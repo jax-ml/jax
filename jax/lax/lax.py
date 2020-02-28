@@ -1779,6 +1779,7 @@ ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, onp.sqrt(onp.pi) / 2.),
 
 real_p = unop(_complex_basetype, _complex, 'real')
 ad.deflinear(real_p, lambda t: [complex(t, onp.zeros((), _dtype(t)))])
+taylor.deflinear(real_p)
 
 imag_p = unop(_complex_basetype, _complex, 'imag')
 ad.defjvp(imag_p, lambda g, _: real(mul(_const(g, -1j), g)))
@@ -1787,6 +1788,7 @@ _complex_dtype = lambda dtype, *args: (onp.zeros((), dtype) + onp.zeros((), onp.
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear(complex_p, lambda t: [real(t), imag(neg(t))])
+taylor.deflinear(complex_p)
 
 conj_p = unop(_complex_dtype, _complex_elem_types | _complex, 'conj')
 
@@ -1892,7 +1894,21 @@ div_p = standard_naryop([_num, _num], 'div')
 ad.defjvp(div_p,
           lambda g, x, y: div(_brcast(g, y), y),
           lambda g, x, y: div(mul(neg(_brcast(g, x)), x), square(y)))
+
+def _div_taylor_rule(primals_in, series_in, **params):
+  x, y = primals_in
+  x_terms, y_terms = series_in
+  u = [x] + x_terms
+  w = [y] + y_terms
+  v = [None] * len(u)
+  def scale(k, j): return 1. / (fact(k - j) * fact(j))
+  for k in range(0, len(v)):
+    conv = sum([scale(k, j) * v[j] * w[k-j] for j in range(0, k)])
+    v[k] = (u[k] - fact(k) * conv) / w[0]
+  primal_out, *series_out = v
+  return primal_out, series_out
 ad.primitive_transposes[div_p] = _div_transpose_rule
+taylor.prop_rules[div_p] = _div_taylor_rule
 
 rem_p = standard_naryop([_num, _num], 'rem')
 ad.defjvp(rem_p,
@@ -1982,6 +1998,7 @@ convert_element_type_p = standard_primitive(
 ad.deflinear(
     convert_element_type_p,
     lambda t, new_dtype, old_dtype: [convert_element_type(t, old_dtype)])
+taylor.deflinear(convert_element_type_p)
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
 
@@ -2371,6 +2388,7 @@ def _broadcast_batch_rule(batched_args, batch_dims, sizes):
 broadcast_p = standard_primitive(
     _broadcast_shape_rule, _input_dtype, 'broadcast')
 ad.deflinear(broadcast_p, lambda t, sizes: [_reduce_sum(t, range(len(sizes)))])
+taylor.deflinear(broadcast_p)
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, shape, broadcast_dimensions):
@@ -2418,6 +2436,7 @@ broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
+taylor.deflinear(broadcast_in_dim_p)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
 
 
@@ -2508,6 +2527,7 @@ concatenate_p = standard_primitive(
     _concatenate_shape_rule, _concatenate_dtype_rule, 'concatenate',
     _concatenate_translation_rule)
 ad.deflinear(concatenate_p, _concatenate_transpose_rule)
+taylor.deflinear(concatenate_p)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
 
@@ -2556,6 +2576,7 @@ def _pad_batch_rule(batched_args, batch_dims, padding_config):
 
 pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad')
 ad.deflinear(pad_p, _pad_transpose)
+taylor.deflinear(pad_p)
 ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
@@ -2648,6 +2669,7 @@ reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
 reshape_p.def_impl(_reshape_impl)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
+taylor.deflinear(reshape_p)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
 taylor.deflinear(reshape_p)
 
@@ -2671,6 +2693,7 @@ def _rev_batch_rule(batched_args, batch_dims, dimensions):
 
 rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev')
 ad.deflinear(rev_p, lambda t, dimensions: [rev(t, dimensions)])
+taylor.deflinear(rev_p)
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 
@@ -2703,6 +2726,7 @@ transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
 transpose_p.def_impl(_transpose_impl)
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
+taylor.deflinear(transpose_p)
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 
 
@@ -2861,6 +2885,7 @@ def _slice_batching_rule(batched_args, batch_dims, start_indices, limit_indices,
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
                              _slice_translation_rule)
 ad.deflinear2(slice_p, _slice_transpose_rule)
+taylor.deflinear(slice_p)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 
 
@@ -3509,6 +3534,7 @@ reduce_sum_p = standard_primitive(
   _reduce_sum_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_sum'),
   'reduce_sum', _reduce_sum_translation_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
+taylor.deflinear(reduce_sum_p)
 batching.defreducer(reduce_sum_p)
 _masking_defreducer(reduce_sum_p,
                     lambda shape, dtype: onp.broadcast_to(onp.array(0, dtype), shape))
@@ -3710,6 +3736,7 @@ reduce_window_sum_p = standard_primitive(
     _reduce_window_sum_shape_rule, _input_dtype, 'reduce_window_sum',
     _reduce_window_sum_translation_rule)
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
+taylor.deflinear(reduce_window_sum_p)
 batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
 
@@ -4167,6 +4194,7 @@ tie_in_p.def_impl(lambda x, y: y)
 tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
+taylor.deflinear(tie_in_p)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.shape_rules[tie_in_p] = lambda x, y: y.shape
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
