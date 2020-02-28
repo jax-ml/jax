@@ -362,8 +362,8 @@ def vjp_odeint(ofunc, y0, t, *args, **kwargs):
 
     time_vjp_list = jax.ops.index_update(result[-1], -1, result[-3])
     vjp_times = np.hstack(time_vjp_list)[::-1]
-
-    return tuple([result[-4], vjp_times] + list(result[-2]))
+    vjp_args = unravel_args(result[-2])
+    return (result[-4], vjp_times, *vjp_args)
 
   primals_out = odeint(flat_func, y0, t, flat_args, rtol=rtol, atol=atol, mxstep=mxstep)
   vjp_fun = lambda g: vjp_all(g, primals_out, t)
