@@ -19,13 +19,15 @@ Building or installing ``jaxlib``
 Installing ``jaxlib`` with pip
 ..............................
 
-If you're only modifying Python portions of JAX, you may be able to install
-``jaxlib`` from pip (or a prebuilt wheel). You can install with pip by running:
+If you're only modifying Python portions of JAX, we recommend installing
+``jaxlib`` from a prebuilt wheel using pip:
 
 .. code-block:: shell
 
  pip install jaxlib
 
+See the `JAX readme <https://github.com/google/jax#installation>`_ for full
+guidance on pip installation (e.g., for GPU support).
 
 Building ``jaxlib`` from source
 ...............................
