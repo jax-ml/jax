@@ -1078,22 +1078,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     '''
     def attempt_sideeffect(x):
       x = [x]
-      x = jnp.concatenate(x)
+      x = lnp.concatenate(x)
       x -= 1.
       return x
 
-    np_input = np.ones((1))
-    jnp_input = jnp.ones((1))
-    expected_np_input_after_call = np.ones((1))
-    expected_jnp_input_after_call = jnp.ones((1))
+    onp_input = onp.ones((1))
+    lnp_input = lnp.ones((1))
+    expected_onp_input_after_call = onp.ones((1))
+    expected_lnp_input_after_call = lnp.ones((1))
     
-    self.assertTrue(type(jnp.concatenate([np_input])) is jnp.DeviceArray)
+    self.assertTrue(type(lnp.concatenate([onp_input])) is lnp.DeviceArray)
     
-    attempt_sideeffect(np_input)
-    attempt_sideeffect(jnp_input)
+    attempt_sideeffect(onp_input)
+    attempt_sideeffect(lnp_input)
 
-    self.assertAllClose(np_input, expected_np_input_after_call, check_dtypes=True)
-    self.assertAllClose(jnp_input, expected_jnp_input_after_call, check_dtypes=True)
+    self.assertAllClose(onp_input, expected_onp_input_after_call, check_dtypes=True)
+    self.assertAllClose(lnp_input, expected_lnp_input_after_call, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
