@@ -1080,7 +1080,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       x = [x]
       x = jnp.concatenate(x)
       x -= 1.
-    return x
+      return x
 
     np_input = np.ones((1))
     jnp_input = jnp.ones((1))
