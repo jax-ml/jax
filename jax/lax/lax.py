@@ -3619,6 +3619,22 @@ _reduce_max_translation_rule = partial(_reduce_chooser_translation_rule, max_p,
 reduce_max_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_max', _reduce_max_translation_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
+
+def _reduce_max_taylor_rule(primals_in, series_in, **params):
+  operand, = primals_in
+  gs, = series_in
+  primal_out = reduce_max_p.bind(operand, **params)
+  def _reduce_chooser_taylor_rule(g, ans, operand, axes):
+    # TODO: everything except the return statement can be factored out of the function
+    shape = [1 if i in axes else d for i, d in enumerate(operand.shape)]
+    location_indicators = convert_element_type(
+        _eq_meet(operand, reshape(ans, shape)), g.dtype)
+    counts = _reduce_sum(location_indicators, axes)
+    return div(_reduce_sum(mul(g, location_indicators), axes), counts)
+  series_out = [_reduce_chooser_taylor_rule(g, primal_out, operand, **params) for g in gs]
+  return primal_out, series_out
+taylor.prop_rules[reduce_max_p] = _reduce_max_taylor_rule
+
 batching.defreducer(reduce_max_p)
 
 
