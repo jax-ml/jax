@@ -1690,6 +1690,19 @@ taylor.prop_rules[exp_p] = _exp_taylor
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
 
+def _log_taylor(primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  v = [log(x)] + [None] * len(series)
+  def scale(k, j): return 1. / (fact(k-j) * fact(j-1))
+  for k in range(1, len(v)):
+    conv = sum([scale(k, j) * v[j] * u[k-j] for j in range(1, k)])
+    v[k] = (u[k] - fact(k - 1) * conv) / u[0]
+  primal_out, *series_out = v
+  return primal_out, series_out
+taylor.prop_rules[log_p] = _log_taylor
+
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
 
