@@ -1072,6 +1072,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for repeats in [2, [1,3,2], [2], lnp.array([1,3,2]), lnp.array([2])]:
       test_single(m_rect, args_maker, repeats, axis=1)
 
+  def testIssue2330(self):
+    '''
+    Make sure return value of jnp.concatenate is a jax.ndarray and is side-effect save
+    '''
+    def attempt_sideeffect(x):
+      x = [x]
+      x = lnp.concatenate(x)
+      x -= 1.
+      return x
+
+    onp_input = onp.ones((1))
+    lnp_input = lnp.ones((1))
+    expected_onp_input_after_call = onp.ones((1))
+    expected_lnp_input_after_call = lnp.ones((1))
+    
+    self.assertTrue(type(lnp.concatenate([onp_input])) is lnp.DeviceArray)
+    
+    attempt_sideeffect(onp_input)
+    attempt_sideeffect(lnp_input)
+
+    self.assertAllClose(onp_input, expected_onp_input_after_call, check_dtypes=True)
+    self.assertAllClose(lnp_input, expected_lnp_input_after_call, check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
           op, jtu.format_shape_dtype_string(shape, dtype), axis, out_dtype),

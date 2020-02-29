@@ -1721,10 +1721,13 @@ def concatenate(arrays, axis=0):
   # tree of concatenations as a workaround especially for op-by-op mode.
   # (https://github.com/google/jax/issues/653).
   k = 16
-  while len(arrays) > 1:
-    arrays = [lax.concatenate(arrays[i:i+k], axis)
-              for i in range(0, len(arrays), k)]
-  return arrays[0]
+  if len(arrays) == 1:
+    return array(arrays[0])
+  else:
+    while len(arrays) > 1:
+      arrays = [lax.concatenate(arrays[i:i+k], axis)
+                for i in range(0, len(arrays), k)]
+    return arrays[0]
 
 
 @_wraps(onp.vstack)
