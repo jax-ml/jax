@@ -1867,6 +1867,7 @@ sub_p = standard_naryop([_num, _num], 'sub')
 ad.defjvp(sub_p,
           lambda g, x, y: _brcast(g, y),
           lambda g, x, y: _brcast(neg(g), x))
+taylor.deflinear(sub_p)
 ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_naryop([_num, _num], 'mul')
