@@ -3185,6 +3185,14 @@ gather_p = standard_primitive(
     _gather_translation_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 
+def _gather_taylor_rule(primals_in, series_in, **params):
+  operand, start_indices = primals_in
+  gs, _ = series_in
+  primal_out = gather_p.bind(operand, start_indices, **params)
+  series_out = [gather_p.bind(g, start_indices, **params) for g in gs]
+  return primal_out, series_out
+taylor.prop_rules[gather_p] = _gather_taylor_rule
+
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
 
