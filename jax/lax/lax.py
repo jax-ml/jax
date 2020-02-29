@@ -3638,14 +3638,15 @@ def _reduce_max_taylor_rule(primals_in, series_in, **params):
   operand, = primals_in
   gs, = series_in
   primal_out = reduce_max_p.bind(operand, **params)
-  def _reduce_chooser_taylor_rule(g, ans, operand, axes):
-    # TODO: everything except the return statement can be factored out of the function
-    shape = [1 if i in axes else d for i, d in enumerate(operand.shape)]
-    location_indicators = convert_element_type(
-        _eq_meet(operand, reshape(ans, shape)), g.dtype)
-    counts = _reduce_sum(location_indicators, axes)
+  axes = params.pop("axes", None)
+  primal_dtype = gs[0].dtype
+  shape = [1 if i in axes else d for i, d in enumerate(operand.shape)]
+  location_indicators = convert_element_type(
+        _eq_meet(operand, reshape(primal_out, shape)), primal_dtype)
+  counts = _reduce_sum(location_indicators, axes)
+  def _reduce_chooser_taylor_rule(g):
     return div(_reduce_sum(mul(g, location_indicators), axes), counts)
-  series_out = [_reduce_chooser_taylor_rule(g, primal_out, operand, **params) for g in gs]
+  series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
   return primal_out, series_out
 taylor.prop_rules[reduce_max_p] = _reduce_max_taylor_rule
 
