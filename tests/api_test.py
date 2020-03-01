@@ -351,6 +351,20 @@ class APITest(jtu.JaxTestCase):
     assert onp.allclose(jacfwd(f)(x), jacrev(f)(x))
 
   @jtu.skip_on_devices("tpu")
+  def test_value_and_jacobian(self):
+    R = onp.random.RandomState(0).randn
+    A = R(4, 3)
+    x = R(3)
+
+    f = lambda x: np.dot(A, x)
+    y, jac = api.value_and_jacfwd(f)(x)
+    assert np.allclose(jac, A)
+    assert np.allclose(y, f(x))
+    y, jac = api.value_and_jacrev(f)(x)
+    assert np.allclose(jac, A)
+    assert np.allclose(y, f(x))
+
+  @jtu.skip_on_devices("tpu")
   def test_hessian(self):
     R = onp.random.RandomState(0).randn
     A = R(4, 4)
