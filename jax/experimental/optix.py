@@ -58,10 +58,10 @@ ClipState = collections.namedtuple("ClipState", "")
 
 
 def clip(max_delta):
-  """Clip updates element-wise.
+  """Clip updates element-wise, to be between -max_delta and +max_delta.
 
   Args:
-    max_delta: the maximum size of an update, for each variable
+    max_delta: the maximum absolute value for each element in the update.
 
   Returns:
     An (init_fn, update_fn) tuple.
@@ -72,7 +72,7 @@ def clip(max_delta):
 
   def update_fn(updates, state):
     updates = tree_multimap(
-        lambda g: jnp.clip_by_value(g, -max_delta, max_delta), updates)
+        lambda g: jnp.clip(g, -max_delta, max_delta), updates)
     return updates, state
 
   return InitUpdate(init_fn, update_fn)
