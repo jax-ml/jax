@@ -69,6 +69,22 @@ def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
+@_wraps(scipy.linalg.polar)
+def polar(a, side="right"):
+  if side not in ["right", "left"]:
+    raise ValueError("`side` must be either 'right' or 'left'")
+  if a.ndim != 2:
+    raise ValueError("`a` must be a 2-D array.")
+
+  w, s, vh = svd(a, full_matrices=False)
+  u = np.matmul(w, vh)
+  if side == 'right':
+    # a = up
+    p = np.matmul((vh.T.conj() * s), vh)
+  else:
+    # a = pu
+    p = np.matmul((w * s), w.T.conj())
+  return u, p
 
 @_wraps(scipy.linalg.det)
 def det(a, overwrite_a=False, check_finite=True):
