@@ -39,6 +39,7 @@ from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
+from . import taylor
 from . import masking
 
 FLAGS = flags.FLAGS
@@ -964,6 +965,7 @@ device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
+taylor.deflinear(device_put_p)
 masking.shape_rules[device_put_p] = lambda x, **_: x.shape
 masking.defvectorized(device_put_p)
 
