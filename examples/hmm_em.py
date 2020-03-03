@@ -8,19 +8,26 @@ from jax import jit, grad
 
 
 def log_normalizer(params, seq):
-  log_pi, log_A, log_B = params
-  def marginalize(log_alpha, obs):
-    log_alpha = logsumexp(log_alpha[:, None] + log_A, axis=0) + log_B[:, obs]
-    return log_alpha, None
-  log_alpha, _ = lax.scan(marginalize, log_pi, seq)
-  return logsumexp(log_alpha)
+  pi, A, B = map(np.exp, params)
+  def marginalize(carry, obs):
+    alpha, logprob = carry
+    alpha = np.dot(alpha, A) * B[:, obs]
+    new_carry = alpha / alpha.sum(), logprob + np.log(alpha.sum())
+    return new_carry, None
+  (_, logprob), _ = lax.scan(marginalize, (pi, 0.), seq)
+  return logprob
 
 @jit
 def EM(params, seq, num_steps):
   def update(i, params):
-    moments = grad(log_normalizer)(params, seq)                     # E step
-    return [np.log(x / x.sum(-1, keepdims=True)) for x in moments]  # M step
+    moments = grad(log_normalizer)(params, seq)                    # E step
+    params = [np.log(normalize(x, smooth=1e-2)) for x in moments]  # M step
+    return params
   return lax.fori_loop(0, num_steps, update, params)
+
+def normalize(x, smooth):
+  x = x + smooth
+  return x / x.sum(-1, keepdims=True)
 
 @partial(jit, static_argnums=(2,))
 def sample(key, params, length):
@@ -51,7 +58,7 @@ if __name__ == '__main__':
   with open(jax.core.__file__, 'r') as f:
     seq, decodings = build_dataset(f.read())
 
-  num_states = 25
+  num_states = 200
   num_obs = len(decodings)
 
   keys = map(random.PRNGKey, count())
@@ -62,5 +69,5 @@ if __name__ == '__main__':
 
   new_params = EM(params, seq, 50)
 
-  sampled_seq = sample(next(keys), new_params, 80)
+  sampled_seq = sample(next(keys), new_params, 200)
   print(''.join(decodings[i] for i in sampled_seq))
