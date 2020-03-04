@@ -454,7 +454,7 @@ def _defvectorized(prim):
   parallel.papply_primitive_rules[prim] = partial(_vectorized_papply, prim)
 
 
-def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
+def _reducer_papply(prim, collective, name, size, vals, papply_axes, axes, **kwargs):
   operand, = vals
   papply_axis, = papply_axes
 
@@ -470,7 +470,7 @@ def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
     result = operand
 
   if not axes or papply_axis in axes:
-    return cprim.bind(result, axis_name=name), None
+    return collective(result, axis_name=name), None
   else:
     new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
     return result, new_papply_axis
@@ -530,9 +530,9 @@ _defbroadcasting(lax.shift_right_logical_p)
 
 _defidentity(lax.tie_in_p)
 
-_defreducer(lax.reduce_sum_p, psum_p)
-_defreducer(lax.reduce_max_p, pmax_p)
-_defreducer(lax.reduce_min_p, pmin_p)
+_defreducer(lax.reduce_sum_p, psum)
+_defreducer(lax.reduce_max_p, pmax)
+_defreducer(lax.reduce_min_p, pmin)
 
 
 def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
