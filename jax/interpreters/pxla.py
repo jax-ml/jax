@@ -800,11 +800,17 @@ class SplitAxisTrace(core.Trace):
           which_mapped = [n is not not_mapped for n in names_in]
           val_out, is_mapped = rule(vals_in, which_mapped, **params)
           name_out = name if is_mapped else not_mapped
-          return SplitAxisTracer(self, name_out, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name_out, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name_out, val_out)
         else:
           # if not, bind the primitive without any processing
           val_out = primitive.bind(*vals_in, **params)
-          return SplitAxisTracer(self, name, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name, val_out)
       else:
         # if it's not a pmap collective primitive, act just like batching
         rule = batching.get_primitive_batcher(primitive)
