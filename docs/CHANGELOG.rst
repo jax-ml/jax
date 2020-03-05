@@ -7,6 +7,7 @@ Change Log
 
 These are the release notes for JAX.
 
+
 jax 0.1.60 (unreleased)
 -----------------------
 
@@ -21,6 +22,18 @@ jax 0.1.60 (unreleased)
     ``static_argnums`` in :py:func:`jax.jit`.
   * Improved error messages for when tracers are mistakenly saved in global state.
   * Added :py:func:`jax.nn.one_hot` utility function.
+
+jaxlib 0.1.40 (March 4, 2020)
+--------------------------------
+
+* Adds experimental support in Jaxlib for TensorFlow profiler, which allows
+  tracing of CPU and GPU computations from TensorBoard.
+* Includes prototype support for multihost GPU computations that communicate via
+  NCCL.
+* Improves performance of NCCL collectives on GPU.
+* Adds TopK, CustomCallWithoutLayout, CustomCallWithLayout, IGammaGradA and
+  RandomGamma implementations.
+* Supports device assignments known at XLA compilation time.
 
 jax 0.1.59 (February 11, 2020)
 ------------------------------
@@ -46,6 +59,12 @@ jax 0.1.59 (February 11, 2020)
   * JAX CPU device buffers now implement the Python buffer protocol, which allows
     zero-copy buffer sharing between JAX and NumPy.
   * Added JAX_SKIP_SLOW_TESTS environment variable to skip tests known as slow.
+
+jaxlib 0.1.39 (February 11, 2020)
+--------------------------------
+
+* Updates XLA.
+
 
 jaxlib 0.1.38 (January 29, 2020)
 --------------------------------
