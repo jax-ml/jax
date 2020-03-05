@@ -22,6 +22,7 @@ jax 0.1.60 (unreleased)
     ``static_argnums`` in :py:func:`jax.jit`.
   * Improved error messages for when tracers are mistakenly saved in global state.
   * Added :py:func:`jax.nn.one_hot` utility function.
+* The minimum jaxlib version is now 0.1.40.
 
 jaxlib 0.1.40 (March 4, 2020)
 --------------------------------

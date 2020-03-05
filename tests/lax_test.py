@@ -1328,7 +1328,6 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(3,), (5, 3)]
       for k in [1, 3]
       for rng_factory in [jtu.rand_default]))
-  @unittest.skipIf(jax.lib.version < (0, 1, 40), "Test requires jaxlib 0.1.40")
   def testTopK(self, shape, dtype, k, rng_factory):
     rng = rng_factory()
     perm_rng = onp.random.RandomState(0)

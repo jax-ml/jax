@@ -46,7 +46,7 @@ def threefry2x32(c, keys, data):
   opaque = cuda_prng_kernels.cuda_threefry2x32_descriptor(_prod(dims))
   layout = tuple(range(ndims - 1, -1, -1))
   shape = xla_client.Shape.array_shape(dtype, dims, layout)
-  return c.CustomCall(
+  return c.CustomCallWithLayout(
       b"cuda_threefry2x32",
       operands=(keys[0], keys[1], data[0], data[1]),
       shape_with_layout=xla_client.Shape.tuple_shape([shape, shape]),
