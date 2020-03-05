@@ -1422,12 +1422,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def scalar_solve(f, y):
       return y / f(1.0)
 
-    def binary_search(func, x0, low=0.0, high=100.0, tolerance=1e-6):
+    def binary_search(func, x0, low=0.0, high=100.0):
       del x0  # unused
 
       def cond(state):
         low, high = state
-        return high - low > tolerance
+        midpoint = 0.5 * (low + high)
+        return (low < midpoint) & (midpoint < high)
 
       def body(state):
         low, high = state
