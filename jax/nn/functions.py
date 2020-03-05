@@ -46,7 +46,11 @@ def softplus(x):
   .. math::
     \mathrm{softplus}(x) = \log(1 + e^x)
   """
-  return np.logaddexp(x, 0)
+  # y_big has the wrong gradient at 0, while y_small turns into inf too quickly
+  y_big = np.logaddexp(x, 0)
+  y_small = np.log1p(np.exp(x))
+  y = np.where(x > 2, y_big, y_small)
+  return y
 
 def soft_sign(x):
   r"""Soft-sign activation function.
