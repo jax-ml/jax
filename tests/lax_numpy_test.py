@@ -1789,6 +1789,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = onp.argsort(x)
     self.assertAllClose(expected, ans, check_dtypes=False)
 
+  def testMsortManually(self):
+    args_maker = lambda: [onp.random.randint(50, size=(5 ,5))]
+    lnp_op = lambda x: lnp.msort(x)
+    onp_op = lambda x: onp.msort(x)
+    self._CheckAgainstNumpy(lnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lnp_op, args_maker, check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_shifts={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
