@@ -1380,6 +1380,16 @@ def make_jaxpr(fun):
 
 
 def device_put(x, device=None):
+  """Transfers ``x`` to ``device``.
+
+  Args:
+    ``x``: An array, scalar, or (nested) standard Python container thereof.
+    ``device``: The ``Device`` to transfer ``x`` to.
+
+  Returns:
+    A copy of ``x`` that resides on ``device``. If ``x`` is already on
+    ``device``, returns ``x``.
+  """
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 

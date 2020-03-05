@@ -28,6 +28,7 @@ Just-in-time compilation (:code:`jit`)
 .. autofunction:: xla_computation
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
+.. autofunction:: device_put
 
 Automatic differentiation
 -------------------------
