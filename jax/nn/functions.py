@@ -46,7 +46,13 @@ def softplus(x):
   .. math::
     \mathrm{softplus}(x) = \log(1 + e^x)
   """
-  return np.logaddexp(x, 0)
+  # Get the smallest normal number.
+  # eps is too big and nextafter(0, 1) is denormal
+  dtype = np.result_type(x).type
+  if not issubclass(dtype, np.inexact):
+    dtype = np.float32
+  zero = np.finfo(dtype).tiny
+  return np.logaddexp(x, zero)
 
 def soft_sign(x):
   r"""Soft-sign activation function.

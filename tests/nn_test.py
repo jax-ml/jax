@@ -43,12 +43,28 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.softplus, (0.,), order=1,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
+  def testSoftplusGradInf(self):
+    check_grads(nn.softplus, (-float('inf'),), order=1,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+    self.assertAllClose(
+        1., jax.grad(nn.softplus)(float('inf')), check_dtypes=True)
+
+  def testSoftplusGradNan(self):
+    self.skipTest('currently broken, returns 1.764052')
+    check_grads(nn.softplus, (float('nan'),), order=1,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+
   def testReluGrad(self):
     rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
+
+  @parameterized.parameters([
+      int, np.int32, float, np.float64, np.float32, np.float64,])
+  def testSoftplusZero(self, dtype):
+    self.assertEqual(np.log(dtype(2)), nn.softplus(dtype(0)))
 
   def testSoftplusValue(self):
     val = nn.softplus(89.)
