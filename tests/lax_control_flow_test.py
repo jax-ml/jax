@@ -1450,10 +1450,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         rtol=1e-7)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
-    # TODO(shoyer): reenable when batching works
-    # inputs = np.array([4.0, 5.0])
-    # results = api.vmap(sqrt_cubed)(inputs)
-    # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+    inputs = np.array([4.0, 5.0])
+    results = api.vmap(sqrt_cubed)(inputs)
+    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,

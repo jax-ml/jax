@@ -1365,27 +1365,21 @@ def custom_root(f, initial_guess, solve, tangent_solve):
   const_lengths = _RootTuple(*_map(len, all_consts))
   jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
 
-  out_flat = root_p.bind(
-      *(_flatten(all_consts) + guess_flat),
-      const_lengths=const_lengths, jaxprs=jaxprs)
+  out_flat = _root(const_lengths, jaxprs, *(_flatten(all_consts) + guess_flat))
   return tree_unflatten(out_tree, out_flat)
 
 
-def _root_abstract_eval(*args, **kwargs):
-  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
-
-
-def _root_impl(*args, **kwargs):
-  const_lengths, jaxprs = split_dict(kwargs, ['const_lengths', 'jaxprs'])
+@partial(jax.custom_jvp, nondiff_argnums=(0, 1))
+def _root(const_lengths, jaxprs, *args):
   params, initial_guess = _split_root_args(args, const_lengths)
   solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
   return solution
 
 
+@_root.defjvp
 def _root_jvp(primals, tangents, const_lengths, jaxprs):
   params, _ = _split_root_args(primals, const_lengths)
-  solution = tuple(root_p.bind(
-      *primals, const_lengths=const_lengths, jaxprs=jaxprs))
+  solution = _root(const_lengths, jaxprs, *primals)
 
   params_dot, _ = _split_root_args(tangents, const_lengths)
 
@@ -1408,16 +1402,6 @@ def _root_jvp(primals, tangents, const_lengths, jaxprs):
       operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
 
   return solution, solution_dot
-
-
-root_p = core.Primitive('root')
-root_p.multiple_results = True
-root_p.def_impl(_root_impl)
-root_p.def_abstract_eval(_root_abstract_eval)
-ad.primitive_jvps[root_p] = _root_jvp
-xla.initial_style_translations[root_p] = xla.lower_fun(
-    _root_impl, initial_style=True)
-# TODO(shoyer): write batching rule
 
 
 class _LinearSolveTuple(collections.namedtuple(
