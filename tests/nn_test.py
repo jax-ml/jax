@@ -39,6 +39,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.softplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
+  def testSoftplusGradZero(self):
+    check_grads(nn.softplus, (0.,), order=1,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+
   def testReluGrad(self):
     rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
