@@ -21,8 +21,13 @@ from .lib import xla_client
 def start_server(port: int):
   """Starts a profiler server on port `port`.
 
-  Returns a profiler server object. The server remains alive until the server
-  object is destroyed.
+  Using the "TensorFlow profiler" feature in `TensorBoard
+  <https://www.tensorflow.org/tensorboard>`_ 2.2 or newer, you can
+  connect to the profiler server and sample execution traces that show CPU and
+  GPU device activity.
+
+  Returns a profiler server object. The server remains alive and listening until
+  the server object is destroyed.
   """
   return xla_client.profiler.start_server(port)
 
@@ -37,7 +42,10 @@ class TraceContext(xla_client.profiler.TraceMe):
   >>> import jax, jax.numpy as jnp
   >>> x = jnp.ones((1000, 1000))
   >>> with jax.profiler.TraceContext("acontext"):
-  >>>   jnp.dot(x, x.T).block_until_ready()
+  ...   jnp.dot(x, x.T).block_until_ready()
+
+  This will cause an "acontext" event to show up on the trace timeline if the
+  event occurs while the process is being traced by TensorBoard.
   """
   pass
 
@@ -46,18 +54,26 @@ def trace_function(func: Callable, name: str = None, **kwargs):
   """Decorator that generates a trace event for the execution of a function.
 
   For example:
+
   >>> import jax, jax.numpy as jnp
   >>>
   >>> @jax.profiler.trace_function
-  >>>   return jnp.dot(x, x.T).block_until_ready()
+  >>> def f(x):
+  ...   return jnp.dot(x, x.T).block_until_ready()
   >>>
   >>> f(jnp.ones((1000, 1000))
 
-  Arguments can be passed to the decorator via :code:`functools.partial`.
-  >>> import jax, jax.numpy as jnp, functools
+  This will cause an "f" event to show up on the trace timeline if the
+  function execution occurs while the process is being traced by TensorBoard.
+
+  Arguments can be passed to the decorator via :py:func:`functools.partial`.
+
+  >>> import jax, jax.numpy as jnp
+  >>> from functools import partial
   >>>
-  >>> @functools.partial(jax.profiler.trace_function, name="event_name")
-  >>>   return jnp.dot(x, x.T).block_until_ready()
+  >>> @partial(jax.profiler.trace_function, name="event_name")
+  >>> def f(x):
+  ...   return jnp.dot(x, x.T).block_until_ready()
   >>>
   >>> f(jnp.ones((1000, 1000))
   """
