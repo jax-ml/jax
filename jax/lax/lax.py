@@ -1043,6 +1043,17 @@ def top_k(operand, k):
   return top_k_p.bind(operand, k=k)
 
 def tie_in(x, y):
+  """Gives ``y`` a fake data dependence on ``x``.
+
+  When staging to XLA (e.g. running under jit or pmap), values that don't depend
+  on computation inputs are computed op-by-op, and folded into the XLA
+  computation as constants.
+
+  ``tie_in`` provides a way to explicitly stage values into the computation.
+  When staging to XLA and ``x`` is already staged, then the result of ``tie_in``
+  is ``y``, but staged to XLA. Downstream use of the result will also be staged
+  to XLA.
+  """
   return tie_in_p.bind(x, y)
 
 
