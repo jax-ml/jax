@@ -14,17 +14,17 @@
 
 """An ONNX to XLA compiler by JAX-tracing a Numpy-backed ONNX interpreter."""
 
-from cStringIO import StringIO
+from io import BytesIO
 from functools import partial
 import hashlib
 import sys
 
 import onnx
 from onnx import numpy_helper
-from onnx import onnx_pb2
-import urllib
+import urllib.request
 
 import jax.numpy as np
+import jax.ops
 from jax import jit, grad
 from jax import lax
 
@@ -33,7 +33,7 @@ def _asarray(proto):
   return numpy_helper.to_array(proto).reshape(tuple(proto.dims))
 
 
-attr_types = dict(onnx_pb2.AttributeProto.AttributeType.items())
+attr_types = dict(onnx.AttributeProto.AttributeType.items())
 attribute_handlers = {
     attr_types['FLOAT']: lambda a: a.f,
     attr_types['INT']: lambda a: a.i,
@@ -62,7 +62,7 @@ def onnx_conv(x, w, b=0, group=1, kernel_shape=None, pads=None, strides=None,
   kernel_shape = kernel_shape or w.shape
   strides = strides or [1] * (w.ndim - 2)
   if auto_pad:
-    auto_pad = 'SAME' if auto_pad.startswith('SAME') else 'VALID'
+    auto_pad = 'SAME' if auto_pad.startswith(b'SAME') else 'VALID'
     pads = lax.padtype_to_pads(x.shape[2:], w.shape[2:], strides, auto_pad)
   else:
     pads = pads or [0] * (w.ndim - 2)
@@ -77,8 +77,9 @@ def onnx_add(a, b, axis=None, broadcast=True):
   if broadcast:
     axis = (a.dim - b.ndim) if axis is None else axis % a.ndim
     assert a.shape[axis:][:b.ndim] == b.shape
-    b_shape = np.ones(a.ndim, dtype='int64').copy()
-    b_shape[axis:axis + b.ndim] = b.shape
+    b_shape = np.ones(a.ndim, dtype='int64')
+    b_shape = jax.ops.index_update(
+      b_shape, jax.ops.index[axis:axis + b.ndim],  b.shape)
     b = np.reshape(b, b_shape)
   return [a + b]
 
@@ -116,7 +117,7 @@ if __name__ == "__main__":
   if hashlib.md5(download).hexdigest() != 'bc8ad9bd19c5a058055dc18d0f089dad':
     print("onnx file checksum mismatch")
     sys.exit(1)
-  model = onnx.load(StringIO(download))
+  model = onnx.load(BytesIO(download))
 
   predict = lambda inputs: interpret_onnx(model.graph, inputs)[0]
 
