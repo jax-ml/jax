@@ -17,6 +17,7 @@ import numpy as np
 import scipy.stats as osp_stats
 
 from ... import lax
+from ...numpy import lax_numpy as jnp
 from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
 from .. import special
 
@@ -49,4 +50,4 @@ def logcdf(x, loc=0, scale=1):
 
 @_wraps(osp_stats.norm.ppf, update_doc=False)
 def ppf(q, loc=0, scale=1):
-  return np.array(special.ndtri(q) * scale + loc, 'float64')
+  return jnp.array(special.ndtri(q) * scale + loc, 'float64')
