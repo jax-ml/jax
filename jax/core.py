@@ -407,9 +407,10 @@ class Tracer(object):
 
     try:
       attr = getattr(self.aval, name)
-    except KeyError:
+    except KeyError as err:
       raise AttributeError(
-          "{} has no attribute {}".format(self.__class__.__name__, name))
+          "{} has no attribute {}".format(self.__class__.__name__, name)
+      ) from err
     else:
       t = type(attr)
       if t is aval_property:
@@ -584,8 +585,8 @@ def valid_jaxtype(x):
 def concrete_aval(x):
   try:
     return pytype_aval_mappings[type(x)](x)
-  except KeyError:
-    raise TypeError("{} is not a valid Jax type".format(type(x)))
+  except KeyError as err:
+    raise TypeError("{} is not a valid Jax type".format(type(x))) from err
 
 
 def get_aval(x):

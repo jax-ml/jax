@@ -397,9 +397,9 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 
   try:
     pred_dtype = dtypes.result_type(pred)
-  except TypeError:
+  except TypeError as err:
     msg = ("Pred type must be either boolean or number, got {}.")
-    raise TypeError(msg.format(pred))
+    raise TypeError(msg.format(pred)) from err
 
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
@@ -765,10 +765,11 @@ def scan(f, init, xs, length=None):
 
   try:
     lengths = [x.shape[0] for x in xs_flat]
-  except AttributeError:
+  except AttributeError as err:
     msg = "scan got value with no leading axis to scan over: {}."
-    raise ValueError(msg.format(', '.join(str(x) for x in xs_flat
-                                          if not hasattr(x, 'shape'))))
+    raise ValueError(
+      msg.format(', '.join(str(x) for x in xs_flat
+                           if not hasattr(x, 'shape')))) from err
 
   if length is not None:
     length = int(length)

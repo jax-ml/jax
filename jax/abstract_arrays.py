@@ -166,8 +166,8 @@ class ShapedArray(UnshapedArray):
   def __len__(self):
     try:
       return self.shape[0]
-    except IndexError:
-      raise TypeError("len() of unsized object")  # same as numpy error
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err # same as numpy error
 
   def _len(self, ignored_tracer):
     return len(self)
