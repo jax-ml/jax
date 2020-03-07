@@ -283,6 +283,8 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
 JAX_ARGMINMAX_RECORDS = [
     op_record("argmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
     op_record("argmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
+    op_record("nanargmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
+    op_record("nanargmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
 ]
 
 JAX_OPERATOR_OVERLOADS = [
@@ -651,6 +653,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory()
     if dtype == onp.complex128 and jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
+    if "nan" in onp_op.__name__ and dtype == jnp.bfloat16:
+      raise unittest.SkipTest("NumPy doesn't correctly handle bfloat16 arrays")
 
     def onp_fun(array_to_reduce):
       return onp_op(array_to_reduce, axis).astype(jnp.int_)
@@ -659,7 +663,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return jnp_op(array_to_reduce, axis)
 
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    try:
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    except ValueError as e:
+      if str(e) == "All-NaN slice encountered":
+        self.skipTest("JAX doesn't support checking for all-NaN slices")
+      else:
+        raise
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(

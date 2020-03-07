@@ -2619,12 +2619,37 @@ def argmax(a, axis=None):
   return _argminmax(max, a, axis)
 
 
+_NANARG_DOC = """\
+Warning: jax.numpy.arg{} returns -1 for all-NaN slices and does not raise
+an error.
+"""
+
+@_wraps(onp.nanargmax, lax_description=_NANARG_DOC.format("max"))
+def nanargmax(a, axis=None):
+  if not issubdtype(_dtype(a), inexact):
+    return argmax(a, axis=axis)
+  nan_mask = isnan(a)
+  a = where(nan_mask, -inf, a)
+  res = argmax(a, axis=axis)
+  return where(all(nan_mask, axis=axis), -1, res)
+
+
 @_wraps(onp.argmin)
 def argmin(a, axis=None):
   if axis is None:
     a = ravel(a)
     axis = 0
   return _argminmax(min, a, axis)
+
+
+@_wraps(onp.nanargmin, lax_description=_NANARG_DOC.format("min"))
+def nanargmin(a, axis=None):
+  if not issubdtype(_dtype(a), inexact):
+    return argmin(a, axis=axis)
+  nan_mask = isnan(a)
+  a = where(nan_mask, inf, a)
+  res = argmin(a, axis=axis)
+  return where(all(nan_mask, axis=axis), -1, res)
 
 
 # TODO(mattjj): redo this lowering with a call to variadic lax.reduce
