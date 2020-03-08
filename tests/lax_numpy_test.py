@@ -2824,7 +2824,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              jtu.format_shape_dtype_string(q_shape, q_dtype),
              axis, keepdims, interpolation),
-         "a_rng": jtu.rand_default, "q_rng": q_rng, "op": op,
+         "a_rng": jtu.rand_some_nan if 'nan' in op else jtu.rand_default,
+         "q_rng": q_rng, "op": op,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
          "keepdims": keepdims,
@@ -2832,6 +2833,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for (op, q_rng) in (
           ("percentile", partial(jtu.rand_uniform, low=0., high=100.)),
           ("quantile", partial(jtu.rand_uniform, low=0., high=1.)),
+          ("nanpercentile", partial(jtu.rand_uniform, low=0., high=100.)),
+          ("nanquantile", partial(jtu.rand_uniform, low=0., high=1.)),
         )
         for a_dtype in default_dtypes
         for a_shape, axis in (
@@ -2842,14 +2845,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for q_dtype in [np.float32]
         for q_shape in scalar_shapes + [(4,)]
         for keepdims in [False, True]
-        for interpolation in ['linear', 'lower', 'higher', 'nearest', 'midpoint']))
+        for interpolation in (['linear'] if 'nan' in op else
+            ['linear', 'lower', 'higher', 'nearest', 'midpoint'])))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
                    axis, keepdims, interpolation):
-    if op == "quantile" and numpy_version < (1, 15):
+    if "quantile" in op and numpy_version < (1, 15):
       raise SkipTest("Numpy < 1.15 does not have np.quantile")
     a_rng = a_rng(self.rng())
     q_rng = q_rng(self.rng())
-    args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+    if "median" in op:
+        args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    else:
+        args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
@@ -2857,6 +2864,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                      interpolation=interpolation)
     jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims,
                       interpolation=interpolation)
+
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
@@ -2870,10 +2878,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name":
-           "_a_shape={}_axis={}_keepdims={}".format(
-             jtu.format_shape_dtype_string(a_shape, a_dtype),
+           "_{}_a_shape={}_axis={}_keepdims={}".format(
+             op, jtu.format_shape_dtype_string(a_shape, a_dtype),
              axis, keepdims),
-         "a_shape": a_shape, "a_dtype": a_dtype,
+         "op": op, "a_shape": a_shape, "a_dtype": a_dtype,
          "axis": axis,
          "keepdims": keepdims}
         for a_dtype in default_dtypes
@@ -2882,15 +2890,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((47, 7), 0),
           ((4, 101), 1),
         )
-        for keepdims in [False, True]))
-  def testMedian(self, a_shape, a_dtype, axis, keepdims):
-    a_rng = jtu.rand_default(self.rng())
+        for keepdims in [False, True]
+        for op in ["median", "nanmedian"]))
+  def testMedian(self, op, a_shape, a_dtype, axis, keepdims):
+    if op == "median":
+      a_rng = jtu.rand_default(self.rng())
+    else:
+      a_rng = jtu.rand_some_nan(self.rng())
     args_maker = lambda: [a_rng(a_shape, a_dtype)]
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
-      return np.median(*args, axis=axis, keepdims=keepdims)
-    jnp_fun = partial(jnp.median, axis=axis, keepdims=keepdims)
+      return getattr(np, op)(*args, axis=axis, keepdims=keepdims)
+    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims)
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
