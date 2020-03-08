@@ -71,19 +71,19 @@ def check_python_version(python_version):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/1.2.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/2.0.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-1.2.1-linux-x86_64",
+            file="bazel-2.0.0-linux-x86_64",
             sha256=
-            "f5e21d7448419d1596ad0c5bb71fb336a0af08c832587aec394970ea56701d88"),
+            "4df79462c6c3ecdeeee7af99fc269b52ab1aa4828ef3bc359c1837d3fafeeee7"),
     "Darwin":
         BazelPackage(
-            file="bazel-1.2.1-darwin-x86_64",
+            file="bazel-2.0.0-darwin-x86_64",
             sha256=
-            "6729be5a56e6eadf7a9112afd2d87ce348da8fca22077b882d9bb7a6f5d41d1c"),
+            "3eca4c96cfda97a9d5f8d3d0dec4155a5cc5ff339b10d3f35213c398bf13881e"),
 }
 
 
@@ -175,6 +175,9 @@ def check_bazel_version(bazel_path, min_version, max_version):
 
 
 BAZELRC_TEMPLATE = """
+# Flag to enable remote config
+common --experimental_repo_remote_exec
+
 build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
 build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
@@ -208,6 +211,9 @@ build --strategy=Genrule=standalone
 
 build --cxxopt=-std=c++14
 build --host_cxxopt=-std=c++14
+
+# Suppress all warning messages.
+build:short_logs --output_filter=DONT_MATCH_ANYTHING
 """
 
 
@@ -318,7 +324,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="1.2.1", max_version=None)
+  check_bazel_version(bazel_path, min_version="2.0.0", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
@@ -346,6 +352,7 @@ def main():
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options
+  config_args += ["--config=short_logs"]
   if args.enable_march_native:
     config_args += ["--config=opt"]
   if args.enable_mkl_dnn:

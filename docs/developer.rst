@@ -19,13 +19,15 @@ Building or installing ``jaxlib``
 Installing ``jaxlib`` with pip
 ..............................
 
-If you're only modifying Python portions of JAX, you may be able to install
-``jaxlib`` from pip (or a prebuilt wheel). You can install with pip by running:
+If you're only modifying Python portions of JAX, we recommend installing
+``jaxlib`` from a prebuilt wheel using pip:
 
 .. code-block:: shell
 
  pip install jaxlib
 
+See the `JAX readme <https://github.com/google/jax#installation>`_ for full
+guidance on pip installation (e.g., for GPU support).
 
 Building ``jaxlib`` from source
 ...............................
@@ -140,8 +142,9 @@ To rebuild the documentation, install several packages:
   pip install -r docs/requirements.txt
 
 You must also install ``pandoc`` in order to regenerate the notebooks.
-See `Install Pandoc <https://pandoc.org/installing.html>`_. On Mac, I had success with
-the miniconda installer, then ``conda install -c conda-forge pandoc``.
+See `Install Pandoc<https://pandoc.org/installing.html>`_,
+or using `Miniconda<https://docs.conda.io/en/latest/miniconda.html>`_ which
+I have used successfully on the Mac: ``conda install -c conda-forge pandoc``.
 If you do not want to install ``pandoc`` then you should regenerate the documentation
 without the notebooks.
 

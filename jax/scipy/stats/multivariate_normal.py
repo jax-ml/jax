@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-import numpy as onp
+import numpy as np
 import scipy.stats as osp_stats
 
 from ... import lax
@@ -28,7 +28,7 @@ def logpdf(x, mean, cov):
   two = _constant_like(x, 2)
   dim = _constant_like(x, mean.shape[0])
   det_sig = det(cov).astype(cov.dtype)
-  log_normalizer = lax.log(lax.mul(lax.pow(_constant_like(x, 2 * onp.pi), dim),
+  log_normalizer = lax.log(lax.mul(lax.pow(_constant_like(x, 2 * np.pi), dim),
     det_sig))
   x_shape = x.shape[:-1]
   if x_shape:

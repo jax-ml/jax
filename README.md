@@ -7,9 +7,10 @@
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
 | [**Install guide**](#installation)
+| [**Change logs**](https://jax.readthedocs.io/en/latest/CHANGELOG.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 
-**Announcement:** JAX 0.1.58 has dropped Python 2 support, and requires Python 3.5 or newer. See [CHANGELOG.md](https://github.com/google/jax/blob/master/CHANGELOG.md).
+**Announcement:** JAX 0.1.58 has dropped Python 2 support, and requires Python 3.5 or newer. See [docs/CHANGELOG.rst](https://jax.readthedocs.io/en/latest/CHANGELOG.html).
 
 ## What is JAX?
 
@@ -272,7 +273,8 @@ replicated and executed in parallel accross devices.
 Here's an example on an 8-GPU machine:
 
 ```python
-from jax import random
+from jax import random, pmap
+import jax.numpy as np
 
 # Create 8 random 5000 x 6000 matrices, one per GPU
 keys = random.split(random.PRNGKey(0), 8)
@@ -410,7 +412,7 @@ PYTHON_VERSION=cp37  # alternatives: cp35, cp36, cp37, cp38
 CUDA_VERSION=cuda92  # alternatives: cuda92, cuda100, cuda101, cuda102
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.39-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.40-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```

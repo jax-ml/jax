@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax

@@ -36,8 +36,15 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
-    check_grads(nn.softplus, (1e-8,), 4,
+    check_grads(nn.softplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+
+  def testReluGrad(self):
+    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    check_grads(nn.relu, (1.,), order=3, rtol=rtol)
+    check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
+    jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
 
   def testSoftplusValue(self):
     val = nn.softplus(89.)
@@ -45,7 +52,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testEluGrad(self):
-    check_grads(nn.elu, (1e4,), 4, eps=1.)
+    check_grads(nn.elu, (1e4,), order=4, eps=1.)
 
   def testEluValue(self):
     val = nn.elu(1e4)

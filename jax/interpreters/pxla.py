@@ -460,12 +460,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
   # We add a dummy first invar, to carry the trace details to `dynamic_fun`
   pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
-  with core.new_master(pe.StagingJaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
-        dynamic_fun, master, False).call_wrapped([pval] + pvals)
-    jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
-    assert not env
-    del master
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+      dynamic_fun, [pval] + pvals, instantiate=False, stage_out_calls=True, bottom=True)
+  jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
+
   out_pvs, out_consts = unzip2(out_pvals)
 
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
@@ -802,11 +800,17 @@ class SplitAxisTrace(core.Trace):
           which_mapped = [n is not not_mapped for n in names_in]
           val_out, is_mapped = rule(vals_in, which_mapped, **params)
           name_out = name if is_mapped else not_mapped
-          return SplitAxisTracer(self, name_out, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name_out, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name_out, val_out)
         else:
           # if not, bind the primitive without any processing
           val_out = primitive.bind(*vals_in, **params)
-          return SplitAxisTracer(self, name, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name, val_out)
       else:
         # if it's not a pmap collective primitive, act just like batching
         rule = batching.get_primitive_batcher(primitive)

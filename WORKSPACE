@@ -28,10 +28,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "c0b31150dfdc9495e2a953024bd86dea7c6f786f655ac2ebbbb04ae0029962b2",
-    strip_prefix = "tensorflow-c25692039b954bb5aa891a26ff1744aab137eee7",
+    sha256 = "9699d5c26fdeb8d57b701b7edb1dd1c127849765f7880d767b0ae8c06c38d601",
+    strip_prefix = "tensorflow-ca8d8fbf7bba22415b675a5cb88b7393bfaadf1f",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/c25692039b954bb5aa891a26ff1744aab137eee7.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/ca8d8fbf7bba22415b675a5cb88b7393bfaadf1f.tar.gz",
     ],
 )
 
@@ -49,3 +49,27 @@ tf_workspace(
 )
 
 tf_bind()
+
+# Required for TensorFlow dependency on @com_github_grpc_grpc
+
+load("@com_github_grpc_grpc//bazel:grpc_deps.bzl", "grpc_deps")
+
+grpc_deps()
+
+load(
+    "@build_bazel_rules_apple//apple:repositories.bzl",
+    "apple_rules_dependencies",
+)
+
+apple_rules_dependencies()
+
+load(
+    "@build_bazel_apple_support//lib:repositories.bzl",
+    "apple_support_dependencies",
+)
+
+apple_support_dependencies()
+
+load("@upb//bazel:repository_defs.bzl", "bazel_version_repository")
+
+bazel_version_repository(name = "bazel_version")

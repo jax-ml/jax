@@ -1036,8 +1036,24 @@ def sort_key_val(keys, values, dimension=-1):
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
 
+def top_k(operand, k):
+  k = int(k)
+  if k < 0:
+    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
+  return top_k_p.bind(operand, k=k)
 
 def tie_in(x, y):
+  """Gives ``y`` a fake data dependence on ``x``.
+
+  When staging to XLA (e.g. running under jit or pmap), values that don't depend
+  on computation inputs are computed op-by-op, and folded into the XLA
+  computation as constants.
+
+  ``tie_in`` provides a way to explicitly stage values into the computation.
+  When staging to XLA and ``x`` is already staged, then the result of ``tie_in``
+  is ``y``, but staged to XLA. Downstream use of the result will also be staged
+  to XLA.
+  """
   return tie_in_p.bind(x, y)
 
 
@@ -4034,7 +4050,6 @@ sort_p = standard_primitive(sort_shape, _input_dtype, 'sort')
 ad.defjvp(sort_p, _sort_jvp_rule)
 batching.primitive_batchers[sort_p] = _sort_batch_rule
 
-
 def _sort_key_val_abstract_eval(keys, values, dimension):
   return raise_to_shaped(keys), raise_to_shaped(values)
 
@@ -4104,6 +4119,26 @@ xla.translations[sort_key_val_p] = partial(standard_translate, 'sort_key_val')
 ad.primitive_jvps[sort_key_val_p] = _sort_key_val_jvp
 ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
+
+def _top_k_abstract_eval(operand, k):
+  if k < 0:
+    raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
+  if len(operand.shape) == 0:
+    raise TypeError("top_k operand must have >= 1 dimension, got {}"
+                    .format(operand.shape))
+  shape = list(operand.shape)
+  if shape[-1] < k:
+    msg = "k argument to top_k must be no larger than minor dimension; {} vs {}"
+    raise ValueError(msg.format(k, shape))
+  shape[-1] = k
+  return (ShapedArray(shape, operand.dtype),
+          ShapedArray(shape, onp.dtype(onp.int32)))
+
+top_k_p = Primitive('top_k')
+top_k_p.multiple_results = True
+top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
+top_k_p.def_abstract_eval(_top_k_abstract_eval)
+xla.translations[top_k_p] = partial(standard_translate, 'top_k')
 
 
 def _tie_in_transpose_rule(t):
