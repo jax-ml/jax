@@ -2186,13 +2186,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertRaises(TypeError, lambda: jnp.arange())
 
     # test that jnp.arange(N) doesn't instantiate an ndarray
-    self.assertNotEquals(type(jnp.arange(77)), type(onp.arange(77)))
-    self.assertEquals(type(jnp.arange(77)), type(lax.iota(onp.int32, 77)))
+    self.assertNotEqual(type(jnp.arange(77)), type(onp.arange(77)))
+    self.assertEqual(type(jnp.arange(77)), type(lax.iota(onp.int32, 77)))
 
     # test that jnp.arange(N, dtype=int32) doesn't instantiate an ndarray
-    self.assertNotEquals(type(jnp.arange(77, dtype=jnp.int32)),
+    self.assertNotEqual(type(jnp.arange(77, dtype=jnp.int32)),
                          type(onp.arange(77, dtype=onp.int32)))
-    self.assertEquals(type(jnp.arange(77, dtype=jnp.int32)),
+    self.assertEqual(type(jnp.arange(77, dtype=jnp.int32)),
                       type(lax.iota(onp.int32, 77)))
 
     # test laziness for int dtypes
