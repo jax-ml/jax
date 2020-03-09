@@ -2667,6 +2667,11 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
+@_wraps(onp.msort)
+def msort(a):
+  return sort(a, axis=0)
+
+
 @_wraps(onp.roll)
 def roll(a, shift, axis=None):
   a = asarray(a)
