@@ -2672,8 +2672,8 @@ def msort(a):
   return sort(a, axis=0)
 
 
-@_wraps(onp.roll)
-def roll(a, shift, axis=None):
+@partial(jit, static_argnums=(2,))
+def _roll(a, shift, axis):
   a = asarray(a)
   a_shape = shape(a)
   if axis is None:
@@ -2694,6 +2694,11 @@ def roll(a, shift, axis=None):
     a = lax.concatenate((a, a), i)
     a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
+
+
+@_wraps(onp.roll)
+def roll(a, shift, axis=None):
+  return _roll(a, shift, axis)
 
 
 @_wraps(onp.take)
