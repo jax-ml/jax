@@ -268,9 +268,10 @@ register_pytree_node(UndefinedPrimal,
 def get_primitive_transpose(p):
   try:
     return primitive_transposes[p]
-  except KeyError:
+  except KeyError as err:
     raise NotImplementedError(
-      "Reverse-mode differentiation rule for '{}' not implemented".format(p))
+      "Reverse-mode differentiation rule for '{}' not implemented".format(p)
+      ) from err
 
 class JVPTrace(Trace):
 
@@ -287,10 +288,10 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     try:
       jvp = primitive_jvps[primitive]
-    except KeyError:
+    except KeyError as err:
       raise NotImplementedError(
           "Forward-mode differentiation rule for '{}' not implemented"
-          .format(primitive))
+          .format(primitive)) from err
     primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
     if primitive.multiple_results:
       return [JVPTracer(self, x, t) for x, t in zip(primal_out, tangent_out)]

@@ -184,9 +184,9 @@ class Scope(object):
 
     try:
       pred_dtype = onp.result_type(pred)
-    except TypeError:
+    except TypeError as err:
       msg = ("Pred type must be either boolean or number, got {}.")
-      raise TypeError(msg.format(pred))
+      raise TypeError(msg.format(pred)) from err
 
     if pred_dtype.kind != 'b':
       if pred_dtype.kind in 'iuf':
@@ -373,7 +373,7 @@ class _BodyTracer(object):
     except ValueError as e:
       if "Tracer not among input tracers" in str(e):
         raise ValueError("Body of cond_range or while_range should not use the "
-                         "index variable returned by iterator.")
+                         "index variable returned by iterator.") from e
       raise
     # End the subtrace for the loop body, before we trace the condition
     _BodyTracer.end_subtrace()

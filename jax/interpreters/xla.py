@@ -58,8 +58,9 @@ xb.register_constant_handler(core.Unit, lambda c, *_: c.Tuple())
 def aval_to_xla_shape(aval):
   try:
     return xla_shape_handlers[type(aval)](aval)
-  except KeyError:
-    raise TypeError("No xla_shape_handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No xla_shape_handler for type: {}".format(type(aval))
+                    ) from err
 xla_shape_handlers = {}
 xla_shape_handlers[core.AbstractUnit] = lambda _: xc.Shape.tuple_shape(())
 xla_shape_handlers[ShapedArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
@@ -68,8 +69,9 @@ xla_shape_handlers[ConcreteArray] = lambda a: xc.Shape.array_shape(a.dtype, a.sh
 def aval_to_result_handler(device, aval):
   try:
     return xla_result_handlers[type(aval)](device, aval)
-  except KeyError:
-    raise TypeError("No xla_result_handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No xla_result_handler for type: {}".format(type(aval))
+                    ) from err
 xla_result_handlers = {}
 xla_result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
 def array_result_handler(device, aval):
@@ -81,8 +83,9 @@ def device_put(x, device=None):
   x = canonicalize_dtype(x)
   try:
     return device_put_handlers[type(x)](x, device)
-  except KeyError:
-    raise TypeError("No device_put handler for type: {}".format(type(x)))
+  except KeyError as err:
+    raise TypeError("No device_put handler for type: {}".format(type(x))
+                    ) from err
 
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
@@ -199,9 +202,9 @@ def _device_from_arg_devices(devices):
   try:
     device, = set(d for d in devices if d is not None) or (None,)
     return device
-  except ValueError:
+  except ValueError as err:
     msg = "primitive arguments must be colocated on the same device, got {}"
-    raise ValueError(msg.format(", ".join(map(str, devices))))
+    raise ValueError(msg.format(", ".join(map(str, devices)))) from err
 
 @cache()
 def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params):
@@ -230,7 +233,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     msg = (" ".join(map(str, e.args)) + "\n"
            "This is a bug in JAX's shape-checking rules; please report it!\n"
            "https://github.com/google/jax/issues\n")
-    raise RuntimeError(msg)
+    raise RuntimeError(msg) from e
 
 def primitive_subcomputation(prim, *avals, **params):
   return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
@@ -808,8 +811,8 @@ class DeviceArray(DeviceValue):
   def __len__(self):
     try:
       return self.aval.shape[0]
-    except IndexError:
-      raise TypeError("len() of unsized object")  # same as numpy error
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err # same as numpy error
 
   def __iter__(self):
     if self.ndim == 0:
@@ -953,9 +956,9 @@ def _device_put_impl(x, device=None):
 
   try:
     a = abstractify(x)
-  except TypeError:
+  except TypeError as err:
     raise TypeError("Argument '{}' of type {} is not a valid JAX type"
-                    .format(x, type(x)))
+                    .format(x, type(x))) from err
   handler = aval_to_result_handler(device, a)
   return handler(device_put(x, device))
 

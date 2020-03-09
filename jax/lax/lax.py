@@ -4327,9 +4327,9 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
     mapping = {'VALID': PaddingType.VALID, 'SAME': PaddingType.SAME}
     try:
       padding = mapping[padding.upper()]
-    except KeyError:
+    except KeyError as err:
       msg = "Unrecognized padding type: expected 'VALID' or 'SAME', got {}."
-      raise RuntimeError(msg.format(padding))
+      raise RuntimeError(msg.format(padding)) from err
 
   if padding == PaddingType.SAME:
     out_shape = _ceil_divide(in_shape, window_strides)

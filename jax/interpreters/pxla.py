@@ -122,8 +122,9 @@ shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 def shard_aval(size, aval):
   try:
     return shard_aval_handlers[type(aval)](size, aval)
-  except KeyError:
-    raise TypeError("No shard_aval handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No shard_aval handler for type: {}".format(type(aval))
+                    ) from err
 shard_aval_handlers = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
 def _shard_abstract_array(size, x):
@@ -136,8 +137,9 @@ shard_aval_handlers[ShapedArray] = _shard_abstract_array
 def aval_to_result_handler(size, nrep, aval):
   try:
     return pxla_result_handlers[type(aval)](size, nrep, aval)
-  except KeyError:
-    raise TypeError("No pxla_result_handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
+                    ) from err
 pxla_result_handlers = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 def array_result_handler(size, nrep, aval):
@@ -792,9 +794,9 @@ class SplitAxisTrace(core.Trace):
           # if the name matches this tracer's name, apply the split_axis rule
           try:
             rule = split_axis_rules[primitive]
-          except KeyError:
+          except KeyError as err:
             msg = "split_axis for {} not implemented. Open a feature request!"
-            raise NotImplementedError(msg.format(primitive))
+            raise NotImplementedError(msg.format(primitive)) from err
           which_mapped = [n is not not_mapped for n in names_in]
           val_out, is_mapped = rule(vals_in, which_mapped, **params)
           name_out = name if is_mapped else not_mapped

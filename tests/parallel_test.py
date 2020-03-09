@@ -306,7 +306,7 @@ class ParallelizeTest(jtu.JaxTestCase):
         pfun, axis_name = _papply(fun)
         ans = soft_pmap(pfun, axis_name)(x, y)
     except (NotImplementedError, TypeError) as e:
-      raise SkipTest(str(e))
+      raise SkipTest(str(e)) from e
 
     ans = self.dedup(ans, expected.ndim)
     self.assertAllClose(ans, expected, check_dtypes=False)

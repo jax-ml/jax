@@ -155,9 +155,9 @@ primitive_batchers = {}
 def get_primitive_batcher(p):
   try:
     return primitive_batchers[p]
-  except KeyError:
+  except KeyError as err:
     msg = "Batching rule for '{}' not implemented"
-    raise NotImplementedError(msg.format(p))
+    raise NotImplementedError(msg.format(p)) from err
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)
