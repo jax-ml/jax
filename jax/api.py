@@ -30,7 +30,7 @@ import itertools as it
 import operator as op
 import os
 import threading
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Collection, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 import numpy as onp
@@ -62,6 +62,8 @@ from .interpreters import masking
 from .interpreters.masking import shapecheck, ensure_poly
 from .config import flags, config, bool_env
 
+AxisName = Any
+
 map = safe_map
 zip = safe_zip
 
@@ -81,8 +83,8 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Tuple[int] = (), device=None,
-        backend: Optional[str] = None):
+def jit(fun: Callable, static_argnums: Union[int, Collection[int]] = (),
+        device=None, backend: Optional[str] = None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
   Args:
@@ -94,12 +96,13 @@ def jit(fun: Callable, static_argnums: Tuple[int] = (), device=None,
       provided they are hashable and have an equality operation defined. Static
       arguments are included as part of a compilation cache key, which is why
       hash and equality operators must be defined.
-    static_argnums: A tuple of ints specifying which positional arguments to
-      treat as static (compile-time constant). Operations that only depend on
-      static arguments will be constant-folded. Calling the jitted function with
-      different values for these constants will trigger recompilation. If the
-      jitted function is called with fewer positional arguments than indicated
-      by `static_argnums` then an error is raised. Defaults to ().
+    static_argnums: An int or collection of ints specifying which positional
+      arguments to treat as static (compile-time constant). Operations that only
+      depend on static arguments will be constant-folded. Calling the jitted
+      function with different values for these constants will trigger
+      recompilation. If the jitted function is called with fewer positional
+      arguments than indicated by `static_argnums` then an error is raised.
+      Defaults to ().
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via ``jax.devices()``.) The default is inherited from
@@ -195,8 +198,9 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun: Callable, static_argnums: Tuple[int] = (),
-                    axis_env: Optional[List[Tuple[Any, int]]] = None,
+def xla_computation(fun: Callable,
+                    static_argnums: Union[int, Collection[int]] = (),
+                    axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
                     instantiate_const_outputs: bool = True):
@@ -205,9 +209,9 @@ def xla_computation(fun: Callable, static_argnums: Tuple[int] = (),
   Args:
     fun: Function from which to form XLA computations.
     static_argnums: See the ``jax.jit`` docstring.
-    axis_env: Optional, a list of pairs where the first element is an axis name
-      and the second element is a positive integer representing the size of the
-      mapped axis with that name. This parameter is useful when lowering
+    axis_env: Optional, a sequence of pairs where the first element is an axis
+      name and the second element is a positive integer representing the size of
+      the mapped axis with that name. This parameter is useful when lowering
       functions that involve parallel communication collectives, and it
       specifies the axis name/size environment that would be set up by
       applications of ``jax.pmap``. See the examples below.
@@ -284,6 +288,7 @@ def xla_computation(fun: Callable, static_argnums: Tuple[int] = (),
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
+  del static_argnums  # Unused.
   _check_callable(fun)
   fun_name = getattr(fun, '__name__', 'unknown')
 
@@ -314,7 +319,7 @@ def xla_computation(fun: Callable, static_argnums: Tuple[int] = (),
     return c.Build(c.Tuple(*outs))
   return computation_maker
 
-def grad(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
+def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux: bool = False, holomorphic: bool = False):
   """Creates a function which evaluates the gradient of `fun`.
 
@@ -323,8 +328,8 @@ def grad(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
       `argnums` should be arrays, scalars, or standard Python containers. It
       should return a scalar (which includes arrays with shape `()` but not
       arrays with shape `(1,)` etc.)
-    argnums: Optional, integer or tuple of integers. Specifies which positional
-      argument(s) to differentiate with respect to (default 0).
+    argnums: Optional, integer or sequence of integers. Specifies which
+      positional argument(s) to differentiate with respect to (default 0).
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
       first element is considered the output of the mathematical function to be
       differentiated and the second element is auxiliary data. Default False.
@@ -365,7 +370,7 @@ def grad(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
 
   return grad_f_aux if has_aux else grad_f
 
-def value_and_grad(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
+def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False):
   """Creates a function which evaluates both `fun` and the gradient of `fun`.
 
@@ -374,8 +379,8 @@ def value_and_grad(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
       `argnums` should be arrays, scalars, or standard Python containers. It
       should return a scalar (which includes arrays with shape `()` but not
       arrays with shape `(1,)` etc.)
-    argnums: Optional, integer or tuple of integers. Specifies which positional
-      argument(s) to differentiate with respect to (default 0).
+    argnums: Optional, integer or sequence of integers. Specifies which
+      positional argument(s) to differentiate with respect to (default 0).
     has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
@@ -386,7 +391,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
     A function with the same arguments as `fun` that evaluates both `fun` and
     the gradient of `fun` and returns them as a pair (a two-element tuple). If
     `argnums` is an integer then the gradient has the same shape and type as the
-    positional argument indicated by that integer. If argnums is a tuple of
+    positional argument indicated by that integer. If argnums is a sequence of
     integers, the gradient is a tuple of values with the same shapes and types
     as the corresponding arguments.
   """
@@ -444,14 +449,14 @@ def _check_scalar(x):
       raise TypeError(msg("had abstract value {}".format(aval)))
 
 
-def jacfwd(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
+def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
            holomorphic: bool = False):
   """Jacobian of `fun` evaluated column-by-column using forward-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
-    argnums: Optional, integer or tuple of integers. Specifies which positional
-      argument(s) to differentiate with respect to (default `0`).
+    argnums: Optional, integer or sequence of integers. Specifies which
+      positional argument(s) to differentiate with respect to (default `0`).
     holomorphic: Optional, bool. Indicates whether `fun` is promised to be
       holomorphic. Default False.
 
@@ -490,13 +495,13 @@ def _check_real_input_jacfwd(x):
     raise TypeError(msg.format(aval.dtype.name))
 
 
-def jacrev(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
+def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
            holomorphic: bool = False):
   """Jacobian of `fun` evaluated row-by-row using reverse-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
-    argnums: Optional, integer or tuple of integers. Specifies which positional
+    argnums: Optional, integer or sequence of integers. Specifies which positional
       argument(s) to differentiate with respect to (default `0`).
     holomorphic: Optional, bool. Indicates whether `fun` is promised to be
       holomorphic. Default False.
@@ -538,14 +543,14 @@ def _check_real_output_jacrev(x):
     raise TypeError(msg.format(aval.dtype.name))
 
 
-def hessian(fun: Callable, argnums: Union[int, Tuple[int, ...]] = 0,
+def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
             holomorphic: bool = False):
   """Hessian of `fun`.
 
   Args:
     fun: Function whose Hessian is to be computed.
-    argnums: Optional, integer or tuple of integers. Specifies which positional
-      argument(s) to differentiate with respect to (default `0`).
+    argnums: Optional, integer or sequence of integers. Specifies which
+      positional argument(s) to differentiate with respect to (default `0`).
     holomorphic: Optional, bool. Indicates whether `fun` is promised to be
       holomorphic. Default False.
 
@@ -725,8 +730,8 @@ def _flatten_axes(treedef, axis_tree):
   return axes
 
 
-def pmap(fun: Callable, axis_name: Any = None,
-         static_broadcasted_argnums: Tuple[int] = (),
+def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
+         static_broadcasted_argnums: Union[int, Collection[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None):
   """Parallel map with support for collectives.
@@ -771,13 +776,13 @@ def pmap(fun: Callable, axis_name: Any = None,
       (tuple/list/dict) thereof.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
-    static_broadcasted_argnums: A tuple of ints specifying which positional
-      arguments to treat as static (compile-time constant). Operations that
-      only depend on static arguments will be constant-folded. Calling the
-      pmaped function with different values for these constants will trigger
-      recompilation. If the pmaped function is called with fewer positional
-      arguments than indicated by `static_argnums` then an error is raised.
-      Each of the static arguments will be broadcasted to all devices.
+    static_broadcasted_argnums: An int or collection of ints specifying which
+      positional arguments to treat as static (compile-time constant).
+      Operations that only depend on static arguments will be constant-folded.
+      Calling the pmaped function with different values for these constants will
+      trigger recompilation. If the pmaped function is called with fewer
+      positional arguments than indicated by `static_argnums` then an error is
+      raised. Each of the static arguments will be broadcasted to all devices.
       Defaults to ().
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
@@ -945,7 +950,7 @@ class _TempAxisName(object):
     return self.obj is other.obj
 
 
-def soft_pmap(fun: Callable, axis_name: Optional[Any] = None,
+def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None,
               backend: Optional[str] = None):
   warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
