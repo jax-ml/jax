@@ -115,7 +115,7 @@ class PapplyTrace(Trace):
       val_out, axis_out = rule(name, size, vals, axes, **params)
       return PapplyTracer(self, name, size, val_out, axis_out)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
@@ -138,7 +138,7 @@ class PapplyTrace(Trace):
       return PapplyTracer(trace, name, size, x, axis)
     return val, todo
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f :lu.WrappedFun, tracers, params):
     raise NotImplementedError  # TODO(mattjj,frostig)
 
 

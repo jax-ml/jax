@@ -115,7 +115,7 @@ class JaxprTrace(Trace):
       out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive, params)
       return out_tracer
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     name = params.get('name', f.__name__)
     if self.master.trace_type is StagingJaxprTrace:
       tracers = map(self.instantiate_const_abstracted, tracers)
@@ -144,7 +144,7 @@ class JaxprTrace(Trace):
       t.recipe = eqn
     return out_tracers
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     reduced_pvs = [None if pv is None else _mapped_aval(pv) for pv in in_pvs]
     fun, aux = partial_eval(f, self, reduced_pvs)
@@ -347,7 +347,7 @@ def partial_val_aval(pv, const):
   else:
     raise TypeError(pv)
 
-def trace_to_jaxpr(fun, pvals, instantiate=False, stage_out_calls=False, bottom=False):
+def trace_to_jaxpr(fun: lu.WrappedFun, pvals, instantiate=False, stage_out_calls=False, bottom=False):
   """Traces a function, given abstract inputs, to a jaxpr."""
   trace_type = StagingJaxprTrace if stage_out_calls else JaxprTrace
   with new_master(trace_type, bottom=bottom) as master:

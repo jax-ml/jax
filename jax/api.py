@@ -1422,7 +1422,7 @@ def device_get(x):
   return tree_map(_device_get, x)
 
 
-def _argnums_partial(f, dyn_argnums, args):
+def _argnums_partial(f: lu.WrappedFun, dyn_argnums, args):
   if isinstance(dyn_argnums, int):
     dyn_argnums = (dyn_argnums,)
   else:

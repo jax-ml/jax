@@ -444,7 +444,7 @@ def jaxpr_collectives(jaxpr):
 
 ### xla_call underlying jit
 
-def _xla_call_impl(fun, *args, device, backend, name):
+def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name):
   compiled_fun = _xla_callable(fun, device, backend, name, *map(arg_spec, args))
   try:
     return compiled_fun(*args)
@@ -454,7 +454,7 @@ def _xla_call_impl(fun, *args, device, backend, name):
     return fun.call_wrapped(*args)  # probably won't return
 
 @lu.cache
-def _xla_callable(fun, device, backend, name, *arg_specs):
+def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))

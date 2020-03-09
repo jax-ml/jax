@@ -134,7 +134,7 @@ result_handlers[ConcreteArray] = _array_result_handler
 
 
 @lu.cache
-def _sharded_callable(fun, partitions, name, *abstract_args):
+def _sharded_callable(fun: lu.WrappedFun, partitions, name, *abstract_args):
   nrep = 1  # TODO generalize
 
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
@@ -263,7 +263,7 @@ def jaxpr_partitions(jaxpr):
 ### sharded_call
 
 
-def _sharded_call_impl(fun, *args, **params):
+def _sharded_call_impl(fun: lu.WrappedFun, *args, **params):
   partitions = params.pop("partitions")
   name = params.pop("name")
   assert not params, params
