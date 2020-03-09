@@ -20,7 +20,6 @@ import numpy as onp
 from jax import dtypes
 from jax import custom_transforms, defjvp
 from jax import lax
-from jax import random
 from jax.scipy.special import expit
 import jax.numpy as np
 

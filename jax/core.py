@@ -16,7 +16,7 @@
 import operator
 from operator import attrgetter
 from contextlib import contextmanager
-from collections import namedtuple, Counter, defaultdict
+from collections import namedtuple
 from functools import total_ordering
 import itertools as it
 from weakref import ref

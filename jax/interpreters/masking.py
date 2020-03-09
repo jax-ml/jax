@@ -14,9 +14,9 @@
 
 
 from contextlib import contextmanager
-from collections import defaultdict, Counter, namedtuple
+from collections import Counter, namedtuple
 import functools
-from functools import partial, wraps
+from functools import partial
 import itertools as it
 import operator as op
 import string
@@ -26,7 +26,7 @@ import numpy as onp
 from .. import abstract_arrays
 from .. import core
 from ..core import Trace, Tracer
-from ..util import unzip2, safe_map, safe_zip, curry
+from ..util import unzip2, safe_map, safe_zip
 from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
 

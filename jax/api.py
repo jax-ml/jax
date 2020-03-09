@@ -27,8 +27,6 @@ arrays.
 import collections
 import functools
 import itertools as it
-import operator as op
-import os
 import threading
 from typing import Any, Callable, Collection, Optional, Sequence, Tuple, Union
 from warnings import warn
@@ -46,7 +44,7 @@ from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
-from .util import (unzip2, unzip3, curry, partial, safe_map, safe_zip,
+from .util import (unzip2, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,

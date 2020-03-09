@@ -16,7 +16,6 @@
 from functools import partial
 
 import numpy as onp
-import warnings
 import textwrap
 import operator
 from typing import Tuple, Union, cast
