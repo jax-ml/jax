@@ -81,7 +81,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Tuple[int] = (), device=None,
+def jit(fun: Callable, static_argnums: Tuple[int, ...] = (), device=None,
         backend: Optional[str] = None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
@@ -195,7 +195,7 @@ def disable_jit():
     _thread_local_state.jit_is_disabled = prev_val
 
 
-def xla_computation(fun: Callable, static_argnums: Tuple[int] = (),
+def xla_computation(fun: Callable, static_argnums: Tuple[int, ...] = (),
                     axis_env: Optional[List[Tuple[Any, int]]] = None,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
@@ -726,7 +726,7 @@ def _flatten_axes(treedef, axis_tree):
 
 
 def pmap(fun: Callable, axis_name: Any = None,
-         static_broadcasted_argnums: Tuple[int] = (),
+         static_broadcasted_argnums: Tuple[int, ...] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None):
   """Parallel map with support for collectives.
