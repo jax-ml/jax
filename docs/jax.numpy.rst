@@ -170,6 +170,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     minimum
     mod
     moveaxis
+    msort
     multiply
     nan_to_num
     nancumprod
