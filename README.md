@@ -433,6 +433,12 @@ for Python 3.5, 3.6, 3.7, and 3.8; for anything else, you must build from
 source. Jax requires Python 3.5 or above. Jax does not support Python 2 any
 more.
 
+To try automatic detection of the correct version for your system, you can run: 
+
+```bash
+pip install --upgrade https://storage.googleapis.com/jax-releases/`nvcc -V | sed -En "s/.* release ([0-9]*)\.([0-9]*),.*/cuda\1\2/p"`/jaxlib-0.1.40-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
+```
+
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.
 
