@@ -32,12 +32,12 @@ from . import partial_eval as pe
 map = safe_map
 
 
-def batch(fun, in_vals, in_dims, out_dim_dests):
+def batch(fun: lu.WrappedFun, in_vals, in_dims, out_dim_dests):
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
   return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
 
-def batch_fun(fun, in_vals, in_dims):
+def batch_fun(fun: lu.WrappedFun, in_vals, in_dims):
   with new_master(BatchTrace) as master:
     fun, out_dims = batch_subtrace(fun, master, in_dims)
     out_vals = fun.call_wrapped(*in_vals)
@@ -114,7 +114,7 @@ class BatchTrace(Trace):
       else:
         return BatchTracer(self, val_out, dim_out)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     name = params.get('name', f.__name__)
     params = dict(params, name=wrap_name(name, 'vmap'))
@@ -128,7 +128,7 @@ class BatchTrace(Trace):
       vals_out = call_primitive.bind(f, *vals, **params)
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)

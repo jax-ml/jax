@@ -34,7 +34,7 @@ map = safe_map
 def identity(x): return x
 
 
-def jvp(fun, has_aux=False, instantiate=True) -> Any:
+def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
   if not has_aux:
     return jvpfun(jvp_subtrace(fun), instantiate)
   else:
@@ -297,7 +297,7 @@ class JVPTrace(Trace):
     else:
       return JVPTracer(self, primal_out, tangent_out)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     primals = [t.primal for t in tracers]
     tangents = [t.tangent for t in tracers]

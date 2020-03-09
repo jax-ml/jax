@@ -826,7 +826,7 @@ class SplitAxisTrace(core.Trace):
         else:
           return new_tracer(val_out, axis_out)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
@@ -839,7 +839,7 @@ class SplitAxisTrace(core.Trace):
         vals_out = call_primitive.bind(f, *vals, **params)
         return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, names = unzip2((t.val, t.axis_name) for t in tracers)
     if all(name is not_mapped for name in names):
       return map_primitive.bind(f, *vals, **params)

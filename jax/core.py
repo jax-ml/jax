@@ -876,7 +876,7 @@ def process_env_traces(primitive, level, params_tuple, *args):
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def call_bind(primitive, f, *args, **params):
+def call_bind(primitive, f: lu.WrappedFun, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
@@ -890,7 +890,7 @@ def call_bind(primitive, f, *args, **params):
   return apply_todos(env_trace_todo(), outs)
 
 
-def call_impl(f, *args, **params):
+def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
 

@@ -22,6 +22,7 @@ import functools
 import itertools
 import operator
 import threading
+from typing import Callable
 
 import numpy as onp
 
@@ -52,7 +53,7 @@ _reduce = functools.reduce
 
 
 @cache()
-def _initial_style_jaxpr(fun, in_tree, in_avals):
+def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
@@ -1068,7 +1069,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
     return c_bar + a_bar
   return _make_typed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
-def _make_typed_jaxpr(traceable, in_avals):
+def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_avals, _ = unzip2(pvals_out)
