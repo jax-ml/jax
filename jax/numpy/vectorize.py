@@ -20,7 +20,6 @@ import numpy as onp
 
 from .. import api
 from .. import lax
-from .. import linear_util as lu
 from . import lax_numpy as np
 from ..util import safe_map as map, safe_zip as zip
 from .lax_numpy import _wraps

@@ -15,13 +15,7 @@
 # Helpers for indexed updates.
 
 
-import collections
-from functools import partial
-
-import numpy as onp
-
 from .. import lax
-from ..api import jit
 from ..numpy import lax_numpy as np
 
 

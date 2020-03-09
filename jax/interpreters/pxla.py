@@ -13,9 +13,8 @@
 # limitations under the License.
 
 
-from collections import namedtuple, defaultdict
+from collections import defaultdict
 from contextlib import contextmanager
-import itertools as it
 import operator as op
 import threading
 
@@ -28,10 +27,9 @@ from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import (partial, unzip2, concatenate, prod, safe_map,
+from ..util import (partial, unzip2, prod, safe_map,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
-from .xla import aval_to_xla_shape, xla_destructure
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe

@@ -14,7 +14,7 @@
 
 
 import itertools as it
-from collections import namedtuple, Counter, defaultdict
+from collections import namedtuple
 import contextlib
 import threading
 from weakref import ref

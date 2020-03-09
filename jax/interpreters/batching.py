@@ -13,16 +13,12 @@
 # limitations under the License.
 
 
-from collections import namedtuple
-
-import itertools as it
-
 import numpy as onp
 
 from .. import core
 from .. import dtypes
 from ..core import Trace, Tracer, new_master
-from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
+from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
 from ..util import unzip2, partial, safe_map, wrap_name

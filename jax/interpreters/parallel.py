@@ -14,19 +14,14 @@
 
 
 from functools import partial
-import warnings
 
-import numpy as onp
 
 from .. import core
 from .. import linear_util as lu
 from ..core import Trace, Tracer, Primitive, new_master
-from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
-from ..util import safe_map, safe_zip, unzip2, unzip3, partialmethod, prod
-from ..lib import xla_bridge as xb
+from ..abstract_arrays import ShapedArray, raise_to_shaped
+from ..util import safe_map, safe_zip, unzip2, unzip3
 from . import partial_eval as pe
-from . import batching
-from . import pxla
 
 map = safe_map
 zip = safe_zip

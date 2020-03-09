@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from .core import lattice_join, Primitive, Unit, unit, AbstractUnit, abstract_unit
+from .core import lattice_join, Primitive, Unit, unit, AbstractUnit
 from .tree_util import register_pytree_node
 from .util import safe_map
 
