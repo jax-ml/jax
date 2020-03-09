@@ -275,30 +275,32 @@ class CoreTest(jtu.JaxTestCase):
 
   def test_comparing_var(self):
     newsym = core.gensym('')
-    a = newsym()
-    b = newsym()
-    c = newsym()
+    a = newsym(core.abstract_unit)
+    b = newsym(core.abstract_unit)
+    c = newsym(core.abstract_unit)
     assert a < b < c
     assert c > b > a
     assert a != b and b != c and a != c
 
   def test_var_ordering(self):
     newsym = core.gensym('')
-    a = newsym()
-    b = newsym()
-    c = newsym()
+    a = newsym(core.abstract_unit)
+    b = newsym(core.abstract_unit)
+    c = newsym(core.abstract_unit)
     for ordering in it.permutations([a, b, c]):
       assert sorted(list(ordering)) == [a, b, c]
 
   def test_var_compared_by_identity(self):
-    a1 = core.gensym('')()
-    a2 = core.gensym('')()
+    a1 = core.gensym('')(core.abstract_unit)
+    a2 = core.gensym('')(core.abstract_unit)
     assert str(a1) == str(a2)
     assert a1 != a2
 
   def test_var_tree_flatten(self):
     newsym = core.gensym('')
-    a, b, c, d = newsym(), newsym(), newsym(), newsym()
+    a, b, c, d = (
+        newsym(core.abstract_unit), newsym(core.abstract_unit),
+        newsym(core.abstract_unit), newsym(core.abstract_unit))
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
 

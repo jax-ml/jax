@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import operator
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple, Counter, defaultdict
@@ -22,8 +23,11 @@ from weakref import ref
 import threading
 import types
 
+import numpy as onp
+
+from . import dtypes
 from . import linear_util as lu
-from .util import safe_zip, safe_map, partial, curry
+from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
@@ -79,6 +83,14 @@ class TypedJaxpr(object):
     assert all(isinstance(aval, AbstractValue) for aval in in_avals)
     assert all(isinstance(aval, AbstractValue) for aval in out_avals)
 
+    if not skip_checks:
+      in_avals_raised = [raise_to_shaped(v) for v in in_avals]
+      out_avals_raised = [raise_to_shaped(v) for v in out_avals]
+      exp_in_avals = [v.aval for v in jaxpr.invars]
+      exp_out_avals = [v.aval for v in jaxpr.outvars]
+      assert in_avals_raised == exp_in_avals, f"expected: {exp_in_avals}, got: {in_avals_raised}"
+      assert out_avals_raised == exp_out_avals, f"expected: {exp_out_avals}, got: {out_avals_raised}"
+
     self.jaxpr = jaxpr
     self.literals = list(literals)
     self.in_avals = list(in_avals)
@@ -108,9 +120,10 @@ class Var(object):
   # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
   # by object id, but pretty printing might collide.
 
-  def __init__(self, count, suffix):
+  def __init__(self, count, suffix, aval):
     self.count = count
     self.suffix = suffix
+    self.aval = raise_to_shaped(aval)
 
   def __lt__(self, other):
     if not isinstance(other, Var):
@@ -130,7 +143,7 @@ class Var(object):
 
 def gensym(suffix):
   counter = it.count()
-  return lambda: Var(next(counter), suffix)
+  return lambda aval: Var(next(counter), suffix, aval)
 
 class Literal(object):
   __slots__ = ["val", "hash"]
@@ -145,6 +158,10 @@ class Literal(object):
           self.hash = hash((val.item(), val.dtype))
         except (TypeError, AttributeError):
           self.hash = None
+
+  @property
+  def aval(self):
+    return raise_to_shaped(get_aval(self.val))
 
   def __hash__(self):
     assert False
@@ -605,6 +622,8 @@ unit = Unit()
 literalable_types.add(Unit)
 
 class UnitVar(object):
+  @property
+  def aval(self): return abstract_unit
   def __repr__(self): return '*'
 unitvar = UnitVar()
 
@@ -613,6 +632,224 @@ pytype_aval_mappings[Unit] = lambda _: abstract_unit
 identity_p = Primitive('id')
 identity_p.def_impl(lambda x: x)
 identity_p.def_custom_bind(lambda x: x)
+
+def concretization_err_msg(fun, context=None):
+  fname = getattr(fun, "__name__", fun)
+  if context is None:
+    context = ("The function to be transformed can't be traced at the required level "
+               "of abstraction. If using `jit`, try using `static_argnums` or "
+               "applying `jit` to smaller subfunctions instead.")
+  msg = "Abstract value passed to `{}`, which requires a concrete value. {}"
+  return msg.format(fname, context)
+
+def concretization_function_error(fun, context=None):
+  def error(self, *args):
+    raise TypeError(concretization_err_msg(fun, context))
+  return error
+
+
+class UnshapedArray(AbstractValue):
+  __slots__ = ['dtype', 'weak_type']
+  array_abstraction_level = 2
+
+  def __init__(self, dtype, weak_type=False):
+    self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtype))
+    self.weak_type = weak_type
+
+  def __eq__(self, other):
+    return (type(self) is type(other) and self.dtype == other.dtype and
+            self.weak_type == other.weak_type)
+
+  def __ne__(self, other):
+    return not self == other
+
+  def __hash__(self):
+    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
+    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # the unique character code via hash(self.dtype.char)
+    return hash((self.dtype, self.weak_type))
+
+  def __repr__(self):
+    return '{}({}{})'.format(self.__class__.__name__, self.str_short(),
+                             ", weak_type=True" if self.weak_type else "")
+
+  _bool = _nonzero = concretization_function_error(bool)
+  _float   = concretization_function_error(
+      float, "Try using `value.astype(float)` instead.")
+  _int     = concretization_function_error(
+      int, "Try using `value.astype(int)` instead.")
+  _complex = concretization_function_error(
+      complex, "Try using `value.astype(complex)` instead.")
+  _hex     = concretization_function_error(hex)
+  _oct     = concretization_function_error(oct)
+
+  def at_least_vspace(self):
+    return self
+
+  def join(self, other):
+    if self.dtype == other.dtype:
+      if self.weak_type == other.weak_type:
+        return self
+      else:
+        return UnshapedArray(self.dtype, weak_type=False)
+    else:
+      raise TypeError(self, other)
+
+  def str_short(self):
+    return self.dtype.name
+
+  def strip_weak_type(self):
+    """Returns a copy of the aval with weak_type=False."""
+    return UnshapedArray(self.dtype) if self.weak_type else self
+
+class ShapedArray(UnshapedArray):
+  __slots__ = ['shape']
+  array_abstraction_level = 1
+
+  def __init__(self, shape, dtype, weak_type=False):
+    super(ShapedArray, self).__init__(dtype, weak_type=weak_type)
+    self.shape = canonicalize_shape(shape)
+
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self: prod(self.shape))
+
+  def __eq__(self, other):
+    return (type(self) is type(other)
+            and self.dtype == other.dtype and self.shape == other.shape
+            and self.weak_type == other.weak_type)
+
+  def __hash__(self):
+    # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
+    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # the unique character code via hash(self.dtype.char)
+    return hash((self.shape, self.dtype, self.weak_type))
+
+  def at_least_vspace(self):
+    return self
+
+  def join(self, other):
+    if self.shape == other.shape and self.dtype == other.dtype:
+      if self.weak_type == other.weak_type:
+        return self
+      else:
+        return ShapedArray(self.shape, self.dtype, weak_type=False)
+    elif self.dtype == other.dtype:
+      return UnshapedArray(self.dtype)
+    else:
+      raise TypeError(self, other)
+
+  def str_short(self):
+    shapestr = ','.join(map(str, self.shape))
+    return '{}[{}]'.format(self.dtype.name, shapestr)
+
+  def __len__(self):
+    try:
+      return self.shape[0]
+    except IndexError:
+      raise TypeError("len() of unsized object")  # same as numpy error
+
+  def _len(self, ignored_tracer):
+    return len(self)
+
+  def strip_weak_type(self):
+    return ShapedArray(self.shape, self.dtype) if self.weak_type else self
+
+
+def _forward_to_value(self, fun, ignored_tracer, *args):
+  return fun(self.val, *args)
+
+class ConcreteArray(ShapedArray):
+  __slots__ = ['val']
+  array_abstraction_level = 0
+
+  def __init__(self, val, weak_type=False):
+    super(ConcreteArray, self).__init__(onp.shape(val), onp.result_type(val),
+                                        weak_type=weak_type)
+    # Note: canonicalized self.dtype doesn't necessarily match self.val
+    self.val = val
+    assert self.dtype != onp.dtype('O')
+
+  def __eq__(self, other):
+    return (type(self) is type(other) and self.dtype == other.dtype
+            and self.shape == other.shape and self.weak_type == other.weak_type
+            and onp.all(self.val == other.val))
+
+  def __hash__(self):
+    return id(self.val)
+
+  def at_least_vspace(self):
+    return ShapedArray(self.shape, self.dtype, weak_type=self.weak_type)
+
+  def join(self, other):
+    if self == other:
+      return self
+    elif self.shape == other.shape and self.dtype == other.dtype:
+      return ShapedArray(self.shape, self.dtype,
+                         weak_type=self.weak_type and other.weak_type)
+    elif self.dtype == other.dtype:
+      return UnshapedArray(self.dtype,
+                           weak_type=self.weak_type and other.weak_type)
+    else:
+      raise TypeError(self, other)
+
+  def str_short(self):
+    return str(self.val)
+
+  def strip_weak_type(self):
+    return ConcreteArray(self.val) if self.weak_type else self
+
+  _bool = _nonzero = partialmethod(_forward_to_value, bool)
+  _float   = partialmethod(_forward_to_value, float)
+  _int     = partialmethod(_forward_to_value, int)
+  _complex = partialmethod(_forward_to_value, complex)
+  _hex     = partialmethod(_forward_to_value, hex)
+  _oct     = partialmethod(_forward_to_value, oct)
+
+
+class AbstractToken(AbstractValue): pass
+
+abstract_token = AbstractToken()
+
+
+def raise_to_shaped(aval, weak_type=False):
+  if isinstance(aval, ShapedArray):
+    return ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
+  elif aval is abstract_unit:
+    return abstract_unit
+  elif aval is abstract_token:
+    return abstract_token
+  else:
+    raise TypeError(type(aval))
+
+# Registry for valid dimension types. This is used by masking.Poly.
+_DIMENSION_TYPES = {int}
+
+def _canonicalize_dimension(dim):
+  if type(dim) in _DIMENSION_TYPES:
+    return dim
+  else:
+    return operator.index(dim)
+
+def canonicalize_shape(shape):
+  """Canonicalizes and checks for errors in a user-provided shape value.
+
+  Args:
+    shape: a Python value that represents a shape.
+
+  Returns:
+    A tuple of integers.
+  """
+  try:
+    return tuple(map(_canonicalize_dimension, shape))
+  except TypeError:
+    pass
+  msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+         "got {}.")
+  if any(isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
+         and not isinstance(get_aval(x), ConcreteArray) for x in shape):
+    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
+            "smaller subfunctions.")
+  raise TypeError(msg.format(shape))
 
 # ------------------- Call -------------------
 
