@@ -1087,7 +1087,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected_onp_input_after_call = onp.ones((1))
     expected_jnp_input_after_call = jnp.ones((1))
     
-    self.assertTrue(type(jnp.concatenate([onp_input])) is jnp.DeviceArray)
+    self.assertIs(type(jnp.concatenate([onp_input])), jnp.DeviceArray)
     
     attempt_sideeffect(onp_input)
     attempt_sideeffect(jnp_input)
@@ -2186,14 +2186,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertRaises(TypeError, lambda: jnp.arange())
 
     # test that jnp.arange(N) doesn't instantiate an ndarray
-    self.assertFalse(type(jnp.arange(77)) == type(onp.arange(77)))
-    self.assertTrue(type(jnp.arange(77)) == type(lax.iota(onp.int32, 77)))
+    self.assertNotEquals(type(jnp.arange(77)), type(onp.arange(77)))
+    self.assertEquals(type(jnp.arange(77)), type(lax.iota(onp.int32, 77)))
 
     # test that jnp.arange(N, dtype=int32) doesn't instantiate an ndarray
-    self.assertFalse(type(jnp.arange(77, dtype=jnp.int32)) ==
-                     type(onp.arange(77, dtype=onp.int32)))
-    self.assertTrue(type(jnp.arange(77, dtype=jnp.int32)) ==
-                    type(lax.iota(onp.int32, 77)))
+    self.assertNotEquals(type(jnp.arange(77, dtype=jnp.int32)),
+                         type(onp.arange(77, dtype=onp.int32)))
+    self.assertEquals(type(jnp.arange(77, dtype=jnp.int32)),
+                      type(lax.iota(onp.int32, 77)))
 
     # test laziness for int dtypes
     self.assertTrue(xla.is_device_constant(jnp.arange(77)))
