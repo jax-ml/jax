@@ -977,23 +977,26 @@ def _remat_translation_rule(c, axis_env, in_nodes,
   del device, concrete  # Unused.
   subc = xb.make_computation_builder("remat_call_subcomputation")
   args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  args = [_foil_cse(subc, x) for x in args]
+  args = _foil_cse(subc, args)
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
   subc = subc.Build(subc.Tuple(*out_nodes))
   return c.Call(subc, list(in_nodes))
 call_translations[pe.remat_call_p] = _remat_translation_rule
 
-def _foil_cse(c, x):
-  xla_shape = c.GetShape(x)
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
-    return x
-  else:
-    rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
-                       c.Constant(onp.array(1, dtype=onp.float32)),
-                       [])
-    pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
-    shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-    zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
-    return c.Select(pred, x, zero)
+def _foil_cse(c, args):
+  rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
+                     c.Constant(onp.array(1, dtype=onp.float32)),
+                     [])
+  pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
+  outs = []
+  for x in args:
+    xla_shape = c.GetShape(x)
+    if xla_shape.is_tuple():
+      assert not xla_shape.tuple_shapes()
+      outs.append(x)
+    else:
+      shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
+      zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
+      outs.append(c.Select(pred, x, zero))
+  return outs
