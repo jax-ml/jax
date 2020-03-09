@@ -17,13 +17,14 @@
 from io import BytesIO
 from functools import partial
 import hashlib
+import urllib.request
 import sys
 
+import numpy as np
 import onnx
 from onnx import numpy_helper
-import urllib.request
 
-import jax.numpy as np
+import jax.numpy as jnp
 import jax.ops
 from jax import jit, grad
 from jax import lax
@@ -52,7 +53,7 @@ def onnx_maxpool(x, kernel_shape, pads=None, strides=None):
   dims = prefix + tuple(kernel_shape)
   pads = tuple(pads) if pads else [0] * len(kernel_shape)
   strides = (prefix + tuple(strides)) if strides else [1] * len(kernel_shape)
-  return [lax.reduce_window(x, -np.inf, lax.max, dims, strides, 'VALID')]
+  return [lax.reduce_window(x, -jnp.inf, lax.max, dims, strides, 'VALID')]
 
 
 def onnx_conv(x, w, b=0, group=1, kernel_shape=None, pads=None, strides=None,
@@ -78,9 +79,8 @@ def onnx_add(a, b, axis=None, broadcast=True):
     axis = (a.dim - b.ndim) if axis is None else axis % a.ndim
     assert a.shape[axis:][:b.ndim] == b.shape
     b_shape = np.ones(a.ndim, dtype='int64')
-    b_shape = jax.ops.index_update(
-      b_shape, jax.ops.index[axis:axis + b.ndim],  b.shape)
-    b = np.reshape(b, b_shape)
+    b_shape[axis:axis + b.ndim] = b.shape
+    b = jnp.reshape(b, b_shape)
   return [a + b]
 
 
@@ -88,10 +88,10 @@ onnx_ops = {
     'Add': onnx_add,
     'Constant': lambda value: [value],
     'Conv': onnx_conv,
-    'MatMul': lambda x, y: [np.matmul(x, y)],
+    'MatMul': lambda x, y: [jnp.matmul(x, y)],
     'MaxPool': onnx_maxpool,
-    'Relu': lambda x: [np.maximum(x, 0)],
-    'Reshape': lambda x, shape: [np.reshape(x, shape)],
+    'Relu': lambda x: [jnp.maximum(x, 0)],
+    'Reshape': lambda x, shape: [jnp.reshape(x, shape)],
 }
 
 
@@ -123,15 +123,15 @@ if __name__ == "__main__":
 
   # Run inference in Numpy-backed interpreter
   print("interpreted:")
-  print(predict(np.ones((1, 1, 28, 28))))
+  print(predict(jnp.ones((1, 1, 28, 28))))
 
   # JIT compile to XLA device, run inference on device
   compiled_predict = jit(predict)
   print("compiled:")
-  print(compiled_predict(np.ones((1, 1, 28, 28))))
+  print(compiled_predict(jnp.ones((1, 1, 28, 28))))
 
   # The interpreter is differentiable too! Even the compiled one:
-  fun = lambda inputs: np.sum(compiled_predict(inputs))
+  fun = lambda inputs: jnp.sum(compiled_predict(inputs))
   print("a derivative with respect to inputs:")
-  print(grad(fun)(np.ones((1, 1, 28, 28)))[..., :3, :3])
+  print(grad(fun)(jnp.ones((1, 1, 28, 28)))[..., :3, :3])
 
