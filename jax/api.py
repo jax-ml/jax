@@ -657,6 +657,14 @@ def vmap(fun: Callable, in_axes=0, out_axes=0):
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
 
+  if isinstance(in_axes, list):
+    # To be a tree prefix of the positional args tuple, in_axes can never be a
+    # list: if in_axes is not a leaf, it must be a tuple of trees. However,
+    # in cases like these users expect tuples and lists to be treated
+    # essentially interchangeably, so we canonicalize lists to tuples here
+    # rather than raising an error. https://github.com/google/jax/issues/2367
+    in_axes = tuple(in_axes)
+
   _check_callable(fun)
   if (not isinstance(in_axes, (list, tuple, type(None), int))
       or not isinstance(out_axes, (list, tuple, type(None), int))):
