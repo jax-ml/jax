@@ -1229,6 +1229,20 @@ class APITest(jtu.JaxTestCase):
     b = np.dot(a + np.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
 
+  def test_vmap_in_axes_list(self):
+    # https://github.com/google/jax/issues/2367
+    dictionary = {'a': 5., 'b': np.ones(2)}
+    x = np.zeros(3)
+    y = np.arange(3.)
+
+
+    def f(dct, x, y):
+      return dct['a'] + dct['b'] + x + y
+
+    out1 = api.vmap(f, (None, 0, 0))(dictionary, x, y)
+    out2 = api.vmap(f, [None, 0, 0])(dictionary, x, y)
+    self.assertAllClose(out1, out2, check_dtypes=True)
+
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
     self.assertRaisesRegex(
