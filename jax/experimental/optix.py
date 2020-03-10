@@ -324,6 +324,36 @@ def add_noise(eta, gamma, seed):
   return InitUpdate(init_fn, update_fn)
 
 
+ApplyEvery = collections.namedtuple("ApplyEvery", "count grad_acc")
+
+
+def apply_every(k=1):
+  """accumulate gradients and apply them every k steps.
+
+  Args:
+    k: apply the update every k steps otherwise accumulate the gradients.
+
+  Returns:
+    An (init_fn, update_fn) tuple.
+  """
+
+  def init_fn(params):
+    grad_acc = tree_multimap(jnp.zeros_like, params)
+    return ApplyEvery(count=jnp.zeros([], jnp.int32), grad_acc=grad_acc)
+
+  def update_fn(updates, state):
+
+    c = state.count % k
+    acc = c != 0
+    grad_acc = tree_multimap(
+        lambda g, ga: acc * ga + g, updates, state.grad_acc)
+    emit = c == (k - 1)
+    updates = tree_multimap(lambda ga: emit * ga, grad_acc)
+    return updates, ApplyEvery(count=state.count + 1, grad_acc=grad_acc)
+
+  return InitUpdate(init_fn, update_fn)
+
+
 ### Utilities for building and using custom optimizers. ###
 
 

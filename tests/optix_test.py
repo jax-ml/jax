@@ -60,6 +60,45 @@ class OptixTest(absltest.TestCase):
     for x, y in zip(tree_leaves(jax_params), tree_leaves(optix_params)):
       onp.testing.assert_allclose(x, y, rtol=1e-5)
 
+  def test_apply_every(self):
+    # The frequency of the application of sgd
+    k = 4
+    zero_update = (jnp.array([0., 0.]), jnp.array([0., 0.]))
+
+    # experimental/optix.py sgd
+    optix_sgd_params = self.init_params
+    sgd = optix.sgd(LR, 0.0)
+    state_sgd = sgd.init(optix_sgd_params)
+
+    # experimental/optix.py sgd apply every
+    optix_sgd_apply_every_params = self.init_params
+    sgd_apply_every = optix.chain(optix.apply_every(k=k),
+                                  optix.trace(decay=0, nesterov=False),
+                                  optix.scale(-LR))
+    state_sgd_apply_every = sgd_apply_every.init(optix_sgd_apply_every_params)
+    for i in range(STEPS):
+      # Apply a step of sgd
+      updates_sgd, state_sgd = sgd.update(self.per_step_updates, state_sgd)
+      optix_sgd_params = optix.apply_updates(optix_sgd_params, updates_sgd)
+
+      # Apply a step of sgd_apply_every
+      updates_sgd_apply_every, state_sgd_apply_every = sgd_apply_every.update(
+          self.per_step_updates, state_sgd_apply_every)
+      optix_sgd_apply_every_params = optix.apply_updates(
+          optix_sgd_apply_every_params, updates_sgd_apply_every)
+      if i % k == k-1:
+        # Check equivalence.
+        for x, y in zip(
+            tree_leaves(optix_sgd_apply_every_params),
+            tree_leaves(optix_sgd_params)):
+          onp.testing.assert_allclose(x, y, atol=1e-6, rtol=100)
+      else:
+        # Check updaue is zero.
+        for x, y in zip(
+            tree_leaves(updates_sgd_apply_every),
+            tree_leaves(zero_update)):
+          onp.testing.assert_allclose(x, y, atol=1e-10, rtol=1e-5)
+
   def test_adam(self):
     b1, b2, eps = 0.9, 0.999, 1e-8
 
