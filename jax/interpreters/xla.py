@@ -257,7 +257,7 @@ def _execute_replicated_primitive(prim, compiled, backend, tuple_args,
   if tuple_args:
     input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
                   zip(input_bufs, compiled.local_devices())]
-  out_buf = compiled.ExecutePerReplica(input_bufs)[0]
+  out_buf = compiled.ExecuteOnLocalDevices(input_bufs)[0]
   return result_handler(out_buf)
 
 def check_nans(prim, bufs):
@@ -566,7 +566,7 @@ def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
   if tuple_args:
     input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
                   zip(input_bufs, compiled.local_devices())]
-  out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
+  out_bufs = compiled.ExecuteOnLocalDevices(input_bufs)[0].destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
