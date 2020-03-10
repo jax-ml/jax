@@ -38,6 +38,7 @@ for examples.
 
 import functools
 import collections
+import operator as op
 
 from .lib import pytree
 
@@ -104,6 +105,26 @@ def register_pytree_node(nodetype, flatten_func, unflatten_func):
   """
   pytree.register_node(nodetype, flatten_func, unflatten_func)
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+
+def register_pytree_node_class(cls):
+  """Extends the set of types that are considered internal nodes in pytrees.
+
+  This function is a thin wrapper around ``register_pytree_node``, and provides
+  a class-oriented interface:
+
+    @register_pytree_node_class
+    class Special:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+      def tree_flatten(self):
+        return ((self.x, self.y), None)
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+  """
+  register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
+  return cls
 
 def tree_map(f, tree):
   """Maps a function over a pytree to produce a new pytree.
