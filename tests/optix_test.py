@@ -19,7 +19,7 @@ from absl.testing import absltest
 from jax import numpy as jnp
 from jax.experimental import optimizers
 from jax.experimental import optix
-import jax.test_util  # imported only for flags
+import jax.test_util
 from jax.tree_util import tree_leaves
 import numpy as onp
 
@@ -60,6 +60,7 @@ class OptixTest(absltest.TestCase):
     for x, y in zip(tree_leaves(jax_params), tree_leaves(optix_params)):
       onp.testing.assert_allclose(x, y, rtol=1e-5)
 
+  jax.test_util.skip_on_devices("tpu")
   def test_apply_every(self):
     # The frequency of the application of sgd
     k = 4
