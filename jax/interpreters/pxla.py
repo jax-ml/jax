@@ -633,7 +633,7 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
 
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecutePerReplica(list(input_bufs))
+  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
   return out_handler(out_bufs)
 
 
