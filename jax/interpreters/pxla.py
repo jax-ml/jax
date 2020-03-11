@@ -375,11 +375,15 @@ def apply_parallel_primitive(prim, *args, **params):
   # look up information in the dynamic axis env.
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   axis_name = params.pop('axis_name')
-  logical_size = lambda frame: frame.hard_size * (frame.soft_size or 1)
-  if isinstance(axis_name, (list, tuple)):
-    shape = tuple(logical_size(dynamic_axis_env[name]) for name in axis_name)
+  replica_groups = params.pop('replica_groups')
+  if replica_groups is not None:
+    shape = (len(replica_groups[0]),)
   else:
-    shape = (logical_size(dynamic_axis_env[axis_name]),)
+    logical_size = lambda frame: frame.hard_size * (frame.soft_size or 1)
+    if isinstance(axis_name, (list, tuple)):
+      shape = tuple(logical_size(dynamic_axis_env[name]) for name in axis_name)
+    else:
+      shape = (logical_size(dynamic_axis_env[axis_name]),)
   return parallel_pure_rules[prim](*args, shape=shape, **params)
 
 parallel_pure_rules: Dict[core.Primitive, Callable] = {}
