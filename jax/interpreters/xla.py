@@ -986,7 +986,7 @@ def _remat_translation_rule(c, axis_env, in_nodes,
 
   true_op = c.Tuple(*in_nodes)
   remat_subc = xb.make_computation_builder("remat_call_subcomputation")
-  input_op = remat_subc.ParameterWithShape(c.GetShape(true_op))
+  input_op = remat_subc.ParameterWithShape(c.GetShape(true_op), replicated=[])
   args = [remat_subc.GetTupleElement(input_op, i) for i in range(len(in_nodes))]
   out_nodes = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'remat')),
@@ -996,7 +996,7 @@ def _remat_translation_rule(c, axis_env, in_nodes,
 
   false_op = true_op
   dummy_subc = xb.make_computation_builder("remat_call_dummy_subcomputation")
-  dummy_subc.ParameterWithShape(c.GetShape(false_op))
+  dummy_subc.ParameterWithShape(c.GetShape(false_op), replicated=[])
 
   def zeros(xla_shape):
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
