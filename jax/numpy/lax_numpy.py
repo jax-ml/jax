@@ -1681,7 +1681,9 @@ def _pad(array, pad_width, mode, constant_values):
 
 @_wraps(onp.pad)
 def pad(array, pad_width, mode='constant', constant_values=0):
-  return _pad(array, tuple(pad_width), mode, constant_values)
+  if isinstance(pad_width, list):
+    pad_width = tuple(pad_width)
+  return _pad(array, pad_width, mode, constant_values)
 
 
 @_wraps(onp.stack)
