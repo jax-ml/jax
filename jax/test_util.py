@@ -116,7 +116,7 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None):
   onp.testing.assert_allclose(a, b, **kw)
 
 def tolerance(dtype, tol=None):
-  tol = tol or {}
+  tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
   tol = {onp.dtype(key): value for key, value in tol.items()}
