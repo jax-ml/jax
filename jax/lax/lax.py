@@ -2356,6 +2356,7 @@ batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, shape, broadcast_dimensions):
   if type(operand) is xla.DeviceArray:
+    shape = _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
     lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
     return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
