@@ -973,31 +973,38 @@ masking.defvectorized(device_put_p)
 def _remat_translation_rule(c, axis_env, in_nodes,
                             name_stack, backend, name, call_jaxpr,
                             device=None, concrete=None):
-  # This looks a lot like _xla_call_translation_rule, except for a widget we use
-  # to foil CSE.
+  """Lower remat to a Conditional which always returns true. This:
+    1. Circumvents common subexpression elimination.
+    2. In common case of `jax.grad(jax.remat(f))`, ensures the remat blocks
+       occur after the primal blocks, because cotangent is an input to the
+       Conditional."""
   del device, concrete  # Unused.
-  subc = xb.make_computation_builder("remat_call_subcomputation")
-  args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  args = _foil_cse(subc, args)
-  out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
-  subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(in_nodes))
-call_translations[pe.remat_call_p] = _remat_translation_rule
-
-def _foil_cse(c, args):
+  # Fake condition which always selects True branch.
   rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
                      c.Constant(onp.array(1, dtype=onp.float32)),
                      [])
   pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
-  outs = []
-  for x in args:
-    xla_shape = c.GetShape(x)
-    if xla_shape.is_tuple():
-      assert not xla_shape.tuple_shapes()
-      outs.append(x)
-    else:
-      shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-      zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
-      outs.append(c.Select(pred, x, zero))
-  return outs
+
+  true_op = c.Tuple(*in_nodes)
+  remat_subc = xb.make_computation_builder("remat_call_subcomputation")
+  input_op = remat_subc.ParameterWithShape(c.GetShape(true_op), replicated=[])
+  args = [remat_subc.GetTupleElement(input_op, i) for i in range(len(in_nodes))]
+  out_nodes = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (),
+                            extend_name_stack(name_stack, wrap_name(name, 'remat')),
+                            *args)
+  out_node_shapes = [remat_subc.GetShape(o) for o in out_nodes]
+  remat_subc = remat_subc.Build(remat_subc.Tuple(*out_nodes))
+
+  false_op = true_op
+  dummy_subc = xb.make_computation_builder("remat_call_dummy_subcomputation")
+  dummy_subc.ParameterWithShape(c.GetShape(false_op), replicated=[])
+
+  def zeros(xla_shape):
+    shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
+    zero = dummy_subc.Constant(onp.array(0, dtype=dtype))
+    return dummy_subc.Broadcast(zero, shape)
+  out_nodes = [zeros(s) for s in out_node_shapes]
+  dummy_subc = dummy_subc.Build(dummy_subc.Tuple(*out_nodes))
+
+  return c.Conditional(pred, true_op, remat_subc, false_op, dummy_subc)
+call_translations[pe.remat_call_p] = _remat_translation_rule
