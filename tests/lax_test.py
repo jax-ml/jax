@@ -199,9 +199,9 @@ class LaxTest(jtu.JaxTestCase):
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
-    if op_name == "nextafter" and dtype == onp.float64:
-      raise SkipTest("nextafter inconsistent for float64: "
-                     "https://github.com/google/jax/issues/2403")
+    if (not FLAGS.jax_enable_x64 and op_name == "nextafter"
+        and dtype == onp.float64):
+      raise SkipTest("64-bit mode disabled")
     rng = rng_factory()
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     op = getattr(lax, op_name)
