@@ -272,6 +272,8 @@ jax.numpy.fft
   irfftn
   fftfreq
   rfftfreq
+  fftshift
+  ifftshift
 
 jax.numpy.linalg
 ----------------
@@ -285,10 +287,13 @@ jax.numpy.linalg
   det
   eig
   eigh
+  eigvals
+  eigvalsh
   inv
   matrix_power
   matrix_rank
   norm
+  pinv
   qr
   slogdet
   solve
