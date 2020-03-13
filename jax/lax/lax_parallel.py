@@ -659,10 +659,10 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
              out, xdim, ydim, dimension_numbers))
 
 
-def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
-                         old_sizes):
+def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions):
   operand, = vals
   axis, = axes
+  old_sizes = tuple(onp.insert(operand.shape, axis, size))
 
   def filter_ones(xs):
     return filter(lambda x: x != 1, xs)

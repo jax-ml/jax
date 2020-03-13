@@ -109,7 +109,7 @@ def vjp(traceable, primals, has_aux=False):
   def vjp_(*cts):
     cts = tuple(map(ignore_consts, cts, pvals))
     dummy_primals_and_cts = (core.unit,) * len(cts) + cts
-    dummy_args = (undefined_primal,) * len(jaxpr.invars)
+    dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
     arg_cts = backward_pass(jaxpr, consts, dummy_args, dummy_primals_and_cts)
     arg_cts = arg_cts[len(primals):]
     return map(instantiate_zeros, primals, arg_cts)
@@ -153,10 +153,10 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
     if type(v) is Literal:
       return v.val
     else:
-      return primal_env.get(v, undefined_primal)
+      return primal_env.get(v, UndefinedPrimal(v.aval))
 
   def write_primal(v, val):
-    if val is not undefined_primal:
+    if not is_undefined_primal(val):
       primal_env[v] = val
 
   primal_env = {}
@@ -168,7 +168,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
     if type(var) is Literal:
       return False
     else:
-      return primal_env.get(var, undefined_primal) is undefined_primal
+      return var not in primal_env
 
   linear_eqns = []
   for eqn in jaxpr.eqns:
@@ -226,17 +226,17 @@ def _eval_primals(jaxpr, args):
     if type(v) is Literal:
       return v.val
     else:
-      return primal_env.get(v, undefined_primal)
+      return primal_env.get(v, UndefinedPrimal(v.aval))
 
   def write_primal(v, val):
-    if val is not undefined_primal:
+    if not is_undefined_primal(val):
       primal_env[v] = val
 
   def is_linear(var):
     if type(var) is Literal:
       return False
     else:
-      return primal_env.get(var, undefined_primal) is undefined_primal
+      return var not in primal_env
 
   write_primal(core.unitvar, core.unit)
   assert not jaxpr.constvars
@@ -258,12 +258,19 @@ def _eval_primals(jaxpr, args):
         map(write_primal, eqn.outvars, ans)
   return map(read_primal, jaxpr.outvars)
 
-class UndefinedPrimal(object):
-  def __repr__(self): return  '_'
-undefined_primal = UndefinedPrimal()
+class UndefinedPrimal:
+  __slots__ = ['aval']
+  def __init__(self, aval):
+    self.aval = aval
+  def __repr__(self):
+    return 'UndefinedPrimal({})'.format(self.aval)
+
+def is_undefined_primal(x):
+  return type(x) is UndefinedPrimal
+
 register_pytree_node(UndefinedPrimal,
-                     lambda z: ((), None),
-                     lambda *_: undefined_primal)
+                     lambda z: ((), z.aval),
+                     lambda aval, _: UndefinedPrimal(aval))
 
 def get_primitive_transpose(p):
   try:
@@ -386,6 +393,14 @@ def linear_transpose(transpose_rule, cotangent, *args, **kwargs):
   return zero if cotangent is zero else transpose_rule(cotangent, **kwargs)
 
 
+def deflinear2(primitive, transpose_rule):
+  primitive_jvps[primitive] = partial(linear_jvp, primitive)
+  primitive_transposes[primitive] = partial(linear_transpose2, transpose_rule)
+
+def linear_transpose2(transpose_rule, cotangent, *args, **kwargs):
+  return zero if cotangent is zero else transpose_rule(cotangent, *args, **kwargs)
+
+
 def defjvp(primitive, *jvprules):
   assert isinstance(primitive, Primitive)
   primitive_jvps[primitive] = partial(standard_jvp, jvprules, primitive)
@@ -484,8 +499,8 @@ def defbilinear_broadcasting(bcast, prim, lhs_rule, rhs_rule):
 defbilinear = partial(defbilinear_broadcasting, lambda g, x: g)
 
 def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
-  assert (x is undefined_primal) ^ (y is undefined_primal)
-  if x is undefined_primal:
+  assert is_undefined_primal(x) ^ is_undefined_primal(y)
+  if is_undefined_primal(x):
     out = zero if cotangent is zero else lhs_rule(cotangent, y, **kwargs)
     return out, None
   else:

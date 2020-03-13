@@ -623,7 +623,7 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
   @lu.wrap_init
   def transposed(*args):
     res, cts_out = split_list(args, [num_res])
-    primals = res + [ad.undefined_primal] * num_non_res
+    primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
         jaxpr.jaxpr, jaxpr.literals, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
@@ -1022,8 +1022,8 @@ def _scan_transpose(cts, *args, forward, length, num_consts, num_carry, jaxpr, l
   consts, _, xs = split_list(args, [num_consts, num_carry])
   ires, _ = split_list(consts, [num_ires])
   _, eres = split_list(xs, [sum(xs_lin)])
-  assert not any(r is ad.undefined_primal for r in ires)
-  assert not any(r is ad.undefined_primal for r in eres)
+  assert not any(ad.is_undefined_primal(r) for r in ires)
+  assert not any(ad.is_undefined_primal(r) for r in eres)
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
@@ -1060,7 +1060,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
   def transposed(*res1_cbar_bbar_res2):
     res1, c_bar, b_bar, res2 = split_list(
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
-    primals = res1 + [ad.undefined_primal] * (num_c + num_a) + res2
+    primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
+               [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
     cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, primals,
                                     b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
@@ -1219,8 +1220,7 @@ def map(f, xs):
   return ys
 
 
-def _concat_masking_rule(padded_vals, logical_shapes, dimension, operand_shapes):
-  del operand_shapes  # Unused.
+def _concat_masking_rule(padded_vals, logical_shapes, dimension):
   result = lax.concatenate(padded_vals, dimension)  # fragmented
   offset = 0
   for padded_val, logical_shape in zip(padded_vals, logical_shapes):
@@ -1577,7 +1577,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
                     'differentiation of custom_linear_solve')
 
   params, b = _split_linear_solve_args(primals, const_lengths)
-  assert b == [ad.undefined_primal] * len(b)
+  assert all(ad.is_undefined_primal(x) for x in b)
   cotangent_b = linear_solve_p.bind(
       *(_flatten(params.transpose()) + cotangent),
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose(),
