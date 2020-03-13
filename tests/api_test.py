@@ -892,9 +892,12 @@ class APITest(jtu.JaxTestCase):
     g = api.grad(f)(pt)
     self.assertIsInstance(pt, ZeroPoint)
 
-  @parameterized.parameters(1, 2, 3)
-  def test_shape_dtype_struct(self, i):
-    s = api.ShapeDtypeStruct(shape=(i, 2, 3), dtype=np.float32)
+  @parameterized.parameters(
+      (i, dtype)
+      for i in (1, 2, 3)
+      for dtype in (np.float32, onp.float32, np.dtype("float32")))
+  def test_shape_dtype_struct(self, i, dtype):
+    s = api.ShapeDtypeStruct(shape=(i, 2, 3), dtype=dtype)
     self.assertEqual(s.shape, (i, 2, 3))
     self.assertEqual(s.dtype, np.float32)
     self.assertEqual(s.ndim, 3)
