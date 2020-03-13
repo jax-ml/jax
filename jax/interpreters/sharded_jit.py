@@ -18,7 +18,7 @@ from absl import logging
 import numpy as onp
 
 from .. import core
-from ..abstract_arrays import ShapedArray, ConcreteArray, array_types, abstract_token
+from ..abstract_arrays import ShapedArray, ConcreteArray, array_types
 from . import partial_eval as pe
 from . import xla
 from .. import linear_util as lu
@@ -134,16 +134,11 @@ result_handlers[ConcreteArray] = _array_result_handler
 
 
 @lu.cache
-def _sharded_callable(fun, partitions, name, *abstract_args):
+def _sharded_callable(fun: lu.WrappedFun, partitions, name, *abstract_args):
   nrep = 1  # TODO generalize
 
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
-  with core.new_master(pe.JaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts,
-            env) = pe.trace_to_subjaxpr(fun, master,
-                                        False).call_wrapped(in_pvals)
-    assert not env  # no subtraces here
-    del master, env
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
 
   if not jaxpr.eqns and all(outvar is core.unitvar for outvar in jaxpr.outvars):
     return lambda *_: [core.unit] * len(jaxpr.outvars)
@@ -268,7 +263,7 @@ def jaxpr_partitions(jaxpr):
 ### sharded_call
 
 
-def _sharded_call_impl(fun, *args, **params):
+def _sharded_call_impl(fun: lu.WrappedFun, *args, **params):
   partitions = params.pop("partitions")
   name = params.pop("name")
   assert not params, params

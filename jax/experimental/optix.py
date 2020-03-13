@@ -14,19 +14,19 @@
 
 """A composable gradient processing and optimization library for JAX.
 
-The `optix` module implements a number of composable gradient transformations,
+The ``optix`` module implements a number of composable gradient transformations,
 typically used in the context of optimizing neural nets.
 
 Each transformation defines:
 
-* an `init_fn`, to initialize a (possibly empty) set of statistics, or `state`.
-* an `update_fn` to transform an input gradient and update the state.
+* an ``init_fn``, to initialize a (possibly empty) set of statistics, or ``state``.
+* an ``update_fn`` to transform an input gradient and update the state.
 
-An (optional) `chain` utility can be used to build custom optimizers by
+An (optional) ``chain`` utility can be used to build custom optimizers by
 chaining arbitrary sequences of transformations. For any sequence of
-transformations `chain` returns a single `init_fn` and `update_fn`.
+transformations ``chain`` returns a single ``init_fn`` and ``update_fn``.
 
-An (optional) `apply_updates` function can be used to eventually apply the
+An (optional) ``apply_updates`` function can be used to eventually apply the
 transformed gradients to the set of parameters of interest.
 
 Separating gradient transformations from the parameter update allows to flexibly
@@ -34,7 +34,7 @@ chain a sequence of transformations of the same gradients, as well as combine
 multiple updates to the same parameters (e.g. in multi-task settings where the
 different tasks may benefit from different sets of gradient transformations).
 
-Many popular optimizers can be implemented using `optix` as one-liners, and,
+Many popular optimizers can be implemented using ``optix`` as one-liners, and,
 for convenience, we provide aliases for some of the most popular ones.
 """
 
@@ -58,10 +58,10 @@ ClipState = collections.namedtuple("ClipState", "")
 
 
 def clip(max_delta):
-  """Clip updates element-wise.
+  """Clip updates element-wise, to be between -max_delta and +max_delta.
 
   Args:
-    max_delta: the maximum size of an update, for each variable
+    max_delta: the maximum absolute value for each element in the update.
 
   Returns:
     An (init_fn, update_fn) tuple.
@@ -72,7 +72,7 @@ def clip(max_delta):
 
   def update_fn(updates, state):
     updates = tree_multimap(
-        lambda g: jnp.clip_by_value(g, -max_delta, max_delta), updates)
+        lambda g: jnp.clip(g, -max_delta, max_delta), updates)
     return updates, state
 
   return InitUpdate(init_fn, update_fn)
@@ -226,7 +226,7 @@ def scale_by_adam(b1=0.9, b2=0.999, eps=1e-8):
   def init_fn(params):
     mu = tree_multimap(jnp.zeros_like, params)  # First moment
     nu = tree_multimap(jnp.zeros_like, params)  # Second moment
-    return ScaleByAdamState(count=jnp.zeros([]), mu=mu, nu=nu)
+    return ScaleByAdamState(count=jnp.zeros([], jnp.int32), mu=mu, nu=nu)
 
   def update_fn(updates, state):
     mu = _update_moment(updates, state.mu, b1, 1)
@@ -278,7 +278,7 @@ def scale_by_schedule(step_size_fn):
   """
 
   def init_fn(_):
-    return ScaleByScheduleState(count=jnp.zeros([]))
+    return ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
 
   def update_fn(updates, state):
     updates = tree_multimap(lambda g: step_size_fn(state.count) * g, updates)
@@ -306,7 +306,8 @@ def add_noise(eta, gamma, seed):
   """
 
   def init_fn(_):
-    return AddNoiseState(count=jnp.zeros([]), rng_key=jrandom.PRNGKey(seed))
+    return AddNoiseState(count=jnp.zeros([], jnp.int32),
+                         rng_key=jrandom.PRNGKey(seed))
 
   def update_fn(updates, state):  # pylint: disable=missing-docstring
     num_vars = len(tree_leaves(updates))
@@ -319,6 +320,36 @@ def add_noise(eta, gamma, seed):
     updates = tree_multimap(
         lambda g, n: g + variance * n, updates, noise)
     return updates, AddNoiseState(count=state.count + 1, rng_key=all_keys[0])
+
+  return InitUpdate(init_fn, update_fn)
+
+
+ApplyEvery = collections.namedtuple("ApplyEvery", "count grad_acc")
+
+
+def apply_every(k=1):
+  """accumulate gradients and apply them every k steps.
+
+  Args:
+    k: apply the update every k steps otherwise accumulate the gradients.
+
+  Returns:
+    An (init_fn, update_fn) tuple.
+  """
+
+  def init_fn(params):
+    grad_acc = tree_multimap(jnp.zeros_like, params)
+    return ApplyEvery(count=jnp.zeros([], jnp.int32), grad_acc=grad_acc)
+
+  def update_fn(updates, state):
+
+    c = state.count % k
+    acc = c != 0
+    grad_acc = tree_multimap(
+        lambda g, ga: acc * ga + g, updates, state.grad_acc)
+    emit = c == (k - 1)
+    updates = tree_multimap(lambda ga: emit * ga, grad_acc)
+    return updates, ApplyEvery(count=state.count + 1, grad_acc=grad_acc)
 
   return InitUpdate(init_fn, update_fn)
 

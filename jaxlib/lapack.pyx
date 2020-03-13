@@ -16,7 +16,7 @@
 # distutils: language = c++
 
 # Shims that allow the XLA CPU backend to call scipy-provided LAPACK kernels
-# via CustomCall.
+# via CustomCallWithLayout.
 
 from __future__ import print_function
 
@@ -240,7 +240,7 @@ def trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
     raise NotImplementedError("Conjugation without transposition not supported")
 
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  return c.CustomCall(
+  return c.CustomCallWithLayout(
       fn,
       operands=(
         c.ConstantS32Scalar(int(left_side)),
@@ -384,7 +384,7 @@ def getrf(c, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       fn,
       operands=(
         c.ConstantS32Scalar(b),
@@ -576,7 +576,7 @@ def geqrf(c, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       fn,
       operands=(
         c.ConstantS32Scalar(b),
@@ -777,7 +777,7 @@ def orgqr(c, a, tau):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       fn,
       operands=(
         c.ConstantS32Scalar(b),
@@ -929,7 +929,7 @@ def potrf(c, a, lower=False):
     b *= d
 
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       fn,
       operands=(c.ConstantS32Scalar(int(lower)),
                 c.ConstantS32Scalar(b), c.ConstantS32Scalar(n), a),
@@ -1234,7 +1234,7 @@ def gesdd(c, a, full_matrices=True, compute_uv=True):
   scalar_layout = tuple(range(num_bd - 1, -1, -1))
   vector_layout = (num_bd,) + scalar_layout
   matrix_layout = (num_bd, num_bd + 1) + scalar_layout
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       fn,
       operands=(c.ConstantS32Scalar(int(full_matrices)),
                 c.ConstantS32Scalar(int(compute_uv)),
@@ -1458,7 +1458,7 @@ def syevd(c, a, lower=False):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       fn,
       operands=(c.ConstantS32Scalar(1 if lower else 0),
                 c.ConstantS32Scalar(b),
@@ -1750,7 +1750,7 @@ def geev(c, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       fn,
       operands=(c.ConstantS32Scalar(b), c.ConstantS32Scalar(n), a),
       shape_with_layout=Shape.tuple_shape(workspaces + eigvals + (

@@ -21,8 +21,6 @@ from jax.numpy import lax_numpy as np
 from jax.numpy.vectorize import vectorize
 from jax import ad_util
 from jax import api
-from jax import api_util
-from jax import core
 from jax import lax
 from jax import ops
 from jax import dtypes
@@ -34,7 +32,6 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
-from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
 
@@ -360,7 +357,7 @@ def triangular_solve_transpose_rule(
     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
-  assert a is not ad.undefined_primal and b is ad.undefined_primal
+  assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
   if cotangent is ad_util.zero:
     cotangent_b = ad_util.zero
   else:
@@ -641,6 +638,8 @@ def _lu_pivots_body_fn(i, permutation_and_swaps):
   permutation = ops.index_update(permutation, ops.index[..., i], y)
   return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
 
+
+@partial(api.jit, static_argnums=(1,))
 def lu_pivots_to_permutation(swaps, m):
   """Converts the pivots (row swaps) returned by LU to a permutation.
 

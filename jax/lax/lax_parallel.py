@@ -15,6 +15,7 @@
 Parallelization primitives.
 """
 
+import collections
 
 import numpy as onp
 
@@ -23,7 +24,7 @@ from jax import ad_util
 from jax import dtypes
 from jax import tree_util
 from jax.lax import lax
-from jax.abstract_arrays import ShapedArray
+from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import parallel
 from jax.interpreters import xla
@@ -61,7 +62,8 @@ def psum(x, axis_name):
   >>> print(y)
   [ 0.          0.16666667  0.33333334  0.5       ]
   """
-  return tree_util.tree_map(partial(psum_p.bind, axis_name=axis_name), x)
+  leaves, treedef = tree_util.tree_flatten(x)
+  return treedef.unflatten(psum_p.bind(*leaves, axis_name=axis_name))
 
 def pmean(x, axis_name):
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
@@ -247,8 +249,9 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 
 ### parallel primitives
 
-def standard_pmap_primitive(name):
+def standard_pmap_primitive(name, multiple_results=False):
   prim = core.Primitive(name)
+  prim.multiple_results = multiple_results
   prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
   prim.def_abstract_eval(lambda x, *args, **params: x)
   return prim
@@ -256,31 +259,70 @@ def standard_pmap_primitive(name):
 
 def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
   assert tuple(which_mapped) == (True,)
-  x, = vals
-  return prim.bind(reducer(x, [0]), axis_name=axis_name), False
+  vals = (reducer(x, [0]) for x in vals)
+  return prim.bind(*vals, axis_name=axis_name), False
 
-def _allreduce_translation_rule(prim, c, val, replica_groups):
+def _allreduce_translation_rule(prim, c, val, replica_groups, platform=None):
   dtype = c.GetShape(val).numpy_dtype()
   scalar = ShapedArray((), dtype)
   computation = xla.primitive_subcomputation(prim, scalar, scalar)
   return c.AllReduce(val, computation, replica_groups=replica_groups)
 
 # psum translation rule has special handling for complex dtypes
-def _psum_translation_rule(c, val, replica_groups):
-  psum = partial(_allreduce_translation_rule, lax.add_p, c,
-                 replica_groups=replica_groups)
-  dtype = c.GetShape(val).numpy_dtype()
-  if dtypes.issubdtype(dtype, onp.complexfloating):
-    return c.Complex(psum(c.Real(val)), psum(c.Imag(val)))
-  else:
-    return psum(val)
+def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
+  if platform == "cpu":
+    return _cpu_psum_translation_rule(c, *args, replica_groups=replica_groups)
 
-psum_p = standard_pmap_primitive('psum')
+  # XLA's tuple all-reduce doesn't support different dtypes in the same
+  # allreduce. Instead, we perform once all-reduce for each argument input type.
+  args_by_type = collections.defaultdict(lambda: ([], []))
+  for i, arg in enumerate(args):
+    indices, dtype_args = args_by_type[c.GetShape(arg).numpy_dtype()]
+    indices.append(i)
+    dtype_args.append(arg)
+
+  # The outputs, in the original argument order.
+  out = [None] * len(args)
+  for dtype, (indices, dtype_args) in sorted(args_by_type.items()):
+    is_complex = dtypes.issubdtype(dtype, onp.complexfloating)
+    n = len(dtype_args)
+    if is_complex:
+      dtype_args = ([c.Real(x) for x in dtype_args] +
+                    [c.Imag(x) for x in dtype_args])
+    scalar = ShapedArray((), c.GetShape(dtype_args[0]).numpy_dtype())
+    computation = xla.primitive_subcomputation(lax.add_p, scalar, scalar)
+    all_reduce = c.AllReduce(c.Tuple(*dtype_args), computation,
+                             replica_groups=replica_groups)
+    if is_complex:
+      xs = [c.Complex(c.GetTupleElement(all_reduce, i),
+                      c.GetTupleElement(all_reduce, n + i)) for i in range(n)]
+    else:
+      xs = [c.GetTupleElement(all_reduce, i) for i in range(n)]
+    for i, x in zip(indices, xs):
+      out[i] = x
+  return c.Tuple(*out)
+
+# TODO(b/150476027): CPU doesn't support tuple all-reduce correctly. But
+# fortunately we don't really need it in that case because CPU doesn't support
+# cross-task communication either.
+def _cpu_psum_translation_rule(c, *args, replica_groups):
+  def _translate(val):
+    psum = partial(_allreduce_translation_rule, lax.add_p, c,
+                   replica_groups=replica_groups)
+    dtype = c.GetShape(val).numpy_dtype()
+    if dtypes.issubdtype(dtype, onp.complexfloating):
+      return c.Complex(psum(c.Real(val)), psum(c.Imag(val)))
+    else:
+      return psum(val)
+  return c.Tuple(*map(_translate, args))
+
+psum_p = standard_pmap_primitive('psum', multiple_results=True)
+psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
-pxla.parallel_pure_rules[psum_p] = lambda x, shape: x * prod(shape)
-ad.deflinear(psum_p, lambda t, axis_name: [psum(t, axis_name)])
+pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
+ad.deflinear(psum_p, lambda *ts, axis_name: psum(*ts, axis_name))
 pxla.multi_host_supported_collectives.add(psum_p)
 
 
@@ -298,7 +340,7 @@ pxla.split_axis_rules[pmin_p] = \
     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 
 
-def _ppermute_translation_rule(c, x, replica_groups, perm):
+def _ppermute_translation_rule(c, x, replica_groups, perm, platform=None):
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -322,7 +364,8 @@ xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups):
+def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups,
+                                 platform=None):
   return c.AllToAll(x, split_axis, concat_axis, replica_groups)
 
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
@@ -411,7 +454,7 @@ def _defvectorized(prim):
   parallel.papply_primitive_rules[prim] = partial(_vectorized_papply, prim)
 
 
-def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
+def _reducer_papply(prim, collective, name, size, vals, papply_axes, axes, **kwargs):
   operand, = vals
   papply_axis, = papply_axes
 
@@ -427,7 +470,7 @@ def _reducer_papply(prim, cprim, name, size, vals, papply_axes, axes, **kwargs):
     result = operand
 
   if not axes or papply_axis in axes:
-    return cprim.bind(result, axis_name=name), None
+    return collective(result, axis_name=name), None
   else:
     new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
     return result, new_papply_axis
@@ -487,9 +530,9 @@ _defbroadcasting(lax.shift_right_logical_p)
 
 _defidentity(lax.tie_in_p)
 
-_defreducer(lax.reduce_sum_p, psum_p)
-_defreducer(lax.reduce_max_p, pmax_p)
-_defreducer(lax.reduce_min_p, pmin_p)
+_defreducer(lax.reduce_sum_p, psum)
+_defreducer(lax.reduce_max_p, pmax)
+_defreducer(lax.reduce_min_p, pmin)
 
 
 def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
@@ -616,10 +659,10 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
              out, xdim, ydim, dimension_numbers))
 
 
-def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
-                         old_sizes):
+def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions):
   operand, = vals
   axis, = axes
+  old_sizes = tuple(onp.insert(operand.shape, axis, size))
 
   def filter_ones(xs):
     return filter(lambda x: x != 1, xs)

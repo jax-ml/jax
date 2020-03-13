@@ -14,7 +14,7 @@
 
 
 import itertools as it
-from collections import namedtuple, Counter, defaultdict
+from collections import namedtuple
 import contextlib
 import threading
 from weakref import ref
@@ -115,7 +115,7 @@ class JaxprTrace(Trace):
       out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive, params)
       return out_tracer
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     name = params.get('name', f.__name__)
     if self.master.trace_type is StagingJaxprTrace:
       tracers = map(self.instantiate_const_abstracted, tracers)
@@ -144,7 +144,7 @@ class JaxprTrace(Trace):
       t.recipe = eqn
     return out_tracers
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     reduced_pvs = [None if pv is None else _mapped_aval(pv) for pv in in_pvs]
     fun, aux = partial_eval(f, self, reduced_pvs)
@@ -347,10 +347,10 @@ def partial_val_aval(pv, const):
   else:
     raise TypeError(pv)
 
-def trace_to_jaxpr(fun, pvals, instantiate=False, stage_out_calls=False):
+def trace_to_jaxpr(fun: lu.WrappedFun, pvals, instantiate=False, stage_out_calls=False, bottom=False):
   """Traces a function, given abstract inputs, to a jaxpr."""
   trace_type = StagingJaxprTrace if stage_out_calls else JaxprTrace
-  with new_master(trace_type) as master:
+  with new_master(trace_type, bottom=bottom) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
     assert not env
@@ -423,20 +423,31 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
     `invars`.
   """
   newvar = core.gensym('')
-  t_to_var = defaultdict(newvar)
-  getvar = lambda t: t_to_var[id(t)]
+  t_to_var = {}
+  def getvar(t):
+    var = t_to_var.get(id(t))
+    if var is None:
+      var = newvar(partial_val_aval(*t.pval))
+      t_to_var[id(t)] = var
+    return var
   sorted_tracers = toposort(out_tracers)
   invars = map(getvar, in_tracers)
   eqns = []
   env = {}
   consts = {}
-  const_to_var = defaultdict(newvar)
+  const_to_var = {}
+  def getconstvar(c):
+    var = const_to_var.get(id(c))
+    if var is None:
+      var = newvar(get_aval(c))
+      const_to_var[id(c)] = var
+    return var
   processed_eqn_ids = set()
   for t in sorted_tracers:
     recipe = t.recipe
     if isinstance(recipe, JaxprEqnRecipe):
       if recipe.eqn_id not in processed_eqn_ids:
-        eqns.append(recipe_to_eqn(newvar, getvar, recipe))
+        eqns.append(recipe_to_eqn(lambda: newvar(core.abstract_unit), getvar, recipe))
         processed_eqn_ids.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
@@ -445,7 +456,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
     elif isinstance(recipe, FreeVar):
       env[getvar(t)] = recipe.val
     elif isinstance(recipe, ConstVar):
-      v = t_to_var[id(t)] = const_to_var[id(recipe.val)]
+      v = t_to_var[id(t)] = getconstvar(recipe.val)
       consts[v] = recipe.val
     elif isinstance(recipe, Literal):
       t_to_var[id(t)] = recipe
@@ -495,6 +506,10 @@ def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
   # jaxpr_2 :: [a2, res] -> b2
   jaxpr_2 = convert_constvars_jaxpr(jaxpr_2)
   jaxpr_2.invars = jaxpr_2.invars[num_res:] + jaxpr_2.invars[:num_res]
+  for var, unknown in zip(jaxpr_2.invars[:len(unknowns)], unknowns):
+    if not unknown:
+      var.aval = abstract_unit
+
   uk_out = [pv is not None for pv in out_pvs_2]
 
   in_avals_1, in_avals_2 = unzip2(map(_split_aval, unknowns, jaxpr.in_avals))

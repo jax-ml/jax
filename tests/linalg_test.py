@@ -128,6 +128,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testTensorsolve(self, m, nq, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
+    if m == 23:
+      _skip_on_mac_xla_bug()
     
     # According to numpy docs the shapes are as follows:
     # Coefficient tensor (a), of shape b.shape + Q. 
@@ -619,6 +621,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default]))
   def testTensorinv(self, shape, dtype, rng_factory):
     _skip_if_unsupported_type(dtype)
+    if shape[0] > 100:
+      _skip_on_mac_xla_bug()
     rng = rng_factory()
 
     def tensor_maker():
@@ -721,6 +725,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for n in [-5, -2, -1, 0, 1, 2, 3, 4, 5, 10]
       for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("tpu")  # TODO(b/149870255): Bug in XLA:TPU?.
   def testMatrixPower(self, shape, dtype, n, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)

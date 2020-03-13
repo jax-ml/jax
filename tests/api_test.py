@@ -308,14 +308,17 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
 
-  def test_device_put_across_devices(self):
-    if xb.device_count() == 1:
+  @parameterized.parameters([(3,)], [(2, 0)])
+  def test_device_put_across_devices(self, shape):
+    if len(api.local_devices()) < 2:
       raise unittest.SkipTest("this test requires multiple devices")
-    d1, d2 = xb.local_devices()[:2]
-    x = api.device_put(onp.array([1,2,3]), device=d1)
+    d1, d2 = api.local_devices()[:2]
+    data = onp.random.randn(*shape).astype(onp.float32)
+    x = api.device_put(data, device=d1)
     self.assertEqual(x.device_buffer.device(), d1)
     y = api.device_put(x, device=d2)
     self.assertEqual(y.device_buffer.device(), d2)
+    onp.testing.assert_array_equal(data, onp.array(y))
     # Make sure these don't crash
     api.device_put(x)
     api.device_put(y)
@@ -1229,6 +1232,20 @@ class APITest(jtu.JaxTestCase):
     b = np.dot(a + np.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
 
+  def test_vmap_in_axes_list(self):
+    # https://github.com/google/jax/issues/2367
+    dictionary = {'a': 5., 'b': np.ones(2)}
+    x = np.zeros(3)
+    y = np.arange(3.)
+
+
+    def f(dct, x, y):
+      return dct['a'] + dct['b'] + x + y
+
+    out1 = api.vmap(f, (None, 0, 0))(dictionary, x, y)
+    out2 = api.vmap(f, [None, 0, 0])(dictionary, x, y)
+    self.assertAllClose(out1, out2, check_dtypes=True)
+
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
     self.assertRaisesRegex(
@@ -1826,9 +1843,6 @@ class APITest(jtu.JaxTestCase):
           re.DOTALL)):
       api.jit(func1)(2.)
 
-  def test_array_tracer_copy(self):
-    api.value_and_grad(lambda x: x.copy().sum())(np.ones(2))  # doesn't crash
-
 
 class JaxprTest(jtu.JaxTestCase):
 
@@ -1883,8 +1897,7 @@ class JaxprTest(jtu.JaxTestCase):
   let c = sin b
       d = mul c 3.0
       e = add a d
-      f = reduce_sum[ axes=(0,)
-                      input_shape=(8,) ] e
+      f = reduce_sum[ axes=(0,) ] e
   in f }
         """, str(jaxpr))
 

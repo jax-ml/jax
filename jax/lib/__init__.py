@@ -17,13 +17,14 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 38)
+_minimum_jaxlib_version = (0, 1, 40)
 try:
   from jaxlib import version as jaxlib_version
-except:
+except Exception as err:
   # jaxlib is too old to have version number.
   msg = 'This version of jax requires jaxlib version >= {}.'
-  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version))))
+  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version)))
+                    ) from err
 
 version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
 

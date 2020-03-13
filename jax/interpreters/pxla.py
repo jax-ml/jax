@@ -13,9 +13,8 @@
 # limitations under the License.
 
 
-from collections import namedtuple, defaultdict
+from collections import defaultdict
 from contextlib import contextmanager
-import itertools as it
 import operator as op
 import threading
 
@@ -28,10 +27,9 @@ from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import (partial, unzip2, concatenate, prod, safe_map,
+from ..util import (partial, unzip2, prod, safe_map,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
-from .xla import aval_to_xla_shape, xla_destructure
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
@@ -124,8 +122,9 @@ shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 def shard_aval(size, aval):
   try:
     return shard_aval_handlers[type(aval)](size, aval)
-  except KeyError:
-    raise TypeError("No shard_aval handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No shard_aval handler for type: {}".format(type(aval))
+                    ) from err
 shard_aval_handlers = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
 def _shard_abstract_array(size, x):
@@ -138,8 +137,9 @@ shard_aval_handlers[ShapedArray] = _shard_abstract_array
 def aval_to_result_handler(size, nrep, aval):
   try:
     return pxla_result_handlers[type(aval)](size, nrep, aval)
-  except KeyError:
-    raise TypeError("No pxla_result_handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
+                    ) from err
 pxla_result_handlers = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 def array_result_handler(size, nrep, aval):
@@ -460,12 +460,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
   # We add a dummy first invar, to carry the trace details to `dynamic_fun`
   pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
-  with core.new_master(pe.StagingJaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
-        dynamic_fun, master, False).call_wrapped([pval] + pvals)
-    jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
-    assert not env
-    del master
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+      dynamic_fun, [pval] + pvals, instantiate=False, stage_out_calls=True, bottom=True)
+  jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
+
   out_pvs, out_consts = unzip2(out_pvals)
 
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
@@ -635,7 +633,7 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
 
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecutePerReplica(list(input_bufs))
+  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
   return out_handler(out_bufs)
 
 
@@ -796,17 +794,23 @@ class SplitAxisTrace(core.Trace):
           # if the name matches this tracer's name, apply the split_axis rule
           try:
             rule = split_axis_rules[primitive]
-          except KeyError:
+          except KeyError as err:
             msg = "split_axis for {} not implemented. Open a feature request!"
-            raise NotImplementedError(msg.format(primitive))
+            raise NotImplementedError(msg.format(primitive)) from err
           which_mapped = [n is not not_mapped for n in names_in]
           val_out, is_mapped = rule(vals_in, which_mapped, **params)
           name_out = name if is_mapped else not_mapped
-          return SplitAxisTracer(self, name_out, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name_out, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name_out, val_out)
         else:
           # if not, bind the primitive without any processing
           val_out = primitive.bind(*vals_in, **params)
-          return SplitAxisTracer(self, name, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name, val_out)
       else:
         # if it's not a pmap collective primitive, act just like batching
         rule = batching.get_primitive_batcher(primitive)
@@ -822,7 +826,7 @@ class SplitAxisTrace(core.Trace):
         else:
           return new_tracer(val_out, axis_out)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
@@ -835,7 +839,7 @@ class SplitAxisTrace(core.Trace):
         vals_out = call_primitive.bind(f, *vals, **params)
         return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, names = unzip2((t.val, t.axis_name) for t in tracers)
     if all(name is not_mapped for name in names):
       return map_primitive.bind(f, *vals, **params)

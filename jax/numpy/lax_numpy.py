@@ -303,7 +303,7 @@ def update_numpydoc(docstr, fun, op):
   parameters = '\n'.join(param_list).replace('@@', '\n    ')
   return docstr[:begin_idx + 1] + parameters + docstr[end_idx - 2:]
 
-_numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\(.*\)$')
+_numpy_signature_re = re.compile(r'^([\w., ]+=)?\s*[\w\.]+\([\w\W]*\)$')
 
 def _wraps(fun, update_doc=True, lax_description=""):
   """Like functools.wraps but works with numpy.ufuncs.
@@ -1527,6 +1527,91 @@ def _check_no_padding(axis_padding, mode):
     raise ValueError(msg.format(mode))
 
 
+def _pad_constant(array, pad_width, constant_values):
+  nd = ndim(array)
+  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+  constant_values = lax.convert_element_type(constant_values, array.dtype)
+  for i in range(nd):
+    widths = [(0, 0, 0)] * nd
+    widths[i] = (pad_width[i, 0], 0, 0)
+    array = lax.pad(array, constant_values[i, 0], widths)
+    widths[i] = (0, pad_width[i, 1], 0)
+    array = lax.pad(array, constant_values[i, 1], widths)
+  return array
+
+
+def _pad_wrap(array, pad_width):
+  for i in range(ndim(array)):
+    if array.shape[i] == 0:
+      _check_no_padding(pad_width[i], "wrap")
+      continue
+    size = array.shape[i]
+    repeats, (left_remainder, right_remainder) = _divmod(pad_width[i], size)
+    total_repeats = repeats.sum() + 1
+    parts = []
+    if left_remainder:
+      parts += [lax.slice_in_dim(array, size - left_remainder, size, axis=i)]
+    parts += total_repeats * [array]
+    if right_remainder:
+      parts += [lax.slice_in_dim(array, 0, right_remainder, axis=i)]
+    array = lax.concatenate(parts, dimension=i)
+  return array
+
+
+def _pad_symmetric_or_reflect(array, pad_width, mode):
+  assert mode in ("symmetric", "reflect")
+
+  for i in range(ndim(array)):
+    if array.shape[i] == 0:
+      _check_no_padding(pad_width[i], mode)
+      continue
+
+    n = array.shape[i]
+    rarray = lax.rev(array, dimensions=(i,))
+    offset = 1 if (mode == "reflect" and n > 1) else 0
+
+    def build_padding(padding, forward):
+      xs = []
+      delta = n - offset
+      while padding > delta:
+        padding -= delta
+        p = array if forward else rarray
+        xs.append(lax.slice_in_dim(p, offset, n, axis=i))
+        forward = not forward
+      if padding > 0:
+        x = lax.slice_in_dim(array if forward else rarray, offset,
+                             padding + offset, axis=i)
+        xs.append(x)
+      return xs
+
+    parts = reversed(build_padding(pad_width[i, 0], forward=True))
+    parts = [lax.rev(x, dimensions=(i,)) for x in parts]
+    parts += [array]
+    parts += build_padding(pad_width[i, 1], forward=False)
+    array = lax.concatenate(parts, dimension=i)
+  return array
+
+
+def _pad_edge(array, pad_width):
+  nd = ndim(array)
+  for i in range(nd):
+    if array.shape[i] == 0:
+      _check_no_padding(pad_width[i], mode)
+      continue
+
+    n = array.shape[i]
+    npad_before, npad_after = pad_width[i]
+
+    edge_before = lax.slice_in_dim(array, 0, 1, axis=i)
+    pad_before = repeat(edge_before, npad_before, axis=i)
+
+    edge_after = lax.slice_in_dim(array, n-1, n, axis=i)
+    pad_after = repeat(edge_after, npad_after, axis=i)
+
+    array = lax.concatenate([pad_before, array, pad_after], dimension=i)
+  return array
+
+
 @partial(jit, static_argnums=(1, 2))
 def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
@@ -1536,61 +1621,17 @@ def _pad(array, pad_width, mode, constant_values):
     raise ValueError("index can't contain negative values")
 
   if mode == "constant":
-    constant_values = broadcast_to(asarray(constant_values), (nd, 2))
-    constant_values = lax.convert_element_type(constant_values, array.dtype)
-    for i in range(nd):
-      widths = [(0, 0, 0)] * nd
-      widths[i] = (pad_width[i, 0], 0, 0)
-      array = lax.pad(array, constant_values[i, 0], widths)
-      widths[i] = (0, pad_width[i, 1], 0)
-      array = lax.pad(array, constant_values[i, 1], widths)
-    return array
+    return _pad_constant(array, pad_width, constant_values)
+
   elif mode == "wrap":
-    for i in range(nd):
-      if array.shape[i] == 0:
-        _check_no_padding(pad_width[i], mode)
-        continue
-      size = array.shape[i]
-      repeats, (left_remainder, right_remainder) = _divmod(pad_width[i], size)
-      total_repeats = repeats.sum() + 1
-      parts = []
-      if left_remainder:
-        parts += [lax.slice_in_dim(array, size - left_remainder, size, axis=i)]
-      parts += total_repeats * [array]
-      if right_remainder:
-        parts += [lax.slice_in_dim(array, 0, right_remainder, axis=i)]
-      array = lax.concatenate(parts, dimension=i)
-    return array
+    return _pad_wrap(array, pad_width)
+
   elif mode in ("symmetric", "reflect"):
-    for i in range(nd):
-      if array.shape[i] == 0:
-        _check_no_padding(pad_width[i], mode)
-        continue
+    return _pad_symmetric_or_reflect(array, pad_width, mode)
 
-      n = array.shape[i]
-      rarray = lax.rev(array, dimensions=(i,))
-      offset = 1 if (mode == "reflect" and n > 1) else 0
+  elif mode == "edge":
+    return _pad_edge(array, pad_width)
 
-      def build_padding(padding, forward):
-        xs = []
-        delta = n - offset
-        while padding > delta:
-          padding -= delta
-          p = array if forward else rarray
-          xs.append(lax.slice_in_dim(p, offset, n, axis=i))
-          forward = not forward
-        if padding > 0:
-          x = lax.slice_in_dim(array if forward else rarray, offset,
-                               padding + offset, axis=i)
-          xs.append(x)
-        return xs
-
-      parts = reversed(build_padding(pad_width[i, 0], forward=True))
-      parts = [lax.rev(x, dimensions=(i,)) for x in parts]
-      parts += [array]
-      parts += build_padding(pad_width[i, 1], forward=False)
-      array = lax.concatenate(parts, dimension=i)
-    return array
   else:
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
@@ -1637,10 +1678,13 @@ def concatenate(arrays, axis=0):
   # tree of concatenations as a workaround especially for op-by-op mode.
   # (https://github.com/google/jax/issues/653).
   k = 16
-  while len(arrays) > 1:
-    arrays = [lax.concatenate(arrays[i:i+k], axis)
-              for i in range(0, len(arrays), k)]
-  return arrays[0]
+  if len(arrays) == 1:
+    return array(arrays[0])
+  else:
+    while len(arrays) > 1:
+      arrays = [lax.concatenate(arrays[i:i+k], axis)
+                for i in range(0, len(arrays), k)]
+    return arrays[0]
 
 
 @_wraps(onp.vstack)
@@ -1772,10 +1816,6 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 def asarray(a, dtype=None, order=None):
   lax._check_user_dtype_supported(dtype, "asarray")
   return array(a, dtype=dtype, copy=False, order=order)
-
-@_wraps(onp.copy)
-def copy(a, order='K'):
-  return array(a, copy=True, order=order)
 
 
 @_wraps(onp.zeros_like)
@@ -2584,8 +2624,13 @@ def argsort(a, axis=-1, kind='quicksort', order=None):
     return perm
 
 
-@_wraps(onp.roll)
-def roll(a, shift, axis=None):
+@_wraps(onp.msort)
+def msort(a):
+  return sort(a, axis=0)
+
+
+@partial(jit, static_argnums=(2,))
+def _roll(a, shift, axis):
   a = asarray(a)
   a_shape = shape(a)
   if axis is None:
@@ -2598,8 +2643,6 @@ def roll(a, shift, axis=None):
   if len(b_shape) != 1:
     msg = "'shift' and 'axis' arguments to roll must be scalars or 1D arrays"
     raise ValueError(msg)
-  if b_shape[0] > a_ndim:
-    raise ValueError("More shifts/axes than dimensions of input to roll.")
 
   for x, i in zip(broadcast_to(shift, b_shape),
                   onp.broadcast_to(axis, b_shape)):
@@ -2608,6 +2651,11 @@ def roll(a, shift, axis=None):
     a = lax.concatenate((a, a), i)
     a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
   return a
+
+
+@_wraps(onp.roll)
+def roll(a, shift, axis=None):
+  return _roll(a, shift, axis)
 
 
 @_wraps(onp.take)
@@ -3397,8 +3445,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
 _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "tile", "trace", "transpose", "var",
-                 "copy"]
+                 "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
 
 # Set up operator, method, and property forwarding on Tracer instances containing

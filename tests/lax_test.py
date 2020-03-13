@@ -18,6 +18,7 @@ import functools
 from functools import partial
 import itertools
 from typing import Optional, cast
+import unittest
 from unittest import skip, SkipTest
 
 from absl.testing import absltest
@@ -198,6 +199,9 @@ class LaxTest(jtu.JaxTestCase):
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
+    if (not FLAGS.jax_enable_x64 and op_name == "nextafter"
+        and dtype == onp.float64):
+      raise SkipTest("64-bit mode disabled")
     rng = rng_factory()
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     op = getattr(lax, op_name)
@@ -1318,6 +1322,29 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda ks, vs: lax.sort_key_val(ks, vs, axis)
     numpy_op = lambda ks, vs: lax_reference.sort_key_val(ks, vs, axis)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_k={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), k),
+       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "k": k}
+      for dtype in [onp.float32, onp.int32, onp.uint32]
+      for shape in [(3,), (5, 3)]
+      for k in [1, 3]
+      for rng_factory in [jtu.rand_default]))
+  def testTopK(self, shape, dtype, k, rng_factory):
+    rng = rng_factory()
+    perm_rng = onp.random.RandomState(0)
+    def args_maker():
+      flat_values = onp.arange(onp.prod(shape, dtype=int), dtype=dtype)
+      values = perm_rng.permutation(flat_values).reshape(shape)
+      return [values]
+    def reference_top_k(x):
+      bcast_idxs = onp.broadcast_to(onp.arange(shape[-1]), shape)
+      sorted_vals, sorted_idxs = lax_reference.sort_key_val(x, bcast_idxs)
+      return sorted_vals[..., :-k-1:-1], sorted_idxs[..., :-k-1:-1]
+    op = lambda vs: lax.top_k(vs, k=k)
+    self._CheckAgainstNumpy(op, reference_top_k, args_maker)
+    self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
@@ -2569,16 +2596,17 @@ class LaxVmapTest(jtu.JaxTestCase):
             jtu.format_test_name_suffix(rec.op, shapes,
                                         itertools.repeat(dtype)), bdims),
          "op_name": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes,
-         "dtype": dtype, "bdims": bdims}
+         "dtype": dtype, "bdims": bdims, "tol": rec.tol}
         for shape_group in compatible_shapes
         for shapes in CombosWithReplacement(shape_group, rec.nargs)
         for bdims in all_bdims(*shapes)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
-  def testOp(self, op_name, rng_factory, shapes, dtype, bdims):
+  def testOp(self, op_name, rng_factory, shapes, dtype, bdims, tol):
     rng = rng_factory()
     op = getattr(lax, op_name)
-    self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng)
+    self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng,
+                        atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

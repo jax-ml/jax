@@ -62,7 +62,7 @@ dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
 
-
+from typing import Any, Tuple
 import weakref
 
 from .util import curry
@@ -122,7 +122,7 @@ class WrappedFun(object):
   def __name__(self):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
-  def wrap(self, gen, gen_static_args, out_store):
+  def wrap(self, gen, gen_static_args, out_store) -> 'WrappedFun':
     """Add another transform and its store."""
     return WrappedFun(self.f, ((gen, gen_static_args),) + self.transforms,
                       (out_store,) + self.stores, self.params)
@@ -172,7 +172,7 @@ class WrappedFun(object):
             self.params == other.params)
 
 @curry
-def transformation(gen, fun: WrappedFun, *gen_static_args):
+def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   """Adds one more transformation to a WrappedFun.
   Args:
     gen: the transformation generator function
@@ -182,7 +182,7 @@ def transformation(gen, fun: WrappedFun, *gen_static_args):
   return fun.wrap(gen, gen_static_args, None)
 
 @curry
-def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args):
+def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args) -> Tuple[WrappedFun, Any]:
   """Adds one more transformation with auxiliary output to a WrappedFun."""
   out_store = Store()
   out_thunk = lambda: out_store.val
@@ -194,7 +194,7 @@ def fun_name(f):
   except:
     return str(f)
 
-def wrap_init(f, params={}):
+def wrap_init(f, params={}) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   return WrappedFun(f, (), (), tuple(sorted(params.items())))
 
@@ -209,7 +209,7 @@ def cache(call):
   """
   fun_caches = weakref.WeakKeyDictionary()
 
-  def memoized_fun(fun, *args):
+  def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
     key = (fun.transforms, fun.params, args)
     result = cache.get(key, None)

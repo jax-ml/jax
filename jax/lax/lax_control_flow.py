@@ -22,6 +22,7 @@ import functools
 import itertools
 import operator
 import threading
+from typing import Callable
 
 import numpy as onp
 
@@ -32,6 +33,7 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
+from jax.core import get_aval
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -51,7 +53,7 @@ _reduce = functools.reduce
 
 
 @cache()
-def _initial_style_jaxpr(fun, in_tree, in_avals):
+def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
@@ -341,7 +343,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   newvar = core.gensym('')
   invars_aug = (
-      cond_jaxpr.jaxpr.invars + [newvar() for _ in range(len(init_dot))])
+      cond_jaxpr.jaxpr.invars + [newvar(get_aval(x)) for x in init_dot])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
@@ -397,9 +399,9 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 
   try:
     pred_dtype = dtypes.result_type(pred)
-  except TypeError:
+  except TypeError as err:
     msg = ("Pred type must be either boolean or number, got {}.")
-    raise TypeError(msg.format(pred))
+    raise TypeError(msg.format(pred)) from err
 
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
@@ -449,8 +451,11 @@ def _cond_translation_rule(c, axis_env, name_stack, pred, *args,
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
 def _cond_pred_bcast_select(pred, x, y):
-  bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
-  return lax.select(bcast_pred, x, y)
+  if core.get_aval(x) is core.get_aval(y) is core.abstract_unit:
+    return x
+  else:
+    bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
+    return lax.select(bcast_pred, x, y)
 
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
@@ -618,7 +623,7 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
   @lu.wrap_init
   def transposed(*args):
     res, cts_out = split_list(args, [num_res])
-    primals = res + [ad.undefined_primal] * num_non_res
+    primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
         jaxpr.jaxpr, jaxpr.literals, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
@@ -762,10 +767,11 @@ def scan(f, init, xs, length=None):
 
   try:
     lengths = [x.shape[0] for x in xs_flat]
-  except AttributeError:
+  except AttributeError as err:
     msg = "scan got value with no leading axis to scan over: {}."
-    raise ValueError(msg.format(', '.join(str(x) for x in xs_flat
-                                          if not hasattr(x, 'shape'))))
+    raise ValueError(
+      msg.format(', '.join(str(x) for x in xs_flat
+                           if not hasattr(x, 'shape')))) from err
 
   if length is not None:
     length = int(length)
@@ -944,6 +950,11 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   const_avals_1 = [raise_to_shaped(core.get_aval(c)) for c in consts_1]
   in_avals_1 = [core.abstract_unit] * num_consts + jaxpr_1.in_avals[num_consts:]
   out_avals_1 = [core.abstract_unit if pv is None else pv for pv, c in out_pvals_1]
+
+  # TODO(cjfj): Explain the need for the code below.
+  for var in untyped_jaxpr_1.invars[:num_consts]:
+    var.aval = core.abstract_unit
+
   jaxpr_1_opt = pe.TypedJaxpr(pe.convert_constvars_jaxpr(untyped_jaxpr_1),
                               (), const_avals_1 + in_avals_1, out_avals_1)
   num_consts_1 = num_consts + len(consts_1)
@@ -1011,8 +1022,8 @@ def _scan_transpose(cts, *args, forward, length, num_consts, num_carry, jaxpr, l
   consts, _, xs = split_list(args, [num_consts, num_carry])
   ires, _ = split_list(consts, [num_ires])
   _, eres = split_list(xs, [sum(xs_lin)])
-  assert not any(r is ad.undefined_primal for r in ires)
-  assert not any(r is ad.undefined_primal for r in eres)
+  assert not any(ad.is_undefined_primal(r) for r in ires)
+  assert not any(ad.is_undefined_primal(r) for r in eres)
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
@@ -1049,7 +1060,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
   def transposed(*res1_cbar_bbar_res2):
     res1, c_bar, b_bar, res2 = split_list(
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
-    primals = res1 + [ad.undefined_primal] * (num_c + num_a) + res2
+    primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
+               [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
     cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, primals,
                                     b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
@@ -1059,7 +1071,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
     return c_bar + a_bar
   return _make_typed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
-def _make_typed_jaxpr(traceable, in_avals):
+def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_avals, _ = unzip2(pvals_out)
@@ -1208,8 +1220,7 @@ def map(f, xs):
   return ys
 
 
-def _concat_masking_rule(padded_vals, logical_shapes, dimension, operand_shapes):
-  del operand_shapes  # Unused.
+def _concat_masking_rule(padded_vals, logical_shapes, dimension):
   result = lax.concatenate(padded_vals, dimension)  # fragmented
   offset = 0
   for padded_val, logical_shape in zip(padded_vals, logical_shapes):
@@ -1566,7 +1577,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
                     'differentiation of custom_linear_solve')
 
   params, b = _split_linear_solve_args(primals, const_lengths)
-  assert b == [ad.undefined_primal] * len(b)
+  assert all(ad.is_undefined_primal(x) for x in b)
   cotangent_b = linear_solve_p.bind(
       *(_flatten(params.transpose()) + cotangent),
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose(),

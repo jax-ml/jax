@@ -13,10 +13,9 @@
 # limitations under the License.
 
 
-from collections import namedtuple, defaultdict
+from collections import defaultdict
 import itertools as it
 import operator as op
-import os
 
 from absl import logging
 import numpy as onp
@@ -24,14 +23,13 @@ import numpy as onp
 from ..config import flags, bool_env
 from .. import core
 from .. import ad_util
-from .. import tree_util
 from .. import dtypes
 from .. import lazy
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
                                abstract_token)
-from ..core import valid_jaxtype, Literal, pp_eqn_compact
+from ..core import Literal, pp_eqn_compact
 from ..pprint_util import pp
 from ..util import (partial, partialmethod, cache, safe_map, prod, unzip2,
                     memoize, extend_name_stack, wrap_name)
@@ -60,8 +58,9 @@ xb.register_constant_handler(core.Unit, lambda c, *_: c.Tuple())
 def aval_to_xla_shape(aval):
   try:
     return xla_shape_handlers[type(aval)](aval)
-  except KeyError:
-    raise TypeError("No xla_shape_handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No xla_shape_handler for type: {}".format(type(aval))
+                    ) from err
 xla_shape_handlers = {}
 xla_shape_handlers[core.AbstractUnit] = lambda _: xc.Shape.tuple_shape(())
 xla_shape_handlers[ShapedArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
@@ -70,8 +69,9 @@ xla_shape_handlers[ConcreteArray] = lambda a: xc.Shape.array_shape(a.dtype, a.sh
 def aval_to_result_handler(device, aval):
   try:
     return xla_result_handlers[type(aval)](device, aval)
-  except KeyError:
-    raise TypeError("No xla_result_handler for type: {}".format(type(aval)))
+  except KeyError as err:
+    raise TypeError("No xla_result_handler for type: {}".format(type(aval))
+                    ) from err
 xla_result_handlers = {}
 xla_result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
 def array_result_handler(device, aval):
@@ -83,8 +83,9 @@ def device_put(x, device=None):
   x = canonicalize_dtype(x)
   try:
     return device_put_handlers[type(x)](x, device)
-  except KeyError:
-    raise TypeError("No device_put handler for type: {}".format(type(x)))
+  except KeyError as err:
+    raise TypeError("No device_put handler for type: {}".format(type(x))
+                    ) from err
 
 device_put_handlers = {}
 device_put_handlers[core.Unit] = \
@@ -201,9 +202,9 @@ def _device_from_arg_devices(devices):
   try:
     device, = set(d for d in devices if d is not None) or (None,)
     return device
-  except ValueError:
+  except ValueError as err:
     msg = "primitive arguments must be colocated on the same device, got {}"
-    raise ValueError(msg.format(", ".join(map(str, devices))))
+    raise ValueError(msg.format(", ".join(map(str, devices)))) from err
 
 @cache()
 def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params):
@@ -232,7 +233,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     msg = (" ".join(map(str, e.args)) + "\n"
            "This is a bug in JAX's shape-checking rules; please report it!\n"
            "https://github.com/google/jax/issues\n")
-    raise RuntimeError(msg)
+    raise RuntimeError(msg) from e
 
 def primitive_subcomputation(prim, *avals, **params):
   return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
@@ -256,7 +257,7 @@ def _execute_replicated_primitive(prim, compiled, backend, tuple_args,
   if tuple_args:
     input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
                   zip(input_bufs, compiled.local_devices())]
-  out_buf = compiled.ExecutePerReplica(input_bufs)[0]
+  out_buf = compiled.ExecuteOnLocalDevices(input_bufs)[0]
   return result_handler(out_buf)
 
 def check_nans(prim, bufs):
@@ -329,7 +330,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
       replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
       new_params = {k: v for k, v in eqn.params.items() if k != 'axis_name'}
       rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
+      ans = rule(c, *in_nodes, replica_groups=replica_groups, platform=platform,
+                 **new_params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = call_translations[eqn.primitive]
@@ -443,7 +445,7 @@ def jaxpr_collectives(jaxpr):
 
 ### xla_call underlying jit
 
-def _xla_call_impl(fun, *args, device, backend, name):
+def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name):
   compiled_fun = _xla_callable(fun, device, backend, name, *map(arg_spec, args))
   try:
     return compiled_fun(*args)
@@ -453,17 +455,16 @@ def _xla_call_impl(fun, *args, device, backend, name):
     return fun.call_wrapped(*args)  # probably won't return
 
 @lu.cache
-def _xla_callable(fun, device, backend, name, *arg_specs):
+def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = unzip2(arg_specs)
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
-  with core.new_master(pe.StagingJaxprTrace, True) as master:
-    jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
-    assert not env  # no subtraces here
-    del master, env
+  jaxpr, pvals, consts = pe.trace_to_jaxpr(
+      fun, pvals, instantiate=False, stage_out_calls=True, bottom=True)
+
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
 
   nreps = jaxpr_replicas(jaxpr)
@@ -565,7 +566,7 @@ def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
   if tuple_args:
     input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
                   zip(input_bufs, compiled.local_devices())]
-  out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
+  out_bufs = compiled.ExecuteOnLocalDevices(input_bufs)[0].destructure()
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
@@ -810,8 +811,8 @@ class DeviceArray(DeviceValue):
   def __len__(self):
     try:
       return self.aval.shape[0]
-    except IndexError:
-      raise TypeError("len() of unsized object")  # same as numpy error
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err # same as numpy error
 
   def __iter__(self):
     if self.ndim == 0:
@@ -955,9 +956,9 @@ def _device_put_impl(x, device=None):
 
   try:
     a = abstractify(x)
-  except TypeError:
+  except TypeError as err:
     raise TypeError("Argument '{}' of type {} is not a valid JAX type"
-                    .format(x, type(x)))
+                    .format(x, type(x))) from err
   handler = aval_to_result_handler(device, a)
   return handler(device_put(x, device))
 
@@ -972,28 +973,38 @@ masking.defvectorized(device_put_p)
 def _remat_translation_rule(c, axis_env, in_nodes,
                             name_stack, backend, name, call_jaxpr,
                             device=None, concrete=None):
-  # This looks a lot like _xla_call_translation_rule, except for a widget we use
-  # to foil CSE.
+  """Lower remat to a Conditional which always returns true. This:
+    1. Circumvents common subexpression elimination.
+    2. In common case of `jax.grad(jax.remat(f))`, ensures the remat blocks
+       occur after the primal blocks, because cotangent is an input to the
+       Conditional."""
   del device, concrete  # Unused.
-  subc = xb.make_computation_builder("remat_call_subcomputation")
-  args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  args = [_foil_cse(subc, x) for x in args]
-  out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
-  subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(in_nodes))
-call_translations[pe.remat_call_p] = _remat_translation_rule
+  # Fake condition which always selects True branch.
+  rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
+                     c.Constant(onp.array(1, dtype=onp.float32)),
+                     [])
+  pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
 
-def _foil_cse(c, x):
-  xla_shape = c.GetShape(x)
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
-    return x
-  else:
-    rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
-                       c.Constant(onp.array(1, dtype=onp.float32)),
-                       [])
-    pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
+  true_op = c.Tuple(*in_nodes)
+  remat_subc = xb.make_computation_builder("remat_call_subcomputation")
+  input_op = remat_subc.ParameterWithShape(c.GetShape(true_op), replicated=[])
+  args = [remat_subc.GetTupleElement(input_op, i) for i in range(len(in_nodes))]
+  out_nodes = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (),
+                            extend_name_stack(name_stack, wrap_name(name, 'remat')),
+                            *args)
+  out_node_shapes = [remat_subc.GetShape(o) for o in out_nodes]
+  remat_subc = remat_subc.Build(remat_subc.Tuple(*out_nodes))
+
+  false_op = true_op
+  dummy_subc = xb.make_computation_builder("remat_call_dummy_subcomputation")
+  dummy_subc.ParameterWithShape(c.GetShape(false_op), replicated=[])
+
+  def zeros(xla_shape):
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-    zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
-    return c.Select(pred, x, zero)
+    zero = dummy_subc.Constant(onp.array(0, dtype=dtype))
+    return dummy_subc.Broadcast(zero, shape)
+  out_nodes = [zeros(s) for s in out_node_shapes]
+  dummy_subc = dummy_subc.Build(dummy_subc.Tuple(*out_nodes))
+
+  return c.Conditional(pred, true_op, remat_subc, false_op, dummy_subc)
+call_translations[pe.remat_call_p] = _remat_translation_rule

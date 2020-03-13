@@ -19,13 +19,15 @@ Building or installing ``jaxlib``
 Installing ``jaxlib`` with pip
 ..............................
 
-If you're only modifying Python portions of JAX, you may be able to install
-``jaxlib`` from pip (or a prebuilt wheel). You can install with pip by running:
+If you're only modifying Python portions of JAX, we recommend installing
+``jaxlib`` from a prebuilt wheel using pip:
 
 .. code-block:: shell
 
  pip install jaxlib
 
+See the `JAX readme <https://github.com/google/jax#installation>`_ for full
+guidance on pip installation (e.g., for GPU support).
 
 Building ``jaxlib`` from source
 ...............................
@@ -140,8 +142,9 @@ To rebuild the documentation, install several packages:
   pip install -r docs/requirements.txt
 
 You must also install ``pandoc`` in order to regenerate the notebooks.
-See `Install Pandoc <https://pandoc.org/installing.html>`_. On Mac, I had success with
-the miniconda installer, then ``conda install -c conda-forge pandoc``.
+See `Install Pandoc<https://pandoc.org/installing.html>`_,
+or using `Miniconda<https://docs.conda.io/en/latest/miniconda.html>`_ which
+I have used successfully on the Mac: ``conda install -c conda-forge pandoc``.
 If you do not want to install ``pandoc`` then you should regenerate the documentation
 without the notebooks.
 
@@ -162,6 +165,16 @@ Open the notebook with http://colab.research.google.com (then `Upload` from your
 local repo), update it as needed, ``Run all cells`` then
 ``Download ipynb``. You may want to test that it executes properly, using ``sphinx-build`` as
 explained above.
+
+Some of the notebooks are built automatically as part of the Travis pre-submit checks and
+as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
+The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
+or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/google/jax/pull/2402/files)).
+You have to add this metadata by hand in the `.ipynb` file. It will be preserved when somebody else
+re-saves the notebook.
+
+We exclude some notebooks from the build, e.g., because they contain long computations.
+See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/master/docs/conf.py).
 
 Documentation building on readthedocs.io
 ----------------------------------------
