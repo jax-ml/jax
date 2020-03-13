@@ -14,7 +14,6 @@
 # limitations under the License.
 
 
-from functools import partial
 import numpy as onp
 
 from jax.numpy import lax_numpy as np

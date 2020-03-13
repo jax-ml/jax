@@ -15,7 +15,10 @@
 
 from .core import lattice_join, Primitive, Unit, unit, AbstractUnit
 from .tree_util import register_pytree_node
+from typing import Any, Dict
 from .util import safe_map
+
+Array = Any
 
 map = safe_map
 
@@ -35,12 +38,12 @@ def add_impl(xs, ys):
 def add_abstract(xs, ys):
   return lattice_join(xs, ys)
 
-jaxval_zeros_likers = {}
+jaxval_zeros_likers: Dict[type, Array] = {}
 
 def zeros_like_aval(aval):
   return aval_zeros_likers[type(aval)](aval)
 
-aval_zeros_likers = {}
+aval_zeros_likers: Dict[type, Array] = {}
 aval_zeros_likers[AbstractUnit] = lambda _: unit
 
 def zeros_like_jaxval(val):

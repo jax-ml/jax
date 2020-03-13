@@ -17,6 +17,7 @@ import itertools as it
 from collections import namedtuple
 import contextlib
 import threading
+from typing import Callable, Dict, Set
 from weakref import ref
 
 import numpy as onp
@@ -248,9 +249,9 @@ def _unmapped_aval(size, aval):
   else:
     raise TypeError(aval)
 
-map_primitives = set()
-custom_partial_eval_rules = {}
-call_partial_eval_rules = {}
+map_primitives: Set[core.Primitive] = set()
+custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
+call_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 
 
 def partial_eval(f, trace, pvs):

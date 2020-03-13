@@ -22,6 +22,7 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
+from typing import Callable, Dict
 import warnings
 
 from absl import logging
@@ -329,7 +330,7 @@ def make_computation_builder(name):
 
 def register_constant_handler(type_, handler_fun):
   _constant_handlers[type_] = handler_fun
-_constant_handlers = {}
+_constant_handlers: Dict[type, Callable] = {}
 
 
 def _ndarray_constant_handler(c, val, canonicalize_types=True):

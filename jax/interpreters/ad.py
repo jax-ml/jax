@@ -15,7 +15,7 @@
 
 import functools
 import itertools as it
-from typing import Any
+from typing import Any, Callable, Dict
 
 from . import partial_eval as pe
 from .. import core as core
@@ -159,7 +159,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
     if not is_undefined_primal(val):
       primal_env[v] = val
 
-  primal_env = {}
+  primal_env: Dict[Any, Any] = {}
   write_primal(core.unitvar, core.unit)
   map(write_primal, jaxpr.constvars, consts)
   map(write_primal, jaxpr.invars, args)
@@ -191,7 +191,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
                                      map(read_primal, eqn.invars), params)
         map(write_primal, eqn.outvars, ans)
 
-  ct_env = {}
+  ct_env: Dict[Any, Any] = {}
   map(write_cotangent, jaxpr.outvars, cotangents_in)
   for eqn in linear_eqns[::-1]:
     invals = map(read_primal, eqn.invars)
@@ -371,10 +371,9 @@ def _primal_tangent_shapes_match(primal, tangent):
 # -------------------- Primitives --------------------
 
 
-primitive_jvps = {}
-composite_jvps = {}
+primitive_jvps: Dict[core.Primitive, Callable] = {}
 
-primitive_transposes = {}
+primitive_transposes: Dict[core.Primitive, Callable] = {}
 
 
 def deflinear(primitive, transpose_rule):

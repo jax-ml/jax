@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
 import numpy as onp
 
@@ -60,8 +61,8 @@ not_mapped = None
 class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim']
 
-  def __init__(self, trace, val, batch_dim):
-    assert core.skip_checks or type(batch_dim) in (int, NotMapped)
+  def __init__(self, trace, val, batch_dim: Optional[int]):
+    assert core.skip_checks or type(batch_dim) in (int, NotMapped)  # type: ignore
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -150,7 +151,8 @@ class BatchTrace(Trace):
 
 ### primitives
 
-primitive_batchers = {}
+BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
+primitive_batchers: Dict[core.Primitive, BatchingRule] = {}
 
 def get_primitive_batcher(p):
   try:

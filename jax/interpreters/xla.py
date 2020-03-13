@@ -16,6 +16,7 @@
 from collections import defaultdict
 import itertools as it
 import operator as op
+from typing import Any, Callable, Dict, Type
 
 from absl import logging
 import numpy as onp
@@ -69,7 +70,7 @@ def aval_to_xla_shape(aval):
   except KeyError as err:
     raise TypeError("No xla_shape_handler for type: {}".format(type(aval))
                     ) from err
-xla_shape_handlers = {}
+xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {}
 xla_shape_handlers[core.AbstractUnit] = _make_abstract_unit
 xla_shape_handlers[ShapedArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
 xla_shape_handlers[ConcreteArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
@@ -80,7 +81,7 @@ def aval_to_result_handler(device, aval):
   except KeyError as err:
     raise TypeError("No xla_result_handler for type: {}".format(type(aval))
                     ) from err
-xla_result_handlers = {}
+xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {}
 xla_result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
 def array_result_handler(device, aval):
   return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
@@ -95,7 +96,7 @@ def device_put(x, device=None):
     raise TypeError("No device_put handler for type: {}".format(type(x))
                     ) from err
 
-device_put_handlers = {}
+device_put_handlers: Dict[Any, Callable] = {}
 device_put_handlers[core.Unit] = _device_put_unit
 def _device_put_array(x, device):
   return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
@@ -118,7 +119,7 @@ def canonicalize_dtype(x):
     if handler: return handler(x)
   raise TypeError("No canonicalize_dtype handler for type: {}".format(type(x)))
 
-canonicalize_dtype_handlers = {}
+canonicalize_dtype_handlers: Dict[Any, Callable] = {}
 canonicalize_dtype_handlers[core.Unit] = identity
 def _canonicalize_ndarray_dtype(x):
   return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
@@ -139,7 +140,7 @@ def abstractify(x):
     if aval_fn: return aval_fn(x)
   raise TypeError("No abstraction handler for type: {}".format(type(x)))
 
-pytype_aval_mappings = {}
+pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
 pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
 for _t in array_types:
   pytype_aval_mappings[_t] = make_shaped_array
@@ -571,7 +572,7 @@ def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
 def _execute_trivial(jaxpr, device, consts, handlers, *args):
-  env = {core.unitvar : core.unit}
+  env = {core.unitvar: core.unit}
   _map(env.setdefault, jaxpr.invars, args)
   _map(env.setdefault, jaxpr.constvars, consts)
   outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
@@ -614,11 +615,11 @@ ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 ### translation tables
 
-translations = {}
-parallel_translations = {}
-initial_style_translations = {}
-call_translations = {}
-backend_specific_translations = defaultdict(dict)
+translations: Dict[core.Primitive, Callable] = {}
+parallel_translations: Dict[core.Primitive, Callable] = {}
+initial_style_translations: Dict[core.Primitive, Callable] = {}
+call_translations: Dict[core.Primitive, Callable] = {}
+backend_specific_translations: Dict[str, Dict[core.Primitive, Callable]] = defaultdict(dict)
 
 translations[core.identity_p] = lambda c, x: x
 call_translations[xla_call_p] = _xla_call_translation_rule
@@ -922,7 +923,8 @@ def _force(x):
     return force_fun(x)
 
 @cache()
-def _lazy_force_computation(sticky, aval, device, lexpr):
+def _lazy_force_computation(sticky, aval, device, lexpr
+                            ) -> Callable[[DeviceValue], DeviceArray]:
   c = xb.make_computation_builder("lazy_force")
   if lazy.is_constant(lexpr):
     param = None
@@ -945,6 +947,7 @@ def _lazy_force_computation(sticky, aval, device, lexpr):
 
   result_device = device if sticky else None
   handler = partial(DeviceArray, aval, result_device, lazy.array(aval.shape))
+  force_fun: Callable[[DeviceValue], DeviceArray]
   if lazy.is_constant(lexpr):
     def force_fun(_):
       return handler(compiled.Execute([], tuple_arguments=False)[0])

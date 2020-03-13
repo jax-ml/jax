@@ -22,6 +22,7 @@ import itertools as it
 from weakref import ref
 import threading
 import types
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Set
 
 import numpy as onp
 
@@ -110,8 +111,10 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 
 
 
-JaxprEqn = namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive', 'params'])
-JaxprEqn.__repr__ = JaxprEqn.__str__ = lambda eqn: str(pp_eqn(eqn)).rstrip()
+class JaxprEqn(namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive', 'params'])):
+  def __repr__(self): return str(pp_eqn(eqn)).rstrip()
+  def __str__(self): return str(pp_eqn(eqn)).rstrip()
+
 new_jaxpr_eqn = JaxprEqn
 
 
@@ -175,7 +178,7 @@ class Literal(object):
     else:
       return '{}'.format(self.val)
 
-literalable_types = set()
+literalable_types: Set[type] = set()
 
 class Primitive(object):
   multiple_results = False  # override for multi-output primitives
@@ -552,7 +555,7 @@ def new_sublevel():
 
 
 class AbstractValue(object):
-  __slots__ = []
+  __slots__: List[str] = []
 
   def at_least_vspace(self):
     assert False
@@ -613,7 +616,7 @@ def get_aval(x):
     return concrete_aval(x)
 
 
-pytype_aval_mappings = {}
+pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
 
 class Unit(object):
@@ -712,6 +715,11 @@ class ShapedArray(UnshapedArray):
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
+
+  broadcast: ClassVar[Optional[aval_method]] = None
+  transpose: ClassVar[Optional[aval_method]] = None
+  reshape: ClassVar[Optional[aval_method]] = None
+  _iter: ClassVar[Optional[staticmethod]] = None
 
   def __eq__(self, other):
     return (type(self) is type(other)
@@ -822,7 +830,7 @@ def raise_to_shaped(aval, weak_type=False):
     raise TypeError(type(aval))
 
 # Registry for valid dimension types. This is used by masking.Poly.
-_DIMENSION_TYPES = {int}
+_DIMENSION_TYPES: Set[type] = {int}
 
 def _canonicalize_dimension(dim):
   if type(dim) in _DIMENSION_TYPES:

@@ -20,7 +20,7 @@ import functools
 import itertools
 import operator
 import string
-from typing import Any
+from typing import Any, Callable
 import warnings
 
 import numpy as onp
@@ -4456,15 +4456,18 @@ def _const(example, val):
     return dtypes.scalar_type_of(example)(val)
   return onp.array(val, _dtype(example))
 
-_zeros = partial(full_like, fill_value=0)
-_zero = partial(full_like, shape=(), fill_value=0)
-_ones = partial(full_like, fill_value=1)
-_one = partial(full_like, shape=(), fill_value=1)
-_twos = partial(full_like, fill_value=2)
-_two = partial(full_like, shape=(), fill_value=2)
+_zeros: Callable = partial(full_like, fill_value=0)
+_zero: Callable = partial(full_like, shape=(), fill_value=0)
+_ones: Callable = partial(full_like, fill_value=1)
+_one: Callable = partial(full_like, shape=(), fill_value=1)
+_twos: Callable = partial(full_like, fill_value=2)
+_two: Callable = partial(full_like, shape=(), fill_value=2)
 
-_dtype = dtype = dtypes.result_type
-_iscomplex = lambda x: dtypes.issubdtype(_dtype(x), onp.complexfloating)
+dtype: Callable = dtypes.result_type
+_dtype: Callable = dtypes.result_type
+
+def _iscomplex(x) -> bool:
+  return dtypes.issubdtype(_dtype(x), onp.complexfloating)
 
 
 def ranges_like(*xs):
