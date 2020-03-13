@@ -94,6 +94,13 @@ def _fori_body_fun(body_fun):
     return lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)
   return while_body_fun
 
+@cache()
+def _fori_scan_body_fun(body_fun):
+  def scanned_fun(loop_carry, _):
+    i, upper, x = loop_carry
+    return (lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)), None
+  return scanned_fun
+
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to ``while_loop``.
 
@@ -131,15 +138,31 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type ``a``.
   """
-  # TODO: perhaps do more type checking here, for better error messages.
+  # TODO(phawkins): perhaps do more type checking here, better error messages.
   lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
   upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
   if lower_dtype != upper_dtype:
     msg = ("lower and upper arguments to fori_loop must have equal types, "
            "got {} and {}")
     raise TypeError(msg.format(lower_dtype.name, upper_dtype.name))
-  _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
-                            (lower, upper, init_val))
+
+  # If we can specialize on the trip count, call scan instead of a while_loop
+  # to enable efficient reverse-mode differentiation.
+  try:
+    lower_ = int(lower)
+    upper_ = int(upper)
+  except TypeError:
+    use_scan = False
+  else:
+    use_scan = True
+
+  if use_scan:
+    (_, _, result), _ = scan(_fori_scan_body_fun(body_fun),
+                             (lower, upper, init_val), None,
+                             length=upper_ - lower_)
+  else:
+    _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
+                              (lower, upper, init_val))
   return result
 
 
@@ -815,17 +838,26 @@ def _scan_impl(*args, forward, length, num_consts, num_carry, jaxpr, linear):
   _, _, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
 
-  def body_fun(i, vals):
-    i = i if forward else length - i - 1
-    carry, ys = split_list(vals, [num_carry])
-    x = _map(partial(_index_array, i), x_avals, xs)
+  def cond_fun(vals):
+    i, *_ = vals
+    return i < length
+
+  def body_fun(vals):
+    [i], carry, ys = split_list(vals, [1, num_carry])
+    i_ = i if forward else length - i - 1
+    x = _map(partial(_index_array, i_), x_avals, xs)
     out_flat = core.jaxpr_as_fun(jaxpr)(*(consts + carry + x))
     carry_out, y_updates = split_list(out_flat, [num_carry])
-    ys_out = _map(partial(_update_array, i), y_avals, ys, y_updates)
-    return carry_out + ys_out
+    ys_out = _map(partial(_update_array, i_), y_avals, ys, y_updates)
+    return [i + 1] + carry_out + ys_out
 
   ys_init = _map(partial(_empty_array, length), y_avals)
-  return fori_loop(lax._const(length, 0), length, body_fun, init + ys_init)
+  if length == 0:
+    return init + ys_init
+  else:
+    init_val = [lax._const(length, 0)] + init + ys_init
+    _, *outs = while_loop(cond_fun, body_fun, init_val)
+    return outs
 
 def _index_array(i, aval, x):
   if aval is core.abstract_unit:
@@ -845,12 +877,11 @@ def _update_array(i, aval, xs, x):
   else:
     return lax.dynamic_update_index_in_dim(xs, x, i, 0)
 
-# TODO(mattjj): make scan a primitive
-# def _scan_abstract_eval(*args, forward, length, num_consts, num_carry, jaxpr, linear):
-#   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-#   ys_avals = [ShapedArray((length,) + aval.shape, aval.dtype)
-#               if aval is not core.abstract_unit else aval for aval in y_avals]
-#   return carry_avals + y_avals
+def _scan_abstract_eval(*args, forward, length, num_consts, num_carry, jaxpr, linear):
+  carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  ys_avals = [ShapedArray((length,) + aval.shape, aval.dtype)
+              if aval is not core.abstract_unit else aval for aval in y_avals]
+  return carry_avals + ys_avals
 
 def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
               linear):
@@ -1141,7 +1172,7 @@ def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,
       *itertools.chain([dynamic_length] + consts, [0], init, xs),
       forward=forward, length=max_length, jaxpr=masked_jaxpr,
       num_consts=1 + num_consts, num_carry=1 + num_carry,
-      linear=[False] + const_linear + [False] + init_linear + xs_linear)
+      linear=tuple([False] + const_linear + [False] + init_linear + xs_linear))
   return out_vals[1:], out_shape
 
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
@@ -1180,7 +1211,8 @@ def scan_bind(*args, forward, length, num_consts, num_carry, jaxpr, linear):
 scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
 scan_p.def_custom_bind(scan_bind)
-scan_p.def_impl(_scan_impl)
+scan_p.def_impl(partial(xla.apply_primitive, scan_p))
+scan_p.def_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
