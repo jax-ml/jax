@@ -1894,8 +1894,7 @@ class JaxprTest(jtu.JaxTestCase):
   let c = sin b
       d = mul c 3.0
       e = add a d
-      f = reduce_sum[ axes=(0,)
-                      input_shape=(8,) ] e
+      f = reduce_sum[ axes=(0,) ] e
   in f }
         """, str(jaxpr))
 
