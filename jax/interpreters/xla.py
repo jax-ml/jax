@@ -651,7 +651,13 @@ def add_jaxvals_translation_rule(c, x, y):
 translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 
 def lower_fun(fun):
-  """Build a translation rule for a traceable function."""
+  # This function can only be used to lower functions that take JAX array types
+  # as arguments (and e.g. don't accept unit values), because it assumes it can
+  # map from XLA types to JAX types. In general that mapping is not possible (as
+  # the mapping from JAX types to XLA types is not invertible), but for now at
+  # least we assume that the mapping from JAX *array* types to XLA array types
+  # is invertible. This assumption is unchecked!
+  # TODO(mattjj): remove assumption can map XLA array types to JAX array types
   def f(c, *xla_args, **params):
     # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.GetShape(x)) for x in xla_args]
@@ -664,6 +670,9 @@ def lower_fun(fun):
   return f
 
 def _array_aval_from_xla_shape(xla_shape):
+  # This function instantiates the assumption that we can map fro XLA array
+  # types to JAX array types.
+  # TODO(mattjj): remove assumption can map XLA array types to JAX array types
   assert not xla_shape.is_tuple()
   return ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
 
