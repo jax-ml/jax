@@ -1559,7 +1559,7 @@ def custom_transforms(fun):
   fun_p.def_abstract_eval(fun_abstract_eval)
 
   def fun_translation(c, *xla_args, **params):
-    return xla.lower_fun(fun_impl, True)(c, *xla_args, **params)
+    return xla.lower_fun(fun_impl)(c, *xla_args, **params)
   xla.translations[fun_p] = fun_translation
 
   return CustomTransformsFunction(fun, fun_p)
