@@ -647,8 +647,7 @@ xla_pmap_p.def_impl(xla_pmap_impl)
 def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name,
-                           call_jaxpr, backend=None,
-                           mapped_invars=None):
+                           call_jaxpr, *, backend=None, mapped_invars):
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
@@ -657,45 +656,48 @@ def _pmap_translation_rule(c, axis_env,
     global_axis_size = axis_size
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
   # Shard the in_nodes that are mapped
+  in_avals = [v.aval for v in call_jaxpr.invars]
   in_nodes_sharded = (
-    _xla_shard(c, new_env, in_node) if in_node_mapped else in_node
-    for in_node, in_node_mapped in zip(in_nodes, mapped_invars))
+    _xla_shard(c, aval, new_env, in_node) if in_node_mapped else in_node
+    for aval, in_node, in_node_mapped in zip(in_avals, in_nodes, mapped_invars))
 
   sharded_outs = xla.jaxpr_subcomp(
       c, call_jaxpr, backend, new_env, (),
       extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
-  outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
+  out_avals = [v.aval for v in call_jaxpr.outvars]
+  outs = [_xla_unshard(c, aval, new_env, shard)
+          for aval, shard in zip(out_avals, sharded_outs)]
   return c.Tuple(*outs)
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
 
-def _xla_shard(c, axis_env, x):
-  xla_shape = c.GetShape(x)
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
+def _xla_shard(c, aval, axis_env, x):
+  if aval is core.abstract_unit:
     return x
-  else:
-    dims = list(xla_shape.dimensions())
+  elif isinstance(aval, ShapedArray):
+    dims = list(c.GetShape(x).dimensions())
     zero = c.Constant(onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
     return c.Reshape(c.DynamicSlice(x, idxs, [1] + dims[1:]), None, dims[1:])
+  else:
+    raise TypeError((aval, c.GetShape(x)))
 
 # TODO(b/110096942): more efficient gather
-def _xla_unshard(c, axis_env, x):
-  xla_shape = c.GetShape(x)
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
+def _xla_unshard(c, aval, axis_env, x):
+  if aval is core.abstract_unit:
     return x
-  else:
-    dims = list(xla_shape.dimensions())
-    padded = c.Broadcast(c.Constant(onp.array(0, xla_shape.numpy_dtype())),
-                         [axis_env.sizes[-1]] + dims)
+  elif isinstance(aval, ShapedArray):
+    dims = list(c.GetShape(x).dimensions())
+    padded = c.Broadcast(c.Constant(onp.array(0, aval.dtype)),
+                          [axis_env.sizes[-1]] + dims)
     zero = c.Constant(onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
     padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims), idxs)
     return c.CrossReplicaSum(padded, xla.axis_groups(axis_env, axis_env.names[-1]))
+  else:
+    raise TypeError((aval, c.GetShape(x)))
 
 def _unravel_index(c, axis_env):
   div = c.Constant(onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))

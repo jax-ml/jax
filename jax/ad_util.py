@@ -29,7 +29,6 @@ add_jaxvals_p = Primitive('add_any')
 
 @add_jaxvals_p.def_impl
 def add_impl(xs, ys):
-  # assert type(xs) == type(ys), (xs, ys)
   return jaxval_adders[type(xs)](xs, ys)
 
 @add_jaxvals_p.def_abstract_eval

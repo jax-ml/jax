@@ -212,10 +212,8 @@ def while_loop(cond_fun, body_fun, init_val):
 def _while_loop_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
-def _while_loop_translation_rule(c, axis_env, name_stack, *args, **kwargs):
-  backend = kwargs.pop('backend')
-  cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
-      kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
+def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
+                                 cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
   cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
   batched = bool(cond_jaxpr.out_avals[0].shape)
 
@@ -428,8 +426,8 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
-def _cond_translation_rule(c, axis_env, name_stack, pred, *args,
-                           true_jaxpr, false_jaxpr, linear, backend=None):
+def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
+                           pred, *args, true_jaxpr, false_jaxpr, linear):
   del linear  # Unused.
   true_ops, false_ops = split_list(args, [len(true_jaxpr.in_avals)])
 
@@ -1184,7 +1182,8 @@ scan_p.def_impl(_scan_impl)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-xla.initial_style_translations[scan_p] = xla.lower_fun(_scan_impl, initial_style=True)
+xla.initial_style_translations[scan_p] = \
+    xla.lower_fun_initial_style(_scan_impl)
 batching.primitive_batchers[scan_p] = _scan_batching_rule
 masking.shape_parameterized_primitive_rules[scan_p] = _scan_masking_rule
 
@@ -1392,8 +1391,7 @@ root_p.multiple_results = True
 root_p.def_impl(_root_impl)
 root_p.def_abstract_eval(_root_abstract_eval)
 ad.primitive_jvps[root_p] = _root_jvp
-xla.initial_style_translations[root_p] = xla.lower_fun(
-    _root_impl, initial_style=True)
+xla.initial_style_translations[root_p] = xla.lower_fun_initial_style(_root_impl)
 # TODO(shoyer): write batching rule
 
 
@@ -1664,7 +1662,7 @@ linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
-xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
-    _custom_linear_solve_impl, initial_style=True)
+xla.initial_style_translations[linear_solve_p] = \
+    xla.lower_fun_initial_style(_custom_linear_solve_impl)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
