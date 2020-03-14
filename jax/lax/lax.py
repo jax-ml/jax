@@ -1701,13 +1701,13 @@ ad.defjvp(atan2_p,
 sinh_p = standard_unop(_float | _complex, 'sinh')
 ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
 
-cosh_p = standard_unop(_float | _complex, 'sinh')
+cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
 ad.defjvp(asinh_p, lambda g, x: mul(g, 1 / sqrt(square(x) + 1)))
 
-acosh_p = standard_unop(_float | _complex, 'atanh')
+acosh_p = standard_unop(_float | _complex, 'acosh')
 ad.defjvp(acosh_p, lambda g, x: mul(g, 1 / sqrt((x - 1.) * (x + 1.))))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
