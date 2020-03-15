@@ -1093,9 +1093,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_input = jnp.ones((1))
     expected_onp_input_after_call = onp.ones((1))
     expected_jnp_input_after_call = jnp.ones((1))
-    
-    self.assertIs(type(jnp.concatenate([onp_input])), jnp.DeviceArray)
-    
+
+    self.assertIs(type(jnp.concatenate([onp_input])), xla.DeviceArray)
+
     attempt_sideeffect(onp_input)
     attempt_sideeffect(jnp_input)
 
@@ -2801,7 +2801,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "axis": axis,
          "dtype": dtype, "rng_factory": rng_factory}
         for shape in [(10,), (10, 15), (10, 15, 20)]
-        for _num_axes in range(len(shape)) 
+        for _num_axes in range(len(shape))
         for axis in itertools.combinations(range(len(shape)), _num_axes)
         for dtype in inexact_dtypes
         for rng_factory in [jtu.rand_default]))
