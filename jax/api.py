@@ -57,7 +57,6 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters import taylor
 from .interpreters.masking import shapecheck, ensure_poly
 from .config import flags, config, bool_env
 
@@ -2108,29 +2107,3 @@ def checkpoint(fun: Callable, concrete: bool = False):
     return tree_unflatten(out_tree(), out_flat)
   return fun_remat
 remat = checkpoint
-
-def jet(fun, primals, series):
-  try:
-    order, = set(map(len, series))
-  except ValueError:
-    msg = "jet terms have inconsistent lengths for different arguments"
-    raise ValueError(msg) from None
-
-  # TODO(mattjj): consider supporting pytree inputs
-  for i, (x, terms) in enumerate(zip(primals, series)):
-    treedef = tree_structure(x)
-    if not treedef_is_leaf(treedef):
-      raise ValueError("primal value at position {} is not an array".format(i))
-    for j, t in enumerate(terms):
-      treedef = tree_structure(t)
-      if not treedef_is_leaf(treedef):
-        raise ValueError("term {} for argument {} is not an array".format(j, i))
-
-  @lu.transformation_with_aux
-  def flatten_fun_output(*args):
-    ans = yield args, {}
-    yield tree_flatten(ans)
-
-  f, out_tree = flatten_fun_output(lu.wrap_init(fun))
-  out_primals, out_terms = taylor.jet(f).call_wrapped(primals, series)
-  return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)

@@ -27,8 +27,9 @@ from jax import test_util as jtu
 
 import jax.numpy as np
 from jax import random
-from jax import jet, jacobian, jit
+from jax import jacobian, jit
 from jax.experimental import stax
+from jax.experimental.jet import jet
 
 from jax.config import config
 config.parse_flags_with_absl()
