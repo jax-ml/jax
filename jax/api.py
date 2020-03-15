@@ -43,7 +43,7 @@ from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
-                        _replace_nones)
+                        treedef_is_leaf, _replace_nones)
 from .util import (unzip2, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
@@ -2110,6 +2110,27 @@ def checkpoint(fun: Callable, concrete: bool = False):
 remat = checkpoint
 
 def jet(fun, primals, series):
-  f = lu.wrap_init(fun)
-  out_primal, out_terms = taylor.jet(f).call_wrapped(primals, series)
-  return out_primal, out_terms
+  try:
+    order, = set(map(len, series))
+  except ValueError:
+    msg = "jet terms have inconsistent lengths for different arguments"
+    raise ValueError(msg) from None
+
+  # TODO(mattjj): consider supporting pytree inputs
+  for i, (x, terms) in enumerate(zip(primals, series)):
+    treedef = tree_structure(x)
+    if not treedef_is_leaf(treedef):
+      raise ValueError("primal value at position {} is not an array".format(i))
+    for j, t in enumerate(terms):
+      treedef = tree_structure(t)
+      if not treedef_is_leaf(treedef):
+        raise ValueError("term {} for argument {} is not an array".format(j, i))
+
+  @lu.transformation_with_aux
+  def flatten_fun_output(*args):
+    ans = yield args, {}
+    yield tree_flatten(ans)
+
+  f, out_tree = flatten_fun_output(lu.wrap_init(fun))
+  out_primals, out_terms = taylor.jet(f).call_wrapped(primals, series)
+  return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)

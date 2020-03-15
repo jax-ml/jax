@@ -15,9 +15,9 @@ def jet(primals, series):
     trace = JetTrace(master, core.cur_sublevel())
     in_tracers = map(partial(JetTracer, trace), primals, series)
     ans = yield in_tracers, {}
-    out_tracer = trace.full_raise(ans)  # TODO multiple outputs
-    out_primal, series_out = out_tracer.primal, out_tracer.terms
-  yield out_primal, series_out
+    out_tracers = map(trace.full_raise, ans)
+    out_primals, out_terms = unzip2((t.primal, t.terms) for t in out_tracers)
+  yield out_primals, out_terms
 
 
 class JetTracer(core.Tracer):
@@ -34,7 +34,10 @@ class JetTracer(core.Tracer):
     return core.get_aval(self.primal)
 
   def full_lower(self):
-    return self  # TODO symbolic zeros
+    if self.terms is zero_series or all(t is zero_term for t in self.terms):
+      return core.full_lower(self.primal)
+    else:
+      return self
 
 class JetTrace(core.Trace):
 
@@ -52,6 +55,7 @@ class JetTrace(core.Trace):
     order, = {len(terms) for terms in series_in if terms is not zero_series}
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
+    # TODO(mattjj): avoid always instantiating zeros
     series_in = [[onp.zeros(onp.shape(x), dtype=onp.result_type(x))
                   if t is zero_term else t for t in series]
                  for x, series in zip(primals_in, series_in)]
