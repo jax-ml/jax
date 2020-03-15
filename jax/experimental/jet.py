@@ -17,7 +17,6 @@ from functools import partial
 from collections import Counter
 
 import numpy as onp
-from scipy.special import factorial as fact
 
 from jax import core
 from jax.util import unzip2, prod
@@ -139,6 +138,9 @@ def linear_prop(prim, primals_in, series_in, **params):
 ### rule definitions
 
 from jax.lax import lax
+
+def fact(n):
+  return lax.exp(lax.lgamma(n+1.))
 
 deflinear(lax.neg_p)
 deflinear(lax.real_p)
