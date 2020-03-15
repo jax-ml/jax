@@ -1684,7 +1684,7 @@ def _exp_taylor(primals_in, series_in):
     v[k] = fact(k-1) * sum([scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
   primal_out, *series_out = v
   return primal_out, series_out
-taylor.prop_rules[exp_p] = _exp_taylor
+taylor.jet_rules[exp_p] = _exp_taylor
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
@@ -1700,7 +1700,7 @@ def _log_taylor(primals_in, series_in):
     v[k] = (u[k] - fact(k - 1) * conv) / u[0]
   primal_out, *series_out = v
   return primal_out, series_out
-taylor.prop_rules[log_p] = _log_taylor
+taylor.jet_rules[log_p] = _log_taylor
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
@@ -1922,7 +1922,7 @@ def _div_taylor_rule(primals_in, series_in, **params):
   primal_out, *series_out = v
   return primal_out, series_out
 ad.primitive_transposes[div_p] = _div_transpose_rule
-taylor.prop_rules[div_p] = _div_taylor_rule
+taylor.jet_rules[div_p] = _div_taylor_rule
 
 rem_p = standard_naryop([_num, _num], 'rem')
 ad.defjvp(rem_p,
@@ -2384,9 +2384,9 @@ def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
     v[k] = fact(k) * sum([scale(k, j) * op(u[j], w[k-j]) for j in range(0, k+1)])
   primal_out, *series_out = v
   return primal_out, series_out
-taylor.prop_rules[dot_general_p] = partial(_bilinear_taylor_rule, dot_general_p)
-taylor.prop_rules[mul_p] = partial(_bilinear_taylor_rule, mul_p)
-taylor.prop_rules[conv_general_dilated_p] = partial(_bilinear_taylor_rule, conv_general_dilated_p)
+taylor.jet_rules[dot_general_p] = partial(_bilinear_taylor_rule, dot_general_p)
+taylor.jet_rules[mul_p] = partial(_bilinear_taylor_rule, mul_p)
+taylor.jet_rules[conv_general_dilated_p] = partial(_bilinear_taylor_rule, conv_general_dilated_p)
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -3205,7 +3205,7 @@ def _gather_taylor_rule(primals_in, series_in, **params):
   primal_out = gather_p.bind(operand, start_indices, **params)
   series_out = [gather_p.bind(g, start_indices, **params) for g in gs]
   return primal_out, series_out
-taylor.prop_rules[gather_p] = _gather_taylor_rule
+taylor.jet_rules[gather_p] = _gather_taylor_rule
 
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
@@ -3648,7 +3648,7 @@ def _reduce_max_taylor_rule(primals_in, series_in, **params):
     return div(_reduce_sum(mul(g, location_indicators), axes), counts)
   series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
   return primal_out, series_out
-taylor.prop_rules[reduce_max_p] = _reduce_max_taylor_rule
+taylor.jet_rules[reduce_max_p] = _reduce_max_taylor_rule
 
 batching.defreducer(reduce_max_p)
 

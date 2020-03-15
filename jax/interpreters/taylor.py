@@ -55,18 +55,18 @@ class JetTrace(core.Trace):
     series_in = [[onp.zeros(onp.shape(x), dtype=onp.result_type(x))
                   if t is zero_term else t for t in series]
                  for x, series in zip(primals_in, series_in)]
-    rule = prop_rules[primitive]
+    rule = jet_rules[primitive]
     primal_out, terms_out = rule(primals_in, series_in, **params)
     return JetTracer(self, primal_out, terms_out)
 
   def process_call(self, call_primitive, f, tracers, params):
-    assert False
+    assert False  # TODO
 
   def post_process_call(self, call_primitive, out_tracer, params):
-    assert False
+    assert False  # TODO
 
   def join(self, xt, yt):
-    assert False
+    assert False  # TODO?
 
 
 class ZeroTerm(object): pass
@@ -76,27 +76,10 @@ class ZeroSeries(object): pass
 zero_series = ZeroSeries()
 
 
-prop_rules = {}
-
-def tay_to_deriv_coeff(u_tay):
-  u_deriv = [ui * fact(i) for (i, ui) in enumerate(u_tay)]
-  return u_deriv
-
-def deriv_to_tay_coeff(u_deriv):
-  u_tay = [ui / fact(i) for (i, ui) in enumerate(u_deriv)]
-  return u_tay
-
-def taylor_tilde(u_tay):
-  u_tilde = [i * ui for (i, ui) in enumerate(u_tay)]
-  return u_tilde
-
-def taylor_untilde(u_tilde):
-  u_tay = [i * ui for (i, ui) in enumerate(u_tilde)]
-  return u_tay
-
+jet_rules = {}
 
 def deflinear(prim):
-  prop_rules[prim] = partial(linear_prop, prim)
+  jet_rules[prim] = partial(linear_prop, prim)
 
 def linear_prop(prim, primals_in, series_in, **params):
   primal_out = prim.bind(*primals_in, **params)
