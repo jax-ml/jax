@@ -274,7 +274,7 @@ def _constant_like(x, const):
   return onp.array(const, dtype=_dtype(x))
 
 
-def update_numpydoc(docstr, fun, op):
+def _update_numpydoc(docstr, fun, op):
   '''Transforms the numpy docstring to remove references of
      parameters that are supported by the numpy version but not the JAX version'''
 
@@ -339,7 +339,7 @@ def _wraps(fun, update_doc=True, lax_description=""):
           break
       body = "\n\n".join(signatures + sections[i + 1:])
       if update_doc:
-        body = update_numpydoc(body, fun, op)
+        body = _update_numpydoc(body, fun, op)
       desc = lax_description + "\n" if lax_description else ""
       docstr = (
           "{summary}\n\nLAX-backend implementation of :func:`{fun}`.\n"
@@ -3485,14 +3485,16 @@ def _astype(arr, dtype):
 def _not_implemented(fun):
   @_wraps(fun)
   def wrapped(*args, **kwargs):
-    msg = "Numpy function {} not yet implemented"
-    raise NotImplementedError(msg.format(fun))
+    msg = "Numpy function '{}' not yet implemented"
+    raise NotImplementedError(msg.format(fun.__name__))
   return wrapped
 
 # Build a set of all unimplemented NumPy functions.
+_unimplemented_numpy_fns = {}
 for func in get_module_functions(onp):
   if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
+    _unimplemented_numpy_fns[func.__name__] = _not_implemented(func)
+globals().update(_unimplemented_numpy_fns)
 
 
 ### add method and operator overloads to arraylike classes
