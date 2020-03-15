@@ -16,12 +16,14 @@ jax 0.1.60 (unreleased)
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...master>`_.
 * New features:
 
-  * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows the user to
-    specify arguments that should be treated as compile-time constants and
-    should be broadcasted to all devices. It works analogously to
+  * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows
+    the user to specify arguments that should be treated as compile-time
+    constants and should be broadcasted to all devices. It works analogously to
     ``static_argnums`` in :py:func:`jax.jit`.
   * Improved error messages for when tracers are mistakenly saved in global state.
   * Added :py:func:`jax.nn.one_hot` utility function.
+  * Added :py:module:`jax.experimental.jet` for exponentially faster
+    higher-order automatic differentiation.
 * The minimum jaxlib version is now 0.1.40.
 
 jaxlib 0.1.40 (March 4, 2020)
