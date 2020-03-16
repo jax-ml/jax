@@ -831,6 +831,17 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
+  def testBroadcastInDimShapeCheck(self):
+    rng = jtu.rand_default()
+    x = rng((6, 7), onp.float32)
+    def op(x):
+      lax.broadcast_in_dim(x, broadcast_dimensions=(1, 2), shape=(3, 4, 5))
+    self.assertRaisesRegex(
+      TypeError,
+      ("broadcast_in_dim operand dimension sizes must equal their "
+       "corresponding dimensions in the broadcasted-to shape;*"),
+      lambda: op(x))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
           jtu.format_shape_dtype_string(inshape, dtype),

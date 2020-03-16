@@ -2366,6 +2366,13 @@ def _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand.ndim, shape))
+  if any(operand.shape[i] != shape[broadcast_dimensions[i]]
+         for i in range(operand.ndim)):
+    msg = ('broadcast_in_dim operand dimension sizes must equal their '
+           'corresponding dimensions in the broadcasted-to shape; got '
+           'operand of shape {}, target broadcast shape {}, '
+           'broadcast_dimensions {} ')
+    raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
   return shape
 
 def _broadcast_in_dim_transpose_rule(t, shape, broadcast_dimensions):
