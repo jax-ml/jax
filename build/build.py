@@ -107,7 +107,8 @@ def download_and_verify_bazel():
           package.file, "#" * progress_chars,
           "." * (num_chars - progress_chars), int(progress * 100.0)))
 
-    tmp_path, _ = urlretrieve(uri, None, progress)
+    tmp_path, _ = urlretrieve(uri, None,
+                              progress if sys.stdout.isatty() else None)
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.
