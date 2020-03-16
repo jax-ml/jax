@@ -615,6 +615,11 @@ def broadcast(operand, sizes):
   return broadcast_in_dim(operand, tuple(sizes) + onp.shape(operand), dims)
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
+  """Wraps XLA's `BroadcastInDim
+  <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
+  operator.
+  """
+  shape = _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions)
   if onp.ndim(operand) == len(shape) and not len(broadcast_dimensions):
     return operand
   return broadcast_in_dim_p.bind(
@@ -2354,25 +2359,31 @@ def _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions):
   _check_shapelike('broadcast_in_dim', 'shape', shape)
   _check_shapelike('broadcast_in_dim', 'broadcast_dimensions',
                    broadcast_dimensions)
-  if any(x >= len(shape) for x in broadcast_dimensions):
-    msg = ("broadcast_in_dim broadcast dimensions must be less than "
-           "ndim(shape), got {} for shape {}.")
-    raise ValueError(msg.format(broadcast_dimensions, shape))
   if operand.ndim != len(broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must have length equal to '
-           'operand ndim, got broadcast_dimensions {} for operand ndim {}.')
+           'operand ndim; got broadcast_dimensions {} for operand ndim {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand.ndim))
+  if len(shape) < operand.ndim:
+    msg = ('broadcast_in_dim target broadcast shape must have equal or higher rank '
+           'to the operand shape; got operand ndim {} and target broadcast ndim {}.')
+    raise TypeError(msg.format(operand.ndim, len(shape)))
   if not set(broadcast_dimensions).issubset(set(range(len(shape)))):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand.ndim, shape))
-  if any(operand.shape[i] != shape[broadcast_dimensions[i]]
+  if any(operand.shape[i] != 1 and operand.shape[i] != shape[broadcast_dimensions[i]]
          for i in range(operand.ndim)):
-    msg = ('broadcast_in_dim operand dimension sizes must equal their '
-           'corresponding dimensions in the broadcasted-to shape; got '
-           'operand of shape {}, target broadcast shape {}, '
-           'broadcast_dimensions {} ')
-    raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
+      msg = ('broadcast_in_dim operand dimension sizes must either be 1, or be '
+             'equal to their corresponding dimensions in the target broadcast shape; '
+             'got operand of shape {}, target broadcast shape {}, '
+             'broadcast_dimensions {} ')
+      raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
+  if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
+      tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):
+      msg = ('broadcast_in_dim broadcast_dimensions must be strictly increasing; '
+             'got broadcast_dimensions {}')
+      raise TypeError(msg.format(broadcast_dimensions))
+
   return shape
 
 def _broadcast_in_dim_transpose_rule(t, shape, broadcast_dimensions):
