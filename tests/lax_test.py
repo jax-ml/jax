@@ -822,6 +822,7 @@ class LaxTest(jtu.JaxTestCase):
           ([2], [2, 2], [1]),
           ([2], [2, 3], [0]),
           ([], [2, 3], []),
+          ([1], [2, 3], [1]),
       ]
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))
@@ -831,16 +832,29 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
-  def testBroadcastInDimShapeCheck(self):
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
+      jtu.format_shape_dtype_string(inshape, onp.float32),
+      outshape, broadcast_dimensions),
+      "inshape": inshape, "outshape": outshape,
+      "broadcast_dimensions": broadcast_dimensions, "err_msg": err_msg}
+    for inshape, outshape, broadcast_dimensions, err_msg in [
+      ([2], [2, 2], [0, 1], ('broadcast_dimensions must have length equal to '
+                              'operand ndim')),
+      ([2, 2], [2], [0, 1], ('target broadcast shape must have equal or higher rank '
+                             'to the operand shape')),
+      ([2], [2, 3], [2], ('broadcast_in_dim broadcast_dimensions must be a subset of output '
+                          'dimensions')),
+      ([2], [3], [0], ('operand dimension sizes must either be 1, or be '
+                       'equal to their corresponding dimensions in the target broadcast shape')),
+      ([2, 2], [2, 2], [1, 0], ('broadcast_dimensions must be strictly increasing')),
+    ]))
+  def testBroadcastInDimShapeCheck(self, inshape, outshape, broadcast_dimensions, err_msg):
     rng = jtu.rand_default()
-    x = rng((6, 7), onp.float32)
-    def op(x):
-      lax.broadcast_in_dim(x, broadcast_dimensions=(1, 2), shape=(3, 4, 5))
-    self.assertRaisesRegex(
-      TypeError,
-      ("broadcast_in_dim operand dimension sizes must equal their "
-       "corresponding dimensions in the broadcasted-to shape;*"),
-      lambda: op(x))
+    x = rng(inshape, onp.float32)
+    with self.assertRaisesRegex(TypeError, err_msg):
+      lax.broadcast_in_dim(x, shape=outshape, broadcast_dimensions=broadcast_dimensions)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
@@ -853,6 +867,7 @@ class LaxTest(jtu.JaxTestCase):
           ([2], [2, 2], [1]),
           ([2], [2, 3], [0]),
           ([], [2, 3], []),
+          ([1], [2, 3], [1]),
       ]
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))
