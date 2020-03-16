@@ -16,6 +16,8 @@ from . import fft
 from . import linalg
 from .vectorize import vectorize
 
+from ..interpreters.xla import DeviceArray
+
 from .lax_numpy import (
     ComplexWarning, NINF, NZERO, PZERO, abs, absolute, add, all, allclose,
     alltrue, amax, amin, angle, any, append, arange, arccos, arccosh, arcsin,
@@ -56,3 +58,25 @@ from .lax_numpy import (
 
 from .lax_numpy import _unimplemented_numpy_fns
 globals().update(_unimplemented_numpy_fns)
+
+# Forward operators, methods, and properties on DeviceArray to lax_numpy
+# functions (with no Tracers involved; this forwarding is direct)
+from .lax_numpy import (_operators, _nondiff_methods, _diff_methods, _reshape_method,
+                        _astype)
+import numpy as _np
+from .. import lax as _lax
+
+for operator_name, function in _operators.items():
+  setattr(DeviceArray, "__{}__".format(operator_name), function)
+for method_name in _nondiff_methods + _diff_methods:
+  setattr(DeviceArray, method_name, globals()[method_name])
+setattr(DeviceArray, "reshape", _reshape_method)
+setattr(DeviceArray, "flatten", ravel)
+setattr(DeviceArray, "T", property(transpose))
+setattr(DeviceArray, "real", property(real))
+setattr(DeviceArray, "imag", property(imag))
+setattr(DeviceArray, "astype", _astype)
+setattr(DeviceArray, "tolist", lambda x: _np.array(x).tolist())
+setattr(DeviceArray, "broadcast", _lax.broadcast)
+setattr(DeviceArray, "broadcast_in_dim", _lax.broadcast_in_dim)
+setattr(DeviceArray, "split", split)

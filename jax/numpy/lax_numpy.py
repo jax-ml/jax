@@ -3596,28 +3596,10 @@ setattr(ShapedArray, "imag", core.aval_property(imag))
 setattr(ShapedArray, "astype", core.aval_method(_astype))
 
 
-# Forward operators, methods, and properties on DeviceArray to lax_numpy
-# functions (with no Tracers involved; this forwarding is direct)
-for operator_name, function in _operators.items():
-  setattr(DeviceArray, "__{}__".format(operator_name), function)
-for method_name in _nondiff_methods + _diff_methods:
-  setattr(DeviceArray, method_name, globals()[method_name])
-setattr(DeviceArray, "reshape", _reshape_method)
-setattr(DeviceArray, "flatten", ravel)
-setattr(DeviceArray, "T", property(transpose))
-setattr(DeviceArray, "real", property(real))
-setattr(DeviceArray, "imag", property(imag))
-setattr(DeviceArray, "astype", _astype)
-setattr(DeviceArray, "tolist", lambda x: onp.array(x).tolist())
-
-
 # Extra methods that are handy
 setattr(ShapedArray, "broadcast", core.aval_method(lax.broadcast))
 setattr(ShapedArray, "broadcast_in_dim", core.aval_method(lax.broadcast_in_dim))
 setattr(ShapedArray, "split", core.aval_method(split))
-setattr(DeviceArray, "broadcast", lax.broadcast)
-setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
-setattr(DeviceArray, "split", split)
 
 @jit
 def _unstack(x):
