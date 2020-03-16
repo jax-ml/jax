@@ -225,8 +225,9 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     rule = backend_specific_translations[platform][prim]
     rule(c, *xla_args, **params)
   elif prim in translations:
-    rule = translations[prim]
-    rule(c, *xla_args, **params)
+    translations[prim](c, *xla_args, **params)
+  elif prim in translations_with_avals:
+    translations_with_avals[prim](c, avals, *xla_args, **params)
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
     rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
@@ -332,6 +333,9 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
       ans = rule(c, *in_nodes, **eqn.params)
     elif eqn.primitive in translations:
       ans = translations[eqn.primitive](c, *in_nodes, **eqn.params)
+    elif eqn.primitive in translations_with_avals:
+      ans = translations_with_avals[eqn.primitive](c, map(aval, eqn.invars),
+                                                   *in_nodes, **eqn.params)
     elif eqn.primitive in initial_style_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = initial_style_translations[eqn.primitive]
@@ -629,6 +633,7 @@ ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 ### translation tables
 
 translations = {}
+translations_with_avals = {}  # TODO(mattjj): unify with above table
 parallel_translations = {}
 initial_style_translations = {}
 call_translations = {}
@@ -650,7 +655,7 @@ def add_jaxvals_translation_rule(c, x, y):
   return c.Add(x, y)
 translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 
-def lower_fun(fun):
+def lower_fun(fun, translation_with_avals=False):
   # This function can only be used to lower functions that take JAX array types
   # as arguments (and e.g. don't accept unit values), because it assumes it can
   # map from XLA types to JAX types. In general that mapping is not possible (as
@@ -658,9 +663,13 @@ def lower_fun(fun):
   # least we assume that the mapping from JAX *array* types to XLA array types
   # is invertible. This assumption is unchecked!
   # TODO(mattjj): remove assumption can map XLA array types to JAX array types
-  def f(c, *xla_args, **params):
+  def f(c, *args, **params):
     # TODO(mattjj): revise this 'calling convention'
-    avals = [_array_aval_from_xla_shape(c.GetShape(x)) for x in xla_args]
+    if translation_with_avals:
+      avals, *xla_args = args
+    else:
+      xla_args = args
+      avals = [_array_aval_from_xla_shape(c.GetShape(x)) for x in xla_args]
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True)
