@@ -72,7 +72,7 @@ import functools
 import operator
 
 import jax.numpy as np
-from jax.util import partial, safe_zip, safe_map, unzip2
+from jax.util import partial, safe_zip, safe_map, unzip
 from jax import tree_util
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            register_pytree_node)
@@ -137,7 +137,7 @@ def optimizer(opt_maker):
     def tree_init(x0_tree):
       x0_flat, tree = tree_flatten(x0_tree)
       initial_states = [init(x0) for x0 in x0_flat]
-      states_flat, subtrees = unzip2(map(tree_flatten, initial_states))
+      states_flat, subtrees = unzip(map(tree_flatten, initial_states))
       packed_state = pack(map(pack, states_flat))
       return OptimizerState(packed_state, tree, subtrees)
 
@@ -152,7 +152,7 @@ def optimizer(opt_maker):
         raise TypeError(msg.format(tree, tree2))
       states = map(tree_unflatten, subtrees, packed_state)
       new_states = map(partial(update, i), grad_flat, states)
-      new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
+      new_states_flat, subtrees2 = unzip(map(tree_flatten, new_states))
       for subtree, subtree2 in zip(subtrees, subtrees2):
         if subtree2 != subtree:
           msg = ("optimizer update function produced an output structure that "
@@ -537,6 +537,6 @@ def pack_optimizer_state(marked_pytree):
   sentinels, tree_def = tree_flatten(marked_pytree)
   assert all(isinstance(s, JoinPoint) for s in sentinels)
   subtrees = [s.subtree for s in sentinels]
-  states_flat, subtree_defs = unzip2(map(tree_flatten, subtrees))
+  states_flat, subtree_defs = unzip(map(tree_flatten, subtrees))
   packed_state = pack(map(pack, states_flat))
   return OptimizerState(packed_state, tree_def, subtree_defs)

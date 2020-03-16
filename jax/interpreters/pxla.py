@@ -27,7 +27,7 @@ from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import (partial, unzip2, prod, safe_map,
+from ..util import (partial, unzip, prod, safe_map,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
 from .batching import broadcast, not_mapped
@@ -464,7 +464,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
       dynamic_fun, [pval] + pvals, instantiate=False, stage_out_calls=True, bottom=True)
   jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
 
-  out_pvs, out_consts = unzip2(out_pvals)
+  out_pvs, out_consts = unzip(out_pvals)
 
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
   # for now raise an error
@@ -725,7 +725,7 @@ def split_axis(axis_name, chunk_size, *args):
     with add_chunk_to_axis_env(axis_name, trace, chunk_size):
       outs = yield in_tracers, {}
     out_tracers = list(map(trace.full_raise, outs))
-    out_vals, out_names = unzip2((t.val, t.axis_name) for t in out_tracers)
+    out_vals, out_names = unzip((t.val, t.axis_name) for t in out_tracers)
     del master, out_tracers
   out_vals = [broadcast(x, chunk_size, 0) if d is not_mapped else x
               for x, d in zip(out_vals, out_names)]
@@ -736,7 +736,7 @@ def split_axis_subtrace(master, names, *vals):
   trace = SplitAxisTrace(master, core.cur_sublevel())
   outs = yield list(map(partial(SplitAxisTracer, trace), names, vals)), {}
   out_tracers = list(map(trace.full_raise, outs))
-  out_vals, out_names = unzip2((t.val, t.axis_name) for t in out_tracers)
+  out_vals, out_names = unzip((t.val, t.axis_name) for t in out_tracers)
   yield out_vals, out_names
 
 @contextmanager
@@ -780,7 +780,7 @@ class SplitAxisTrace(core.Trace):
     return SplitAxisTracer(self, val.axis_name, val.val)
 
   def process_primitive(self, primitive, tracers, params):
-    vals_in, names_in = unzip2((t.val, t.axis_name) for t in tracers)
+    vals_in, names_in = unzip((t.val, t.axis_name) for t in tracers)
     if primitive is axis_index_p:
       dummy, = vals_in
       hard_idx = primitive.bind(dummy, **params)
@@ -833,7 +833,7 @@ class SplitAxisTrace(core.Trace):
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     else:
-      vals, names = unzip2((t.val, t.axis_name) for t in tracers)
+      vals, names = unzip((t.val, t.axis_name) for t in tracers)
       if all(name is not_mapped for name in names):
         return call_primitive.bind(f, *vals, **params)
       else:
@@ -842,7 +842,7 @@ class SplitAxisTrace(core.Trace):
         return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
-    vals, names = unzip2((t.val, t.axis_name) for t in tracers)
+    vals, names = unzip((t.val, t.axis_name) for t in tracers)
     if all(name is not_mapped for name in names):
       return map_primitive.bind(f, *vals, **params)
     else:

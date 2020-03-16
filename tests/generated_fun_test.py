@@ -30,7 +30,7 @@ config.parse_flags_with_absl()
 
 npr.seed(0)
 
-from jax.util import unzip2, safe_zip, safe_map
+from jax.util import unzip, safe_zip, safe_map
 
 map = safe_map
 zip = safe_zip
@@ -165,7 +165,7 @@ def choice(xs, weights=None):
   return xs[i]
 
 def weighted_choice(weighted_choices):
-  weights, choices = unzip2(weighted_choices)
+  weights, choices = unzip(weighted_choices)
   return choice(choices, weights)
 
 def gen_sized_subset(xs, size):

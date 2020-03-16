@@ -21,7 +21,7 @@ from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
-from ..util import unzip2, partial, safe_map, wrap_name
+from ..util import unzip, partial, safe_map, wrap_name
 from . import xla
 from . import partial_eval as pe
 
@@ -47,7 +47,7 @@ def batch_subtrace(master, in_dims, *in_vals):
                 for val, dim in zip(in_vals, in_dims)]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
-  out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+  out_vals, out_dims = unzip((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
 
 
@@ -98,7 +98,7 @@ class BatchTrace(Trace):
     return BatchTracer(self, val.val, val.batch_dim)
 
   def process_primitive(self, primitive, tracers, params):
-    vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
+    vals_in, dims_in = unzip((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     else:
@@ -116,7 +116,7 @@ class BatchTrace(Trace):
     params = dict(params, name=wrap_name(name, 'vmap'))
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
-    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    vals, dims = unzip((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims):
       return call_primitive.bind(f, *vals, **params)
     else:
@@ -125,7 +125,7 @@ class BatchTrace(Trace):
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
-    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    vals, dims = unzip((t.val, t.batch_dim) for t in tracers)
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)
     else:
@@ -140,7 +140,7 @@ class BatchTrace(Trace):
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
   def post_process_call(self, call_primitive, out_tracers, params):
-    vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    vals, dims = unzip((t.val, t.batch_dim) for t in out_tracers)
     master = self.master
     def todo(x):
       trace = BatchTrace(master, core.cur_sublevel())
@@ -308,7 +308,7 @@ def batch_jaxpr(jaxpr, size, batched, instantiate):
               for a, b in zip(jaxpr.in_avals, batched)]
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in avals_in]
   jaxpr_out, pvals_out, consts_out = pe.trace_to_jaxpr(f, in_pvals, instantiate=True)
-  avals_out, _ = unzip2(pvals_out)
+  avals_out, _ = unzip(pvals_out)
   jaxpr_out = core.TypedJaxpr(jaxpr_out, consts_out, avals_in, avals_out)
   return jaxpr_out, batched_out()
 
@@ -319,7 +319,7 @@ def batched_traceable(size, batched, instantiate, *vals):
     trace = BatchTrace(master, core.cur_sublevel())
     ans = yield map(partial(BatchTracer, trace), vals, in_dims), {}
     out_tracers = map(trace.full_raise, ans)
-    out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    out_vals, out_dims = unzip((t.val, t.batch_dim) for t in out_tracers)
     del master, out_tracers
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_vals)

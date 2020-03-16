@@ -23,7 +23,7 @@ from ..core import Trace, Tracer, new_master, get_aval, call_p, Primitive, Liter
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, zero)
 from ..abstract_arrays import raise_to_shaped
-from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name
+from ..util import unzip, safe_map, safe_zip, partial, split_list, wrap_name
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
@@ -63,7 +63,7 @@ def jvp_subtrace(master, primals, tangents):
                 for x, t in zip(primals, tangents)]
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
-  yield unzip2([(out_tracer.primal, out_tracer.tangent)
+  yield unzip([(out_tracer.primal, out_tracer.tangent)
                 for out_tracer in out_tracers])
 
 @lu.transformation_with_aux
@@ -75,8 +75,8 @@ def jvp_subtrace_aux(master, primals, tangents):
   ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
   ans_tracers = map(trace.full_raise, ans)
   aux_tracers = map(trace.full_raise, aux)
-  out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
-  aux_primals, _            = unzip2((t.primal, t.tangent) for t in aux_tracers)
+  out_primals, out_tangents = unzip((t.primal, t.tangent) for t in ans_tracers)
+  aux_primals, _            = unzip((t.primal, t.tangent) for t in aux_tracers)
   aux_primals = map(core.full_lower, aux_primals)
   yield (out_primals, out_tangents), aux_primals
 
@@ -94,7 +94,7 @@ def linearize(traceable, *primals, **kwargs):
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jvpfun_flat, in_pvals)
   pval_primals, pval_tangents = tree_unflatten(out_tree(), out_pvals)
-  aval_primals, const_primals = unzip2(pval_primals)
+  aval_primals, const_primals = unzip(pval_primals)
   assert all(aval_primal is None for aval_primal in aval_primals)
   if not has_aux:
     return const_primals, pval_tangents, jaxpr, consts
@@ -292,7 +292,7 @@ class JVPTrace(Trace):
     return JVPTracer(self, val.primal, val.tangent)
 
   def process_primitive(self, primitive, tracers, params):
-    primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
+    primals_in, tangents_in = unzip((t.primal, t.tangent) for t in tracers)
     try:
       jvp = primitive_jvps[primitive]
     except KeyError as err:
@@ -318,7 +318,7 @@ class JVPTrace(Trace):
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
 
   def post_process_call(self, call_primitive, out_tracers, params):
-    primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
+    primals, tangents = unzip((t.primal, t.tangent) for t in out_tracers)
     out = primals + tangents
     del primals, tangents
     master = self.master
@@ -578,7 +578,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
   pvals = [pe.PartialVal((aval, core.unit)) for aval in avals_in]
   jaxpr_out, pvals_out, literals_out = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
-  avals_out, _ = unzip2(pvals_out)
+  avals_out, _ = unzip(pvals_out)
   jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
   return jaxpr_out, out_nonzeros()
 

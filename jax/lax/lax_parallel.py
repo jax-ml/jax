@@ -29,7 +29,7 @@ from jax.interpreters import ad
 from jax.interpreters import parallel
 from jax.interpreters import xla
 from jax.interpreters import pxla
-from jax.util import partial, unzip2, prod
+from jax.util import partial, unzip, prod
 from jax.lib import xla_client
 
 from jax.interpreters.pxla import axis_index
@@ -342,7 +342,7 @@ pxla.split_axis_rules[pmin_p] = \
 
 def _ppermute_translation_rule(c, x, replica_groups, perm, platform=None):
   group_size = len(replica_groups[0])
-  srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
+  srcs, dsts = unzip((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
     msg = "ppermute sources and destinations must be unique, got {}."
     raise ValueError(msg.format(perm))
@@ -354,7 +354,7 @@ def _ppermute_translation_rule(c, x, replica_groups, perm, platform=None):
   return c.CollectivePermute(x, full_perm)
 
 def _ppermute_transpose_rule(t, perm, axis_name):
-  srcs, dsts = unzip2(perm)
+  srcs, dsts = unzip(perm)
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 

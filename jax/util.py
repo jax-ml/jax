@@ -16,6 +16,7 @@
 import functools
 import itertools as it
 import types
+import warnings
 
 import numpy as onp
 
@@ -33,23 +34,20 @@ def safe_map(f, *args):
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
   return list(map(f, *args))
 
+def unzip(tuples):
+  return tuple(zip(*tuples))
+
 def unzip2(xys):
-  xs = []
-  ys = []
-  for x, y in xys:
-    xs.append(x)
-    ys.append(y)
-  return tuple(xs), tuple(ys)
+  warnings.warn(
+    "unzip2() is deprecated, please use unzip() instead", DeprecationWarning)
+  x, y = unzip(xys)
+  return x, y
 
 def unzip3(xyzs):
-  xs = []
-  ys = []
-  zs = []
-  for x, y, z in xyzs:
-    xs.append(x)
-    ys.append(y)
-    zs.append(z)
-  return tuple(xs), tuple(ys), tuple(zs)
+  warnings.warn(
+    "unzip3() is deprecated, please use unzip() instead", DeprecationWarning)
+  x, y, z = unzip(xyzs)
+  return x, y, z
 
 def subvals(lst, replace):
   lst = list(lst)

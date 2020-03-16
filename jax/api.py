@@ -44,7 +44,7 @@ from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         _replace_nones)
-from .util import (unzip2, curry, partial, safe_map, safe_zip,
+from .util import (unzip, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
@@ -1395,7 +1395,7 @@ def make_jaxpr(fun: Callable):
     in_pvals = map(pv_like, jax_args)
     jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
         jaxtree_fun, in_pvals, instantiate=True, stage_out_calls=True)
-    out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
+    out_avals = map(raise_to_shaped, unzip(out_pvals)[0])
     in_avals = tuple(raise_to_shaped(in_aval) for in_aval, _ in in_pvals)
     typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
     return typed_jaxpr

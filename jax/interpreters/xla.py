@@ -31,7 +31,7 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                abstract_token)
 from ..core import Literal, pp_eqn_compact
 from ..pprint_util import pp
-from ..util import (partial, partialmethod, cache, safe_map, prod, unzip2,
+from ..util import (partial, partialmethod, cache, safe_map, prod, unzip,
                     memoize, extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
@@ -167,7 +167,7 @@ def apply_primitive(prim, *args, **params):
 
 @cache()
 def xla_primitive_callable(prim, *arg_specs, **params):
-  avals, arg_devices = unzip2(arg_specs)
+  avals, arg_devices = unzip(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
   aval_out = prim.abstract_eval(*avals, **params)
@@ -471,7 +471,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
 
-  abstract_args, arg_devices = unzip2(arg_specs)
+  abstract_args, arg_devices = unzip(arg_specs)
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
       fun, pvals, instantiate=False, stage_out_calls=True, bottom=True)

@@ -44,7 +44,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..util import curry, cache, safe_zip, unzip2, prod
+from ..util import curry, cache, safe_zip, unzip, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree
 from ..lib import xla_bridge

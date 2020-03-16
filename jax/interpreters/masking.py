@@ -26,7 +26,7 @@ import numpy as onp
 from .. import abstract_arrays
 from .. import core
 from ..core import Trace, Tracer
-from ..util import unzip2, safe_map, safe_zip
+from ..util import unzip, safe_map, safe_zip
 from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
 
@@ -85,7 +85,7 @@ def mask_subtrace(master, in_vals, shape_exprs):
                 for x, s in zip(in_vals, shape_exprs)]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
-  out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
+  out_vals, out_shapes = unzip((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
 
 def ensure_poly(p):
@@ -373,7 +373,7 @@ class MaskTrace(Trace):
     return MaskTracer(self, val.val, val.shape_expr)
 
   def process_primitive(self, primitive, tracers, params):
-    vals, shape_exprs = unzip2((t.val, t.shape_expr) for t in tracers)
+    vals, shape_exprs = unzip((t.val, t.shape_expr) for t in tracers)
     if primitive in shape_parameterized_primitive_rules:
       rule = shape_parameterized_primitive_rules[primitive]
       out, out_shape = rule(shape_envs, vals, shape_exprs, **params)

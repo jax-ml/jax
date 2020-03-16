@@ -117,7 +117,7 @@ from jax.lax import lax_control_flow
 from jax import tree_util
 from jax import numpy as jnp
 from jax.interpreters import partial_eval as pe
-from jax.util import unzip2, safe_map
+from jax.util import unzip, safe_map
 
 
 class Scope(object):
@@ -423,12 +423,12 @@ class _BodyTracer(object):
     assert not env
 
     # TODO: this is from the final part of lax_control_flow._initial_style_jaxpr
-    out_avals = safe_map(abstract_arrays.raise_to_shaped, unzip2(out_pvals)[0])
+    out_avals = safe_map(abstract_arrays.raise_to_shaped, unzip(out_pvals)[0])
     const_avals = tuple(abstract_arrays.raise_to_shaped(core.get_aval(c))
                         for c in consts)
 
     in_pvals = [t.pval for t in in_tracers]
-    in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
+    in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip(in_pvals)[0]))
 
     typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                   (), const_avals + in_avals, out_avals)

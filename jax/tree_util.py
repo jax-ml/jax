@@ -42,7 +42,7 @@ import operator as op
 
 from .lib import pytree
 
-from .util import partial, safe_zip, unzip2
+from .util import partial, safe_zip, unzip
 
 def tree_flatten(tree):
   """Flattens a pytree.
@@ -190,7 +190,7 @@ _RegistryEntry = collections.namedtuple("RegistryEntry", ["to_iter", "from_iter"
 _registry = {
     tuple: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: tuple(xs)),
     list: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: list(xs)),
-    dict: _RegistryEntry(lambda xs: unzip2(sorted(xs.items()))[::-1],
+    dict: _RegistryEntry(lambda xs: unzip(sorted(xs.items()))[::-1],
                          lambda keys, xs: dict(zip(keys, xs))),
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }

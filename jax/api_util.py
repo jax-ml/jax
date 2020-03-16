@@ -16,7 +16,7 @@
 from .tree_util import (build_tree, tree_flatten, tree_unflatten,
                         treedef_is_leaf)
 from . import linear_util as lu
-from .util import safe_map, unzip2, partial, curry
+from .util import safe_map, unzip, partial, curry
 
 map = safe_map
 

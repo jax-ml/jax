@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 import numpy as onp
 
-from .util import safe_map, safe_zip, unzip2, subvals
+from .util import safe_map, safe_zip, unzip, subvals
 from .lib import xla_bridge as xb
 
 map = safe_map
@@ -235,7 +235,7 @@ def stage_lexpr(c, lexpr, x):
     assert False
 
   # then apply the operations encoded in reindex
-  bcast_dims, perm = unzip2((i, d) for i, d in enumerate(dims) if d is not None)
+  bcast_dims, perm = unzip((i, d) for i, d in enumerate(dims) if d is not None)
   if tuple(perm) != tuple(range(len(perm))):
     x = c.Transpose(x, perm)
   if shape != c.GetShape(x).dimensions():

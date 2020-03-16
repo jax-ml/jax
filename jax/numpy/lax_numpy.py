@@ -45,7 +45,7 @@ from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
-from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
+from ..util import partial, get_module_functions, unzip, prod as _prod, subvals
 from ..lib import pytree
 from ..lib import xla_client
 
@@ -1771,7 +1771,7 @@ def _block(xs):
   elif isinstance(xs, list):
     if len(xs) == 0:
       raise ValueError("jax.numpy.block does not allow empty list arguments")
-    xs, depths = unzip2([_block(x) for x in xs])
+    xs, depths = unzip([_block(x) for x in xs])
     if _any(d != depths[0] for d in depths[1:]):
       raise ValueError("Mismatched list depths in jax.numpy.block")
     rank = _max(depths[0], _max(ndim(x) for x in xs))
@@ -2481,7 +2481,7 @@ def _einsum(operands, contractions, precision):
 
       contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
       batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
-      lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
+      lhs_batch, rhs_batch = unzip((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
 
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
@@ -2504,7 +2504,7 @@ def _einsum(operands, contractions, precision):
                               if i in batch_dims)
 
       # contract using lax.dot_general
-      lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
+      lhs_cont, rhs_cont = unzip((lhs_names.index(n), rhs_names.index(n))
                                   for n in contracted_names)
       bdims = tuple(range(len(batch_dims)))
       dimension_numbers = [(lhs_cont, rhs_cont), (bdims, bdims)]

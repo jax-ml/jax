@@ -41,7 +41,7 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
+from jax.util import (partial, unzip, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple)
@@ -58,7 +58,7 @@ def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
   fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
                                                stage_out_calls=True)
-  out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
+  out_avals = _map(raise_to_shaped, unzip(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                 (), const_avals + in_avals, out_avals)
@@ -586,7 +586,7 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   # assert true_jaxpr_1.out_avals == false_jaxpr_1.out_avals
   num_res = num_t_res + num_f_res
 
-  _, in_consts = unzip2([t.pval for t in tracers])
+  _, in_consts = unzip([t.pval for t in tracers])
   out_consts_res = cond_p.bind(
       *in_consts, true_jaxpr=true_jaxpr_1, false_jaxpr=false_jaxpr_1,
       linear=linear)
@@ -1103,7 +1103,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
 def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
-  out_avals, _ = unzip2(pvals_out)
+  out_avals, _ = unzip(pvals_out)
   return core.TypedJaxpr(jaxpr, consts, in_avals, _map(raise_to_shaped, out_avals))
 
 

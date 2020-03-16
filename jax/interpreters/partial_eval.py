@@ -24,7 +24,7 @@ import numpy as onp
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
-from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
+from ..util import (unzip, safe_zip, safe_map, toposort, partial, split_list,
                     wrap_name, cache)
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
                     AbstractValue, unit, unitvar, abstract_unit, Primitive,
@@ -98,7 +98,7 @@ class JaxprTrace(Trace):
       return self.default_process_primitive(primitive, tracers, params)
 
   def default_process_primitive(self, primitive, tracers, params):
-    pvs, consts = unzip2(t.pval for t in tracers)
+    pvs, consts = unzip(t.pval for t in tracers)
     if all(pv is None for pv in pvs):
       return primitive.bind(*consts, **params)
     tracers = map(self.instantiate_const, tracers)
@@ -126,7 +126,7 @@ class JaxprTrace(Trace):
       return call_partial_eval_rules[call_primitive](self, f, tracers, params)
     if call_primitive in map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
-    in_pvs, in_consts = unzip2([t.pval for t in tracers])
+    in_pvs, in_consts = unzip([t.pval for t in tracers])
     fun, aux = partial_eval(f, self, in_pvs)
     out_flat = call_primitive.bind(fun, *in_consts, **params)
     out_pvs, jaxpr, env = aux()
@@ -145,7 +145,7 @@ class JaxprTrace(Trace):
     return out_tracers
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
-    in_pvs, in_consts = unzip2([t.pval for t in tracers])
+    in_pvs, in_consts = unzip([t.pval for t in tracers])
     reduced_pvs = [None if pv is None else _mapped_aval(pv) for pv in in_pvs]
     fun, aux = partial_eval(f, self, reduced_pvs)
     out_flat = map_primitive.bind(fun, *in_consts, **params)
@@ -174,7 +174,7 @@ class JaxprTrace(Trace):
     if call_primitive in map_primitives:
       return self.post_process_map(call_primitive, out_tracers, params)
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
-    out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
+    out_pvs, out_pv_consts = unzip(t.pval for t in out_tracers)
     out = out_pv_consts + consts
     del consts, out_pv_consts
     master = self.master
@@ -198,7 +198,7 @@ class JaxprTrace(Trace):
 
   def post_process_map(self, map_primitive, out_tracers, params):
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
-    out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
+    out_pvs_reduced, out_pv_consts = unzip(t.pval for t in out_tracers)
     out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
                for pv in out_pvs_reduced]
     out = out_pv_consts + consts
@@ -262,7 +262,7 @@ def partial_eval(f, trace, pvs):
 def partial_eval_wrapper(avals, *consts):
   py_args = (map(PartialVal, zip(avals, consts)),)
   jaxpr, (out_pvals, consts, env) = yield py_args, {}
-  out_pvs, out_consts = unzip2(out_pvals)
+  out_pvs, out_consts = unzip(out_pvals)
   out = tuple(out_consts) + tuple(consts)  # TODO: can consts be traced?
   yield out, (out_pvs, jaxpr, env)
 
@@ -271,7 +271,7 @@ def abstract_eval_fun(fun, *avals, **params):
   pvals_in = [PartialVal((a, unit)) for a in avals]
   _, pvals_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
                                   instantiate=True)
-  avals_out, _ = unzip2(pvals_out)
+  avals_out, _ = unzip(pvals_out)
   for aval_out in avals_out:
     assert isinstance(aval_out, AbstractValue)  # instantiate=True
   return avals_out
@@ -465,8 +465,8 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
     else:
       raise TypeError(recipe)
 
-  env_vars, env_vals = unzip2(env.items())
-  const_vars, const_vals = unzip2(consts.items())
+  env_vars, env_vals = unzip(env.items())
+  const_vars, const_vals = unzip(consts.items())
   # The env_vars are pre-pended to the invars
   jaxpr = Jaxpr(const_vars, list(it.chain(env_vars, invars)), list(map(getvar, out_tracers)), eqns)
   core.skip_checks or core.check_jaxpr(jaxpr)
@@ -490,7 +490,7 @@ def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
     pvals = [PartialVal((aval, unit)) if uk else PartialVal((None, val))
              for aval, val, uk in zip(jaxpr.in_avals, vals, unknowns)]
     jaxpr_2, out_pvals_2, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
-    out_pvs_2, out_consts_2 = unzip2(out_pvals_2)
+    out_pvs_2, out_consts_2 = unzip(out_pvals_2)
     cell.append((out_pvs_2, jaxpr_2, len(consts_2)))
     return out_consts_2 + consts_2
 
@@ -512,10 +512,10 @@ def partial_eval_jaxpr(jaxpr, unknowns, instantiate):
 
   uk_out = [pv is not None for pv in out_pvs_2]
 
-  in_avals_1, in_avals_2 = unzip2(map(_split_aval, unknowns, jaxpr.in_avals))
-  out_avals_1, out_avals_2 = unzip2(map(_split_aval, uk_out, jaxpr.out_avals))
+  in_avals_1, in_avals_2 = unzip(map(_split_aval, unknowns, jaxpr.in_avals))
+  out_avals_1, out_avals_2 = unzip(map(_split_aval, uk_out, jaxpr.out_avals))
   # out_avals_1 and in_avals_2 need the residuals added
-  out_pvs, _ = unzip2(out_pvals)
+  out_pvs, _ = unzip(out_pvals)
   res_avals = out_pvs[len(jaxpr.out_avals):]
   assert len(res_avals) == num_res
   out_avals_1 = out_avals_1 + res_avals
@@ -554,7 +554,7 @@ def _remat_partial_eval(trace, f, tracers, params):
     instantiated_tracers = map(trace.instantiate_const_abstracted, tracers)
 
   # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
-  in_pvs, in_consts = unzip2(t.pval for t in instantiated_tracers)
+  in_pvs, in_consts = unzip(t.pval for t in instantiated_tracers)
   fun, aux = partial_eval(f, trace, in_pvs)
   if concrete:
     # TODO(mattjj): remove `remat_context` when confident no accidental FLOPs
@@ -595,7 +595,7 @@ def _remat_partial_eval(trace, f, tracers, params):
   to_compute = [not uk and type(pv) is not ConcreteArray
                 for uk, pv in zip(out_unknowns, out_pvs)]
   jaxpr_1_primals = _dce_jaxpr(jaxpr_1, to_compute + [False] * num_res)
-  _, in_consts = unzip2(t.pval for t in it.chain(env, tracers))
+  _, in_consts = unzip(t.pval for t in it.chain(env, tracers))
   out_pval_consts2 = core.jaxpr_as_fun(jaxpr_1_primals)(*in_consts)[:-num_res or None]
   out_pvals = map(_reconstruct_pval, out_pvals1, out_pval_consts2, out_unknowns)
 
@@ -619,7 +619,7 @@ def _dce_jaxpr(typed_jaxpr, outputs):
   outvars, out_avals = jaxpr.outvars, typed_jaxpr.out_avals
   out_pairs = [(var, aval) if output else (unitvar, core.abstract_unit)
               for var, aval, output in zip(outvars, out_avals, outputs)]
-  new_outvars, new_out_avals = unzip2(out_pairs)
+  new_outvars, new_out_avals = unzip(out_pairs)
 
   needed_vars = {v for v in new_outvars if type(v) is not Literal}
   new_eqns = []

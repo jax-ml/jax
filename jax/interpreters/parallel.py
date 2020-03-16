@@ -20,7 +20,7 @@ from .. import core
 from .. import linear_util as lu
 from ..core import Trace, Tracer, Primitive, new_master
 from ..abstract_arrays import ShapedArray, raise_to_shaped
-from ..util import safe_map, safe_zip, unzip2, unzip3
+from ..util import safe_map, safe_zip, unzip
 from . import partial_eval as pe
 
 map = safe_map
@@ -43,7 +43,7 @@ def papply_transform(name, axis_size, *args):
     in_tracers = map(partial(PapplyTracer, trace, name, axis_size, axis=0), args)
     outs = yield in_tracers, {}
     out_tracers = map(trace.full_raise, outs)
-    out_vals, out_axes = unzip2((t.val, t.axis) for t in out_tracers)
+    out_vals, out_axes = unzip((t.val, t.axis) for t in out_tracers)
     del master, out_tracers
   yield out_vals, out_axes
 
@@ -52,7 +52,7 @@ def papply_subtrace(master, name, axis_size, axes, *vals):
   trace = PapplyTrace(master, core.cur_sublevel())
   outs = yield map(partial(PapplyTracer, trace, name, axis_size), vals, axes), {}
   out_tracers = map(trace.full_raise, outs)
-  out_vals, out_axes = unzip2((t.val, t.axis) for t in out_tracers)
+  out_vals, out_axes = unzip((t.val, t.axis) for t in out_tracers)
   yield out_vals, out_axes
 
 # TODO(mattjj); use a special sentinel type rather than None
@@ -100,7 +100,7 @@ class PapplyTrace(Trace):
     return PapplyTracer(self, val.name, val.axis_size, val.val, val.axis)
 
   def process_primitive(self, primitive, tracers, params):
-    names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
+    names, vals, axes = unzip((t.name, t.val, t.axis) for t in tracers)
     if all(axis is not_sharded for axis in axes):
       return primitive.bind(*vals, **params)
     else:
@@ -113,7 +113,7 @@ class PapplyTrace(Trace):
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
-    names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
+    names, vals, axes = unzip((t.name, t.val, t.axis) for t in tracers)
     if all(axis is not_sharded for axis in axes):
       return call_primitive.bind(f, *vals, **params)
     else:

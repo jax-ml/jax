@@ -30,7 +30,7 @@ from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
-from jax.util import unzip2
+from jax.util import unzip
 from jax.lib import xla_bridge
 import jax.numpy as np  # scan tests use numpy
 import jax.scipy as jsp
@@ -1212,7 +1212,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       c_out, bs = lax.scan(f, (c[0][i], c[1][i]), (as_[0][:,i], as_[1][:,:,i]))
       expected_c_out.append(c_out)
       expected_bs.append(bs)
-    expected_c_out_0, expected_c_out_1 = unzip2(expected_c_out)
+    expected_c_out_0, expected_c_out_1 = unzip(expected_c_out)
     expected_c_out = (np.stack(expected_c_out_0), np.stack(expected_c_out_1))
     expected_bs = np.stack(expected_bs)
     expected = expected_c_out, expected_bs
