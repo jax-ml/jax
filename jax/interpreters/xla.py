@@ -55,7 +55,7 @@ def identity(x): return x
 def _make_unit(c): return c.Constant(onp.zeros((), dtype=onp.dtype('bool')))
 def _make_abstract_unit(_): return xc.Shape.array_shape(onp.dtype('bool'), ())
 def _device_put_unit(_, device):
-  return xc.Buffer.from_pyval(onp.zeros((), dtype=onp.dtype('bool')),
+  return xc.Buffer.from_pyval(onp.zeros((), dtype=onp.dtype('bool')), device,
                               backend=xb.get_device_backend(device))
 
 
