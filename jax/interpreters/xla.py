@@ -175,7 +175,7 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     handle_result = aval_to_result_handler(device, aval_out)
   else:
     handlers = tuple(map(partial(aval_to_result_handler, device), aval_out))
-    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
+    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs))
   tuple_args = len(avals) > 100
   if prim in initial_style_translations:
     nreps = initial_style_primitive_replicas(params)
@@ -249,30 +249,23 @@ def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
                                 result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
-  if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, backend)]
-  out_buf = compiled.Execute(input_bufs)
+  out_bufs = compiled.Execute(input_bufs, tuple_arguments=tuple_args)
   if FLAGS.jax_debug_nans:
-    check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
-  return result_handler(out_buf)
+    check_nans(prim, out_bufs)
+  return result_handler(out_bufs if prim.multiple_results else out_bufs[0])
 
 def _execute_replicated_primitive(prim, compiled, backend, tuple_args,
                                   result_handler, *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
-  if tuple_args:
-    input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
-                  zip(input_bufs, compiled.local_devices())]
-  out_buf = compiled.ExecuteOnLocalDevices(input_bufs)[0]
+  out_buf = compiled.ExecuteOnLocalDevices(
+      input_bufs, tuple_arguments=tuple_args)[0][0]
   return result_handler(out_buf)
 
 def check_nans(prim, bufs):
-  if prim.multiple_results:
-    for buf in bufs:
-      _check_nans(prim.name, buf.shape(), buf)
-  else:
-    _check_nans(prim.name, bufs.shape(), bufs)
+  for buf in bufs:
+    _check_nans(prim.name, buf.shape(), buf)
 
 def _check_nans(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
@@ -564,9 +557,7 @@ def _pval_to_result_handler(device, pval):
 def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
-  if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, backend)]
-  out_bufs = compiled.Execute(input_bufs).destructure()
+  out_bufs = compiled.Execute(input_bufs, tuple_arguments=tuple_args)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
@@ -574,10 +565,8 @@ def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
-  if tuple_args:
-    input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
-                  zip(input_bufs, compiled.local_devices())]
-  out_bufs = compiled.ExecuteOnLocalDevices(input_bufs)[0].destructure()
+  out_bufs = compiled.ExecuteOnLocalDevices(
+      input_bufs, tuple_arguments=tuple_args)[0]
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
@@ -589,9 +578,6 @@ def _execute_trivial(jaxpr, device, consts, handlers, *args):
           for v in jaxpr.outvars]
   return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
           else h(device_put(x, device)) for h, x in zip(handlers, outs)]
-
-def make_tuple(bufs, device, backend):
-  return xb.get_backend(backend).make_tuple(bufs, device)
 
 @memoize
 def _get_device(device, backend):
@@ -960,9 +946,11 @@ def _lazy_force_computation(sticky, aval, device, lexpr):
   result_device = device if sticky else None
   handler = partial(DeviceArray, aval, result_device, lazy.array(aval.shape))
   if lazy.is_constant(lexpr):
-    force_fun = lambda _: handler(compiled.Execute([]))
+    def force_fun(_):
+      return handler(compiled.Execute([], tuple_arguments=False)[0])
   else:
-    force_fun = lambda x: handler(compiled.Execute([x.device_buffer]))
+    def force_fun(x):
+      return handler(compiled.Execute([x.device_buffer], tuple_arguments=False)[0])
   return force_fun
 
 

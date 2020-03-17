@@ -117,27 +117,12 @@ class APITest(jtu.JaxTestCase):
 
     f(1, 2, z=onp.zeros(3))  # doesn't crash
 
-  def test_jit_many_args_tuples(self):
+  def test_jit_with_many_args_works(self):
     @jit
     def f(args_list):
       return sum(args_list)
 
-    make_tuple = xla.make_tuple
-
-    counts = [0]
-    def make_tuple_and_count(*args, **kwargs):
-      counts[0] += 1
-      return make_tuple(*args, **kwargs)
-
-    try:
-      xla.make_tuple = make_tuple_and_count
-      ans = f(list(range(500)))
-    finally:
-      xla.make_tuple = make_tuple
-
-    expected = sum(range(500))
-    self.assertEqual(counts[0], 1)  # formed a tuple on dispatch
-    self.assertEqual(ans, expected)  # computed the correct result
+    self.assertEqual(f(list(range(500))), sum(range(500)))
 
   def test_grad_of_jit(self):
     side = []

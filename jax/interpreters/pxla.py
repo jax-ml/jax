@@ -45,7 +45,7 @@ _map = safe_map
 
 def identity(x): return x
 
-def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
+def shard_args(backend, devices, assignments, axis_size, args):
   """Shard each argument data array along its leading axis.
 
   Args:
@@ -95,10 +95,6 @@ def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
       bufs = shard_arg_handlers[type(arg)](arg, devices, assignments)
       for r, buf in enumerate(bufs):
         buffers[r][a] = buf
-
-  if tuple_args:
-    buffers = [[xla.make_tuple(bufs, devices[r], backend)]
-               for r, bufs in enumerate(buffers)]
 
   return buffers
 
@@ -546,11 +542,12 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   handle_args = partial(shard_args, backend, compiled.local_devices(),
                         assign_shards_to_replicas(num_local_replicas, axis_size),
-                        axis_size, tuple_args)
+                        axis_size)
   handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas,
                                           out_pvals, compiled.local_devices(),
                                           backend)
-  return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
+  return partial(execute_replicated, compiled, backend, handle_args, handle_outs,
+                 tuple_args)
 
 multi_host_supported_collectives = set()
 
@@ -564,7 +561,7 @@ def _pvals_to_results_handler(size, nrep, out_pvals, devices, backend):
   def handler(out_bufs):
     buffers = [[result_to_populate] * nrep for _ in range(nouts)]
     for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf.destructure()):
+      for i, buf in enumerate(tuple_buf):
         buffers[i][r] = buf
     assert not any(buf is result_to_populate for bufs in buffers
                    for buf in bufs)
@@ -631,9 +628,11 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
   else:
     return aval_to_result_handler(axis_size, nrep, pv)
 
-def execute_replicated(compiled, backend, in_handler, out_handler, *args):
+def execute_replicated(compiled, backend, in_handler, out_handler, tuple_args,
+                       *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
+  out_bufs = compiled.ExecuteOnLocalDevices(
+      list(input_bufs), tuple_arguments=tuple_args)
   return out_handler(out_bufs)
 
 

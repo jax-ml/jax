@@ -86,7 +86,7 @@ def _pvals_to_results_handler(nrep, npar, partitions, out_pvals):
     buffers = [[[None] * npar for _ in range(nrep)] for _ in range(nouts)]
     for raw_idx, tuple_buf in enumerate(out_bufs):
       r, p = onp.unravel_index(raw_idx, (nrep, npar))
-      for i, buf in enumerate(tuple_buf.destructure()):
+      for i, buf in enumerate(tuple_buf):
         buffers[i][r][p] = buf
     return [h(bufs) for h, bufs in zip(handlers, buffers)]
 
@@ -202,7 +202,8 @@ def _sharded_jit_translation_rule(c, axis_env, freevar_nodes,
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
+  out_bufs = compiled.ExecuteOnLocalDevices(
+      list(input_bufs), tuple_arguments=False)
   return out_handler(out_bufs)
 
 
