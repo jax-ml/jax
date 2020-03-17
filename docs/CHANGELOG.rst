@@ -9,6 +9,11 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.1.62 (unreleased)
+---------------------------
+
+* JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
+
 jax 0.1.61 (March 17, 2020)
 ---------------------------
 
