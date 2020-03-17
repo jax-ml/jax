@@ -8,7 +8,7 @@ Change Log
 These are the release notes for JAX.
 
 
-jax 0.1.60 (unreleased)
+jax 0.1.60 (March 17, 2020)
 -----------------------
 
 .. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
