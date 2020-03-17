@@ -1309,6 +1309,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_op, jnp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
+  def testOnesWithInvalidShape(self):
+    with self.assertRaises(TypeError):
+      jnp.ones((-1, 1))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_filldtype={}_outdtype={}".format(
           jtu.format_shape_dtype_string(shape, in_dtype),
