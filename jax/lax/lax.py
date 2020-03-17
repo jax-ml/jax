@@ -1705,13 +1705,15 @@ cosh_p = standard_unop(_float | _complex, 'cosh')
 ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
 
 asinh_p = standard_unop(_float | _complex, 'asinh')
-ad.defjvp(asinh_p, lambda g, x: mul(g, 1 / sqrt(square(x) + 1)))
+ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(square(x) + _one(x))))
 
 acosh_p = standard_unop(_float | _complex, 'acosh')
-ad.defjvp(acosh_p, lambda g, x: mul(g, 1 / sqrt((x - 1.) * (x + 1.))))
+ad.defjvp(acosh_p,
+          lambda g, x: mul(g, rsqrt((x - _one(x)) * (x + _one(x)))))
 
 atanh_p = standard_unop(_float | _complex, 'atanh')
-ad.defjvp(atanh_p, lambda g, x: mul(g, 1 / ((1. - x) * (1. + x))))
+ad.defjvp(atanh_p,
+          lambda g, x: mul(g, reciprocal((_one(x) - x) * (_one(x) + x))))
 
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta')
