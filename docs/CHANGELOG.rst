@@ -29,7 +29,7 @@ jax 0.1.60 (unreleased)
 * The minimum jaxlib version is now 0.1.41.
 
 jaxlib 0.1.40 (March 4, 2020)
-------------------------------
+-------------------------------
 
 * Adds experimental support in Jaxlib for TensorFlow profiler, which allows
   tracing of CPU and GPU computations from TensorBoard.
