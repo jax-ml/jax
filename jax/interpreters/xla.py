@@ -732,6 +732,9 @@ class DeviceArray(DeviceValue):
   __slots__ = ["_npy_value", "_device", "_lazy_expr"]
   __array_priority__ = 100
 
+  # We dynamically add numpy methods in jax/numpy/__init__.py.
+  _HAS_DYNAMIC_ATTRIBUTES = True
+
   def __init__(self, aval, device, lazy_expr, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
