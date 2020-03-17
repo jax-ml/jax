@@ -975,14 +975,9 @@ def squeeze(a, axis=None):
   if axis is None:
     newshape = [d for d in shape(a) if d != 1]
   else:
-    if isinstance(axis, int):
-      if shape(a)[axis] != 1:
-        raise ValueError(msg)
-      axis = (axis,)
-    elif isinstance(axis, tuple):
-      for x in axis:
-        if shape(a)[x] != 1:
-          raise ValueError(msg)
+    axis = (axis,) if isinstance(axis, int) else axis
+    if any(shape(a)[x] != 1 for x in axis):
+      raise ValueError(msg)
     axis = frozenset(_canonicalize_axis(i, ndim(a)) for i in axis)
     newshape = [d for i, d in enumerate(shape(a))
                 if d != 1 or i not in axis]
