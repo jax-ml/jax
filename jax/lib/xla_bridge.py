@@ -232,8 +232,8 @@ def host_id(backend=None):
 
 
 def host_ids(backend=None):
-  """Returns a list of all host IDs."""
-  return list(set(d.host_id for d in devices(backend)))
+  """Returns a sorted list of all host IDs."""
+  return sorted(list(set(d.host_id for d in devices(backend))))
 
 
 def host_count(backend=None):
