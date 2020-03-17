@@ -5,13 +5,18 @@ Change Log
    Remember to leave an empty line before the start of an itemized list,
    and to align the itemized text with the first line of an item.
 
+.. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+
 These are the release notes for JAX.
 
+jax 0.1.61 (March 17, 2020)
+---------------------------
+
+* Fixes Python 3.5 support. This will be the last JAX or jaxlib release that
+  supports Python 3.5.
 
 jax 0.1.60 (March 17, 2020)
------------------------
-
-.. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+---------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...master>`_.
 * New features:
