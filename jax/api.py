@@ -2006,7 +2006,7 @@ class ShapeDtypeStruct(object):
   __slots__ = ["shape", "dtype"]
   def __init__(self, shape, dtype):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
 
   size = property(lambda self: onp.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -2019,7 +2019,7 @@ class ShapeDtypeStruct(object):
 
   def __repr__(self):
     return "{}(shape={}, dtype={})".format(
-        type(self).__name__, self.shape, self.dtype.dtype.name)
+        type(self).__name__, self.shape, self.dtype.name)
 
   __str__ = __repr__
 
