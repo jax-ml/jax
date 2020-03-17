@@ -3,13 +3,12 @@ notifications:
   email: false
 dist: xenial
 language: python
-python:
-  - "3.6"
-env:
-  - JAX_ENABLE_X64=0 JAX_NUM_GENERATED_CASES=25
-  - JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
 matrix:
   include:
+    - python: "3.6"
+      env: JAX_ENABLE_X64=0 JAX_NUM_GENERATED_CASES=25
+    - python: "3.6"
+      env: JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
     - python: "3.7"
       env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
 

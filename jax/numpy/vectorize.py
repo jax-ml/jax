@@ -62,8 +62,7 @@ def _update_dim_sizes(
     shape: Tuple[int, ...],
     core_dims: CoreDims,
     error_context: str = "",
-    *,
-    is_input: bool,
+    is_input: bool = False,
 ):
   """Incrementally check and update core dimension sizes for a single argument.
 

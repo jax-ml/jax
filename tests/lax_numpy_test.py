@@ -567,7 +567,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
         for shape in rec.shapes for dtype in rec.dtypes
         for out_dtype in [None] + rec.dtypes
-        for axis in set(range(-len(shape), len(shape))) | set([None])
+        for axis in list(range(-len(shape), len(shape))) + [None]
         for keepdims in [False, True])
     for rec in JAX_REDUCER_RECORDS))
   def testReducer(self, onp_op, jnp_op, rng_factory, shape, dtype, out_dtype,
@@ -599,7 +599,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
       for rec in JAX_REDUCER_NO_DTYPE_RECORDS
       for shape in rec.shapes for dtype in rec.dtypes
-      for axis in set(range(-len(shape), len(shape))) | set([None])
+      for axis in list(range(-len(shape), len(shape))) + [None]
       for keepdims in [False, True]))
   def testReducerNoDtype(self, onp_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
@@ -616,7 +616,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "shape": shape, "dtype": dtype, "axis": axis}
       for shape in all_shapes for dtype in all_dtypes
-      for axis in set(range(-len(shape), len(shape))) | set([None])))
+      for axis in list(range(-len(shape), len(shape))) + [None]))
   def testCountNonzero(self, shape, dtype, axis):
     rng = jtu.rand_some_zero()
     onp_fun = lambda x: onp.count_nonzero(x, axis)
@@ -1484,7 +1484,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default, "shape": shape, "dtype": dtype, "axis": axis,
        "weights_shape": weights_shape, "returned": returned}
       for shape, dtype in _shape_and_dtypes(nonempty_shapes, number_dtypes)
-      for axis in set(range(-len(shape), len(shape))) | set([None])
+      for axis in list(range(-len(shape), len(shape))) + [None]
       # `weights_shape` is either `None`, same as the averaged axis, or same as
       # that of the input
       for weights_shape in ([None, shape] if axis is None or len(shape) == 1

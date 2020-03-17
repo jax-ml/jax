@@ -28,7 +28,7 @@ import collections
 import functools
 import itertools as it
 import threading
-from typing import Any, Callable, Collection, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 import numpy as onp
@@ -81,7 +81,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Union[int, Collection[int]] = (),
+def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
         device=None, backend: Optional[str] = None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
@@ -197,7 +197,7 @@ def disable_jit():
 
 
 def xla_computation(fun: Callable,
-                    static_argnums: Union[int, Collection[int]] = (),
+                    static_argnums: Union[int, Iterable[int]] = (),
                     axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
@@ -737,7 +737,7 @@ def _flatten_axes(treedef, axis_tree):
 
 
 def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
-         static_broadcasted_argnums: Union[int, Collection[int]] = (),
+         static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None):
   """Parallel map with support for collectives.
