@@ -5,7 +5,7 @@ dist: xenial
 language: python
 matrix:
   include:
-    - python: "3.5"
+    - python: "3.6"
       env: JAX_ENABLE_X64=0 JAX_NUM_GENERATED_CASES=25
     - python: "3.6"
       env: JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
