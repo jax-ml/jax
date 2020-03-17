@@ -88,8 +88,8 @@ class TypedJaxpr(object):
       out_avals_raised = [raise_to_shaped(v) for v in out_avals]
       exp_in_avals = [v.aval for v in jaxpr.invars]
       exp_out_avals = [v.aval for v in jaxpr.outvars]
-      assert in_avals_raised == exp_in_avals, f"expected: {exp_in_avals}, got: {in_avals_raised}"
-      assert out_avals_raised == exp_out_avals, f"expected: {exp_out_avals}, got: {out_avals_raised}"
+      assert in_avals_raised == exp_in_avals, "expected: {}, got: {}".format(exp_in_avals, in_avals_raised)
+      assert out_avals_raised == exp_out_avals, "expected: {}, got: {}".format(exp_out_avals, out_avals_raised)
 
     self.jaxpr = jaxpr
     self.literals = list(literals)
