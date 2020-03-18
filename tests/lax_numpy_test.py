@@ -2113,17 +2113,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jax_numpy_result = ((x + x.T) / 2).dtype
     self.assertEqual(orig_numpy_result, jax_numpy_result)
 
-  def testIssue347(self):
-    # https://github.com/google/jax/issues/347
-    def test_fail(x):
-      x = jnp.sqrt(jnp.sum(x ** 2, axis=1))
-      ones = jnp.ones_like(x)
-      x = jnp.where(x > 0.5, x, ones)
-      return jnp.sum(x)
-
-    x = jnp.array([[1, 2], [3, 4], [0, 0]], dtype=jnp.float64)
-    result = api.grad(test_fail)(x)
-    assert not onp.any(onp.isnan(result))
+  # NOTE(mattjj): I disabled this test when removing lax._safe_mul because
+  # introducing the convention 0 * inf = 0 leads to silently wrong results in
+  # some cases. See this comment for details:
+  # https://github.com/google/jax/issues/1052#issuecomment-514083352
+  # def testIssue347(self):
+  #   # https://github.com/google/jax/issues/347
+  #   def test_fail(x):
+  #     x = jnp.sqrt(jnp.sum(x ** 2, axis=1))
+  #     ones = jnp.ones_like(x)
+  #     x = jnp.where(x > 0.5, x, ones)
+  #     return jnp.sum(x)
+  #   x = jnp.array([[1, 2], [3, 4], [0, 0]], dtype=jnp.float64)
+  #   result = api.grad(test_fail)(x)
+  #   assert not onp.any(onp.isnan(result))
 
   def testIssue453(self):
     # https://github.com/google/jax/issues/453
@@ -2240,11 +2243,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp.zeros(3,), api.grad(f)(onp.ones(3,)),
                         check_dtypes=True)
 
-  def testIssue777(self):
-    x = jnp.linspace(-200, 0, 4, dtype=onp.float32)
-    f = api.grad(lambda x: jnp.sum(1 / (1 + jnp.exp(-x))))
-    self.assertAllClose(f(x), onp.array([0., 0., 0., 0.25], dtype=onp.float32),
-                        check_dtypes=True)
+  # NOTE(mattjj): I disabled this test when removing lax._safe_mul because this
+  # is a numerical stability issue that should be solved with a custom jvp rule
+  # of the sigmoid function being differentiated here, not by safe_mul.
+  # def testIssue777(self):
+  #   x = jnp.linspace(-200, 0, 4, dtype=onp.float32)
+  #   f = api.grad(lambda x: jnp.sum(1 / (1 + jnp.exp(-x))))
+  #   self.assertAllClose(f(x), onp.array([0., 0., 0., 0.25], dtype=onp.float32),
+  #                       check_dtypes=True)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(

@@ -1145,9 +1145,6 @@ def stop_gradient(x):
   return tree_map(stop_gradient_p.bind, x)
 
 
-def _safe_mul(x, y): return safe_mul_p.bind(x, y)
-
-
 ### convenience wrappers around traceables
 
 
@@ -1674,7 +1671,7 @@ is_finite_p = unop(_fixed_dtype(onp.bool_), _float, 'is_finite')
 ad.defjvp_zero(is_finite_p)
 
 exp_p = standard_unop(_float | _complex, 'exp')
-ad.defjvp2(exp_p, lambda g, ans, x: _safe_mul(g, ans))
+ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
@@ -1804,21 +1801,18 @@ _maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
-ad.defjvp2(sqrt_p, lambda g, ans, x: _safe_mul(g, div(_const(x, 0.5), ans)))
+ad.defjvp2(sqrt_p, lambda g, ans, x: mul(g, div(_const(x, 0.5), ans)))
 
 rsqrt_p = standard_unop(_float | _complex, 'rsqrt')
 ad.defjvp2(rsqrt_p,
            lambda g, ans, x:
-           _safe_mul(g, mul(_const(x, -0.5), pow(x, _const(x, -1.5)))))
+           mul(g, mul(_const(x, -0.5), pow(x, _const(x, -1.5)))))
 
 pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, ans, x, y):
-  # we call _safe_mul here so that we get the behavior 0*inf = 0, since when a
-  # coefficient in `g` is zero we want to keep it at zero, not produce a nan.
-  # see https://github.com/google/jax/pull/383
   jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
-  return _safe_mul(_brcast(g, y), jac)
+  return mul(_brcast(g, y), jac)
 
 def _pow_jvp_rhs(g, ans, x, y):
   return mul(_brcast(g, x), mul(log(_replace_zero(x)), ans))
@@ -1858,19 +1852,6 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
-
-def _safe_mul_translation_rule(c, x, y):
-  dtype = c.GetShape(x).numpy_dtype()
-  zero = c.Constant(onp.array(0, dtype=dtype))
-  out_shape = broadcast_shapes(c.GetShape(x).dimensions(),
-                               c.GetShape(y).dimensions())
-  return c.Select(c.Or(c.Eq(x, zero), c.Eq(y, zero)),
-                  c.Broadcast(zero, out_shape),
-                  c.Mul(x, y))
-
-safe_mul_p = standard_naryop([_num, _num], 'safe_mul',
-                            translation_rule=_safe_mul_translation_rule)
-ad.defbilinear_broadcasting(_brcast, safe_mul_p, _safe_mul, _safe_mul)
 
 
 def _div_transpose_rule(cotangent, x, y):
