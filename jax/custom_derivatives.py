@@ -68,7 +68,7 @@ def _memoize(thunk):
   return memoized
 
 def _initial_style_jaxpr(fun, in_avals):
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
                                                bottom=True, stage_out=False)
   assert not any(isinstance(c, core.Tracer) for c in consts)

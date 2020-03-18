@@ -52,10 +52,6 @@ def _skip_if_unsupported_type(dtype):
       dtype in (onp.dtype('float64'), onp.dtype('complex128'))):
     raise unittest.SkipTest("--jax_enable_x64 is not set")
 
-# TODO(phawkins): bug https://github.com/google/jax/issues/432
-def _skip_on_mac_xla_bug():
-  if sys.platform == "darwin" and osp.version.version > "1.0.0":
-    raise unittest.SkipTest("Test fails on Mac with new scipy (issue #432)")
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
@@ -129,7 +125,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if m == 23:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     
     # According to numpy docs the shapes are as follows:
     # Coefficient tensor (a), of shape b.shape + Q. 
@@ -236,7 +232,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if shape == (50, 50) and dtype == onp.complex64:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -622,7 +618,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testTensorinv(self, shape, dtype, rng_factory):
     _skip_if_unsupported_type(dtype)
     if shape[0] > 100:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     rng = rng_factory()
 
     def tensor_maker():
@@ -678,7 +674,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if shape == (200, 200) and dtype == onp.float32:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     if jtu.device_under_test() == "gpu" and shape == (200, 200):
       raise unittest.SkipTest("Test is flaky on GPU")
 
@@ -709,7 +705,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if shape == (7, 10000) and dtype in [onp.complex64, onp.float32]:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
@@ -885,7 +881,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if n == 200 and dtype == onp.complex64:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     args_maker = lambda: [rng((n, n), dtype)]
 
     x, = args_maker()
@@ -1110,7 +1106,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if n == 50 and dtype in [onp.complex64, onp.float32]:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     args_maker = lambda: [rng((n, n), dtype)]
 
     osp_fun = lambda a: osp.linalg.expm(a)
@@ -1133,7 +1129,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     for dtype in float_types + complex_types
   ))
   def testIssue2131(self, n, dtype):
-    _skip_on_mac_xla_bug()
+    jtu.skip_on_mac_xla_bug()
     args_maker_zeros = lambda: [onp.zeros((n, n), dtype)]
     osp_fun = lambda a: osp.linalg.expm(a)
     jsp_fun = lambda a: jsp.linalg.expm(a)

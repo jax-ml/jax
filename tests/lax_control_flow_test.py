@@ -17,6 +17,7 @@ import collections
 from functools import partial
 import itertools
 import re
+from typing import Callable
 from unittest import SkipTest
 
 from absl.testing import absltest

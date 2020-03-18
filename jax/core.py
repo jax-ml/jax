@@ -662,6 +662,8 @@ def lattice_join(x, y):
   else:
     raise TypeError((x, y))
 
+# For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
+Value = Any
 
 def valid_jaxtype(x):
   try:

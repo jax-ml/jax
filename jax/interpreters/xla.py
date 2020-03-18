@@ -16,7 +16,7 @@
 from collections import defaultdict
 import itertools as it
 import operator as op
-from typing import Any, Callable, Dict, Type
+from typing import Any, Callable, Dict, Sequence, Type
 
 from absl import logging
 import numpy as onp
@@ -475,7 +475,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = unzip2(arg_specs)
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
+  pvals: Sequence[pe.PartialVal] = [pe.PartialVal.unknown(aval) for aval in abstract_args]
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
       fun, pvals, instantiate=False, stage_out=True, bottom=True)
 
@@ -663,7 +663,7 @@ def lower_fun(fun, multiple_results=True):
   def f(c, *xla_args, **params):
     # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.GetShape(x)) for x in xla_args]
-    pvals = [pe.PartialVal((a, core.unit)) for a in avals]
+    pvals = [pe.PartialVal.unknown(a) for a in avals]
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
@@ -687,7 +687,7 @@ def _array_aval_from_xla_shape(xla_shape):
 
 def lower_fun_initial_style(fun):
   def f(c, axis_env, name_stack, avals, backend, *xla_args, **params):
-    pvals = [pe.PartialVal((a, core.unit)) for a in avals]
+    pvals = [pe.PartialVal.unknown(a) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
     consts = _map(c.Constant, consts)

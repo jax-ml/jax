@@ -302,7 +302,7 @@ def _axis_index_partial_eval(trace, _, **params):
   # during pmap lowering. It is like the standard JaxprTrace.process_primitive
   # rule except that we don't attempt to lower out of the trace.
   out_aval = ShapedArray((), onp.int32)
-  out_tracer = pe.JaxprTracer(trace, pe.PartialVal((out_aval, core.unit)), None)
+  out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
   eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p, params)
   out_tracer.recipe = eqn
   return out_tracer
@@ -493,9 +493,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
       return fun.call_wrapped(*args)
 
   avals = tuple(map(partial(shard_aval, axis_size), avals))
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+  pvals = [pe.PartialVal.unknown(aval) for aval in avals]
   # We add a dummy first invar, to carry the trace details to `dynamic_fun`
-  pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
+  pval = pe.PartialVal.unknown(core.abstract_unit)  # dummy value for axis env
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
       dynamic_fun, [pval] + pvals, instantiate=False, stage_out=True, bottom=True)
   jaxpr.invars = jaxpr.invars[1:]  # ignore dummy

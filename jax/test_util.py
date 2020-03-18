@@ -19,6 +19,7 @@ import re
 import itertools as it
 import os
 from typing import Dict, Sequence, Union
+import sys
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -26,6 +27,7 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
+import scipy
 
 from . import api
 from . import core
@@ -346,6 +348,11 @@ def skip_on_flag(flag_name, skip_value):
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
+
+# TODO(phawkins): bug https://github.com/google/jax/issues/432
+def skip_on_mac_xla_bug():
+  if sys.platform == "darwin" and scipy.version.version > "1.0.0":
+    raise absltest.SkipTest("Test fails on Mac with new scipy (issue #432)")
 
 
 def format_test_name_suffix(opname, shapes, dtypes):

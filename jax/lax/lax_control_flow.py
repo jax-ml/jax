@@ -22,7 +22,7 @@ import functools
 import itertools
 import operator
 import threading
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as onp
 
@@ -55,7 +55,7 @@ _reduce = functools.reduce
 
 @cache()
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   with core.initial_style_staging():
     jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
@@ -583,6 +583,7 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   num_t_res = len(true_jaxpr_1.out_avals) - len(out_uks)
   num_f_res = len(false_jaxpr_1.out_avals) - len(out_uks)
 
+  # Move the residuals to front
   move = [False] * len(true_jaxpr.in_avals) + [True] * num_t_res
   true_jaxpr_2 = pe.move_binders_to_front(true_jaxpr_2, move)
   move = [False] * len(false_jaxpr.in_avals) + [True] * num_f_res
@@ -1004,9 +1005,9 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   # The residuals are treated as extensive outputs of jaxpr_1 (and extensive
   # inputs to jaxpr_2), but residuals that are loop-invariant can be hoisted.
   # TODO(mattjj): hoist other loop-invariant values here too (instantiate=False)
-  invariant_pvals = [pe.PartialVal((None, core.unit if uk else t.pval[1]))
+  invariant_pvals = [pe.PartialVal.known(core.unit if uk else t.pval[1])
                      for uk, t in zip(unknowns[:num_consts], tracers[:num_consts])]
-  other_pvals = [pe.PartialVal((a, core.unit)) for a in jaxpr_1.in_avals[num_consts:]]
+  other_pvals = [pe.PartialVal.unknown(a) for a in jaxpr_1.in_avals[num_consts:]]
   in_pvals_1 = invariant_pvals + other_pvals
   untyped_jaxpr_1, out_pvals_1, consts_1 = pe.trace_to_jaxpr(
       lu.wrap_init(core.jaxpr_as_fun(jaxpr_1)), in_pvals_1,
@@ -1135,8 +1136,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
     return c_bar + a_bar
   return _make_typed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
-def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals):
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
+  pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_avals, _ = unzip2(pvals_out)
   return core.TypedJaxpr(jaxpr, consts, in_avals, _map(raise_to_shaped, out_avals))
