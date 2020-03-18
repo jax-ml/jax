@@ -113,13 +113,13 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
 @_wraps(osp_special.xlogy)
 def xlogy(x, y):
   x, y = _promote_args_inexact("xlogy", x, y)
-  return lax.mul(x, lax.log(y))
+  return jnp.where(x == 0., jnp.zeros_like(x), lax.mul(x, lax.log(y)))
 
 
 @_wraps(osp_special.xlog1py, update_doc=False)
 def xlog1py(x, y):
   x, y = _promote_args_inexact("xlog1py", x, y)
-  return lax.mul(x, lax.log1p(y))
+  return jnp.where(x == 0., jnp.zeros_like(x), lax.mul(x, lax.log1p(y)))
 
 
 @_wraps(osp_special.entr)
