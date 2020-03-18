@@ -992,7 +992,7 @@ def reduce(operand: Array, init_value: Array, computation: Callable,
 
 @cache()
 def _reduction_jaxpr(computation, aval):
-  pval = pe.PartialVal((aval, core.unit))
+  pval = pe.PartialVal.unknown(aval)
   comp = lu.wrap_init(lambda x, y: (computation(x, y),))
   jaxpr, _, consts = pe.trace_to_jaxpr(comp, (pval, pval), instantiate=False)
   return jaxpr, consts

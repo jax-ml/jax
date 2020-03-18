@@ -314,7 +314,7 @@ def xla_computation(fun: Callable,
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
-    pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
+    pvals = [pe.PartialVal.unknown(aval) for aval in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
                                          instantiate=instantiate_const_outputs,
                                          stage_out=True)
@@ -1308,7 +1308,8 @@ def _lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
     dummy = (core.unit,) * len(tangents)
     out = eval_jaxpr(jaxpr, consts, *(dummy + tangents))
     tangents_out = out[len(out)//2:]
-    return tuple(map(pe.merge_pvals, tangents_out, out_pvals))
+    return tuple(map(lambda out_pv, tan_out: out_pv.merge_with_known(tan_out),
+                     out_pvals, tangents_out))
 
   return apply_flat_fun(fun, io_tree, *py_args)
 
@@ -1444,7 +1445,7 @@ def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
 
   def pv_like(x):
     aval = xla.abstractify(x)
-    return pe.PartialVal((aval, core.unit))
+    return pe.PartialVal.unknown(aval)
 
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
@@ -1630,7 +1631,7 @@ class CustomTransformsFunction(object):
     # TODO(mattjj): instead of tracing to a jaxpr, use process_call
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
-    in_pvals = [pe.PartialVal((raise_to_shaped(core.get_aval(x)), core.unit))
+    in_pvals = [pe.PartialVal.unknown(raise_to_shaped(core.get_aval(x)))
                 for x in args_flat]
     with core.initial_style_staging():
       jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)

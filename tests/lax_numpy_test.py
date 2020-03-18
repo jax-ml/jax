@@ -2744,8 +2744,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     f = lambda y: lax.fori_loop(0, 5, body, (y, y))
     wrapped = linear_util.wrap_init(f)
-    pv = partial_eval.PartialVal(
-      (jax.ShapedArray((3, 4), onp.float32), jax.core.unit))
+    pv = partial_eval.PartialVal.unknown(jax.ShapedArray((3, 4), onp.float32))
     _, _, consts = partial_eval.trace_to_jaxpr(wrapped, [pv])
     self.assertFalse(
       any(onp.array_equal(x, onp.full((3, 4), 2., dtype=onp.float32))
