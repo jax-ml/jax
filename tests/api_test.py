@@ -18,7 +18,6 @@ from contextlib import contextmanager
 import copy
 from functools import partial
 import re
-import sys
 import unittest
 import warnings
 import weakref
@@ -1870,8 +1869,6 @@ class JaxprTest(jtu.JaxTestCase):
   in e }
         """, str(jaxpr))
 
-  @unittest.skipIf((sys.version_info.major, sys.version_info.minor) <= (3, 5),
-                   "Test fails on Python 3.5")
   def testExamplesJaxprDoc(self):
     """Tests examples included in the Understanding JAXPRs doc (docs/jaxpr.rst)."""
     from jax import numpy as jnp
