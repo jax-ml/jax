@@ -17,6 +17,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 import operator as op
 import threading
+from typing import Any, Callable, Dict, List, Sequence, Set, Type
 
 from absl import logging
 import numpy as onp
@@ -99,7 +100,7 @@ def shard_args(backend, devices, assignments, axis_size, args):
   return buffers
 
 
-shard_arg_handlers = {}
+shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
     lambda x, devices, _: [xla.device_put(core.unit, d) for d in devices]
 def _shard_array(x, devices, assignments):
@@ -121,7 +122,7 @@ def shard_aval(size, aval):
   except KeyError as err:
     raise TypeError("No shard_aval handler for type: {}".format(type(aval))
                     ) from err
-shard_aval_handlers = {}
+shard_aval_handlers: Dict[Type[core.AbstractValue], Callable[[int, Any], Any]] = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
 def _shard_abstract_array(size, x):
   if x.shape[0] != size:
@@ -136,7 +137,8 @@ def aval_to_result_handler(size, nrep, aval):
   except KeyError as err:
     raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
                     ) from err
-pxla_result_handlers = {}
+PxlaResultHandler = Callable[..., Callable[[Any], Any]]
+pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 def array_result_handler(size, nrep, aval):
   full_aval = ShapedArray((size,) + aval.shape, aval.dtype)
@@ -242,7 +244,7 @@ def apply_parallel_primitive(prim, *args, **params):
     shape = (logical_size(dynamic_axis_env[axis_name]),)
   return parallel_pure_rules[prim](*args, shape=shape, **params)
 
-parallel_pure_rules = {}
+parallel_pure_rules: Dict[core.Primitive, Callable] = {}
 
 
 def axis_index(axis_name):
@@ -377,7 +379,7 @@ xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 
 
 class ChunkedDeviceArray(ShardedDeviceArray):
-  __slots__ = []
+  __slots__: List[str] = []
   _collect = staticmethod(onp.concatenate)
 
   def __init__(self, axis_size, aval, device_buffers):
@@ -549,7 +551,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs,
                  tuple_args)
 
-multi_host_supported_collectives = set()
+multi_host_supported_collectives: Set[core.Primitive] = set()
 
 class ResultToPopulate(object): pass
 result_to_populate = ResultToPopulate()
@@ -865,4 +867,4 @@ class SplitAxisTrace(core.Trace):
     return  val, todo
 
 
-split_axis_rules = {}
+split_axis_rules: Dict[core.Primitive, Callable] = {}

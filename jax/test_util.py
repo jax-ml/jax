@@ -18,6 +18,7 @@ import functools
 import re
 import itertools as it
 import os
+from typing import Dict, Sequence
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -629,7 +630,7 @@ def assert_dot_precision(expected_precision, fun, *args):
     assert precision == expected_precision, msg
 
 
-_CACHED_INDICES = {}
+_CACHED_INDICES: Dict[int, Sequence[int]] = {}
 
 def cases_from_list(xs):
   xs = list(xs)

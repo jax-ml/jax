@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+from typing import Callable, Dict, Type
 
 from absl import logging
 import numpy as onp
@@ -105,7 +106,7 @@ def _aval_to_result_handler(partition, aval):
   return result_handlers[type(aval)](partition, aval)
 
 
-result_handlers = {}
+result_handlers: Dict[Type[core.AbstractValue], Callable] = {}
 
 
 def _array_result_handler(partition, aval):
