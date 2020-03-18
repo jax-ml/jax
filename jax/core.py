@@ -111,8 +111,9 @@ def jaxpr_as_fun(typed_jaxpr, *args):
 
 
 
-class JaxprEqn(namedtuple('JaxprEqn', ['invars', 'outvars', 'primitive', 'params'])):
-  def __repr__(self): return str(pp_eqn(eqn)).rstrip()
+class JaxprEqn(namedtuple('JaxprEqn',
+                          ['invars', 'outvars', 'primitive', 'params'])):
+  def __repr__(self): return str(pp_eqn(self)).rstrip()
 
 new_jaxpr_eqn = JaxprEqn
 
