@@ -1150,9 +1150,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     _skip_if_unsupported_type(dtype)
     rng = rng_factory()
 
-    jnp_fun = lambda lhs, rhs: np.linalg.lstsq(lhs, rhs)
-    onp_fun = lambda lhs, rhs: onp.linalg.lstsq(lhs, rhs)
-
     a = rng(lhs_shape, dtype)
     b = rng(rhs_shape, dtype)
 

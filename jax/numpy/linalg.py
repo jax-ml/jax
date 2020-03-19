@@ -387,6 +387,10 @@ def lstsq(a, b):
     residuals = np.array([], dtype=a.dtype)
   else:
     residuals = np.sum(np.square(b - np.dot(a, x_hat)), axis=0)
+
+  x_hat = x_hat.astype(a.dtype)
+  residuals = residuals.astype(a.dtype)
+  s = s.astype(a.dtype)
   return x_hat, residuals, a_rank, s
 
 
