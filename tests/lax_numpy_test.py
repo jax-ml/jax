@@ -54,8 +54,11 @@ nonzerodim_shapes = nonempty_nonscalar_array_shapes + empty_array_shapes
 nonempty_shapes = scalar_shapes + nonempty_array_shapes
 all_shapes =  scalar_shapes + array_shapes
 
-float_dtypes = list(jtu.supported_dtypes().intersection(
-  {jnp.bfloat16, onp.float16, onp.float32, onp.float64}))
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([jnp.bfloat16, onp.float16, onp.float32,
+                                 onp.float64])
 complex_dtypes = [onp.complex64, onp.complex128]
 int_dtypes = [onp.int32, onp.int64]
 uint_dtypes = [onp.uint32, onp.uint64]

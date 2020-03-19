@@ -55,15 +55,16 @@ def num_float_bits(dtype):
 # For standard unops and binops, we can generate a large number of tests on
 # arguments of appropriate shapes and dtypes using the following table.
 
-float_dtypes = list(jtu.supported_dtypes().intersection(
-  {dtypes.bfloat16, onp.float16, onp.float32, onp.float64}))
-complex_elem_dtypes = list(jtu.supported_dtypes().intersection(
-    {onp.float32, onp.float64}))
-complex_dtypes = list(jtu.supported_dtypes().intersection(
-    {onp.complex64, onp.complex128}))
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
+                                 onp.float64])
+complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
+complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
 inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = list(jtu.supported_dtypes().intersection({onp.int32, onp.int64}))
-uint_dtypes = list(jtu.supported_dtypes().intersection({onp.uint32, onp.uint64}))
+int_dtypes = supported_dtypes([onp.int32, onp.int64])
+uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
