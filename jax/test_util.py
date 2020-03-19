@@ -18,7 +18,7 @@ import functools
 import re
 import itertools as it
 import os
-from typing import Dict, Sequence
+from typing import Dict, Sequence, Union
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -294,6 +294,15 @@ def count_jit_and_pmap_compiles():
 
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
+
+def if_device_under_test(device_type: Union[str, Sequence[str]],
+                         if_true, if_false):
+  """Chooses `if_true` of `if_false` based on device_under_test."""
+  if device_under_test() in ([device_type] if isinstance(device_type, str)
+                             else device_type):
+    return if_true
+  else:
+    return if_false
 
 def supported_dtypes():
   if device_under_test() == "tpu":
