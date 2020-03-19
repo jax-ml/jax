@@ -384,7 +384,7 @@ def lstsq(a, b):
 
   x_hat = np.dot(np.dot(np.dot(V.T, sigma_pinv), U.T), b)
   if m <= n or a_rank < n:
-    residuals = np.array([])
+    residuals = np.array([], dtype=a.dtype)
   else:
     residuals = np.sum(np.square(b - np.dot(a, x_hat)), axis=0)
   return x_hat, residuals, a_rank, s
