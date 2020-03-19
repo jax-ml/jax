@@ -79,7 +79,6 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
 ]
 
-
 CombosWithReplacement = itertools.combinations_with_replacement
 
 

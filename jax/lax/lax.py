@@ -1456,21 +1456,25 @@ def atan(x):
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
   return atan2(x, _const(x, 1))
 
-@api.jit
-@_upcast_fp16_for_computation
 def sinh(x):
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
-  log_half = _const(x, onp.log(0.5))
-  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
-  return sub(exp(add(log_half, x)), exp(sub(log_half, x)))
+  return sinh_p.bind(x)
 
-@api.jit
-@_upcast_fp16_for_computation
 def cosh(x):
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
-  log_half = _const(x, onp.log(0.5))
-  # This formulation avoids overflow when e^x is inf but e^x/2 is not inf.
-  return add(exp(add(log_half, x)), exp(sub(log_half, x)))
+  return cosh_p.bind(x)
+
+def asinh(x):
+  r"""Elementwise inverse hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
+  return asinh_p.bind(x)
+
+def acosh(x):
+  r"""Elementwise inverse hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
+  return acosh_p.bind(x)
+
+def atanh(x):
+  r"""Elementwise inverse hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
+  return atanh_p.bind(x)
 
 
 # Add some methods to ShapedArray that rely on lax primitives
@@ -1695,6 +1699,23 @@ atan2_p = standard_naryop([_float, _float], 'atan2')
 ad.defjvp(atan2_p,
   lambda g, x, y: _brcast(g, y) * (y / (square(x) + square(y))),
   lambda g, x, y: _brcast(g, x) * -x / (square(x) + square(y)))
+
+sinh_p = standard_unop(_float | _complex, 'sinh')
+ad.defjvp(sinh_p, lambda g, x: mul(g, cosh(x)))
+
+cosh_p = standard_unop(_float | _complex, 'cosh')
+ad.defjvp(cosh_p, lambda g, x: mul(g, sinh(x)))
+
+asinh_p = standard_unop(_float | _complex, 'asinh')
+ad.defjvp(asinh_p, lambda g, x: mul(g, rsqrt(square(x) + _one(x))))
+
+acosh_p = standard_unop(_float | _complex, 'acosh')
+ad.defjvp(acosh_p,
+          lambda g, x: mul(g, rsqrt((x - _one(x)) * (x + _one(x)))))
+
+atanh_p = standard_unop(_float | _complex, 'atanh')
+ad.defjvp(atanh_p,
+          lambda g, x: mul(g, reciprocal((_one(x) - x) * (_one(x) + x))))
 
 regularized_incomplete_beta_p = standard_naryop(
     [_float, _float, _float], 'regularized_incomplete_beta')

@@ -424,6 +424,9 @@ arctan = _one_to_one_unop(onp.arctan, lax.atan, True)
 sinh = _one_to_one_unop(onp.sinh, lax.sinh, True)
 cosh = _one_to_one_unop(onp.cosh, lax.cosh, True)
 tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
+arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
+arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
+arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
 sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
 
 
@@ -709,52 +712,6 @@ def sinc(x):
   pi_x = lax.mul(lax._const(x, pi), safe_x)
   return where(eq_zero,
                lax._const(x, 1), lax.div(lax.sin(pi_x), pi_x))
-
-
-@_wraps(onp.arcsinh)
-@custom_transforms
-@jit
-@lax._upcast_fp16_for_computation
-def arcsinh(x):
-  # asinh(x) = log(x + sqrt(x**2 + 1))
-  x, = _promote_dtypes_inexact(x)
-  one = lax._const(x, 1)
-  result = lax.log(x + lax.sqrt(x * x + one))
-  if issubdtype(_dtype(result), complexfloating):
-    return result
-  a = abs(x)
-  sqrt_max_value = onp.sqrt(finfo(_dtype(x)).max)
-  log2 = lax._const(a, onp.log(2))
-  return lax.select(a < sqrt_max_value, result, lax.sign(x) * (lax.log(a) + log2))
-
-defjvp(arcsinh, lambda g, ans, x: g / lax.sqrt(lax._const(x, 1) + square(x)))
-
-
-@_wraps(onp.arccosh)
-@jit
-@lax._upcast_fp16_for_computation
-def arccosh(x):
-  # acosh(x) = log(x + sqrt((x + 1) * (x - 1))) if x < sqrt_max_value
-  #            log(x) + log(2) otherwise
-  x, = _promote_dtypes_inexact(x)
-  one = lax._const(x, 1)
-  result = lax.log(x + lax.sqrt((x + one) * (x - one)))
-  if issubdtype(_dtype(result), complexfloating):
-    return result
-  sqrt_max_value = onp.sqrt(finfo(_dtype(x)).max)
-  log2 = lax._const(x, onp.log(2))
-  return lax.select(x < sqrt_max_value, result, lax.log(x) + log2)
-
-
-@_wraps(onp.arctanh)
-def arctanh(x):
-  # atanh(x) = 0.5 * log((1 + x) / (1 - x))
-  x, = _promote_dtypes_inexact(x)
-  one = lax._const(x, 1)
-  result = lax._const(x, 0.5) * lax.log((one + x) / (one - x))
-  if issubdtype(_dtype(result), complexfloating):
-    return result
-  return lax.select(abs(x) <= 1, result, lax.full_like(x, onp.nan))
 
 
 @_wraps(onp.transpose)
