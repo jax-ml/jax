@@ -1141,7 +1141,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for lhs_shape, rhs_shape in [
           ((2, 4), (2, 2)),
           ((5, 4), (5, 2)),
-          ((4, 4), (4, 1))
+          ((4, 4), (4, 1)),
+          ((1, 2), (1,))
       ]
       for dtype in float_types
       for rng_factory in [jtu.rand_default]))
@@ -1154,8 +1155,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     a = rng(lhs_shape, dtype)
     b = rng(rhs_shape, dtype)
-      
-    self.assertAllClose(jnp_fun(a, b), onp_fun(a, b), atol=1e-4, check_dtypes=True)
+
+    jax_x, jax_res, jax_rank, jax_s = np.linalg.lstsq(a, b)
+    x, res, rank, s = onp.linalg.lstsq(a, b, rcond=0)
+
+    self.assertAllClose(jax_x, x, atol=1e-4, check_dtypes=True)
+    self.assertAllClose(jax_res, res, atol=1e-4, check_dtypes=True)
+    self.assertAllClose(jax_s, s, atol=1e-4, check_dtypes=True)
+    self.assertAllClose(jax_rank, rank, atol=1e-4, check_dtypes=False)
+
 
 if __name__ == "__main__":
   absltest.main()
