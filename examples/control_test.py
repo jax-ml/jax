@@ -17,6 +17,7 @@ from __future__ import division
 from __future__ import print_function
 
 from functools import partial
+from unittest import SkipTest
 
 from absl.testing import absltest
 import numpy as onp
@@ -215,6 +216,7 @@ class ControlExampleTest(jtu.JaxTestCase):
 
 
   def testMpcWithLqrProblemSpecifiedGenerally(self):
+    raise SkipTest  # TODO(froystig)
     randn = onp.random.RandomState(0).randn
     dim, T, num_iters = 2, 10, 3
     p = one_step_control(dim, T)
