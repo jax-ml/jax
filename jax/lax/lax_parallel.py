@@ -246,7 +246,6 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
                              axis_name=axis_name)
   return tree_util.tree_map(bind, x)
 
-
 ### parallel primitives
 
 def standard_pmap_primitive(name, multiple_results=False):
@@ -399,13 +398,45 @@ pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 def _drop(x, dim, axis_name):
   return lax.dynamic_index_in_dim(x, axis_index(axis_name), dim, False)
 
-def _allgather(x, dim, size, axis_name):
+def _expand(dim, size, axis_name, x):
   shape = list(x.shape)
   shape.insert(dim, size)
   out = lax.full(shape, lax._const(x, 0))
-  out = lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
-  return psum(out, axis_name)
+  return lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
 
+def _allgather(x, dim, size, axis_name):
+  outs = tree_util.tree_map(partial(_expand, dim, size, axis_name), x)
+  return psum(outs, axis_name)
+
+def all_gather(x, axis_name):
+  """Gather values of x across all replicas.
+
+  If ``x`` is a pytree then the result is equivalent to mapping this function to
+  each leaf in the tree.
+
+  This is equivalent to, but faster than, all_to_all(broadcast(x)).
+
+  Args:
+    x: array(s) with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      ``pmap`` docstring for more details).
+
+  Returns:
+    Array(s) representing the result of an all-gather along the axis
+    ``axis_name``. Shapes are the same as ``x.shape``, but with a leading
+    dimension of the axis_size.
+
+  For example, with 2 XLA devices available:
+
+  >>> x = np.arange(4)
+  >>> y = jax.pmap(lambda x: jax.lax.all_gather(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [[0 1 2 3]
+   [0 1 2 3]
+   [0 1 2 3]
+   [0 1 2 3]]
+  """
+  return _allgather(x, 0, psum(1, axis_name), axis_name)
 
 def _broadcasting_papply(prim, name, size, vals, axes, **params):
   x, y = vals
