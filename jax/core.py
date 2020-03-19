@@ -968,11 +968,7 @@ def pp_eqn(eqn):
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 def pp_jaxpr(jaxpr):
-  if len(jaxpr.outvars) > 1:
-    pp_outvars = str(tuple(jaxpr.outvars))
-  else:
-    pp_outvars = str(jaxpr.outvars[0])
-
+  pp_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
           ((pp('let ') >>
