@@ -1861,12 +1861,12 @@ class JaxprTest(jtu.JaxTestCase):
       d = add a 2.0
       e = cond[ false_jaxpr={ lambda  ; b a.
                               let c = sub a b
-                              in c }
+                              in (c,) }
                 linear=(False, False, False, False)
                 true_jaxpr={ lambda  ; b a.
                              let c = add a b
-                             in c } ] b a c a d
-  in e }
+                             in (c,) } ] b a c a d
+  in (e,) }
         """, str(jaxpr))
 
   def testExamplesJaxprDoc(self):
@@ -1883,7 +1883,7 @@ class JaxprTest(jtu.JaxTestCase):
       d = mul c 3.0
       e = add a d
       f = reduce_sum[ axes=(0,) ] e
-  in f }
+  in (f,) }
         """, str(jaxpr))
 
     def func5(first, second):
@@ -1898,7 +1898,7 @@ class JaxprTest(jtu.JaxTestCase):
 { lambda b d ; a.
   let c = add a b
       e = sub c d
-  in e }
+  in (e,) }
             """, str(jaxpr))
 
     def func7(arg):
@@ -1914,12 +1914,12 @@ class JaxprTest(jtu.JaxTestCase):
   let b = ge a 0.0
       c = cond[ false_jaxpr={ lambda  ; a.
                               let b = sub a 3.0
-                              in b }
+                              in (b,) }
                 linear=(False, False)
                 true_jaxpr={ lambda  ; a.
                              let b = add a 3.0
-                             in b } ] b a a
-  in c }
+                             in (b,) } ] b a a
+  in (c,) }
                 """, str(jaxpr))
 
     def func8(arg1, arg2):  # arg2 is a pair
@@ -1935,12 +1935,12 @@ class JaxprTest(jtu.JaxTestCase):
   let d = ge a 0.0
       f = cond[ false_jaxpr={ lambda  ; c a b.
                               let d = add c b
-                              in d }
+                              in (d,) }
                 linear=(False, False, False, False, False)
                 true_jaxpr={ lambda  ; a b.
                              let 
-                             in a } ] d b c e b c
-  in f }
+                             in (a,) } ] d b c e b c
+  in (f,) }
                     """, str(jaxpr))
 
     def func10(arg, n):
@@ -1961,9 +1961,9 @@ class JaxprTest(jtu.JaxTestCase):
                      body_nconsts=2
                      cond_jaxpr={ lambda  ; a b c.
                                   let d = lt a b
-                                  in d }
+                                  in (d,) }
                      cond_nconsts=0 ] c a 0 b e
-  in h }
+  in (h,) }
       """, str(jaxpr))
 
     def func11(arr, extra):
@@ -2008,11 +2008,11 @@ class JaxprTest(jtu.JaxTestCase):
                     call_jaxpr={ lambda  ; c b a.
                                  let d = mul b c
                                      e = add a d
-                                 in e }
+                                 in (e,) }
                     device=None
                     name=inner ] b a c
       e = add a d
-  in e }
+  in (e,) }
                             """, str(jaxpr))
 
     def func13(arr, extra):
@@ -2033,12 +2033,12 @@ class JaxprTest(jtu.JaxTestCase):
                                      e = add c d
                                      f = psum[ axis_name=rows ] a
                                      g = div e f
-                                 in g }
+                                 in (g,) }
                     devices=None
                     global_axis_size=None
                     mapped_invars=(True, False, True)
                     name=inner ] c b a
-  in d }
+  in (d,) }
                               """, str(jaxpr))
 
 class LazyTest(jtu.JaxTestCase):
