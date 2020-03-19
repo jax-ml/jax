@@ -18,6 +18,7 @@ import functools
 import re
 import itertools as it
 import os
+from typing import Dict, Sequence
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -116,7 +117,7 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None):
   onp.testing.assert_allclose(a, b, **kw)
 
 def tolerance(dtype, tol=None):
-  tol = tol or {}
+  tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
   tol = {onp.dtype(key): value for key, value in tol.items()}
@@ -629,7 +630,7 @@ def assert_dot_precision(expected_precision, fun, *args):
     assert precision == expected_precision, msg
 
 
-_CACHED_INDICES = {}
+_CACHED_INDICES: Dict[int, Sequence[int]] = {}
 
 def cases_from_list(xs):
   xs = list(xs)

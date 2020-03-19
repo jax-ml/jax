@@ -166,6 +166,16 @@ local repo), update it as needed, ``Run all cells`` then
 ``Download ipynb``. You may want to test that it executes properly, using ``sphinx-build`` as
 explained above.
 
+Some of the notebooks are built automatically as part of the Travis pre-submit checks and
+as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
+The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
+or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/google/jax/pull/2402/files)).
+You have to add this metadata by hand in the `.ipynb` file. It will be preserved when somebody else
+re-saves the notebook.
+
+We exclude some notebooks from the build, e.g., because they contain long computations.
+See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/master/docs/conf.py).
+
 Documentation building on readthedocs.io
 ----------------------------------------
 

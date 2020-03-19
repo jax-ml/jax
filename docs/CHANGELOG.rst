@@ -5,27 +5,41 @@ Change Log
    Remember to leave an empty line before the start of an itemized list,
    and to align the itemized text with the first line of an item.
 
+.. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+
 These are the release notes for JAX.
 
+jax 0.1.62 (unreleased)
+---------------------------
 
-jax 0.1.60 (unreleased)
------------------------
+* JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
 
-.. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+jax 0.1.61 (March 17, 2020)
+---------------------------
+
+* Fixes Python 3.5 support. This will be the last JAX or jaxlib release that
+  supports Python 3.5.
+
+jax 0.1.60 (March 17, 2020)
+---------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...master>`_.
 * New features:
 
-  * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows the user to
-    specify arguments that should be treated as compile-time constants and
-    should be broadcasted to all devices. It works analogously to
+  * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows
+    the user to specify arguments that should be treated as compile-time
+    constants and should be broadcasted to all devices. It works analogously to
     ``static_argnums`` in :py:func:`jax.jit`.
   * Improved error messages for when tracers are mistakenly saved in global state.
   * Added :py:func:`jax.nn.one_hot` utility function.
-* The minimum jaxlib version is now 0.1.40.
+  * Added :py:module:`jax.experimental.jet` for exponentially faster
+    higher-order automatic differentiation.
+  * Added more sanity checking to arguments of :py:func:`jax.lax.broadcast_in_dim`.
+
+* The minimum jaxlib version is now 0.1.41.
 
 jaxlib 0.1.40 (March 4, 2020)
---------------------------------
+-------------------------------
 
 * Adds experimental support in Jaxlib for TensorFlow profiler, which allows
   tracing of CPU and GPU computations from TensorBoard.

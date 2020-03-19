@@ -28,7 +28,7 @@ import collections
 import functools
 import itertools as it
 import threading
-from typing import Any, Callable, Collection, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 import numpy as onp
@@ -43,7 +43,7 @@ from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
-                        _replace_nones)
+                        treedef_is_leaf, _replace_nones)
 from .util import (unzip2, curry, partial, safe_map, safe_zip,
                    WrapHashably, Hashable, prod, split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
@@ -57,7 +57,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters.masking import shapecheck, ensure_poly
+from .interpreters.masking import ensure_poly
 from .config import flags, config, bool_env
 
 AxisName = Any
@@ -81,7 +81,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Union[int, Collection[int]] = (),
+def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
         device=None, backend: Optional[str] = None):
   """Sets up `fun` for just-in-time compilation with XLA.
 
@@ -197,7 +197,7 @@ def disable_jit():
 
 
 def xla_computation(fun: Callable,
-                    static_argnums: Union[int, Collection[int]] = (),
+                    static_argnums: Union[int, Iterable[int]] = (),
                     axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
@@ -414,9 +414,9 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     if not has_aux:
-      ans, vjp_py = vjp(f_partial, *dyn_args)
+      ans, vjp_py = _vjp(f_partial, *dyn_args)
     else:
-      ans, vjp_py, aux = vjp(f_partial, *dyn_args, has_aux=True)
+      ans, vjp_py, aux = _vjp(f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     dtype = dtypes.result_type(ans)
     if not (holomorphic or dtypes.issubdtype(dtype, onp.floating)):
@@ -477,7 +477,7 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
     holomorphic or tree_map(_check_real_input_jacfwd, dyn_args)
-    pushfwd = partial(jvp, f_partial, dyn_args)
+    pushfwd = partial(_jvp, f_partial, dyn_args)
     y, jac = vmap(pushfwd, out_axes=(None, batching.last))(_std_basis(dyn_args))
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     return tree_map(partial(_unravel_array_into_pytree, example_args, -1), jac)
@@ -521,7 +521,7 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = _argnums_partial(f, argnums, args)
-    y, pullback = vjp(f_partial, *dyn_args)
+    y, pullback = _vjp(f_partial, *dyn_args)
     holomorphic or tree_map(_check_real_output_jacrev, y)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
@@ -737,7 +737,7 @@ def _flatten_axes(treedef, axis_tree):
 
 
 def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
-         static_broadcasted_argnums: Union[int, Collection[int]] = (),
+         static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None):
   """Parallel map with support for collectives.
@@ -1060,7 +1060,7 @@ def mask(fun: Callable, in_shapes, out_shape):
   in_specs = map(masking.parse_spec, in_specs)
   out_specs = map(masking.parse_spec, out_specs)
 
-  unique_ids = collections.defaultdict(object)
+  unique_ids: Dict[Any, Any] = collections.defaultdict(object)
   in_specs  = map(partial(_remap_ids, unique_ids), in_specs)
   out_specs = map(partial(_remap_ids, unique_ids), out_specs)
 
@@ -1148,9 +1148,10 @@ def jvp(fun: Callable, primals, tangents):
   >>> print(v)
   0.19900084
   """
-  if not isinstance(fun, lu.WrappedFun):
-    fun = lu.wrap_init(fun)
+  return _jvp(lu.wrap_init(fun), primals, tangents)
 
+def _jvp(fun: lu.WrappedFun, primals, tangents):
+  """Variant of jvp() that takes an lu.WrappedFun."""
   if (not isinstance(primals, (tuple, list)) or
       not isinstance(tangents, (tuple, list))):
     msg = ("primal and tangent arguments to jax.jvp must be tuples or lists; "
@@ -1316,10 +1317,12 @@ def vjp(fun: Callable, *primals, **kwargs):
   >>> print(ybar)
   -0.2524413
   """
+  return _vjp(lu.wrap_init(fun), *primals, **kwargs)
+
+def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
+  """Variant of vjp() that takes an lu.WrappedFun."""
   has_aux = kwargs.pop('has_aux', False)
   assert not kwargs
-  if not isinstance(fun, lu.WrappedFun):
-    fun = lu.wrap_init(fun)
   primals_flat, in_tree = tree_flatten(primals)
   _check_args(primals_flat)
   tree_map(_check_inexact_input_vjp, primals)
@@ -1559,7 +1562,7 @@ def custom_transforms(fun):
   fun_p.def_abstract_eval(fun_abstract_eval)
 
   def fun_translation(c, *xla_args, **params):
-    return xla.lower_fun(fun_impl, True)(c, *xla_args, **params)
+    return xla.lower_fun(fun_impl)(c, *xla_args, **params)
   xla.translations[fun_p] = fun_translation
 
   return CustomTransformsFunction(fun, fun_p)
@@ -2006,7 +2009,7 @@ class ShapeDtypeStruct(object):
   __slots__ = ["shape", "dtype"]
   def __init__(self, shape, dtype):
     self.shape = shape
-    self.dtype = dtype
+    self.dtype = onp.dtype(dtype)
 
   size = property(lambda self: onp.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -2019,7 +2022,7 @@ class ShapeDtypeStruct(object):
 
   def __repr__(self):
     return "{}(shape={}, dtype={})".format(
-        type(self).__name__, self.shape, self.dtype.dtype.name)
+        type(self).__name__, self.shape, self.dtype.name)
 
   __str__ = __repr__
 
@@ -2091,8 +2094,9 @@ def eval_shape(fun: Callable, *args, **kwargs):
   def abstractify(x):
     return ShapedArray(onp.shape(x), dtypes.result_type(x))
   args_flat, in_tree = tree_flatten((args, kwargs))
-  fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-  out = pe.abstract_eval_fun(fun.call_wrapped, *map(abstractify, args_flat))
+  wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+  out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,
+                             *map(abstractify, args_flat))
   out = [ShapeDtypeStruct(x.shape, x.dtype) for x in out]
   return tree_unflatten(out_tree(), out)
 

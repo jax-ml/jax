@@ -322,7 +322,7 @@ pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
-ad.deflinear(psum_p, lambda *ts, axis_name: psum(*ts, axis_name))
+ad.deflinear(psum_p, lambda ts, axis_name: psum(ts, axis_name=axis_name))
 pxla.multi_host_supported_collectives.add(psum_p)
 
 
@@ -519,7 +519,6 @@ _defbroadcasting(lax.xor_p)
 _defbroadcasting(lax.add_p)
 _defbroadcasting(lax.sub_p)
 _defbroadcasting(lax.mul_p)
-_defbroadcasting(lax.safe_mul_p)
 _defbroadcasting(lax.div_p)
 _defbroadcasting(lax.rem_p)
 _defbroadcasting(lax.max_p)
@@ -659,10 +658,10 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
              out, xdim, ydim, dimension_numbers))
 
 
-def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions,
-                         old_sizes):
+def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions):
   operand, = vals
   axis, = axes
+  old_sizes = tuple(onp.insert(operand.shape, axis, size))
 
   def filter_ones(xs):
     return filter(lambda x: x != 1, xs)

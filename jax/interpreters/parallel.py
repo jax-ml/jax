@@ -14,6 +14,7 @@
 
 
 from functools import partial
+from typing import Callable, Dict
 
 
 from .. import core
@@ -137,4 +138,4 @@ class PapplyTrace(Trace):
     raise NotImplementedError  # TODO(mattjj,frostig)
 
 
-papply_primitive_rules = {}
+papply_primitive_rules: Dict[core.Primitive, Callable] = {}

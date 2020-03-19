@@ -188,9 +188,10 @@ def broadcast(operand, sizes):
   return onp.broadcast_to(operand, sizes + onp.shape(operand))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
-  inshape = tuple(1 if i not in broadcast_dimensions else d
-                  for i, d in enumerate(shape))
-  return onp.broadcast_to(onp.reshape(operand, inshape), shape)
+  in_reshape = onp.ones(len(shape), dtype=onp.int32)
+  for i, bd in enumerate(broadcast_dimensions):
+    in_reshape[bd] = operand.shape[i]
+  return onp.broadcast_to(onp.reshape(operand, in_reshape), shape)
 
 sum = onp.sum
 

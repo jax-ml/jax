@@ -116,27 +116,12 @@ class APITest(jtu.JaxTestCase):
 
     f(1, 2, z=onp.zeros(3))  # doesn't crash
 
-  def test_jit_many_args_tuples(self):
+  def test_jit_with_many_args_works(self):
     @jit
     def f(args_list):
       return sum(args_list)
 
-    make_tuple = xla.make_tuple
-
-    counts = [0]
-    def make_tuple_and_count(*args, **kwargs):
-      counts[0] += 1
-      return make_tuple(*args, **kwargs)
-
-    try:
-      xla.make_tuple = make_tuple_and_count
-      ans = f(list(range(500)))
-    finally:
-      xla.make_tuple = make_tuple
-
-    expected = sum(range(500))
-    self.assertEqual(counts[0], 1)  # formed a tuple on dispatch
-    self.assertEqual(ans, expected)  # computed the correct result
+    self.assertEqual(f(list(range(500))), sum(range(500)))
 
   def test_grad_of_jit(self):
     side = []
@@ -308,14 +293,17 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], onp.ndarray)
     assert onp.all(y2[1][1] == 3 * x)
 
-  def test_device_put_across_devices(self):
-    if xb.device_count() == 1:
+  @parameterized.parameters([(3,)], [(2, 0)])
+  def test_device_put_across_devices(self, shape):
+    if len(api.local_devices()) < 2:
       raise unittest.SkipTest("this test requires multiple devices")
-    d1, d2 = xb.local_devices()[:2]
-    x = api.device_put(onp.array([1,2,3]), device=d1)
+    d1, d2 = api.local_devices()[:2]
+    data = onp.random.randn(*shape).astype(onp.float32)
+    x = api.device_put(data, device=d1)
     self.assertEqual(x.device_buffer.device(), d1)
     y = api.device_put(x, device=d2)
     self.assertEqual(y.device_buffer.device(), d2)
+    onp.testing.assert_array_equal(data, onp.array(y))
     # Make sure these don't crash
     api.device_put(x)
     api.device_put(y)
@@ -1894,8 +1882,7 @@ class JaxprTest(jtu.JaxTestCase):
   let c = sin b
       d = mul c 3.0
       e = add a d
-      f = reduce_sum[ axes=(0,)
-                      input_shape=(8,) ] e
+      f = reduce_sum[ axes=(0,) ] e
   in f }
         """, str(jaxpr))
 

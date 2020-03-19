@@ -3,13 +3,14 @@ notifications:
   email: false
 dist: xenial
 language: python
-python:
-  - "3.6"
-env:
-  - JAX_ENABLE_X64=0 JAX_NUM_GENERATED_CASES=25
-  - JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
 matrix:
   include:
+    - python: "3.6"
+      env: JAX_CHECK_TYPES=true
+    - python: "3.6"
+      env: JAX_ENABLE_X64=0 JAX_NUM_GENERATED_CASES=25
+    - python: "3.6"
+      env: JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
     - python: "3.7"
       env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
 
@@ -24,11 +25,11 @@ before_install:
   - conda config --add channels conda-forge
   - conda update -q conda
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy
   # The jaxlib version should match the minimum jaxlib version in
   # jax/lib/__init__.py. This tests JAX PRs against the oldest permitted
   # jaxlib.
-  - pip install jaxlib==0.1.40
+  - pip install jaxlib==0.1.41
   - pip install -v .
   # The following are needed to test the Colab notebooks and the documentation building
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
@@ -39,6 +40,8 @@ install:
 script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
+    elif [ "$JAX_CHECK_TYPES" = true ]; then
+      mypy --config-file=mypy.ini jax ;
     else
       pytest -n 1 tests examples -W ignore ;
     fi

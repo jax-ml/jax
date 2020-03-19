@@ -14,7 +14,6 @@
 # limitations under the License.
 
 
-from functools import partial
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
@@ -357,7 +356,7 @@ def triangular_solve_transpose_rule(
     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
-  assert a is not ad.undefined_primal and b is ad.undefined_primal
+  assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
   if cotangent is ad_util.zero:
     cotangent_b = ad_util.zero
   else:
@@ -616,7 +615,7 @@ lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
+xla.translations[lu_p] = xla.lower_fun(_lu_python)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
