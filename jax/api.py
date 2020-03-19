@@ -1283,10 +1283,11 @@ def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
   return tree_unflatten(out_tree, ans)
 
 
-def vjp(fun: Callable, *primals, **kwargs) -> Tuple[Any, Callable]:
+def vjp(fun: Callable, *primals, **kwargs
+        ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
   """Compute a (reverse-mode) vector-Jacobian product of `fun`.
 
-  `grad` is implemented as a special case of `vjp`.
+  :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
 
   Args:
     fun: Function to be differentiated. Its arguments should be arrays, scalars,
@@ -1301,11 +1302,14 @@ def vjp(fun: Callable, *primals, **kwargs) -> Tuple[Any, Callable]:
      differentiated and the second element is auxiliary data. Default False.
 
   Returns:
-    A `(primals_out, vjpfun)` pair, where `primals_out` is `fun(*primals)`.
-    `vjpfun` is a function from a cotangent vector with the same shape as
-    `primals_out` to a tuple of cotangent vectors with the same shape as
-    `primals`, representing the vector-Jacobian product of `fun` evaluated at
-    `primals`.
+    If ``has_aux`` is ``False``, returns a ``(primals_out, vjpfun)`` pair, where
+    ``primals_out`` is ``fun(*primals)``.
+    ``vjpfun`` is a function from a cotangent vector with the same shape as
+    ``primals_out`` to a tuple of cotangent vectors with the same shape as
+    ``primals``, representing the vector-Jacobian product of ``fun`` evaluated at
+    ``primals``. If ``has_aux`` is ``True``, returns a
+    ``(primals_out, vjpfun, aux)`` tuple where ``aux`` is the auxiliary data
+    returned by ``fun``.
 
   >>> def f(x, y):
   ...   return jax.numpy.sin(x), jax.numpy.cos(y)
