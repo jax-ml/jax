@@ -35,6 +35,7 @@ For an introduction to JAX, start at the
    :caption: Notes
 
    CHANGELOG
+   faq
    jaxpr
    async_dispatch
    concurrency
