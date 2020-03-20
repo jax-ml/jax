@@ -1183,9 +1183,7 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard python container of arrays or scalars.
     primals: The primal values at which the Jacobian of `fun` should be
-      evaluated. Should be a tuple of arrays, scalar, or standard Python
-      container thereof. The length of the tuple is equal to the number of
-      positional parameters of `fun`.
+      evaluated, one for each positional argument of `fun`.
 
   Returns:
     A pair where the first element is the value of `f(*primals)` and the second
@@ -1211,8 +1209,8 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   same linearization point. Moreover if all the input tangent vectors are known
   at once, it can be more efficient to vectorize using `vmap`, as in::
 
-    pushfwd = partial(jvp, f, (x,))
-    y, out_tangents = vmap(pushfwd, out_axes=(None, 0))((in_tangents,))
+    y, f_jvp = api.linearize(f, x)
+    out_tangents = api.vmap(f_jvp)(in_tangents)
 
   By using `vmap` and `jvp` together like this we avoid the stored-linearization
   memory cost that scales with the depth of the computation, which is incurred
