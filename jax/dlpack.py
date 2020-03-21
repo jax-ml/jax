@@ -18,7 +18,7 @@ from .interpreters import xla
 from .lib import xla_client
 from .lib import xla_bridge
 
-def to_dlpack(x):
+def to_dlpack(x: xla.DeviceArray):
   """Returns a DLPack tensor that encapsulates a DeviceArray `x`.
 
   The DLPack shares memory with `x`.
@@ -48,4 +48,4 @@ def from_dlpack(dlpack, backend=None):
   xla_shape = buf.shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
-  return xla.DeviceArray(aval, buf.device(), lazy.array(aval.shape), buf)
+  return xla.DeviceArray(aval, buf.device(), lazy.array(aval.shape), buf)  # pytype: disable=attribute-error
