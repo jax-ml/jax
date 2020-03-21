@@ -25,7 +25,10 @@ before_install:
   - conda config --add channels conda-forge
   - conda update -q conda
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy pytype
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy
+  - if [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
+      pip install pytype ;  # Not on conda
+    fi
   # The jaxlib version should match the minimum jaxlib version in
   # jax/lib/__init__.py. This tests JAX PRs against the oldest permitted
   # jaxlib.
