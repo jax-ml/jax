@@ -70,7 +70,7 @@ def broadcast_shapes(*shapes):
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
-  return tuple(result_shape)
+  return tuple(map(int, result_shape))
 
 def _identity(x): return x
 
