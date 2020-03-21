@@ -22,7 +22,6 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import api
 from jax import core
 from jax import numpy as np
 from jax import test_util as jtu
@@ -31,7 +30,7 @@ from jax.lax import UnshapedArray, ShapedArray, ConcreteArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+
 
 from jax.config import config
 config.parse_flags_with_absl()
