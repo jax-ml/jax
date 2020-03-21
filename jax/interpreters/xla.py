@@ -59,13 +59,14 @@ def _make_abstract_unit(_): return xc.Shape.array_shape(onp.dtype('bool'), ())
 def _device_put_unit(_, device):
   return xc.Buffer.from_pyval(onp.zeros((), dtype=onp.dtype('bool')), device,
                               backend=xb.get_device_backend(device))
-
+def _make_array_shape(a):
+  return xc.Shape.array_shape(a.dtype, a.shape)
 
 ### handlers
 
 xb.register_constant_handler(core.Unit, lambda c, *_: _make_unit(c))
 
-def aval_to_xla_shape(aval: core.AbstractValue):
+def aval_to_xla_shape(aval):
   try:
     return xla_shape_handlers[type(aval)](aval)
   except KeyError as err:
@@ -74,8 +75,8 @@ def aval_to_xla_shape(aval: core.AbstractValue):
 xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {}
 xla_shape_handlers[core.AbstractUnit] = _make_abstract_unit
 
-xla_shape_handlers[ShapedArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
-xla_shape_handlers[ConcreteArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
+xla_shape_handlers[ShapedArray] = _make_array_shape
+xla_shape_handlers[ConcreteArray] = _make_array_shape
 
 def aval_to_result_handler(device, aval):
   try:
