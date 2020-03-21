@@ -70,9 +70,15 @@ def svd(x, full_matrices=True, compute_uv=True):
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
                      conjugate_a=False, unit_diagonal=False):
   conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
-  return triangular_solve_p.bind(
+  singleton = np.ndim(b) == np.ndim(a) - 1
+  if singleton:
+    b = np.expand_dims(b, -1 if left_side else -2)
+  out = triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
+  if singleton:
+    out = out[..., 0] if left_side else out[..., 0, :]
+  return out
 
 
 # utilities
