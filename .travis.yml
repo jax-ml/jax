@@ -1,9 +1,9 @@
-sudo: false
 notifications:
   email: false
 dist: xenial
 language: python
-matrix:
+os: linux
+jobs:
   include:
     - python: "3.6"
       env: JAX_ONLY_CHECK_TYPES=true
@@ -44,7 +44,10 @@ script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
     elif [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
-      mypy --config-file=mypy.ini jax && pytype jax ;
+      echo "===== Checking with mypy ====" &&
+      time mypy --config-file=mypy.ini jax &&
+      echo "===== Checking with pytype ====" &&
+      time pytype jax ;
     else
       pytest -n 1 tests examples -W ignore ;
     fi
