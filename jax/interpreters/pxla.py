@@ -399,7 +399,7 @@ xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl(fun, *args, backend, axis_name, axis_size, global_axis_size,
+def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size, global_axis_size,
                   devices, name, mapped_invars=None):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
@@ -602,7 +602,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
     devices = xb.get_backend(backend).get_default_device_assignment(nrep)
   assert nrep == len(devices)
 
-  aval = xla.abstractify(val)
+  aval = xla.abstractify(val)  # type: ShapedArray
   aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
   device_buffers = [xla.device_put(val, d) for d in devices]
   return ShardedDeviceArray(aval, device_buffers)

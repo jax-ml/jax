@@ -17,7 +17,7 @@ import itertools as it
 from collections import namedtuple
 import contextlib
 import threading
-from typing import Callable, Dict, Set
+from typing import Callable, Dict, Sequence, Set
 from weakref import ref
 
 import numpy as onp
@@ -331,7 +331,7 @@ class PartialVal(tuple):
 
 valid_pv_types = (AbstractValue, type(None))
 
-def merge_pvals(val, pval):
+def merge_pvals(val, pval: PartialVal):
   pv, const = pval
   if isinstance(pv, AbstractValue):
     return val
@@ -348,7 +348,9 @@ def partial_val_aval(pv, const):
   else:
     raise TypeError(pv)
 
-def trace_to_jaxpr(fun: lu.WrappedFun, pvals, instantiate=False, stage_out_calls=False, bottom=False):
+
+def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
+                   instantiate=False, stage_out_calls=False, bottom=False):
   """Traces a function, given abstract inputs, to a jaxpr."""
   trace_type = StagingJaxprTrace if stage_out_calls else JaxprTrace
   with new_master(trace_type, bottom=bottom) as master:

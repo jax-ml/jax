@@ -433,7 +433,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
              (isinstance(axis, tuple) and len(axis) == 1)
           else [None, 'fro', 1, 2, -1, -2, np.inf, -np.inf, 'nuc'])
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
+      for rng_factory in [jtu.rand_default]))  # type: ignore
   def testNorm(self, shape, dtype, ord, axis, keepdims, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
