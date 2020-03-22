@@ -44,10 +44,8 @@ script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
     elif [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
-      echo "===== Checking with mypy ====" &&
-      time mypy --config-file=mypy.ini jax &&
-      echo "===== Checking with pytype ====" &&
-      time pytype jax ;
+      echo "===== Checking with mypy ===="
+      time mypy --config-file=mypy.ini jax ;
     else
       pytest -n 1 tests examples -W ignore ;
     fi

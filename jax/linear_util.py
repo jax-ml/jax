@@ -81,7 +81,8 @@ class Store(object):
     self._val = _EMPTY_STORE_VALUE
 
   def store(self, val):
-    assert self._val is _EMPTY_STORE_VALUE, "Store occupied"
+    if self._val is not _EMPTY_STORE_VALUE:
+      raise StoreException("Store occupied")
     self._val = val
 
   @property

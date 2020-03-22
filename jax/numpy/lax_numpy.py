@@ -38,7 +38,7 @@ import warnings
 import numpy as onp
 import opt_einsum
 
-from jax import jit, device_put, custom_transforms, defjvp
+from jax import jit, device_put
 from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
@@ -423,6 +423,7 @@ arccos = _one_to_one_unop(onp.arccos, lax.acos, True)
 arctan = _one_to_one_unop(onp.arctan, lax.atan, True)
 sinh = _one_to_one_unop(onp.sinh, lax.sinh, True)
 cosh = _one_to_one_unop(onp.cosh, lax.cosh, True)
+arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)

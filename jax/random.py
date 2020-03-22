@@ -30,7 +30,7 @@ from . import lax
 from . import numpy as np
 from . import tree_util
 from . import dtypes
-from .api import custom_transforms, defjvp, jit, vmap
+from .api import jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
 from jax.lib import cuda_prng
