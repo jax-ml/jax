@@ -4,6 +4,48 @@ JAX Frequently Asked Questions
 We are collecting here answers to frequently asked questions.
 Contributions welcome!
 
+`jit` changes the behavior of my function
+-----------------------------------------
+
+If you have a Python function that changes behavior after using `jit`, perhaps
+your function uses global state, or has side-effects. In the following code, the
+`impure_func` uses the global `y` and has a side-effect due to `print`::
+
+    y = 0
+
+    # @jit   # Different behavior with jit
+    def impure_func(x):
+      print("Inside:", y)
+      return x + y
+
+    for y in range(3):
+      print("Result:", impure_func(y))
+
+Without `jit` the output is::
+
+    Inside: 0
+    Result: 0
+    Inside: 1
+    Result: 2
+    Inside: 2
+    Result: 4
+
+and with `jit` it is:
+
+    Inside: 0
+    Result: 0
+    Result: 1
+    Result: 2
+
+For `jit` the function is executed once using the Python interpreter, at which time the
+`Inside` printing happens, and the first value of `y` is observed. Then the function
+is compiled and cached, and executed multiple times with different values of `x`, but
+with the same first value of `y`. 
+
+Additional reading:
+
+  * [JAX - The Sharp Bits: Pure Functions](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Pure-functions)
+
 Gradients contain `NaN` where using ``where``
 ------------------------------------------------
 
