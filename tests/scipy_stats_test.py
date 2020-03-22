@@ -441,7 +441,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             lsp_stats.multivariate_normal.logpdf,
                             args_maker, check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
-                          check_dtypes=True)
+                          check_dtypes=True, rtol=1e-4, atol=1e-4)
 
 
 if __name__ == "__main__":
