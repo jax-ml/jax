@@ -596,6 +596,200 @@ class APITest(jtu.JaxTestCase):
   def test_complex_input_jacfwd_raises_error(self):
     self.assertRaises(TypeError, lambda: jacfwd(lambda x: np.sin(x))(1 + 2j))
 
+  def test_defvjp_all(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
+
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (4 * g * np.sin(x),)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 2 * 3.**2, check_dtypes=False)
+    self.assertAllClose(grad_ans, 4 * 2 * onp.sin(3.), check_dtypes=False)
+
+  def test_defvjp_all_const(self):
+    foo_p = Primitive('foo')
+    def foo(x): return foo_p.bind(x)
+
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, 9., check_dtypes=False)
+    self.assertAllClose(grad_ans, 12., check_dtypes=True)
+
+  def test_defvjp_all_higher_order_revmode(self):
+    foo_p = Primitive('foo')
+    def foo(x): return 2. * foo_p.bind(x)
+
+    ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (g * x ** 2,)))
+    ans = api.grad(api.grad(foo))(3.)
+    self.assertAllClose(ans, 2 * 2 * 3., check_dtypes=False)
+
+  def test_defvjp_all_multiple_arguments(self):
+    # also tests passing in symbolic zero tangents b/c we differentiate wrt only
+    # the first argument in one case
+
+    foo_p = Primitive('foo')
+    def foo(x, y): return foo_p.bind(x, y)
+
+    def vjpfun(x, y):
+      out = x**2 + y**3
+      vjp = lambda g: (g + x + y, g * x * 9.)
+      return out, vjp
+
+    ad.defvjp_all(foo_p, vjpfun)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, 3.**2 + 4.**3, check_dtypes=False)
+    self.assertAllClose(grad_ans, 1. + 3. + 4., check_dtypes=False)
+
+    ans = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans, (1. + 3. + 4., 1. * 3. * 9.), check_dtypes=False)
+
+  def test_defvjp_all_custom_transforms(self):
+    @api.custom_transforms
+    def foo(x):
+      return np.sin(x)
+
+    api.defvjp_all(foo, lambda x: (np.sin(x), lambda g: (g * x,)))
+    val_ans, grad_ans = api.value_and_grad(foo)(3.)
+    self.assertAllClose(val_ans, onp.sin(3.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 3., check_dtypes=False)
+
+  # TODO(mattjj): add defvjp_all test with pytree arguments
+
+  def test_defvjp(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    api.defvjp(foo, None, lambda g, _, x, y: g * x * y)
+    val_ans, grad_ans = api.value_and_grad(foo)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 0., check_dtypes=False)
+
+    ans_0, ans_1 = api.grad(foo, (0, 1))(3., 4.)
+    self.assertAllClose(ans_0, 0., check_dtypes=False)
+    self.assertAllClose(ans_1, 3. * 4., check_dtypes=False)
+
+  def test_defvjp_higher_order(self):
+    @api.custom_transforms
+    def foo(x):
+      return np.sin(2. * x)
+
+    api.defvjp(foo, lambda g, _, x: g * np.cos(x))
+    ans = api.grad(api.grad(foo))(2.)
+    expected = api.grad(api.grad(np.sin))(2.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_defvjp_use_ans(self):
+    @api.custom_transforms
+    def foo(x, y):
+      return np.sin(x * y)
+
+    api.defvjp(foo, None, lambda g, ans, x, y: g * x * y + np.cos(ans))
+    val_ans, grad_ans = api.value_and_grad(foo, 1)(3., 4.)
+    self.assertAllClose(val_ans, onp.sin(3. * 4.), check_dtypes=False)
+    self.assertAllClose(grad_ans, 3. * 4. + onp.cos(onp.sin(3. * 4)),
+                        check_dtypes=False)
+
+  # TODO
+  # def test_defjvp_closure_error(self):
+  #   def foo(x):
+  #     @api.custom_transforms
+  #     def bar(y):
+  #       return x * y
+
+  #     api.defjvp(bar, lambda y_dot, ans, y: x * y)
+  #     return bar(x)
+  #   jtu.check_raises(
+  #       lambda: api.jvp(foo, (1.,), (1.,)), ValueError,
+  #       "Detected differentiation with respect to closed-over values with "
+  #       "custom JVP rule, which isn't supported.")
+
+  # TODO
+  # def test_defvjp_closure_error(self):
+  #   def foo(x):
+  #     @api.custom_transforms
+  #     def bar(y):
+  #       return x * y
+
+  #     api.defvjp(bar, lambda g, ans, y: x * y)
+  #     return bar(x)
+  #   jtu.check_raises(
+  #       lambda: grad(foo)(1.,), ValueError,
+  #       "Detected differentiation w.r.t. variables from outside "
+  #       "the scope of <jax.custom_transforms function bar>, but defvjp and "
+  #       "defvjp_all only support differentiation w.r.t. positional arguments.")
+
+  def test_custom_transforms_eval_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = f((1, 2))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+
+  def test_custom_transforms_jit_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = jit(f)((1, 2))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+
+  def test_custom_transforms_jit_with_pytrees_consts(self):
+    # The purpose of this test is to exercise the custom_transforms default
+    # translation rule in how it deals with constants that are too large to be
+    # treated as literals (at the time of writing).
+    z = onp.arange(10.)
+
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': z * b}
+
+    ans = jit(f)((1, 2))
+    self.assertAllClose(ans, {'hi': 2 * 1, 'bye': z * 2}, check_dtypes=False)
+
+  def test_custom_transforms_jvp_with_pytrees(self):
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans, out_tangent = api.jvp(f, ((1, 2),), ((3, 4),))
+    self.assertEqual(ans, {'hi': 2 * 1, 'bye': 2 * 2})
+    self.assertEqual(out_tangent, {'hi': 2 * 3, 'bye': 2 * 4})
+
+  def test_custom_transforms_vmap_with_pytrees(self):
+    raise unittest.SkipTest("Test deprecated custom_transforms")
+    @api.custom_transforms
+    def f(x):
+      a, b = x[0], x[1]
+      return {'hi': 2 * a, 'bye': 2 * b}
+
+    ans = api.vmap(f)((onp.arange(3), onp.ones((3, 2))))
+    expected = {'hi': 2 * onp.arange(3), 'bye': 2 * onp.ones((3, 2))}
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_custom_transforms_jvp_with_closure(self):
+    def f(x):
+      @api.custom_transforms
+      def g(y):
+        return x * y
+      return g(x)
+
+    ans = api.grad(f)(1.)
+    expected = 2.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_custom_gradient(self):
+    @api.custom_gradient
+    def f(x):
+      return x ** 2, lambda g: (g * x,)
+
+    self.assertAllClose(f(3.), 9., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
+
   def test_legacy_devicearray_repr(self):
     dx = device_put(3.)
     str(dx.item())  # doesn't crash
@@ -955,6 +1149,55 @@ class APITest(jtu.JaxTestCase):
                   lambda: np.linspace(0, 3, dtype=onp.float32))
     check_warning(lambda: np.tri(2, dtype="float64"),
                   lambda: np.tri(2, dtype="float32"))
+
+  def test_custom_vjp_zeros(self):
+    @api.custom_transforms
+    def f(x, y):
+      return 2 * x, 3 * y
+
+    def f_vjp(x, y):
+      return (2 * x, 3 * y), lambda ts: (4 * ts[0], 5 * ts[1])
+
+    api.defvjp_all(f, f_vjp, )
+    api.grad(lambda x, y: f(x, y)[0])(1., 2.)  # doesn't crash
+
+  def test_custom_transforms_vjp_nones(self):
+    # issue rasied by jsnoek@ and jumper@
+    @jax.custom_transforms
+    def solve(a, b):
+      return np.dot(np.linalg.inv(a), b)
+    # print(solve(a, b))
+
+    def solve_vjp(a, b):
+      x = solve(a, b)
+      def vjp(x_tangent):
+        dx = np.dot(solve(a, x_tangent), x.T)
+        out = (dx, b * 0.)
+        return out
+      return x, vjp
+    jax.defvjp_all(solve, solve_vjp)
+    gf = grad(lambda a,b: np.sum(solve(a, b)))
+
+    n = 3
+    a_in = np.linspace(0, 1, n)[:, None]
+    a = np.dot(a_in, a_in.T) + np.eye(n) * 0.1
+    real_x = onp.random.RandomState(0).randn(n)
+    b = np.dot(a + np.eye(a.shape[0]), real_x)
+    print(gf(a, b))  # doesn't crash
+
+  def test_vmap_in_axes_list(self):
+    # https://github.com/google/jax/issues/2367
+    dictionary = {'a': 5., 'b': np.ones(2)}
+    x = np.zeros(3)
+    y = np.arange(3.)
+
+
+    def f(dct, x, y):
+      return dct['a'] + dct['b'] + x + y
+
+    out1 = api.vmap(f, (None, 0, 0))(dictionary, x, y)
+    out2 = api.vmap(f, [None, 0, 0])(dictionary, x, y)
+    self.assertAllClose(out1, out2, check_dtypes=True)
 
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
