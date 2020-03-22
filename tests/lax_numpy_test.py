@@ -1479,6 +1479,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_axis={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype), ax),
+       "arg_shape": arg_shape, "dtype": dtype, "ax": ax,
+       "rng_factory": jtu.rand_default}
+      for arg_shape, ax in [
+          ((3,), 0),
+          ((1, 3), 1),
+          ((1, 3, 1), (0, 1))]
+      for dtype in default_dtypes))
+  def testSqueezeFailsOnNonsingletonAxis(self, arg_shape, dtype, ax,
+                                         rng_factory):
+    rng = rng_factory()
+    x = jnp.zeros(arg_shape, dtype=dtype)
+    fun = lambda: jnp.squeeze(x, ax)
+    self.assertRaisesRegex(ValueError, "cannot select an axis to squeeze", fun)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           axis,
