@@ -9,11 +9,20 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.1.63 (unreleased)
+---------------------------
 
-jax 0.1.62 (unreleased)
+jax 0.1.62 (March 21, 2020)
 ---------------------------
 
 * JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
+* Removed the internal function ``lax._safe_mul``, which implemented the
+  convention ``0. * nan == 0.``. This change means some programs when
+  differentiated will produce nans when they previously produced correct
+  values, though it ensures nans rather than silently incorrect results are
+  produced for other programs. See #2447 and #1052 for details.
+* Added an ``all_gather`` parallel convenience function.
+* More type annotations in core code.
 
 jaxlib 0.1.42 (March 19, 2020)
 ------------------------------
