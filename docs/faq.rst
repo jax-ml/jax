@@ -4,6 +4,26 @@ JAX Frequently Asked Questions
 We are collecting here answers to frequently asked questions.
 Contributions welcome!
 
+Creating arrays with `jax.numpy.array` is slower than with `numpy.array`
+------------------------------------------------------------------------
+
+The following code is relatively fast when using NumPy, and slow when using
+JAX's NumPy::
+
+  import numpy as np
+  np.array([0] * int(1e6))
+
+The reason is that in NumPy the `numpy.array` function is implemented in C, while
+the `jax.numpy.array` is implemented in Python, and it needs to iterate over a long
+list to convert each list element to an array element.
+
+An alternative would be to create the array with original NumPy and then convert
+it to a JAX array::
+
+  from jax import numpy as jnp
+  jnp.array(np.array([0] * int(1e6)))
+
+
 `jit` changes the behavior of my function
 -----------------------------------------
 
