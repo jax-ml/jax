@@ -754,8 +754,20 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testFloatIndexingError(self):
-    x = jnp.array([1, 2, 3])
-    self.assertRaises(TypeError, lambda: x[3.5])
+    BAD_INDEX_TYPE_ERROR = "Indexer must have integer or boolean type, got indexer with type"
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros(2)[0.]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[(0, 0.)]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[(0, 0.)]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      api.jit(lambda idx: jnp.zeros((2, 2))[idx])((0, 0.))
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      ops.index_add(jnp.zeros(2), 0., 1.)
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      ops.index_update(jnp.zeros(2), 0., 1.)
+
 
   def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
     array = jnp.ones(5)
