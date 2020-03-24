@@ -401,12 +401,92 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
                   for nz in nonzeros_out]
   return out_carry, out_tangents
 
+def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts: int,
+                        cond_jaxpr: pe.TypedJaxpr, body_nconsts: int,
+                        body_jaxpr: pe.TypedJaxpr) -> Sequence[pe.Tracer]:
+  """An implementation of partial evaluation for while.
+  As long as some carry (and hence output) are known and the output
+  of `cond_jaxpr` is known, we use a portion of the loop body to compute the known
+  outputs of the `while_loop`. For the unknown outputs we generate Jaxpr to run
+  the whole while, including recomputing the known parts.
+
+  This means that we don't actually save any computation by partial
+  evaluation if there are unknown outputs.
+
+  What this achieves is that we can give a proper error for reverse
+  differentiation of `while`, because in that use of partial evaluation the
+  primal inputs are considered "known", and only the tangent computation is
+  unknown (see issue #2129).
+  """
+  unknowns = [not t.pval.is_known() for t in tracers]
+  params = dict(cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr,
+                body_nconsts=body_nconsts, body_jaxpr=body_jaxpr)
+
+  cond_consts_uk, body_consts_uk, carry_init_uk = split_list(unknowns, [cond_nconsts, body_nconsts])
+  # Fixpoint computation of unknown carry. Each iteration promotes
+  # at least one carry to unknown. We need one last iteration to prepare the jaxpr.
+  carry_uk = carry_init_uk
+  for _ in range(1 + len(carry_uk)):
+    body_jaxpr_known, _, carry_out_uk = pe.partial_eval_jaxpr(
+        body_jaxpr, body_consts_uk + carry_uk, instantiate=carry_uk,
+        trace_type=trace.master.trace_type)
+    if carry_out_uk == carry_uk:
+      break
+    else:
+      carry_uk = _map(operator.or_, carry_uk, carry_out_uk)
+  else:
+    assert False, "Fixpoint not reached"
+
+  cond_jaxpr_known, _, cond_uk = pe.partial_eval_jaxpr(
+    cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False,
+    trace_type=trace.master.trace_type)
+
+  if cond_uk[0] or  all([not uk for uk in unknowns]) or all(unknowns):
+    # If conditional is unknown, or all inputs are known, or all are unknown,
+    # just do the default processing.
+    return trace.default_process_primitive(while_p, tracers, params)
+
+  # Run the known part of the while. Prepare the inputs, as constants (if known), or
+  # as core.unit.
+  in_consts = [ core.unit if uk else t.pval.get_known()
+                for uk, t in zip(cond_consts_uk + body_consts_uk + carry_uk,
+                                 tracers)]
+  # There should be no residuals for the cond_jaxpr_known
+  assert 1 == len(cond_jaxpr_known.out_avals)
+  # We ignore the residuals from the body_jaxpr_known, so the type of inputs matches
+  # the type of outputs; residuals are at the end
+  if len(body_jaxpr_known.out_avals) > len(body_jaxpr.out_avals):
+    # TODO(necula): this is not quite enough; we should drop the residual computations also
+    body_jaxpr_known.out_avals = body_jaxpr_known.out_avals[:len(body_jaxpr.out_avals)]
+    body_jaxpr_known.jaxpr.outvars = body_jaxpr_known.jaxpr.outvars[:len(body_jaxpr.out_avals)]
+  out_known = while_p.bind(
+    *in_consts,
+    cond_nconsts=cond_nconsts,
+    cond_jaxpr=cond_jaxpr_known,
+    body_nconsts=body_nconsts,
+    body_jaxpr=body_jaxpr_known)
+
+  # Run the whole while_loop to get all the outputs, then merge with known ones
+  out_all: Sequence[pe.Tracer] = trace.default_process_primitive(while_p, tracers, params)
+  out_tracers: Sequence[pe.Tracer] = [
+    out_unknown if uk
+    else pe.JaxprTracer(trace, pe.PartialVal.known(known), out_unknown.recipe)
+    for uk, out_unknown, known in zip(carry_uk, out_all, out_known)]
+
+  return out_tracers
+
+def _while_transpose_error(*_, **kwargs):
+  raise ValueError("Reverse-mode differentiation does not work for lax.while_loop. "
+                   "Try using lax.scan, or lax.fori_loop with constant bounds.")
+
 while_p = lax.Primitive('while')
 while_p.multiple_results = True
 while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
+pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.initial_style_translations[while_p] = _while_loop_translation_rule
+ad.primitive_transposes[while_p] = _while_transpose_error
 batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 
@@ -571,14 +651,18 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
     params = dict(true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
     return trace.default_process_primitive(cond_p, tracers, params)
 
-  _, _, t_out_uks = pe.partial_eval_jaxpr(true_jaxpr, t_uk, instantiate=False)
-  _, _, f_out_uks = pe.partial_eval_jaxpr(false_jaxpr, f_uk, instantiate=False)
+  _, _, t_out_uks = pe.partial_eval_jaxpr(true_jaxpr, t_uk, instantiate=False,
+                                          trace_type=trace.master.trace_type)
+  _, _, f_out_uks = pe.partial_eval_jaxpr(false_jaxpr, f_uk, instantiate=False,
+                                          trace_type=trace.master.trace_type)
   out_uks = [a or b for a, b in zip(t_out_uks, f_out_uks)]
 
   true_jaxpr_1, true_jaxpr_2, _ = pe.partial_eval_jaxpr(true_jaxpr, t_uk,
-                                                        instantiate=out_uks)
+                                                        instantiate=out_uks,
+                                                        trace_type=trace.master.trace_type)
   false_jaxpr_1, false_jaxpr_2, _ = pe.partial_eval_jaxpr(false_jaxpr, f_uk,
-                                                          instantiate=out_uks)
+                                                          instantiate=out_uks,
+                                                          trace_type=trace.master.trace_type)
 
   num_t_res = len(true_jaxpr_1.out_avals) - len(out_uks)
   num_f_res = len(false_jaxpr_1.out_avals) - len(out_uks)
@@ -992,7 +1076,8 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   for _ in range(1 + len(carry_uk)):
     unknowns = const_uk + carry_uk + xs_uk
     jaxpr_1, jaxpr_2, out_uk = pe.partial_eval_jaxpr(
-        jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys)
+        jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys,
+        trace_type=trace.master.trace_type)
     carry_uk_out, ys_uk = out_uk[:num_carry], out_uk[num_carry:]
     if carry_uk_out == carry_uk:
       break
