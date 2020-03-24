@@ -77,6 +77,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
     op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
+    # TODO(botev): for some reason there are issues with the gradients
+    op_record("ellipk", 1, float_dtypes, partial(jtu.rand_uniform, 0.0, 1.0),
+              False),
+    op_record("ellipe", 1, float_dtypes, partial(jtu.rand_uniform, 0.0, 1.0),
+              False),
+    op_record("ellipj", 2, float_dtypes, partial(jtu.rand_uniform, 0.0, 1.0),
+              False),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
