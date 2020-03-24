@@ -1609,7 +1609,8 @@ def custom_transforms(fun):
   ad.primitive_jvps[fun_p] = fun_jvp
 
   def fun_batch(args, dims, **params):
-    return batching.batch_fun(lu.wrap_init(fun_impl, params), args, dims)
+    batched, out_dims = batching.batch_fun2(lu.wrap_init(fun_impl, params), dims)
+    return batched.call_wrapped(*args), out_dims()
   batching.primitive_batchers[fun_p] = fun_batch
 
   def fun_abstract_eval(*avals, **params):
