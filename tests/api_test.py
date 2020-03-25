@@ -2228,7 +2228,7 @@ class CustomJVPTest(jtu.JaxTestCase):
   def test_pmap(self):
     raise unittest.SkipTest("TODO")  # TODO(mattjj): write test
 
-  def test_missing_jvp_rule_error(self):
+  def test_missing_jvp_rule_error_message(self):
     @api.custom_jvp
     def foo(x):
       return x ** 2
@@ -2246,7 +2246,7 @@ class CustomJVPTest(jtu.JaxTestCase):
         r"No JVP defined for custom_jvp function foo using defjvp.",
         lambda: api.grad(foo)(2.))
 
-  def test_jvp_rule_inconsistent_pytree_structures_error(self):
+  def test_jvp_rule_inconsistent_pytree_structures_error_message(self):
     @api.custom_jvp
     def f(x):
       return (x**2,)
@@ -2263,11 +2263,31 @@ class CustomJVPTest(jtu.JaxTestCase):
         re.escape(
             "Custom JVP rule must produce primal and tangent outputs "
             "with equal container (pytree) structures, but got "
-            "{} and {}.".format(
+            "{} and {} respectively.".format(
                 tree_util.tree_structure((1,)),
                 tree_util.tree_structure([1, 2]))
         ),
         lambda: api.jvp(f, (2.,), (1.,)))
+
+  def test_primal_tangent_aval_disagreement_error_message(self):
+    @api.custom_jvp
+    def f(x):
+      return x ** 2
+
+    @f.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      return f(x), np.reshape(t, (1,))
+
+    f(2.)  # doesn't crash
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom JVP rule must produce primal and tangent outputs "
+            "with equal shapes and dtypes, but got float32[] and float32[1] "
+            "respectively."),
+        lambda: api.jvp(f, (np.float32(2.),), (np.float32(1.),)))
 
 
 class CustomVJPTest(jtu.JaxTestCase):
