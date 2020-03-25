@@ -24,7 +24,7 @@ from ..numpy import lax_numpy as jnp
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
 
-from ..third_party.scipy.special import ellipk, ellipe, ellipj
+from ..third_party.scipy.special import ellipk, ellipe, ellipj, ellipkinc, ellipeinc, cosm1
 
 
 @_wraps(osp_special.gammaln)
