@@ -336,5 +336,13 @@ class EinsumTest(jtu.JaxTestCase):
     s = 'cij,cjk->cik'
     self._check(s, x, y)
 
+  def test_broadcasting_issue_2189(self):
+    r = rng()
+    x = r.randn(2, 1, 3, 3)
+    y = r.randn(2, 4, 3)
+    s = '...ij,...j'
+    self._check(s, x, y)
+
+
 if __name__ == '__main__':
   absltest.main()
