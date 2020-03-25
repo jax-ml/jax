@@ -1579,6 +1579,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         onp.array([0x2a], dtype=onp.uint8),
         check_dtypes=True)
 
+  def testIsClose(self):
+    c_isclose = api.jit(jnp.isclose)
+    c_isclose_nan = api.jit(partial(jnp.isclose, equal_nan=True))
+    n = 2
+
+    rng = onp.random.RandomState(0)
+    x = rng.randn(n, 1)
+    y = rng.randn(n, 1)
+    inf = onp.asarray(n * [onp.inf]).reshape([n, 1])
+    nan = onp.asarray(n * [onp.nan]).reshape([n, 1])
+    args = [x, y, inf, -inf, nan]
+
+    for arg0 in args:
+      for arg1 in args:
+        result_np = onp.isclose(arg0, arg1)
+        result_jax = jnp.isclose(arg0, arg1)
+        result_jit = c_isclose(arg0, arg1)
+        self.assertTrue(jnp.all(jnp.equal(result_np, result_jax)))
+        self.assertTrue(jnp.all(jnp.equal(result_np, result_jit)))
+        result_np = onp.isclose(arg0, arg1, equal_nan=True)
+        result_jax = jnp.isclose(arg0, arg1, equal_nan=True)
+        result_jit = c_isclose_nan(arg0, arg1)
+        self.assertTrue(jnp.all(jnp.equal(result_np, result_jax)))
+        self.assertTrue(jnp.all(jnp.equal(result_np, result_jit)))
+
   def testAllClose(self):
     rng = onp.random.RandomState(0)
     x = rng.randn(2, 2)
