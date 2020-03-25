@@ -20,14 +20,11 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as np
 from jax import test_util as jtu
-from jax.abstract_arrays import ShapedArray
 from jax import lax
 from jax import lax_linalg
 from jax import random
 from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
-from jax.core import unit
-from jax.interpreters import partial_eval as pe
 from jax.util import partial, curry
 import jax.ops
 

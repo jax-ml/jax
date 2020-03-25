@@ -46,15 +46,11 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 def _cho_solve(c, b, lower):
   c, b = np_linalg._promote_arg_dtypes(np.asarray(c), np.asarray(b))
   np_linalg._check_solve_shapes(c, b)
-  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
-  # add a dummy dimension. Extend it to support vectors and simplify this.
-  rhs_vector = c.ndim == b.ndim + 1
-  b = b[..., np.newaxis] if rhs_vector else b
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=lower, conjugate_a=lower)
-  return b[..., 0] if rhs_vector else b
+  return b
 
 @_wraps(scipy.linalg.cho_solve, update_doc=False)
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):

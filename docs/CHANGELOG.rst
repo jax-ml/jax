@@ -5,27 +5,58 @@ Change Log
    Remember to leave an empty line before the start of an itemized list,
    and to align the itemized text with the first line of an item.
 
+.. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+
 These are the release notes for JAX.
 
+jax 0.1.63 (unreleased)
+---------------------------
 
-jax 0.1.60 (unreleased)
------------------------
+jax 0.1.62 (March 21, 2020)
+---------------------------
 
-.. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
+* JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
+* Removed the internal function ``lax._safe_mul``, which implemented the
+  convention ``0. * nan == 0.``. This change means some programs when
+  differentiated will produce nans when they previously produced correct
+  values, though it ensures nans rather than silently incorrect results are
+  produced for other programs. See #2447 and #1052 for details.
+* Added an ``all_gather`` parallel convenience function.
+* More type annotations in core code.
+
+jaxlib 0.1.42 (March 19, 2020)
+------------------------------
+
+* jaxlib 0.1.41 broke cloud TPU support due to an API incompatibility. This
+  release fixes it again.
+* JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
+
+jax 0.1.61 (March 17, 2020)
+---------------------------
+
+* Fixes Python 3.5 support. This will be the last JAX or jaxlib release that
+  supports Python 3.5.
+
+jax 0.1.60 (March 17, 2020)
+---------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...master>`_.
 * New features:
 
-  * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows the user to
-    specify arguments that should be treated as compile-time constants and
-    should be broadcasted to all devices. It works analogously to
+  * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows
+    the user to specify arguments that should be treated as compile-time
+    constants and should be broadcasted to all devices. It works analogously to
     ``static_argnums`` in :py:func:`jax.jit`.
   * Improved error messages for when tracers are mistakenly saved in global state.
   * Added :py:func:`jax.nn.one_hot` utility function.
-* The minimum jaxlib version is now 0.1.40.
+  * Added :py:module:`jax.experimental.jet` for exponentially faster
+    higher-order automatic differentiation.
+  * Added more sanity checking to arguments of :py:func:`jax.lax.broadcast_in_dim`.
+
+* The minimum jaxlib version is now 0.1.41.
 
 jaxlib 0.1.40 (March 4, 2020)
---------------------------------
+-------------------------------
 
 * Adds experimental support in Jaxlib for TensorFlow profiler, which allows
   tracing of CPU and GPU computations from TensorBoard.
@@ -46,7 +77,7 @@ jax 0.1.59 (February 11, 2020)
   * Simplified :py:class:`Jaxpr` by removing the ``Jaxpr.freevars`` and
     ``Jaxpr.bound_subjaxprs``. The call primitives (``xla_call``, ``xla_pmap``,
     ``sharded_call``, and ``remat_call``) get a new parameter ``call_jaxpr`` with a
-    fully-closed (no ``constvars``) JAXPR. Also, added a new field ``call_primitive``
+    fully-closed (no ``constvars``) jaxpr. Also, added a new field ``call_primitive``
     to primitives.
 * New features:
 

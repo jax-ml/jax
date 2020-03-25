@@ -64,8 +64,8 @@ def get_python_version(python_bin_path):
   return major, minor
 
 def check_python_version(python_version):
-  if python_version < (3, 5):
-    print("JAX requires Python 3.5 or newer.")
+  if python_version < (3, 6):
+    print("JAX requires Python 3.6 or newer.")
     sys.exit(-1)
 
 
@@ -107,7 +107,8 @@ def download_and_verify_bazel():
           package.file, "#" * progress_chars,
           "." * (num_chars - progress_chars), int(progress * 100.0)))
 
-    tmp_path, _ = urlretrieve(uri, None, progress)
+    tmp_path, _ = urlretrieve(uri, None,
+                              progress if sys.stdout.isatty() else None)
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.

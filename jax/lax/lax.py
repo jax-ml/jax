@@ -20,7 +20,7 @@ import functools
 import itertools
 import operator
 import string
-from typing import Any
+from typing import Any, Callable
 import warnings
 
 import numpy as onp
@@ -619,6 +619,11 @@ def broadcast(operand, sizes):
   return broadcast_in_dim(operand, tuple(sizes) + onp.shape(operand), dims)
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
+  """Wraps XLA's `BroadcastInDim
+  <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
+  operator.
+  """
+  shape = _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions)
   if onp.ndim(operand) == len(shape) and not len(broadcast_dimensions):
     return operand
   return broadcast_in_dim_p.bind(
@@ -1142,9 +1147,6 @@ def stop_gradient(x):
    array(0., dtype=float32)
    """
   return tree_map(stop_gradient_p.bind, x)
-
-
-def _safe_mul(x, y): return safe_mul_p.bind(x, y)
 
 
 ### convenience wrappers around traceables
@@ -1677,7 +1679,7 @@ is_finite_p = unop(_fixed_dtype(onp.bool_), _float, 'is_finite')
 ad.defjvp_zero(is_finite_p)
 
 exp_p = standard_unop(_float | _complex, 'exp')
-ad.defjvp2(exp_p, lambda g, ans, x: _safe_mul(g, ans))
+ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
@@ -1824,21 +1826,18 @@ _maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
-ad.defjvp2(sqrt_p, lambda g, ans, x: _safe_mul(g, div(_const(x, 0.5), ans)))
+ad.defjvp2(sqrt_p, lambda g, ans, x: mul(g, div(_const(x, 0.5), ans)))
 
 rsqrt_p = standard_unop(_float | _complex, 'rsqrt')
 ad.defjvp2(rsqrt_p,
            lambda g, ans, x:
-           _safe_mul(g, mul(_const(x, -0.5), pow(x, _const(x, -1.5)))))
+           mul(g, mul(_const(x, -0.5), pow(x, _const(x, -1.5)))))
 
 pow_p = standard_naryop([_float | _complex, _float | _complex], 'pow')
 
 def _pow_jvp_lhs(g, ans, x, y):
-  # we call _safe_mul here so that we get the behavior 0*inf = 0, since when a
-  # coefficient in `g` is zero we want to keep it at zero, not produce a nan.
-  # see https://github.com/google/jax/pull/383
   jac = mul(y, pow(x, select(eq(y, _zeros(y)), _ones(y), sub(y, _ones(y)))))
-  return _safe_mul(_brcast(g, y), jac)
+  return mul(_brcast(g, y), jac)
 
 def _pow_jvp_rhs(g, ans, x, y):
   return mul(_brcast(g, x), mul(log(_replace_zero(x)), ans))
@@ -1858,7 +1857,9 @@ xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
 
 def _add_transpose(t, x, y):
-  # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)  # not affine
+  # The following linearity assertion is morally true, but because in some cases we
+  # instantiate zeros for convenience, it doesn't always hold.
+  # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
   return [t, t]
 
 add_p = standard_naryop([_num, _num], 'add')
@@ -1867,7 +1868,9 @@ ad.primitive_transposes[add_p] = _add_transpose
 
 
 def _sub_transpose(t, x, y):
-  assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
+  # The following linearity assertion is morally true, but because in some cases
+  # we instantiate zeros for convenience, it doesn't always hold.
+  # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
   return [t, neg(t) if t is not ad_util.zero else ad_util.zero]
 
 sub_p = standard_naryop([_num, _num], 'sub')
@@ -1878,20 +1881,6 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
-
-
-def _safe_mul_translation_rule(c, x, y):
-  dtype = c.GetShape(x).numpy_dtype()
-  zero = c.Constant(onp.array(0, dtype=dtype))
-  out_shape = broadcast_shapes(c.GetShape(x).dimensions(),
-                               c.GetShape(y).dimensions())
-  return c.Select(c.Or(c.Eq(x, zero), c.Eq(y, zero)),
-                  c.Broadcast(zero, out_shape),
-                  c.Mul(x, y))
-
-safe_mul_p = standard_naryop([_num, _num], 'safe_mul',
-                            translation_rule=_safe_mul_translation_rule)
-ad.defbilinear_broadcasting(_brcast, safe_mul_p, _safe_mul, _safe_mul)
 
 
 def _div_transpose_rule(cotangent, x, y):
@@ -2369,6 +2358,7 @@ batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, shape, broadcast_dimensions):
   if type(operand) is xla.DeviceArray:
+    shape = _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
     lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
     return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
@@ -2380,18 +2370,32 @@ def _broadcast_in_dim_shape_rule(operand, shape, broadcast_dimensions):
   _check_shapelike('broadcast_in_dim', 'shape', shape)
   _check_shapelike('broadcast_in_dim', 'broadcast_dimensions',
                    broadcast_dimensions)
-  if any(x >= len(shape) for x in broadcast_dimensions):
-    msg = ("broadcast_in_dim broadcast dimensions must be less than "
-           "ndim(shape), got {} for shape {}.")
-    raise ValueError(msg.format(broadcast_dimensions, shape))
-  if operand.ndim != len(broadcast_dimensions):
+  operand_ndim = onp.ndim(operand)
+  if operand_ndim != len(broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must have length equal to '
-           'operand ndim, got broadcast_dimensions {} for operand ndim {}.')
-    raise TypeError(msg.format(broadcast_dimensions, operand.ndim))
+           'operand ndim; got broadcast_dimensions {} for operand ndim {}.')
+    raise TypeError(msg.format(broadcast_dimensions, operand_ndim))
+  if len(shape) < operand_ndim:
+    msg = ('broadcast_in_dim target broadcast shape must have equal or higher rank '
+           'to the operand shape; got operand ndim {} and target broadcast ndim {}.')
+    raise TypeError(msg.format(operand_ndim, len(shape)))
   if not set(broadcast_dimensions).issubset(set(range(len(shape)))):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
-    raise TypeError(msg.format(broadcast_dimensions, operand.ndim, shape))
+    raise TypeError(msg.format(broadcast_dimensions, operand_ndim, shape))
+  if any(operand.shape[i] != 1 and operand.shape[i] != shape[broadcast_dimensions[i]]
+         for i in range(operand_ndim)):
+      msg = ('broadcast_in_dim operand dimension sizes must either be 1, or be '
+             'equal to their corresponding dimensions in the target broadcast shape; '
+             'got operand of shape {}, target broadcast shape {}, '
+             'broadcast_dimensions {} ')
+      raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
+  if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
+      tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):
+      msg = ('broadcast_in_dim broadcast_dimensions must be strictly increasing; '
+             'got broadcast_dimensions {}')
+      raise TypeError(msg.format(broadcast_dimensions))
+
   return shape
 
 def _broadcast_in_dim_transpose_rule(t, shape, broadcast_dimensions):
@@ -3152,6 +3156,7 @@ gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     _gather_translation_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
+
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
 
@@ -4480,15 +4485,18 @@ def _const(example, val):
     return dtypes.scalar_type_of(example)(val)
   return onp.array(val, _dtype(example))
 
-_zeros = partial(full_like, fill_value=0)
-_zero = partial(full_like, shape=(), fill_value=0)
-_ones = partial(full_like, fill_value=1)
-_one = partial(full_like, shape=(), fill_value=1)
-_twos = partial(full_like, fill_value=2)
-_two = partial(full_like, shape=(), fill_value=2)
+_zeros: Callable = partial(full_like, fill_value=0)
+_zero: Callable = partial(full_like, shape=(), fill_value=0)
+_ones: Callable = partial(full_like, fill_value=1)
+_one: Callable = partial(full_like, shape=(), fill_value=1)
+_twos: Callable = partial(full_like, fill_value=2)
+_two: Callable = partial(full_like, shape=(), fill_value=2)
 
-_dtype = dtype = dtypes.result_type
-_iscomplex = lambda x: dtypes.issubdtype(_dtype(x), onp.complexfloating)
+dtype: Callable = dtypes.result_type
+_dtype: Callable = dtypes.result_type
+
+def _iscomplex(x) -> bool:
+  return dtypes.issubdtype(_dtype(x), onp.complexfloating)
 
 
 def ranges_like(*xs):

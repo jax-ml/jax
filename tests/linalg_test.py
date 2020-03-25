@@ -433,7 +433,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
              (isinstance(axis, tuple) and len(axis) == 1)
           else [None, 'fro', 1, 2, -1, -2, np.inf, -np.inf, 'nuc'])
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
+      for rng_factory in [jtu.rand_default]))  # type: ignore
   def testNorm(self, shape, dtype, ord, axis, keepdims, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
@@ -1037,8 +1037,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for conjugate_a in (
           [False] if np.issubdtype(dtype, np.floating) else [False, True])
       for left_side, a_shape, b_shape in [
+          (False, (4, 4), (4,)),
           (False, (4, 4), (1, 4,)),
           (False, (3, 3), (4, 3)),
+          (True, (4, 4), (4,)),
           (True, (4, 4), (4, 1)),
           (True, (4, 4), (4, 3)),
           (True, (2, 8, 8), (2, 8, 10)),
@@ -1138,6 +1140,36 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker_zeros,
                             check_dtypes=True)
     self._CompileAndCheck(jsp_fun, args_maker_zeros, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_lhs={}_rhs={}_lower={}".format(
+          jtu.format_shape_dtype_string(lhs_shape, dtype),
+          jtu.format_shape_dtype_string(rhs_shape, dtype),
+          lower),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "rng_factory": rng_factory, "lower": lower}
+      for lhs_shape, rhs_shape in [
+          [(1, 1), (1,)],
+          [(4, 4), (4,)],
+          [(4, 4), (4, 4)],
+      ]
+      for dtype in float_types
+      for lower in [True, False]
+      for rng_factory in [jtu.rand_default]))
+  def testChoSolve(self, lhs_shape, rhs_shape, dtype, lower, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    def args_maker():
+      b = rng(rhs_shape, dtype)
+      if lower:
+        L = onp.tril(rng(lhs_shape, dtype))
+        return [(L, lower), b]
+      else:
+        U = onp.triu(rng(lhs_shape, dtype))
+        return [(U, lower), b]
+    self._CheckAgainstNumpy(osp.linalg.cho_solve, jsp.linalg.cho_solve,
+                            args_maker, check_dtypes=True, tol=1e-3)
+
 
 if __name__ == "__main__":
   absltest.main()

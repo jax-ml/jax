@@ -17,6 +17,7 @@ import itertools as it
 from collections import namedtuple
 import contextlib
 import threading
+from typing import Callable, Dict, Sequence, Set
 from weakref import ref
 
 import numpy as onp
@@ -123,7 +124,7 @@ class JaxprTrace(Trace):
       name = wrap_name(name, 'pe')
     params = dict(params, name=name)
     if call_primitive in call_partial_eval_rules:
-      return call_partial_eval_rules[call_primitive](self, f, tracers, params)
+      return call_partial_eval_rules[call_primitive](self, call_primitive, f, tracers, params)
     if call_primitive in map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
@@ -248,9 +249,9 @@ def _unmapped_aval(size, aval):
   else:
     raise TypeError(aval)
 
-map_primitives = set()
-custom_partial_eval_rules = {}
-call_partial_eval_rules = {}
+map_primitives: Set[core.Primitive] = set()
+custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
+call_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 
 
 def partial_eval(f, trace, pvs):
@@ -284,7 +285,7 @@ class JaxprTracer(Tracer):
     assert isinstance(pval, PartialVal)
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
-      trace.escaped_tracer_error(
+      core.escaped_tracer_error(
         "Tracer from a higher level: {} in trace {}".format(const, trace))
     self._trace = trace
     self.pval = pval
@@ -330,7 +331,7 @@ class PartialVal(tuple):
 
 valid_pv_types = (AbstractValue, type(None))
 
-def merge_pvals(val, pval):
+def merge_pvals(val, pval: PartialVal):
   pv, const = pval
   if isinstance(pv, AbstractValue):
     return val
@@ -347,8 +348,8 @@ def partial_val_aval(pv, const):
   else:
     raise TypeError(pv)
 
-def trace_to_jaxpr(fun: lu.WrappedFun, pvals, instantiate=False, stage_out_calls=False, bottom=False):
-  """Traces a function, given abstract inputs, to a jaxpr."""
+def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
+                   instantiate=False, stage_out_calls=False, bottom=False):
   trace_type = StagingJaxprTrace if stage_out_calls else JaxprTrace
   with new_master(trace_type, bottom=bottom) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
@@ -451,7 +452,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
         processed_eqn_ids.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
-        t._trace.escaped_tracer_error("Tracer not among input tracers {}".format(t))
+        core.escaped_tracer_error("Tracer not among input tracers {}".format(t))
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
       env[getvar(t)] = recipe.val
@@ -536,7 +537,7 @@ remat_call_p.def_custom_bind(remat_call)
 remat_call_p.def_impl(core.call_impl)
 remat_call_p.multiple_results = True
 
-def _remat_partial_eval(trace, f, tracers, params):
+def _remat_partial_eval(trace, _, f, tracers, params):
   concrete = params['concrete']
 
   # Unlike JaxprTrace.process_call, we want to form a jaxpr for the entirety of

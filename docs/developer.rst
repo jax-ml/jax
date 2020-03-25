@@ -1,9 +1,7 @@
 Building from source
 ====================
 
-First, obtain the JAX source code.
-
-.. code-block:: shell
+First, obtain the JAX source code::
 
     git clone https://github.com/google/jax
     cd jax
@@ -20,9 +18,7 @@ Installing ``jaxlib`` with pip
 ..............................
 
 If you're only modifying Python portions of JAX, we recommend installing
-``jaxlib`` from a prebuilt wheel using pip:
-
-.. code-block:: shell
+``jaxlib`` from a prebuilt wheel using pip::
 
  pip install jaxlib
 
@@ -40,9 +36,7 @@ To build ``jaxlib`` from source, you must also install some prerequisites:
 * Cython
 * six (required for during the jaxlib build only, not required at install time)
 
-On Ubuntu 18.04 or Debian you can install the necessary prerequisites with:
-
-.. code-block:: shell
+On Ubuntu 18.04 or Debian you can install the necessary prerequisites with::
 
  sudo apt-get install g++ python python3-dev python3-numpy python3-scipy cython3 python3-six
 
@@ -50,16 +44,12 @@ On Ubuntu 18.04 or Debian you can install the necessary prerequisites with:
 If you are building on a Mac, make sure XCode and the XCode command line tools
 are installed.
 
-You can also install the necessary Python dependencies using ``pip``:
+You can also install the necessary Python dependencies using ``pip``::
 
-.. code-block:: shell
-
- pip install numpy scipy cython six
+    pip install numpy scipy cython six
 
 
-To build ``jaxlib`` with CUDA support, you can run
-
-.. code-block:: shell
+To build ``jaxlib`` with CUDA support, you can run::
 
     python build/build.py --enable_cuda
     pip install -e build  # installs jaxlib (includes XLA)
@@ -70,9 +60,7 @@ specify the paths to CUDA and CUDNN, which you must have installed. Here
 ``python`` should be the name of your Python 3 interpreter; on some systems, you
 may need to use ``python3`` instead.
 
-To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cuda``:
-
-.. code-block:: shell
+To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cuda``::
 
   python build/build.py
   pip install -e build  # installs jaxlib (includes XLA)
@@ -80,9 +68,7 @@ To build ``jaxlib`` without CUDA GPU support (CPU only), drop the ``--enable_cud
 Installing ``jax``
 ------------------
 
-Once ``jaxlib`` has been installed, you can install ``jax`` by running
-
-.. code-block:: shell
+Once ``jaxlib`` has been installed, you can install ``jax`` by running::
 
   pip install -e .  # installs jax
 
@@ -97,33 +83,25 @@ Running the tests
 To run all the JAX tests, we recommend using ``pytest-xdist``, which can run tests in
 parallel. First, install ``pytest-xdist`` and ``pytest-benchmark`` by running
 ``pip install pytest-xdist pytest-benchmark``.
-Then, from the repository root directory run
-
-.. code-block:: shell
+Then, from the repository root directory run::
 
  pytest -n auto tests
 
 
 JAX generates test cases combinatorially, and you can control the number of
 cases that are generated and checked for each test (default is 10). The automated tests
-currently use 25:
-
-.. code-block:: shell
+currently use 25::
 
  JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
 
-The automated tests also run the tests with default 64-bit floats and ints:
-
-.. code-block:: shell
+The automated tests also run the tests with default 64-bit floats and ints::
 
  JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
 
 You can run a more specific set of tests using
 `pytest <https://docs.pytest.org/en/latest/usage.html#specifying-tests-selecting-tests>`_'s
 built-in selection mechanisms, or alternatively you can run a specific test
-file directly to see more detailed information about the cases being run:
-
-.. code-block:: shell
+file directly to see more detailed information about the cases being run::
 
  python tests/lax_numpy_test.py --num_generated_cases=5
 
@@ -135,9 +113,7 @@ The Colab notebooks are tested for errors as part of the documentation build.
 Update documentation
 ====================
 
-To rebuild the documentation, install several packages:
-
-.. code-block:: shell
+To rebuild the documentation, install several packages::
 
   pip install -r docs/requirements.txt
 
@@ -148,9 +124,7 @@ I have used successfully on the Mac: ``conda install -c conda-forge pandoc``.
 If you do not want to install ``pandoc`` then you should regenerate the documentation
 without the notebooks.
 
-You run at top-level one of the following commands:
-
-.. code-block:: shell
+You run at top-level one of the following commands::
 
   sphinx-build -b html docs docs/build/html  # with the notebooks
   sphinx-build -b html -D nbsphinx_execute=never docs docs/build/html  # without the notebooks
@@ -195,9 +169,7 @@ branch. That branch is also built automatically, and you can
 see the generated documentation `here <https://jax.readthedocs.io/en/test-docs/>`_.
 
 For a local test, I was able to do it in a fresh directory by replaying the commands
-I saw in the Readthedocs logs:
-
-.. code-block:: shell
+I saw in the Readthedocs logs::
 
     mkvirtualenv jax-docs  # A new virtualenv
     mkdir jax-docs  # A new directory

@@ -54,8 +54,11 @@ nonzerodim_shapes = nonempty_nonscalar_array_shapes + empty_array_shapes
 nonempty_shapes = scalar_shapes + nonempty_array_shapes
 all_shapes =  scalar_shapes + array_shapes
 
-float_dtypes = list(jtu.supported_dtypes().intersection(
-  {jnp.bfloat16, onp.float16, onp.float32, onp.float64}))
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([jnp.bfloat16, onp.float16, onp.float32,
+                                 onp.float64])
 complex_dtypes = [onp.complex64, onp.complex128]
 int_dtypes = [onp.int32, onp.int64]
 uint_dtypes = [onp.uint32, onp.uint64]
@@ -567,7 +570,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
         for shape in rec.shapes for dtype in rec.dtypes
         for out_dtype in [None] + rec.dtypes
-        for axis in set(range(-len(shape), len(shape))) | set([None])
+        for axis in list(range(-len(shape), len(shape))) + [None]
         for keepdims in [False, True])
     for rec in JAX_REDUCER_RECORDS))
   def testReducer(self, onp_op, jnp_op, rng_factory, shape, dtype, out_dtype,
@@ -599,7 +602,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
       for rec in JAX_REDUCER_NO_DTYPE_RECORDS
       for shape in rec.shapes for dtype in rec.dtypes
-      for axis in set(range(-len(shape), len(shape))) | set([None])
+      for axis in list(range(-len(shape), len(shape))) + [None]
       for keepdims in [False, True]))
   def testReducerNoDtype(self, onp_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
@@ -616,7 +619,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "shape": shape, "dtype": dtype, "axis": axis}
       for shape in all_shapes for dtype in all_dtypes
-      for axis in set(range(-len(shape), len(shape))) | set([None])))
+      for axis in list(range(-len(shape), len(shape))) + [None]))
   def testCountNonzero(self, shape, dtype, axis):
     rng = jtu.rand_some_zero()
     onp_fun = lambda x: onp.count_nonzero(x, axis)
@@ -1309,6 +1312,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_op, jnp_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
+  def testOnesWithInvalidShape(self):
+    with self.assertRaises(TypeError):
+      jnp.ones((-1, 1))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_filldtype={}_outdtype={}".format(
           jtu.format_shape_dtype_string(shape, in_dtype),
@@ -1472,6 +1479,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_axis={}".format(
+          jtu.format_shape_dtype_string(arg_shape, dtype), ax),
+       "arg_shape": arg_shape, "dtype": dtype, "ax": ax,
+       "rng_factory": jtu.rand_default}
+      for arg_shape, ax in [
+          ((3,), 0),
+          ((1, 3), 1),
+          ((1, 3, 1), (0, 1))]
+      for dtype in default_dtypes))
+  def testSqueezeFailsOnNonsingletonAxis(self, arg_shape, dtype, ax,
+                                         rng_factory):
+    rng = rng_factory()
+    x = jnp.zeros(arg_shape, dtype=dtype)
+    fun = lambda: jnp.squeeze(x, ax)
+    self.assertRaisesRegex(ValueError, "cannot select an axis to squeeze", fun)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           axis,
@@ -1480,7 +1504,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default, "shape": shape, "dtype": dtype, "axis": axis,
        "weights_shape": weights_shape, "returned": returned}
       for shape, dtype in _shape_and_dtypes(nonempty_shapes, number_dtypes)
-      for axis in set(range(-len(shape), len(shape))) | set([None])
+      for axis in list(range(-len(shape), len(shape))) + [None]
       # `weights_shape` is either `None`, same as the averaged axis, or same as
       # that of the input
       for weights_shape in ([None, shape] if axis is None or len(shape) == 1
@@ -2109,17 +2133,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jax_numpy_result = ((x + x.T) / 2).dtype
     self.assertEqual(orig_numpy_result, jax_numpy_result)
 
-  def testIssue347(self):
-    # https://github.com/google/jax/issues/347
-    def test_fail(x):
-      x = jnp.sqrt(jnp.sum(x ** 2, axis=1))
-      ones = jnp.ones_like(x)
-      x = jnp.where(x > 0.5, x, ones)
-      return jnp.sum(x)
-
-    x = jnp.array([[1, 2], [3, 4], [0, 0]], dtype=jnp.float64)
-    result = api.grad(test_fail)(x)
-    assert not onp.any(onp.isnan(result))
+  # NOTE(mattjj): I disabled this test when removing lax._safe_mul because
+  # introducing the convention 0 * inf = 0 leads to silently wrong results in
+  # some cases. See this comment for details:
+  # https://github.com/google/jax/issues/1052#issuecomment-514083352
+  # def testIssue347(self):
+  #   # https://github.com/google/jax/issues/347
+  #   def test_fail(x):
+  #     x = jnp.sqrt(jnp.sum(x ** 2, axis=1))
+  #     ones = jnp.ones_like(x)
+  #     x = jnp.where(x > 0.5, x, ones)
+  #     return jnp.sum(x)
+  #   x = jnp.array([[1, 2], [3, 4], [0, 0]], dtype=jnp.float64)
+  #   result = api.grad(test_fail)(x)
+  #   assert not onp.any(onp.isnan(result))
 
   def testIssue453(self):
     # https://github.com/google/jax/issues/453
@@ -2236,11 +2263,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(onp.zeros(3,), api.grad(f)(onp.ones(3,)),
                         check_dtypes=True)
 
-  def testIssue777(self):
-    x = jnp.linspace(-200, 0, 4, dtype=onp.float32)
-    f = api.grad(lambda x: jnp.sum(1 / (1 + jnp.exp(-x))))
-    self.assertAllClose(f(x), onp.array([0., 0., 0., 0.25], dtype=onp.float32),
-                        check_dtypes=True)
+  # NOTE(mattjj): I disabled this test when removing lax._safe_mul because this
+  # is a numerical stability issue that should be solved with a custom jvp rule
+  # of the sigmoid function being differentiated here, not by safe_mul.
+  # def testIssue777(self):
+  #   x = jnp.linspace(-200, 0, 4, dtype=onp.float32)
+  #   f = api.grad(lambda x: jnp.sum(1 / (1 + jnp.exp(-x))))
+  #   self.assertAllClose(f(x), onp.array([0., 0., 0., 0.25], dtype=onp.float32),
+  #                       check_dtypes=True)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(

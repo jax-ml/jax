@@ -27,6 +27,10 @@ from ..lib.xla_bridge import xla_client
 from ..interpreters import ad
 from ..interpreters import batching
 
+__all__ = [
+  "fft",
+  "fft_p",
+]
 
 def _promote_to_complex(arg):
   dtype = onp.result_type(arg, onp.complex64)
@@ -133,3 +137,4 @@ fft_p.def_abstract_eval(fft_abstract_eval)
 xla.translations[fft_p] = fft_translation_rule
 ad.deflinear(fft_p, fft_transpose_rule)
 batching.primitive_batchers[fft_p] = fft_batching_rule
+

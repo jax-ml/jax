@@ -20,6 +20,7 @@ from functools import partial
 import itertools as it
 import operator as op
 import string
+from typing import Callable, Dict
 
 import numpy as onp
 
@@ -389,9 +390,9 @@ class MaskTrace(Trace):
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     raise NotImplementedError  # TODO mask-of-jit
 
-shape_parameterized_primitive_rules = {}
-masking_rules = {}
-shape_rules = {}
+shape_parameterized_primitive_rules: Dict[core.Primitive, Callable] = {}
+masking_rules: Dict[core.Primitive, Callable] = {}
+shape_rules: Dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
   masking_rules[prim] = partial(vectorized_masking_rule, prim)

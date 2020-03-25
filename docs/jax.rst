@@ -41,12 +41,8 @@ Automatic differentiation
 .. autofunction:: jvp
 .. autofunction:: linearize
 .. autofunction:: vjp
-.. autofunction:: custom_transforms
-.. autofunction:: defjvp
-.. autofunction:: defjvp_all
-.. autofunction:: defvjp
-.. autofunction:: defvjp_all
-.. autofunction:: custom_gradient
+.. autofunction:: custom_jvp
+.. autofunction:: custom_vjp
 
 
 Vectorization (:code:`vmap`)

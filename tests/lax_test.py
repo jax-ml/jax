@@ -55,15 +55,16 @@ def num_float_bits(dtype):
 # For standard unops and binops, we can generate a large number of tests on
 # arguments of appropriate shapes and dtypes using the following table.
 
-float_dtypes = list(jtu.supported_dtypes().intersection(
-  {dtypes.bfloat16, onp.float16, onp.float32, onp.float64}))
-complex_elem_dtypes = list(jtu.supported_dtypes().intersection(
-    {onp.float32, onp.float64}))
-complex_dtypes = list(jtu.supported_dtypes().intersection(
-    {onp.complex64, onp.complex128}))
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
+                                 onp.float64])
+complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
+complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
 inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = list(jtu.supported_dtypes().intersection({onp.int32, onp.int64}))
-uint_dtypes = list(jtu.supported_dtypes().intersection({onp.uint32, onp.uint64}))
+int_dtypes = supported_dtypes([onp.int32, onp.int64])
+uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -114,6 +115,7 @@ LAX_OPS = [
     op_record("atan", 1, float_dtypes, jtu.rand_small),
     op_record("asinh", 1, float_dtypes, jtu.rand_default),
     op_record("acosh", 1, float_dtypes, jtu.rand_positive),
+    op_record("atanh", 1, float_dtypes, jtu.rand_small),
     op_record("sinh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("cosh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("lgamma", 1, float_dtypes, jtu.rand_positive,
@@ -824,6 +826,7 @@ class LaxTest(jtu.JaxTestCase):
           ([2], [2, 2], [1]),
           ([2], [2, 3], [0]),
           ([], [2, 3], []),
+          ([1], [2, 3], [1]),
       ]
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))
@@ -832,6 +835,30 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(inshape, dtype)]
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CompileAndCheck(op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
+      jtu.format_shape_dtype_string(inshape, onp.float32),
+      outshape, broadcast_dimensions),
+      "inshape": inshape, "outshape": outshape,
+      "broadcast_dimensions": broadcast_dimensions, "err_msg": err_msg}
+    for inshape, outshape, broadcast_dimensions, err_msg in [
+      ([2], [2, 2], [0, 1], ('broadcast_dimensions must have length equal to '
+                              'operand ndim')),
+      ([2, 2], [2], [0, 1], ('target broadcast shape must have equal or higher rank '
+                             'to the operand shape')),
+      ([2], [2, 3], [2], ('broadcast_in_dim broadcast_dimensions must be a subset of output '
+                          'dimensions')),
+      ([2], [3], [0], ('operand dimension sizes must either be 1, or be '
+                       'equal to their corresponding dimensions in the target broadcast shape')),
+      ([2, 2], [2, 2], [1, 0], ('broadcast_dimensions must be strictly increasing')),
+    ]))
+  def testBroadcastInDimShapeCheck(self, inshape, outshape, broadcast_dimensions, err_msg):
+    rng = jtu.rand_default()
+    x = rng(inshape, onp.float32)
+    with self.assertRaisesRegex(TypeError, err_msg):
+      lax.broadcast_in_dim(x, shape=outshape, broadcast_dimensions=broadcast_dimensions)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
@@ -844,6 +871,7 @@ class LaxTest(jtu.JaxTestCase):
           ([2], [2, 2], [1]),
           ([2], [2, 3], [0]),
           ([], [2, 3], []),
+          ([1], [2, 3], [1]),
       ]
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))

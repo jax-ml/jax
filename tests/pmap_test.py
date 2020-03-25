@@ -98,6 +98,15 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testGather(self):
+    f = pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = onp.array([x] * xla_bridge.device_count())
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):

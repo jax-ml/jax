@@ -38,7 +38,7 @@ import warnings
 import numpy as onp
 import opt_einsum
 
-from jax import jit, device_put, custom_transforms, defjvp
+from jax import jit, device_put
 from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
@@ -89,7 +89,7 @@ set_printoptions = onp.set_printoptions
 # the ndarray class to have a metaclass with special __instancecheck__ behavior.
 _arraylike_types = (onp.ndarray, UnshapedArray, DeviceArray)
 
-class _ArrayMeta(type(onp.ndarray)):
+class _ArrayMeta(type(onp.ndarray)):  # type: ignore
   """Metaclass for overriding ndarray isinstance checks."""
 
   def __instancecheck__(self, instance):
@@ -172,7 +172,6 @@ iinfo = dtypes.iinfo
 dtype = onp.dtype
 can_cast = dtypes.can_cast
 issubsctype = dtypes.issubsctype
-result_type = dtypes.result_type
 promote_types = dtypes.promote_types
 
 ComplexWarning = onp.ComplexWarning
@@ -424,6 +423,7 @@ arccos = _one_to_one_unop(onp.arccos, lax.acos, True)
 arctan = _one_to_one_unop(onp.arctan, lax.atan, True)
 sinh = _one_to_one_unop(onp.sinh, lax.sinh, True)
 cosh = _one_to_one_unop(onp.cosh, lax.cosh, True)
+arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
@@ -925,15 +925,19 @@ def ravel(a, order="C"):
 
 @_wraps(onp.squeeze)
 def squeeze(a, axis=None):
-  if 1 not in shape(a):
-    return a
+  shape_a = shape(a)
   if axis is None:
-    newshape = [d for d in shape(a) if d != 1]
+    if 1 not in shape_a:
+      return a
+    newshape = [d for d in shape_a if d != 1]
   else:
     if isinstance(axis, int):
       axis = (axis,)
     axis = frozenset(_canonicalize_axis(i, ndim(a)) for i in axis)
-    newshape = [d for i, d in enumerate(shape(a))
+    if _any(shape_a[a] != 1 for a in axis):
+      raise ValueError("cannot select an axis to squeeze out which has size "
+                       "not equal to one")
+    newshape = [d for i, d in enumerate(shape_a)
                 if d != 1 or i not in axis]
   return lax.reshape(a, newshape)
 
@@ -1638,6 +1642,8 @@ def _pad(array, pad_width, mode, constant_values):
 
 @_wraps(onp.pad)
 def pad(array, pad_width, mode='constant', constant_values=0):
+  if isinstance(pad_width, list):
+    pad_width = tuple(pad_width)
   return _pad(array, pad_width, mode, constant_values)
 
 

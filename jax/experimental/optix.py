@@ -83,7 +83,6 @@ ClipByGlobalNormState = collections.namedtuple("ClipByGlobalNormState", "")
 
 def global_norm(items):
   return jnp.sqrt(jnp.sum([jnp.sum(x**2) for x in tree_leaves(items)]))
-_global_norm = global_norm  # TODO(mtthss): remove when google code updated
 
 
 def clip_by_global_norm(max_norm):
@@ -106,7 +105,7 @@ def clip_by_global_norm(max_norm):
     g_norm = global_norm(updates)
     trigger = g_norm < max_norm
     updates = tree_multimap(
-        lambda t: jnp.where(trigger, t, t * (max_norm / g_norm)), updates)
+        lambda t: jnp.where(trigger, t, (t / g_norm) * max_norm), updates)
     return updates, state
 
   return InitUpdate(init_fn, update_fn)
