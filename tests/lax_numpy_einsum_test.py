@@ -315,6 +315,26 @@ class EinsumTest(jtu.JaxTestCase):
     self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
                         check_dtypes=False, rtol=rtol)
 
+  def test_contraction_broadcasting(self):
+    r = rng()
+    x = r.randn(3, 4, 5)
+    y = r.randn(3, 1, 6)
+    s = 'cij,cjk->cik'
+    self._check(s, x, y)
+
+  def test_batch_broadcasting(self):
+    r = rng()
+    x = r.randn(1, 4, 5)
+    y = r.randn(3, 5, 6)
+    s = 'cij,cjk->cik'
+    self._check(s, x, y)
+
+  def test_batch_and_contraction_broadcasting(self):
+    r = rng()
+    x = r.randn(1, 4, 5)
+    y = r.randn(3, 1, 6)
+    s = 'cij,cjk->cik'
+    self._check(s, x, y)
 
 if __name__ == '__main__':
   absltest.main()
