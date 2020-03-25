@@ -708,6 +708,13 @@ class UnshapedArray(AbstractValue):
     """Returns a copy of the aval with weak_type=False."""
     return UnshapedArray(self.dtype) if self.weak_type else self
 
+  @property
+  def shape(self):
+    msg = ("UnshapedArray has no shape. Please open an issue at "
+           "https://github.com/google/jax/issues because it's unexpected for "
+           "UnshapedArray instances to ever be produced.")
+    raise TypeError(msg)
+
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']
   array_abstraction_level = 1
