@@ -17,14 +17,15 @@
 
 import numpy as onp
 
+from jax import custom_transforms, defjvp
+from jax import dtypes
 from jax import lax
-from jax import random
 from jax.scipy.special import expit
 import jax.numpy as np
-from jax import jarrett
 
 # activations
 
+@custom_transforms
 def relu(x):
   r"""Rectified linear unit activation function.
 
@@ -34,6 +35,7 @@ def relu(x):
     \mathrm{relu}(x) = \max(x, 0)
   """
   return np.maximum(x, 0)
+defjvp(relu, lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
 def softplus(x):
   r"""Softplus activation function.
@@ -179,7 +181,8 @@ def gelu(x):
   speed. For more information, see `Gaussian Error Linear Units (GELUs)
   <https://arxiv.org/abs/1606.08415>`_, section 2.
   """
-  cdf = 0.5 * (1.0 + np.tanh((np.sqrt(2 / np.pi) * (x + 0.044715 * x**3))))
+  sqrt_2_over_pi = onp.sqrt(2 / onp.pi).astype(x.dtype)
+  cdf = 0.5 * (1.0 + np.tanh(sqrt_2_over_pi * (x + 0.044715 * x**3)))
   return x * cdf
 
 def glu(x, axis=-1):
@@ -235,3 +238,31 @@ def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):
     # when used in neural network normalization layers
     variance = np.mean(x**2, axis, keepdims=True) - mean**2
   return (x - mean) * lax.rsqrt(variance + epsilon)
+
+def one_hot(x, num_classes, *, dtype=np.float64):
+  """One-hot encodes the given indicies.
+
+  Each index in the input ``x`` is encoded as a vector of zeros of length
+  ``num_classes`` with the element at ``index`` set to one::
+
+  >>> jax.nn.one_hot(np.array([0, 1, 2]), 3)
+  DeviceArray([[1., 0., 0.],
+               [0., 1., 0.],
+               [0., 0., 1.]], dtype=float32)
+
+  Indicies outside the range [0, num_classes) will be encoded as zeros::
+
+  >>> jax.nn.one_hot(np.array([-1, 3]), 3)
+  DeviceArray([[0., 0., 0.],
+               [0., 0., 0.]], dtype=float32)
+
+  Args:
+    x: A tensor of indices.
+    num_classes: Number of classes in the one-hot dimension.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+  """
+  dtype = dtypes.canonicalize_dtype(dtype)
+  x = np.asarray(x)
+  return np.array(x[..., np.newaxis] == np.arange(num_classes, dtype=x.dtype),
+                  dtype=dtype)

@@ -16,17 +16,18 @@
 from functools import partial
 
 import numpy as onp
-import warnings
 import textwrap
 import operator
 from typing import Tuple, Union, cast
 
-from jax import jit, ops
+from jax import jit, vmap
 from .. import lax
+from .. import ops
 from .. import lax_linalg
 from .. import dtypes
 from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
+from .vectorize import vectorize
 from . import lax_numpy as np
 from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
@@ -110,13 +111,6 @@ def matrix_rank(M, tol=None):
   return np.sum(S > tol)
 
 
-# TODO(pfau): make this work for complex types
-def _jvp_slogdet(g, ans, x):
-  jvp_sign = np.zeros(x.shape[:-2])
-  jvp_logdet = np.trace(solve(x, g), axis1=-1, axis2=-2)
-  return jvp_sign, jvp_logdet
-
-
 @_wraps(onp.linalg.slogdet)
 @custom_transforms
 @jit
@@ -143,6 +137,10 @@ def slogdet(a):
       is_zero, np.array(-np.inf, dtype=dtype),
       np.sum(np.log(np.abs(diag)), axis=-1))
   return sign, np.real(logdet)
+def _jvp_slogdet(g, ans, x):
+  jvp_sign = np.zeros(x.shape[:-2])
+  jvp_logdet = np.trace(solve(x, g), axis1=-1, axis2=-2)
+  return jvp_sign, jvp_logdet
 defjvp(slogdet, _jvp_slogdet)
 
 
@@ -328,41 +326,38 @@ def qr(a, mode="reduced"):
   return q, r
 
 
+def _check_solve_shapes(a, b):
+  if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
+    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
+           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(a.shape, b.shape))
+
+
+@partial(vectorize, signature='(n,m),(m)->(n)')
+def _matvec_multiply(a, b):
+  return np.dot(a, b, precision=lax.Precision.HIGHEST)
+
+
 @_wraps(onp.linalg.solve)
 @jit
 def solve(a, b):
   a, b = _promote_arg_dtypes(np.asarray(a), np.asarray(b))
-  a_shape = np.shape(a)
-  b_shape = np.shape(b)
-  a_ndims = len(a_shape)
-  b_ndims = len(b_shape)
-  if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2] and b_ndims >= 1):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(a_shape, b_shape))
-  lu, pivots = lax_linalg.lu(a)
-  dtype = lax.dtype(a)
+  _check_solve_shapes(a, b)
 
-  m = a_shape[-1]
-
-  # Numpy treats the RHS as a (batched) vector if the number of dimensions
-  # differ by 1. Otherwise, broadcasting rules apply.
-  x = b[..., None] if a_ndims == b_ndims + 1 else b
-
-  batch_dims = lax.broadcast_shapes(lu.shape[:-2], x.shape[:-2])
-  x = np.broadcast_to(x, batch_dims + x.shape[-2:])
-  lu = np.broadcast_to(lu, batch_dims + lu.shape[-2:])
-
-  permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
-  permutation = np.broadcast_to(permutation, batch_dims + (m,))
-  iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
-  x = x[iotas[:-1] + (permutation, slice(None))]
-
-  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
-                                  unit_diagonal=True)
-  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
-
-  return x[..., 0] if a_ndims == b_ndims + 1 else x
+  # With custom_linear_solve, we can reuse the same factorization when
+  # computing sensitivities. This is considerably faster.
+  lu, pivots = lax.stop_gradient(lax_linalg.lu)(a)
+  custom_solve = partial(
+      lax.custom_linear_solve,
+      lambda x: _matvec_multiply(a, x),
+      solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=0),
+      transpose_solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=1))
+  if a.ndim == b.ndim + 1:
+    # b.shape == [..., m]
+    return custom_solve(b)
+  else:
+    # b.shape == [..., m, k]
+    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 
 @_wraps(onp.linalg.lstsq)

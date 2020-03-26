@@ -26,7 +26,7 @@ import numpy as onp
 
 from jax import api
 from jax import lax
-from jax import numpy as lnp
+from jax import numpy as jnp
 from jax import ops
 from jax import test_util as jtu
 from jax import util
@@ -412,7 +412,7 @@ class IndexingTest(jtu.JaxTestCase):
     for rng_factory in [jtu.rand_default])
   def testStaticIndexingGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory()
-    tol = 1e-2 if lnp.finfo(dtype).bits == 32 else None
+    tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: x[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)
@@ -526,7 +526,7 @@ class IndexingTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory()
-    tol = 1e-2 if lnp.finfo(dtype).bits == 32 else None
+    tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
     @api.jit
@@ -606,7 +606,7 @@ class IndexingTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default])
   def testAdvancedIntegerIndexingGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory()
-    tol = 1e-2 if lnp.finfo(dtype).bits == 32 else None
+    tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: x[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)
@@ -718,7 +718,7 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertRaises(IndexError, lambda: api.jit(lambda x, i: x[i])(x, i))
 
   def testIssue187(self):
-    x = lnp.ones((5, 5))
+    x = jnp.ones((5, 5))
     x[[0, 2, 4], [0, 2, 4]]  # doesn't crash
 
     x = onp.arange(25).reshape((5, 5))
@@ -729,9 +729,9 @@ class IndexingTest(jtu.JaxTestCase):
   def testJVPOfGradOfIndexing(self):
     # Should return a value, even though we didn't pass a symbolic zero as the
     # index tangent.
-    x = lnp.ones((3, 4), lnp.float32)
-    i = lnp.ones((3,), lnp.int32)
-    f = lambda x, i: lnp.sum(x[i])
+    x = jnp.ones((3, 4), jnp.float32)
+    i = jnp.ones((3,), jnp.int32)
+    f = lambda x, i: jnp.sum(x[i])
     primals, tangents = api.jvp(api.grad(f), (x, i), (x, onp.zeros_like(i)))
     expected = onp.broadcast_to(
       onp.array([0, 3, 0], dtype=onp.float32)[:, None], (3, 4))
@@ -746,16 +746,33 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testBooleanIndexingWithEmptyResult(self):
     # based on a TensorFlow Probability test that started failing after #1622
-    x = lnp.array([-1])
-    mask = lnp.array([False])
+    x = jnp.array([-1])
+    mask = jnp.array([False])
     ans = x[mask]  # doesn't crash
 
     expected =  onp.array([-1])[onp.array([False])]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testFloatIndexingError(self):
-    x = lnp.array([1, 2, 3])
-    self.assertRaises(TypeError, lambda: x[3.5])
+    BAD_INDEX_TYPE_ERROR = "Indexer must have integer or boolean type, got indexer with type"
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros(2)[0.]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[(0, 0.)]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[(0, 0.)]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      api.jit(lambda idx: jnp.zeros((2, 2))[idx])((0, 0.))
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      ops.index_add(jnp.zeros(2), 0., 1.)
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      ops.index_update(jnp.zeros(2), 0., 1.)
+
+
+  def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
+    array = jnp.ones(5)
+    self.assertAllClose(array, array[:10], check_dtypes=True)
+
 
 def _broadcastable_shapes(shape):
   """Returns all shapes that broadcast to `shape`."""

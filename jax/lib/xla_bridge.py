@@ -22,6 +22,7 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
+from typing import Callable, Dict
 import warnings
 
 from absl import logging
@@ -232,8 +233,8 @@ def host_id(backend=None):
 
 
 def host_ids(backend=None):
-  """Returns a list of all host IDs."""
-  return list(set(d.host_id for d in devices(backend)))
+  """Returns a sorted list of all host IDs."""
+  return sorted(list(set(d.host_id for d in devices(backend))))
 
 
 def host_count(backend=None):
@@ -329,7 +330,7 @@ def make_computation_builder(name):
 
 def register_constant_handler(type_, handler_fun):
   _constant_handlers[type_] = handler_fun
-_constant_handlers = {}
+_constant_handlers: Dict[type, Callable] = {}
 
 
 def _ndarray_constant_handler(c, val, canonicalize_types=True):

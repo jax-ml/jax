@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-from collections import namedtuple
-
-import itertools as it
-
 import numpy as onp
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
 from .. import core
 from .. import dtypes
 from ..core import Trace, Tracer, new_master
-from ..abstract_arrays import ShapedArray, make_shaped_array, array_types, raise_to_shaped
+from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
 from ..util import unzip2, partial, safe_map, wrap_name
@@ -32,27 +28,48 @@ from . import partial_eval as pe
 map = safe_map
 
 
-def batch(fun, in_vals, in_dims, out_dim_dests):
-  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
-  out_vals, out_dims = batch_fun(fun, in_vals, in_dims)
-  return map(partial(matchaxis, size), out_dims, out_dim_dests(), out_vals)
-
-def batch_fun(fun, in_vals, in_dims):
-  with new_master(BatchTrace) as master:
-    fun, out_dims = batch_subtrace(fun, master, in_dims)
-    out_vals = fun.call_wrapped(*in_vals)
-    del master
-  return out_vals, out_dims()
+def batch(fun : lu.WrappedFun, in_vals, in_dims, out_dim_dests):
+  # executes a batched version of `fun` following out_dim_dests
+  batched_fun = batch_fun(fun, in_dims, out_dim_dests)
+  return batched_fun.call_wrapped(*in_vals)
 
 @lu.transformation_with_aux
-def batch_subtrace(master, in_dims, *in_vals):
+def batch_subtrace(master, in_dims, *in_vals, **params):
   trace = BatchTrace(master, core.cur_sublevel())
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_dims)]
-  outs = yield in_tracers, {}
+  outs = yield in_tracers, params
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
+
+def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests):
+  # transformation version of batch, which doesn't call the function
+  fun, out_dims = batch_subtrace(fun)
+  return _batch_fun(fun, in_dims, out_dims, out_dim_dests)
+
+@lu.transformation
+def _batch_fun(in_dims, out_dims, out_dim_dests, *in_vals, **params):
+  in_dims = in_dims() if callable(in_dims) else in_dims
+  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  with new_master(BatchTrace) as master:
+    out_vals = yield (master, in_dims,) + in_vals, params
+    del master
+  out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
+  out_vals = map(partial(matchaxis, size), out_dims(), out_dim_dests, out_vals)
+  yield out_vals
+
+def batch_fun2(fun : lu.WrappedFun, in_dims):
+  # like `batch_fun` but returns output batch dims (so no out_dim_dests)
+  fun, out_dims = batch_subtrace(fun)
+  return _batch_fun2(fun, in_dims), out_dims
+
+@lu.transformation
+def _batch_fun2(in_dims, *in_vals, **params):
+  with new_master(BatchTrace) as master:
+    out_vals = yield (master, in_dims,) + in_vals, params
+    del master
+  yield out_vals
 
 
 ### tracer
@@ -64,8 +81,8 @@ not_mapped = None
 class BatchTracer(Tracer):
   __slots__ = ['val', 'batch_dim']
 
-  def __init__(self, trace, val, batch_dim):
-    assert core.skip_checks or type(batch_dim) in (int, NotMapped)
+  def __init__(self, trace, val, batch_dim: Optional[int]):
+    assert core.skip_checks or type(batch_dim) in (int, NotMapped)  # type: ignore
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -114,21 +131,23 @@ class BatchTrace(Trace):
       else:
         return BatchTracer(self, val_out, dim_out)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
-    name = params.get('name', f.__name__)
-    params = dict(params, name=wrap_name(name, 'vmap'))
-    if call_primitive in pe.map_primitives:
+    params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
+    if call_primitive in call_batching_rules:
+      return call_batching_rules[call_primitive](self, call_primitive, f, tracers, params)
+    elif call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
-    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
-    if all(bdim is not_mapped for bdim in dims):
-      return call_primitive.bind(f, *vals, **params)
     else:
-      f, dims_out = batch_subtrace(f, self.master, dims)
-      vals_out = call_primitive.bind(f, *vals, **params)
-      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+      vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+      if all(bdim is not_mapped for bdim in dims):
+        return call_primitive.bind(f, *vals, **params)
+      else:
+        f, dims_out = batch_subtrace(f, self.master, dims)
+        vals_out = call_primitive.bind(f, *vals, **params)
+        return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)
@@ -154,14 +173,16 @@ class BatchTrace(Trace):
 
 ### primitives
 
-primitive_batchers = {}
+BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
+primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
+call_batching_rules : Dict[core.Primitive, BatchingRule] = {}
 
 def get_primitive_batcher(p):
   try:
     return primitive_batchers[p]
-  except KeyError:
+  except KeyError as err:
     msg = "Batching rule for '{}' not implemented"
-    raise NotImplementedError(msg.format(p))
+    raise NotImplementedError(msg.format(p)) from err
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)
@@ -174,6 +195,15 @@ def defbroadcasting(prim):
   primitive_batchers[prim] = partial(broadcast_batcher, prim)
 
 def broadcast_batcher(prim, args, dims, **params):
+  """Process a primitive with built-in broadcasting.
+
+  Args:
+    args: the possibly-batched arguments
+    dims: list or tuple of the same length as `args`, where each
+      entry indicates the batching state of the corresponding entry to `args`:
+      either an int indicating the batch dimension, or else `not_mapped`
+      indicating no batching.
+  """
   shapes = {(x.shape, d) for x, d in zip(args, dims) if onp.ndim(x)}
   if len(shapes) == 1:
     # if there's only agreeing batch dims and scalars, just call the primitive

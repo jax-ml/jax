@@ -14,14 +14,12 @@
 # limitations under the License.
 
 
-from functools import partial
 import numpy as onp
 
 from jax.numpy import lax_numpy as np
+from jax.numpy.vectorize import vectorize
 from jax import ad_util
 from jax import api
-from jax import api_util
-from jax import core
 from jax import lax
 from jax import ops
 from jax import dtypes
@@ -33,9 +31,9 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
-from jax.lib import xla_client
 from jax.lib import lapack
 from jax.lib import cusolver
+
 
 # traceables
 
@@ -72,9 +70,15 @@ def svd(x, full_matrices=True, compute_uv=True):
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
                      conjugate_a=False, unit_diagonal=False):
   conjugate_a = conjugate_a and np.issubdtype(lax.dtype(a), np.complexfloating)
-  return triangular_solve_p.bind(
+  singleton = np.ndim(b) == np.ndim(a) - 1
+  if singleton:
+    b = np.expand_dims(b, -1 if left_side else -2)
+  out = triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
+  if singleton:
+    out = out[..., 0] if left_side else out[..., 0, :]
+  return out
 
 
 # utilities
@@ -358,7 +362,7 @@ def triangular_solve_transpose_rule(
     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
-  assert a is not ad.undefined_primal and b is ad.undefined_primal
+  assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
   if cotangent is ad_util.zero:
     cotangent_b = ad_util.zero
   else:
@@ -617,7 +621,7 @@ lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.translations[lu_p] = xla.lower_fun(_lu_python, instantiate=True)
+xla.translations[lu_p] = xla.lower_fun(_lu_python)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
@@ -639,6 +643,8 @@ def _lu_pivots_body_fn(i, permutation_and_swaps):
   permutation = ops.index_update(permutation, ops.index[..., i], y)
   return ops.index_update(permutation, ops.index[iotas + (j,)], x), swaps
 
+
+@partial(api.jit, static_argnums=(1,))
 def lu_pivots_to_permutation(swaps, m):
   """Converts the pivots (row swaps) returned by LU to a permutation.
 
@@ -660,6 +666,62 @@ def lu_pivots_to_permutation(swaps, m):
   result, _ = lax.fori_loop(onp.array(0, onp.int32), onp.array(k, onp.int32),
                             _lu_pivots_body_fn, (permutation, swaps))
   return result
+
+
+@partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
+def _lu_solve_core(lu, pivots, b, trans):
+  m = lu.shape[0]
+  permutation = lu_pivots_to_permutation(pivots, m)
+  x = np.reshape(b, (m, -1))
+  if trans == 0:
+    x = x[permutation, :]
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
+    x = triangular_solve(lu, x, left_side=True, lower=False)
+  elif trans == 1 or trans == 2:
+    conj = trans == 2
+    x = triangular_solve(lu, x, left_side=True, lower=False, transpose_a=True,
+                         conjugate_a=conj)
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
+                         transpose_a=True, conjugate_a=conj)
+    x = x[np.argsort(permutation), :]
+  else:
+    raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
+  return lax.reshape(x, b.shape)
+
+
+@partial(api.jit, static_argnums=(3,))
+def _lu_solve(lu, pivots, b, trans):
+  if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
+    raise ValueError("last two dimensions of LU decomposition must be equal, "
+                     "got shape {}".format(lu.shape))
+  if len(b.shape) < 1:
+    raise ValueError("b matrix must have rank >= 1, got shape {}"
+                     .format(b.shape))
+  # Broadcasting follows NumPy's convention for linalg.solve: the RHS is
+  # treated as a (batched) vector if the number of dimensions differ by 1.
+  # Otherwise, broadcasting rules apply.
+  rhs_vector = lu.ndim == b.ndim + 1
+  if rhs_vector:
+    if b.shape[-1] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b have the same "
+                       "number of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and b array (shape {}) must match"
+                       .format(lu.shape, b.shape))
+    b = b[..., np.newaxis]
+  else:
+    if b.shape[-2] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b different "
+                       "numbers of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and second to last axis of b array "
+                       "(shape {}) must match"
+                       .format(lu.shape, b.shape))
+  x = _lu_solve_core(lu, pivots, b, trans)
+  return x[..., 0] if rhs_vector else x
+
+
+def lu_solve(lu, pivots, b, trans=0):
+  """LU solve with broadcasting."""
+  return _lu_solve(lu, pivots, b, trans)
 
 
 # QR decomposition

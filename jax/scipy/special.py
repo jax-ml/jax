@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 
-import numpy as onp
+import numpy as np
 import scipy.special as osp_special
 
-from .. import lax
 from .. import util
+from .. import lax
+from .. import api
 from ..api import custom_transforms, defjvp
-from ..numpy import lax_numpy as np
+from ..numpy import lax_numpy as jnp
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
 
@@ -100,9 +102,9 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None or return_sign:
     raise NotImplementedError("Only implemented for b=None, return_sign=False")
   dims = _reduction_dims(a, axis)
-  shape = util.subvals(onp.shape(a), zip(dims, (1,) * len(dims)))
+  shape = util.subvals(np.shape(a), zip(dims, (1,) * len(dims)))
   dimadd = lambda x: lax.reshape(x, shape)
-  amax = lax.reduce(a, _constant_like(a, -onp.inf), lax.max, dims)
+  amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
   amax = lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0))
   amax_singletons = dimadd(amax)
   out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
@@ -113,20 +115,26 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
 @_wraps(osp_special.xlogy)
 def xlogy(x, y):
   x, y = _promote_args_inexact("xlogy", x, y)
-  return lax._safe_mul(x, lax.log(y))
+  x_ok = x != 0.
+  safe_x = jnp.where(x_ok, x, 1.)
+  safe_y = jnp.where(x_ok, y, 1.)
+  return jnp.where(x_ok, lax.mul(safe_x, lax.log(safe_y)), jnp.zeros_like(x))
 
 
 @_wraps(osp_special.xlog1py, update_doc=False)
 def xlog1py(x, y):
   x, y = _promote_args_inexact("xlog1py", x, y)
-  return lax._safe_mul(x, lax.log1p(y))
+  x_ok = x != 0.
+  safe_x = jnp.where(x_ok, x, 1.)
+  safe_y = jnp.where(x_ok, y, 1.)
+  return jnp.where(x_ok, lax.mul(safe_x, lax.log1p(safe_y)), jnp.zeros_like(x))
 
 
 @_wraps(osp_special.entr)
 def entr(x):
   x, = _promote_args_inexact("entr", x)
   return lax.select(lax.lt(x, _constant_like(x, 0)),
-                    lax.full_like(x, -onp.inf),
+                    lax.full_like(x, -np.inf),
                     lax.neg(xlogy(x, x)))
 
 
@@ -136,9 +144,9 @@ def multigammaln(a, d):
   d = lax.convert_element_type(d, lax.dtype(a))
   constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d),
                              lax.sub(d, _constant_like(a, 1))),
-                     lax.log(_constant_like(a, onp.pi)))
-  res = np.sum(gammaln(np.expand_dims(a, axis=-1) -
-                       lax.div(np.arange(d), _constant_like(a, 2))),
+                     lax.log(_constant_like(a, np.pi)))
+  res = jnp.sum(gammaln(jnp.expand_dims(a, axis=-1) -
+                        lax.div(jnp.arange(d), _constant_like(a, 2))),
                axis=-1)
   return res + constant
 
@@ -206,15 +214,15 @@ def multigammaln(a, d):
 # appears to be zero, relative to scipy's (which is always 64bit). They were
 # then made more conservative just to be safe. (Conservative means use the
 # expansion more than we probably need to.)
-_LOGNDTR_FLOAT64_LOWER = onp.array(-20, onp.float64)
-_LOGNDTR_FLOAT32_LOWER = onp.array(-10, onp.float32)
+_LOGNDTR_FLOAT64_LOWER = np.array(-20, np.float64)
+_LOGNDTR_FLOAT32_LOWER = np.array(-10, np.float32)
 
 # Upper bound values were chosen by examining for which values of 'x'
 # Log[cdf(x)] is 0, after which point we need to use the approximation
 # Log[cdf(x)] = Log[1 - cdf(-x)] approx -cdf(-x). We chose a value slightly
 # conservative, meaning we use the approximation earlier than needed.
-_LOGNDTR_FLOAT64_UPPER = onp.array(8, onp.float64)
-_LOGNDTR_FLOAT32_UPPER = onp.array(5, onp.float32)
+_LOGNDTR_FLOAT64_UPPER = np.array(8, np.float64)
+_LOGNDTR_FLOAT32_UPPER = np.array(5, np.float32)
 
 
 def ndtr(x):
@@ -240,9 +248,9 @@ def ndtr(x):
   Raises:
     TypeError: if `x` is not floating-type.
   """
-  x = np.asarray(x)
+  x = jnp.asarray(x)
   dtype = lax.dtype(x)
-  if dtype not in (np.float32, np.float64):
+  if dtype not in (jnp.float32, jnp.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
         .format(dtype))
@@ -252,7 +260,7 @@ def ndtr(x):
 def _ndtr(x):
   """Implements ndtr core logic."""
   dtype = lax.dtype(x).type
-  half_sqrt_2 = dtype(0.5) * onp.sqrt(2., dtype=dtype)
+  half_sqrt_2 = dtype(0.5) * np.sqrt(2., dtype=dtype)
   w = x * half_sqrt_2
   z = lax.abs(w)
   y = lax.select(lax.lt(z, half_sqrt_2),
@@ -281,9 +289,9 @@ def ndtri(p):
   Raises:
     TypeError: if `p` is not floating-type.
   """
-  x = np.asarray(p)
+  x = jnp.asarray(p)
   dtype = lax.dtype(p)
-  if dtype not in (np.float32, np.float64):
+  if dtype not in (jnp.float32, jnp.float64):
     raise TypeError(
         "x.dtype={} is not supported, see docstring for supported types."
         .format(dtype))
@@ -348,23 +356,23 @@ def _ndtri(p):
                       6.79019408009981274425E-9]))
 
   dtype = lax.dtype(p).type
-  shape = np.shape(p)
+  shape = jnp.shape(p)
 
   def _create_polynomial(var, coeffs):
     """Compute n_th order polynomial via Horner's method."""
-    coeffs = onp.array(coeffs, dtype)
+    coeffs = np.array(coeffs, dtype)
     if not coeffs.size:
-      return np.zeros_like(var)
+      return jnp.zeros_like(var)
     return coeffs[0] + _create_polynomial(var, coeffs[1:]) * var
 
 
-  maybe_complement_p = np.where(p > dtype(-onp.expm1(-2.)), dtype(1.) - p, p)
+  maybe_complement_p = jnp.where(p > dtype(-np.expm1(-2.)), dtype(1.) - p, p)
   # Write in an arbitrary value in place of 0 for p since 0 will cause NaNs
   # later on. The result from the computation when p == 0 is not used so any
   # number that doesn't result in NaNs is fine.
-  sanitized_mcp = np.where(
+  sanitized_mcp = jnp.where(
       maybe_complement_p <= dtype(0.),
-      np.full(shape, dtype(0.5)),
+      jnp.full(shape, dtype(0.5)),
       maybe_complement_p)
 
   # Compute x for p > exp(-2): x/sqrt(2pi) = w + w**3 P0(w**2)/Q0(w**2).
@@ -372,7 +380,7 @@ def _ndtri(p):
   ww = lax.square(w)
   x_for_big_p = w + w * ww * (_create_polynomial(ww, p0)
                               / _create_polynomial(ww, q0))
-  x_for_big_p *= -dtype(onp.sqrt(2. * onp.pi))
+  x_for_big_p *= -dtype(np.sqrt(2. * np.pi))
 
   # Compute x for p <= exp(-2): x = z - log(z)/z - (1/z) P(1/z) / Q(1/z),
   # where z = sqrt(-2. * log(p)), and P/Q are chosen between two different
@@ -388,14 +396,14 @@ def _ndtri(p):
   x_for_small_p = first_term - second_term_small_p
   x_otherwise = first_term - second_term_otherwise
 
-  x = np.where(sanitized_mcp > dtype(onp.exp(-2.)),
-                      x_for_big_p,
-                      np.where(z >= dtype(8.0), x_for_small_p, x_otherwise))
+  x = jnp.where(sanitized_mcp > dtype(np.exp(-2.)),
+                x_for_big_p,
+                jnp.where(z >= dtype(8.0), x_for_small_p, x_otherwise))
 
-  x = np.where(p > dtype(1. - onp.exp(-2.)), x, -x)
-  infinity = np.full(shape, dtype(onp.inf))
-  x_nan_replaced = np.where(
-      p <= dtype(0.0), -infinity, np.where(p >= dtype(1.0), infinity, x))
+  x = jnp.where(p > dtype(1. - np.exp(-2.)), x, -x)
+  infinity = jnp.full(shape, dtype(np.inf))
+  x_nan_replaced = jnp.where(
+      p <= dtype(0.0), -infinity, jnp.where(p >= dtype(1.0), infinity, x))
   return x_nan_replaced
 
 
@@ -467,17 +475,17 @@ def log_ndtr(x, series_order=3):
   if series_order > 30:
     raise ValueError("series_order must be <= 30.")
 
-  x = np.asarray(x)
+  x = jnp.asarray(x)
   dtype = lax.dtype(x)
 
-  if dtype == np.float64:
+  if dtype == jnp.float64:
     lower_segment = _LOGNDTR_FLOAT64_LOWER
     upper_segment = _LOGNDTR_FLOAT64_UPPER
-  elif dtype == np.float32:
+  elif dtype == jnp.float32:
     lower_segment = _LOGNDTR_FLOAT32_LOWER
     upper_segment = _LOGNDTR_FLOAT32_UPPER
   else:
-    raise TypeError("x.dtype={} is not supported.".format(onp.dtype(dtype)))
+    raise TypeError("x.dtype={} is not supported.".format(np.dtype(dtype)))
 
   # The basic idea here was ported from:
   #   https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
@@ -493,21 +501,21 @@ def log_ndtr(x, series_order=3):
   #   the gradient of a select involves the calculation 1*dy+0*(-inf)=nan
   #   regardless of whether dy is finite. Note that the minimum is a NOP if
   #   the branch is chosen.
-  return np.where(
+  return jnp.where(
       lax.gt(x, upper_segment),
       -_ndtr(-x),  # log(1-x) ~= -x, x << 1
-      np.where(lax.gt(x, lower_segment),
-                      lax.log(_ndtr(lax.max(x, lower_segment))),
-                      _log_ndtr_lower(lax.min(x, lower_segment),
-                                      series_order)))
-
+      jnp.where(lax.gt(x, lower_segment),
+                       lax.log(_ndtr(lax.max(x, lower_segment))),
+                       _log_ndtr_lower(lax.min(x, lower_segment),
+                                       series_order)))
+defjvp(log_ndtr, lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
 
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""
   dtype = lax.dtype(x).type
   x_2 = lax.square(x)
   # Log of the term multiplying (1 + sum)
-  log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * onp.log(2. * onp.pi))
+  log_scale = -dtype(0.5) * x_2 - lax.log(-x) - dtype(0.5 * np.log(2. * np.pi))
   return log_scale + lax.log(_log_ndtr_asymptotic_series(x, series_order))
 
 
@@ -515,13 +523,13 @@ def _log_ndtr_asymptotic_series(x, series_order):
   """Calculates the asymptotic series used in log_ndtr."""
   dtype = lax.dtype(x).type
   if series_order <= 0:
-    return onp.array(1, dtype)
+    return np.array(1, dtype)
   x_2 = lax.square(x)
-  even_sum = np.zeros_like(x)
-  odd_sum = np.zeros_like(x)
+  even_sum = jnp.zeros_like(x)
+  odd_sum = jnp.zeros_like(x)
   x_2n = x_2  # Start with x^{2*1} = x^{2*n} with n = 1.
   for n in range(1, series_order + 1):
-    y = onp.array(_double_factorial(2 * n - 1), dtype) / x_2n
+    y = np.array(_double_factorial(2 * n - 1), dtype) / x_2n
     if n % 2:
       odd_sum += y
     else:
@@ -532,18 +540,15 @@ def _log_ndtr_asymptotic_series(x, series_order):
 
 def _double_factorial(n):
   """The double factorial function for small Python integer `n`."""
-  return onp.prod(onp.arange(n, 1, -2))
+  return np.prod(np.arange(n, 1, -2))
 
 
-_norm_logpdf_constant = onp.log(onp.sqrt(2 * onp.pi))
+_norm_logpdf_constant = np.log(np.sqrt(2 * np.pi))
 
 def _norm_logpdf(x):
   neg_half = _constant_like(x, -0.5)
   log_normalizer = _constant_like(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
-
-defjvp(log_ndtr,
-       lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
 
 @_wraps(osp_special.i0e)
 def i0e(x):

@@ -15,3 +15,4 @@
 from .lax_numpy import *
 from . import fft
 from . import linalg
+from .vectorize import vectorize

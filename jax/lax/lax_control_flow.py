@@ -22,16 +22,18 @@ import functools
 import itertools
 import operator
 import threading
+from typing import Callable
 
 import numpy as onp
 
-from jax import api
+import jax
 from jax import core
 from jax import dtypes
 from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
+from jax.core import get_aval
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -42,7 +44,8 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, treedef_tuple)
+                           treedef_children, treedef_tuple, tree_leaves,
+                           tree_multimap)
 from jax import ad_util
 
 _map = safe_map
@@ -51,11 +54,11 @@ _reduce = functools.reduce
 
 
 @cache()
-def _initial_style_jaxpr(fun, in_tree, in_avals):
+def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
-  fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
-                                               stage_out_calls=True)
+  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+    wrapped_fun, in_pvals, instantiate=True, stage_out_calls=True)
   out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
@@ -76,7 +79,11 @@ def typematch(aval1, aval2):
   return (raise_to_shaped(aval1).strip_weak_type() ==
           raise_to_shaped(aval2).strip_weak_type())
 
-class FixedPointError(Exception): pass
+def _disable_jit_impl(prim, interp, *args, **kwargs):
+  if jax.api._jit_is_disabled():
+    return interp(*args, **kwargs)
+  else:
+    return xla.apply_primitive(prim, *args, **kwargs)
 
 
 ### fori_loop and while_loop
@@ -91,6 +98,13 @@ def _fori_body_fun(body_fun):
     i, upper, x = loop_carry
     return lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)
   return while_body_fun
+
+@cache()
+def _fori_scan_body_fun(body_fun):
+  def scanned_fun(loop_carry, _):
+    i, upper, x = loop_carry
+    return (lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)), None
+  return scanned_fun
 
 def fori_loop(lower, upper, body_fun, init_val):
   """Loop from ``lower`` to ``upper`` by reduction to ``while_loop``.
@@ -129,15 +143,31 @@ def fori_loop(lower, upper, body_fun, init_val):
   Returns:
     Loop value from the final iteration, of type ``a``.
   """
-  # TODO: perhaps do more type checking here, for better error messages.
+  # TODO(phawkins): perhaps do more type checking here, better error messages.
   lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
   upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
   if lower_dtype != upper_dtype:
     msg = ("lower and upper arguments to fori_loop must have equal types, "
            "got {} and {}")
     raise TypeError(msg.format(lower_dtype.name, upper_dtype.name))
-  _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
-                            (lower, upper, init_val))
+
+  # If we can specialize on the trip count, call scan instead of a while_loop
+  # to enable efficient reverse-mode differentiation.
+  try:
+    lower_ = int(lower)
+    upper_ = int(upper)
+  except TypeError:
+    use_scan = False
+  else:
+    use_scan = False  # TODO(mattjj): re-enable this
+
+  if use_scan:
+    (_, _, result), _ = scan(_fori_scan_body_fun(body_fun),
+                             (lower, upper, init_val), None,
+                             length=upper_ - lower_)
+  else:
+    _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
+                              (lower, upper, init_val))
   return result
 
 
@@ -185,6 +215,12 @@ def while_loop(cond_fun, body_fun, init_val):
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
   """
+  if jax.api._jit_is_disabled():
+    val = init_val
+    while cond_fun(val):
+      val = body_fun(val)
+    return val
+
   init_vals, in_tree = tree_flatten((init_val,))
   init_avals = tuple(_map(_abstractify, init_vals))
   cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals)
@@ -210,10 +246,8 @@ def while_loop(cond_fun, body_fun, init_val):
 def _while_loop_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["body_jaxpr"].out_avals)
 
-def _while_loop_translation_rule(c, axis_env, name_stack, *args, **kwargs):
-  backend = kwargs.pop('backend')
-  cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts = split_dict(
-      kwargs, ["cond_jaxpr", "body_jaxpr", "cond_nconsts", "body_nconsts"])
+def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
+                                 cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
   cond_consts, body_consts, init_vals = split_list(args, [cond_nconsts, body_nconsts])
   batched = bool(cond_jaxpr.out_avals[0].shape)
 
@@ -341,7 +375,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   newvar = core.gensym('')
   invars_aug = (
-      cond_jaxpr.jaxpr.invars + [newvar() for _ in range(len(init_dot))])
+      cond_jaxpr.jaxpr.invars + [newvar(get_aval(x)) for x in init_dot])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
@@ -397,9 +431,9 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 
   try:
     pred_dtype = dtypes.result_type(pred)
-  except TypeError:
+  except TypeError as err:
     msg = ("Pred type must be either boolean or number, got {}.")
-    raise TypeError(msg.format(pred))
+    raise TypeError(msg.format(pred)) from err
 
   if pred_dtype.kind != 'b':
     if pred_dtype.kind in 'iuf':
@@ -407,6 +441,13 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
     else:
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
+
+  if jax.api._jit_is_disabled():
+    if pred:
+      return true_fun(true_operand)
+    else:
+      return false_fun(false_operand)
+
   true_ops, true_tree = tree_flatten((true_operand,))
   true_avals = tuple(_map(_abstractify, true_ops))
   true_jaxpr, true_consts, true_out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
@@ -426,8 +467,8 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
 
-def _cond_translation_rule(c, axis_env, name_stack, pred, *args,
-                           true_jaxpr, false_jaxpr, linear, backend=None):
+def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
+                           pred, *args, true_jaxpr, false_jaxpr, linear):
   del linear  # Unused.
   true_ops, false_ops = split_list(args, [len(true_jaxpr.in_avals)])
 
@@ -449,8 +490,11 @@ def _cond_translation_rule(c, axis_env, name_stack, pred, *args,
   return c.Conditional(pred, true_op, true_c, false_op, false_c)
 
 def _cond_pred_bcast_select(pred, x, y):
-  bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
-  return lax.select(bcast_pred, x, y)
+  if core.get_aval(x) is core.get_aval(y) is core.abstract_unit:
+    return x
+  else:
+    bcast_pred = lax.broadcast_in_dim(pred, onp.shape(x), list(range(onp.ndim(pred))))
+    return lax.select(bcast_pred, x, y)
 
 def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
@@ -618,7 +662,7 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
   @lu.wrap_init
   def transposed(*args):
     res, cts_out = split_list(args, [num_res])
-    primals = res + [ad.undefined_primal] * num_non_res
+    primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
         jaxpr.jaxpr, jaxpr.literals, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
@@ -757,15 +801,16 @@ def scan(f, init, xs, length=None):
     the second output of ``f`` when scanned over the leading axis of the inputs.
   """
   init_flat, init_tree = tree_flatten(init)
-  xs_flat, _ = tree_flatten(xs)
+  xs_flat, xs_tree = tree_flatten(xs)
   in_flat, in_tree = tree_flatten((init, xs))
 
   try:
     lengths = [x.shape[0] for x in xs_flat]
-  except AttributeError:
+  except AttributeError as err:
     msg = "scan got value with no leading axis to scan over: {}."
-    raise ValueError(msg.format(', '.join(str(x) for x in xs_flat
-                                          if not hasattr(x, 'shape'))))
+    raise ValueError(
+      msg.format(', '.join(str(x) for x in xs_flat
+                           if not hasattr(x, 'shape')))) from err
 
   if length is not None:
     length = int(length)
@@ -783,6 +828,17 @@ def scan(f, init, xs, length=None):
       raise ValueError(msg)
     else:
       length, = unique_lengths
+
+  if jax.api._jit_is_disabled():
+    carry = init
+    ys = []
+    for i in range(length):
+      xs_slice = [_index_array(i, core.get_aval(x), x) for x in xs_flat]
+      carry, y = f(carry, tree_unflatten(xs_tree, xs_slice))
+      ys.append(y)
+    stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
+                            else jax.numpy.stack((y, *ys)))
+    return carry, tree_multimap(stack, *ys)
 
   carry_avals = tuple(_map(_abstractify, init_flat))
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
@@ -809,17 +865,26 @@ def _scan_impl(*args, forward, length, num_consts, num_carry, jaxpr, linear):
   _, _, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
 
-  def body_fun(i, vals):
-    i = i if forward else length - i - 1
-    carry, ys = split_list(vals, [num_carry])
-    x = _map(partial(_index_array, i), x_avals, xs)
+  def cond_fun(vals):
+    i, *_ = vals
+    return i < length
+
+  def body_fun(vals):
+    [i], carry, ys = split_list(vals, [1, num_carry])
+    i_ = i if forward else length - i - 1
+    x = _map(partial(_index_array, i_), x_avals, xs)
     out_flat = core.jaxpr_as_fun(jaxpr)(*(consts + carry + x))
     carry_out, y_updates = split_list(out_flat, [num_carry])
-    ys_out = _map(partial(_update_array, i), y_avals, ys, y_updates)
-    return carry_out + ys_out
+    ys_out = _map(partial(_update_array, i_), y_avals, ys, y_updates)
+    return [i + 1] + carry_out + ys_out
 
   ys_init = _map(partial(_empty_array, length), y_avals)
-  return fori_loop(lax._const(length, 0), length, body_fun, init + ys_init)
+  if length == 0:
+    return init + ys_init
+  else:
+    init_val = [lax._const(length, 0)] + init + ys_init
+    _, *outs = while_loop(cond_fun, body_fun, init_val)
+    return outs
 
 def _index_array(i, aval, x):
   if aval is core.abstract_unit:
@@ -839,12 +904,11 @@ def _update_array(i, aval, xs, x):
   else:
     return lax.dynamic_update_index_in_dim(xs, x, i, 0)
 
-# TODO(mattjj): make scan a primitive
-# def _scan_abstract_eval(*args, forward, length, num_consts, num_carry, jaxpr, linear):
-#   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
-#   ys_avals = [ShapedArray((length,) + aval.shape, aval.dtype)
-#               if aval is not core.abstract_unit else aval for aval in y_avals]
-#   return carry_avals + y_avals
+def _scan_abstract_eval(*args, forward, length, num_consts, num_carry, jaxpr, linear):
+  carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  ys_avals = [ShapedArray((length,) + aval.shape, aval.dtype)
+              if aval is not core.abstract_unit else aval for aval in y_avals]
+  return carry_avals + ys_avals
 
 def _scan_jvp(primals, tangents, forward, length, jaxpr, num_consts, num_carry,
               linear):
@@ -944,6 +1008,11 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   const_avals_1 = [raise_to_shaped(core.get_aval(c)) for c in consts_1]
   in_avals_1 = [core.abstract_unit] * num_consts + jaxpr_1.in_avals[num_consts:]
   out_avals_1 = [core.abstract_unit if pv is None else pv for pv, c in out_pvals_1]
+
+  # TODO(cjfj): Explain the need for the code below.
+  for var in untyped_jaxpr_1.invars[:num_consts]:
+    var.aval = core.abstract_unit
+
   jaxpr_1_opt = pe.TypedJaxpr(pe.convert_constvars_jaxpr(untyped_jaxpr_1),
                               (), const_avals_1 + in_avals_1, out_avals_1)
   num_consts_1 = num_consts + len(consts_1)
@@ -1006,13 +1075,13 @@ def _scan_transpose(cts, *args, forward, length, num_consts, num_carry, jaxpr, l
   if xs_lin != [True] * (len(xs_lin) - num_eres) + [False] * num_eres:
     raise NotImplementedError
   if not all(init_lin):
-    raise NotImplementedError
+    pass  # TODO(mattjj): error check https://github.com/google/jax/issues/1963
 
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-  ires, consts = split_list(consts, [num_ires])
-  xs, eres = split_list(xs, [sum(xs_lin)])
-  assert not any(r is ad.undefined_primal for r in ires)
-  assert not any(r is ad.undefined_primal for r in eres)
+  consts, _, xs = split_list(args, [num_consts, num_carry])
+  ires, _ = split_list(consts, [num_ires])
+  _, eres = split_list(xs, [sum(xs_lin)])
+  assert not any(ad.is_undefined_primal(r) for r in ires)
+  assert not any(ad.is_undefined_primal(r) for r in eres)
 
   carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_avals = _map(partial(_promote_aval_rank, length), y_avals)
@@ -1049,7 +1118,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
   def transposed(*res1_cbar_bbar_res2):
     res1, c_bar, b_bar, res2 = split_list(
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
-    primals = res1 + [ad.undefined_primal] * (num_c + num_a) + res2
+    primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
+               [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
     cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, primals,
                                     b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
@@ -1059,7 +1129,7 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
     return c_bar + a_bar
   return _make_typed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
-def _make_typed_jaxpr(traceable, in_avals):
+def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals):
   pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_avals, _ = unzip2(pvals_out)
@@ -1129,7 +1199,7 @@ def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, forward, length,
       *itertools.chain([dynamic_length] + consts, [0], init, xs),
       forward=forward, length=max_length, jaxpr=masked_jaxpr,
       num_consts=1 + num_consts, num_carry=1 + num_carry,
-      linear=[False] + const_linear + [False] + init_linear + xs_linear)
+      linear=tuple([False] + const_linear + [False] + init_linear + xs_linear))
   return out_vals[1:], out_shape
 
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
@@ -1169,10 +1239,13 @@ scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
 scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(_scan_impl)
+# scan_p.def_impl(partial(xla.apply_primitive, scan_p))  # TODO(mattjj): re-enable
+scan_p.def_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
-xla.initial_style_translations[scan_p] = xla.lower_fun(_scan_impl, initial_style=True)
+xla.initial_style_translations[scan_p] = \
+    xla.lower_fun_initial_style(_scan_impl)
 batching.primitive_batchers[scan_p] = _scan_batching_rule
 masking.shape_parameterized_primitive_rules[scan_p] = _scan_masking_rule
 
@@ -1208,8 +1281,7 @@ def map(f, xs):
   return ys
 
 
-def _concat_masking_rule(padded_vals, logical_shapes, dimension, operand_shapes):
-  del operand_shapes  # Unused.
+def _concat_masking_rule(padded_vals, logical_shapes, dimension):
   result = lax.concatenate(padded_vals, dimension)  # fragmented
   offset = 0
   for padded_val, logical_shape in zip(padded_vals, logical_shapes):
@@ -1237,9 +1309,9 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree):
 def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
 
-  Corresponding `tree` and `avals` must match in the sense that the number of leaves in
-  `tree` must be equal to the length of `avals`.
-  `what` will be prepended to details of the mismatch in TypeError.
+  Corresponding `tree` and `avals` must match in the sense that the number of
+  leaves in `tree` must be equal to the length of `avals`. `what` will be
+  prepended to details of the mismatch in TypeError.
   """
   if tree1 != tree2:
     msg = ("{} must have same type structure, got {} and {}.")
@@ -1320,7 +1392,7 @@ def custom_root(f, initial_guess, solve, tangent_solve):
   _check_tree("solve", "initial_guess", solution_tree, in_tree)
 
   def linearize_and_solve(x, b):
-    unchecked_zeros, f_jvp = api.linearize(f, x)
+    unchecked_zeros, f_jvp = jax.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
@@ -1381,8 +1453,7 @@ root_p.multiple_results = True
 root_p.def_impl(_root_impl)
 root_p.def_abstract_eval(_root_abstract_eval)
 ad.primitive_jvps[root_p] = _root_jvp
-xla.initial_style_translations[root_p] = xla.lower_fun(
-    _root_impl, initial_style=True)
+xla.initial_style_translations[root_p] = xla.lower_fun_initial_style(_root_impl)
 # TODO(shoyer): write batching rule
 
 
@@ -1403,7 +1474,7 @@ def _transpose_function(linear_fun, primals):
   # TODO(shoyer): can we use something more direct than the vjp machinery?
   # It's particularly awkward that we need the second argument to give
   # particular values of the primals, which are entirely arbitrary.
-  _, vjp_fun = api.vjp(linear_fun, primals)
+  _, vjp_fun = jax.vjp(linear_fun, primals)
 
   def transposed_fun(x):
     (y,) = vjp_fun(x)
@@ -1566,7 +1637,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
                     'differentiation of custom_linear_solve')
 
   params, b = _split_linear_solve_args(primals, const_lengths)
-  assert b == [ad.undefined_primal] * len(b)
+  assert all(ad.is_undefined_primal(x) for x in b)
   cotangent_b = linear_solve_p.bind(
       *(_flatten(params.transpose()) + cotangent),
       const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose(),
@@ -1653,7 +1724,7 @@ linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
-xla.initial_style_translations[linear_solve_p] = xla.lower_fun(
-    _custom_linear_solve_impl, initial_style=True)
+xla.initial_style_translations[linear_solve_p] = \
+    xla.lower_fun_initial_style(_custom_linear_solve_impl)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.primitive_batchers[linear_solve_p] = _linear_solve_batching_rule

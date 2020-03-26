@@ -13,11 +13,11 @@
 # limitations under the License.
 
 
-from collections import namedtuple, defaultdict
+from collections import defaultdict
 from contextlib import contextmanager
-import itertools as it
 import operator as op
 import threading
+from typing import Any, Callable, Dict, List, Sequence, Set, Type
 
 from absl import logging
 import numpy as onp
@@ -28,10 +28,9 @@ from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import (partial, unzip2, concatenate, prod, safe_map,
+from ..util import (partial, unzip2, prod, safe_map,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
-from .xla import aval_to_xla_shape, xla_destructure
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
@@ -47,7 +46,7 @@ _map = safe_map
 
 def identity(x): return x
 
-def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
+def shard_args(backend, devices, assignments, axis_size, args):
   """Shard each argument data array along its leading axis.
 
   Args:
@@ -98,14 +97,10 @@ def shard_args(backend, devices, assignments, axis_size, tuple_args, args):
       for r, buf in enumerate(bufs):
         buffers[r][a] = buf
 
-  if tuple_args:
-    buffers = [[xla.make_tuple(bufs, devices[r], backend)]
-               for r, bufs in enumerate(buffers)]
-
   return buffers
 
 
-shard_arg_handlers = {}
+shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
     lambda x, devices, _: [xla.device_put(core.unit, d) for d in devices]
 def _shard_array(x, devices, assignments):
@@ -124,9 +119,10 @@ shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 def shard_aval(size, aval):
   try:
     return shard_aval_handlers[type(aval)](size, aval)
-  except KeyError:
-    raise TypeError("No shard_aval handler for type: {}".format(type(aval)))
-shard_aval_handlers = {}
+  except KeyError as err:
+    raise TypeError("No shard_aval handler for type: {}".format(type(aval))
+                    ) from err
+shard_aval_handlers: Dict[Type[core.AbstractValue], Callable[[int, Any], Any]] = {}
 shard_aval_handlers[core.AbstractUnit] = lambda size, x: x
 def _shard_abstract_array(size, x):
   if x.shape[0] != size:
@@ -138,9 +134,11 @@ shard_aval_handlers[ShapedArray] = _shard_abstract_array
 def aval_to_result_handler(size, nrep, aval):
   try:
     return pxla_result_handlers[type(aval)](size, nrep, aval)
-  except KeyError:
-    raise TypeError("No pxla_result_handler for type: {}".format(type(aval)))
-pxla_result_handlers = {}
+  except KeyError as err:
+    raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
+                    ) from err
+PxlaResultHandler = Callable[..., Callable[[Any], Any]]
+pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 def array_result_handler(size, nrep, aval):
   full_aval = ShapedArray((size,) + aval.shape, aval.dtype)
@@ -246,7 +244,7 @@ def apply_parallel_primitive(prim, *args, **params):
     shape = (logical_size(dynamic_axis_env[axis_name]),)
   return parallel_pure_rules[prim](*args, shape=shape, **params)
 
-parallel_pure_rules = {}
+parallel_pure_rules: Dict[core.Primitive, Callable] = {}
 
 
 def axis_index(axis_name):
@@ -381,7 +379,7 @@ xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 
 
 class ChunkedDeviceArray(ShardedDeviceArray):
-  __slots__ = []
+  __slots__: List[str] = []
   _collect = staticmethod(onp.concatenate)
 
   def __init__(self, axis_size, aval, device_buffers):
@@ -401,7 +399,7 @@ xla.canonicalize_dtype_handlers[ChunkedDeviceArray] = identity
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl(fun, *args, backend, axis_name, axis_size, global_axis_size,
+def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size, global_axis_size,
                   devices, name, mapped_invars=None):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
@@ -460,12 +458,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
   # We add a dummy first invar, to carry the trace details to `dynamic_fun`
   pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
-  with core.new_master(pe.StagingJaxprTrace, True) as master:
-    jaxpr, (out_pvals, consts, env) = pe.trace_to_subjaxpr(
-        dynamic_fun, master, False).call_wrapped([pval] + pvals)
-    jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
-    assert not env
-    del master
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+      dynamic_fun, [pval] + pvals, instantiate=False, stage_out_calls=True, bottom=True)
+  jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
+
   out_pvs, out_consts = unzip2(out_pvals)
 
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
@@ -548,13 +544,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   handle_args = partial(shard_args, backend, compiled.local_devices(),
                         assign_shards_to_replicas(num_local_replicas, axis_size),
-                        axis_size, tuple_args)
+                        axis_size)
   handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas,
                                           out_pvals, compiled.local_devices(),
                                           backend)
-  return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
+  return partial(execute_replicated, compiled, backend, handle_args, handle_outs,
+                 tuple_args)
 
-multi_host_supported_collectives = set()
+multi_host_supported_collectives: Set[core.Primitive] = set()
 
 class ResultToPopulate(object): pass
 result_to_populate = ResultToPopulate()
@@ -566,7 +563,7 @@ def _pvals_to_results_handler(size, nrep, out_pvals, devices, backend):
   def handler(out_bufs):
     buffers = [[result_to_populate] * nrep for _ in range(nouts)]
     for r, tuple_buf in enumerate(out_bufs):
-      for i, buf in enumerate(tuple_buf.destructure()):
+      for i, buf in enumerate(tuple_buf):
         buffers[i][r] = buf
     assert not any(buf is result_to_populate for bufs in buffers
                    for buf in bufs)
@@ -605,7 +602,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
     devices = xb.get_backend(backend).get_default_device_assignment(nrep)
   assert nrep == len(devices)
 
-  aval = xla.abstractify(val)
+  aval = xla.abstractify(val)  # type: ShapedArray
   aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
   device_buffers = [xla.device_put(val, d) for d in devices]
   return ShardedDeviceArray(aval, device_buffers)
@@ -633,22 +630,25 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
   else:
     return aval_to_result_handler(axis_size, nrep, pv)
 
-def execute_replicated(compiled, backend, in_handler, out_handler, *args):
+def execute_replicated(compiled, backend, in_handler, out_handler, tuple_args,
+                       *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecutePerReplica(list(input_bufs))
+  out_bufs = compiled.ExecuteOnLocalDevices(
+      list(input_bufs), tuple_arguments=tuple_args)
   return out_handler(out_bufs)
 
 
 xla_pmap_p = core.Primitive('xla_pmap')
+xla_pmap_p.call_primitive = True
 xla_pmap_p.multiple_results = True
 xla_pmap = partial(core.call_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
-def _pmap_translation_rule(c, jaxpr, axis_env,
+def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
-                           global_axis_size, devices, name, backend=None,
-                           mapped_invars=None):
+                           global_axis_size, devices, name,
+                           call_jaxpr, *, backend=None, mapped_invars):
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
@@ -657,45 +657,48 @@ def _pmap_translation_rule(c, jaxpr, axis_env,
     global_axis_size = axis_size
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
   # Shard the in_nodes that are mapped
+  in_avals = [v.aval for v in call_jaxpr.invars]
   in_nodes_sharded = (
-    _xla_shard(c, new_env, in_node) if in_node_mapped else in_node
-    for in_node, in_node_mapped in zip(in_nodes, mapped_invars))
+    _xla_shard(c, aval, new_env, in_node) if in_node_mapped else in_node
+    for aval, in_node, in_node_mapped in zip(in_avals, in_nodes, mapped_invars))
 
   sharded_outs = xla.jaxpr_subcomp(
-      c, jaxpr, backend, new_env, (),
+      c, call_jaxpr, backend, new_env, (),
       extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
-  outs = [_xla_unshard(c, new_env, shard) for shard in sharded_outs]
+  out_avals = [v.aval for v in call_jaxpr.outvars]
+  outs = [_xla_unshard(c, aval, new_env, shard)
+          for aval, shard in zip(out_avals, sharded_outs)]
   return c.Tuple(*outs)
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 pe.map_primitives.add(xla_pmap_p)
 
-def _xla_shard(c, axis_env, x):
-  xla_shape = c.GetShape(x)
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
+def _xla_shard(c, aval, axis_env, x):
+  if aval is core.abstract_unit:
     return x
-  else:
-    dims = list(xla_shape.dimensions())
+  elif isinstance(aval, ShapedArray):
+    dims = list(c.GetShape(x).dimensions())
     zero = c.Constant(onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
     return c.Reshape(c.DynamicSlice(x, idxs, [1] + dims[1:]), None, dims[1:])
+  else:
+    raise TypeError((aval, c.GetShape(x)))
 
 # TODO(b/110096942): more efficient gather
-def _xla_unshard(c, axis_env, x):
-  xla_shape = c.GetShape(x)
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
+def _xla_unshard(c, aval, axis_env, x):
+  if aval is core.abstract_unit:
     return x
-  else:
-    dims = list(xla_shape.dimensions())
-    padded = c.Broadcast(c.Constant(onp.array(0, xla_shape.numpy_dtype())),
-                         [axis_env.sizes[-1]] + dims)
+  elif isinstance(aval, ShapedArray):
+    dims = list(c.GetShape(x).dimensions())
+    padded = c.Broadcast(c.Constant(onp.array(0, aval.dtype)),
+                          [axis_env.sizes[-1]] + dims)
     zero = c.Constant(onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
     padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims), idxs)
     return c.CrossReplicaSum(padded, xla.axis_groups(axis_env, axis_env.names[-1]))
+  else:
+    raise TypeError((aval, c.GetShape(x)))
 
 def _unravel_index(c, axis_env):
   div = c.Constant(onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))
@@ -794,17 +797,23 @@ class SplitAxisTrace(core.Trace):
           # if the name matches this tracer's name, apply the split_axis rule
           try:
             rule = split_axis_rules[primitive]
-          except KeyError:
+          except KeyError as err:
             msg = "split_axis for {} not implemented. Open a feature request!"
-            raise NotImplementedError(msg.format(primitive))
+            raise NotImplementedError(msg.format(primitive)) from err
           which_mapped = [n is not not_mapped for n in names_in]
           val_out, is_mapped = rule(vals_in, which_mapped, **params)
           name_out = name if is_mapped else not_mapped
-          return SplitAxisTracer(self, name_out, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name_out, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name_out, val_out)
         else:
           # if not, bind the primitive without any processing
           val_out = primitive.bind(*vals_in, **params)
-          return SplitAxisTracer(self, name, val_out)
+          if primitive.multiple_results:
+            return [SplitAxisTracer(self, name, v) for v in val_out]
+          else:
+            return SplitAxisTracer(self, name, val_out)
       else:
         # if it's not a pmap collective primitive, act just like batching
         rule = batching.get_primitive_batcher(primitive)
@@ -820,7 +829,7 @@ class SplitAxisTrace(core.Trace):
         else:
           return new_tracer(val_out, axis_out)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
@@ -833,7 +842,7 @@ class SplitAxisTrace(core.Trace):
         vals_out = call_primitive.bind(f, *vals, **params)
         return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, names = unzip2((t.val, t.axis_name) for t in tracers)
     if all(name is not_mapped for name in names):
       return map_primitive.bind(f, *vals, **params)
@@ -858,4 +867,4 @@ class SplitAxisTrace(core.Trace):
     return  val, todo
 
 
-split_axis_rules = {}
+split_axis_rules: Dict[core.Primitive, Callable] = {}

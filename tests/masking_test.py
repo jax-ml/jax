@@ -149,11 +149,17 @@ class MaskingTest(jtu.JaxTestCase):
       return api.device_put(x)
 
   def test_shapecheck_broadcast_in_dim(self):
-    x = np.zeros((7, 1))
-    lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1, 2))
-    @shapecheck(['(n, 1)'], '(3, n, 4)')
+    x = np.zeros(7)
+
+    @shapecheck(['(n,)'], '(3, n, 4)')
     def broadcast_in_dim(x):
-      return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1, 2))
+      return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1,))
+
+    x = np.zeros((7, 1))
+
+    @shapecheck(['(n, 1)'], '(3, n, 4, 1)')
+    def broadcast_in_dim(x):
+      return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4, x.shape[1]), broadcast_dimensions=(1, 3))
 
   def test_shapecheck_jit(self):
     @shapecheck(['n'], '2*n')

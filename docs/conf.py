@@ -94,6 +94,10 @@ exclude_patterns = [
     'notebooks/neural_network_with_tfds_data.ipynb',
     # Slow notebook
     'notebooks/Neural_Network_and_Data_Loading.ipynb',
+    'notebooks/score_matching.ipynb',
+    'notebooks/maml.ipynb',
+    # Fails with shape error in XL
+    'notebooks/XLA_in_Python.ipynb'
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.

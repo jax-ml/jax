@@ -6,7 +6,7 @@ jax.experimental package
 
     jax.experimental.loops
     jax.experimental.optimizers
+    jax.experimental.optix
     jax.experimental.stax
-    jax.experimental.vectorize
 
 .. automodule:: jax.experimental

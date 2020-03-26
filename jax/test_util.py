@@ -18,6 +18,7 @@ import functools
 import re
 import itertools as it
 import os
+from typing import Dict, Sequence, Union
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -27,6 +28,7 @@ import numpy as onp
 import numpy.random as npr
 
 from . import api
+from . import core
 from . import dtypes
 from . import lax
 from .config import flags, bool_env
@@ -115,7 +117,7 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None):
   onp.testing.assert_allclose(a, b, **kw)
 
 def tolerance(dtype, tol=None):
-  tol = tol or {}
+  tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
   tol = {onp.dtype(key): value for key, value in tol.items()}
@@ -292,6 +294,15 @@ def count_jit_and_pmap_compiles():
 
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
+
+def if_device_under_test(device_type: Union[str, Sequence[str]],
+                         if_true, if_false):
+  """Chooses `if_true` of `if_false` based on device_under_test."""
+  if device_under_test() in ([device_type] if isinstance(device_type, str)
+                             else device_type):
+    return if_true
+  else:
+    return if_false
 
 def supported_dtypes():
   if device_under_test() == "tpu":
@@ -616,9 +627,8 @@ def _iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
-    if eqn.bound_subjaxpr:
-      for sub_eqn in _iter_eqns(eqn.bound_subjaxpr):
-        yield sub_eqn
+  for subjaxpr in core.subjaxprs(jaxpr):
+    yield from _iter_eqns(subjaxpr)
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
@@ -629,7 +639,7 @@ def assert_dot_precision(expected_precision, fun, *args):
     assert precision == expected_precision, msg
 
 
-_CACHED_INDICES = {}
+_CACHED_INDICES: Dict[int, Sequence[int]] = {}
 
 def cases_from_list(xs):
   xs = list(xs)
@@ -699,7 +709,7 @@ class JaxTestCase(parameterized.TestCase):
     expected_clean = re.sub(ignore_space_re, '\n', expected.strip())
     what_clean = re.sub(ignore_space_re, '\n', what.strip())
     self.assertMultiLineEqual(expected_clean, what_clean,
-                              msg="Expecting\n"+expected)
+                              msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
                        rtol=None, atol=None):
@@ -747,7 +757,7 @@ class JaxTestCase(parameterized.TestCase):
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
                          check_dtypes=False, tol=None):
     args = args_maker()
-    numpy_ans = numpy_reference_op(*args)
     lax_ans = lax_op(*args)
+    numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)
