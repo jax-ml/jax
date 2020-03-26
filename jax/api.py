@@ -1593,7 +1593,6 @@ class CustomTransformsFunction(object):
 
 def custom_transforms(fun):
   """This API is deprecated. See jax.custom_jvp and jax.custom_vjp instead."""
-  warn("custom_transforms is deprecated and replaced by custom_vjp/custom_jvp.")
 
   name = getattr(fun, '__name__', '<unnamed custom_transforms primitive>')
   fun_p = core.Primitive(name)
@@ -1631,7 +1630,6 @@ def _check_custom_transforms_type(name, fun):
 
 def defjvp_all(fun, custom_jvp):
   """This API is deprecated. See jax.custom_jvp and jax.custom_vjp instead."""
-  warn("custom_transforms is deprecated and replaced by custom_vjp/custom_jvp.")
 
   _check_custom_transforms_type("defjvp_all", fun)
   def custom_transforms_jvp(primals, tangents, **params):
@@ -1656,7 +1654,6 @@ def defjvp_all(fun, custom_jvp):
 
 def defjvp(fun, *jvprules):
   """This API is deprecated. See jax.custom_jvp and jax.custom_vjp instead."""
-  warn("custom_transforms is deprecated and replaced by custom_vjp/custom_jvp.")
 
   _check_custom_transforms_type("defjvp", fun)
   def custom_jvp(primals, tangents):
@@ -1668,7 +1665,6 @@ def defjvp(fun, *jvprules):
 
 def defvjp_all(fun, custom_vjp):
   """This API is deprecated. See jax.custom_jvp and jax.custom_vjp instead."""
-  warn("custom_transforms is deprecated and replaced by custom_vjp/custom_jvp.")
 
   _check_custom_transforms_type("defvjp_all", fun)
   def custom_transforms_vjp(*consts_and_args, **params):
@@ -1704,7 +1700,6 @@ def defvjp_all(fun, custom_vjp):
 
 def defvjp(fun, *vjprules):
   """This API is deprecated. See jax.custom_jvp and jax.custom_vjp instead."""
-  warn("custom_transforms is deprecated and replaced by custom_vjp/custom_jvp.")
 
   _check_custom_transforms_type("defvjp", fun)
   def custom_vjp(*primals):
@@ -1718,7 +1713,6 @@ def defvjp(fun, *vjprules):
 
 def custom_gradient(fun):
   """This API is deprecated. See jax.custom_jvp and jax.custom_vjp instead."""
-  warn("custom_transforms is deprecated and replaced by custom_vjp/custom_jvp.")
 
   def primal_fun(*args, **kwargs):
     ans, _ = fun(*args, **kwargs)
