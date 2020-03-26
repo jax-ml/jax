@@ -20,7 +20,7 @@ import textwrap
 import operator
 from typing import Tuple, Union, cast
 
-from jax import jit, vmap, custom_jvp
+from jax import jit, vmap
 from .. import lax
 from .. import ops
 from .. import lax_linalg
@@ -29,6 +29,7 @@ from .lax_numpy import _not_implemented
 from .lax_numpy import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as np
+from ..api import custom_transforms, defjvp
 from ..util import get_module_functions
 from ..third_party.numpy.linalg import cond, tensorinv, tensorsolve
 
@@ -110,8 +111,8 @@ def matrix_rank(M, tol=None):
   return np.sum(S > tol)
 
 
-@custom_jvp
 @_wraps(onp.linalg.slogdet)
+@custom_transforms
 @jit
 def slogdet(a):
   a = _promote_arg_dtypes(np.asarray(a))
@@ -136,15 +137,11 @@ def slogdet(a):
       is_zero, np.array(-np.inf, dtype=dtype),
       np.sum(np.log(np.abs(diag)), axis=-1))
   return sign, np.real(logdet)
-def _slogdet_jvp(primals, tangents):
-  x, = primals
-  g, = tangents
-  if np.issubdtype(np._dtype(x), np.complexfloating):
-    raise NotImplementedError  # TODO(pfau): make this work for complex types
-  sign, ans = slogdet(x)
-  sign_dot, ans_dot = np.zeros_like(sign), np.trace(solve(x, g), axis1=-1, axis2=-2)
-  return (sign, ans), (sign_dot, ans_dot)
-slogdet.defjvp(_slogdet_jvp)
+def _jvp_slogdet(g, ans, x):
+  jvp_sign = np.zeros(x.shape[:-2])
+  jvp_logdet = np.trace(solve(x, g), axis1=-1, axis2=-2)
+  return jvp_sign, jvp_logdet
+defjvp(slogdet, _jvp_slogdet)
 
 
 @_wraps(onp.linalg.det)
