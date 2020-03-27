@@ -518,6 +518,7 @@ def _custom_vjp_call_jaxpr_jvp(primals, tangents, jaxpr, fwd, bwd, out_trees,
   _, primals = split_list(primals, [num_consts])
   zero_tangents, tangents = split_list(tangents, [num_consts])
   assert all(t is zero for t in zero_tangents)
+  tangents = map(ad.instantiate_zeros, primals, tangents)
   res_and_primals_out = fwd.call_wrapped(*primals)
   out_tree, res_tree = out_trees()
   res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
