@@ -23,8 +23,9 @@ from absl import app
 import jax
 from jax import numpy as np
 from jax import pmap
-from jax.benchmarks import benchmark
 from jax.config import config
+
+import benchmark
 
 import numpy as onp
 
