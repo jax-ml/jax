@@ -2866,33 +2866,42 @@ def _is_singleton_reshape(old, new):
 
 def _reshape_sharded_device_array(array, new_sizes, old_sizes):
   """Returns None if `array` could not be efficiently reshaped."""
-  chunk_shape = array.device_buffers[0].shape().dimensions()
-  if not all(buf.shape().dimensions() == chunk_shape
-              for buf in array.device_buffers[:1]):
-    return None
-
   # TODO(skye): the axis split/merge logic below assumes that
   # ShardedDevicesArrays are always sharded across their leading axes. Remove
-  # this implicit constraint, especially if/when we add APIs that produce
-  # sharding across interior axes.
-  # TODO(skye): handle replicated buffers (and check for no partial overlap?).
-  # TODffO(skye): this logic also assumes that device_buffers are sorted in
-  # row-major order when generating indices.
+  # this constraint, especially if/when we add APIs that produce sharding across
+  # interior axes.
+  if any(num_shards != 1 for num_shards in array.sharding_spec.shards_per_axis):
+    return None
+
+  # TODO(skye): handle replicated buffers
+  if array.sharding_spec.replication_factor != 1:
+    return None
+
+  # ShardedDevicesArrays require all buffers to have the same shape
+  chunk_shape = array.device_buffers[0][0].shape().dimensions()
+
   if _is_axis_merge(old_sizes, new_sizes):
     num_chunks, ragged = divmod(new_sizes[0], chunk_shape[0])
     if ragged: return None
     aval = ShapedArray(new_sizes, array.dtype)
-    indices = [builtins.slice(i, i + chunk_shape[0])
-               for i in range(0, new_sizes[0], chunk_shape[0])]
-    return pxla.ShardedDeviceArray(aval, indices, array.device_buffers)
+    sharding_spec = pxla.ShardingSpec(
+        shards_per_axis=(num_chunks,) + (1,) * (len(new_sizes) - 1),
+        is_axis_materialized=(True,) * len(new_sizes),
+        replication_factor=1)
+    indices = pxla.get_indices(new_sizes, sharding_spec)
+    return pxla.ShardedDeviceArray(aval, sharding_spec, indices,
+                                   array.device_buffers)
 
   if _is_axis_split(old_sizes, new_sizes):
     split_axis_size, ragged = divmod(old_sizes[0], chunk_shape[0])
     assert not ragged
     if new_sizes[0] != split_axis_size: return None
     aval = ShapedArray(new_sizes, array.dtype)
-    indices = list(range(new_sizes[0]))
-    return pxla.ShardedDeviceArray(aval, indices, array.device_buffers)
+    sharding_spec = pxla._pmap_sharding_spec(new_sizes[0], new_sizes[0],
+                                             new_sizes[1:])
+    indices = pxla.get_indices(new_sizes, sharding_spec)
+    return pxla.ShardedDeviceArray(aval, sharding_spec, indices,
+                                   array.device_buffers)
 
   return None
 

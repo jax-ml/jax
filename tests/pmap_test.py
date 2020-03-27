@@ -189,7 +189,7 @@ class PmapTest(jtu.JaxTestCase):
         lambda: f(onp.random.randn(n), onp.random.randn(n - 1)))
 
   @parameterized.named_parameters(
-      {"testcase_name": "_mesh={}".format(device_mesh_shape),
+      {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedShardingAndStacking(self, device_mesh_shape):
@@ -280,7 +280,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_mesh={}".format(device_mesh_shape),
+      {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
        "device_mesh_shape": device_mesh_shape}
       for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
   def testNestedWithClosure(self, device_mesh_shape):
@@ -339,7 +339,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
-    y.device_buffers = y.device_buffers[::-1]
+    y.device_buffers = [y.device_buffers[0][::-1]]
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
@@ -590,7 +590,9 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     # Test that 'ans' was properly replicated across devices.
-    self.assertEqual([b.device() for b in ans.device_buffers], devices)
+    self.assertEqual([b.device()
+                      for replica in ans.device_buffers
+                      for b in replica], devices)
 
   def testPmapConstantError(self):
     device_count = xla_bridge.device_count()
@@ -621,8 +623,8 @@ class PmapTest(jtu.JaxTestCase):
 
     # Test that 'ans' was properly replicated across devices.
     expected_sharded = pmap(pmap(lambda x: x))(expected)
-    self.assertEqual([b.device() for b in ans.device_buffers],
-                     [b.device() for b in expected_sharded.device_buffers])
+    self.assertEqual([b.device() for b in ans._flattened_buffers()],
+                     [b.device() for b in expected_sharded._flattened_buffers()])
 
     f = pmap(pmap(lambda x: (x, 3)))
     x_sharded, ans = f(x)
