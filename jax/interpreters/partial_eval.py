@@ -285,8 +285,8 @@ class JaxprTracer(Tracer):
     assert isinstance(pval, PartialVal)
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
-      core.escaped_tracer_error(
-        "Tracer from a higher level: {} in trace {}".format(const, trace))
+      raise core.escaped_tracer_error(
+          "Tracer from a higher level: {} in trace {}".format(const, trace))
     self._trace = trace
     self.pval = pval
     self.recipe = recipe
@@ -452,7 +452,8 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
         processed_eqn_ids.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
-        core.escaped_tracer_error("Tracer not among input tracers {}".format(t))
+        raise core.escaped_tracer_error(
+            "Tracer not among input tracers {}".format(t))
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
       env[getvar(t)] = recipe.val
