@@ -1012,17 +1012,17 @@ class APITest(jtu.JaxTestCase):
     X = onp.random.randn(10, 4)
     U = onp.random.randn(10, 2)
 
-    self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
         r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
         "so\n"
         "arg 0 has an axis to be mapped of size 10\n"
-        "arg 1 has an axis to be mapped of size 2",
-        lambda: api.vmap(h, in_axes=(0, 1))(X, U))
+        "arg 1 has an axis to be mapped of size 2"):
+      api.vmap(h, in_axes=(0, 1))(X, U)
 
-    self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
@@ -1030,15 +1030,38 @@ class APITest(jtu.JaxTestCase):
         r"arg 2 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
         "so\n"
         "args 0, 2 have axes to be mapped of size 10\n"
-        "arg 1 has an axis to be mapped of size 2",
-        lambda: api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X))
+        "arg 1 has an axis to be mapped of size 2"):
+      api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X)
 
-    self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         "the tree of axis sizes is:\n"
-        r"\(10, \[2, 2\]\)",
-        lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
+        r"\(10, \[2, 2\]\)"):
+      api.vmap(h, in_axes=(0, 1))(X, [U, U])
+
+    with self.assertRaisesRegex(ValueError, "vmap got arg 0 of rank 0 but axis to be mapped 0"):
+      # The mapped inputs cannot be scalars
+      api.vmap(lambda x: x)(1.)
+
+    with self.assertRaisesRegexp(ValueError, re.escape("vmap got arg 0 of rank 1 but axis to be mapped [1. 2.]")):
+      api.vmap(lambda x: x, in_axes=(np.array([1., 2.]),))(np.array([1., 2.]))
+
+    with self.assertRaisesRegex(ValueError, "vmap must have at least one non-None in_axes"):
+      # If the output is mapped, there must be a non-None in_axes
+      api.vmap(lambda x: x, in_axes=None)(np.array([1., 2.]))
+
+    with self.assertRaisesRegexp(ValueError, "vmap got arg 0 of rank 1 but axis to be mapped 1"):
+      api.vmap(lambda x: x, in_axes=1)(np.array([1., 2.]))
+
+    # Error is: TypeError: only integer scalar arrays can be converted to a scalar index
+    with self.assertRaisesRegexp(ValueError, "axes specification must be a tree prefix of the corresponding value"):
+      api.vmap(lambda x: x, in_axes=0, out_axes=(2, 3))(np.array([1., 2.]))
+
+    with self.assertRaisesRegexp(ValueError, "vmap has mapped output but out_axes is None"):
+      # If the output is mapped, then there must be some out_axes specified
+      api.vmap(lambda x: x, out_axes=None)(np.array([1., 2.]))
+
 
   def test_vmap_structured_in_axes(self):
 
