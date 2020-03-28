@@ -459,7 +459,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   # We add a dummy first invar, to carry the trace details to `dynamic_fun`
   pval = pe.PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-      dynamic_fun, [pval] + pvals, instantiate=False, stage_out_calls=True, bottom=True)
+      dynamic_fun, [pval] + pvals, instantiate=False, stage_out=True, bottom=True)
   jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
 
   out_pvs, out_consts = unzip2(out_pvals)

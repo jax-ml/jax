@@ -57,8 +57,9 @@ _reduce = functools.reduce
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
   in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-    wrapped_fun, in_pvals, instantiate=True, stage_out_calls=True)
+  with core.initial_style_staging():
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+      wrapped_fun, in_pvals, instantiate=True, stage_out=False)
   out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),

@@ -471,7 +471,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   abstract_args, arg_devices = unzip2(arg_specs)
   pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
-      fun, pvals, instantiate=False, stage_out_calls=True, bottom=True)
+      fun, pvals, instantiate=False, stage_out=True, bottom=True)
 
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
 

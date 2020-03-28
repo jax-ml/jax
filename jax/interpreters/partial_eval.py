@@ -226,6 +226,14 @@ class JaxprTrace(Trace):
       return out_tracers
     return out, todo
 
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+    assert self.master.trace_type is StagingJaxprTrace
+    return fun.call_wrapped(*tracers)
+
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
+    assert self.master.trace_type is StagingJaxprTrace
+    return fun.call_wrapped(*tracers)
+
 # This subclass is used just for its type tag, which switches the behavior of
 # process_call to stage out into the jaxpr any call primitives encountered
 # (rather than doing partial evaluation into the call).
@@ -254,8 +262,8 @@ custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 call_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 
 
-def partial_eval(f, trace, pvs):
-  f = trace_to_subjaxpr(f, trace.master, False)
+def partial_eval(f, trace, pvs, instantiate=False):
+  f = trace_to_subjaxpr(f, trace.master, instantiate)
   return partial_eval_wrapper(f, tuple(pvs))
 
 
@@ -349,8 +357,8 @@ def partial_val_aval(pv, const):
     raise TypeError(pv)
 
 def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
-                   instantiate=False, stage_out_calls=False, bottom=False):
-  trace_type = StagingJaxprTrace if stage_out_calls else JaxprTrace
+                   instantiate=False, stage_out=False, bottom=False):
+  trace_type = StagingJaxprTrace if stage_out else JaxprTrace
   with new_master(trace_type, bottom=bottom) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
