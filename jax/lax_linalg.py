@@ -496,7 +496,7 @@ def _lu_unblocked(a):
   return lax.fori_loop(0, min(m, n), body, (pivot, perm, a))
 
 
-def _lu_blocked(a, block_size=32):
+def _lu_blocked(a, block_size=128):
   """Blocked LU decomposition, as an unrolled loop."""
   m, n = a.shape
   r = min(m, n)
@@ -504,13 +504,12 @@ def _lu_blocked(a, block_size=32):
   for k in range(0, r, block_size):
     b = min(r - k, block_size)
     block_pivot, perm, lu_block = _lu_unblocked(a[k:, k:k+b])
-    a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
 
-    a = ops.index_update(a, ops.index[k:, :k], a[perm + k, :k])
+    a = ops.index_update(a, ops.index[k:, :], a[perm + k, :])
+    a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
     pivot = ops.index_update(pivot, ops.index[k:k+b], block_pivot + k)
 
     if k + b < n:
-      a = ops.index_update(a, ops.index[k:, k+b:], a[perm + k, k+b:])
       a = ops.index_update(
         a, ops.index[k:k+b, k+b:],
         triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:],
