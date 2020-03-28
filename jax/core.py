@@ -274,33 +274,20 @@ def eval_jaxpr(jaxpr, consts, *args):
   return map(read, jaxpr.outvars)
 
 
-def full_lower(val):
-  if isinstance(val, Tracer):
-    return val.full_lower()
-  else:
-    return val
-
-
-def find_top_trace(xs):
- try:
-   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
-                   key=attrgetter('level'))
- except ValueError:
-   return None
- else:
-   return type(top_trace)(top_trace.master, cur_sublevel())
-
-
 # -------------------- tracing --------------------
 
 
-class Trace(object):
-  def __init__(self, master, sublevel):
+class Trace:
+  master: 'MasterTrace'
+  level: int
+  sublevel: 'Sublevel'
+
+  def __init__(self, master: 'MasterTrace', sublevel: 'Sublevel') -> None:
     self.master = master
     self.level = master.level
     self.sublevel = sublevel
 
-  def full_raise(self, val):
+  def full_raise(self, val) -> 'Tracer':
     if not isinstance(val, Tracer):
       return self.pure(val)
     level = self.level
@@ -311,18 +298,19 @@ class Trace(object):
       elif val._trace.sublevel < sublevel:
         return self.sublift(val)
       else:
-        escaped_tracer_error(
-          "Can't lift sublevels {} to {}".format(val._trace.sublevel, sublevel))
+        raise escaped_tracer_error("Can't lift sublevels {} to {}"
+                                   .format(val._trace.sublevel, sublevel))
     elif val._trace.level < level:
       if val._trace.sublevel > sublevel:
-        escaped_tracer_error(
-          "Incompatible sublevel: {}, {}".format(val._trace, (level, sublevel)))
+        raise escaped_tracer_error("Incompatible sublevel: {}, {}"
+                                   .format(val._trace, (level, sublevel)))
       return self.lift(val)
     elif val._trace.level > level:
-      escaped_tracer_error(
-        "Can't lift level {} to {}".format(val, self))
+      raise escaped_tracer_error("Can't lift level {} to {}"
+                                 .format(val, self))
     else:  # val._trace.level == self.level:
-      escaped_tracer_error("Different traces at same level: {}, {}".format(val, self))
+      raise escaped_tracer_error("Different traces at same level: {}, {}"
+                                 .format(val, self))
 
   def pure(self, val):
     raise NotImplementedError("must override")
@@ -342,12 +330,13 @@ class Trace(object):
 
 def escaped_tracer_error(detail):
   msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
-          "through global state from a previously traced function.\n"
-          "The functions being transformed should not save traced values to "
-          "global state.\nDetails: {}.")
-  raise UnexpectedTracerError(msg.format(detail))
+         "through global state from a previously traced function.\n"
+         "The functions being transformed should not save traced values to "
+         "global state.\nDetails: {}.")
+  return UnexpectedTracerError(msg.format(detail))
 
 class UnexpectedTracerError(Exception): pass
+
 
 class Tracer(object):
   __array_priority__ = 1000
@@ -452,73 +441,90 @@ class Tracer(object):
   def __deepcopy__(self, unused_memo):
     return self
 
-
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
 aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
 
 
-class MasterTrace(object):
-  def __init__(self, level, trace_type):
+class MasterTrace:
+  level: int
+  trace_type: Type[Trace]
+
+  def __init__(self, level, trace_type) -> None:
     self.level = level
     self.trace_type = trace_type
 
-  def __repr__(self):
+  def __repr__(self) -> str:
     return "MasterTrace({},{})".format(self.level, self.trace_type.__name__)
 
-  def __hash__(self):
+  def __hash__(self) -> int:
     return hash((self.level, self.trace_type))
 
-  def __eq__(self, other):
-    return self.level == other.level and self.trace_type == other.trace_type
+  def __eq__(self, other: object) -> bool:
+    return (isinstance(other, MasterTrace) and
+            self.level == other.level and self.trace_type == other.trace_type)
 
+class TraceStack:
+  upward: List[MasterTrace]
+  downward: List[MasterTrace]
 
-class TraceStack(object):
   def __init__(self):
     self.upward = []
     self.downward = []
 
-  def next_level(self, bottom):
+  def next_level(self, bottom: bool) -> int:
     if bottom:
       return - (len(self.downward) + 1)
     else:
       return len(self.upward)
 
-  def push(self, val, bottom):
+  def push(self, master_trace: MasterTrace, bottom: bool) -> None:
     if bottom:
-      self.downward.append(val)
+      self.downward.append(master_trace)
     else:
-      self.upward.append(val)
+      self.upward.append(master_trace)
 
-  def pop(self, bottom):
+  def pop(self, bottom: bool) -> None:
     if bottom:
       self.downward.pop()
     else:
       self.upward.pop()
 
-  def __repr__(self):
+  def __repr__(self) -> str:
     return  'Trace stack\n{} ---\n{}'.format(
       map('  {}\n'.format, self.upward[::-1]),
       map('  {}\n'.format, self.downward))
 
+  def copy(self):
+    new = TraceStack()
+    new.upward = self.upward[:]
+    new.downward = self.downward[:]
+    return new
 
 class Sublevel(int): pass
+
 
 # The global state of the tracer is accessed by a thread-local object.
 # This allows concurrent tracing in separate threads; passing traced objects
 # between threads is forbidden.
 class TraceState(threading.local):
-  def __init__(self):
+  trace_stack: TraceStack
+  substack: List[Sublevel]
+
+  def __init__(self) -> None:
     self.trace_stack = TraceStack()
     self.substack = [Sublevel(0)]
 
+  def copy(self):
+    new = TraceState()
+    new.trace_stack = self.trace_stack.copy()
+    new.substack = self.substack[:]
+    return new
 trace_state = TraceState()
 
-
-def cur_sublevel():
+def cur_sublevel() -> Sublevel:
   return trace_state.substack[-1]
-
 
 @contextmanager
 def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MasterTrace, None, None]:
@@ -538,9 +544,8 @@ def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MasterTrace, 
       print(trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
 
-
 @contextmanager
-def new_sublevel():
+def new_sublevel() -> Generator[None, None, None]:
   sublevel = Sublevel(len(trace_state.substack))
   trace_state.substack.append(sublevel)
   try:
@@ -553,6 +558,22 @@ def new_sublevel():
     del sublevel
     if t() is not None:
       raise Exception('Leaked sublevel {}'.format(t()))
+
+def full_lower(val):
+  if isinstance(val, Tracer):
+    return val.full_lower()
+  else:
+    return val
+
+def find_top_trace(xs):
+ try:
+   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
+                   key=attrgetter('level'))
+ except ValueError:
+   return None
+ else:
+   return type(top_trace)(top_trace.master, cur_sublevel())
+
 
 # -------------------- abstract values --------------------
 
