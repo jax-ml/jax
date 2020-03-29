@@ -703,7 +703,7 @@ def _pmap_translation_rule(c, axis_env,
       c, call_jaxpr, backend, new_env, (),
       extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_xla_unshard(c, aval, new_env, shard)
+  outs = [_xla_unshard(c, aval, new_env, shard, backend=backend)
           for aval, shard in zip(out_avals, sharded_outs)]
   return c.Tuple(*outs)
 
@@ -723,17 +723,30 @@ def _xla_shard(c, aval, axis_env, x):
     raise TypeError((aval, c.GetShape(x)))
 
 # TODO(b/110096942): more efficient gather
-def _xla_unshard(c, aval, axis_env, x):
+def _xla_unshard(c, aval, axis_env, x, backend):
   if aval is core.abstract_unit:
     return x
   elif isinstance(aval, ShapedArray):
-    dims = list(c.GetShape(x).dimensions())
-    padded = c.Broadcast(c.Constant(onp.array(0, aval.dtype)),
-                          [axis_env.sizes[-1]] + dims)
+    # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
+    convert_bool = (onp.issubdtype(aval.dtype, onp.bool_)
+                    and xb.get_backend(backend).platform in ('cpu', 'gpu'))
+    if convert_bool:
+      x = c.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
+
+    xla_shape = c.GetShape(x)
+    dims = list(xla_shape.dimensions())
+    padded = c.Broadcast(c.Constant(onp.array(0, xla_shape.numpy_dtype())),
+                         [axis_env.sizes[-1]] + dims)
     zero = c.Constant(onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
     padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims), idxs)
-    return c.CrossReplicaSum(padded, xla.axis_groups(axis_env, axis_env.names[-1]))
+    out = c.CrossReplicaSum(padded, xla.axis_groups(axis_env, axis_env.names[-1]))
+
+    # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
+    if convert_bool:
+      nonzero = c.Ne(out, c.Constant(onp.array(0, dtype=onp.float32)))
+      out = c.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
+    return out
   else:
     raise TypeError((aval, c.GetShape(x)))
 
