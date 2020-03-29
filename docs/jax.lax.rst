@@ -163,3 +163,4 @@ Parallelism support is experimental.
     pmin
     ppermute
     pswapaxes
+    axis_index
