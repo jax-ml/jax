@@ -1525,10 +1525,6 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, *args, **kwargs):
   least_specialized = _max(
       map(type, args), key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
-    msg = ("If you see this error, please let us know by opening an issue at\n"
-           "https://github.com/google/jax/issues \n"
-           "since we thought this was unreachable!")
-    assert pe._thread_local_state.remat, msg
     return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs))
   elif least_specialized is ShapedArray:
     return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs))
