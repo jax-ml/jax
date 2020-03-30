@@ -311,7 +311,8 @@ def xla_computation(fun: Callable,
     avals = map(xla.abstractify, jax_args)
     pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
-                                         instantiate=instantiate_const_outputs)
+                                         instantiate=instantiate_const_outputs,
+                                         stage_out=True)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(c.Constant, consts)

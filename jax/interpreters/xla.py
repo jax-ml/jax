@@ -653,7 +653,7 @@ def lower_fun(fun):
     avals = [_array_aval_from_xla_shape(c.GetShape(x)) for x in xla_args]
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
-        lu.wrap_init(fun, params), pvals, instantiate=True)
+        lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
     consts = _map(c.Constant, consts)
     outs = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1), consts, '', *xla_args)
     return c.Tuple(*outs)
@@ -670,7 +670,7 @@ def lower_fun_initial_style(fun):
   def f(c, axis_env, name_stack, avals, backend, *xla_args, **params):
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
-        lu.wrap_init(fun, params), pvals, instantiate=True)
+        lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
     consts = _map(c.Constant, consts)
     outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack,
                          *xla_args)
