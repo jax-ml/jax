@@ -2720,7 +2720,11 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_odeint_vmap_grad(self):
     # https://github.com/google/jax/issues/2531
-    from jax.experimental.ode import odeint
+    # TODO(mattjj): factor out an ode tests file
+    try:
+      from jax.experimental.ode import odeint
+    except ImportError:
+      raise unittest.SkipTest("missing jax.experimental") from None
 
     def dx_dt(x, *args):
       return 0.1 * x
