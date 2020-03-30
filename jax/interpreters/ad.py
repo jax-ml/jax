@@ -307,19 +307,16 @@ class JVPTrace(Trace):
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
-    if call_primitive in call_jvp_rules:
-      return call_jvp_rules[call_primitive](self, call_primitive, f, tracers, params)
-    else:
-      primals = [t.primal for t in tracers]
-      tangents = [t.tangent for t in tracers]
-      nonzero_tangents, in_tree_def = tree_flatten(tangents)
-      f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master),
-                                      len(primals), in_tree_def)
-      name = params.get('name', f.__name__)
-      params = dict(params, name=wrap_name(name, 'jvp'))
-      result = call_primitive.bind(f_jvp, *(primals + nonzero_tangents), **params)
-      primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
-      return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
+    primals = [t.primal for t in tracers]
+    tangents = [t.tangent for t in tracers]
+    nonzero_tangents, in_tree_def = tree_flatten(tangents)
+    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master),
+                                    len(primals), in_tree_def)
+    name = params.get('name', f.__name__)
+    params = dict(params, name=wrap_name(name, 'jvp'))
+    result = call_primitive.bind(f_jvp, *(primals + nonzero_tangents), **params)
+    primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
+    return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
 
   def post_process_call(self, call_primitive, out_tracers, params):
     primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
@@ -332,6 +329,26 @@ class JVPTrace(Trace):
       trace = JVPTrace(master, core.cur_sublevel())
       return map(partial(JVPTracer, trace), primals, tangents)
     return out, todo
+
+  def process_custom_jvp_call(self, _, __, f_jvp, tracers):
+    primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
+    primals_in = map(core.full_lower, primals_in)
+    tangents_in = map(instantiate_zeros, primals_in, tangents_in)
+    outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
+    primals_out, tangents_out = split_list(outs, [len(outs) // 2])
+    return map(partial(JVPTracer, self), primals_out, tangents_out)
+
+  def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
+    primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
+    tangents_in = map(instantiate_zeros, primals_in, tangents_in)
+    res_and_primals_out = fwd.call_wrapped(*map(core.full_lower, primals_in))
+    out_tree, res_tree = out_trees()
+    res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+    avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+    tangents_out = custom_lin_p.bind(
+        *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
+        avals_out=avals_out)
+    return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def join(self, xt, yt):
     xz, yz = xt is zero, yt is zero
@@ -376,7 +393,6 @@ def _primal_tangent_shapes_match(primal, tangent):
 
 
 primitive_jvps : Dict[core.Primitive, Callable] = {}
-call_jvp_rules : Dict[core.Primitive, Callable] = {}
 
 primitive_transposes: Dict[core.Primitive, Callable] = {}
 
@@ -559,6 +575,24 @@ def _perm(primal_counts, tangent_counts, lst):
 def _interleave(xs, ys):
   assert len(xs) == len(ys)
   return [e for pair in zip(xs, ys) for l in pair for e in l]
+
+
+custom_lin_p = core.Primitive('custom_lin')
+custom_lin_p.def_abstract_eval(lambda *_, avals_out, **__: avals_out)
+custom_lin_p.multiple_results = True
+
+def _raise_custom_vjp_error_on_jvp(*_, **__):
+  raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
+                  "function.")
+custom_lin_p.def_impl(_raise_custom_vjp_error_on_jvp)
+
+def _custom_lin_transpose(cts_out, *invals, num_res, bwd, avals_out):
+  res, _ = split_list(invals, [num_res])
+  cts_out = map(instantiate_zeros_aval, avals_out, cts_out)
+  cts_in = bwd.call_wrapped(*res, *cts_out)
+  cts_in_flat, _ = tree_flatten(cts_in)  # already checked tree structure
+  return [None] * num_res + cts_in_flat
+primitive_transposes[custom_lin_p] = _custom_lin_transpose
 
 
 # TODO(mattjj): delete everything below here (deprecated custom_transforms)

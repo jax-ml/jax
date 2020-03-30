@@ -511,15 +511,18 @@ class Sublevel(int): pass
 class TraceState(threading.local):
   trace_stack: TraceStack
   substack: List[Sublevel]
+  initial_style: bool
 
   def __init__(self) -> None:
     self.trace_stack = TraceStack()
     self.substack = [Sublevel(0)]
+    self.initial_style = False
 
   def copy(self):
     new = TraceState()
     new.trace_stack = self.trace_stack.copy()
     new.substack = self.substack[:]
+    new.initial_style = self.initial_style
     return new
 trace_state = TraceState()
 
@@ -573,6 +576,12 @@ def find_top_trace(xs):
    return None
  else:
    return type(top_trace)(top_trace.master, cur_sublevel())
+
+@contextmanager
+def initial_style_staging():
+  prev, trace_state.initial_style = trace_state.initial_style, True
+  yield
+  trace_state.initial_style = prev
 
 
 # -------------------- abstract values --------------------

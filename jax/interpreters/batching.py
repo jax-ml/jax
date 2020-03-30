@@ -21,7 +21,7 @@ from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
-from ..util import unzip2, partial, safe_map, wrap_name
+from ..util import unzip2, partial, safe_map, wrap_name, split_list
 from . import xla
 from . import partial_eval as pe
 
@@ -43,20 +43,22 @@ def batch_subtrace(master, in_dims, *in_vals, **params):
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   yield out_vals, out_dims
 
-def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests):
+
+def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, sum_match=False):
   # transformation version of batch, which doesn't call the function
   fun, out_dims = batch_subtrace(fun)
-  return _batch_fun(fun, in_dims, out_dims, out_dim_dests)
+  return _batch_fun(fun, sum_match, in_dims, out_dims, out_dim_dests)
 
 @lu.transformation
-def _batch_fun(in_dims, out_dims, out_dim_dests, *in_vals, **params):
+def _batch_fun(sum_match, in_dims, out_dims, out_dim_dests, *in_vals, **params):
   in_dims = in_dims() if callable(in_dims) else in_dims
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   with new_master(BatchTrace) as master:
     out_vals = yield (master, in_dims,) + in_vals, params
     del master
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-  out_vals = map(partial(matchaxis, size), out_dims(), out_dim_dests, out_vals)
+  out_vals = map(partial(matchaxis, size, sum_match=sum_match),
+                 out_dims(), out_dim_dests, out_vals)
   yield out_vals
 
 def batch_fun2(fun : lu.WrappedFun, in_dims):
@@ -134,9 +136,7 @@ class BatchTrace(Trace):
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
-    if call_primitive in call_batching_rules:
-      return call_batching_rules[call_primitive](self, call_primitive, f, tracers, params)
-    elif call_primitive in pe.map_primitives:
+    if call_primitive in pe.map_primitives:
       return self.process_map(call_primitive, f, tracers, params)
     else:
       vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
@@ -170,12 +170,33 @@ class BatchTrace(Trace):
       return map(partial(BatchTracer, trace), x, dims)
     return vals, todo
 
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+    in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    fun, out_dims1 = batch_subtrace(fun, self.master, in_dims)
+    jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.master, in_dims)
+    out_vals = prim.bind(fun, jvp, *in_vals)
+    fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
+    if not fst:
+      assert out_dims == out_dims[:len(out_dims) // 2] * 2
+      out_dims = out_dims[:len(out_dims) // 2]
+    return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
+
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees):
+    in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    fun, out_dims1 = batch_subtrace(fun, self.master, in_dims)
+    fwd, out_dims2 = batch_subtrace(fwd, self.master, in_dims)
+    bwd = batch_fun(bwd, out_dims2, in_dims, sum_match=True)
+    out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
+    fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
+    if not fst:
+      out_dims = out_dims[-len(out_vals) % len(out_dims):]
+    return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
+
 
 ### primitives
 
 BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
 primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
-call_batching_rules : Dict[core.Primitive, BatchingRule] = {}
 
 def get_primitive_batcher(p):
   try:
@@ -297,7 +318,7 @@ def moveaxis(x, src, dst):
   perm.insert(dst, src)
   return x.transpose(perm)
 
-def matchaxis(sz, src, dst, x):
+def matchaxis(sz, src, dst, x, sum_match=False):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
   if src == dst:
@@ -308,6 +329,8 @@ def matchaxis(sz, src, dst, x):
     return moveaxis(x, src, -1)
   elif src is not_mapped and dst is not not_mapped:
     return broadcast(x, sz, dst)
+  elif dst is None and sum_match:
+    return x.sum(src)
   else:
     raise ValueError((src, dst))
 
@@ -354,3 +377,30 @@ def batched_traceable(size, batched, instantiate, *vals):
   out_batched = [d is not not_mapped or inst
                  for d, inst in zip(out_dims, instantiate)]
   yield out_vals, out_batched
+
+
+@lu.transformation_with_aux
+def batch_custom_jvp_subtrace(master, in_dims, *in_vals):
+  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  trace = BatchTrace(master, core.cur_sublevel())
+  in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
+                for val, dim in zip(in_vals, in_dims * 2)]
+  outs = yield in_tracers, {}
+  out_tracers = map(trace.full_raise, outs)
+  out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+  out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
+  out_primal_bds, out_tangent_bds = split_list(out_dims, [len(out_vals) // 2])
+  out_dims = map(_merge_bdims, out_primal_bds, out_tangent_bds)
+  out_primals  = map(partial(matchaxis, size),  out_primal_bds, out_dims,  out_primals)
+  out_tangents = map(partial(matchaxis, size), out_tangent_bds, out_dims, out_tangents)
+  yield out_primals + out_tangents, out_dims * 2
+
+def _merge_bdims(x, y):
+  if x == y:
+    return x
+  elif x is not_mapped:
+    return y
+  elif y is not_mapped:
+    return x
+  else:
+    return x  # arbitrary
