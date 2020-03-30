@@ -227,10 +227,20 @@ class JaxprTrace(Trace):
     return out, todo
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+    # We form jaxprs using JaxprTraces for two distinct purposes: to stage
+    # program representations completely out of the JAX system (e.g. for XLA
+    # using jit or pmap), and to build a representation of a function that may
+    # require further JAX transformations (e.g. in "initial-style" higher-order
+    # primitives, like for control flow). In particular, in the latter case we
+    # need custom differentiation rules to stick around, but in the former we do
+    # not. This method call should only be reachable in the former case, and so
+    # we check that the former case is indicated (with a StagingJaxprTrace) and
+    # then drop the differentiation rules.
     assert self.master.trace_type is StagingJaxprTrace
     return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
+    # See comment in the above process_custom_jvp_call method.
     assert self.master.trace_type is StagingJaxprTrace
     return fun.call_wrapped(*tracers)
 

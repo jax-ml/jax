@@ -328,6 +328,22 @@ class Trace:
     return '{}(level={}/{})'.format(
         self.__class__.__name__, self.level, self.sublevel)
 
+  def procecss_call(self, call_primitive, f, tracers, params):
+    raise NotImplementedError("must override to handle call-like primitives")
+
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+    # As a default implementation, drop the custom differentiation rule. This
+    # behavior is desirable when staging out of the JAX system, but not when
+    # there are further differentiation transformations to be applied. Override
+    # this method to allow differentiation to be performed downstream.
+    del primitive, jvp  # Unused.
+    return fun.call_wrapped(*tracers)
+
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+    # See comment in the above process_custom_jvp_call method.
+    del primitive, fwd, bwd, out_trees  # Unused.
+    return fun.call_wrapped(*tracers)
+
 def escaped_tracer_error(detail):
   msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
          "through global state from a previously traced function.\n"
