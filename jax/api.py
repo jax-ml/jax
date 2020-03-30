@@ -1640,6 +1640,7 @@ def defjvp_all(fun, custom_jvp):
       msg = ("Detected differentiation with respect to closed-over values with "
              "custom JVP rule, which isn't supported.")
       raise ValueError(msg)
+    args_dot_flat = map(ad.instantiate_zeros, args_flat, args_dot_flat)
     args = tree_unflatten(in_tree, args_flat)
     args_dot = tree_unflatten(in_tree, args_dot_flat)
     out, out_dot = custom_jvp(args, args_dot)
