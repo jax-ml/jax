@@ -2291,6 +2291,27 @@ class CustomJVPTest(jtu.JaxTestCase):
             "respectively."),
         lambda: api.jvp(f, (np.float32(2.),), (np.float32(1.),)))
 
+  def test_jvp_rule_doesnt_return_pair_error_message(self):
+    # https://github.com/google/jax/issues/2516
+
+    @api.custom_jvp
+    def f(x):
+      return x ** 2
+
+    @f.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      return t
+
+    f(2.)  # doesn't crash
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom JVP rule must produce a pair (list or tuple of length two) "
+            "representing primal and tangent outputs, got 1.0"),
+        lambda: api.jvp(f, (2.,), (1.,)))
+
   def test_multiple_rule_invocations(self):
     @jax.custom_jvp
     def expit(x):
@@ -2361,6 +2382,22 @@ class CustomJVPTest(jtu.JaxTestCase):
     jax.jit(jax.grad(lambda x: jax.vmap(f)(x).sum()))(np.arange(3.))
     jax.grad(lambda x: jax.vmap(f)(x).sum())(np.arange(3.))
     jax.jvp(jax.jit(jax.vmap(f)), (np.arange(3.),), (np.ones(3),))
+
+  def test_eval_shape(self):
+    @jax.custom_jvp
+    def expit(x):
+      return 1 / (1 + lax.exp(-x))
+
+    @expit.defjvp
+    def _expit_jvp(primals, tangents):
+      (x,), (t,) = primals, tangents
+      ans = expit(x)
+      t_out = t * ans * (1 - ans)
+      return ans, t_out
+
+    # don't crash
+    api.eval_shape(expit, np.ones((2, 3)))
+    api.eval_shape(api.grad(lambda x: expit(x).sum()), np.ones((2, 3)))
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -2675,6 +2712,38 @@ class CustomVJPTest(jtu.JaxTestCase):
                 tree_util.tree_structure((1,)))
         ),
         lambda: api.grad(f)(2.))
+
+  def test_issue2511(self):
+    arr = np.ones((5, 2, 2))
+    foo = lambda x: api.vmap(np.linalg.det, (0,))(x)
+    api.jit(foo)(arr)  # doesn't crash
+
+  def test_odeint_vmap_grad(self):
+    # https://github.com/google/jax/issues/2531
+    from jax.experimental.ode import odeint
+
+    def dx_dt(x, *args):
+      return 0.1 * x
+
+    def f(x, y):
+      y0 = np.array([x, y])
+      t = np.array([0., 5.])
+      y = odeint(dx_dt, y0, t)
+      return y[-1].sum()
+
+    def g(x):
+      # Two initial values for the ODE
+      y0_arr = np.array([[x, 0.1],
+                         [x, 0.2]])
+
+      # Run ODE twice
+      t = np.array([0., 5.])
+      y = jax.vmap(lambda y0: odeint(dx_dt, y0, t))(y0_arr)
+      return y[:,-1].sum()
+
+    ans = jax.grad(g)(2.)  # don't crash
+    expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):

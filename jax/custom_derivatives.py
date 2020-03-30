@@ -202,7 +202,7 @@ def _flatten_jvp(in_tree, *args):
   py_primals = tree_unflatten(in_tree, primals_in)
   py_tangents = tree_unflatten(in_tree, tangents_in)
   pair_out = yield (py_primals, py_tangents), {}
-  if not isinstance(pair_out, (list, tuple)) and len(pair_out) == 2:
+  if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = ("Custom JVP rule must produce a pair (list or tuple of length two) "
            "representing primal and tangent outputs, got {}.")
     raise TypeError(msg.format(pair_out))
@@ -314,7 +314,7 @@ def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk):
   del jvp_jaxpr_thunk
   name = 'custom_jvp_call_jaxpr_linear'
   return ad.call_transpose(core.call_p, dict(name=name), fun_jaxpr.jaxpr,
-                           tuple(jaxpr.literals) + args, cts)
+                           tuple(fun_jaxpr.literals) + args, cts)
 ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 
@@ -440,7 +440,7 @@ class custom_vjp:
 def _flatten_fwd(in_tree, *args):
   py_args = tree_unflatten(in_tree, args)
   pair_out = yield py_args, {}
-  if not isinstance(pair_out, (list, tuple)) and len(pair_out) == 2:
+  if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = ("Custom VJP fwd function must produce a pair (list or tuple of "
            "length two) representing primal outputs and residuals (values "
            "stored from the forward pass for use on the backward pass), "
@@ -544,7 +544,7 @@ def _custom_vjp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, fwd_jaxpr_thunk,
 
   fwd_in_dims = [0 if b else not_mapped for b in in_batched]
   fwd_out_dims = lambda: out_dims2[0]
-  batched_bwd = batching.batch_fun(bwd, fwd_out_dims, fwd_in_dims)
+  batched_bwd = batching.batch_fun(bwd, fwd_out_dims, fwd_in_dims, sum_match=True)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
