@@ -92,17 +92,24 @@ def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
   times = []
   for params in params_list:
     f = prepare(**params)
-    subname = name + "".join("_%s=%s" % (n, p) for n, p in params.items())
+    subname = name + "".join("_%s=%s" % (n, _param_str(p))
+                             for n, p in params.items())
     times.append(benchmark(f, name=subname,
                            target_total_secs=target_total_secs))
 
   print("---------Benchmark summary for %s---------" % name)
   param_names = list(params_list[0].keys())
-  print(tabulate([tuple(params.values()) +
+  print(tabulate([tuple(map(_param_str, params.values())) +
                   (t.mean(), _pstd(t), t.mean() / times[0].mean())
                   for params, t in safe_zip(params_list, times)],
                  param_names + ["mean", "%std", "relative"]))
   print()
+
+
+def _param_str(param):
+  if callable(param):
+    return param.__name__
+  return str(param)
 
 
 def _pstd(x):
