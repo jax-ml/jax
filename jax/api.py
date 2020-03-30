@@ -303,12 +303,15 @@ def xla_computation(fun: Callable,
       names, sizes = zip(*axis_env)
       return xla.AxisEnv(nreps, names, sizes)
 
+  def abstractify(x):
+    return ShapedArray(onp.shape(x), dtypes.result_type(x))
+
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    avals = map(xla.abstractify, jax_args)
+    avals = map(abstractify, jax_args)
     pvals = [pe.PartialVal((aval, core.unit)) for aval in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
                                          instantiate=instantiate_const_outputs,

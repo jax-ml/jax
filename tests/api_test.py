@@ -838,6 +838,23 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(param_shapes[0].xla_element_type(),
                      xb.xla_client.PrimitiveType.TUPLE)
 
+  def test_xla_computation_duck_typing(self):
+    def foo(x, y, z):
+      return x + y + z
+
+    x = jax.ShapeDtypeStruct((), onp.float32)
+    y = jax.ShapeDtypeStruct((), onp.float32)
+    z = jax.ShapeDtypeStruct((), onp.float32)
+
+    c = api.xla_computation(foo)(x, y, z)
+    self.assertEqual(len(c.GetProgramShape().parameter_shapes()), 3)
+
+    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
+    param_shapes = c.GetProgramShape().parameter_shapes()
+    self.assertEqual(len(param_shapes), 1)
+    self.assertEqual(param_shapes[0].xla_element_type(),
+                     xb.xla_client.PrimitiveType.TUPLE)
+
   def test_staging_out_multi_replica(self):
     def f(x):
       return api.pmap(np.mean)(x)
