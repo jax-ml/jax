@@ -622,7 +622,9 @@ def defvjp_all(prim, custom_vjp):
       primals_out = [primals_out]
     out_avals = [raise_to_shaped(get_aval(x)) for x in primals_out]
     ct_pvals = [pe.PartialVal((aval, core.unit)) for aval in out_avals]
-    jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
+    with core.initial_style_staging():
+      jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals,
+                                        instantiate=True)
     tangents_out = fun_lin_p.bind(*it.chain(res, tangents), trans_jaxpr=jaxpr,
                                   num_res=len(res), out_avals=out_avals)
     return primals_out + tangents_out
