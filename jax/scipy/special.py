@@ -20,7 +20,6 @@ import scipy.special as osp_special
 from .. import util
 from .. import lax
 from .. import api
-from ..api import custom_transforms, defjvp
 from ..numpy import lax_numpy as jnp
 from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
@@ -80,21 +79,21 @@ def erfinv(x):
   return lax.erf_inv(x)
 
 
+@api.custom_jvp
 @_wraps(osp_special.logit, update_doc=False)
-@custom_transforms
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-defjvp(logit, lambda g, ans, x: g / (x * (1 - x)))
+logit.defjvp(lambda g, ans, x: g / (x * (1 - x)))
 
 
+@api.custom_jvp
 @_wraps(osp_special.expit, update_doc=False)
-@custom_transforms
 def expit(x):
   x = asarray(x)
   one = lax._const(x, 1)
   return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-defjvp(expit, lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
+expit.defjvps(lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 
 
 @_wraps(osp_special.logsumexp)
@@ -407,7 +406,7 @@ def _ndtri(p):
   return x_nan_replaced
 
 
-@custom_transforms
+@partial(api.custom_jvp, nondiff_argnums=(1,))
 def log_ndtr(x, series_order=3):
   r"""Log Normal distribution function.
 
@@ -508,7 +507,12 @@ def log_ndtr(x, series_order=3):
                        lax.log(_ndtr(lax.max(x, lower_segment))),
                        _log_ndtr_lower(lax.min(x, lower_segment),
                                        series_order)))
-defjvp(log_ndtr, lambda g, ans, x: lax.mul(g, lax.exp(lax.sub(_norm_logpdf(x), ans))))
+def _log_ndtr_jvp(series_order, primals, tangents):
+  (x,), (t,) = primals, tangents
+  ans = log_ndtr(x, series_order=series_order)
+  t_out = lax.mul(t, lax.exp(lax.sub(_norm_logpdf(x), ans)))
+  return ans, t_out
+log_ndtr.defjvp(_log_ndtr_jvp)
 
 def _log_ndtr_lower(x, series_order):
   """Asymptotic expansion version of `Log[cdf(x)]`, appropriate for `x<<-1`."""

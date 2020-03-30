@@ -13,14 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial, update_wrapper
+from functools import partial, update_wrapper, reduce
 import inspect
 import itertools as it
 import operator as op
 
 from . import core
 from . import linear_util as lu
-from .tree_util import tree_flatten, tree_unflatten
+from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
 from .util import safe_zip, safe_map, unzip2, split_list, curry
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
@@ -75,6 +75,12 @@ def _initial_style_jaxpr(fun, in_avals):
   out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   return typed_jaxpr
+
+def sum_tangents(x, *xs):
+  return reduce(ad.add_tangents, xs, x)
+
+def zeros_like_pytree(x):
+  return tree_map(lambda _: zero, x)
 
 
 ### JVPs
@@ -150,6 +156,21 @@ class custom_jvp:
         return primal_out, tangent_out
     """
     self.jvp = jvp
+
+  def defjvps(self, *jvps):
+    """Convenience wrapper for defining JVPs for each argument separately."""
+    if self.nondiff_argnums:
+      raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
+
+    def jvp(primals, tangents):
+      primal_out = self(*primals)
+      zeros = zeros_like_pytree(primal_out)
+      all_tangents_out = [jvp(t, primal_out, *primals) if jvp else zeros
+                          for t, jvp in zip(tangents, jvps)]
+      tangent_out = tree_multimap(sum_tangents, *all_tangents_out)
+      return primal_out, tangent_out
+
+    self.defjvp(jvp)
 
   def __call__(self, *args, **kwargs):
     if not self.jvp:
