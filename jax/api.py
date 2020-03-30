@@ -1586,7 +1586,8 @@ class CustomTransformsFunction(object):
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
     in_pvals = [pe.PartialVal((raise_to_shaped(core.get_aval(x)), core.unit))
                 for x in args_flat]
-    jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
+    with core.initial_style_staging():
+      jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
     outs = self.prim.bind(*it.chain(consts, args_flat), jaxpr=jaxpr,
                           in_tree=in_tree, out_tree=out_tree(),
                           num_consts=len(consts))
