@@ -25,7 +25,7 @@ from jax import numpy as np
 from jax import pmap
 from jax.config import config
 
-import benchmark
+from benchmarks import benchmark
 
 import numpy as onp
 
