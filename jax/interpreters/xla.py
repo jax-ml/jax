@@ -188,7 +188,7 @@ def xla_primitive_callable(prim, *arg_specs, **params):
   built_c = primitive_computation(prim, AxisEnv(nreps), backend, tuple_args,
                                   *avals, **params)
   options = xb.get_compile_options(
-      num_replicas=1,
+      num_replicas=nreps,
       num_partitions=1,
       device_assignment=device and (device.id,))
   compiled = built_c.Compile(compile_options=options, backend=backend)
@@ -264,7 +264,9 @@ def _execute_replicated_primitive(prim, compiled, backend, tuple_args,
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
   out_buf = compiled.ExecuteOnLocalDevices(
-      input_bufs, tuple_arguments=tuple_args)[0][0]
+      input_bufs, tuple_arguments=tuple_args)[0]
+  if not prim.multiple_results:
+    out_buf, = out_buf
   return result_handler(out_buf)
 
 def check_nans(prim, bufs):
