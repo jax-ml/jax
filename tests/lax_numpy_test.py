@@ -2735,18 +2735,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-        {"testcase_name": ("_shape={}_varargs={} axis={}_dtype={}").format(shape, varargs, axis, dtype),
+        {"testcase_name": ("_shape={}_varargs={} axis={}_dtype={}")
+         .format(shape, varargs, axis, dtype),
          "shape": shape,
          "varargs": varargs,
          "axis": axis,
          "dtype": dtype, "rng_factory": rng_factory}
         for shape in [(10,), (10, 15), (10, 15, 20)]
         for _num_axes in range(len(shape))
-        for varargs in [2, 1, 0, (2, 2), (1, 2), (2, 3), (2, 0)]
+        for varargs in [0, (1,), (2, 0)]
         for axis in itertools.combinations(range(len(shape)), _num_axes)
         for dtype in inexact_dtypes
         for rng_factory in [jtu.rand_default]))
-  def testGradient(self, shape, axis, dtype, rng_factory):
+  def testGradient(self, shape, varargs, axis, dtype, rng_factory):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, [shape], [varargs], [dtype])
     jnp_fun = lambda y: jnp.gradient(y, axis=axis)
