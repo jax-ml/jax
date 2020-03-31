@@ -842,7 +842,9 @@ def _gradient(a, varargs, axis=None):
             axes = (axis,)
         if not isinstance(axis, tuple) and not isinstance(axis, list):
             raise ValueError("Give `axis` either as int or iterable")
-        axes = [_canonicalize_axis(i, a.ndim) for i in axis]
+        elif len(axis) == 0:
+            return []
+        axes = [_canonicalize_axis(i, a.ndim) for i in axes]
 
     if min([s for i, s in enumerate(a.shape) if i in axes]) < 2:
         raise ValueError("Shape of array too small to calculate "
@@ -871,6 +873,7 @@ def _gradient(a, varargs, axis=None):
         a_grad = a_grad[0]
 
     return a_grad
+
 
 @_wraps(onp.gradient)
 def gradient(a, *args, **kwargs):
