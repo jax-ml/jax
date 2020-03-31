@@ -2749,7 +2749,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for rng_factory in [jtu.rand_default]))
   def testGradient(self, shape, varargs, axis, dtype, rng_factory):
     rng = rng_factory()
-    args_maker = self._GetArgsMaker(rng, [shape], [varargs], [dtype])
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype], [varargs])
     jnp_fun = lambda y: jnp.gradient(y, axis=axis)
     onp_fun = lambda y: onp.gradient(y, axis=axis)
     self._CheckAgainstNumpy(
