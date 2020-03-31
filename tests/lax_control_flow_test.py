@@ -1816,22 +1816,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = onp.arange(10)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("tpu", "gpu", "cpu")# TODO(mattjj): follow up w/ xla
-  # Issue #2554
   def test_while_loop_of_pmap(self):
     # code from jsnoek@
+
     def body(i, x):
       result = api.pmap(lambda z: lax.psum(np.sin(z), 'i'), axis_name='i')(x)
       return result + x
     f_loop = lambda x: lax.fori_loop(0, 3, body, x)
-    ans = f_loop(np.ones(8))
+    ans = f_loop(np.ones(api.device_count()))
     del body, f_loop
 
     def body2(i, x):
       result = np.broadcast_to(np.sin(x).sum(), x.shape)
       return result + x
     g_loop = lambda x: lax.fori_loop(0, 3, body2, x)
-    expected = g_loop(np.ones(8))
+    expected = g_loop(np.ones(api.device_count()))
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
