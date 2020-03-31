@@ -203,8 +203,7 @@ def _sharded_jit_translation_rule(c, axis_env, freevar_nodes,
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecuteOnLocalDevices(
-      list(input_bufs), tuple_arguments=False)
+  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
   return out_handler(out_bufs)
 
 
