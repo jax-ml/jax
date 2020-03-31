@@ -85,23 +85,22 @@ _thread_local_state = _ThreadLocalState()
 
 def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
         device=None, backend: Optional[str] = None) -> Callable:
-  """Sets up `fun` for just-in-time compilation with XLA.
+  """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
     fun: Function to be jitted. Should be a pure function, as side-effects may
       only be executed once. Its arguments and return value should be arrays,
       scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
-
-      Positional arguments indicated by `static_argnums` can be anything at all,
-      provided they are hashable and have an equality operation defined. Static
-      arguments are included as part of a compilation cache key, which is why
-      hash and equality operators must be defined.
+      Positional arguments indicated by ``static_argnums`` can be anything at
+      all, provided they are hashable and have an equality operation defined.
+      Static arguments are included as part of a compilation cache key, which is
+      why hash and equality operators must be defined.
     static_argnums: An int or collection of ints specifying which positional
       arguments to treat as static (compile-time constant). Operations that only
       depend on static arguments will be constant-folded. Calling the jitted
       function with different values for these constants will trigger
       recompilation. If the jitted function is called with fewer positional
-      arguments than indicated by `static_argnums` then an error is raised.
+      arguments than indicated by ``static_argnums`` then an error is raised.
       Defaults to ().
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
@@ -111,10 +110,10 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
 
   Returns:
-    A wrapped version of `fun`, set up for just-in-time compilation.
+    A wrapped version of ``fun``, set up for just-in-time compilation.
 
-  In the following example, `selu` can be compiled into a single fused kernel by
-  XLA:
+  In the following example, ``selu`` can be compiled into a single fused kernel
+  by XLA:
 
   >>> @jax.jit
   >>> def selu(x, alpha=1.67, lmbda=1.05):
@@ -157,9 +156,9 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
 
 @contextmanager
 def disable_jit():
-  """Context manager that disables `jit` behavior under its dynamic context.
+  """Context manager that disables ``jit`` behavior under its dynamic context.
 
-  For debugging purposes, it is useful to have a mechanism that disables `jit`
+  For debugging purposes, it is useful to have a mechanism that disables ``jit``
   everywhere in a dynamic context.
 
   Values that have a data dependence on the arguments to a jitted function are
@@ -179,10 +178,10 @@ def disable_jit():
   Value of y is Traced<ShapedArray(int32[3]):JaxprTrace(level=-1/1)>
   [5 7 9]
 
-  Here `y` has been abstracted by `jit` to a `ShapedArray`, which represents an
-  array with a fixed shape and type but an arbitrary value. It's also traced. If
-  we want to see a concrete value while debugging, and avoid the tracer too, we
-  can use the `disable_jit` context manager:
+  Here ``y`` has been abstracted by ``jit`` to a ``ShapedArray``, which
+  represents an array with a fixed shape and type but an arbitrary value. It's
+  also traced. If we want to see a concrete value while debugging, and avoid the
+  tracer too, we can use the ``disable_jit`` context manager:
 
   >>> with jax.disable_jit():
   >>>   print(f(np.array([1, 2, 3])))
@@ -328,28 +327,28 @@ def xla_computation(fun: Callable,
 
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux: bool = False, holomorphic: bool = False) -> Callable:
-  """Creates a function which evaluates the gradient of `fun`.
+  """Creates a function which evaluates the gradient of ``fun``.
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
-      `argnums` should be arrays, scalars, or standard Python containers. It
-      should return a scalar (which includes arrays with shape `()` but not
-      arrays with shape `(1,)` etc.)
+      ``argnums`` should be arrays, scalars, or standard Python containers. It
+      should return a scalar (which includes arrays with shape ``()`` but not
+      arrays with shape ``(1,)`` etc.)
     argnums: Optional, integer or sequence of integers. Specifies which
       positional argument(s) to differentiate with respect to (default 0).
-    has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
       first element is considered the output of the mathematical function to be
       differentiated and the second element is auxiliary data. Default False.
-    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+    holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
 
   Returns:
-    A function with the same arguments as `fun`, that evaluates the gradient of
-    `fun`. If `argnums` is an integer then the gradient has the same shape and
-    type as the positional argument indicated by that integer. If argnums is a
-    tuple of integers, the gradient is a tuple of values with the same shapes
-    and types as the corresponding arguments. If `has_aux` is True then a pair
-    of (gradient, auxiliary_data) is returned.
+    A function with the same arguments as ``fun``, that evaluates the gradient
+    of ``fun``. If ``argnums`` is an integer then the gradient has the same
+    shape and type as the positional argument indicated by that integer. If
+    argnums is a tuple of integers, the gradient is a tuple of values with the
+    same shapes and types as the corresponding arguments. If ``has_aux`` is True
+    then a pair of (gradient, auxiliary_data) is returned.
 
   For example:
 
@@ -379,28 +378,28 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False) -> Callable:
-  """Creates a function which evaluates both `fun` and the gradient of `fun`.
+  """Create a function which evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
-      `argnums` should be arrays, scalars, or standard Python containers. It
-      should return a scalar (which includes arrays with shape `()` but not
-      arrays with shape `(1,)` etc.)
+      ``argnums`` should be arrays, scalars, or standard Python containers. It
+      should return a scalar (which includes arrays with shape ``()`` but not
+      arrays with shape ``(1,)`` etc.)
     argnums: Optional, integer or sequence of integers. Specifies which
       positional argument(s) to differentiate with respect to (default 0).
-    has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
-    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+    holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
 
   Returns:
-    A function with the same arguments as `fun` that evaluates both `fun` and
-    the gradient of `fun` and returns them as a pair (a two-element tuple). If
-    `argnums` is an integer then the gradient has the same shape and type as the
-    positional argument indicated by that integer. If argnums is a sequence of
-    integers, the gradient is a tuple of values with the same shapes and types
-    as the corresponding arguments.
+    A function with the same arguments as ``fun`` that evaluates both ``fun``
+    and the gradient of ``fun`` and returns them as a pair (a two-element
+    tuple). If ``argnums`` is an integer then the gradient has the same shape
+    and type as the positional argument indicated by that integer. If argnums is
+    a sequence of integers, the gradient is a tuple of values with the same
+    shapes and types as the corresponding arguments.
   """
 
   docstr = ("Value and gradient of {fun} with respect to positional "
@@ -458,18 +457,18 @@ def _check_scalar(x):
 
 def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
            holomorphic: bool = False) -> Callable:
-  """Jacobian of `fun` evaluated column-by-column using forward-mode AD.
+  """Jacobian of ``fun`` evaluated column-by-column using forward-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
     argnums: Optional, integer or sequence of integers. Specifies which
-      positional argument(s) to differentiate with respect to (default `0`).
-    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      positional argument(s) to differentiate with respect to (default ``0``).
+    holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
 
   Returns:
-    A function with the same arguments as `fun`, that evaluates the Jacobian of
-    `fun` using forward-mode automatic differentiation.
+    A function with the same arguments as ``fun``, that evaluates the Jacobian of
+    ``fun`` using forward-mode automatic differentiation.
 
   >>> def f(x):
   ...   return jax.numpy.asarray(
@@ -497,25 +496,25 @@ def _check_real_input_jacfwd(x):
   aval = core.get_aval(x)
   if not dtypes.issubdtype(aval.dtype, onp.floating):
     msg = ("jacfwd only defined for functions with input dtypes that are "
-           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
-           "{}. For holomorphic differentiation, pass holomorphic=True.")
+           "sub-dtypes of `np.floating` (i.e. that model real values), but "
+           "got {}. For holomorphic differentiation, pass holomorphic=True.")
     raise TypeError(msg.format(aval.dtype.name))
 
 
 def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
            holomorphic: bool = False) -> Callable:
-  """Jacobian of `fun` evaluated row-by-row using reverse-mode AD.
+  """Jacobian of ``fun`` evaluated row-by-row using reverse-mode AD.
 
   Args:
     fun: Function whose Jacobian is to be computed.
-    argnums: Optional, integer or sequence of integers. Specifies which positional
-      argument(s) to differentiate with respect to (default `0`).
-    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+    argnums: Optional, integer or sequence of integers. Specifies which
+      positional argument(s) to differentiate with respect to (default ``0``).
+    holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
 
   Returns:
-    A function with the same arguments as `fun`, that evaluates the Jacobian of
-    `fun` using reverse-mode automatic differentiation.
+    A function with the same arguments as ``fun``, that evaluates the Jacobian of
+    ``fun`` using reverse-mode automatic differentiation.
 
   >>> def f(x):
   ...   return jax.numpy.asarray(
@@ -545,25 +544,25 @@ def _check_real_output_jacrev(x):
   aval = core.get_aval(x)
   if not dtypes.issubdtype(aval.dtype, onp.floating):
     msg = ("jacrev only defined for functions with output dtypes that are "
-           "sub-dtypes of `np.floating` (i.e. that model real values), but got "
-           "{}. For holomorphic differentiation, pass holomorphic=True.")
+           "sub-dtypes of `np.floating` (i.e. that model real values), but "
+           "got {}. For holomorphic differentiation, pass holomorphic=True.")
     raise TypeError(msg.format(aval.dtype.name))
 
 
 def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
             holomorphic: bool = False) -> Callable:
-  """Hessian of `fun`.
+  """Hessian of ``fun`` as a dense array.
 
   Args:
     fun: Function whose Hessian is to be computed.
     argnums: Optional, integer or sequence of integers. Specifies which
-      positional argument(s) to differentiate with respect to (default `0`).
-    holomorphic: Optional, bool. Indicates whether `fun` is promised to be
+      positional argument(s) to differentiate with respect to (default ``0``).
+    holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
 
   Returns:
-    A function with the same arguments as `fun`, that evaluates the Hessian of
-    `fun`.
+    A function with the same arguments as ``fun``, that evaluates the Hessian of
+    ``fun``.
 
   >>> g = lambda(x): x[0]**3 - 2*x[0]*x[1] - x[1]**6
   >>> print(jax.hessian(g)(jax.numpy.array([1., 2.])))
@@ -599,7 +598,7 @@ def _dtype(x):
 
 
 def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
-  """Vectorizing map. Creates a function which maps `fun` over argument axes.
+  """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
     fun: Function to be mapped over additional axes.
@@ -796,7 +795,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
       Operations that only depend on static arguments will be constant-folded.
       Calling the pmaped function with different values for these constants will
       trigger recompilation. If the pmaped function is called with fewer
-      positional arguments than indicated by `static_argnums` then an error is
+      positional arguments than indicated by ``static_argnums`` then an error is
       raised. Each of the static arguments will be broadcasted to all devices.
       Defaults to ().
     devices: This is an experimental feature and the API is likely to change.
@@ -1130,24 +1129,26 @@ def _shape_spec_consistent(spec, expr):
 
 
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
-  """Computes a (forward-mode) Jacobian-vector product of `fun`.
+  """Computes a (forward-mode) Jacobian-vector product of ``fun``.
 
   Args:
     fun: Function to be differentiated. Its arguments should be arrays, scalars,
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard Python container of arrays or scalars.
-    primals: The primal values at which the Jacobian of `fun` should be
+    primals: The primal values at which the Jacobian of ``fun`` should be
       evaluated. Should be either a tuple or a list of arguments,
-      and its length should  equal to the number of positional parameters of `fun`.
+      and its length should  equal to the number of positional parameters of
+      ``fun``.
     tangents: The tangent vector for which the Jacobian-vector product should be
       evaluated. Should be either a tuple or a list of tangents, with the same
-      tree structure and array shapes as `primals`.
+      tree structure and array shapes as ``primals``.
 
   Returns:
-    A `(primals_out, tangents_out)` pair, where `primals_out` is
-    `fun(*primals)`, and `tangents_out` is the Jacobian-vector product of
-    `function` evaluated at `primals` with `tangents`. The `tangents_out` value
-    has the same Python tree structure and shapes as `primals_out`.
+    A ``(primals_out, tangents_out)`` pair, where ``primals_out`` is
+    ``fun(*primals)``, and ``tangents_out`` is the Jacobian-vector product of
+    ``function`` evaluated at ``primals`` with ``tangents``. The
+    ``tangents_out`` value has the same Python tree structure and shapes as
+    ``primals_out``.
 
   For example:
 
@@ -1185,49 +1186,49 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
           tree_unflatten(out_tree(), out_tangents))
 
 def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
-  """Produce a linear approximation to `fun` using `jvp` and partial evaluation.
+  """Produce a linear approximation to ``fun`` using ``jvp`` and partial eval.
 
   Args:
     fun: Function to be differentiated. Its arguments should be arrays, scalars,
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard python container of arrays or scalars.
-    primals: The primal values at which the Jacobian of `fun` should be
+    primals: The primal values at which the Jacobian of ``fun`` should be
       evaluated. Should be a tuple of arrays, scalar, or standard Python
       container thereof. The length of the tuple is equal to the number of
-      positional parameters of `fun`.
+      positional parameters of ``fun``.
 
   Returns:
-    A pair where the first element is the value of `f(*primals)` and the second
-    element is a function that evaluates the (forward-mode) Jacobian-vector
-    product of `fun` evaluated at `primals` without re-doing the linearization
-    work.
+    A pair where the first element is the value of ``f(*primals)`` and the
+    second element is a function that evaluates the (forward-mode)
+    Jacobian-vector product of ``fun`` evaluated at ``primals`` without re-doing
+    the linearization work.
 
-  In terms of values computed, `linearize` behaves much like a curried `jvp`,
-  where these two code blocks compute the same values::
+  In terms of values computed, ``linearize`` behaves much like a curried
+  ``jvp``, where these two code blocks compute the same values::
 
     y, out_tangent = jax.jvp(f, (x,), (in_tangent,))
 
     y, f_jvp = jax.linearize(f, x)
     out_tangent = f_jvp(in_tangent)
 
-  However, the difference is that `linearize` uses partial evaluation so that
-  the function `f` is not re-linearized on calls to `f_jvp`. In general that
+  However, the difference is that ``linearize`` uses partial evaluation so that
+  the function ``f`` is not re-linearized on calls to ``f_jvp``. In general that
   means the memory usage scales with the size of the computation, much like in
-  reverse-mode. (Indeed, `linearize` has a similar signature to `vjp`!)
+  reverse-mode. (Indeed, ``linearize`` has a similar signature to ``vjp``!)
 
-  This function is mainly useful if you want to apply `f_jvp` multiple times,
+  This function is mainly useful if you want to apply ``f_jvp`` multiple times,
   i.e. to evaluate a pushforward for many different input tangent vectors at the
   same linearization point. Moreover if all the input tangent vectors are known
-  at once, it can be more efficient to vectorize using `vmap`, as in::
+  at once, it can be more efficient to vectorize using ``vmap``, as in::
 
     pushfwd = partial(jvp, f, (x,))
     y, out_tangents = vmap(pushfwd, out_axes=(None, 0))((in_tangents,))
 
-  By using `vmap` and `jvp` together like this we avoid the stored-linearization
+  By using ``vmap`` and ``jvp`` together like this we avoid the stored-linearization
   memory cost that scales with the depth of the computation, which is incurred
-  by both `linearize` and `vjp`.
+  by both ``linearize`` and ``vjp``.
 
-  Here's a more complete example of using `linearize`:
+  Here's a more complete example of using ``linearize``:
 
   >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
   ...
@@ -1294,19 +1295,19 @@ def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
 
 def vjp(fun: Callable, *primals, **kwargs
         ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
-  """Compute a (reverse-mode) vector-Jacobian product of `fun`.
+  """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
-  :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
+  :py:func:``grad`` is implemented as a special case of :py:func:``vjp``.
 
   Args:
     fun: Function to be differentiated. Its arguments should be arrays, scalars,
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard Python container of arrays or scalars.
-    primals: A sequence of primal values at which the Jacobian of `fun`
-      should be evaluated. The length of `primals` should be equal to the number
-      of positional parameters to `fun`. Each primal value should be a tuple of
-      arrays, scalar, or standard Python containers thereof.
-    has_aux: Optional, bool. Indicates whether `fun` returns a pair where the
+    primals: A sequence of primal values at which the Jacobian of ``fun``
+      should be evaluated. The length of ``primals`` should be equal to the
+      number of positional parameters to ``fun``. Each primal value should be a
+      tuple of arrays, scalar, or standard Python containers thereof.
+    has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
 
@@ -1360,23 +1361,22 @@ def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
-    fun: The function whose `jaxpr` is to be computed. Its positional arguments
-      and return value should be arrays, scalars, or standard Python containers
-      (tuple/list/dict) thereof.
+    fun: The function whose ``jaxpr`` is to be computed. Its positional
+      arguments and return value should be arrays, scalars, or standard Python
+      containers (tuple/list/dict) thereof.
 
   Returns:
-    A wrapped version of `fun` that when applied to example arguments returns a
-    TypedJaxpr representation of `fun` on those arguments.
+    A wrapped version of ``fun`` that when applied to example arguments returns a
+    ``TypedJaxpr`` representation of ``fun`` on those arguments.
 
-  A `jaxpr` is JAX's intermediate representation for program traces. The `jaxpr`
-  language is based on the simply-typed first-order lambda calculus with
-  let-bindings. `make_jaxpr` adapts a function to return its `jaxpr`, which we
-  can inspect to understand what JAX is doing internally.
+  A ``jaxpr`` is JAX's intermediate representation for program traces. The
+  ``jaxpr`` language is based on the simply-typed first-order lambda calculus
+  with let-bindings. ``make_jaxpr`` adapts a function to return its ``jaxpr``,
+  which we can inspect to understand what JAX is doing internally. The ``jaxpr``
+  returned is a trace of ``fun`` abstracted to ``ShapedArray`` level. Other
+  levels of abstraction exist internally.
 
-  The `jaxpr` returned is a trace of `fun` abstracted to `ShapedArray` level.
-  Other levels of abstraction exist internally.
-
-  We do not describe the semantics of the `jaxpr` language in detail here, but
+  We do not describe the semantics of the ``jaxpr`` language in detail here, but
   instead give a few examples.
 
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
