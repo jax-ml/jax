@@ -825,7 +825,7 @@ def diff(a, n=1, axis=-1,):
 
 
 @partial(jit, static_argnums=(1, 2))
-def _gradient(a, varargs, axis=None):
+def _gradient(a, varargs, axis):
   def gradient_along_axis(a, h, axis):
     sliced = partial(lax.slice_in_dim, a, axis=axis)
     a_grad = concatenate((
