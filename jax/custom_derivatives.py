@@ -96,7 +96,7 @@ class custom_jvp:
   differentiation of the underlying function's implementation. There is a single
   instance method, ``defjvp``, which defines the custom JVP rule.
 
-  For example:
+  For example::
 
     import jax.numpy as np
 
@@ -139,7 +139,7 @@ class custom_jvp:
     Returns:
       None.
 
-    Example:
+    Example::
 
       import jax.numpy as np
 
@@ -158,7 +158,28 @@ class custom_jvp:
     self.jvp = jvp
 
   def defjvps(self, *jvps):
-    """Convenience wrapper for defining JVPs for each argument separately."""
+    """Convenience wrapper for defining JVPs for each argument separately.
+
+    This convenience wrapper cannot be used together with ``nondiff_argnums``.
+
+    Args:
+      *jvps: a sequence of functions, one for each positional argument of the
+        ``custom_jvp`` function. Each function takes as arguments the tangent
+        value for the corresponding primal input, the primal output, and the
+        primal inputs. See the example below.
+
+    Returns:
+      None.
+
+    Example::
+
+      @jax.custom_jvp
+      def f(x, y):
+        return np.sin(x) * y
+
+      f.defjvps(lambda x_dot, primal_out, x, y: np.cos(x) * x_dot * y,
+                lambda y_dot, primal_out, x, y: -np.sin(x) * y_dot)
+    """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
 
@@ -333,7 +354,7 @@ class custom_vjp:
 
   This decorator precludes the use of forward-mode automatic differentiation.
 
-  For example:
+  For example::
 
     import jax.numpy as np
 
@@ -387,7 +408,7 @@ class custom_vjp:
     Returns:
       None.
 
-    Example:
+    Example::
 
       import jax.numpy as np
 
