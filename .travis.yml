@@ -37,7 +37,7 @@ install:
   # The following are needed to test the Colab notebooks and the documentation building
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       conda install --yes -c conda-forge pandoc ipykernel;
-      conda install --yes sphinx sphinx_rtd_theme nbsphinx jupyter_client matplotlib;
+      conda install --yes sphinx sphinx_rtd_theme nbsphinx sphinx-autodoc-typehints jupyter_client matplotlib;
       pip install sklearn;
     fi
 script:
