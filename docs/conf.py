@@ -60,6 +60,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'nbsphinx',
+    'sphinx_autodoc_typehints',
 ]
 
 intersphinx_mapping = {
