@@ -1816,24 +1816,40 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = onp.arange(10)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("tpu", "gpu", "cpu")# TODO(mattjj): follow up w/ xla
-  # Issue #2554
   def test_while_loop_of_pmap(self):
     # code from jsnoek@
+
     def body(i, x):
       result = api.pmap(lambda z: lax.psum(np.sin(z), 'i'), axis_name='i')(x)
       return result + x
     f_loop = lambda x: lax.fori_loop(0, 3, body, x)
-    ans = f_loop(np.ones(8))
+    ans = f_loop(np.ones(api.device_count()))
     del body, f_loop
 
     def body2(i, x):
       result = np.broadcast_to(np.sin(x).sum(), x.shape)
       return result + x
     g_loop = lambda x: lax.fori_loop(0, 3, body2, x)
-    expected = g_loop(np.ones(8))
+    expected = g_loop(np.ones(api.device_count()))
 
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_while_loop_of_pmap_error_message(self):
+
+    def body(i, x):
+      result = api.pmap(lambda z: lax.psum(np.sin(z), 'i'), axis_name='i')(x)
+      return result + x
+    f_loop = lambda x: lax.fori_loop(0, 3, body, x)
+
+    too_big = 2 * api.device_count()
+
+    self.assertRaisesRegex(
+        ValueError,
+        re.escape(
+            "compiling a primitive computation `while` that requires {} "
+            "replicas, but only {} XLA devices are available on backend {}."
+            .format(too_big, api.device_count(), jtu.device_under_test())),
+        lambda: f_loop(np.ones(too_big)))
 
 
 if __name__ == '__main__':
