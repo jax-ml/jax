@@ -1834,6 +1834,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_while_loop_of_pmap_error_message(self):
+
+    def body(i, x):
+      result = api.pmap(lambda z: lax.psum(np.sin(z), 'i'), axis_name='i')(x)
+      return result + x
+    f_loop = lambda x: lax.fori_loop(0, 3, body, x)
+
+    too_big = 2 * api.device_count()
+
+    self.assertRaisesRegex(
+        ValueError,
+        re.escape(
+            "compiling a primitive computation `while` that requires {} "
+            "replicas, but only {} XLA devices are available on backend {}."
+            .format(too_big, api.device_count(), jtu.device_under_test())),
+        lambda: f_loop(np.ones(too_big)))
+
 
 if __name__ == '__main__':
   absltest.main()

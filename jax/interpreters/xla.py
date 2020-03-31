@@ -185,6 +185,11 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     nreps = initial_style_primitive_replicas(params)
   else:
     nreps = 1
+  if nreps > xb.device_count(backend):
+    msg = ("compiling a primitive computation `{}` that requires {} replicas, "
+           "but only {} XLA devices are available on backend {}.")
+    raise ValueError(msg.format(prim, nreps, xb.device_count(backend),
+                                backend.platform))
   built_c = primitive_computation(prim, AxisEnv(nreps), backend, tuple_args,
                                   *avals, **params)
   options = xb.get_compile_options(
