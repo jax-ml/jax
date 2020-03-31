@@ -836,21 +836,21 @@ def _gradient(a, varargs, axis=None):
         return a_grad
 
     if axis is None:
-        axes = range(a.ndim)
+        axis = range(a.ndim)
     else:
         if isinstance(axis, int):
-            axes = (axis,)
+            axis = (axis,)
         if not isinstance(axis, tuple) and not isinstance(axis, list):
             raise ValueError("Give `axis` either as int or iterable")
         elif len(axis) == 0:
             return []
-        axes = [_canonicalize_axis(i, a.ndim) for i in axes]
+        axis = [_canonicalize_axis(i, a.ndim) for i in axis]
 
-    if min([s for i, s in enumerate(a.shape) if i in axes]) < 2:
+    if min([s for i, s in enumerate(a.shape) if i in axis]) < 2:
         raise ValueError("Shape of array too small to calculate "
                          "a numerical gradient, "
                          "at least 2 elements are required.")
-    len_axes = len(axes)
+    len_axes = len(axis)
     n = len(varargs)
     if n == 0:
         # no spacing
@@ -867,9 +867,9 @@ def _gradient(a, varargs, axis=None):
         raise NotImplementedError("Non-constant spacing not implemented")
 
     # TODO: use jax.lax loop tools if possible
-    a_grad = [gradient_along_axis(a, h, ax) for ax, h in zip(axes, dx)]
+    a_grad = [gradient_along_axis(a, h, ax) for ax, h in zip(axis, dx)]
 
-    if len(axes) == 1:
+    if len(axis) == 1:
         a_grad = a_grad[0]
 
     return a_grad
