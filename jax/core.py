@@ -328,7 +328,7 @@ class Trace:
     return '{}(level={}/{})'.format(
         self.__class__.__name__, self.level, self.sublevel)
 
-  def procecss_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError("must override to handle call-like primitives")
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
