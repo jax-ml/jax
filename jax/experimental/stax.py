@@ -134,12 +134,10 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     # TODO(phawkins): np.expand_dims should accept an axis tuple.
     # (https://github.com/numpy/numpy/issues/12290)
     ed = tuple(None if i in axis else slice(None) for i in range(np.ndim(x)))
-    beta = beta[ed]
-    gamma = gamma[ed]
     z = normalize(x, axis, epsilon=epsilon)
-    if center and scale: return gamma * z + beta
-    if center: return z + beta
-    if scale: return gamma * z
+    if center and scale: return gamma[ed] * z + beta[ed]
+    if center: return z + beta[ed]
+    if scale: return gamma[ed] * z
     return z
   return init_fun, apply_fun
 
