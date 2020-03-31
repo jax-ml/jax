@@ -1816,10 +1816,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = onp.arange(10)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("tpu", "gpu", "cpu")# TODO(mattjj): follow up w/ xla
+  # Issue #2554
   def test_while_loop_of_pmap(self):
-    if api.device_count() == 1 and xla_bridge.get_backend().platform == 'cpu':
-      raise SkipTest("test segfaults on cpu")  # TODO(mattjj): follow up w/ xla
-
     # code from jsnoek@
     def body(i, x):
       result = api.pmap(lambda z: lax.psum(np.sin(z), 'i'), axis_name='i')(x)
