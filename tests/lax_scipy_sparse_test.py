@@ -16,6 +16,7 @@ from functools import partial
 from absl.testing import parameterized
 from absl.testing import absltest
 
+from jax import jit
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse.linalg
@@ -25,11 +26,21 @@ from jax.experimental import sparse
 
 float_types = [np.float32, np.float64]
 complex_types = [np.complex64, np.complex128]
-_H = lambda x: np.swapaxes(x, -1, -2).conj()
 
 
-def dot_high_precision(a, b):
-  return lax.dot(a, b, precision=lax.Precision.HIGHEST)
+def matmul_high_precision(a, b):
+  return jnp.matmul(a, b, precision=lax.Precision.HIGHEST)
+
+
+@jit
+def posify(matrix):
+  return matmul_high_precision(matrix, matrix.T.conj())
+
+
+def lax_cg(a, b, maxiter=None, tol=0.0, atol=0.0):
+  matvec = lambda x: matmul_high_precision(a, x)
+  x, _ = sparse.cg(matvec=matvec, b=b, maxiter=maxiter, tol=tol, atol=atol)
+  return x
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -40,23 +51,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for shape in [(4, 4), (7, 7), (32, 32)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  def test_linalg_sparse_cg(self, shape, dtype, rng_factory):
+  def test_cg_against_scipy(self, shape, dtype, rng_factory):
 
     def scipy_cg(a, b, maxiter=None, tol=0.0, atol=0.0):
       x, _ = scipy.sparse.linalg.cg(
           a, b, maxiter=maxiter, tol=tol, atol=atol)
       return x
 
-    def lax_cg(a, b, maxiter=None, tol=0.0, atol=0.0):
-      matvec = lambda x: dot_high_precision(a, x)
-      x, _ = sparse.cg(matvec=matvec, b=b, maxiter=maxiter, tol=tol, atol=atol)
-      return x
-
     def args_maker():
       rng = rng_factory()
-      b = rng((shape[0],), dtype)
+      b = rng(shape[:1], dtype)
       square_mat = np.eye(N=shape[0], dtype=dtype) + rng(shape, dtype)
-      spd_mat = np.matmul(square_mat, _H(square_mat))
+      spd_mat = square_mat @ square_mat.T.conj()
       return spd_mat, b
 
     self._CheckAgainstNumpy(
@@ -78,14 +84,31 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         check_dtypes=True,
         tol=1e-4)
 
-    # TODO(shoyer): figure out why calculating gradients appears to crash XLA
-    # rng = rng_factory()
-    # a = rng(shape, dtype)
-    # b = rng((shape[0],), dtype)
-    # jtu.check_grads(
-    #     lambda x, y: lax_cg(dot_high_precision(x, x), y),
-    #     (a, b),
-    #     order=2)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(2, 2)]
+      for dtype in float_types
+      for rng_factory in [jtu.rand_default]))
+  def test_cg_as_solve(self, shape, dtype, rng_factory):
+
+    rng = rng_factory()
+    a = rng(shape, dtype)
+    b = rng(shape[:1], dtype)
+
+    expected = np.linalg.solve(posify(a), b)
+    actual = lax_cg(posify(a), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    actual = jit(lax_cg)(posify(a), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # numerical gradients are only well defined if ``a`` is guaranteed to be
+    # positive definite.
+    jtu.check_grads(
+        lambda x, y: lax_cg(posify(x), y),
+        (a, b), order=2, rtol=1e-2)
 
 
 if __name__ == "__main__":

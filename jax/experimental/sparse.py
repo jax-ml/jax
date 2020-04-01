@@ -17,6 +17,7 @@ import textwrap
 
 import scipy.sparse.linalg
 import jax.numpy as jnp
+import numpy as np
 from jax.numpy.lax_numpy import _wraps
 from .. import lax
 
