@@ -266,7 +266,7 @@ def Dropout(rate, mode='train'):
     if rng is None:
       msg = ("Dropout layer requires apply_fun to be called with a PRNG key "
              "argument. That is, instead of `apply_fun(params, inputs)`, call "
-             "it like `apply_fun(params, inputs, key)` where `key` is a "
+             "it like `apply_fun(params, inputs, rng)` where `rng` is a "
              "jax.random.PRNGKey value.")
       raise ValueError(msg)
     if mode == 'train':
