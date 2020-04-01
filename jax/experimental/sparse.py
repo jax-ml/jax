@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,51 +12,62 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 from functools import partial
+import textwrap
 
 import scipy.sparse.linalg
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.numpy.lax_numpy import _wraps
 from .. import lax
-import numpy as onp
 
-def body_fun(matvec, x):
-  p, x_current, r, r_norm, k = x
+
+def _vdot(x, y):
+  return jnp.vdot(x, y, precision=lax.Precision.HIGHEST)
+
+
+def _cg_solve(matvec, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None):
   # inspired by https://en.wikipedia.org/wiki/Conjugate_gradient_method#Example_code_in_MATLAB_/_GNU_Octave
-  Ap = matvec(p)
-  alpha = r_norm / lax.dot(p, Ap)
-  x_new = x_current + alpha * p
-  r_new = r - alpha * Ap
-  r_norm_new = lax.dot(r_new, np.conj(r_new))
-  p_new = r_new + (r_norm_new / r_norm) * p
-  return p_new, x_new, r_new, r_norm_new, (k+1)
 
-def _cg_solve(matvec, b, x0, tol, maxiter):
-  N = np.shape(b)[0]
-  x_0 = np.zeros_like(b)
-  if x0 is not None:
-    x_0 = x0
-    if not np.shape(x0) == (N,):
-      raise ValueError('A and x have incompatible dimensions')
-  if maxiter is None:
-    maxiter = max(N*10, 1000)
-  r_0 = b - matvec(x_0)
-  r_0_norm = lax.dot(r_0, np.conj(r_0))
-  p_0 = r_0
-  _, x_final, _, _, _ = lax.while_loop(
-      lambda x: (x[-2] > tol) & (x[-1] < maxiter),
-      partial(body_fun, matvec),
-      (p_0, x_0, r_0, r_0_norm, 0)
-  )
+  # copied from the non-legacy behavior of scipy.sparse.linalg.cg
+  bs = _vdot(b, b)
+  atol2 = jnp.maximum(tol ** 2 * bs, atol ** 2)
+
+  def cond_fun(value):
+    x, r, rs, p, k = value
+    return (rs > atol2) & (maxiter is None or k < maxiter)
+
+  def body_fun(value):
+    x, r, rs, p, k = value
+    Ap = matvec(p)
+    alpha = rs / _vdot(p, Ap)
+    x_new = x + alpha * p
+    r_new = r - alpha * Ap
+    rs_new = _vdot(r_new, r_new)
+    beta = rs_new / rs
+    p_new = r_new + beta * p
+    return x_new, r_new, rs_new, p_new, k + 1
+
+  r0 = b - matvec(x0)
+  rs0 = _vdot(r0, r0)
+  initial_value = (x0, r0, rs0, r0, 0)
+
+  x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
+
   return x_final
 
-@_wraps(scipy.sparse.linalg.cg)
-def cg(matvec, b, x0=None, tol=1e-10, maxiter=None):
-  # exposed as scipy.sparse.cg
-  info = 0
-  cg_solve = lambda matvec, b: _cg_solve(matvec, b, x0, tol, maxiter)
+
+@_wraps(scipy.sparse.linalg.cg,
+    lax_description=textwrap.dedent("""\
+        Unlike scipy.sparse.linalg.cg, the first argument should be a function
+        that returns the matrix-vector product, not a LinearOperator. Also, the
+        return code ``info`` is currently always fixed at 0.
+        """))
+def cg(matvec, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None):
+  if x0 is None:
+    x0 = jnp.zeros_like(b)
+  if x0.shape != b.shape:
+    raise ValueError('x0 and b must have matching shape')
+  cg_solve = partial(_cg_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter)
   x = lax.custom_linear_solve(matvec, b, cg_solve, symmetric=True)
+  info = 0  # TODO(shoyer): return the real iteration count here
   return x, info
