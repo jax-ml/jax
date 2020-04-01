@@ -226,11 +226,10 @@ class LaxRandomTest(jtu.JaxTestCase):
        "a": a, "b": b, "dtype": onp.dtype(dtype).name}
       for a in [0.2, 5.]
       for b in [0.2, 5.]
-      for dtype in [onp.float32, onp.float64]))
-  # TODO(phawkins): slow compilation times on cpu and tpu.
-  # TODO(mattjj): test fails after https://github.com/google/jax/pull/1123
-  @jtu.skip_on_devices("cpu", "gpu", "tpu")
+      for dtype in [onp.float64]))  # NOTE: KS test fails with float32
   def testBeta(self, a, b, dtype):
+    if not FLAGS.jax_enable_x64:
+      raise SkipTest("skip test except on X64")
     key = random.PRNGKey(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
     crand = api.jit(rand)
