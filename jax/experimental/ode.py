@@ -155,17 +155,19 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=np.inf):
     point in `t`, represented as an array (or pytree of arrays) with the same
     shape/structure as `y0` except with a new leading axis of length `len(t)`.
   """
-  return _odeint_wrapper(func, rtol, atol, mxstep, y0, t, *args)
+  _init_nfe = 0.  # add argument to input signature so that VJP can return b-NFE
+  return _odeint_wrapper(func, rtol, atol, mxstep, _init_nfe, y0, t, *args)
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3))
-def _odeint_wrapper(func, rtol, atol, mxstep, y0, ts, *args):
+def _odeint_wrapper(func, rtol, atol, mxstep, _init_nfe, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
   func = ravel_first_arg(func, unravel)
-  out = _odeint(func, rtol, atol, mxstep, y0, ts, *args)
-  return jax.vmap(unravel)(out)
+  nfe, out = _odeint(func, rtol, atol, mxstep, _init_nfe, y0, ts, *args)
+  flat_, unravel = ravel_pytree((nfe, jax.vmap(unravel)(out)))
+  return unravel(flat_)
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1, 2, 3))
-def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
+def _odeint(func, rtol, atol, mxstep, _init_nfe, y0, ts, *args):
   func_ = lambda y, t: func(y, t, *args)
 
   def scan_fun(carry, target_t):
@@ -186,8 +188,10 @@ def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
       old = [i + 1,      y,      f,      t, dt, last_t,     interp_coeff]
       return map(partial(np.where, np.all(error_ratios <= 1.)), new, old)
 
-    _, *carry = lax.while_loop(cond_fun, body_fun, [0] + carry)
-    _, _, t, _, last_t, interp_coeff = carry
+    nfe = carry[-1]
+    n_steps, *carry_ = lax.while_loop(cond_fun, body_fun, [0] + carry[:-1])
+    carry = carry_ + [nfe + 6 * n_steps]
+    _, _, t, _, last_t, interp_coeff = carry[:-1]
     relative_output_time = (target_t - last_t) / (t - last_t)
     y_target = np.polyval(interp_coeff, relative_output_time)
     return carry, y_target
@@ -195,13 +199,15 @@ def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
   f0 = func_(y0, ts[0])
   dt = initial_step_size(func_, ts[0], y0, 4, rtol, atol, f0)
   interp_coeff = np.array([y0] * 5)
-  init_carry = [y0, f0, ts[0], dt, ts[0], interp_coeff]
-  _, ys = lax.scan(scan_fun, init_carry, ts[1:])
-  return np.concatenate((y0[None], ys))
+  init_nfe = 2.  # real init NFE, since picking initial step size takes 2 NFE
+  init_carry = [y0, f0, ts[0], dt, ts[0], interp_coeff, init_nfe]
+  carry, ys = lax.scan(scan_fun, init_carry, ts[1:])
+  nfe = carry[-1]
+  return nfe, np.concatenate((y0[None], ys))
 
-def _odeint_fwd(func, rtol, atol, mxstep, y0, ts, *args):
-  ys = _odeint(func, rtol, atol, mxstep, y0, ts, *args)
-  return ys, (ys, ts, args)
+def _odeint_fwd(func, rtol, atol, mxstep, _init_nfe, y0, ts, *args):
+  nfe, ys = _odeint(func, rtol, atol, mxstep, _init_nfe, y0, ts, *args)
+  return (nfe, ys), (ys, ts, args)
 
 def _odeint_rev(func, rtol, atol, mxstep, res, g):
   ys, ts, args = res
@@ -217,24 +223,29 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
   t0_bar = 0.
 
   def scan_fun(carry, i):
-    y_bar, t0_bar, args_bar = carry
+    y_bar, t0_bar, args_bar, nfe = carry
     # Compute effect of moving measurement time
     t_bar = np.dot(func(ys[i], ts[i], *args), g[i])
     t0_bar = t0_bar - t_bar
     # Run augmented system backwards to previous observation
-    _, y_bar, t0_bar, args_bar = odeint(
+    cur_nfe, (_, y_bar, t0_bar, args_bar) = odeint(
         aug_dynamics, (ys[i], y_bar, t0_bar, args_bar), np.array([ts[i - 1], ts[i]]),
         *args, rtol=rtol, atol=atol, mxstep=mxstep)
+    nfe += cur_nfe + 1  # add 1 for calculating t_bar
     y_bar, t0_bar, args_bar = tree_map(op.itemgetter(1), (y_bar, t0_bar, args_bar))
     # Add gradient from current output
     y_bar = y_bar + g[i - 1]
-    return (y_bar, t0_bar, args_bar), t_bar
+    return (y_bar, t0_bar, args_bar, nfe), t_bar
 
-  init_carry = (g[-1], 0., tree_map(np.zeros_like, args))
-  (y_bar, t0_bar, args_bar), rev_ts_bar = lax.scan(
+  # remove cotangent wrt nfe
+  # this assumes the nfe output has no outgoing edges in the computation graph
+  _, g = g
+  init_carry = (g[-1], 0., tree_map(np.zeros_like, args), 0.)
+  (y_bar, t0_bar, args_bar, nfe), rev_ts_bar = lax.scan(
       scan_fun, init_carry, np.arange(len(ts) - 1, 0, -1))
   ts_bar = np.concatenate([np.array([t0_bar]), rev_ts_bar[::-1]])
-  return (y_bar, ts_bar, *args_bar)
+  # use spot for gradient wrt NFE argument for reporting b-NFE
+  return (nfe, y_bar, ts_bar, *args_bar)
 
 _odeint.defvjp(_odeint_fwd, _odeint_rev)
 
@@ -263,7 +274,7 @@ def benchmark_odeint(fun, y0, tspace, *args):
   for k in range(n_trials):
     start = time.time()
     for _ in range(n_repeat):
-      jax_result = odeint(jax_fun, y0, tspace, *args)
+      nfe, jax_result = odeint(jax_fun, y0, tspace, *args)
     jax_result.block_until_ready()
     end = time.time()
     print('JAX odeint elapsed time ({} of {}): {}'.format(k+1, n_trials, end-start))
@@ -280,7 +291,7 @@ def pend_benchmark_odeint():
 
 def pend_check_grads():
   def f(y0, ts, *args):
-    return odeint(partial(pend, np), y0, ts, *args)
+    return odeint(partial(pend, np), y0, ts, *args)[1]
 
   y0 = [np.pi - 0.1, 0.0]
   ts = np.linspace(0., 1., 11)
@@ -289,7 +300,27 @@ def pend_check_grads():
   check_grads(f, (y0, ts, *args), modes=["rev"], order=2,
               atol=1e-1, rtol=1e-1)
 
+def pend_get_nfe():
+  def f(init_nfe, y0, ts, *args):
+    return _odeint_wrapper(partial(pend, np),
+                           1.4e-8,
+                           1.4e-8,
+                           np.inf,
+                           init_nfe,
+                           y0, ts, *args)
+
+  y0 = [np.pi - 0.1, 0.0]
+  ts = np.linspace(0., 1., 11)
+  args = (0.25, 9.8)
+
+  f_nfe, ys = f(0., y0, ts, *args)
+  _, vjpfun_ = jax.vjp(f, 0., y0, ts, *args)
+  b_nfe, *cotangent_out = vjpfun_((f_nfe, ys))
+  print("Forward NFE:\t", int(f_nfe))
+  print("Backward NFE:\t", int(b_nfe))
+
 
 if __name__ == '__main__':
   pend_benchmark_odeint()
   pend_check_grads()
+  pend_get_nfe()
