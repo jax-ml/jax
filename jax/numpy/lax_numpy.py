@@ -2317,25 +2317,20 @@ def dot(a, b, precision=None):  # pylint: disable=missing-docstring
 def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
-  a = lax.reshape(a, (1,) + shape(a)) if a_is_vec else a
-  b = lax.reshape(b, shape(b) + (1,)) if b_is_vec else b
-
-  a, b = _promote_dtypes(a, b)
-  batch_shape = lax.broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
-  a = broadcast_to(a, batch_shape + shape(a)[-2:])
-  b = broadcast_to(b, batch_shape + shape(b)[-2:])
-  batch_dims = tuple(range(len(batch_shape)))
-  dim_numbers = (((ndim(a) - 1,), (ndim(b) - 2,)), (batch_dims, batch_dims))
-  result = lax.dot_general(a, b, dim_numbers,  precision)
-
-  if a_is_vec or b_is_vec:
-    m, n = shape(result)[-2:]
-    new_m = () if a_is_vec else (m,)
-    new_n = () if b_is_vec else (n,)
-    return lax.reshape(result, batch_shape + new_m + new_n)
+  # We lower to einsum here because it handles batch dimensions for us.
+  # np.matmul is stricter than np.einsum with respect to size 1 contracting
+  # dimensions, so we need an additional check.
+  if shape(a)[0 if a_is_vec else -1] != shape(b)[0 if b_is_vec else -2]:
+    msg = "matmul requires contracting dimension to match, got {} and {}"
+    raise ValueError(msg.format(shape(a), shape(b)))
+  if a_is_vec and b_is_vec:
+    return lax.dot(a, b, precision=precision)
+  elif a_is_vec:
+    return einsum('i,...ij->...j', a, b, precision=precision)
+  elif b_is_vec:
+    return einsum('...ij,j->...i', a, b, precision=precision)
   else:
-    return result
-
+    return einsum('...ij,...jk->...ik', a, b, precision=precision)
 
 @_wraps(onp.vdot, lax_description=_PRECISION_DOC)
 def vdot(a, b, precision=None):
@@ -2425,6 +2420,17 @@ def _einsum(operands, contractions, precision):
           names = names.replace(name, '', count - 1)
     return operand, names
 
+  def filter_singleton_dims(operand, names, other_shape, other_names):
+    s = shape(operand)
+    new_shape = []
+    new_names = []
+    for i, d in enumerate(names):
+      other_i = other_names.find(d)
+      if s[i] != 1 or other_i == -1 or other_shape[other_i] == 1:
+        new_shape.append(s[i])
+        new_names.append(d)
+    return reshape(operand, tuple(new_shape)), "".join(new_names)
+
   for operand_indices, contracted_names, einstr in contractions:
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
@@ -2445,8 +2451,17 @@ def _einsum(operands, contractions, precision):
 
     elif len(operand_indices) == 2:
       lhs, rhs = map(operands.pop, operand_indices)
-      lhs_counts, rhs_counts = map(collections.Counter, input_names)
       lhs_names, rhs_names = input_names
+
+      # handle cases where one side of a contracting or batch dimension is 1
+      # but its counterpart is not.
+      lhs, lhs_names = filter_singleton_dims(lhs, lhs_names, shape(rhs),
+                                             rhs_names)
+      rhs, rhs_names = filter_singleton_dims(rhs, rhs_names, shape(lhs),
+                                             lhs_names)
+
+      lhs_counts = collections.Counter(lhs_names)
+      rhs_counts = collections.Counter(rhs_names)
 
       # sum out unique contracted indices in lhs and rhs
       lhs_uniques = [name for name in contracted_names
@@ -2465,14 +2480,16 @@ def _einsum(operands, contractions, precision):
 
       contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
       batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
+
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
 
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
-      assert _all(name in lhs_names and name in rhs_names and
-                  lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
-                  for name in contracted_names)
+      assert _all(
+        name in lhs_names and name in rhs_names and
+        lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
+        for name in contracted_names)
 
       # move batch dims to the front (required by lax.dot_general, and easier)
       batch_dims = tuple(range(len(batch_names)))
