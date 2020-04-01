@@ -2408,6 +2408,7 @@ def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
   if shape(a)[0 if a_is_vec else -1] != shape(b)[0 if b_is_vec else -2]:
     msg = "matmul requires contracting dimension to match, got {} and {}"
     raise ValueError(msg.format(shape(a), shape(b)))
+  a, b = _promote_dtypes(a, b)
   if a_is_vec and b_is_vec:
     return lax.dot(a, b, precision=precision)
   elif a_is_vec:
