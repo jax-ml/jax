@@ -68,30 +68,13 @@ def shard_args(backend, devices, assignments, axis_size, args):
   for a, arg in enumerate(args):
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
     # inline handling for ShardedDeviceArray as a special case for performance
-    if type(arg) is ShardedDeviceArray:
-      if nrep == len(arg.device_buffers):
-        # The argument is already prepared for the right number of replicas, so
-        # we just ensure that buf[r] is on devices[r] for each replica index r
-        # TODO(mattjj): compared to the other case, this logic has less looping
-        # but could incur more device-to-device data movement
-        for r, buf in enumerate(arg.device_buffers):
-          buffers[r][a] = buf if buf.device() == devices[r] else buf.copy_to_device(devices[r])
-      else:
-        # The argument is prepared for a different number of replicas, so for
-        # each of our replica indices we check if there's already a buffer with
-        # the correct logical assignment on the correct device, and if not just
-        # copy one of them
-        prev_assignments = assign_shards_to_replicas(len(arg.device_buffers), axis_size)
-        candidates = defaultdict(list)
-        for r, buf in enumerate(arg.device_buffers):
-          candidates[prev_assignments[r]].append(buf)
-        for r in range(nrep):
-          for buf in candidates[assignments[r]]:
-            if buf.device() == devices[r]:
-              buffers[r][a] = buf
-              break
-          else:
-            buffers[r][a] = buf.copy_to_device(devices[r])
+    if type(arg) is ShardedDeviceArray and nrep == len(arg.device_buffers):
+      # The argument is already prepared for the right number of replicas, so
+      # we just ensure that buf[r] is on devices[r] for each replica index r
+      # TODO(mattjj): compared to the other case, this logic has less looping
+      # but could incur more device-to-device data movement
+      for r, buf in enumerate(arg.device_buffers):
+        buffers[r][a] = buf if buf.device() == devices[r] else buf.copy_to_device(devices[r])
     else:
       bufs = shard_arg_handlers[type(arg)](arg, devices, assignments)
       for r, buf in enumerate(bufs):
@@ -394,16 +377,26 @@ class ShardedDeviceArray(xla.DeviceArray):
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
 
-# This handler code is effectively dead because we in-lined it in shard_args for
-# performance reasons.
-def _shard_sharded_device_array(x, devices, assignments):
-  n = len(devices)
-  if n == len(x.device_buffers):
-    return (b if b.device() == devices[r] else b.copy_to_device(devices[r])
-            for r, b in enumerate(x.device_buffers))
-  else:
-    return (xla.device_put(x[assignments[r]], devices[r]) for r in range(n))
-shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array
+
+# The fast path is handled directly in shard_args().
+def _shard_sharded_device_array_slow_path(x, devices, assignments):
+  # The array is sharded for a different number of replicas, so for each of our
+  # replica indices we check if there's already a buffer with the correct
+  # logical assignment on the correct device, and if not just copy one of them
+  prev_assignments = assign_shards_to_replicas(len(x.device_buffers), axis_size)
+  candidates = defaultdict(list)
+  for r, buf in enumerate(x.device_buffers):
+    candidates[prev_assignments[r]].append(buf)
+  bufs = []
+  for r in range(devices):
+    for buf in candidates[assignments[r]]:
+      if buf.device() == devices[r]:
+        bufs.append(buf)
+        break
+    else:
+      bufs.append(buf.copy_to_device(devices[r]))
+  return bufs
+shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array_slow_path
 
 def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
   return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
