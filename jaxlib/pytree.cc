@@ -321,7 +321,7 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
       FlattenHelper(entry, leaves, tree);
     }
   } else {
-    CHECK(node.kind == Kind::kLeaf);
+    assert(node.kind == Kind::kLeaf);
     leaves->append(py::reinterpret_borrow<py::object>(handle));
   }
   node.num_nodes = tree->traversal_.size() - start_num_nodes + 1;
