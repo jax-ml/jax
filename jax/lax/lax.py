@@ -2559,7 +2559,7 @@ def _reshape_impl(operand, new_sizes, dimensions):
     if bcast_dims is not None:
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
-      return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+      return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   if (type(operand) is pxla.ShardedDeviceArray and dimensions is None
       and _is_axis_merge(old_sizes, new_sizes)):
     aval = ShapedArray(new_sizes, operand.dtype)

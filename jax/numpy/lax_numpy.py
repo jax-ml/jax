@@ -1811,6 +1811,9 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if isinstance(object, ndarray):
     if dtype and _dtype(object) != dtypes.canonicalize_dtype(dtype):
       out = lax.convert_element_type(object, dtype)
+    elif isinstance(object, DeviceArray):
+      # respect current device placement
+      out = object
     else:
       out = device_put(object)
   elif isscalar(object):
