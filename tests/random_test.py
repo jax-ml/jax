@@ -227,8 +227,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       for a in [0.2, 5.]
       for b in [0.2, 5.]
       for dtype in [onp.float64]))  # NOTE: KS test fails with float32
-  # TODO(phawkins): slow compilation times on cpu and tpu.
-  @jtu.skip_on_devices("tpu")
   def testBeta(self, a, b, dtype):
     if not FLAGS.jax_enable_x64:
       raise SkipTest("skip test except on X64")
