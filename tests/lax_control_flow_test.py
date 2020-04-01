@@ -1654,7 +1654,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         (a, b), order=2, rtol=1e-2)
 
   def test_custom_linear_solve_complex(self):
-    raise SkipTest("known failure: https://github.com/google/jax/issues/2572")
 
     def positive_definite_solve(a, b):
       def solve(matvec, x):
@@ -1670,9 +1669,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = positive_definite_solve(posify(a), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    jtu.check_grads(
-        lambda x, y: positive_definite_solve(posify(x), y),
-        (a, b), order=2, rtol=1e-2)
+    # TODO(shoyer): remove this error when complex values work 
+    with self.assertRaises(NotImplementedError):
+      jtu.check_grads(
+          lambda x, y: positive_definite_solve(posify(x), y),
+          (a, b), order=2, rtol=1e-2)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
