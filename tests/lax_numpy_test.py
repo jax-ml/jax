@@ -872,6 +872,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  def testClipError(self):
+    with self.assertRaisesRegex(ValueError, "At most one of a_min and a_max.*"):
+      jnp.clip(jnp.zeros((3,)))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_decimals={}".format(
           jtu.format_shape_dtype_string(shape, dtype), decimals),
