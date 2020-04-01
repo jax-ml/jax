@@ -37,52 +37,74 @@ def posify(matrix):
   return matmul_high_precision(matrix, matrix.T.conj())
 
 
-def lax_cg(a, b, maxiter=None, tol=0.0, atol=0.0):
-  matvec = lambda x: matmul_high_precision(a, x)
-  x, _ = sparse.cg(matvec=matvec, b=b, maxiter=maxiter, tol=tol, atol=atol)
+def lax_cg(A, b, M=None, tol=0.0, atol=0.0, **kwargs):
+  A = partial(matmul_high_precision, A)
+  if M is not None:
+    M = partial(matmul_high_precision, M)
+  x, _ = sparse.cg(A, b, tol=tol, atol=atol, M=M, **kwargs)
   return x
+
+
+def rand_sym_pos_def(rng, shape, dtype):
+  matrix = np.eye(N=shape[0], dtype=dtype) + rng(shape, dtype)
+  return matrix @ matrix.T.conj()
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+       "_shape={}_preconditioner={}".format(
+            jtu.format_shape_dtype_string(shape, dtype),
+            preconditioner),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory,
+       "preconditioner": preconditioner}
       for shape in [(4, 4), (7, 7), (32, 32)]
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
-  def test_cg_against_scipy(self, shape, dtype, rng_factory):
+      for rng_factory in [jtu.rand_default]
+      for rng_factory in [jtu.rand_default]
+      for preconditioner in [None, 'random', 'identity', 'exact']))
+  def test_cg_against_scipy(self, shape, dtype, rng_factory, preconditioner):
 
-    def scipy_cg(a, b, maxiter=None, tol=0.0, atol=0.0):
-      x, _ = scipy.sparse.linalg.cg(
-          a, b, maxiter=maxiter, tol=tol, atol=atol)
+    def scipy_cg(A, b, tol=0.0, atol=0.0, **kwargs):
+      x, _ = scipy.sparse.linalg.cg(A, b, tol=tol, atol=atol, **kwargs)
       return x
 
+    rng = rng_factory()
+    A = rand_sym_pos_def(rng, shape, dtype)
+    b = rng(shape[:1], dtype)
+
+    if preconditioner == 'identity':
+      M = np.eye(shape[0], dtype=dtype)
+    elif preconditioner == 'random':
+      M = np.linalg.inv(rand_sym_pos_def(rng, shape, dtype))
+    elif preconditioner == 'exact':
+      M = np.linalg.inv(A)
+    else:
+      M = None
+
     def args_maker():
-      rng = rng_factory()
-      b = rng(shape[:1], dtype)
-      square_mat = np.eye(N=shape[0], dtype=dtype) + rng(shape, dtype)
-      spd_mat = square_mat @ square_mat.T.conj()
-      return spd_mat, b
+      return A, b
 
     self._CheckAgainstNumpy(
-        partial(scipy_cg, maxiter=1),
-        partial(lax_cg, maxiter=1),
+        partial(scipy_cg, M=M, maxiter=1),
+        partial(lax_cg, M=M, maxiter=1),
         args_maker,
-        check_dtypes=True)
+        check_dtypes=True,
+        tol=3e-5)
 
     self._CheckAgainstNumpy(
-        partial(scipy_cg, maxiter=3),
-        partial(lax_cg, maxiter=3),
-        args_maker,
-        check_dtypes=True)
-
-    self._CheckAgainstNumpy(
-        partial(scipy_cg, atol=1e-6),
-        partial(lax_cg, atol=1e-6),
+        partial(scipy_cg, M=M, maxiter=3),
+        partial(lax_cg, M=M, maxiter=3),
         args_maker,
         check_dtypes=True,
         tol=1e-4)
+
+    self._CheckAgainstNumpy(
+        np.linalg.solve,
+        partial(lax_cg, M=M, atol=1e-6),
+        args_maker,
+        check_dtypes=True,
+        tol=2e-4)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
