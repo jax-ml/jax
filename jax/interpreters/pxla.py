@@ -46,11 +46,10 @@ _map = safe_map
 
 def identity(x): return x
 
-def shard_args(backend, devices, assignments, axis_size, args):
+def shard_args(devices, assignments, axis_size, args):
   """Shard each argument data array along its leading axis.
 
   Args:
-    backend: the platform to be used
     devices: list of Devices mapping replica index to a physical device.
     assignments: list of integers with the same length as `devices` mapping
       replica index to an index along the leading axis (i.e. a shard).
@@ -580,7 +579,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   compiled = built.Compile(compile_options=compile_options,
                            backend=xb.get_backend(backend))
 
-  handle_args = partial(shard_args, backend, compiled.local_devices(),
+  handle_args = partial(shard_args, compiled.local_devices(),
                         assign_shards_to_replicas(num_local_replicas, axis_size),
                         axis_size)
   handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas,
