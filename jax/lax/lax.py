@@ -2865,12 +2865,17 @@ def _is_singleton_reshape(old, new):
       return None
 
 def _reshape_sharded_device_array(array, new_sizes, old_sizes):
-  """Returns None if `array` could not be efficiently reshaped."""
+  """Returns None if `array` could not be efficiently reshaped.
+
+  This function is primarily to support soft_pmap, although these optimizations
+  could be useful when directly calling reshape as well.
+  """
   # TODO(skye): the axis split/merge logic below assumes that
   # ShardedDevicesArrays are always sharded across their leading axes. Remove
   # this constraint, especially if/when we add APIs that produce sharding across
   # interior axes.
-  if any(num_shards != 1 for num_shards in array.sharding_spec.shards_per_axis):
+  if any(num_shards != 1 for num_shards
+         in array.sharding_spec.shards_per_axis[1:]):
     return None
 
   # TODO(skye): handle replicated buffers
@@ -2878,7 +2883,7 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
     return None
 
   # ShardedDevicesArrays require all buffers to have the same shape
-  chunk_shape = array.device_buffers[0][0].shape().dimensions()
+  chunk_shape = array.device_buffers[0].shape().dimensions()
 
   if _is_axis_merge(old_sizes, new_sizes):
     num_chunks, ragged = divmod(new_sizes[0], chunk_shape[0])
@@ -2888,9 +2893,7 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
         shards_per_axis=(num_chunks,) + (1,) * (len(new_sizes) - 1),
         is_axis_materialized=(True,) * len(new_sizes),
         replication_factor=1)
-    indices = pxla.get_indices(new_sizes, sharding_spec)
-    return pxla.ShardedDeviceArray(aval, sharding_spec, indices,
-                                   array.device_buffers)
+    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
 
   if _is_axis_split(old_sizes, new_sizes):
     split_axis_size, ragged = divmod(old_sizes[0], chunk_shape[0])
@@ -2899,9 +2902,7 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
     aval = ShapedArray(new_sizes, array.dtype)
     sharding_spec = pxla._pmap_sharding_spec(new_sizes[0], new_sizes[0],
                                              new_sizes[1:])
-    indices = pxla.get_indices(new_sizes, sharding_spec)
-    return pxla.ShardedDeviceArray(aval, sharding_spec, indices,
-                                   array.device_buffers)
+    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
 
   return None
 

@@ -339,7 +339,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
-    y.device_buffers = [y.device_buffers[0][::-1]]
+    y.device_buffers = y.device_buffers[::-1]
     z = f(y)
     self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
@@ -590,9 +590,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     # Test that 'ans' was properly replicated across devices.
-    self.assertEqual([b.device()
-                      for replica in ans.device_buffers
-                      for b in replica], devices)
+    self.assertEqual([b.device() for b in ans.device_buffers], devices)
 
   def testPmapConstantError(self):
     device_count = xla_bridge.device_count()
@@ -623,8 +621,8 @@ class PmapTest(jtu.JaxTestCase):
 
     # Test that 'ans' was properly replicated across devices.
     expected_sharded = pmap(pmap(lambda x: x))(expected)
-    self.assertEqual([b.device() for b in ans._flattened_buffers()],
-                     [b.device() for b in expected_sharded._flattened_buffers()])
+    self.assertEqual([b.device() for b in ans.device_buffers],
+                     [b.device() for b in expected_sharded.device_buffers])
 
     f = pmap(pmap(lambda x: (x, 3)))
     x_sharded, ans = f(x)
@@ -787,11 +785,11 @@ class PmapTest(jtu.JaxTestCase):
     shard = np.arange(np.prod(shard_shape)).reshape(shard_shape)
     bufs = [xla.device_put(shard, d) for d in xla_bridge.devices()[:4]]
     aval = ShapedArray((6,4), shard.dtype)
-    indices = [(slice(0,3), slice(0,2)),
-               (slice(0,3), slice(2,4)),
-               (slice(3,6), slice(0,2)),
-               (slice(3,6), slice(2,4))]
-    arr = pxla.ShardedDeviceArray(aval, indices, bufs)
+    sharding_spec = pxla.ShardingSpec(
+        shards_per_axis=(2, 2),
+        is_axis_materialized=(True, True),
+        replication_factor=2)
+    arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
 
     r = pmap(lambda x: x + 1)(arr)
     self.assertAllClose(r, arr + 1, check_dtypes=True)

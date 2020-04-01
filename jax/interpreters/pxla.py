@@ -44,16 +44,17 @@ FLAGS = flags.FLAGS
 _map = safe_map
 
 # mypy doesn't support cyclic types :(
-Index = Union[int, slice, type(Ellipsis), Tuple['Index']] # type: ignore
+Index = Union[int, slice, Tuple['Index']]  # type: ignore
 
-class ShardingSpec(object):
+
+class ShardingSpec:
   """Describes how a logical array is sharded across devices.
 
   Note this does not specify the physical devices to be sharded across.
 
   Attributes:
-    shards_per_axis: a tuple the same length as the array shape. Indicates how many
-      shards each axis is divided into. Each axis must be divided into
+    shards_per_axis: a tuple the same length as the array shape. Indicates how
+      many shards each axis is divided into. Each axis must be divided into
       equal-sized shards (i.e. array_shape[i] % shards_per_axis[i] == 0).
     is_axis_materialized: a tuple the same length as the array shape. Indicates
       whether each axis of the array is represented in the on-device shape
@@ -80,11 +81,27 @@ class ShardingSpec(object):
              self.replication_factor))
 
 
-def get_indices(shape, sharding_spec):
+def spec_to_indices(shape: Tuple[int],
+                    sharding_spec: ShardingSpec) -> List[Index]:
+  """Returns numpy-style indices corresponding to sharding_spec.
+
+  Each index describes a shard of the array. The order of the indices is the
+  same as the device_buffers of a ShardedDeviceArray (i.e. the data is laid out
+  row-major, with replication treated as an extra innermost dimension).
+
+  Args:
+    shape: The shape of the logical array being sharded.
+    sharding_spec: Describes how the array is sharded.
+
+  Returns:
+    A list of length `prod(sharding_spec.shards_per_axis)`. Each element is an
+    int, a slice object with step=1, or a tuple thereof, to be treated as an
+    index into the full logical array.
+  """
   assert (len(shape) == len(sharding_spec.shards_per_axis) ==
           len(sharding_spec.is_axis_materialized))
   indices_per_axis = [
-      _get_axis_indices(axis_size, num_shards, is_materialized)
+      _axis_indices(axis_size, num_shards, is_materialized)
       for axis_size, num_shards, is_materialized in zip(
           shape, sharding_spec.shards_per_axis, sharding_spec.is_axis_materialized)]
 
@@ -104,7 +121,7 @@ def get_indices(shape, sharding_spec):
   return [i for i in indices for _ in range(sharding_spec.replication_factor)]
 
 
-def _get_axis_indices(axis_size, num_shards, is_materialized):
+def _axis_indices(axis_size, num_shards, is_materialized):
   if not is_materialized:
     assert axis_size == num_shards
     return range(axis_size)
@@ -121,17 +138,14 @@ def identity(x): return x
 
 # TODO(skye): expose PyLocalBuffers in xla_client
 def shard_args(devices: List[xb.xla_client.Device],
-               sharding_specs: List[ShardingSpec],
                indices: List[List[Index]],
                args) -> List[List[xb.xla_client._xla.PyLocalBuffer]]:
   """Shard each argument data array along its leading axis.
 
   Args:
     devices: list of Devices mapping replica index to a physical device.
-    sharding_specs: list of ShardingSpecs the same length as `args` describing
-      how `args` should be sharded/replicated across devices.
     indices: list the same length as `args`. Each element indices[i] is the
-      result of get_indices(sharding_specs[i]).
+      result of spec_to_indices(sharding_specs[i]).
     args: a sequence of JaxTypes representing arguments to be sharded along
       their leading axes and placed on `devices`.
 
@@ -145,8 +159,10 @@ def shard_args(devices: List[xb.xla_client.Device],
   for a, arg in enumerate(args):
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
     # inline handling for ShardedDeviceArray as a special case for performance
-    if type(arg) is ShardedDeviceArray and sharding_specs[a] == arg.sharding_spec:
-      for r, buf in enumerate(arg._flattened_buffers()):
+    # NOTE: we compare indices instead of sharding_spec because
+    # pmap_benchmark.pmap_shard_args_benchmark indicates this is faster.
+    if type(arg) is ShardedDeviceArray and indices[a] == arg.indices:
+      for r, buf in enumerate(arg.device_buffers):
         buffers[r][a] = (buf if buf.device() == devices[r]
                          else buf.copy_to_device(devices[r]))
     else:
@@ -199,8 +215,8 @@ pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
 def array_result_handler(size, sharding_spec, indices, aval):
   full_aval = ShapedArray((size,) + aval.shape, aval.dtype)
-  return lambda bufs: ShardedDeviceArray(full_aval, sharding_spec, indices,
-                                         [bufs])
+  return lambda bufs: ShardedDeviceArray(full_aval, sharding_spec, bufs,
+                                         indices)
 pxla_result_handlers[ShapedArray] = array_result_handler
 pxla_result_handlers[ConcreteArray] = array_result_handler
 
@@ -375,19 +391,17 @@ class ShardedDeviceArray(xla.DeviceArray):
 
   Attributes:
     aval: A ShapedArray indicating the shape and dtype of this array.
-    device_buffers: the buffers containing the data for this array. Each buffer
-      is the same shape and on a different device. Buffers are indexed first by
-      replica (i.e. `len(device_buffers) == sharding_spec.replication_factor`).
-      Each replica contains the full logical array's worth of buffers in
-      row-major order (i.e. len(device_buffers[r] == prod(shards_per_axis))).
     sharding_spec: describes how this array is sharded across `device_buffers`.
-    indices: A list the same length as `device_buffers[r]`. Each element is
-      an int, a slice object with step=1, or a tuple thereof, to be treated as
-      an index into the full array, and indicates what portion of the full array
-      is stored in the corresponding device buffer. In other words, for each
-      index/buffer pair, `array[indices[i]] == device_buffers[r][i].to_py()`.
-      Together, these indices cover the entire array, i.e. every array element
-      is included in at least one index.
+    device_buffers: the buffers containing the data for this array. Each buffer
+      is the same shape and on a different device. Buffers are in row-major
+      order, with replication treated as an extra innermost dimension. For
+      example, if the unsharded data is [1, 2], the replicated data should be
+      laid out here as [1, 1, 2, 2].
+    indices: the result of spec_to_indices(sharding_spec). Can optionally be
+      precomputed for efficiency. A list the same length as `device_buffers`
+      (equal to `prod(sharding_spec.shards_per_axis)`). Each index indicates what
+      portion of the full array is stored in the corresponding device buffer,
+      i.e. `array[indices[i]] == device_buffers[i].to_py()`.
   """
   __slots__ = ["device_buffers", "sharding_spec", "indices"]
 
@@ -395,9 +409,11 @@ class ShardedDeviceArray(xla.DeviceArray):
   def __init__(self,
                aval: ShapedArray,
                sharding_spec: ShardingSpec,
-               indices: List[Index],
-               device_buffers: List[List[xb.xla_client._xla.PyLocalBuffer]]):
+               device_buffers: List[xb.xla_client._xla.PyLocalBuffer],
+               indices: List[Index] = None):
     # TODO(skye): assert invariants. Keep performance in mind though.
+    if indices is None:
+      indices = spec_to_indices(aval.shape, sharding_spec)
     self.aval = aval
     self.device_buffers = device_buffers
     self.sharding_spec = sharding_spec
@@ -408,11 +424,12 @@ class ShardedDeviceArray(xla.DeviceArray):
 
   def copy_to_host_async(self):
     if self._npy_value is None:
-      for buf in self.device_buffers[0]:
+      # TODO(skye): only transfer one replica?
+      for buf in self.device_buffers:
         buf.copy_to_host_async()
 
   def delete(self):
-    for buf in self._flattened_buffers():
+    for buf in self.device_buffers:
       buf.delete()
     self.device_buffers = None
     self._npy_value = None
@@ -423,7 +440,7 @@ class ShardedDeviceArray(xla.DeviceArray):
 
   def block_until_ready(self):
     self._check_if_deleted()
-    for buf in self._flattened_buffers():
+    for buf in self.device_buffers:
       buf.block_host_until_ready()
     return self
 
@@ -432,22 +449,18 @@ class ShardedDeviceArray(xla.DeviceArray):
     if self._npy_value is None:
       self.copy_to_host_async()
       self._npy_value = onp.empty(self.aval.shape, self.aval.dtype)
-      for buf, idx in zip(self.device_buffers[0], self.indices):
-        self._npy_value[idx] = buf.to_py()
+      for i in range(0, len(self.device_buffers),
+                     self.sharding_spec.replication_factor):
+        self._npy_value[self.indices[i]] = self.device_buffers[i].to_py()
     return self._npy_value
 
   def __getitem__(self, idx):
     if self._npy_value is None and idx in self.indices:
-      buf = self.device_buffers[0][self.indices.index(idx)]
+      buf = self.device_buffers[self.indices.index(idx)]
       aval = ShapedArray(buf.shape().dimensions(), self.aval.dtype)
       return xla.DeviceArray(aval, None, lazy.array(aval.shape), buf)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)
-
-  def _flattened_buffers(self):
-    return (self.device_buffers[rep_idx][buf_idx]
-            for buf_idx in range(len(self.device_buffers[0]))
-            for rep_idx in range(len(self.device_buffers)))
 
 
 def _hashable_index(idx):
@@ -458,9 +471,8 @@ def _hashable_index(idx):
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
 def _shard_sharded_device_array_slow_path(x, devices, indices):
   candidates = defaultdict(list)
-  for buffers in x.device_buffers:
-    for buf, idx in zip(buffers, x.indices):
-      candidates[_hashable_index(idx)].append(buf)
+  for buf, idx in zip(x.device_buffers, x.indices):
+    candidates[_hashable_index(idx)].append(buf)
 
   bufs = []
   for idx, device in safe_zip(indices, devices):
@@ -642,11 +654,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
                                         aval.shape)
                     if aval is not core.abstract_unit else None
                     for aval in sharded_avals]
-  indices = [get_indices(aval.shape, spec)
+  indices = [spec_to_indices(aval.shape, spec)
              if spec is not None else None
              for aval, spec in zip(avals, sharding_specs)]
-  handle_args = partial(shard_args, compiled.local_devices(), sharding_specs,
-                        indices)
+  handle_args = partial(shard_args, compiled.local_devices(), indices)
 
   handle_outs = _pvals_to_results_handler(axis_size, num_local_replicas,
                                           out_pvals, compiled.local_devices(),
@@ -709,10 +720,8 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
   aval = xla.abstractify(val)  # type: ShapedArray
   replicated_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, aval.shape)
-  indices = get_indices(replicated_aval.shape, sharding_spec)
   device_buffers = [xla.device_put(val, d) for d in devices]
-  return ShardedDeviceArray(replicated_aval, sharding_spec, indices,
-                            [device_buffers])
+  return ShardedDeviceArray(replicated_aval, sharding_spec, device_buffers)
 
 def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
   if devices:
@@ -737,7 +746,7 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
   else:
     if pv is not core.abstract_unit:
       sharding_spec = _pmap_sharding_spec(nrep, axis_size, pv.shape)
-      indices = get_indices((axis_size,) + pv.shape, sharding_spec)
+      indices = spec_to_indices((axis_size,) + pv.shape, sharding_spec)
     else:
       sharding_spec = indices = None
     return aval_to_result_handler(axis_size, sharding_spec, indices, pv)
