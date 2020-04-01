@@ -451,8 +451,8 @@ def rand_small():
   return partial(_rand_dtype, randn, scale=1e-3)
 
 
-def rand_not_small():
-  post = lambda x: x + onp.where(x > 0, 10., -10.)
+def rand_not_small(offset=10.):
+  post = lambda x: x + onp.where(x > 0, offset, -offset)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3., post=post)
 
