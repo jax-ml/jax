@@ -12,16 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 
 import scipy.linalg
 import textwrap
 
-from jax import jit
+from jax import jit, vmap
 from .. import lax
 from .. import lax_linalg
 from ..numpy.lax_numpy import _wraps
@@ -48,24 +45,12 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 @partial(jit, static_argnums=(2,))
 def _cho_solve(c, b, lower):
   c, b = np_linalg._promote_arg_dtypes(np.asarray(c), np.asarray(b))
-  c_shape = np.shape(c)
-  b_shape = np.shape(b)
-  c_ndims = len(c_shape)
-  b_ndims = len(b_shape)
-  if not (c_ndims >= 2 and c_shape[-1] == c_shape[-2] and
-          (c_ndims == b_ndims or c_ndims == b_ndims + 1)):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(c_shape, b_shape))
-
-  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
-  # add a dummy dimension. Extend it to support vectors and simplify this.
-  b = b if c_ndims == b_ndims else b[..., None]
+  np_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=lower, conjugate_a=lower)
-  return b[..., 0] if c_ndims != b_ndims else b
+  return b
 
 @_wraps(scipy.linalg.cho_solve, update_doc=False)
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
@@ -109,7 +94,6 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
     return w, v
 
 
-
 @_wraps(scipy.linalg.inv)
 def inv(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
@@ -122,46 +106,12 @@ def lu_factor(a, overwrite_a=False, check_finite=True):
   a = np_linalg._promote_arg_dtypes(np.asarray(a))
   return lax_linalg.lu(a)
 
-@partial(jit, static_argnums=(3,))
-def _lu_solve(lu, pivots, b, trans):
-  lu_shape = np.shape(lu)
-  b_shape = np.shape(b)
-  if len(lu_shape) != 2 or lu_shape[0] != lu_shape[1]:
-    raise ValueError("LU decomposition must be a square matrix, got shape {}"
-                     .format(lu_shape))
-  if len(b_shape) < 1:
-    raise ValueError("b matrix must have rank >= 1, got shape {}"
-                     .format(b_shape))
-
-  if b_shape[0] != lu_shape[0]:
-    raise ValueError("Dimension of LU decomposition matrix (shape {}) must "
-                     "match leading axis of b array (shape {})"
-                     .format(lu_shape, b_shape))
-  m = lu_shape[0]
-  permutation = lax_linalg.lu_pivots_to_permutation(np.array(pivots), m)
-  x = np.reshape(b, (m, -1))
-  if trans == 0:
-    x = x[permutation, :]
-    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
-                                    unit_diagonal=True)
-    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
-  elif trans == 1 or trans == 2:
-    conj = trans == 2
-    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False,
-                                    transpose_a=True, conjugate_a=conj)
-    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
-                                    unit_diagonal=True, transpose_a=True,
-                                    conjugate_a=conj)
-    x = x[np.argsort(permutation), :]
-  else:
-    raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
-  return lax.reshape(x, b_shape)
 
 @_wraps(scipy.linalg.lu_solve)
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   lu, pivots = lu_and_piv
-  return _lu_solve(lu, pivots, b, trans)
+  return lax_linalg.lu_solve(lu, pivots, b, trans)
 
 
 @partial(jit, static_argnums=(1,))
@@ -208,13 +158,30 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
   del overwrite_a, lwork, check_finite
   return _qr(a, mode, pivoting)
 
+
 @partial(jit, static_argnums=(2, 3))
 def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
 
   a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
-  return cho_solve(cho_factor(a, lower=lower), b)
+  np_linalg._check_solve_shapes(a, b)
+
+  # With custom_linear_solve, we can reuse the same factorization when
+  # computing sensitivities. This is considerably faster.
+  factors = lax.stop_gradient(cho_factor)(a, lower=lower)
+  custom_solve = partial(
+      lax.custom_linear_solve,
+      lambda x: np_linalg._matvec_multiply(a, x),
+      solve=lambda _, x: cho_solve(factors, x),
+      symmetric=True)
+  if a.ndim == b.ndim + 1:
+    # b.shape == [..., m]
+    return custom_solve(b)
+  else:
+    # b.shape == [..., m, k]
+    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
+
 
 @_wraps(scipy.linalg.solve)
 def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
@@ -278,7 +245,7 @@ def _expm(A, upper_triangular=False):
     R = _solve_P_Q(P, Q, upper_triangular)
     R = _squaring(R, n_squarings)
     return R
-    
+
 @jit
 def _calc_P_Q(A):
     A = np.asarray(A)
@@ -292,7 +259,7 @@ def _calc_P_Q(A):
        U7,V7 = _pade7(A)
        U9,V9 = _pade9(A)
        maxnorm = 5.371920351148152
-       n_squarings = np.maximum(0, np.floor_divide(np.log2(A_L1 / maxnorm),1))
+       n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
        A = A / 2**n_squarings
        U13,V13 = _pade13(A)
        conds=np.array([1.495585217958292e-002, 2.539398330063230e-001, 9.504178996162932e-001, 2.097847961257068e+000])
@@ -302,7 +269,7 @@ def _calc_P_Q(A):
         U3,V3 = _pade3(A)
         U5,V5 = _pade5(A)
         maxnorm = 3.925724783138660
-        n_squarings = np.maximum(0, np.floor_divide(np.log2(A_L1 / maxnorm),1))
+        n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
         A = A / 2**n_squarings
         U7,V7 = _pade7(A)
         conds=np.array([4.258730016922831e-001, 1.880152677804762e+000])
@@ -379,3 +346,25 @@ def _pade13(A):
     U = np.dot(A,np.dot(A6, b[13]*A6 + b[11]*A4 + b[9]*A2) + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
     V = np.dot(A6, b[12]*A6 + b[10]*A4 + b[8]*A2) + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
     return U,V
+
+
+@_wraps(scipy.linalg.block_diag)
+@jit
+def block_diag(*arrs):
+  if len(arrs) == 0:
+    arrs = [np.zeros((1, 0))]
+  arrs = np._promote_dtypes(*arrs)
+  bad_shapes = [i for i, a in enumerate(arrs) if np.ndim(a) > 2]
+  if bad_shapes:
+    raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
+                     "most 2 dimensions, got {} at argument {}."
+                     .format(arrs[bad_shapes[0]], bad_shapes[0]))
+  arrs = [np.atleast_2d(a) for a in arrs]
+  acc = arrs[0]
+  dtype = lax.dtype(acc)
+  for a in arrs[1:]:
+    _, c = a.shape
+    a = lax.pad(a, dtype.type(0), ((0, 0, 0), (acc.shape[-1], 0, 0)))
+    acc = lax.pad(acc, dtype.type(0), ((0, 0, 0), (0, c, 0)))
+    acc = lax.concatenate([acc, a], dimension=0)
+  return acc

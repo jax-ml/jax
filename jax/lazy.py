@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple
 import functools
@@ -41,7 +38,7 @@ def taggedtuple(name, fields) -> Callable[..., Any]:
     return '{}{}'.format(name, tuple.__str__(self[1:]))
   class_namespace = {'__new__' : __new__, '__str__': __str__}
   for i, f in enumerate(fields):
-    class_namespace[f] = property(op.itemgetter(i+1))
+    class_namespace[f] = property(op.itemgetter(i+1))  # type: ignore
   return type(name, (tuple,), class_namespace)
 
 

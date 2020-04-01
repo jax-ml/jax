@@ -13,9 +13,6 @@
 # limitations under the License.
 
 """Tests for --debug_nans."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -24,9 +21,7 @@ import numpy as onp
 
 import jax
 from jax import test_util as jtu
-from jax.test_util import check_grads
 from jax import numpy as np
-from jax import random
 
 from jax.config import config
 config.parse_flags_with_absl()

@@ -12,21 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import print_function
 
 from contextlib import contextmanager
-from collections import defaultdict, Counter, namedtuple
+from collections import Counter, namedtuple
 import functools
-from functools import partial, wraps
+from functools import partial
 import itertools as it
 import operator as op
 import string
+from typing import Callable, Dict
 
 import numpy as onp
 
+from .. import abstract_arrays
 from .. import core
 from ..core import Trace, Tracer
-from ..util import unzip2, safe_map, safe_zip, curry
+from ..util import unzip2, safe_map, safe_zip
 from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
 
@@ -87,7 +88,6 @@ def mask_subtrace(master, in_vals, shape_exprs):
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
-
 
 def ensure_poly(p):
   if isinstance(p, Poly):
@@ -216,6 +216,9 @@ class Poly(Counter):
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
+abstract_arrays._DIMENSION_TYPES.add(Poly)
+
+
 class Mon(Counter):  # type Mon = Map Id Int -- ids to degrees
   def __hash__(self):
     return hash(tuple(self.items()))
@@ -343,7 +346,7 @@ class MaskTracer(Tracer):
   __slots__ = ["val", "shape_expr"]
 
   def __init__(self, trace, val, shape_expr):
-    self.trace = trace
+    self._trace = trace
     self.val = val
     self.shape_expr = shape_expr
 
@@ -384,12 +387,12 @@ class MaskTrace(Trace):
     else:
       return map(partial(MaskTracer, self), out, out_shape)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     raise NotImplementedError  # TODO mask-of-jit
 
-shape_parameterized_primitive_rules = {}
-masking_rules = {}
-shape_rules = {}
+shape_parameterized_primitive_rules: Dict[core.Primitive, Callable] = {}
+masking_rules: Dict[core.Primitive, Callable] = {}
+shape_rules: Dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
   masking_rules[prim] = partial(vectorized_masking_rule, prim)
@@ -410,7 +413,7 @@ def naryop_masking_rule(prim, padded_vals, logical_shapes):
 
 ### definition-time (import-time) shape checker tracer machinery
 
-def shapecheck(fun, in_shapes):
+def shapecheck(fun: lu.WrappedFun, in_shapes):
   with core.new_master(ShapeCheckTrace) as master:
     out_shapes = check_subtrace(fun, master).call_wrapped(in_shapes)
     del master
@@ -430,7 +433,7 @@ class ShapeCheckTracer(Tracer):
   __slots__ = ["shape_expr"]
 
   def __init__(self, trace, shape_expr):
-    self.trace = trace
+    self._trace = trace
     self.shape_expr = shape_expr
 
   @property
@@ -458,6 +461,7 @@ class ShapeCheckTrace(Trace):
     out_shape = shape_rule(*avals, **params)
     return ShapeCheckTracer(self, out_shape)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     # TODO apply proper subtrace:
     return map(self.full_raise, f.call_wrapped(*tracers))
+

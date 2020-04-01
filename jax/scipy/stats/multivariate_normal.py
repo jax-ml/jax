@@ -12,35 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-import numpy as onp
+import numpy as np
 import scipy.stats as osp_stats
 
 from ... import lax
+from ...lax_linalg import cholesky, triangular_solve
+from ... import numpy as jnp
 from ...numpy.lax_numpy import _promote_dtypes_inexact, _constant_like, _wraps
-from ...numpy.lax_numpy import dot, subtract, einsum
-from ...numpy.linalg import det, inv
 
 
 @_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False)
 def logpdf(x, mean, cov):
   x, mean, cov = _promote_dtypes_inexact(x, mean, cov)
-  two = _constant_like(x, 2)
-  dim = _constant_like(x, mean.shape[0])
-  det_sig = det(cov).astype(cov.dtype)
-  log_normalizer = lax.log(lax.mul(lax.pow(_constant_like(x, 2 * onp.pi), dim),
-    det_sig))
-  x_shape = x.shape[:-1]
-  if x_shape:
-    x_2d = x.reshape((-1, mean.shape[0]))
-    quadratic = einsum("ij,jk,ik->i", subtract(x_2d, mean), inv(cov), 
-      subtract(x_2d, mean)).reshape(x_shape).astype(cov.dtype)
+  if not mean.shape:
+    return -1/2 * (x - mean) ** 2 / cov - 1/2 * (np.log(2*np.pi) + jnp.log(cov))
   else:
-    quadratic = dot(dot(subtract(x, mean), inv(cov)), subtract(x, mean).T).astype(cov.dtype)
-  return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
+    n = mean.shape[-1]
+    if not np.shape(cov):
+      y = x - mean
+      return (-1/2 * jnp.einsum('...i,...i->...', y, y) / cov
+              - n/2 * (np.log(2*np.pi) + jnp.log(cov)))
+    else:
+      if cov.ndim < 2 or cov.shape[-2:] != (n, n):
+        raise ValueError("multivariate_normal.logpdf got incompatible shapes")
+      L = cholesky(cov)
+      y = triangular_solve(L, x - mean, lower=True, transpose_a=True)
+      return (-1/2 * jnp.einsum('...i,...i->...', y, y) - n/2*np.log(2*np.pi)
+              - jnp.log(L.diagonal()).sum())
 
 @_wraps(osp_stats.multivariate_normal.pdf, update_doc=False)
 def pdf(x, mean, cov):

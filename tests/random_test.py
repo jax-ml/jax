@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 from unittest import SkipTest
@@ -332,6 +329,15 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
                         rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
 
+  def testGammaGradType(self):
+    # Regression test for https://github.com/google/jax/issues/2130
+    key = random.PRNGKey(0)
+    a = np.array(1., dtype=np.float32)
+    b = np.array(3., dtype=np.float32)
+    f = lambda x, y: random.gamma(key=key, a=x, dtype=np.float32) / y
+    # Should not crash with a type error.
+    api.vjp(f, a, b)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
@@ -488,7 +494,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       phi = lambda x, t: np.sqrt(2.0 / d) * np.cos(np.matmul(W, x) + w*t + b)
       return phi
 
-    self.assertRaisesRegex(ValueError, '.*requires a concrete.*',
+    self.assertRaisesRegex(TypeError, 'Shapes must be 1D.*',
                            lambda: feature_map(5, 3))
 
   def testIssue756(self):
@@ -512,6 +518,39 @@ class LaxRandomTest(jtu.JaxTestCase):
       out = random.threefry_2x32(onp.zeros(2, onp.uint32), onp.arange(10, dtype=onp.uint32))
     finally:
       xla.apply_primitive = apply_primitive
+
+  def testPRNGValues(self):
+    # Test to ensure consistent random values between JAX versions
+    k = random.PRNGKey(0)
+
+    randints = random.randint(k, (3, 3), 0, 8)
+    if FLAGS.jax_enable_x64:
+        self.assertAllClose(
+            random.randint(k, (3, 3), 0, 8),
+            onp.array([[7, 2, 6],
+                       [2, 1, 0],
+                       [6, 7, 7]], dtype='int64'),
+            check_dtypes=True)
+    else:
+        self.assertAllClose(
+            random.randint(k, (3, 3), 0, 8),
+            onp.array([[2, 1, 3],
+                       [6, 1, 5],
+                       [6, 3, 4]], dtype='int32'),
+            check_dtypes=True)
+
+    self.assertAllClose(
+        random.split(k, 4),
+        onp.array([[2285895361, 1501764800],
+                   [1518642379, 4090693311],
+                   [ 433833334, 4221794875],
+                   [ 839183663, 3740430601]], dtype='uint32'),
+        check_dtypes=True)
+
+    self.assertAllClose(
+        random.fold_in(k, 4),
+        onp.array([2285895361,  433833334], dtype='uint32'),
+        check_dtypes=True)
 
 
 if __name__ == "__main__":

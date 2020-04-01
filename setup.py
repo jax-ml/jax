@@ -27,7 +27,7 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
-    python_requires='>=3.5',
+    python_requires='>=3.6',
     install_requires=[
         'numpy>=1.12', 'absl-py', 'opt_einsum'
     ],

@@ -103,9 +103,6 @@ Transformations:
 For usage example, see tests/loops_test.py.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import copy
 from functools import partial
@@ -187,9 +184,9 @@ class Scope(object):
 
     try:
       pred_dtype = onp.result_type(pred)
-    except TypeError:
+    except TypeError as err:
       msg = ("Pred type must be either boolean or number, got {}.")
-      raise TypeError(msg.format(pred))
+      raise TypeError(msg.format(pred)) from err
 
     if pred_dtype.kind != 'b':
       if pred_dtype.kind in 'iuf':
@@ -373,10 +370,10 @@ class _BodyTracer(object):
         in_tracers=in_tracers,
         out_tracers=body_out_tracers,
         trace=self.trace)
-    except AssertionError as e:
-      if "Encountered unexpected tracer" == str(e):
+    except core.UnexpectedTracerError as e:
+      if "Tracer not among input tracers" in str(e):
         raise ValueError("Body of cond_range or while_range should not use the "
-                         "index variable returned by iterator.")
+                         "index variable returned by iterator.") from e
       raise
     # End the subtrace for the loop body, before we trace the condition
     _BodyTracer.end_subtrace()
@@ -433,7 +430,7 @@ class _BodyTracer(object):
     in_pvals = [t.pval for t in in_tracers]
     in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
 
-    typed_jaxpr = core.TypedJaxpr(pe.closure_convert_jaxpr(jaxpr),
+    typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                   (), const_avals + in_avals, out_avals)
     return typed_jaxpr, consts
 
@@ -510,11 +507,13 @@ class _CondBuilder(_LoopBuilder):
       lax_control_flow._initial_style_jaxpr(lambda *args: args,
                                             carried_tree,
                                             tuple(init_avals)))
+    args = list(itertools.chain(body_const_vals, init_vals,
+                                false_body_const_vals, init_vals))
     return lax_control_flow.cond_p.bind(
-      *itertools.chain([self.pred], body_const_vals,
-                       init_vals, false_body_const_vals, init_vals),
-      true_jaxpr=body_typed_jaxpr, false_jaxpr=false_body_typed_jaxpr,
-      true_nconsts=len(body_const_vals), false_nconsts=len(false_body_const_vals))
+        self.pred, *args,
+        true_jaxpr=body_typed_jaxpr,
+        false_jaxpr=false_body_typed_jaxpr,
+        linear=(False,) * len(args))
 
 
 class _WhileBuilder(_LoopBuilder):
@@ -566,4 +565,3 @@ class _WhileBuilder(_LoopBuilder):
                                          cond_jaxpr=cond_jaxpr,
                                          body_nconsts=len(body_const_vals),
                                          body_jaxpr=body_typed_jaxpr)
-

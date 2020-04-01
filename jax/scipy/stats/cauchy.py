@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-import numpy as onp
+import numpy as np
 import scipy.stats as osp_stats
 
 from ... import lax
@@ -27,7 +24,7 @@ from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_inexact("cauchy.logpdf", x, loc, scale)
   one = _constant_like(x, 1)
-  pi = _constant_like(x, onp.pi)
+  pi = _constant_like(x, np.pi)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   normalize_term = lax.log(lax.mul(pi, scale))
   return lax.neg(lax.add(normalize_term, lax.log1p(lax.mul(scaled_x, scaled_x))))

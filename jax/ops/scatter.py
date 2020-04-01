@@ -14,17 +14,8 @@
 
 # Helpers for indexed updates.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import collections
-from functools import partial
-
-import numpy as onp
 
 from .. import lax
-from ..api import jit
 from ..numpy import lax_numpy as np
 
 

@@ -12,15 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-import numpy as onp
+import numpy as np
 import scipy.stats as osp_stats
 
 from ... import lax
-from ... import numpy as np
+from ...numpy import lax_numpy as jnp
 from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
 from .. import special
 
@@ -29,7 +26,7 @@ def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_inexact("norm.logpdf", x, loc, scale)
   two = _constant_like(x, 2)
   scale_sqrd = lax.pow(scale, two)
-  log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * onp.pi), scale_sqrd))
+  log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * np.pi), scale_sqrd))
   quadratic = lax.div(lax.pow(lax.sub(x, loc), two), scale_sqrd)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
 
@@ -53,4 +50,4 @@ def logcdf(x, loc=0, scale=1):
 
 @_wraps(osp_stats.norm.ppf, update_doc=False)
 def ppf(q, loc=0, scale=1):
-  return np.array(special.ndtri(q) * scale + loc, 'float64')
+  return jnp.array(special.ndtri(q) * scale + loc, 'float64')

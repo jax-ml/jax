@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 
@@ -50,9 +47,27 @@ class AnObject(object):
   def __repr__(self):
     return "AnObject({},{},{})".format(self.x, self.y, self.z)
 
-
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
+
+@tree_util.register_pytree_node_class
+class Special:
+  def __init__(self, x, y):
+    self.x = x
+    self.y = y
+
+  def __repr__(self):
+    return "Special(x={}, y={})".format(self.x, self.y)
+
+  def tree_flatten(self):
+    return ((self.x, self.y), None)
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(*children)
+
+  def __eq__(self, other):
+    return type(self) is type(other) and (self.x, self.y) == (other.x, other.y)
 
 PYTREES = [
     ("foo",),
@@ -63,6 +78,7 @@ PYTREES = [
     ([3],),
     ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
     ([AnObject(3, None, [4, "foo"])],),
+    (Special(2, 3.),),
     ({"a": 1, "b": 2},),
     (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
     (collections.defaultdict(dict,

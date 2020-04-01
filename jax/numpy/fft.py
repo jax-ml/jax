@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import numpy as onp
 
@@ -209,6 +206,34 @@ def rfftfreq(n, d=1.0):
     k = np.arange(0, (n - 1) // 2 + 1)
 
   return k / (d * n)
+
+
+@_wraps(onp.fft.fftshift)
+def fftshift(x, axes=None):
+  x = np.asarray(x)
+  if axes is None:
+    axes = tuple(range(x.ndim))
+    shift = [dim // 2 for dim in x.shape]
+  elif isinstance(axes, int):
+    shift = x.shape[axes] // 2
+  else:
+    shift = [x.shape[ax] // 2 for ax in axes]
+
+  return np.roll(x, shift, axes)
+
+
+@_wraps(onp.fft.ifftshift)
+def ifftshift(x, axes=None):
+  x = np.asarray(x)
+  if axes is None:
+    axes = tuple(range(x.ndim))
+    shift = [-(dim // 2) for dim in x.shape]
+  elif isinstance(axes, int):
+    shift = -(x.shape[axes] // 2)
+  else:
+    shift = [-(x.shape[ax] // 2) for ax in axes]
+
+  return np.roll(x, shift, axes)
 
 
 for func in get_module_functions(onp.fft):

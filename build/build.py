@@ -16,9 +16,6 @@
 #
 # Helper script for building JAX's libjax easily.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import argparse
 import collections
@@ -58,21 +55,35 @@ def get_python_bin_path(python_bin_path_flag):
   return python_bin_path_flag or sys.executable
 
 
+def get_python_version(python_bin_path):
+  version_output = shell(
+    [python_bin_path, "-c",
+     "import sys; print(\"{}.{}\".format(sys.version_info[0], "
+     "sys.version_info[1]))"])
+  major, minor = map(int, version_output.split("."))
+  return major, minor
+
+def check_python_version(python_version):
+  if python_version < (3, 6):
+    print("JAX requires Python 3.6 or newer.")
+    sys.exit(-1)
+
+
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.29.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/2.0.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.29.1-linux-x86_64",
+            file="bazel-2.0.0-linux-x86_64",
             sha256=
-            "da3031d811f42f6208d24a87984b5b07e1c75afede184cad86eb02bef6c3b9b0"),
+            "4df79462c6c3ecdeeee7af99fc269b52ab1aa4828ef3bc359c1837d3fafeeee7"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.29.1-darwin-x86_64",
+            file="bazel-2.0.0-darwin-x86_64",
             sha256=
-            "34daae4caafbdb0952415ed6f97f47f03df84df9af146e9eb910ba65c073efdd"),
+            "3eca4c96cfda97a9d5f8d3d0dec4155a5cc5ff339b10d3f35213c398bf13881e"),
 }
 
 
@@ -96,7 +107,8 @@ def download_and_verify_bazel():
           package.file, "#" * progress_chars,
           "." * (num_chars - progress_chars), int(progress * 100.0)))
 
-    tmp_path, _ = urlretrieve(uri, None, progress)
+    tmp_path, _ = urlretrieve(uri, None,
+                              progress if sys.stdout.isatty() else None)
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.
@@ -128,11 +140,11 @@ def get_bazel_path(bazel_path_flag):
   if bazel_path_flag:
     return bazel_path_flag
 
-  bazel = which("bazel")
+  bazel = download_and_verify_bazel()
   if bazel:
     return bazel
 
-  bazel = download_and_verify_bazel()
+  bazel = which("bazel")
   if bazel:
     return bazel
 
@@ -154,16 +166,19 @@ def check_bazel_version(bazel_path, min_version, max_version):
   if min_ints > actual_ints:
     print("Outdated bazel revision (>= {} required, found {})".format(
         min_version, version))
-    sys.exit(0)
+    sys.exit(-1)
   if max_version is not None:
     max_ints = [int(x) for x in max_version.split(".")]
     if actual_ints >= max_ints:
       print("Please downgrade your bazel revision to build JAX (>= {} and < {}"
             " required, found {})".format(min_version, max_version, version))
-      sys.exit(0)
+      sys.exit(-1)
 
 
 BAZELRC_TEMPLATE = """
+# Flag to enable remote config
+common --experimental_repo_remote_exec
+
 build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
 build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
@@ -197,6 +212,9 @@ build --strategy=Genrule=standalone
 
 build --cxxopt=-std=c++14
 build --host_cxxopt=-std=c++14
+
+# Suppress all warning messages.
+build:short_logs --output_filter=DONT_MATCH_ANYTHING
 """
 
 
@@ -307,11 +325,14 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="0.24.0", max_version=None)
+  check_bazel_version(bazel_path, min_version="2.0.0", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
   print("Python binary path: {}".format(python_bin_path))
+  python_version = get_python_version(python_bin_path)
+  print("Python version: {}".format(".".join(map(str, python_version))))
+  check_python_version(python_version)
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print("-march=native: {}".format("yes" if args.enable_march_native else "no"))
@@ -332,6 +353,7 @@ def main():
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options
+  config_args += ["--config=short_logs"]
   if args.enable_march_native:
     config_args += ["--config=opt"]
   if args.enable_mkl_dnn:

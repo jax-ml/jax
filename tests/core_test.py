@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple
 import gc
@@ -25,7 +22,6 @@ import numpy as onp
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from jax import api
 from jax import core
 from jax import numpy as np
 from jax import test_util as jtu
@@ -34,7 +30,7 @@ from jax.lax import UnshapedArray, ShapedArray, ConcreteArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -278,30 +274,32 @@ class CoreTest(jtu.JaxTestCase):
 
   def test_comparing_var(self):
     newsym = core.gensym('')
-    a = newsym()
-    b = newsym()
-    c = newsym()
+    a = newsym(core.abstract_unit)
+    b = newsym(core.abstract_unit)
+    c = newsym(core.abstract_unit)
     assert a < b < c
     assert c > b > a
     assert a != b and b != c and a != c
 
   def test_var_ordering(self):
     newsym = core.gensym('')
-    a = newsym()
-    b = newsym()
-    c = newsym()
+    a = newsym(core.abstract_unit)
+    b = newsym(core.abstract_unit)
+    c = newsym(core.abstract_unit)
     for ordering in it.permutations([a, b, c]):
       assert sorted(list(ordering)) == [a, b, c]
 
   def test_var_compared_by_identity(self):
-    a1 = core.gensym('')()
-    a2 = core.gensym('')()
+    a1 = core.gensym('')(core.abstract_unit)
+    a2 = core.gensym('')(core.abstract_unit)
     assert str(a1) == str(a2)
     assert a1 != a2
 
   def test_var_tree_flatten(self):
     newsym = core.gensym('')
-    a, b, c, d = newsym(), newsym(), newsym(), newsym()
+    a, b, c, d = (
+        newsym(core.abstract_unit), newsym(core.abstract_unit),
+        newsym(core.abstract_unit), newsym(core.abstract_unit))
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
 
