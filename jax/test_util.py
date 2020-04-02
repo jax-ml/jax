@@ -314,6 +314,10 @@ def supported_dtypes():
             dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
             onp.complex64, onp.complex128}
 
+def skip_if_unsupported_type(dtype):
+  if dtype not in supported_dtypes():
+    raise SkipTest(f"Type {dtype} not supported on {device_under_test()}")
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):

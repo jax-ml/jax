@@ -1261,6 +1261,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if (dtype not in [jnp.bfloat16, onp.float16, onp.float32]
         and not FLAGS.jax_enable_x64):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
+    jtu.skip_if_unsupported_type(dtype)
     rng = rng_factory()
     onp_fun = lambda x: onp.frexp(x)
     jnp_fun = lambda x: jnp.frexp(x)
