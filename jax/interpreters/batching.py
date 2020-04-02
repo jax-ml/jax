@@ -59,7 +59,7 @@ def _batch_fun(sum_match, in_dims, out_dims_thunk, out_dim_dests, *in_vals, **pa
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_dims = out_dims_thunk()
   for od, od_dest in zip(out_dims, out_dim_dests):
-    if od is not None and not isinstance(od_dest, int) and not od_dest is last:
+    if od is not None and not isinstance(od_dest, int) and not od_dest is last and not sum_match:
       msg = f"vmap has mapped output but out_axes is {od_dest}"
       raise ValueError(msg)
   out_vals = map(partial(matchaxis, size, sum_match=sum_match), out_dims, out_dim_dests, out_vals)
