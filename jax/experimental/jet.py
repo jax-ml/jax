@@ -49,18 +49,31 @@ def jet(fun, primals, series):
     yield tree_flatten(ans)
 
   f, out_tree = flatten_fun_output(lu.wrap_init(fun))
-  out_primals, out_terms = jet_transform(f).call_wrapped(primals, series)
+  out_primals, out_terms = jet_fun(jet_subtrace(f)).call_wrapped(primals, series)
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
 @lu.transformation
-def jet_transform(primals, series):
+def jet_fun(primals, series):
   with core.new_master(JetTrace) as master:
-    trace = JetTrace(master, core.cur_sublevel())
-    in_tracers = map(partial(JetTracer, trace), primals, series)
-    ans = yield in_tracers, {}
-    out_tracers = map(trace.full_raise, ans)
-    out_primals, out_terms = unzip2((t.primal, t.terms) for t in out_tracers)
+    out_primals, out_terms = yield (master, primals, series), {}
+    del master
   yield out_primals, out_terms
+
+@lu.transformation
+def jet_subtrace(master, primals, series):
+  trace = JetTrace(master, core.cur_sublevel())
+  in_tracers = map(partial(JetTracer, trace), primals, series)
+  ans = yield in_tracers, {}
+  out_tracers = map(trace.full_raise, ans)
+  out_primals, out_terms = unzip2((t.primal, t.terms) for t in out_tracers)
+  yield out_primals, out_terms
+
+@lu.transformation_with_aux
+def traceable(in_tree_def, *primals_and_series):
+  primals_in, series_in = tree_unflatten(in_tree_def, primals_and_series)
+  primals_out, series_out = yield (primals_in, series_in), {}
+  out_flat, out_tree_def = tree_flatten((primals_out, series_out))
+  yield out_flat, out_tree_def
 
 
 class JetTracer(core.Tracer):
@@ -94,6 +107,7 @@ class JetTrace(core.Trace):
     return JetTracer(self, val.primal, val.terms)
 
   def process_primitive(self, primitive, tracers, params):
+    assert not primitive.multiple_results  # TODO
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     order, = {len(terms) for terms in series_in if terms is not zero_series}
     series_in = [[zero_term] * order if s is zero_series else s
@@ -107,10 +121,23 @@ class JetTrace(core.Trace):
     return JetTracer(self, primal_out, terms_out)
 
   def process_call(self, call_primitive, f, tracers, params):
-    assert False  # TODO
+    primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
+    primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
+    f_jet, out_tree_def = traceable(jet_subtrace(f, self.master), in_tree_def)
+    result = call_primitive.bind(f_jet, *primals_and_series, **params)
+    primals_out, series_out = tree_unflatten(out_tree_def(), result)
+    return [JetTracer(self, p, ts) for p, ts in zip(primals_out, series_out)]
 
-  def post_process_call(self, call_primitive, out_tracer, params):
-    assert False  # TODO
+  def post_process_call(self, call_primitive, out_tracers, params):
+    primals, series = unzip2((t.primal, t.terms) for t in out_tracers)
+    out, treedef = tree_flatten((primals, series))
+    del primals, series
+    master = self.master
+    def todo(x):
+      primals, series = tree_unflatten(treedef, x)
+      trace = JetTrace(master, core.cur_sublevel())
+      return map(partial(JetTracer, trace), primals, series)
+    return out, todo
 
   def join(self, xt, yt):
     assert False  # TODO?
@@ -278,3 +305,12 @@ def _abs_taylor_rule(x, series_in, **params):
   series_out = [fix_sign(*terms_in, **params) for terms_in in zip(*series_in)]
   return primal_out, series_out
 jet_rules[lax.abs_p] = _abs_taylor_rule
+
+def _select_taylor_rule(primal_in, series_in, **params):
+  b, x, y = primal_in
+  primal_out = lax.select_p.bind(b, x, y, **params)
+  sel = lambda _, x, y: lax.select(b, x, y)
+  series_out = [sel(*terms_in, **params) for terms_in in zip(*series_in)]
+  return primal_out, series_out
+jet_rules[lax.select_p] = _select_taylor_rule
+
