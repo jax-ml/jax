@@ -2402,21 +2402,25 @@ def dot(a, b, precision=None):  # pylint: disable=missing-docstring
 def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
-  # We lower to einsum here because it handles batch dimensions for us.
-  # np.matmul is stricter than np.einsum with respect to size 1 contracting
-  # dimensions, so we need an additional check.
-  if shape(a)[0 if a_is_vec else -1] != shape(b)[0 if b_is_vec else -2]:
-    msg = "matmul requires contracting dimension to match, got {} and {}"
-    raise ValueError(msg.format(shape(a), shape(b)))
+  a = lax.reshape(a, (1,) + shape(a)) if a_is_vec else a
+  b = lax.reshape(b, shape(b) + (1,)) if b_is_vec else b
+
   a, b = _promote_dtypes(a, b)
-  if a_is_vec and b_is_vec:
-    return lax.dot(a, b, precision=precision)
-  elif a_is_vec:
-    return einsum('i,...ij->...j', a, b, precision=precision)
-  elif b_is_vec:
-    return einsum('...ij,j->...i', a, b, precision=precision)
+  batch_shape = lax.broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
+  a = broadcast_to(a, batch_shape + shape(a)[-2:])
+  b = broadcast_to(b, batch_shape + shape(b)[-2:])
+  batch_dims = tuple(range(len(batch_shape)))
+  dim_numbers = (((ndim(a) - 1,), (ndim(b) - 2,)), (batch_dims, batch_dims))
+  result = lax.dot_general(a, b, dim_numbers,  precision)
+
+  if a_is_vec or b_is_vec:
+    m, n = shape(result)[-2:]
+    new_m = () if a_is_vec else (m,)
+    new_n = () if b_is_vec else (n,)
+    return lax.reshape(result, batch_shape + new_m + new_n)
   else:
-    return einsum('...ij,...jk->...ik', a, b, precision=precision)
+    return result
+
 
 @_wraps(onp.vdot, lax_description=_PRECISION_DOC)
 def vdot(a, b, precision=None):
