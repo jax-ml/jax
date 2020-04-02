@@ -21,7 +21,7 @@ import numpy as onp
 from jax import test_util as jtu
 import jax.numpy as np
 from jax import random
-from jax import jacfwd
+from jax import jacfwd, jit
 from jax.experimental import stax
 from jax.experimental.jet import jet, fact, zero_series
 from jax.tree_util import tree_map
@@ -177,6 +177,31 @@ class JetTest(jtu.JaxTestCase):
   def test_or(self):    self.binary_check(lambda x, y: np.logical_or(x, y))
   @jtu.skip_on_devices("tpu")
   def test_xor(self):   self.binary_check(lambda x, y: np.logical_xor(x, y))
+
+  def test_process_call(self):
+    def f(x):
+      return jit(lambda x: x * x)(x)
+    self.unary_check(f)
+
+  def test_post_process_call(self):
+    def f(x):
+      return jit(lambda y: x * y)(2.)
+
+    self.unary_check(f)
+
+  def test_select(self):
+    M, K = 2, 3
+    order = 3
+    rng = onp.random.RandomState(0)
+    b = rng.rand(M, K) < 0.5
+    x = rng.randn(M, K)
+    y = rng.randn(M, K)
+    primals = (b, x, y)
+    terms_b = [rng.randn(*b.shape) for _ in range(order)]
+    terms_x = [rng.randn(*x.shape) for _ in range(order)]
+    terms_y = [rng.randn(*y.shape) for _ in range(order)]
+    series_in = (terms_b, terms_x, terms_y)
+    self.check_jet(np.where, primals, series_in)
 
 
 if __name__ == '__main__':
