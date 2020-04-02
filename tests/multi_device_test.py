@@ -121,6 +121,12 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assertAllClose(w, (1 + onp.array([1, 2])) * 2, check_dtypes=False)
     self.assertEqual(w.device_buffer.device(), jax.devices()[1])
 
+    # stack, array operations shouldn't override device placement
+    w = np.stack([z, z])
+    self.assertEqual(w.device_buffer.device(), jax.devices()[1])
+    w = np.asarray(z)
+    self.assertEqual(w.device_buffer.device(), jax.devices()[1])
+
     z = jax.device_put(1., jax.devices()[1]) + jax.device_put(2)
     self.assertAllClose(z, 3., check_dtypes=False)
     self.assertEqual(z.device_buffer.device(), jax.devices()[1])
