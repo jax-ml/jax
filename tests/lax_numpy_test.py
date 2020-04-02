@@ -1228,6 +1228,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for x1_shape, x2_shape in filter(_shapes_are_broadcast_compatible,
                                        CombosWithReplacement(array_shapes, 2))
       for x1_dtype in default_dtypes))
+  @jtu.skip_on_devices("tpu")  # TODO(b/153053081)
   def testLdexp(self, x1_shape, x1_dtype, x2_shape, x1_rng_factory, x2_rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (x1_dtype not in [jnp.bfloat16, onp.float16, onp.float32]
@@ -1256,12 +1257,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       ])
       for shape in all_shapes
       for dtype in default_dtypes))
+  @jtu.skip_on_devices("tpu")
   def testFrexp(self, shape, dtype, rng_factory):
     # integer types are converted to float64 in numpy's implementation
     if (dtype not in [jnp.bfloat16, onp.float16, onp.float32]
         and not FLAGS.jax_enable_x64):
       self.skipTest("Only run float64 testcase when float64 is enabled.")
-    jtu.skip_if_unsupported_type(dtype)
     rng = rng_factory()
     onp_fun = lambda x: onp.frexp(x)
     jnp_fun = lambda x: jnp.frexp(x)
