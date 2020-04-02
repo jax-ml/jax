@@ -1,0 +1,63 @@
+Notes on hacking Jaxlib build process
+2 March 2020
+
+
+command line params give to the build.py script
+--bazel_options=-s --python_bin_path C:/Users/dom/AppData/Local/Programs/Python/Python37/python.exe
+
+resulting command line call that ran the build
+C:\Users\dom\tools\bazel.EXE run --verbose_failures=true -s --config=short_logs --config=mkl_open_source_only :install_xla_in_source_tree C:\Users\dom\libraries\durian888\jax\build
+
+
+Despite my efforts messing with defines in the .bazelrc file (and what I have done there is frankly speculative), to get things to compile I was forced to make the following changes in the code base pulled in by bazel. I'm guessing that this is "not how things should be done" (I'm visualizing you slapping your head and issuing comments about my mental functionality) and the changes will probably disappear should I do a bazel clean but needs must. I also suspect that a better build wizard than I would probably not have to resort to some or perhaps all of them by better command line parameter selection. Sadly I'm at a serious disadvantage since I am so new to bazel and its cunning ways.
+
+I assume that to develop Jax properly one needs the tensorflow source repo and I would do this if I could work out how to build jax from a local repo not one pulled in by bazal. However I fear to start down that hole - it may be a long time before I get back to the surface.  
+
+Here are the summary of the hacks I put in.
+
+I attempted to avoid the following problem with the /D_WINSOCKAPI_ in the bazelrc file
+build --copt="/D_WINSOCKAPI_ /D_USE_MATH_DEFINES /DWIN32 /std:c++17" but
+
+to stop the compiler complaining about a conflict between  both winsock.h and winsock2.h being pulled in I
+added
+
+#define _WINSOCKAPI_  
+line 17
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\core\platform\windows\error_windows.cc
+
+To deal with the repeated problem of M_PI not being defined I had to resort to adding
+#define M_PI 3.14159265358979323846
+in muliple files. I tried using the define /D_USE_MATH_DEFINES which some sources suggested would fix the problem but at least in my hands it failed to help.
+
+line 15
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\core\lib\random\distribution_sampler.cc
+
+line15
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\compiler\xla\python\bfloat16.cc
+
+line 15
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\core\lib\random\random_distributions_test.cc
+
+line 15
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\core\lib\random\simple_philox.cc
+
+line 15
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\core\lib\random\weighted_picker.cc
+
+line 16
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\compiler\xla\client\lib\math.cc
+
+line 15
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\core\lib\random\random_distributions.h
+
+Along the way I ended up with
+#include <utility>
+line 15
+C:\Users\dom\_bazel_dom\mo5isdhc\external\org_tensorflow\tensorflow\compiler\xla\client\lib\math.cc
+this may not be necessary - I can't now work out exactly why I put this in (sigh)
+
+I got the following weird error that seemed to be due to the use of the name small for a parameter - I'm scratching my head over this.
+
+external/org_tensorflow/tensorflow/compiler/xla/client/lib/math.cc(1600): error C2632: 'double' followed by 'char' is illegal
+
+as an experiment as I had a suspicion about the name "small" I renamed small to small_djb (djb are my initials - makes it easy for me to know if I made a change) through out the function that small appeared in and this and much to my surprise this change appeared to make the compiler happy and the build proceeded when I restarted bazel! If you have an explination about this stuff I would be very happy to hear it.

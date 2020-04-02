@@ -179,15 +179,22 @@ BAZELRC_TEMPLATE = """
 # Flag to enable remote config
 common --experimental_repo_remote_exec
 
-build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
-build --python_path="{python_bin_path}"
-build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
+build --repo_env PYTHON_BIN_PATH="C:/Users/dom/AppData/Local/Programs/Python/Python37/python.exe"
+build --python_path="C:/Users/dom/AppData/Local/Programs/Python/Python37/python.exe"
+build --repo_env TF_NEED_CUDA="0"
 build --distinct_host_configuration=false
-build --copt=-Wno-sign-compare
+#build --copt=-Wno-sign-compare
+build --copt="/D_WINSOCKAPI_  /D_USE_MATH_DEFINES /DWIN32 /std:c++17" # /D_USE_MATH_DEFINES  does it lead to the definition of M_PI in 
+                                                                                                   #or do we need to explicitly define M_PI here or in code?
+                                                                                                   # /DM_PI=3.14159265358979323846
 build -c opt
 build:opt --copt=-march=native
 build:opt --host_copt=-march=native
 build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
+
+
+build --local_cpu_resources=HOST_CPUS*.75 # added by djb  
+build --local_ram_resources=HOST_RAM*.75 # added by djb 
 
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
@@ -210,8 +217,10 @@ build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
 build --spawn_strategy=standalone
 build --strategy=Genrule=standalone
 
-build --cxxopt=-std=c++14
-build --host_cxxopt=-std=c++14
+#build --cxxopt=-std=latest                         # commented out by djb 
+#build --host_cxxopt=-std=--bazel_startup_options   # commented out by djb
+#build --cxxopt= /std:c++17                         # commented out by djb
+#build --host_cxxopt= /std:c++17                    # commented out by djb
 
 # Suppress all warning messages.
 build:short_logs --output_filter=DONT_MATCH_ANYTHING

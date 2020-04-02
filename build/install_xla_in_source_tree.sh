@@ -64,8 +64,8 @@ cp -f "$(rlocation __main__/jaxlib/cusolver.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation __main__/jaxlib/cuda_prng.py)" "${TARGET}/jaxlib"
 cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so)" \
   "${TARGET}/jaxlib"
-cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so)" \
-  "${TARGET}/jaxlib"
+#cp -f "$(rlocation org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so)" \
+#  "${TARGET}/jaxlib"
 sed \
   -e 's/from tensorflow.compiler.xla.python import xla_extension as _xla/from . import xla_extension as _xla/' \
   -e 's/from tensorflow.compiler.xla.python.xla_extension import ops/from .xla_extension import ops/' \
