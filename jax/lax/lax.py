@@ -2870,7 +2870,7 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
   This function is primarily to support soft_pmap, although these optimizations
   could be useful when directly calling reshape as well.
   """
-  # TODO(skye): the axis split/merge logic below assumes that
+  # TODO(jekbradbury): the axis split/merge logic below assumes that
   # ShardedDevicesArrays are always sharded across their leading axes. Remove
   # this constraint, especially if/when we add APIs that produce sharding across
   # interior axes.
