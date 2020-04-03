@@ -252,6 +252,7 @@ def _flatten_jvp(in_tree, *args):
   yield primals_out + tangents_out, out_tree
 
 def _custom_jvp_call_bind(prim, fun, jvp, *args):
+  args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
   level = (core.trace_state.trace_stack.next_level(True)
            if top_trace is None else top_trace.level)
@@ -490,6 +491,7 @@ def _flatten_bwd(in_tree, out_trees, *args):
   yield cts_in
 
 def _custom_vjp_call_bind(prim, fun, fwd, bwd, *args, out_trees):
+  args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
   level = (core.trace_state.trace_stack.next_level(True)
            if top_trace is None else top_trace.level)
