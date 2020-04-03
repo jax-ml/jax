@@ -880,7 +880,6 @@ def gradient(a, *args, **kwargs):
   axis = kwargs.pop("axis", None)
   if not len(kwargs) == 0:
     raise ValueError("Only `axis` keyword is implemented")
-  a = asarray(a, dtype="float32")
   return _gradient(a, args, axis)
 
 
