@@ -32,10 +32,7 @@ config.parse_flags_with_absl()
 class LoopsTest(jtu.JaxTestCase):
 
   def tearDown(self) -> None:
-    # Check that the global state manipulated by loops is restored
-    if core.trace_state.trace_stack.downward or core.trace_state.trace_stack.upward:
-      core.trace_state = core.TraceState()
-      assert False  # Fail this test
+    assert core.reset_trace_state()
 
   def test_scope_no_loops(self):
     def f_op(r):
