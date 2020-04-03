@@ -2766,6 +2766,19 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_lowering_out_of_traces(self):
+    # https://github.com/google/jax/issues/2578
+
+    class F(collections.namedtuple("F", ["a"])):
+      def __call__(self, x):
+        return jax.nn.relu(self.a) * x
+
+    @jax.jit
+    def g(f, x):
+      return f(x)
+
+    jax.grad(g, argnums=(1,))(F(2.0), 0.)  # doesn't crash
+
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
 

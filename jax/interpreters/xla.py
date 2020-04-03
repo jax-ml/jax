@@ -185,19 +185,25 @@ def xla_primitive_callable(prim, *arg_specs, **params):
     nreps = initial_style_primitive_replicas(params)
   else:
     nreps = 1
+  if nreps > xb.device_count(backend):
+    msg = ("compiling a primitive computation `{}` that requires {} replicas, "
+           "but only {} XLA devices are available on backend {}.")
+    raise ValueError(msg.format(prim, nreps, xb.device_count(backend),
+                                backend.platform))
   built_c = primitive_computation(prim, AxisEnv(nreps), backend, tuple_args,
                                   *avals, **params)
   options = xb.get_compile_options(
-      num_replicas=1,
+      num_replicas=nreps,
       num_partitions=1,
       device_assignment=device and (device.id,))
+  options.tuple_arguments = tuple_args
   compiled = built_c.Compile(compile_options=options, backend=backend)
   if nreps == 1:
     return partial(_execute_compiled_primitive, prim, compiled, backend,
-                  tuple_args, handle_result)
+                   handle_result)
   else:
     return partial(_execute_replicated_primitive, prim, compiled, backend,
-                   tuple_args, handle_result)
+                   handle_result)
 
 def _device_from_arg_devices(devices):
   """Given devices of inputs, determine where to perform a computation.
@@ -249,22 +255,22 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
 def primitive_subcomputation(prim, *avals, **params):
   return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
 
-def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
-                                result_handler, *args):
+def _execute_compiled_primitive(prim, compiled, backend, result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
-  out_bufs = compiled.Execute(input_bufs, tuple_arguments=tuple_args)
+  out_bufs = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans:
     check_nans(prim, out_bufs)
   return result_handler(out_bufs if prim.multiple_results else out_bufs[0])
 
-def _execute_replicated_primitive(prim, compiled, backend, tuple_args,
-                                  result_handler, *args):
+def _execute_replicated_primitive(prim, compiled, backend, result_handler,
+                                  *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
-  out_buf = compiled.ExecuteOnLocalDevices(
-      input_bufs, tuple_arguments=tuple_args)[0][0]
+  out_buf = compiled.ExecuteOnLocalDevices(input_bufs)[0]
+  if not prim.multiple_results:
+    out_buf, = out_buf
   return result_handler(out_buf)
 
 def check_nans(prim, bufs):
@@ -513,12 +519,13 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
       num_replicas=nreps,
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
+  options.tuple_arguments = tuple_args
   compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
 
   if nreps == 1:
-    return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
+    return partial(_execute_compiled, compiled, backend, result_handlers)
   else:
-    return partial(_execute_replicated, compiled, backend, result_handlers, tuple_args)
+    return partial(_execute_replicated, compiled, backend, result_handlers)
 
 def _xla_callable_device(nreps, backend, device, arg_devices):
   if nreps > 1:
@@ -558,19 +565,18 @@ def _pval_to_result_handler(device, pval):
   else:
     return aval_to_result_handler(device, pv)
 
-def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
+def _execute_compiled(compiled, backend, handlers, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
-  out_bufs = compiled.Execute(input_bufs, tuple_arguments=tuple_args)
+  out_bufs = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
+def _execute_replicated(compiled, backend, handlers, *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
-  out_bufs = compiled.ExecuteOnLocalDevices(
-      input_bufs, tuple_arguments=tuple_args)[0]
+  out_bufs = compiled.ExecuteOnLocalDevices(input_bufs)[0]
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
@@ -953,10 +959,10 @@ def _lazy_force_computation(sticky, aval, device, lexpr) -> Callable[[DeviceArra
   force_fun: Callable[[DeviceValue], DeviceArray]
   if lazy.is_constant(lexpr):
     def force_fun(_):
-      return handler(compiled.Execute([], tuple_arguments=False)[0])
+      return handler(compiled.Execute([])[0])
   else:
     def force_fun(x):
-      return handler(compiled.Execute([x.device_buffer], tuple_arguments=False)[0])
+      return handler(compiled.Execute([x.device_buffer])[0])
   return force_fun
 
 

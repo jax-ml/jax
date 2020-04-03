@@ -54,7 +54,7 @@ def batch_elbo(logprob, rng, params, num_samples):
 # ========= Helper function for plotting. =========
 
 @partial(jit, static_argnums=(0, 1, 2, 4))
-def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
+def _mesh_eval(func, x_limits, y_limits, params, num_ticks):
     # Evaluate func on a 2D grid defined by x_limits and y_limits.
     x = np.linspace(*x_limits, num=num_ticks)
     y = np.linspace(*y_limits, num=num_ticks)
@@ -63,6 +63,8 @@ def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
     zs = vmap(func, in_axes=(0, None))(xy_vec, params)
     return X, Y, zs.reshape(X.shape)
 
+def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
+    return _mesh_eval(func, x_limits, y_limits, params, num_ticks)
 
 # ========= Define an intractable unnormalized density =========
 

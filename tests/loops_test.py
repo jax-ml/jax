@@ -20,12 +20,14 @@ import numpy as onp
 import re
 
 from jax import api, lax, ops
+from jax import core
 from jax import numpy as np
 from jax import test_util as jtu
 from jax.experimental import loops
 
 from jax.config import config
 config.parse_flags_with_absl()
+
 
 class LoopsTest(jtu.JaxTestCase):
 

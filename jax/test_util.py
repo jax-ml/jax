@@ -314,6 +314,10 @@ def supported_dtypes():
             dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
             onp.complex64, onp.complex128}
 
+def skip_if_unsupported_type(dtype):
+  if dtype not in supported_dtypes():
+    raise SkipTest(f"Type {dtype} not supported on {device_under_test()}")
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
@@ -451,8 +455,8 @@ def rand_small():
   return partial(_rand_dtype, randn, scale=1e-3)
 
 
-def rand_not_small():
-  post = lambda x: x + onp.where(x > 0, 10., -10.)
+def rand_not_small(offset=10.):
+  post = lambda x: x + onp.where(x > 0, offset, -offset)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3., post=post)
 
@@ -663,6 +667,9 @@ def cases_from_gens(*gens):
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
+
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""

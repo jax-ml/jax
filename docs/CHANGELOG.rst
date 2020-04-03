@@ -12,6 +12,11 @@ These are the release notes for JAX.
 jax 0.1.63 (unreleased)
 ---------------------------
 
+jaxlib 0.1.43 (March 31, 2020)
+------------------------------
+
+* Fixed a performance regression for Resnet-50 on GPU.
+
 jax 0.1.62 (March 21, 2020)
 ---------------------------
 
