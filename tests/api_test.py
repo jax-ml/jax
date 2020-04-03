@@ -46,6 +46,13 @@ FLAGS = config.FLAGS
 
 class APITest(jtu.JaxTestCase):
 
+  def tearDown(self) -> None:
+    if (core.trace_state.substack != [core.Sublevel(0)] or
+        core.trace_state.trace_stack.downward or
+        core.trace_state.trace_stack.upward):
+      core.trace_state = core.TraceState()
+      assert False  # Fail this test
+
   def test_grad_argnums(self):
     def f(x, y, z, flag=False):
       assert flag
