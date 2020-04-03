@@ -1027,8 +1027,11 @@ def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
 
 def pp_jaxpr(jaxpr) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))
-  return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
-                                         pp_vars(jaxpr.invars))) +
+  if jaxpr.constvars:
+    pp_invars = '{} ; {}'.format(pp_vars(jaxpr.constvars), pp_vars(jaxpr.invars))
+  else:
+    pp_invars = pp_vars(jaxpr.invars)
+  return (pp('{{ lambda {}.'.format(pp_invars)) +
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
            pp('in {} }}'.format(pp_outvars))).indent(2))

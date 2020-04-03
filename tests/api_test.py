@@ -1613,15 +1613,15 @@ class JaxprTest(jtu.JaxTestCase):
                       lambda xf: xf - x)
     jaxpr = api.make_jaxpr(f)(3.)
     self.assertMultiLineStrippedEqual("""
-{ lambda  ; a.
+{ lambda a.
   let b = ge a 0.0
       c = add a 1.0
       d = add a 2.0
-      e = cond[ false_jaxpr={ lambda  ; b a.
+      e = cond[ false_jaxpr={ lambda b a.
                               let c = sub a b
                               in (c,) }
                 linear=(False, False, False, False)
-                true_jaxpr={ lambda  ; b a.
+                true_jaxpr={ lambda b a.
                              let c = add a b
                              in (c,) } ] b a c a d
   in (e,) }
@@ -1636,7 +1636,7 @@ class JaxprTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(func1)(jnp.zeros(8), jnp.ones(8))
     self.assertMultiLineStrippedEqual("""
-{ lambda  ; a b.
+{ lambda a b.
   let c = sin b
       d = mul c 3.0
       e = add a d
@@ -1668,13 +1668,13 @@ class JaxprTest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(func7)(5.)
     self.assertMultiLineStrippedEqual("""
-{ lambda  ; a.
+{ lambda a.
   let b = ge a 0.0
-      c = cond[ false_jaxpr={ lambda  ; a.
+      c = cond[ false_jaxpr={ lambda a.
                               let b = sub a 3.0
                               in (b,) }
                 linear=(False, False)
-                true_jaxpr={ lambda  ; a.
+                true_jaxpr={ lambda a.
                              let b = add a 3.0
                              in (b,) } ] b a a
   in (c,) }
@@ -1691,11 +1691,11 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual("""
 { lambda e ; a b c.
   let d = ge a 0.0
-      f = cond[ false_jaxpr={ lambda  ; c a b.
+      f = cond[ false_jaxpr={ lambda c a b.
                               let d = add c b
                               in (d,) }
                 linear=(False, False, False, False, False)
-                true_jaxpr={ lambda  ; a b.
+                true_jaxpr={ lambda a b.
                              let 
                              in (a,) } ] d b c e b c
   in (f,) }
@@ -1711,13 +1711,13 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual("""
 { lambda c d ; a b.
   let e = add a d
-      f g h = while[ body_jaxpr={ lambda  ; e g a b c.
+      f g h = while[ body_jaxpr={ lambda e g a b c.
                                   let d = add a 1
                                       f = add c e
                                       h = add f g
                                   in (d, b, h) }
                      body_nconsts=2
-                     cond_jaxpr={ lambda  ; a b c.
+                     cond_jaxpr={ lambda a b c.
                                   let d = lt a b
                                   in (d,) }
                      cond_nconsts=0 ] c a 0 b e
@@ -1739,7 +1739,7 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual("""
 { lambda c ; a b.
   let d e = scan[ forward=True
-                  jaxpr={ lambda  ; a b c d e.
+                  jaxpr={ lambda a b c d e.
                           let f = mul c e
                               g = add b f
                               h = add g a
@@ -1765,7 +1765,7 @@ class JaxprTest(jtu.JaxTestCase):
       d = xla_call[ backend=None
                     device=None
                     name=inner ] b a c
-          { lambda  ; c b a.
+          { lambda c b a.
             let d = mul b c
                 e = add a d
             in (e,) }
@@ -1790,7 +1790,7 @@ class JaxprTest(jtu.JaxTestCase):
                     global_axis_size=None
                     mapped_invars=(True, False, True)
                     name=inner ] c b a
-          { lambda  ; d b a.
+          { lambda d b a.
             let c = add a b
                 e = add c d
                 f = psum[ axis_name=rows ] a
