@@ -33,6 +33,7 @@ import os
 import re
 import string
 import types
+from typing import Callable
 import warnings
 
 import numpy as onp
@@ -1569,7 +1570,59 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
   return td
 
-def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
+
+# Parallel prefix-scan. See:
+# https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
+# and
+# Blelloch, Guy E. 1990. "Prefix Sums and Their Applications.", Technical Report
+# CMU-CS-90-190, School of Computer Science, Carnegie Mellon University.
+#
+# Unlike the Blelloch algorithm, we use an out-of-place algorithm that uses 2n
+# space. This is somewhat wasteful if we are interested only in the output of
+# the forward pass, but more memory-efficient if we intend to differentiate
+# through the implementation of the scan.
+def _prescan_power_of_two(x, axis: int, op: Callable, unit):
+  n = x.shape[axis]
+  assert n != 0 and n & (n - 1) == 0, "n must be a power of 2"
+
+  # Upsweep
+  xs = []
+  for d in range(0, n.bit_length() - 1):
+    x1 = lax.slice_in_dim(x, 0, None, stride=2, axis=axis)
+    xs.append(x1)
+    x2 = lax.slice_in_dim(x, 1, None, stride=2, axis=axis)
+    x = op(x1, x2)
+  total = x
+
+  # Downsweep
+  x = full_like(total, unit)
+  pad_left = [(0, 0, 0)] * len(x.shape)
+  pad_left[axis] = (1, 0, 1)
+  pad_right = [(0, 0, 0)] * len(x.shape)
+  pad_right[axis] = (0, 1, 1)
+  for w in reversed(xs):
+    x1 = lax.pad(x, x.dtype.type(0), pad_right)
+    x2 = lax.pad(x, x.dtype.type(0), pad_left)
+    w = lax.pad(w, x.dtype.type(0), pad_left)
+    x = x1 + op(x2, w)
+
+  return x, total
+
+def _parallel_prefix_scan(x, axis: int, op: Callable, unit):
+  n = x.shape[axis]
+
+  # Pads to the next largest power of two
+  nbits = n.bit_length()
+  if n == (1 << (nbits - 1)):
+    nbits -= 1
+  padding = [(0, 0, 0)] * len(x.shape)
+  padding[axis] = (0, (1 << nbits) - n, 0)
+  x = lax.pad(x, x.dtype.type(unit), padding)
+  x, product = _prescan_power_of_two(x, axis, op, unit)
+  return concatenate((lax.slice_in_dim(x, 1, n, axis=axis), product), axis=axis)
+
+
+def _make_cumulative_reduction(onp_reduction, op, unit,
                                squash_nan=False):
   # We want to allow XLA to fuse the pad and reduce-window operators to
   # avoid materializing the padded output.
@@ -1592,7 +1645,7 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
               axis, num_dims))
 
     if squash_nan:
-      a = where(isnan(a), _constant_like(a, init_val), a)
+      a = where(isnan(a), _constant_like(a, unit), a)
 
     if not dtype and _dtype(a) == bool_:
       dtype = int_
@@ -1601,15 +1654,7 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
 
     if a_shape[axis] == 0:
       return a
-
-    padding = [(0, 0, 0)] * num_dims
-    padding[axis] = (a_shape[axis] - 1, 0, 0)
-    a = lax.pad(a, _constant_like(a, init_val), padding)
-    strides = [1] * num_dims
-    window_dims = [1] * num_dims
-    window_dims[axis] = a_shape[axis]
-    return window_reduce(
-       a, window_dims, strides, xla_client.PaddingType.VALID)
+    return _parallel_prefix_scan(a, axis, op, unit)
 
   @_wraps(onp_reduction)
   def cumulative_reduction(a, axis=None, dtype=None):
@@ -1619,14 +1664,14 @@ def _make_cumulative_reduction(onp_reduction, window_reduce, init_val,
 
 
 cumsum = _make_cumulative_reduction(
-  onp.cumsum, lax._reduce_window_sum, 0, squash_nan=False)
+  onp.cumsum, add, 0, squash_nan=False)
 cumprod = _make_cumulative_reduction(
-  onp.cumprod, lax._reduce_window_prod, 1, squash_nan=False)
+  onp.cumprod, multiply, 1, squash_nan=False)
 cumproduct = cumprod
 nancumsum = _make_cumulative_reduction(
-  onp.nancumsum, lax._reduce_window_sum, 0, squash_nan=True)
+  onp.nancumsum, add, 0, squash_nan=True)
 nancumprod = _make_cumulative_reduction(
-  onp.nancumprod, lax._reduce_window_prod, 1, squash_nan=True)
+  onp.nancumprod, multiply, 1, squash_nan=True)
 
 
 ### Array-creation functions

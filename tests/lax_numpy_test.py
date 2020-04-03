@@ -1104,7 +1104,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
-          op, jtu.format_shape_dtype_string(shape, dtype), axis, out_dtype),
+          op, jtu.format_shape_dtype_string(shape, dtype), axis,
+          out_dtype.__name__),
        "axis": axis, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
        "rng_factory": jtu.rand_default, "jnp_op": getattr(jnp, op),
        "onp_op": getattr(onp, op)}
@@ -1124,6 +1125,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+    grad_dtypes = [onp.float32, onp.float64, onp.complex64, onp.complex128]
+    if dtype in grad_dtypes and out_dtype in grad_dtypes:
+      check_grads(jnp_fun, args_maker(), order=2, rtol=1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
