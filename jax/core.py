@@ -544,11 +544,10 @@ trace_state = TraceState()
 
 def reset_trace_state() -> bool:
   "Reset the global trace state and return True if it was already clean."
-  global trace_state
   if (trace_state.substack != [Sublevel(0)] or
       trace_state.trace_stack.downward or
       trace_state.trace_stack.upward):
-    trace_state = TraceState()
+    trace_state.__init__()
     return False
   else:
     return True
