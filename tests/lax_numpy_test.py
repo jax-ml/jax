@@ -2743,7 +2743,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "dtype": dtype, "rng_factory": rng_factory}
         for shape in [(10,), (10, 15), (10, 15, 20)]
         for _num_axes in range(len(shape))
-        for varargs in [0, 1, (2, 0)]
+        for varargs in [2, 1, (2, 1, 2)]
         for axis in itertools.combinations(range(len(shape)), _num_axes)
         for dtype in inexact_dtypes
         for rng_factory in [jtu.rand_default]))
