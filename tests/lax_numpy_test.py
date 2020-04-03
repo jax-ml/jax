@@ -1089,9 +1089,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_input = jnp.ones((1))
     expected_onp_input_after_call = onp.ones((1))
     expected_jnp_input_after_call = jnp.ones((1))
-    
+
     self.assertIs(type(jnp.concatenate([onp_input])), jnp.DeviceArray)
-    
+
     attempt_sideeffect(onp_input)
     attempt_sideeffect(jnp_input)
 
@@ -2743,15 +2743,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "dtype": dtype, "rng_factory": rng_factory}
         for shape in [(10,), (10, 15), (10, 15, 20)]
         for _num_axes in range(len(shape))
-        for varargs in [0, (1,), (2, 0)]
+        for varargs in [0, 1, (2, 0)]
         for axis in itertools.combinations(range(len(shape)), _num_axes)
         for dtype in inexact_dtypes
         for rng_factory in [jtu.rand_default]))
   def testGradient(self, shape, varargs, axis, dtype, rng_factory):
     rng = rng_factory()
-    args_maker = self._GetArgsMaker(rng, [shape], [dtype], [varargs])
-    jnp_fun = lambda y: jnp.gradient(y, axis=axis)
-    onp_fun = lambda y: onp.gradient(y, axis=axis)
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    jnp_fun = lambda y: jnp.gradient(y, varargs, axis=axis)
+    onp_fun = lambda y: onp.gradient(y, varargs, axis=axis)
     self._CheckAgainstNumpy(
         onp_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
