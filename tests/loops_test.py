@@ -31,9 +31,6 @@ config.parse_flags_with_absl()
 
 class LoopsTest(jtu.JaxTestCase):
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
-
   def test_scope_no_loops(self):
     def f_op(r):
       with loops.Scope() as s:

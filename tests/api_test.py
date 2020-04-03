@@ -46,9 +46,6 @@ FLAGS = config.FLAGS
 
 class APITest(jtu.JaxTestCase):
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
-
   def test_grad_argnums(self):
     def f(x, y, z, flag=False):
       assert flag
@@ -1592,9 +1589,6 @@ class APITest(jtu.JaxTestCase):
 
 class JaxprTest(jtu.JaxTestCase):
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
-
   def test_scalar_literals(self):
     jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
     self.assertLen(jaxpr.jaxpr.constvars, 0)
@@ -1807,9 +1801,6 @@ class JaxprTest(jtu.JaxTestCase):
 
 class LazyTest(jtu.JaxTestCase):
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
-
   @contextmanager
   def count_compiles(self):
 
@@ -1989,9 +1980,6 @@ class LazyTest(jtu.JaxTestCase):
     self.assertAllClose(y, onp.ones(3) + onp.ones(3), check_dtypes=False)
 
 class CustomJVPTest(jtu.JaxTestCase):
-
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
 
   def test_basic(self):
     @api.custom_jvp
@@ -2430,9 +2418,6 @@ class CustomJVPTest(jtu.JaxTestCase):
 
 class CustomVJPTest(jtu.JaxTestCase):
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
-
   def test_basic(self):
     @api.custom_vjp
     def f(x):
@@ -2796,9 +2781,6 @@ class CustomVJPTest(jtu.JaxTestCase):
 
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
-
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
 
   def test_defvjp_all(self):
     foo_p = Primitive('foo')
