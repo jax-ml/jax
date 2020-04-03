@@ -449,7 +449,18 @@ class Tracer(object):
         return attr
 
   def __repr__(self):
-    return 'Traced<{}>with<{}>'.format(self.aval, self._trace)
+    base = pp('Traced<{}>with<{}>'.format(self.aval, self._trace))
+    contents = self._contents()
+    if contents:
+      base += pp('  with ') >> vcat(pp('{} = '.format(name)) >> pp_payload
+                                    for name, pp_payload in contents)
+    return str(base)
+
+  def _contents(self):
+    try:
+      return [(name, pp(repr(getattr(self, name)))) for name in self.__slots__]
+    except AttributeError:
+      return ()
 
   def __copy__(self):
     return self
