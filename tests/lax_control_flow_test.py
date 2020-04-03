@@ -62,11 +62,7 @@ def high_precision_dot(a, b):
 class LaxControlFlowTest(jtu.JaxTestCase):
 
   def tearDown(self) -> None:
-    if (core.trace_state.substack != [core.Sublevel(0)] or
-        core.trace_state.trace_stack.downward or
-        core.trace_state.trace_stack.upward):
-      core.trace_state = core.TraceState()
-      assert False  # Fail this test
+    assert core.reset_trace_state()
 
   def testWhileWithTuple(self):
     limit = 10
