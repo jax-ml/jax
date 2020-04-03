@@ -2296,11 +2296,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for init_val, op, dtypes in [
           (0, lax.add, inexact_dtypes),
           # Precision problems for float16 tests.
-          (-onp.inf, lax.max, [t for t in inexact_dtypes if t != onp.float16]),
-          (onp.inf, lax.min, [t for t in inexact_dtypes if t != onp.float16]),
+          (-onp.inf, lax.max,
+           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
+          (onp.inf, lax.min,
+           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
           # The mul test overflows the range of a float16.
-          (1, lax.mul, [t for t in inexact_dtypes
-                        if t not in (onp.float16, dtypes.bfloat16)]),
+          (1, lax.mul,
+           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
       ]
       for dtype in dtypes
       for shape, dims in [
@@ -2324,7 +2326,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     eps = (1.0 if dtypes.finfo(dtype).bits == 16 and op is lax.add else
            1e-1 if dtype == dtypes.bfloat16 else
            1e-2 if dtypes.finfo(dtype).bits == 32 else None)
-    check_grads(reduce, (operand,), 1, ["fwd", "rev"], tol, tol, eps)
+    check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"

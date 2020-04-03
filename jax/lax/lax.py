@@ -3526,23 +3526,26 @@ def _reduce_prod_jvp_rule(tangent, operand, axes):
   operand = reshape(operand, new_shape, permutation)
   tangent = reshape(tangent, new_shape, permutation)
 
-  one = _const(operand, 1)
-  window_dims = [n] + [1] * len(non_axes)
-  window_strides = [1] * (len(non_axes) + 1)
+  def _reduce_prod_tree(x, axis=0):
+    """Reduce by repeatedly splitting the array and multiplying."""
+    while x.shape[axis] > 1:
+      n = x.shape[axis]
+      n1 = (n + 1) // 2
+      n2 = n - n1
+      x1 = slice_in_dim(x, 0, n1)
+      x2 = slice_in_dim(x, n1, None)
+      if n2 != n1:
+        paddings = [(0, 0, 0)] * len(x.shape)
+        paddings[axis] = (0, 1, 0)
+        x2 = pad(x2, _const(x, 1), paddings)
+      x = x1 * x2
+    shape = list(x.shape)
+    del shape[axis]
+    return reshape(x, shape)
 
-  # Form the partial products of all elements to the left and right of each
-  # element.
-  left_padding = [(n, -1, 0)] + [(0, 0, 0)] * len(non_axes)
-  right_padding = [(-1, n, 0)] + [(0, 0, 0)] * len(non_axes)
-  left_products = _reduce_window_prod(pad(operand, one, left_padding),
-                                      window_dims, window_strides,
-                                      xla_client.PaddingType.VALID)
-  right_products = _reduce_window_prod(pad(operand, one, right_padding),
-                                       window_dims, window_strides,
-                                       xla_client.PaddingType.VALID)
+  _, tangent_out = api.jvp(_reduce_prod_tree, (operand,), (tangent,))
+  return tangent_out
 
-  # Multiply partial products with the tangents and sum.
-  return _reduce_sum(mul(tangent, mul(left_products, right_products)), (0,))
 
 reduce_prod_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_prod'),
