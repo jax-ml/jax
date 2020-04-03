@@ -46,6 +46,11 @@ def lax_cg(A, b, M=None, tol=0.0, atol=0.0, **kwargs):
   return x
 
 
+def scipy_cg(A, b, tol=0.0, atol=0.0, **kwargs):
+  x, _ = scipy.sparse.linalg.cg(A, b, tol=tol, atol=atol, **kwargs)
+  return x
+
+
 def rand_sym_pos_def(rng, shape, dtype):
   matrix = np.eye(N=shape[0], dtype=dtype) + rng(shape, dtype)
   return matrix @ matrix.T.conj()
@@ -65,10 +70,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default]
       for preconditioner in [None, 'random', 'identity', 'exact']))
   def test_cg_against_scipy(self, shape, dtype, rng_factory, preconditioner):
-
-    def scipy_cg(A, b, tol=0.0, atol=0.0, **kwargs):
-      x, _ = scipy.sparse.linalg.cg(A, b, tol=tol, atol=atol, **kwargs)
-      return x
 
     rng = rng_factory()
     A = rand_sym_pos_def(rng, shape, dtype)

@@ -69,14 +69,15 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   The numerics of JAX's ``cg`` should exact match SciPy's ``cg`` (up to
   numerical precision), but note that the interface is slightly different: you
-  need to supply the linear operator ``A`` as a function instead of sparse
+  need to supply the linear operator ``A`` as a function instead of a sparse
   matrix or ``LinearOperator``.
 
   Parameters
   ----------
   A : function
-      Function that calculate the matrix-vector product ``Ax`` when called like
-      ``A(x)``. ``A`` must represent a hermitian, positive definite matrix.
+      Function that calculates the matrix-vector product ``Ax`` when called
+      like ``A(x)``. ``A`` must represent a hermitian, positive definite
+      matrix.
   b : array
       Right hand side of the linear system. Has shape (N,).
 
