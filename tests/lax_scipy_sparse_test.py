@@ -22,7 +22,8 @@ import numpy as np
 import scipy.sparse.linalg
 from jax import lax
 from jax import test_util as jtu
-from jax.experimental import sparse
+import jax.scipy.sparse.linalg
+
 
 float_types = [np.float32, np.float64]
 complex_types = [np.complex64, np.complex128]
@@ -41,7 +42,7 @@ def lax_cg(A, b, M=None, tol=0.0, atol=0.0, **kwargs):
   A = partial(matmul_high_precision, A)
   if M is not None:
     M = partial(matmul_high_precision, M)
-  x, _ = sparse.cg(A, b, tol=tol, atol=atol, M=M, **kwargs)
+  x, _ = jax.scipy.sparse.linalg.cg(A, b, tol=tol, atol=atol, M=M, **kwargs)
   return x
 
 

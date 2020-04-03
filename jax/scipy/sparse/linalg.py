@@ -19,7 +19,7 @@ import scipy.sparse.linalg
 import jax.numpy as jnp
 import numpy as np
 from jax.numpy.lax_numpy import _wraps
-from .. import lax
+from jax import lax
 
 
 def _vdot(x, y):
@@ -64,14 +64,51 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
   return x_final
 
 
-@_wraps(scipy.sparse.linalg.cg,
-    lax_description=textwrap.dedent("""\
-        Unlike scipy.sparse.linalg.cg, the linear operator ``A`` to invert and
-        the optional preconditioner ``M`` should be a functions that returns a
-        matrix-vector product, not a LinearOperator. Also, the return code
-        ``info`` is currently always fixed at 0.
-        """))
 def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
+  """Use Conjugate Gradient iteration to solve ``Ax = b``.
+
+  The numerics of JAX's ``cg`` should exact match SciPy's ``cg`` (up to
+  numerical precision), but note that the interface is slightly different: you
+  need to supply the linear operator ``A`` as a function instead of sparse
+  matrix or ``LinearOperator``.
+
+  Parameters
+  ----------
+  A : function
+      Function that calculate the matrix-vector product ``Ax`` when called like
+      ``A(x)``. ``A`` must represent a hermitian, positive definite matrix.
+  b : array
+      Right hand side of the linear system. Has shape (N,).
+
+  Returns
+  -------
+  x : array
+      The converged solution.
+  info : None
+      Placeholder for convergence information. In the future, JAX will report
+      the number of iterations when convergence is not achieved, like SciPy.
+
+  Other Parameters
+  ----------------
+  x0 : array
+      Starting guess for the solution.
+  tol, atol : float, optional
+      Tolerances for convergence, ``norm(residual) <= max(tol*norm(b), atol)``.
+      We do not implement SciPy's "legacy" behavior, so JAX's tolerance will
+      differ from SciPy unless you explicitly pass ``atol`` to SciPy's ``cg``.
+  maxiter : integer
+      Maximum number of iterations.  Iteration will stop after maxiter
+      steps even if the specified tolerance has not been achieved.
+  M : function
+      Preconditioner for A.  The preconditioner should approximate the
+      inverse of A.  Effective preconditioning dramatically improves the
+      rate of convergence, which implies that fewer iterations are needed
+      to reach a given error tolerance.
+
+  See also
+  --------
+  scipy.sparse.linalg.cg
+  """
   if x0 is None:
     x0 = jnp.zeros_like(b)
 
@@ -91,5 +128,5 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   cg_solve = partial(
       _cg_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter, M=M)
   x = lax.custom_linear_solve(A, b, cg_solve, symmetric=True)
-  info = 0  # TODO(shoyer): return the real iteration count here
+  info = None  # TODO(shoyer): return the real iteration count here
   return x, info
