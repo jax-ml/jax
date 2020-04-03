@@ -829,11 +829,11 @@ def _gradient(a, varargs, axis):
   def gradient_along_axis(a, h, axis):
     sliced = partial(lax.slice_in_dim, a, axis=axis)
     a_grad = concatenate((
-      (sliced(1, 2) - sliced(0, 1)) / h,  # upper edge
-      (sliced(2, None) - sliced(None, -2)) / (2. * h),  # inner
-      (sliced(-1, None) - sliced(-2, -1)) / h,  # lower edge
+      (sliced(1, 2) - sliced(0, 1)),  # upper edge
+      (sliced(2, None) - sliced(None, -2)) * 0.5,  # inner
+      (sliced(-1, None) - sliced(-2, -1)),  # lower edge
     ), axis)
-    return a_grad
+    return a_grad / h
 
   if axis is None:
     axis = range(a.ndim)
@@ -852,7 +852,7 @@ def _gradient(a, varargs, axis):
                      "at least 2 elements are required.")
   len_axes = len(axis)
   n = len(varargs)
-  if n == 0:
+  if n == 0 or varargs is None:
     # no spacing
     dx = [1.0] * len_axes
   elif n == 1:
@@ -880,6 +880,7 @@ def gradient(a, *args, **kwargs):
   axis = kwargs.pop("axis", None)
   if not len(kwargs) == 0:
     raise ValueError("Only `axis` keyword is implemented")
+  a = asarray(a, dtype="float32")
   return _gradient(a, args, axis)
 
 
