@@ -547,7 +547,7 @@ def reset_trace_state() -> bool:
   if (trace_state.substack != [Sublevel(0)] or
       trace_state.trace_stack.downward or
       trace_state.trace_stack.upward):
-    trace_state.__init__()
+    trace_state.__init__()  # type: ignore
     return False
   else:
     return True
