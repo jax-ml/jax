@@ -3514,7 +3514,9 @@ def _reduce_prod_translation_rule(c, operand, axes):
   return c.Reduce(operand, c.Constant(onp.array(1, dtype)),
                   xla.primitive_subcomputation(mul_p, scalar, scalar), axes)
 
-def _reduce_prod_jvp_rule(tangent, operand, axes):
+def _reduce_prod_jvp_rule(primals, tangents, axes):
+  operand, = primals
+  tangent, = tangents
   input_shape = onp.array(operand.shape)
 
   n = onp.prod(input_shape[list(axes)])
@@ -3543,14 +3545,13 @@ def _reduce_prod_jvp_rule(tangent, operand, axes):
     del shape[axis]
     return reshape(x, shape)
 
-  _, tangent_out = api.jvp(_reduce_prod_tree, (operand,), (tangent,))
-  return tangent_out
+  return api.jvp(_reduce_prod_tree, (operand,), (tangent,))
 
 
 reduce_prod_p = standard_primitive(
   _reduce_op_shape_rule, partial(_reduce_number_dtype_rule, 'reduce_prod'),
   'reduce_prod', _reduce_prod_translation_rule)
-ad.defjvp(reduce_prod_p, _reduce_prod_jvp_rule)
+ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p)
 
 
