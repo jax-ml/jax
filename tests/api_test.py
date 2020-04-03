@@ -1763,12 +1763,12 @@ class JaxprTest(jtu.JaxTestCase):
 { lambda b ; a.
   let c = sub a 2.0
       d = xla_call[ backend=None
-                    call_jaxpr={ lambda  ; c b a.
-                                 let d = mul b c
-                                     e = add a d
-                                 in (e,) }
                     device=None
                     name=inner ] b a c
+          { lambda  ; c b a.
+            let d = mul b c
+                e = add a d
+            in (e,) }
       e = add a d
   in (e,) }
                             """, str(jaxpr))
@@ -1786,16 +1786,16 @@ class JaxprTest(jtu.JaxTestCase):
   let d = xla_pmap[ axis_name=rows
                     axis_size=1
                     backend=None
-                    call_jaxpr={ lambda  ; d b a.
-                                 let c = add a b
-                                     e = add c d
-                                     f = psum[ axis_name=rows ] a
-                                     g = div e f
-                                 in (g,) }
                     devices=None
                     global_axis_size=None
                     mapped_invars=(True, False, True)
                     name=inner ] c b a
+          { lambda  ; d b a.
+            let c = add a b
+                e = add c d
+                f = psum[ axis_name=rows ] a
+                g = div e f
+            in (g,) }
   in (d,) }
                               """, str(jaxpr))
 

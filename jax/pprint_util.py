@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from functools import partial, reduce
+import functools
 import operator as op
 
 
@@ -50,8 +50,13 @@ class PrettyPrint(object):
 def pp(s):
   return PrettyPrint([(0, line) for line in str(s).splitlines()])
 
-hcat = partial(reduce, op.rshift)
-def vcat(ps): return reduce(op.add, ps) if ps else pp('')
+
+def hcat(ps):
+  return functools.reduce(op.rshift, ps)
+
+
+def vcat(ps):
+  return functools.reduce(op.add, ps) if ps else pp('')
 
 
 def pp_kv_pairs(kv_pairs):

@@ -1020,15 +1020,8 @@ def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars)
   call_jaxpr, params = extract_call_jaxpr(eqn.primitive, eqn.params)
   pp_subexpr = pp_jaxpr(call_jaxpr).indent(2) if call_jaxpr else pp('')
-  non_jaxpr_params = []
-  for name, val in sorted(params.items()):
-    if isinstance(val, (Jaxpr, TypedJaxpr)):
-      val = val if isinstance(val, Jaxpr) else val.jaxpr
-      pp_subexpr += (pp(name) + pp_jaxpr(val)).indent(2)
-    else:
-      non_jaxpr_params.append((name, val))
   return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(non_jaxpr_params)
+          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
 
