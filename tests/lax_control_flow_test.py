@@ -61,9 +61,6 @@ def high_precision_dot(a, b):
 
 class LaxControlFlowTest(jtu.JaxTestCase):
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
-
   def testWhileWithTuple(self):
     limit = 10
 
