@@ -480,6 +480,7 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
    [ 0.        , 16.        , -2.        ],
    [ 1.6209068 ,  0.        ,  0.84147096]]
   """
+  _check_callable(fun)
 
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
@@ -526,6 +527,8 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
    [ 0.        , 16.        , -2.        ],
    [ 1.6209068 ,  0.        ,  0.84147096]]
   """
+  _check_callable(fun)
+
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
@@ -662,6 +665,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   >>> print(vfoo(tree)).shape
   (6, 2, 5)
   """
+  _check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
 
@@ -673,7 +677,6 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  _check_callable(fun)
   if (not isinstance(in_axes, (list, tuple, type(None), int))
       or not isinstance(out_axes, (list, tuple, type(None), int))):
     msg = ("vmap arguments in_axes and out_axes must each be an integer, None, "
@@ -1062,6 +1065,7 @@ def _parallelize(fun):
 
 
 def mask(fun: Callable, in_shapes, out_shape) -> Callable:
+  _check_callable(fun)
   in_specs, in_shapes_tree = tree_flatten(in_shapes)
   out_specs, out_shapes_tree = tree_flatten(out_shape)
 
@@ -1113,6 +1117,7 @@ def _bind_shapes(shape_exprs, shapes):
 
 @curry
 def shapecheck(in_shapes, out_shape, fun):
+  _check_callable(fun)
   in_shapes, in_tree = tree_flatten(in_shapes)
   in_shapes = map(masking.parse_spec, in_shapes)
   out_shapes, out_tree = tree_flatten(out_shape)
@@ -1158,6 +1163,7 @@ def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
   >>> print(v)
   0.19900084
   """
+  _check_callable(fun)
   return _jvp(lu.wrap_init(fun), primals, tangents)
 
 def _jvp(fun: lu.WrappedFun, primals, tangents):
@@ -1242,6 +1248,7 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   >>> print(f_jvp(4.))
   -6.676704
   """
+  _check_callable(fun)
   f = lu.wrap_init(fun)
   primals_flat, in_tree = tree_flatten((primals, {}))
   jaxtree_fun, out_tree = flatten_fun(f, in_tree)
@@ -1249,11 +1256,11 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   out_tree = out_tree()
   out_primal_py = tree_unflatten(out_tree, out_primals)
   primal_avals = list(map(core.get_aval, primals_flat))
-  lifted_jvp = partial(lift_linearized, jaxpr, primal_avals, consts,
+  lifted_jvp = partial(_lift_linearized, jaxpr, primal_avals, consts,
                        (in_tree, out_tree), out_pvals)
   return out_primal_py, lifted_jvp
 
-def lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
+def _lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
   def fun(*tangents):
     tangent_avals = list(map(core.get_aval, tangents))
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
@@ -1331,6 +1338,7 @@ def vjp(fun: Callable, *primals, **kwargs
   >>> print(ybar)
   -0.2524413
   """
+  _check_callable(fun)
   return _vjp(lu.wrap_init(fun), *primals, **kwargs)
 
 def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
