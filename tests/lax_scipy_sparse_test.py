@@ -146,7 +146,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     b = {"a": 1.0, "b": -4.0}
     expected = {"a": 4.0, "b": -6.0}
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
-    self.assertEqual(expected, actual)
+    self.assertEqual(expected.keys(), actual.keys())
+    self.assertAlmostEqual(expected["a"], actual["a"])
+    self.assertAlmostEqual(expected["b"], actual["b"])
 
   def test_cg_errors(self):
     A = lambda x: x
