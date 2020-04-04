@@ -129,7 +129,13 @@ class JetTrace(core.Trace):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
     f_jet, out_tree_def = traceable(jet_subtrace(f, self.master), in_tree_def)
-    result = call_primitive.bind(f_jet, *primals_and_series, **params)
+    new_params = dict(params)
+    if "donated_invars" in params:
+      if any(params["donated_invars"]):
+        raise ValueError("Buffer donation is not supported with jet.")
+      new_donated_invars = (False,) * len(primals_and_series)
+      new_params["donated_invars"] = new_donated_invars
+    result = call_primitive.bind(f_jet, *primals_and_series, **new_params)
     primals_out, series_out = tree_unflatten(out_tree_def(), result)
     return [JetTracer(self, p, ts) for p, ts in zip(primals_out, series_out)]
 

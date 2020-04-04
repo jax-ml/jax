@@ -187,9 +187,14 @@ class JaxprTrace(Trace):
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
     out_tracers = [JaxprTracer(self, pval, None) for pval in out_pvals]
     new_params = dict(params, call_jaxpr=lifted_jaxpr)
+    invars = tuple(it.chain(const_tracers, env_tracers, tracers))
+    if 'donated_invars' in params:
+      new_donated_invars = ((False,) * len(const_tracers) +
+                            (False,) * len(env_tracers) +
+                            params['donated_invars'])
+      new_params['donated_invars'] = tuple(new_donated_invars)
     # The `jaxpr` already contains the env_vars at start of invars
-    eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
-                         out_tracers, call_primitive, new_params)
+    eqn = new_eqn_recipe(invars, out_tracers, call_primitive, new_params)
     for t in out_tracers:
       t.recipe = eqn
     return out_tracers
@@ -209,10 +214,12 @@ class JaxprTrace(Trace):
       lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+      invars = tuple(it.chain(const_tracers, env_tracers))
       new_params = dict(params, call_jaxpr=lifted_jaxpr)
+      if 'donated_invars' in params:
+        new_params['donated_invars'] = (False,) * len(invars)
       # The `jaxpr` already contains the env_vars at start of invars
-      eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers)),
-                           out_tracers, call_primitive, new_params)
+      eqn = new_eqn_recipe(invars, out_tracers, call_primitive, new_params)
       for t in out_tracers:
         t.recipe = eqn
       return out_tracers
@@ -244,10 +251,14 @@ class JaxprTrace(Trace):
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
     out_tracers = [JaxprTracer(self, pval, None) for pval in out_pvals]
     # The `jaxpr` already contains the env_vars at start of invars
-    new_params = dict(params,
-                      mapped_invars=((True,) * len(const_tracers) +
-                                     (False,) * len(env_tracers) +
-                                     params['mapped_invars']),
+    new_donated_invars = ((False,) * len(const_tracers) +
+                          (False,) * len(env_tracers) +
+                          params['donated_invars'])
+    new_mapped_invars = ((True,) * len(const_tracers) +
+                         (False,) * len(env_tracers) +
+                         params['mapped_invars'])
+    new_params = dict(params, donated_invars=tuple(new_donated_invars),
+                      mapped_invars=tuple(new_mapped_invars),
                       call_jaxpr=lifted_jaxpr)
     assert (len(new_params['mapped_invars'])
             == len(const_tracers) + len(env_tracers) + len(tracers))
@@ -275,9 +286,10 @@ class JaxprTrace(Trace):
       lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-      new_params = dict(params,
-                        mapped_invars=tuple([True] * len(const_tracers) +
-                                            [False] * len(env)),
+      new_donated_invars = (False,) * (len(const_tracers) + len(env))
+      new_mapped_invars = (True,) * len(const_tracers) + (False,) * len(env)
+      new_params = dict(params, donated_invars=tuple(new_donated_invars),
+                        mapped_invars=tuple(new_mapped_invars),
                         call_jaxpr=lifted_jaxpr)
       env_tracers = map(trace.full_raise, env)
       eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
@@ -479,6 +491,7 @@ def new_eqn_recipe(invars, outvars, primitive, params):
     assert "call_jaxpr" in params
   if primitive.map_primitive:
     assert "mapped_invars" in params
+    assert "donated_invars" in params
   return JaxprEqnRecipe(object(), tuple(invars), map(ref, outvars), primitive,
                         params)
 

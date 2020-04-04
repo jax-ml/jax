@@ -3064,6 +3064,80 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     b = jnp.dot(a + jnp.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
 
+class BufferDonationTest(jtu.JaxTestCase):
+
+  def test_jit_donate_argnums_warning_raised(self):
+    x = jnp.array([1.0, 2.0], jnp.float32)
+    y = jnp.array([1, 2], jnp.int32)
+    f = jit(lambda x, y: x.sum() + y.sum(), donate_argnums=(0, 1))
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      f(x, y)
+
+      self.assertLen(w, 1)
+      self.assertTrue(issubclass(w[-1].category, UserWarning))
+      self.assertIn(
+          "Some donated buffers were not usable: f32[2]{0}, s32[2]{0}",
+          str(w[-1].message))
+
+  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  def test_jit_donate_argnums_invalidates_input(self):
+    # We can't just use `lambda x: x` because JAX simplifies this away.
+    move = jit(lambda x: x + x - x, donate_argnums=0)
+    x = jnp.ones([])
+    y = move(x)
+    self.assertDeleted(x)
+    self.assertEqual(y, 1.)
+
+  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  def test_jit_donate_argnums_static_argnums(self):
+    jit_fun = jit(lambda a, b, c, d: ((a + b + c), (a + b + d)),
+                  static_argnums=(0, 1), donate_argnums=(2, 3))
+
+    a = jnp.array(1)
+    b = jnp.array(2)
+    c = jax.device_put(jnp.array([1., 1.]))
+    d = jax.device_put(jnp.array([1., 1., 1.]))
+    e, f = jit_fun(a, b, c, d)
+    np.testing.assert_allclose(e, jnp.array([4., 4.]))
+    np.testing.assert_allclose(f, jnp.array([4., 4., 4.]))
+    self.assertNotDeleted(a)
+    self.assertNotDeleted(b)
+    self.assertDeleted(c)
+    self.assertDeleted(d)
+
+  def test_jit_nested_donate_ignored(self):
+    jit_fun = jit(lambda x: jit(lambda y: y ** 2, donate_argnums=0)(x))
+    a = jax.device_put(jnp.array(1))
+    with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+      jit_fun(a)
+
+  # === pmap ===
+
+  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  def test_pmap_donate_argnums_invalidates_input(self):
+    move = api.pmap(lambda x: x + x - x, donate_argnums=0)
+    n = jax.local_device_count()
+    x = api.pmap(lambda x: x)(jnp.ones([n]))
+    y = move(x)
+    self.assertDeleted(x)
+    np.testing.assert_allclose(y, [1.] * n)
+
+  def test_pmap_nested_donate_raises(self):
+    pmap_fun = jit(lambda x: api.pmap(lambda y: y ** 2, donate_argnums=0)(x))
+    a = api.pmap(lambda x: x)(jnp.array([1]))
+    with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+      pmap_fun(a)
+
+  assertDeleted = lambda self, x: self._assertDeleted(x, True)
+  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
+
+  def _assertDeleted(self, x, deleted):
+    if hasattr(x, "device_buffer"):
+      self.assertEqual(x.device_buffer.is_deleted(), deleted)
+    else:
+      for buffer in x.device_buffers:
+        self.assertEqual(buffer.is_deleted(), deleted)
 
 if __name__ == '__main__':
   absltest.main()

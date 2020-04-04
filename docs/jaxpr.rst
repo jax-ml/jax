@@ -430,6 +430,7 @@ computation should run. For example
                                      e = add a d
                                  in (e,) }
                     device=None
+                    donated_invars=(False, False, False)
                     name=inner ] b a c
       e = add a d
   in (e,) }
@@ -474,6 +475,7 @@ example
                                      g = div e f
                                  in (g,) }
                     devices=None
+                    donated_invars=(False, False, False)
                     global_axis_size=None
                     mapped_invars=(True, False, True)
                     name=inner ] c b a

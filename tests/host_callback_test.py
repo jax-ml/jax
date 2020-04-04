@@ -252,6 +252,7 @@ what: here
                                                    ] 42 a
                                  in (c,) }
                     device=None
+                    donated_invars=(False,)
                     name=func ] a
   in (b,) }""", str(api.make_jaxpr(api.jit(func))(5)))
     self.assertEqual("", testing_stream.output)
