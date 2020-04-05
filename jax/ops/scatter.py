@@ -130,6 +130,7 @@ def index_add(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_add)
 
+
 def index_min(x, idx, y):
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
@@ -202,6 +203,7 @@ def index_max(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter_max)
 
+
 def index_update(x, idx, y):
   """Pure equivalent of :code:`x[idx] = y`.
 
@@ -239,6 +241,7 @@ def index_update(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter)
 
+
 def segment_sum(data, segment_ids, num_segments=None):
   """Computes the sum within segments of an array.
 
@@ -267,3 +270,19 @@ def segment_sum(data, segment_ids, num_segments=None):
   out = np.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
   segment_ids = np.mod(segment_ids, num_segments)
   return index_add(out, segment_ids, data)
+
+
+def index_by_mask(x, boolean_mask, axis=0, pad_value=0):
+  """A version of NumPy's `x[boolean_mask]`, but with a static output shape.
+
+  Selects elements of `x` according to the boolean mask `boolean_mask`. The
+  output is padded with `pad_value` so that it has the same shape as `x`.
+
+  Args:
+    x: the array that should be indexed.
+    boolean_mask: boolean array with shape `(x.shape[axis],)`.
+    axis: The dimension of `x` that should be indexed.
+    pad_value: Value to pad the output with to make it statically shaped.
+  """
+  x = np.where(boolean_mask, x, pad_value)
+  return lax.sort_key_val(~boolean_mask, x, dimension=axis)[1]
