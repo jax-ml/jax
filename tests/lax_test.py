@@ -3127,6 +3127,11 @@ class LaxVmapTest(jtu.JaxTestCase):
     x = lax.iota(onp.int32, 3) + 1
     self.assertIsInstance(x.shape[0], int)  # not np.int64
 
+  def testBroadcastShapesReturnsPythonInts(self):
+    shape1, shape2 = (1, 2, 3), (2, 3)
+    out_shape = lax.broadcast_shapes(shape1, shape2)
+    self.assertTrue(all(type(s) is int for s in out_shape))
+
   # TODO Concatenate
   # TODO Reverse
   # TODO DynamicSlice

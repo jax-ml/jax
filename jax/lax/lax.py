@@ -34,7 +34,7 @@ from .. import linear_util as lu
 from .. import dtypes
 from .. import lazy
 from ..config import flags
-from ..core import Primitive
+from ..core import _canonicalize_dimension, Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
                                raise_to_shaped, abstract_token, canonicalize_shape)
@@ -70,7 +70,7 @@ def broadcast_shapes(*shapes):
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
-  return tuple(result_shape)
+  return tuple(map(_canonicalize_dimension, result_shape))
 
 def _identity(x): return x
 
