@@ -1125,9 +1125,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
-    grad_dtypes = [onp.float32, onp.float64, onp.complex64, onp.complex128]
-    if dtype in grad_dtypes and out_dtype in grad_dtypes:
-      check_grads(jnp_fun, args_maker(), order=2, rtol=1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(

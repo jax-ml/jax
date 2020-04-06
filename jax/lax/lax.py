@@ -1016,6 +1016,14 @@ def _select_and_gather_add(tangents, operand, select_prim, window_dimensions,
       window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=padding)
 
+def cumsum(operand, axis: int):
+  """Computes a cumulative sum along `axis`."""
+  return cumsum_p.bind(operand, axis=int(axis))
+
+def cumprod(operand, axis: int):
+  """Computes a cumulative product along `axis`."""
+  return cumprod_p.bind(operand, axis=int(axis))
+
 def sort(operand, dimension=-1):
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_
@@ -4040,6 +4048,112 @@ xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
   _select_and_gather_add_translation,
   max_bits=32)
 
+
+# Parallel prefix-scan. See:
+# https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
+# and
+# Blelloch, Guy E. 1990. "Prefix Sums and Their Applications.", Technical Report
+# CMU-CS-90-190, School of Computer Science, Carnegie Mellon University.
+#
+# Unlike the Blelloch algorithm, we use an out-of-place algorithm that uses 2n
+# space. This is somewhat wasteful if we are interested only in the output of
+# the forward pass, but more memory-efficient if we intend to differentiate
+# through the implementation of the scan.
+def _prescan_power_of_two(x, axis: int, op: Callable, unit):
+  n = x.shape[axis]
+  assert n != 0 and n & (n - 1) == 0, "n must be a power of 2"
+
+  # Upsweep
+  xs = []
+  for d in range(0, n.bit_length() - 1):
+    x1 = slice_in_dim(x, 0, None, stride=2, axis=axis)
+    xs.append(x1)
+    x2 = slice_in_dim(x, 1, None, stride=2, axis=axis)
+    x = op(x1, x2)
+  total = x
+
+  # Downsweep
+  x = full_like(total, unit)
+  pad_left = [(0, 0, 0)] * len(x.shape)
+  pad_left[axis] = (1, 0, 1)
+  pad_right = [(0, 0, 0)] * len(x.shape)
+  pad_right[axis] = (0, 1, 1)
+  for w in reversed(xs):
+    x1 = pad(x, _const(x, 0), pad_right)
+    x2 = pad(x, _const(x, 0), pad_left)
+    w = pad(w, _const(x, 0), pad_left)
+    x = x1 + op(x2, w)
+
+  return x, total
+
+
+def _parallel_prefix_scan(x, axis: int, op: Callable, unit):
+  n = x.shape[axis]
+  if n == 0:
+    return x
+  # Pads to the next largest power of two
+  nbits = n.bit_length()
+  if n == (1 << (nbits - 1)):
+    nbits -= 1
+  padding = [(0, 0, 0)] * len(x.shape)
+  padding[axis] = (0, (1 << nbits) - n, 0)
+  x = pad(x, _const(x, unit), padding)
+  x, total = _prescan_power_of_two(x, axis, op, unit)
+  return concatenate((slice_in_dim(x, 1, n, axis=axis), total), dimension=axis)
+
+def _cumred_shape_rule(x, axis):
+  if axis < 0 or axis >= x.ndim:
+    raise ValueError(
+        "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
+  return x.shape
+
+
+def _cumred_jvp_rule(impl: Callable, primals, tangents, axis: int):
+  return api.jvp(partial(impl, axis=axis), primals, tangents)
+
+
+def _cumred_tpu_translation_rule(window_reduce: Callable, unit, x, axis: int):
+  # On TPU, an implementation using reduce_window is handled specially by the
+  # compiler. However, irrespective of backend, we always use the parallel
+  # prefix scan implementation when differentiating because reduce_window is not
+  # arbitrarily differentiable.
+  n = x.shape[axis]
+  padding = [(0, 0, 0)] * x.ndim
+  padding[axis] = (n - 1, 0, 0)
+  x = pad(x, _const(x, unit), padding)
+  strides = [1] * x.ndim
+  window_dims = [1] * x.ndim
+  window_dims[axis] = n
+  return window_reduce(x, window_dims, strides, xla_client.PaddingType.VALID)
+
+def _cumred_batch_rule(prim, batched_args, batch_dims, axis: int):
+  operand, = batched_args
+  bdim, = batch_dims
+  axis = axis if axis < bdim else axis + 1
+  return prim.bind(operand, axis=axis), bdim
+
+
+_cumsum_impl = partial(_parallel_prefix_scan, op=add, unit=0)
+
+cumsum_p = standard_primitive(
+  _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cumsum"),
+  'cumsum', xla.lower_fun(_cumsum_impl, multiple_results=False))
+ad.primitive_jvps[cumsum_p] = partial(_cumred_jvp_rule, _cumsum_impl)
+xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
+  partial(_cumred_tpu_translation_rule, _reduce_window_sum, 0),
+  multiple_results=False)
+batching.primitive_batchers[cumsum_p] = partial(_cumred_batch_rule, cumsum_p)
+
+_cumprod_impl= partial(_parallel_prefix_scan, op=mul, unit=1)
+
+cumprod_p = standard_primitive(
+  _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cumprod"),
+  'cumprod', xla.lower_fun(_cumprod_impl, multiple_results=False))
+ad.primitive_jvps[cumprod_p] = partial(_cumred_jvp_rule, _cumprod_impl)
+xla.backend_specific_translations['tpu'][cumprod_p] = xla.lower_fun(
+  partial(_cumred_tpu_translation_rule, _reduce_window_prod, 1),
+  multiple_results=False)
+batching.primitive_batchers[cumprod_p] = partial(_cumred_batch_rule, cumprod_p)
 
 sort_shape = lambda operand, dimension: operand.shape
 
