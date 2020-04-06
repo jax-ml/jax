@@ -279,7 +279,7 @@ def check_nans(prim, bufs):
 
 def _check_nans(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
-  if dtypes.issubdtype(xla_shape.element_type(), onp.floating):
+  if dtypes.issubdtype(xla_shape.element_type(), onp.inexact):
     if onp.any(onp.isnan(buf.to_py())):
       msg = "invalid value (nan) encountered in {}"
       raise FloatingPointError(msg.format(name))
