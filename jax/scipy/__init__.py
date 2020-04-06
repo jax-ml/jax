@@ -14,5 +14,6 @@
 
 from . import linalg
 from . import ndimage
+from . import sparse
 from . import special
 from . import stats
