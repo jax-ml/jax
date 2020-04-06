@@ -1270,6 +1270,29 @@ class LaxTest(jtu.JaxTestCase):
     # pylint: enable=cell-var-from-loop
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_axis={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
+       "op": op, "onp_op": onp_op, "shape": shape, "dtype": dtype,
+       "axis": axis, "rng_factory": rng_factory}
+      for op, onp_op, types in [
+          (lax.cumsum, onp.cumsum, default_dtypes),
+          (lax.cumprod, onp.cumprod, default_dtypes),
+      ]
+      for dtype in types
+      for shape in [[10], [3, 4, 5]]
+      for axis in range(len(shape))
+      for rng_factory in [
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          else jtu.rand_small]))
+  def testCumulativeReduce(self, op, onp_op, shape, dtype, axis, rng_factory):
+    rng = rng_factory()
+    fun = partial(op, axis=axis)
+    onp_fun = partial(onp_op, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(fun, onp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
@@ -2385,6 +2408,27 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], tol, tol,
                   eps)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_axis={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
+       "op": op, "shape": shape, "dtype": dtype,
+       "axis": axis, "rng_factory": rng_factory}
+      for op, types in [
+          (lax.cumsum, [onp.float32, onp.float64]),
+          (lax.cumprod, [onp.float32, onp.float64]),
+      ]
+      for dtype in types
+      for shape in [[10], [3, 4, 5]]
+      for axis in range(len(shape))
+      for rng_factory in [
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          else jtu.rand_small]))
+  @jtu.skip_on_devices("tpu")  # TODO(b/153183305): wrong outputs
+  def testCumulativeReduceGrad(self, op, shape, dtype, axis, rng_factory):
+    rng = rng_factory()
+    check_grads(partial(op, axis=axis), (rng(shape, dtype),), order=2)
+
+
   # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
@@ -3024,6 +3068,28 @@ class LaxVmapTest(jtu.JaxTestCase):
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape):
         self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_axis={}_bdims={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis,
+               bdims),
+       "op": op, "shape": shape, "dtype": dtype, "bdims": bdims,
+       "axis": axis, "rng_factory": rng_factory}
+      for op, types in [
+          (lax.cumsum, [onp.float32, onp.float64]),
+          (lax.cumprod, [onp.float32, onp.float64]),
+      ]
+      for dtype in types
+      for shape in [[10], [3, 4, 5]]
+      for axis in range(len(shape))
+      for bdims in all_bdims(shape)
+      for rng_factory in [
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          else jtu.rand_small]))
+  def testCumulativeReduce(self, op, shape, dtype, axis, bdims, rng_factory):
+    rng = rng_factory()
+    self._CheckBatching(partial(op, axis=axis), 7, bdims, (shape,), (dtype,),
+                        rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_padding={}".format(onp.dtype(dtype).name,

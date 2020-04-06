@@ -1571,59 +1571,7 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   return td
 
 
-# Parallel prefix-scan. See:
-# https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
-# and
-# Blelloch, Guy E. 1990. "Prefix Sums and Their Applications.", Technical Report
-# CMU-CS-90-190, School of Computer Science, Carnegie Mellon University.
-#
-# Unlike the Blelloch algorithm, we use an out-of-place algorithm that uses 2n
-# space. This is somewhat wasteful if we are interested only in the output of
-# the forward pass, but more memory-efficient if we intend to differentiate
-# through the implementation of the scan.
-def _prescan_power_of_two(x, axis: int, op: Callable, unit):
-  n = x.shape[axis]
-  assert n != 0 and n & (n - 1) == 0, "n must be a power of 2"
-
-  # Upsweep
-  xs = []
-  for d in range(0, n.bit_length() - 1):
-    x1 = lax.slice_in_dim(x, 0, None, stride=2, axis=axis)
-    xs.append(x1)
-    x2 = lax.slice_in_dim(x, 1, None, stride=2, axis=axis)
-    x = op(x1, x2)
-  total = x
-
-  # Downsweep
-  x = full_like(total, unit)
-  pad_left = [(0, 0, 0)] * len(x.shape)
-  pad_left[axis] = (1, 0, 1)
-  pad_right = [(0, 0, 0)] * len(x.shape)
-  pad_right[axis] = (0, 1, 1)
-  for w in reversed(xs):
-    x1 = lax.pad(x, x.dtype.type(0), pad_right)
-    x2 = lax.pad(x, x.dtype.type(0), pad_left)
-    w = lax.pad(w, x.dtype.type(0), pad_left)
-    x = x1 + op(x2, w)
-
-  return x, total
-
-def _parallel_prefix_scan(x, axis: int, op: Callable, unit):
-  n = x.shape[axis]
-
-  # Pads to the next largest power of two
-  nbits = n.bit_length()
-  if n == (1 << (nbits - 1)):
-    nbits -= 1
-  padding = [(0, 0, 0)] * len(x.shape)
-  padding[axis] = (0, (1 << nbits) - n, 0)
-  x = lax.pad(x, x.dtype.type(unit), padding)
-  x, product = _prescan_power_of_two(x, axis, op, unit)
-  return concatenate((lax.slice_in_dim(x, 1, n, axis=axis), product), axis=axis)
-
-
-def _make_cumulative_reduction(onp_reduction, op, unit,
-                               squash_nan=False):
+def _make_cumulative_reduction(onp_reduction, reduction, squash_nan=False):
   # We want to allow XLA to fuse the pad and reduce-window operators to
   # avoid materializing the padded output.
   # Consider removing `jit` once again if reduce-window is generalized to
@@ -1652,9 +1600,7 @@ def _make_cumulative_reduction(onp_reduction, op, unit,
     if dtype:
       a = lax.convert_element_type(a, dtype)
 
-    if a_shape[axis] == 0:
-      return a
-    return _parallel_prefix_scan(a, axis, op, unit)
+    return reduction(a, axis)
 
   @_wraps(onp_reduction)
   def cumulative_reduction(a, axis=None, dtype=None):
@@ -1663,15 +1609,13 @@ def _make_cumulative_reduction(onp_reduction, op, unit,
   return cumulative_reduction
 
 
-cumsum = _make_cumulative_reduction(
-  onp.cumsum, add, 0, squash_nan=False)
-cumprod = _make_cumulative_reduction(
-  onp.cumprod, multiply, 1, squash_nan=False)
+cumsum = _make_cumulative_reduction(onp.cumsum, lax.cumsum, squash_nan=False)
+cumprod = _make_cumulative_reduction(onp.cumprod, lax.cumprod, squash_nan=False)
 cumproduct = cumprod
-nancumsum = _make_cumulative_reduction(
-  onp.nancumsum, add, 0, squash_nan=True)
-nancumprod = _make_cumulative_reduction(
-  onp.nancumprod, multiply, 1, squash_nan=True)
+nancumsum = _make_cumulative_reduction(onp.nancumsum, lax.cumsum,
+                                       squash_nan=True)
+nancumprod = _make_cumulative_reduction(onp.nancumprod, lax.cumprod,
+                                        squash_nan=True)
 
 
 ### Array-creation functions
