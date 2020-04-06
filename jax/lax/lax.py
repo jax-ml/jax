@@ -4101,8 +4101,8 @@ def _parallel_prefix_scan(x, axis: int, op: Callable, unit):
   x, total = _prescan_power_of_two(x, axis, op, unit)
   return concatenate((slice_in_dim(x, 1, n, axis=axis), total), dimension=axis)
 
-_cumsum_impl = partial(_parallel_prefix_scan, op=add, unit=0)
-_cumprod_impl = partial(_parallel_prefix_scan, op=mul, unit=1)
+_cumsum_prefix_scan = partial(_parallel_prefix_scan, op=add, unit=0)
+_cumprod_prefix_scan = partial(_parallel_prefix_scan, op=mul, unit=1)
 
 def _cumred_shape_rule(x, axis):
   if axis < 0 or axis >= x.ndim:
@@ -4117,7 +4117,7 @@ def _cumprod_jvp_rule(primals, tangents, axis: int):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return api.jvp(partial(_cumprod_impl, axis=axis), primals, tangents)
+  return api.jvp(partial(_cumprod_prefix_scan, axis=axis), primals, tangents)
 
 
 def _cumred_tpu_translation_rule(window_reduce: Callable, unit, x, axis: int):
@@ -4143,7 +4143,7 @@ def _cumred_batch_rule(prim, batched_args, batch_dims, axis: int):
 
 cumsum_p = standard_primitive(
   _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cumsum"),
-  'cumsum', xla.lower_fun(_cumsum_impl, multiple_results=False))
+  'cumsum', xla.lower_fun(_cumsum_prefix_scan, multiple_results=False))
 ad.deflinear(cumsum_p, _cumsum_transpose_rule)
 xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
   partial(_cumred_tpu_translation_rule, _reduce_window_sum, 0),
@@ -4153,7 +4153,7 @@ batching.primitive_batchers[cumsum_p] = partial(_cumred_batch_rule, cumsum_p)
 
 cumprod_p = standard_primitive(
   _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cumprod"),
-  'cumprod', xla.lower_fun(_cumprod_impl, multiple_results=False))
+  'cumprod', xla.lower_fun(_cumprod_prefix_scan, multiple_results=False))
 ad.primitive_jvps[cumprod_p] = _cumprod_jvp_rule
 xla.backend_specific_translations['tpu'][cumprod_p] = xla.lower_fun(
   partial(_cumred_tpu_translation_rule, _reduce_window_prod, 1),
