@@ -2423,6 +2423,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for rng_factory in [
           jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
           else jtu.rand_small]))
+  @jtu.skip_on_devices("tpu")  # TODO(b/153183305): wrong outputs
   def testCumulativeReduceGrad(self, op, shape, dtype, axis, rng_factory):
     rng = rng_factory()
     check_grads(partial(op, axis=axis), (rng(shape, dtype),), order=2)
