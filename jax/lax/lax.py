@@ -4118,6 +4118,8 @@ def _cumred_tpu_translation_rule(window_reduce: Callable, unit, x, axis: int):
   # prefix scan implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
   n = x.shape[axis]
+  if n == 0:
+    return x
   padding = [(0, 0, 0)] * x.ndim
   padding[axis] = (n - 1, 0, 0)
   x = pad(x, _const(x, unit), padding)
