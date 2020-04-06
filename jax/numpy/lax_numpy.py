@@ -3443,12 +3443,12 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
     msg = ("jax.numpy.quantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  if interpolation != "linear":
-    raise NotImplementedError("Only interpolation='linear' is implemented")
-  return _quantile(a, q, axis, keepdims)
+  if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
+    raise ValueError("interpolation can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
+  return _quantile(a, q, axis, interpolation, keepdims)
 
-@partial(jit, static_argnums=(2, 3))
-def _quantile(a, q, axis, keepdims):
+@partial(jit, static_argnums=(2, 3, 4))
+def _quantile(a, q, axis, interpolation, keepdims):
   a = asarray(a)
   if axis is None:
     a = ravel(a)
@@ -3477,7 +3477,7 @@ def _quantile(a, q, axis, keepdims):
   n = a_shape[axis]
   q = lax.mul(q, _constant_like(q, n - 1))
   low = lax.floor(q)
-  high = lax.add(low, _constant_like(low, 1))
+  high = lax.ceil(q)
   high_weight = lax.sub(q, low)
   low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
 
@@ -3506,9 +3506,23 @@ def _quantile(a, q, axis, keepdims):
                                       broadcast_dimensions=(0,))
     high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
                                       broadcast_dimensions=(0,))
-  return lax.convert_element_type(
-    lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
-            lax.mul(high_value.astype(q.dtype), high_weight)), a.dtype)
+
+  if interpolation == "linear":
+    result = lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
+                     lax.mul(high_value.astype(q.dtype), high_weight))
+  elif interpolation == "lower":
+    result = low_value
+  elif interpolation == "higher":
+    result = high_value
+  elif interpolation == "nearest":
+    pred = lax.le(high_weight, _constant_like(high_weight, 0.5))
+    result = lax.select(pred, low_value, high_value)
+  elif interpolation == "midpoint":
+    result = lax.mul(lax.add(low_value, high_value), _constant_like(low_value, 0.5))
+  else:
+    raise ValueError(f"interpolation={interpolation!r} not recognized")
+
+  return lax.convert_element_type(result, a.dtype)
 
 
 @_wraps(onp.percentile)
