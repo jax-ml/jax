@@ -3481,7 +3481,7 @@ def percentile(a, q, axis=None, out=None, overwrite_input=False,
 def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
     q = 0.5
     return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                    keepdims=keepdims)
+                    keepdims=keepdims, interpolation='midpoint')
 
 def _astype(arr, dtype):
   lax._check_user_dtype_supported(dtype, "astype")
