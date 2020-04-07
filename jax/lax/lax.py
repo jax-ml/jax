@@ -2935,7 +2935,8 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
                                  start_index_map=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_indices, start_idx_bds)
   return _gather_batching_rule(
-    [operand, index], [operand_bd, index_bdim], dnums, slice_sizes)
+    [operand, index], [operand_bd, index_bdim], dimension_numbers=dnums,
+    slice_sizes=slice_sizes)
 
 
 dynamic_slice_p = standard_primitive(
