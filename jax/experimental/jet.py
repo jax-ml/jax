@@ -228,6 +228,17 @@ def _exp_taylor(primals_in, series_in):
   return primal_out, series_out
 jet_rules[lax.exp_p] = _exp_taylor
 
+def _expm1_taylor(primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  v = [lax.exp(x)] + [None] * len(series)
+  for k in range(1,len(v)):
+    v[k] = fact(k-1) * sum([_scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+  primal_out, *series_out = v
+  return lax.expm1(x), series_out
+jet_rules[lax.expm1_p] = _expm1_taylor
+
 def _log_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
@@ -239,6 +250,18 @@ def _log_taylor(primals_in, series_in):
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.log_p] = _log_taylor
+
+def _log1p_taylor(primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x + 1] + series
+  v = [lax.log(x + 1)] + [None] * len(series)
+  for k in range(1, len(v)):
+    conv = sum([_scale(k, j) * v[j] * u[k-j] for j in range(1, k)])
+    v[k] = (u[k] - fact(k - 1) * conv) / u[0]
+  primal_out, *series_out = v
+  return primal_out, series_out
+jet_rules[lax.log1p_p] = _log1p_taylor
 
 def _div_taylor_rule(primals_in, series_in, **params):
   x, y = primals_in
