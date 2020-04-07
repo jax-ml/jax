@@ -877,7 +877,13 @@ class APITest(jtu.JaxTestCase):
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
-                            lambda: api.jit(3))
+                           lambda: api.jit(3))
+
+  def test_jit_of_generator(self):
+    def gen(x):
+      yield x
+    self.assertRaisesRegex(TypeError, "Expected a function, got a generator function.*",
+                           lambda: api.jit(gen))
 
   def test_issue_1062(self):
     # code from https://github.com/google/jax/issues/1062 @shoyer

@@ -26,6 +26,7 @@ arrays.
 
 import collections
 import functools
+import inspect
 import itertools as it
 import threading
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
@@ -75,7 +76,9 @@ flags.DEFINE_bool("jax_disable_jit",
 
 def _check_callable(fun):
   if not callable(fun):
-    raise TypeError("Expected a callable value, got {}".format(fun))
+    raise TypeError(f"Expected a callable value, got {fun}")
+  if inspect.isgeneratorfunction(fun):
+    raise TypeError(f"Expected a function, got a generator function: {fun}")
 
 class _ThreadLocalState(threading.local):
   def __init__(self):
