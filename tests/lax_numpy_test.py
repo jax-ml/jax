@@ -2090,19 +2090,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name":
-           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}".format(
+           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}_interpolation={}".format(
              op,
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              jtu.format_shape_dtype_string(q_shape, q_dtype),
-             axis, keepdims),
+             axis, keepdims, interpolation),
          "a_rng": jtu.rand_default(), "q_rng": q_rng, "op": op,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
-         "keepdims": keepdims}
+         "keepdims": keepdims,
+         "interpolation": interpolation}
         for (op, q_rng) in (
           ("percentile", jtu.rand_uniform(low=0., high=100.)),
           ("quantile", jtu.rand_uniform(low=0., high=1.)),
-          ("median", jtu.rand_uniform(low=0., high=1.)),
         )
         for a_dtype in float_dtypes
         for a_shape, axis in (
@@ -2112,26 +2112,59 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         )
         for q_dtype in [onp.float32]
         for q_shape in scalar_shapes + [(4,)]
-        for keepdims in [False, True]))
+        for keepdims in [False, True]
+        for interpolation in ['linear', 'lower', 'higher', 'nearest', 'midpoint']))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
-                   axis, keepdims):
+                   axis, keepdims, interpolation):
     if op == "quantile" and numpy_version < (1, 15):
       raise SkipTest("Numpy < 1.15 does not have np.quantile")
-    if op == "median":
-        args_maker = lambda: [a_rng(a_shape, a_dtype)]
-    else:
-        args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+    args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     def onp_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               onp.asarray(x, onp.float32) for x in args]
-      return getattr(onp, op)(*args, axis=axis, keepdims=keepdims)
-    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims)
+      return getattr(onp, op)(*args, axis=axis, keepdims=keepdims,
+                     interpolation=interpolation)
+    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims,
+                      interpolation=interpolation)
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
     tol_spec = {onp.float32: 2e-4, onp.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, rtol=tol)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name":
+           "_op=median_a_shape={}_axis={}_keepdims={}".format(
+             jtu.format_shape_dtype_string(a_shape, a_dtype),
+             axis, keepdims),
+         "a_rng": jtu.rand_default(), 
+         "a_shape": a_shape, "a_dtype": a_dtype,
+         "axis": axis,
+         "keepdims": keepdims}
+        for a_dtype in float_dtypes
+        for a_shape, axis in (
+          ((7,), None),
+          ((47, 7), 0),
+          ((4, 101), 1),
+        )
+        for keepdims in [False, True]))
+  def testMedian(self, a_rng, a_shape, a_dtype, axis, keepdims):
+    args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    def onp_fun(*args):
+      args = [x if jnp.result_type(x) != jnp.bfloat16 else
+              onp.asarray(x, onp.float32) for x in args]
+      return onp.median(*args, axis=axis, keepdims=keepdims)
+    jnp_fun = partial(jnp.median, axis=axis, keepdims=keepdims)
+    # TODO(phawkins): we currently set dtype=False because we aren't as
+    # aggressive about promoting to float64. It's not clear we want to mimic
+    # Numpy here.
+    tol_spec = {onp.float32: 2e-4, onp.float64: 5e-6}
+    tol = jtu.tolerance(a_dtype, tol_spec)
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, rtol=tol)
