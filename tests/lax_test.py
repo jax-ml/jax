@@ -469,9 +469,15 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dilation": lhs_dilation,
        "rhs_dilation": rhs_dilation, "dimension_numbers": dim_nums,
+       "feature_group_count": feature_group_count,
+       "batch_group_count": batch_group_count,
        "perms": perms, "rng_factory": rng_factory}
+      for batch_group_count, feature_group_count in [
+        (1, 1), (2, 1), (1, 2)
+      ]
       for lhs_shape, rhs_shape in [
-          ((b, i, 9, w), (j, i, 4, 5))
+          ((b * batch_group_count, i * feature_group_count, 9, w),
+           (j * feature_group_count * batch_group_count, i, 4, 5))
           for w in [0, 10]
           for b, i, j in itertools.product([2, 3], repeat=3)]
       for dtype in float_dtypes for strides in [(1, 1), (2, 1)]
@@ -486,6 +492,7 @@ class LaxTest(jtu.JaxTestCase):
       ]))
   def testConvGeneralDilated(self, lhs_shape, rhs_shape, dtype, strides,
                              padding, lhs_dilation, rhs_dilation,
+                             feature_group_count, batch_group_count,
                              dimension_numbers, perms, rng_factory):
     rng = rng_factory()
     lhs_perm, rhs_perm = perms  # permute to compatible shapes
@@ -497,7 +504,8 @@ class LaxTest(jtu.JaxTestCase):
     def fun(lhs, rhs):
       return lax.conv_general_dilated(
           lhs, rhs, strides, padding, lhs_dilation, rhs_dilation,
-          dimension_numbers)
+          dimension_numbers, feature_group_count=feature_group_count,
+          batch_group_count=batch_group_count)
 
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
@@ -2012,16 +2020,20 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng_factory": rng_factory, "dimension_numbers": dim_nums,
-       "perms": perms, "feature_group_count": feature_group_count}
+       "perms": perms, "feature_group_count": feature_group_count,
+       "batch_group_count": batch_group_count}
+      for batch_group_count, feature_group_count in [
+        (1, 1), # (2, 1), (1, 2)
+      ]
       for lhs_shapes, rhs_shape, all_strides, lhs_dils, rhs_dils in [
-          ([(b, i, 6, 7), (b, i, 0, 4)],  # lhs_shape
-           (j, i, 1, 2),  # rhs_shape
+          ([(b * batch_group_count, i * feature_group_count, 6, 7),
+            (b * batch_group_count, i * feature_group_count, 0, 4)],  # lhs_shape
+           (j * batch_group_count * feature_group_count, i, 1, 2),  # rhs_shape
            [(1, 1), (1, 2), (2, 1)],  # strides
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
       for lhs_shape in lhs_shapes
-      for feature_group_count in [1, 2]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
@@ -2036,7 +2048,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   ))
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
-                                 perms, feature_group_count, rng_factory):
+                                 perms, feature_group_count, batch_group_count,
+                                 rng_factory):
     rng = rng_factory()
     tol = {dtypes.bfloat16: 1e-0, onp.float16: 5e-1, onp.float32: 1e-4}
 
@@ -2044,9 +2057,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     lhs_perm, rhs_perm = perms
     lhs_shape = list(onp.take(lhs_shape, lhs_perm))
     rhs_shape = list(onp.take(rhs_shape, rhs_perm))
-    dim_spec = lax.conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers)
-    lhs_shape[dim_spec.lhs_spec[1]] *= feature_group_count
-    rhs_shape[dim_spec.rhs_spec[0]] *= feature_group_count
 
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
@@ -2054,6 +2064,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                    padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
                    dimension_numbers=dimension_numbers,
                    feature_group_count=feature_group_count,
+                   batch_group_count=batch_group_count,
                    precision=lax.Precision.HIGHEST)
     check_grads_bilinear(conv, (lhs, rhs), order=2, modes=["fwd", "rev"],
                          atol=tol, rtol=tol)
