@@ -279,7 +279,7 @@ def check_nans(prim, bufs):
 
 def _check_nans(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
-  if dtypes.issubdtype(xla_shape.element_type(), onp.floating):
+  if dtypes.issubdtype(xla_shape.element_type(), onp.inexact):
     if onp.any(onp.isnan(buf.to_py())):
       msg = "invalid value (nan) encountered in {}"
       raise FloatingPointError(msg.format(name))
@@ -646,7 +646,13 @@ def add_jaxvals_translation_rule(c, x, y):
   return c.Add(x, y)
 translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 
-def lower_fun(fun):
+@lu.transformation
+def _tuple_output(*args, **kwargs):
+  ans = yield args, kwargs
+  yield (ans,)
+
+
+def lower_fun(fun, multiple_results=True):
   # This function can only be used to lower functions that take JAX array types
   # as arguments (and e.g. don't accept unit values), because it assumes it can
   # map from XLA types to JAX types. In general that mapping is not possible (as
@@ -658,11 +664,18 @@ def lower_fun(fun):
     # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.GetShape(x)) for x in xla_args]
     pvals = [pe.PartialVal((a, core.unit)) for a in avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(
-        lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
+    wrapped_fun = lu.wrap_init(fun, params)
+    if not multiple_results:
+      wrapped_fun = _tuple_output(wrapped_fun)
+    jaxpr, _, consts = pe.trace_to_jaxpr(wrapped_fun, pvals, instantiate=True,
+                                         stage_out=True)
     consts = _map(c.Constant, consts)
     outs = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1), consts, '', *xla_args)
-    return c.Tuple(*outs)
+    if multiple_results:
+      return c.Tuple(*outs)
+    else:
+      assert len(outs) == 1, outs
+      return outs[0]
   return f
 
 def _array_aval_from_xla_shape(xla_shape):

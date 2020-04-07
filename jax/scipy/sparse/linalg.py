@@ -82,6 +82,10 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   need to supply the linear operator ``A`` as a function instead of a sparse
   matrix or ``LinearOperator``.
 
+  Derivatives of ``cg`` are implemented via implicit differentiation with
+  another ``cg`` solve, rather than by differentiating *through* the solver.
+  They will be accurate only if both solves converge.
+
   Parameters
   ----------
   A : function
@@ -121,6 +125,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   See also
   --------
   scipy.sparse.linalg.cg
+  jax.lax.custom_linear_solve
   """
   if x0 is None:
     x0 = tree_map(jnp.zeros_like, b)

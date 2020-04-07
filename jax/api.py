@@ -26,6 +26,7 @@ arrays.
 
 import collections
 import functools
+import inspect
 import itertools as it
 import threading
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
@@ -75,7 +76,9 @@ flags.DEFINE_bool("jax_disable_jit",
 
 def _check_callable(fun):
   if not callable(fun):
-    raise TypeError("Expected a callable value, got {}".format(fun))
+    raise TypeError(f"Expected a callable value, got {fun}")
+  if inspect.isgeneratorfunction(fun):
+    raise TypeError(f"Expected a function, got a generator function: {fun}")
 
 class _ThreadLocalState(threading.local):
   def __init__(self):
@@ -617,9 +620,15 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
       ``in_axes`` can itself be a matching container, so that distinct array
       axes can be mapped for different container elements. ``in_axes`` must be a
       container tree prefix of the positional argument tuple passed to ``fun``.
+
+      At least one positional argument must have `in_axes` not None. The sizes
+      of the mapped input axes for all mapped positional arguments must all
+      be equal.
+
     out_axes: A nonnegative integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof indicating where the mapped axis should appear
-      in the output.
+      in the output. All outputs with a mapped axis must have a non-None
+      `out_axes` specification.
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to
@@ -664,6 +673,23 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   >>> vfoo = vmap(foo, in_axes=((0, (1, 2)),))
   >>> print(vfoo(tree)).shape
   (6, 2, 5)
+
+  The results of a vectorized function can be mapped or unmapped.
+  For example, the function below returns a pair with the first
+  element mapped and the second unmapped. Only for unmapped results
+  we can specify `out_axes` to be None (to keep it unmapped).
+
+  >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=(0, None))(np.arange(2.), 4.))
+  ([4., 5.], 8.)
+
+  If the `out_axes` is specified for an unmapped result, the result is broadcast
+  across the mapped axis:
+
+  >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(np.arange(2.), 4.))
+  ([4., 5.], [8., 8.])
+
+  If the `out_axes` is specified for a mapped result, the result is
+  transposed accordingly.
   """
   _check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
@@ -683,11 +709,20 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
            "or a (nested) tuple of those types, got {} and {} respectively.")
     raise TypeError(msg.format(type(in_axes), type(out_axes)))
 
-  def _check_axis_sizes(tree, vals, dims):
-    mapped_axis_sizes = {x.shape[d] for x, d in zip(vals, dims) if d is not None}
+  def _get_axis_size(i:int, shape: Tuple[int, ...], axis: int):
     try:
-      sizes, = mapped_axis_sizes
+      return shape[axis]
+    except (IndexError, TypeError) as e:
+      raise ValueError(f"vmap got arg {i} of rank {len(shape)} but axis to be mapped {axis}") from e
+
+  def _check_axis_sizes(tree, vals, dims):
+    mapped_axis_sizes = {_get_axis_size(i, onp.shape(x), d) for i, (x, d) in enumerate(zip(vals, dims))
+                         if d is not None}
+    try:
+      size, = mapped_axis_sizes
     except ValueError as e:
+      if not mapped_axis_sizes:
+        raise ValueError("vmap must have at least one non-None in_axes") from e
       msg = "vmap got inconsistent sizes for array axes to be mapped:\n{}"
       # we switch the error message based on whether args is a tuple of arrays,
       # in which case we can produce an error message based on argument indices,
