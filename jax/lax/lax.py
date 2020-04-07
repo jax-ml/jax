@@ -3014,8 +3014,8 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
                                   scatter_dims_to_operand_dims=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_idx, start_idx_bd)
   return _scatter_batching_rule(
-    scatter, (operand, index, update),
-    (operand_bd, index_bdim, update_bd), None, None, dnums)
+    scatter, (operand, index, update), (operand_bd, index_bdim, update_bd),
+    update_jaxpr=None, update_consts=None, dimension_numbers=dnums)
 
 
 dynamic_update_slice_p = standard_primitive(
