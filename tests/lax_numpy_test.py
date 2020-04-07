@@ -2139,7 +2139,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name":
-           "_op=median_a_shape={}_axis={}_keepdims={}".format(
+           "_a_shape={}_axis={}_keepdims={}".format(
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              axis, keepdims),
          "a_rng": jtu.rand_default(), 
