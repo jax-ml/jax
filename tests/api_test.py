@@ -1765,18 +1765,19 @@ class JaxprTest(jtu.JaxTestCase):
       return lax.scan(body, 0., (arr, ones))
 
     jaxpr = api.make_jaxpr(func11)(onp.ones(16), 5.)
+    # TODO(#2640): update docs/jaxpr.rst to reflect new jaxpr
     self.assertMultiLineStrippedEqual("""
 { lambda c ; a b.
   let d e = scan[ forward=True
-                  jaxpr={ lambda  ; a b c d e.
-                          let f = mul c e
-                              g = add b f
-                              h = add g a
-                          in (h, b) }
+                  jaxpr={ lambda  ; f a b c.
+                          let d = mul b c
+                              e = add a d
+                              g = add e f
+                          in (g, a) }
                   length=16
-                  linear=(False, False, False, True, False)
+                  linear=(False, False, False, False)
                   num_carry=1
-                  num_consts=1 ] b 0.0 a * c
+                  num_consts=1 ] b 0.0 a c
   in (d, e) }
                         """, str(jaxpr))
 
