@@ -2237,16 +2237,22 @@ def _conv_general_dilated_transpose_lhs(
 
 def _conv_general_dilated_transpose_rhs(
     g, lhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, feature_group_count, batch_group_count,
-    lhs_shape, rhs_shape, precision):
+    dimension_numbers: ConvDimensionNumbers, feature_group_count: int,
+    batch_group_count: int, lhs_shape, rhs_shape, precision):
   assert type(dimension_numbers) is ConvDimensionNumbers
-  assert batch_group_count == 1
   if onp.size(g) == 0:
     # Avoids forming degenerate convolutions where the RHS has spatial size 0.
     return ad_util.zero
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
-  if feature_group_count > 1:
+  assert batch_group_count == 1 or feature_group_count == 1
+  if batch_group_count > 1:
+    feature_group_count = batch_group_count
+    batch_group_count = 1
+  elif feature_group_count == lhs_shape[dimension_numbers.lhs_spec[1]]:
+    batch_group_count = feature_group_count
+    feature_group_count = 1
+  elif feature_group_count > 1:
     lhs = _reshape_axis_out_of(lhs_trans[0], feature_group_count, lhs)
     lhs = _reshape_axis_into(lhs_trans[0], lhs_trans[1], lhs)
   trans_dimension_numbers = ConvDimensionNumbers(lhs_trans, out_trans, rhs_trans)
@@ -2258,7 +2264,8 @@ def _conv_general_dilated_transpose_rhs(
       lhs, g, window_strides=rhs_dilation, padding=padding,
       lhs_dilation=lhs_dilation, rhs_dilation=window_strides,
       dimension_numbers=trans_dimension_numbers,
-      feature_group_count=feature_group_count, precision=precision)
+      feature_group_count=feature_group_count,
+      batch_group_count=batch_group_count, precision=precision)
 
 def _conv_general_dilated_translation_rule(
     c, lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,

@@ -2023,7 +2023,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "perms": perms, "feature_group_count": feature_group_count,
        "batch_group_count": batch_group_count}
       for batch_group_count, feature_group_count in [
-        (1, 1), # (2, 1), (1, 2)
+        (1, 1), (1, 2), # (2, 1) TODO(phawkins)
       ]
       for lhs_shapes, rhs_shape, all_strides, lhs_dils, rhs_dils in [
           ([(b * batch_group_count, i * feature_group_count, 6, 7),
