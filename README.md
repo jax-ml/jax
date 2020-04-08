@@ -9,6 +9,7 @@
 | [**Install guide**](#installation)
 | [**Change logs**](https://jax.readthedocs.io/en/latest/CHANGELOG.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
+| [**Code search**](https://cs.opensource.google/jax/jax)
 
 **Announcement:** JAX has dropped Python 2 support, and requires Python 3.6 or newer. See [docs/CHANGELOG.rst](https://jax.readthedocs.io/en/latest/CHANGELOG.html).
 
