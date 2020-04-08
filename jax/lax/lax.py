@@ -438,10 +438,6 @@ Precision = xla_client.PrecisionConfig.Precision
 Precision.__str__ = lambda precision: precision.name
 PrecisionType = Any
 
-# lhs_spec and out_spec are lists containing
-#   [batch dim, feature dim, spatial dims ...]
-# rhs_spec is a list containing:
-#   [out feature dim, in feature dim, spatial dims ...]
 class ConvDimensionNumbers(NamedTuple):
   """Describes batch, spatial, and feature dimensions of a convolution.
 
