@@ -653,6 +653,12 @@ def signbit(x):
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), onp.bool)
 
+
+@_wraps(onp.trunc)
+def trunc(x):
+  return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
+
+
 def _normalize_float(x):
     info = finfo(_dtype(x))
     cond = lax.abs(x) < info.tiny
