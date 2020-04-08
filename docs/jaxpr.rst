@@ -1,4 +1,4 @@
-Understanding jaxprs
+Understanding Jaxprs
 ====================
 
 Updated: February 14, 2020 (for commit 9e6fe64).
@@ -373,18 +373,6 @@ For the example consider the function ``func11`` below::
       return lax.scan(body, 0., (arr, ones))
 
      print(api.make_jaxpr(func11)(onp.ones(16), 5.))
-    { lambda c ; a b.
-      let d e = scan[ forward=True
-                      jaxpr={ lambda  ; a b c d e.
-                              let f = mul c e
-                                  g = add b f
-                                  h = add g a
-                              in (h, b) }
-                      length=16
-                      linear=(False, False, False, True, False)
-                      num_carry=1
-                      num_consts=1 ] b 0.0 a * c
-      in (d, e) }
     { lambda c ; a b.
       let d e = scan[ forward=True
                       jaxpr={ lambda  ; f a b c.
