@@ -971,6 +971,11 @@ def _prune_zeros(ts):
 
 def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
                        jaxpr, linear):
+  if trace.master.trace_type is pe.StagingJaxprTrace:
+    params = {"forward": forward, "length": length, "num_consts": num_consts,
+              "num_carry": num_carry, "jaxpr": jaxpr, "linear": linear}
+    return trace.default_process_primitive(scan_p, tracers, params)
+
   num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
 
