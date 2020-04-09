@@ -20,6 +20,7 @@ import numpy as onp
 
 from jax import test_util as jtu
 import jax.numpy as np
+import jax.scipy.special
 from jax import random
 from jax import jacfwd, jit
 from jax.experimental import stax
@@ -153,6 +154,27 @@ class JetTest(jtu.JaxTestCase):
     else:
       self.check_jet_finite(fun, primal_in, series_in, atol=1e-4, rtol=1e-4)
 
+  def expit_check(self, lims=[-2, 2], order=3):
+    dims = 2, 3
+    rng = onp.random.RandomState(0)
+    primal_in = transform(lims, rng.rand(*dims))
+    terms_in = [rng.randn(*dims) for _ in range(order)]
+
+    primals = (primal_in, )
+    series = (terms_in, )
+
+    y, terms = jax.experimental.jet._expit_taylor(primals, series)
+    expected_y, expected_terms = jvp_taylor(jax.scipy.special.expit, primals, series)
+
+    atol = 1e-4
+    rtol = 1e-4
+    self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
+                        check_dtypes=True)
+
+    self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
+                        check_dtypes=True)
+
+
   @jtu.skip_on_devices("tpu")
   def test_exp(self):        self.unary_check(np.exp)
   @jtu.skip_on_devices("tpu")
@@ -187,6 +209,12 @@ class JetTest(jtu.JaxTestCase):
   def test_log1p(self):      self.unary_check(np.log1p, lims=[0, 4.])
   @jtu.skip_on_devices("tpu")
   def test_expm1(self):      self.unary_check(np.expm1)
+  @jtu.skip_on_devices("tpu")
+  def test_tanh(self):       self.unary_check(np.tanh, lims=[-500, 500], order=5)
+  @jtu.skip_on_devices("tpu")
+  def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-500, 500], order=5)
+  @jtu.skip_on_devices("tpu")
+  def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
