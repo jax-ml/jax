@@ -22,6 +22,7 @@ from jax.experimental.callback import (
     callback_transform, find_by_value, rewrite, FoundValue)
 import jax.numpy as np
 from jax import lax
+from jax import jit
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -43,6 +44,21 @@ class CallbackTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {'testcase_name': '_value={}'.format(value), 'value': value}
       for value in [np.inf, np.nan]))
+  def testFindByValueFoundJIT(self, value):
+    def f(x):
+      @jit
+      def g(x):
+        y = x ** 2
+        z = 1 - y
+        r = 1 / z
+        return r * 0
+      return g(x)
+    with self.assertRaises(FoundValue):
+      find_by_value(f, value)(np.array([1.0, 2.0, 3.0]))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {'testcase_name': '_value={}'.format(value), 'value': value}
+      for value in [np.inf, np.nan]))
   def testFindByValueNotFound(self, value):
     def f(x):
       y = x ** 2
@@ -54,6 +70,20 @@ class CallbackTest(jtu.JaxTestCase):
   def testRewrite(self):
     def f(x):
       return x * 2
+
+    x = np.array([2.0, 4.0])
+    self.assertAllClose(f(x), np.array([4.0, 8.0]), True)
+
+    self.assertAllClose(
+        rewrite(f, {lax.mul_p: lambda x, y: x + y})(x),
+        np.array([4.0, 6.0]), True)
+
+  def testRewriteJIT(self):
+    def f(x):
+      @jit
+      def g(x):
+        return x * 2
+      return g(x)
 
     x = np.array([2.0, 4.0])
     self.assertAllClose(f(x), np.array([4.0, 8.0]), True)
