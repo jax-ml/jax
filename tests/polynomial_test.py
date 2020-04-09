@@ -133,7 +133,11 @@ class TestPolynomial(jtu.JaxTestCase):
     # allowing jit transformation but yielding nan's for these inputs.
     p = np.concatenate([np.zeros(zeros, dtype), rng((nonzeros,), dtype)])
 
-    self.assertTrue(np.any(np.isnan(np.roots(p, strip_zeros=False))))
+    if p.size == 1:
+      # polynomial = const has no roots
+      self.assertTrue(np.roots(p, strip_zeros=False).size == 0)
+    else:
+      self.assertTrue(np.any(np.isnan(np.roots(p, strip_zeros=False))))
 
 
 if __name__ == "__main__":
