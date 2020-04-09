@@ -71,7 +71,7 @@ DeviceArray([nan+nanj, nan+nanj], dtype=complex64)
 >>> np.roots([0, 1, 2])         # use the no-jit version instead
 DeviceArray([-2.+0.j], dtype=complex64)
 """)
-def roots(p, strip_zeros=True):
+def roots(p, *, strip_zeros=True):
   # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/lib/polynomial.py#L168-L251
   p = np.atleast_1d(p)
   if p.ndim != 1:
