@@ -181,6 +181,8 @@ class JetTest(jtu.JaxTestCase):
   def test_or(self):    self.binary_check(lambda x, y: np.logical_or(x, y))
   @jtu.skip_on_devices("tpu")
   def test_xor(self):   self.binary_check(lambda x, y: np.logical_xor(x, y))
+  @jtu.skip_on_devices("tpu")
+  def test_pow2(self):  self.binary_check(lambda x, y: x ** y, lims=[0.2, 15])
 
   def test_process_call(self):
     def f(x):

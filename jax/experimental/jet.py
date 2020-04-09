@@ -239,6 +239,22 @@ def _expm1_taylor(primals_in, series_in):
   return lax.expm1(x), series_out
 jet_rules[lax.expm1_p] = _expm1_taylor
 
+def _pow_taylor(primals_in, series_in):
+  u_, r_ = primals_in
+  u_terms, r_terms = series_in
+  u = [u_] + u_terms
+  r = [r_] + r_terms
+
+  logu_, logu_terms = _log_taylor((u_, ), (u_terms, ))
+
+  v_, v_terms = _bilinear_taylor_rule(lax.mul_p, (logu_, r_), (logu_terms, r_terms))
+
+  v_, v_terms = _exp_taylor((v_, ), (v_terms, ))
+
+  return v_, v_terms
+jet_rules[lax.pow_p] = _pow_taylor
+
+
 def _log_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
