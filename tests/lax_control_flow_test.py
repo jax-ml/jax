@@ -1434,12 +1434,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def scalar_solve(f, y):
       return y / f(1.0)
 
-    def binary_search(func, x0, low=0.0, high=100.0, tolerance=1e-6):
+    def binary_search(func, x0, low=0.0, high=100.0):
       del x0  # unused
 
       def cond(state):
         low, high = state
-        return high - low > tolerance
+        midpoint = 0.5 * (low + high)
+        return (low < midpoint) & (midpoint < high)
 
       def body(state):
         low, high = state
@@ -1462,10 +1463,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         rtol=1e-7)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
-    # TODO(shoyer): reenable when batching works
-    # inputs = np.array([4.0, 5.0])
-    # results = api.vmap(sqrt_cubed)(inputs)
-    # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+    inputs = np.array([4.0, 5.0])
+    results = api.vmap(sqrt_cubed)(inputs)
+    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
