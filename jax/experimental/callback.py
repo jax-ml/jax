@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,14 +27,13 @@ from jax.interpreters import partial_eval as pe
 import inspect
 from jax.api_util import (wraps, flatten_fun_nokwargs)
 from jax.tree_util import (tree_flatten, tree_unflatten)
-from jax import lax
 
 map = safe_map
 
 ### Public
 
 def callback_transform(
-    fun: Callable, callback: Callable, strip_calls=False) -> Callable:
+    fun: Callable, callback: Callable, strip_calls: bool=False) -> Callable:
   _check_callable(fun)
 
   @wraps(fun)
@@ -50,18 +49,24 @@ def callback_transform(
 ### Example Transform
 
 def find_by_value(fun: Callable, queries) -> Callable:
-  def find_callback(p, vals, params):
-    vals = p.bind(*vals, **params)
+  def find_callback(
+          prim: core.Primitive,
+          vals: Sequence[core.Tracer],
+          params: Dict[str, Any]) -> Union[core.Tracer, Sequence[core.Tracer]]:
+    vals = prim.bind(*vals, **params)
     _contains_query(vals, queries)
     return vals
   return callback_transform(fun, find_callback, True)
 
 def rewrite(fun: Callable, rules) -> Callable:
   assert isinstance(rules, dict)
-  def rewrite_callback(p, vals, params):
-    if p in rules:
-      return rules[p](*vals, **params)
-    return p.bind(*vals, **params)
+  def rewrite_callback(
+          prim: core.Primitive,
+          vals: Sequence[core.Tracer],
+          params: Dict[str, Any]) -> Union[core.Tracer, Sequence[core.Tracer]]:
+    if prim in rules:
+      return rules[prim](*vals, **params)
+    return prim.bind(*vals, **params)
   return callback_transform(fun, rewrite_callback)
 
 class FoundValue(Exception):
@@ -148,7 +153,7 @@ class CallbackTrace(Trace):
     return CallbackTracer(self, vals_out)
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
-    if self.master.strip_calls:
+    if self.master.strip_calls: # type: ignore
       return f.call_wrapped(*tracers)
     vals_in = [t.val for t in tracers]
     f = callback_subtrace(f, self.master)
