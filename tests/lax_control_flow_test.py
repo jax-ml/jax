@@ -1656,25 +1656,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_custom_linear_solve_complex(self):
 
-    def positive_definite_solve(a, b):
+    def solve(a, b):
       def solve(matvec, x):
         return jsp.linalg.solve(a, x)
+      def tr_solve(matvec, x):
+        return jsp.linalg.solve(a.T, x)
       matvec = partial(high_precision_dot, a)
-      return lax.custom_linear_solve(matvec, b, solve, symmetric=True)
+      return lax.custom_linear_solve(matvec, b, solve, tr_solve)
 
     rng = onp.random.RandomState(0)
     a = 0.5 * rng.randn(2, 2) + 0.5j * rng.randn(2, 2)
     b = 0.5 * rng.randn(2) + 0.5j * rng.randn(2)
-
-    expected = np.linalg.solve(posify(a), b)
-    actual = positive_definite_solve(posify(a), b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
-
-    # TODO(shoyer): remove this error when complex values work 
-    with self.assertRaises(NotImplementedError):
-      jtu.check_grads(
-          lambda x, y: positive_definite_solve(posify(x), y),
-          (a, b), order=2, rtol=1e-2)
+    jtu.check_grads(solve, (a, b), order=2, rtol=1e-2)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
