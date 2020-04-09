@@ -1130,5 +1130,59 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 
+class SpecToIndicesTest(jtu.JaxTestCase):
+
+  def testShardsPerAxis(self):
+    shape = (4, 8)
+    spec = pxla.ShardingSpec(shards_per_axis=(2, 2),
+                             is_axis_materialized=(True, True),
+                             replication_factor=1)
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     ((slice(0,2), slice(0,4)),
+                      (slice(0,2), slice(4,8)),
+                      (slice(2,4), slice(0,4)),
+                      (slice(2,4), slice(4,8))))
+
+  def testUnshardedAxis(self):
+    shape = (4, 8)
+    spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
+                             is_axis_materialized=(True, True),
+                             replication_factor=1)
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     (slice(0,2), (slice(2,4))))
+
+  def testNoSharding(self):
+    shape = (4,8)
+    spec = pxla.ShardingSpec(shards_per_axis=(1, 1),
+                             is_axis_materialized=(True, True),
+                             replication_factor=1)
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     (slice(None),))
+
+  def testUnmaterializedAxis(self):
+    shape = (4, 8)
+    spec = pxla.ShardingSpec(shards_per_axis=(4, 1),
+                             is_axis_materialized=(False, True),
+                             replication_factor=1)
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     (0, 1, 2, 3))
+
+    shape = (2, 2)
+    spec = pxla.ShardingSpec(shards_per_axis=(1, 2),
+                             is_axis_materialized=(True, False),
+                             replication_factor=1)
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     ((slice(None), 0),
+                      (slice(None), 1)))
+
+  def testReplication(self):
+    shape = (2, 8)
+    spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
+                             is_axis_materialized=(False, True),
+                             replication_factor=3)
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     (0, 0, 0, 1, 1, 1))
+
+
 if __name__ == '__main__':
   absltest.main()
