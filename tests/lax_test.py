@@ -472,9 +472,7 @@ class LaxTest(jtu.JaxTestCase):
        "feature_group_count": feature_group_count,
        "batch_group_count": batch_group_count,
        "perms": perms, "rng_factory": rng_factory}
-      for batch_group_count, feature_group_count in [
-        (1, 1), (2, 1), (1, 2)
-      ]
+      for batch_group_count, feature_group_count in [(1, 1), (2, 1), (1, 2)]
       for lhs_shape, rhs_shape in [
           ((b * batch_group_count, i * feature_group_count, 9, w),
            (j * feature_group_count * batch_group_count, i, 4, 5))
@@ -2012,19 +2010,21 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
-       "rhs_dilation={}_dims={}_feature_group_count={}"
+       "rhs_dilation={}_dims={}_feature_group_count={}_batch_group_count={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
                jtu.format_shape_dtype_string(rhs_shape, dtype),
                strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
-               feature_group_count),
+               feature_group_count, batch_group_count),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng_factory": rng_factory, "dimension_numbers": dim_nums,
        "perms": perms, "feature_group_count": feature_group_count,
        "batch_group_count": batch_group_count}
-      for batch_group_count, feature_group_count in [
-        (1, 1), (1, 2), # (2, 1) TODO(phawkins)
-      ]
+      # TODO(phawkins): make batch_group_count tests unconditional after
+      # minimum jaxlib version is 0.1.44 or greater.
+      for batch_group_count, feature_group_count in (
+        [(1, 1), (2, 1), (1, 2)] if jax.lib.version > (0, 1, 43)
+        else [(1, 1), (1, 2)])
       for lhs_shapes, rhs_shape, all_strides, lhs_dils, rhs_dils in [
           ([(b * batch_group_count, i * feature_group_count, 6, 7),
             (b * batch_group_count, i * feature_group_count, 0, 4)],  # lhs_shape
@@ -2695,25 +2695,32 @@ class LaxVmapTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
-       "rhs_dilation={}_dims={}_feature_group_count={}_lhs_bdim={}_rhs_bdim={}"
+       "rhs_dilation={}_dims={}_feature_group_count={}_batch_group_count={}"
+       "_lhs_bdim={}_rhs_bdim={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
                jtu.format_shape_dtype_string(rhs_shape, dtype),
                strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
-               feature_group_count, lhs_bdim, rhs_bdim),
+               feature_group_count, batch_group_count, lhs_bdim, rhs_bdim),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "rng_factory": rng_factory, "dimension_numbers": dim_nums,
        "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim,
-       "feature_group_count": feature_group_count}
+       "feature_group_count": feature_group_count,
+       "batch_group_count": batch_group_count,
+       }
+      # TODO(phawkins): make batch_group_count tests unconditional after
+      # minimum jaxlib version is 0.1.44 or greater.
+      for batch_group_count, feature_group_count in (
+        [(1, 1), (2, 1), (1, 2)] if jax.lib.version > (0, 1, 43)
+        else [(1, 1), (1, 2)])
       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
-          ((b, i, 6, 7),  # lhs_shape
-           (j, i, 1, 2),  # rhs_shape
+          ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
+           (j * batch_group_count * feature_group_count, i, 1, 2),  # rhs_shape
            [(1, 1), (1, 2), (2, 1)],  # strides
            [((0, 0), (0, 0)), ((1, 0), (0, 1)), ((0, -1), (0, 0))],  # pads
            [(1, 1), (2, 1)],  # lhs_dils
            [(1, 1), (2, 2)])  # rhs_dils
           for b, i, j in itertools.product([1, 2], repeat=3)]
-      for feature_group_count in [1, 2]
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
@@ -2730,11 +2737,10 @@ class LaxVmapTest(jtu.JaxTestCase):
       if (lhs_bdim, rhs_bdim) != (None, None)
       for rng_factory in [jtu.rand_default]
   ))
-  # TODO(mattjj): some cases fail on TPU just due to numerical tolerances
-  @jtu.skip_on_devices("tpu")
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
-      dimension_numbers, perms, feature_group_count, lhs_bdim, rhs_bdim, rng_factory):
+      dimension_numbers, perms, feature_group_count, batch_group_count,
+      lhs_bdim, rhs_bdim, rng_factory):
     rng = rng_factory()
     tol = 1e-1 if dtypes.finfo(dtype).bits <= 32 else 1e-3
 
@@ -2742,14 +2748,12 @@ class LaxVmapTest(jtu.JaxTestCase):
     lhs_perm, rhs_perm = perms
     lhs_shape = list(onp.take(lhs_shape, lhs_perm))
     rhs_shape = list(onp.take(rhs_shape, rhs_perm))
-    dim_spec = lax.conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers)
-    lhs_shape[dim_spec.lhs_spec[1]] *= feature_group_count
-    rhs_shape[dim_spec.rhs_spec[0]] *= feature_group_count
 
     conv = partial(lax.conv_general_dilated, window_strides=strides,
                    padding=padding, lhs_dilation=lhs_dil, rhs_dilation=rhs_dil,
                    dimension_numbers=dimension_numbers,
                    feature_group_count=feature_group_count,
+                   batch_group_count=batch_group_count,
                    precision=lax.Precision.HIGHEST)
     self._CheckBatching(conv, 5, (lhs_bdim, rhs_bdim), (lhs_shape, rhs_shape),
                         (dtype, dtype), rng, rtol=tol, atol=tol)
