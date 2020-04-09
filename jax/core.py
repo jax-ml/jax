@@ -419,12 +419,18 @@ class Tracer(object):
   def __getitem__(self, idx): return self.aval._getitem(self, idx)
   def __nonzero__(self): return self.aval._nonzero(self)
   def __bool__(self): return self.aval._bool(self)
-  def __float__(self): return self.aval._float(self)
   def __int__(self): return self.aval._int(self)
   def __long__(self): return self.aval._long(self)
-  def __complex__(self): return self.aval._complex(self)
   def __hex__(self): return self.aval._hex(self)
   def __oct__(self): return self.aval._oct(self)
+
+  def __float__(self):
+    raise TypeError("JAX Tracer object cannot be interpreted as a float. "
+                    "Try using `x.astype(float)` instead.")
+
+  def __complex__(self):
+    raise TypeError("JAX Tracer object cannot be interpreted as a complex. "
+                    "Try using `x.astype(complex)` instead.")
 
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
@@ -750,11 +756,11 @@ class UnshapedArray(AbstractValue):
 
   _bool = _nonzero = concretization_function_error(bool)
   _float   = concretization_function_error(
-      float, "Try using `value.astype(float)` instead.")
+      float, "Try using `x.astype(float)` instead.")
   _int     = concretization_function_error(
-      int, "Try using `value.astype(int)` instead.")
+      int, "Try using `x.astype(int)` instead.")
   _complex = concretization_function_error(
-      complex, "Try using `value.astype(complex)` instead.")
+      complex, "Try using `x.astype(complex)` instead.")
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
 
@@ -886,9 +892,7 @@ class ConcreteArray(ShapedArray):
     return ConcreteArray(self.val) if self.weak_type else self
 
   _bool = _nonzero = partialmethod(_forward_to_value, bool)
-  _float   = partialmethod(_forward_to_value, float)
   _int     = partialmethod(_forward_to_value, int)
-  _complex = partialmethod(_forward_to_value, complex)
   _hex     = partialmethod(_forward_to_value, hex)
   _oct     = partialmethod(_forward_to_value, oct)
 
