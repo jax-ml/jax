@@ -1617,6 +1617,11 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
   kwargs = dict(const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
   x = linear_solve_p.bind(*primals, **kwargs)
 
+  if any(issubclass(dtypes.dtype(xi).type, onp.complexfloating) for xi in x):
+    raise NotImplementedError(
+        "gradients of complex values are not yet supported in "
+        "custom_linear_solve: https://github.com/google/jax/issues/2572")
+
   params, _ = _split_linear_solve_args(primals, const_lengths)
   params_dot, b_dot = _split_linear_solve_args(tangents, const_lengths)
 

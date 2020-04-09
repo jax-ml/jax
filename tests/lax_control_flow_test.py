@@ -59,6 +59,10 @@ def high_precision_dot(a, b):
   return lax.dot(a, b, precision=lax.Precision.HIGHEST)
 
 
+def posify(matrix):
+  return high_precision_dot(matrix, matrix.T.conj())
+
+
 class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testWhileWithTuple(self):
@@ -1636,18 +1640,40 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    expected = np.linalg.solve(high_precision_dot(a, a.T), b)
-    actual = positive_definite_solve(high_precision_dot(a, a.T), b)
+    expected = np.linalg.solve(onp.asarray(posify(a)), b)
+    actual = positive_definite_solve(posify(a), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    actual = api.jit(positive_definite_solve)(high_precision_dot(a, a.T), b)
+    actual = api.jit(positive_definite_solve)(posify(a), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
     jtu.check_grads(
-        lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
+        lambda x, y: positive_definite_solve(posify(x), y),
         (a, b), order=2, rtol=1e-2)
+
+  def test_custom_linear_solve_complex(self):
+
+    def positive_definite_solve(a, b):
+      def solve(matvec, x):
+        return jsp.linalg.solve(a, x)
+      matvec = partial(high_precision_dot, a)
+      return lax.custom_linear_solve(matvec, b, solve, symmetric=True)
+
+    rng = onp.random.RandomState(0)
+    a = 0.5 * rng.randn(2, 2) + 0.5j * rng.randn(2, 2)
+    b = 0.5 * rng.randn(2) + 0.5j * rng.randn(2)
+
+    expected = np.linalg.solve(posify(a), b)
+    actual = positive_definite_solve(posify(a), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # TODO(shoyer): remove this error when complex values work 
+    with self.assertRaises(NotImplementedError):
+      jtu.check_grads(
+          lambda x, y: positive_definite_solve(posify(x), y),
+          (a, b), order=2, rtol=1e-2)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
