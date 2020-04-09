@@ -15,10 +15,6 @@
 Model-predictive non-linear control example.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import collections
 
 from jax import lax, grad, jacfwd, jacobian, vmap
