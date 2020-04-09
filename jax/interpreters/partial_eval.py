@@ -446,8 +446,8 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
   def getvar(t):
     var = t_to_var.get(id(t))
     if var is None:
-      var = newvar(partial_val_aval(*t.pval))
-      t_to_var[id(t)] = var
+      aval = t.pval[0] if t.pval[0] is not None else abstract_unit
+      var = t_to_var[id(t)] = newvar(aval)
     return var
   sorted_tracers = toposort(out_tracers)
   invars = map(getvar, in_tracers)
@@ -458,8 +458,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
   def getconstvar(c):
     var = const_to_var.get(id(c))
     if var is None:
-      var = newvar(get_aval(c))
-      const_to_var[id(c)] = var
+      var = const_to_var[id(c)] = newvar(get_aval(c))
     return var
   processed_eqn_ids = set()
   for t in sorted_tracers:
