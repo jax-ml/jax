@@ -19,9 +19,6 @@ the mini-library jax.experimental.optimizers is for first-order stochastic
 optimization.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import time
 import itertools
@@ -40,7 +37,7 @@ from examples import datasets
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(preds * targets)
+  return -np.mean(np.sum(preds * targets, axis=1))
 
 def accuracy(params, batch):
   inputs, targets = batch

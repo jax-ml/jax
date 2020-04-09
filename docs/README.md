@@ -1,6 +1,2 @@
-To rebuild the documentation, install the `sphinx` and `sphinx_rtd_theme` pip
-packages and then run:
-
-```
-sphinx-build -M html . build
-```
+To rebuild the documentation, 
+see [Update Documentation](https://jax.readthedocs.io/en/latest/developer.html#update-documentation).

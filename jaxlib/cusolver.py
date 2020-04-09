@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
+import functools
 import operator
 
 import numpy as np
-from six.moves import reduce
 
 from jaxlib import xla_client
 
@@ -54,7 +51,7 @@ def _real_type(dtype):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-_prod = lambda xs: reduce(operator.mul, xs, 1)
+_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
          diag=False):
@@ -84,7 +81,7 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
   lwork, opaque = cublas_kernels.build_trsm_batched_descriptor(
     np.dtype(dtype), batch, m, n, left_side, lower, trans_a, conj_a, diag)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       b"cublas_trsm_batched",
       operands=(a, b),
       shape_with_layout=_Shape.tuple_shape((
@@ -97,6 +94,39 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
       ),
       opaque=opaque)
   return c.GetTupleElement(out, 0)
+
+
+def potrf(c, a, lower):
+  """Cholesky decomposition."""
+  a_shape = c.GetShape(a)
+  dtype = a_shape.element_type()
+  dims = a_shape.dimensions()
+  m, n = dims[-2:]
+  assert m == n
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  batch = _prod(batch_dims)
+
+  lwork, opaque = cusolver_kernels.build_potrf_descriptor(
+      np.dtype(dtype), lower, batch, n)
+  kernel = b"cusolver_potrf"
+
+  out = c.CustomCallWithLayout(
+      kernel,
+      operands=(a,),
+      shape_with_layout=_Shape.tuple_shape((
+          _Shape.array_shape(
+              dtype, batch_dims + (n, n),
+              (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(
+              np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+          _Shape.array_shape(np.dtype(np.int8), (lwork,), (0,)),
+      )),
+      operand_shapes_with_layout=(_Shape.array_shape(
+          dtype, batch_dims + (n, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),),
+      opaque=opaque)
+  return c.GetTupleElement(out, 0), c.GetTupleElement(out, 1)
 
 
 def getrf(c, a):
@@ -121,7 +151,7 @@ def getrf(c, a):
     workspace = _Shape.array_shape(dtype, (lwork,), (0,))
     kernel = b"cusolver_getrf"
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       kernel,
       operands=(a,),
       shape_with_layout=_Shape.tuple_shape((
@@ -158,7 +188,7 @@ def geqrf(c, a):
   workspace = _Shape.array_shape(dtype, (lwork,), (0,))
   kernel = b"cusolver_geqrf"
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       kernel,
       operands=(a,),
       shape_with_layout=_Shape.tuple_shape((
@@ -199,7 +229,7 @@ def orgqr(c, a, tau):
   workspace = _Shape.array_shape(dtype, (lwork,), (0,))
   kernel = b"cusolver_orgqr"
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       kernel,
       operands=(a, tau),
       shape_with_layout=_Shape.tuple_shape((
@@ -246,7 +276,7 @@ def syevd(c, a, lower=False):
         np.dtype(dtype), lower, batch, n)
   eigvals_type = _real_type(dtype)
 
-  out = c.CustomCall(
+  out = c.CustomCallWithLayout(
       kernel,
       operands=(a,),
       shape_with_layout=_Shape.tuple_shape((
@@ -286,7 +316,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
     matrix_layout = (num_bd, num_bd + 1) + scalar_layout
-    out = c.CustomCall(
+    out = c.CustomCallWithLayout(
         b"cusolver_gesvdj",
         operands=(a,),
         shape_with_layout=_Shape.tuple_shape((
@@ -315,7 +345,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
     matrix_layout = (num_bd + 1, num_bd) + scalar_layout
-    out = c.CustomCall(
+    out = c.CustomCallWithLayout(
         b"cusolver_gesvd",
         operands=(a,),
         shape_with_layout=_Shape.tuple_shape((
@@ -342,7 +372,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
     scalar_layout = tuple(range(num_bd - 1, -1, -1))
     vector_layout = (num_bd,) + scalar_layout
     matrix_layout = (num_bd, num_bd + 1) + scalar_layout
-    out = c.CustomCall(
+    out = c.CustomCallWithLayout(
         b"cusolver_gesvd",
         operands=(a,),
         shape_with_layout=_Shape.tuple_shape((

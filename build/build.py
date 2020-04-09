@@ -16,9 +16,6 @@
 #
 # Helper script for building JAX's libjax easily.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import argparse
 import collections
@@ -58,21 +55,35 @@ def get_python_bin_path(python_bin_path_flag):
   return python_bin_path_flag or sys.executable
 
 
+def get_python_version(python_bin_path):
+  version_output = shell(
+    [python_bin_path, "-c",
+     "import sys; print(\"{}.{}\".format(sys.version_info[0], "
+     "sys.version_info[1]))"])
+  major, minor = map(int, version_output.split("."))
+  return major, minor
+
+def check_python_version(python_version):
+  if python_version < (3, 6):
+    print("JAX requires Python 3.6 or newer.")
+    sys.exit(-1)
+
+
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/0.24.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/2.0.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-0.24.1-linux-x86_64",
+            file="bazel-2.0.0-linux-x86_64",
             sha256=
-            "e18e2877e18a447eb5d94f5efbec375366d82af6443c6a83a93c62657a7b1c32"),
+            "4df79462c6c3ecdeeee7af99fc269b52ab1aa4828ef3bc359c1837d3fafeeee7"),
     "Darwin":
         BazelPackage(
-            file="bazel-0.24.1-darwin-x86_64",
+            file="bazel-2.0.0-darwin-x86_64",
             sha256=
-            "cf763752550050d117e03659aaa6ccd6f97da1f983a6029300a497fdaeaaec46"),
+            "3eca4c96cfda97a9d5f8d3d0dec4155a5cc5ff339b10d3f35213c398bf13881e"),
 }
 
 
@@ -96,7 +107,8 @@ def download_and_verify_bazel():
           package.file, "#" * progress_chars,
           "." * (num_chars - progress_chars), int(progress * 100.0)))
 
-    tmp_path, _ = urlretrieve(uri, None, progress)
+    tmp_path, _ = urlretrieve(uri, None,
+                              progress if sys.stdout.isatty() else None)
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.
@@ -128,11 +140,11 @@ def get_bazel_path(bazel_path_flag):
   if bazel_path_flag:
     return bazel_path_flag
 
-  bazel = which("bazel")
+  bazel = download_and_verify_bazel()
   if bazel:
     return bazel
 
-  bazel = download_and_verify_bazel()
+  bazel = which("bazel")
   if bazel:
     return bazel
 
@@ -154,19 +166,22 @@ def check_bazel_version(bazel_path, min_version, max_version):
   if min_ints > actual_ints:
     print("Outdated bazel revision (>= {} required, found {})".format(
         min_version, version))
-    sys.exit(0)
+    sys.exit(-1)
   if max_version is not None:
     max_ints = [int(x) for x in max_version.split(".")]
     if actual_ints >= max_ints:
       print("Please downgrade your bazel revision to build JAX (>= {} and < {}"
             " required, found {})".format(min_version, max_version, version))
-      sys.exit(0)
+      sys.exit(-1)
 
 
 BAZELRC_TEMPLATE = """
-build --action_env PYTHON_BIN_PATH="{python_bin_path}"
+# Flag to enable remote config
+common --experimental_repo_remote_exec
+
+build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
-build --action_env TF_NEED_CUDA="{tf_need_cuda}"
+build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
 build --distinct_host_configuration=false
 build --copt=-Wno-sign-compare
 build -c opt
@@ -176,6 +191,10 @@ build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
+build --macos_minimum_os=10.9
+
+# Make Bazel print out all options from rc files.
+build --announce_rc
 
 # Disable enabled-by-default TensorFlow features that we don't care about.
 build --define=no_aws_support=true
@@ -190,6 +209,12 @@ build:cuda --define=using_cuda=true --define=using_cuda_nvcc=true
 
 build --spawn_strategy=standalone
 build --strategy=Genrule=standalone
+
+build --cxxopt=-std=c++14
+build --host_cxxopt=-std=c++14
+
+# Suppress all warning messages.
+build:short_logs --output_filter=DONT_MATCH_ANYTHING
 """
 
 
@@ -300,11 +325,14 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="0.24.0", max_version=None)
+  check_bazel_version(bazel_path, min_version="2.0.0", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
   print("Python binary path: {}".format(python_bin_path))
+  python_version = get_python_version(python_bin_path)
+  print("Python version: {}".format(".".join(map(str, python_version))))
+  check_python_version(python_version)
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
   print("-march=native: {}".format("yes" if args.enable_march_native else "no"))
@@ -325,16 +353,19 @@ def main():
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options
+  config_args += ["--config=short_logs"]
   if args.enable_march_native:
     config_args += ["--config=opt"]
   if args.enable_mkl_dnn:
     config_args += ["--config=mkl_open_source_only"]
   if args.enable_cuda:
     config_args += ["--config=cuda"]
-  shell(
-    [bazel_path] + args.bazel_startup_options +
+    config_args += ["--define=xla_python_enable_gpu=true"]
+  command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +
     [":install_xla_in_source_tree", os.getcwd()])
+  print(" ".join(command))
+  shell(command)
   shell([bazel_path, "shutdown"])
 
 

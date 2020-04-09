@@ -12,13 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools
 import unittest
-from unittest import SkipTest
+from unittest import SkipTest, skip
 
 import numpy as onp
 from absl.testing import absltest
@@ -133,6 +130,7 @@ class PapplyTest(jtu.JaxTestCase):
     make_jaxpr(pfun)(onp.ones(3))  # doesn't crash
 
 
+@skip("causing trace state errors that affect other tests")
 class ParallelizeTest(jtu.JaxTestCase):
 
   def dedup(self, arr, expected_rank):
@@ -309,7 +307,7 @@ class ParallelizeTest(jtu.JaxTestCase):
         pfun, axis_name = _papply(fun)
         ans = soft_pmap(pfun, axis_name)(x, y)
     except (NotImplementedError, TypeError) as e:
-      raise SkipTest(e)
+      raise SkipTest(str(e)) from e
 
     ans = self.dedup(ans, expected.ndim)
     self.assertAllClose(ans, expected, check_dtypes=False)

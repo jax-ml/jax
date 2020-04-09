@@ -68,8 +68,10 @@ Not every function in NumPy is implemented; contributions are welcome!
     bitwise_or
     bitwise_xor
     blackman
+    block
     broadcast_arrays
     broadcast_to
+    can_cast
     ceil
     clip
     column_stack
@@ -105,7 +107,6 @@ Not every function in NumPy is implemented; contributions are welcome!
     expm1
     eye
     fabs
-    fftn
     fix
     flip
     fliplr
@@ -114,6 +115,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     floor
     floor_divide
     fmod
+    frexp
     full
     full_like
     gcd
@@ -137,12 +139,14 @@ Not every function in NumPy is implemented; contributions are welcome!
     isneginf
     isposinf
     isreal
+    isscalar
     issubdtype
     issubsctype
     ix_
     kaiser
     kron
     lcm
+    ldexp
     left_shift
     less
     less_equal
@@ -168,6 +172,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     minimum
     mod
     moveaxis
+    msort
     multiply
     nan_to_num
     nancumprod
@@ -177,6 +182,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     nanprod
     nansum
     negative
+    nextafter
+    nonzero
     not_equal
     ones
     ones_like
@@ -188,6 +195,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     positive
     prod
     product
+    promote_types
     ptp
     quantile
     rad2deg
@@ -198,6 +206,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     remainder
     repeat
     reshape
+    result_type
     right_shift
     roll
     rot90
@@ -205,6 +214,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     row_stack
     select
     sign
+    signbit
     sin
     sinc
     sinh
@@ -242,6 +252,31 @@ Not every function in NumPy is implemented; contributions are welcome!
     zeros
     zeros_like
 
+jax.numpy.fft
+-------------
+
+.. automodule:: jax.numpy.fft
+
+.. autosummary::
+  :toctree: _autosummary
+
+  fft
+  ifft
+  fft2
+  ifft2
+  fftn
+  ifftn
+  rfft
+  irfft
+  rfft2
+  irfft2
+  rfftn
+  irfftn
+  fftfreq
+  rfftfreq
+  fftshift
+  ifftshift
+
 jax.numpy.linalg
 ----------------
 
@@ -254,8 +289,13 @@ jax.numpy.linalg
   det
   eig
   eigh
+  eigvals
+  eigvalsh
   inv
+  matrix_power
+  matrix_rank
   norm
+  pinv
   qr
   slogdet
   solve

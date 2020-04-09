@@ -12,16 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-import collections
 import functools
 import itertools as it
 import types
 
-import fastcache
 import numpy as onp
 
 
@@ -55,6 +50,12 @@ def unzip3(xyzs):
     ys.append(y)
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
+
+def subvals(lst, replace):
+  lst = list(lst)
+  for i, v in replace:
+    lst[i] = v
+  return tuple(lst)
 
 def split_list(args, ns):
   assert type(ns) is list
@@ -107,6 +108,7 @@ def curry(f):
 
 def toposort(end_nodes):
   if not end_nodes: return []
+  end_nodes = _remove_duplicates(end_nodes)
 
   child_counts = {}
   stack = list(end_nodes)
@@ -141,6 +143,15 @@ def check_toposort(nodes):
     assert all(id(parent) in visited for parent in node.parents)
     visited.add(id(node))
 
+def _remove_duplicates(node_list):
+  seen = set()
+  out = []
+  for n in node_list:
+    if id(n) not in seen:
+      seen.add(id(n))
+      out.append(n)
+  return out
+
 def split_merge(predicate, xs):
   sides = list(map(predicate, xs))
   lhs = [x for x, s in zip(xs, sides) if s]
@@ -161,9 +172,9 @@ def split_merge(predicate, xs):
   return lhs, rhs, merge
 
 def cache(max_size=4096):
-  return fastcache.clru_cache(maxsize=max_size)
+  return functools.lru_cache(maxsize=max_size)
 
-memoize = fastcache.clru_cache(maxsize=None)
+memoize = functools.lru_cache(maxsize=None)
 
 def prod(xs):
   out = 1
@@ -204,8 +215,18 @@ def get_module_functions(module):
   """
   module_fns = set()
   for key in dir(module):
+    # Omitting module level __getattr__, __dir__ which was added in Python 3.7
+    # https://www.python.org/dev/peps/pep-0562/
+    if key in ('__getattr__', '__dir__'):
+      continue
     attr = getattr(module, key)
     if isinstance(
         attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
       module_fns.add(attr)
   return module_fns
+
+def wrap_name(name, transform_name):
+  return transform_name + '(' + name + ')'
+
+def extend_name_stack(stack, name=''):
+  return stack + name + '/'

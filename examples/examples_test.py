@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import os
 import sys
@@ -88,8 +85,6 @@ class ExamplesTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def testKernelRegressionTrainAndPredict(self):
-    # TODO(frostig): reenable this test.
-    self.skipTest("Test is broken")
     n, d = 100, 20
     rng = onp.random.RandomState(0)
     truth = rng.randn(d)

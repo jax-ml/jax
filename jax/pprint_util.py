@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-from six.moves import reduce
+import functools
 
 
 class PrettyPrint(object):
@@ -35,6 +32,8 @@ class PrettyPrint(object):
   def __rshift__(self, rhs):
     if not rhs.lines:
       return self
+    if not self.lines:
+      return rhs
 
     indent, s = self.lines[-1]
     indented_block = rhs.indent(indent + len(s))
@@ -44,7 +43,7 @@ class PrettyPrint(object):
                        + indented_block.lines[1:])
 
   def __str__(self):
-    return '\n'.join(' ' * indent + s for indent, s in self.lines) + '\n'
+    return '\n'.join(' ' * indent + s for indent, s in self.lines)
 
 
 def pp(s):
@@ -52,14 +51,14 @@ def pp(s):
 
 
 def hcat(ps):
-  return reduce(lambda x, y: x >> y, ps)
+  return functools.reduce(lambda x, y: x >> y, ps)
 
 
 def vcat(ps):
   if not ps:
     return pp('')
   else:
-    return reduce(lambda x, y: x + y, ps)
+    return functools.reduce(lambda x, y: x + y, ps)
 
 
 def pp_kv_pairs(kv_pairs):

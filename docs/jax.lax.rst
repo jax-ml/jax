@@ -30,6 +30,9 @@ Operators
     atan
     atan2
     batch_matmul
+    bessel_i0e
+    bessel_i1e
+    betainc
     bitcast_convert_type
     bitwise_not
     bitwise_and
@@ -73,6 +76,8 @@ Operators
     gather
     ge
     gt
+    igamma
+    igammac
     imag
     index_in_dim
     index_take
@@ -88,6 +93,7 @@ Operators
     mul
     ne
     neg
+    nextafter
     pad
     pow
     real
@@ -102,7 +108,6 @@ Operators
     scatter
     scatter_add
     select
-    shaped_identity
     shift_left
     shift_right_arithmetic
     shift_right_logical
@@ -115,7 +120,6 @@ Operators
     sort_key_val
     sqrt
     square
-    stop_gradient
     sub
     tan
     tie_in
@@ -134,6 +138,15 @@ Control flow operators
     scan
     while_loop
 
+Custom gradient operators
+-------------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    stop_gradient
+    custom_linear_solve
+    custom_root
 
 Parallel operators
 ------------------
@@ -143,7 +156,11 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
+    all_gather
+    all_to_all
     psum
     pmax
     pmin
     ppermute
+    pswapaxes
+    axis_index

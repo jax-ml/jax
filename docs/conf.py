@@ -59,6 +59,8 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
+    'nbsphinx',
+    'sphinx_autodoc_typehints',
 ]
 
 intersphinx_mapping = {
@@ -73,7 +75,6 @@ templates_path = ['_templates']
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 #
-# source_suffix = ['.rst', '.md']
 source_suffix = '.rst'
 
 # The master toctree document.
@@ -89,7 +90,16 @@ language = None
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = []
+exclude_patterns = [
+    # Slow notebook: long time to load tf.ds
+    'notebooks/neural_network_with_tfds_data.ipynb',
+    # Slow notebook
+    'notebooks/Neural_Network_and_Data_Loading.ipynb',
+    'notebooks/score_matching.ipynb',
+    'notebooks/maml.ipynb',
+    # Fails with shape error in XL
+    'notebooks/XLA_in_Python.ipynb'
+]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = None
@@ -97,6 +107,81 @@ pygments_style = None
 
 autosummary_generate = True
 napolean_use_rtype = False
+
+# -- Options for nbsphinx -----------------------------------------------------
+
+# Execute notebooks before conversion: 'always', 'never', 'auto' (default)
+# We execute all notebooks, exclude the slow ones using 'exclude_patterns'
+nbsphinx_execute = 'always'
+
+# Use this kernel instead of the one stored in the notebook metadata:
+#nbsphinx_kernel_name = 'python3'
+
+# List of arguments to be passed to the kernel that executes the notebooks:
+# nbsphinx_execute_arguments = []
+
+# If True, the build process is continued even if an exception occurs:
+#nbsphinx_allow_errors = True
+
+
+# Controls when a cell will time out (defaults to 30; use -1 for no timeout):
+nbsphinx_timeout = 180
+
+# Default Pygments lexer for syntax highlighting in code cells:
+#nbsphinx_codecell_lexer = 'ipython3'
+
+# Width of input/output prompts used in CSS:
+#nbsphinx_prompt_width = '8ex'
+
+# If window is narrower than this, input/output prompts are on separate lines:
+#nbsphinx_responsive_width = '700px'
+
+# This is processed by Jinja2 and inserted before each notebook
+nbsphinx_prolog = r"""
+{% set docname = 'docs/' + env.doc2path(env.docname, base=None) %}
+
+.. only:: html
+
+    .. role:: raw-html(raw)
+        :format: html
+
+    .. nbinfo::
+
+        Interactive online version:
+        :raw-html:`<a href="https://colab.research.google.com/github/google/jax/blob/master/{{ docname }}"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg" style="vertical-align:text-bottom"></a>`
+
+    __ https://github.com/google/jax/blob/
+        {{ env.config.release }}/{{ docname }}
+"""
+
+# This is processed by Jinja2 and inserted after each notebook
+# nbsphinx_epilog = r"""
+# """
+
+# Input prompt for code cells. "%s" is replaced by the execution count.
+#nbsphinx_input_prompt = 'In [%s]:'
+
+# Output prompt for code cells. "%s" is replaced by the execution count.
+#nbsphinx_output_prompt = 'Out[%s]:'
+
+# Specify conversion functions for custom notebook formats:
+#import jupytext
+#nbsphinx_custom_formats = {
+#    '.Rmd': lambda s: jupytext.reads(s, '.Rmd'),
+#}
+
+# Link or path to require.js, set to empty string to disable
+#nbsphinx_requirejs_path = ''
+
+# Options for loading require.js
+#nbsphinx_requirejs_options = {'async': 'async'}
+
+# mathjax_config = {
+#     'TeX': {'equationNumbers': {'autoNumber': 'AMS', 'useLabelIds': True}},
+# }
+
+# Additional files needed for generating LaTeX/PDF output:
+# latex_additional_files = ['references.bib']
 
 # -- Options for HTML output -------------------------------------------------
 

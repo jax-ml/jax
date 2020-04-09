@@ -14,13 +14,6 @@
 
 # Helpers for indexed updates.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import collections
-
-import numpy as onp
 
 from .. import lax
 from ..numpy import lax_numpy as np
@@ -48,11 +41,20 @@ def _scatter_update(x, idx, y, scatter_op):
 
   x = np.asarray(x)
   y = np.asarray(y)
-  y = lax.convert_element_type(y, lax.dtype(x))
-
 
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
+  treedef, static_idx, dynamic_idx = np._split_index_for_jit(idx)
+  return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx)
+
+
+# TODO(phawkins): re-enable jit after fixing excessive recompilation for
+# slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
+# @partial(jit, static_argnums=(2, 3, 4))
+def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
+  y = lax.convert_element_type(y, lax.dtype(x))
+
+  idx = np._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = np._index_to_gather(np.shape(x), idx)
 
   # Broadcast `y` to the slice output shape.

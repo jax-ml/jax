@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-from .core import lattice_join, Primitive, Unit, unit, AbstractUnit, abstract_unit
+from .core import lattice_join, Primitive, Unit, unit, AbstractUnit
 from .tree_util import register_pytree_node
+from typing import Any, Dict
 from .util import safe_map
+
+Array = Any
 
 map = safe_map
 
@@ -32,22 +32,18 @@ add_jaxvals_p = Primitive('add_any')
 
 @add_jaxvals_p.def_impl
 def add_impl(xs, ys):
-  # assert type(xs) == type(ys), (xs, ys)
   return jaxval_adders[type(xs)](xs, ys)
 
 @add_jaxvals_p.def_abstract_eval
 def add_abstract(xs, ys):
   return lattice_join(xs, ys)
 
-def zeros_like_impl_jaxtuple(xs):
-  return JaxTuple(map(zeros_like_impl, xs))
-
-jaxval_zeros_likers = {}
+jaxval_zeros_likers: Dict[type, Array] = {}
 
 def zeros_like_aval(aval):
   return aval_zeros_likers[type(aval)](aval)
 
-aval_zeros_likers = {}
+aval_zeros_likers: Dict[type, Array] = {}
 aval_zeros_likers[AbstractUnit] = lambda _: unit
 
 def zeros_like_jaxval(val):

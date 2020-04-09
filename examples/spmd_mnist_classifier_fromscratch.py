@@ -20,9 +20,6 @@ minimizing dependencies by avoiding the use of higher-level layers and
 optimizers libraries.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 import time
@@ -57,7 +54,7 @@ def predict(params, inputs):
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(preds * targets)
+  return -np.mean(np.sum(preds * targets, axis=1))
 
 @jit
 def accuracy(params, batch):

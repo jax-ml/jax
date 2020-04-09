@@ -66,15 +66,10 @@ the JAX transforms defined in api.py) and it has to be consumable by update_fun
 and get_params.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from collections import namedtuple
 import functools
 import operator
-
-from six.moves import reduce
 
 import jax.numpy as np
 from jax.util import partial, safe_zip, safe_map, unzip2
@@ -201,11 +196,12 @@ def sgd(step_size):
 
 @optimizer
 def momentum(step_size, mass):
-  """Construct optimizer triple for SGD with Nesterov momentum.
+  """Construct optimizer triple for SGD with momentum.
 
   Args:
     step_size: positive scalar, or a callable representing a step size schedule
       that maps the iteration index to positive scalar.
+    mass: positive scalar representing the momentum coefficient.
 
   Returns:
     An (init_fun, update_fun, get_params) triple.
@@ -216,8 +212,35 @@ def momentum(step_size, mass):
     return x0, v0
   def update(i, g, state):
     x, velocity = state
-    velocity = mass * velocity - (1. - mass) * g
-    x = x + step_size(i) * velocity
+    velocity = mass * velocity + g
+    x = x - step_size(i) * velocity
+    return x, velocity
+  def get_params(state):
+    x, _ = state
+    return x
+  return init, update, get_params
+
+
+@optimizer
+def nesterov(step_size, mass):
+  """Construct optimizer triple for SGD with Nesterov momentum.
+
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to positive scalar.
+    mass: positive scalar representing the momentum coefficient.
+
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+  def init(x0):
+    v0 = np.zeros_like(x0)
+    return x0, v0
+  def update(i, g, state):
+    x, velocity = state
+    velocity = mass * velocity + g
+    x = x - step_size(i) * (mass * velocity + g)
     return x, velocity
   def get_params(state):
     x, _ = state
@@ -282,7 +305,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
   def update(i, g, state):
     x, avg_sq_grad = state
     avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
-    x = x - step_size(i) * g / (np.sqrt(avg_sq_grad) + eps)
+    x = x - step_size(i) * g / np.sqrt(avg_sq_grad + eps)
     return x, avg_sq_grad
   def get_params(state):
     x, _ = state
@@ -392,7 +415,7 @@ def sm3(step_size, momentum=0.9):
   def update(i, g, state):
     x, m, vs = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
-    accum = reduce(np.minimum, vs) + g ** 2
+    accum = functools.reduce(np.minimum, vs) + g ** 2
     accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m

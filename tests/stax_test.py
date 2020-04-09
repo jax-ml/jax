@@ -13,9 +13,6 @@
 # limitations under the License.
 
 """Tests for Stax library."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -138,20 +135,22 @@ class StaxTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_window_shape={}_padding={}_strides={}_input_shape={}"
-                        "_maxpool={}"
+                        "_maxpool={}_spec={}"
                         .format(window_shape, padding, strides, input_shape,
-                                max_pool),
+                                max_pool, spec),
        "window_shape": window_shape, "padding": padding, "strides": strides,
-       "input_shape": input_shape, "max_pool": max_pool}
+       "input_shape": input_shape, "max_pool": max_pool, "spec": spec}
       for window_shape in [(1, 1), (2, 3)]
       for padding in ["VALID"]
       for strides in [None, (2, 1)]
-      for input_shape in [(2, 5, 6, 1)]
-      for max_pool in [False, True]))
+      for input_shape in [(2, 5, 6, 4)]
+      for max_pool in [False, True]
+      for spec in ["NHWC", "NCHW", "WHNC", "WHCN"]))
   def testPoolingShape(self, window_shape, padding, strides, input_shape,
-                       max_pool):
+                       max_pool, spec):
     layer = stax.MaxPool if max_pool else stax.AvgPool
-    init_fun, apply_fun = layer(window_shape, padding=padding, strides=strides)
+    init_fun, apply_fun = layer(window_shape, padding=padding, strides=strides,
+                                spec=spec)
     _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -213,6 +212,19 @@ class StaxTest(jtu.JaxTestCase):
     assert out_shape == out.shape
     assert onp.allclose(onp.sum(onp.asarray(out), -1), 1.)
 
+  def testBatchNormNoScaleOrCenter(self):
+    key = random.PRNGKey(0)
+    axes = (0, 1, 2)
+    init_fun, apply_fun = stax.BatchNorm(axis=axes, center=False, scale=False)
+    input_shape = (4, 5, 6, 7)
+    inputs = random_inputs(onp.random.RandomState(0), input_shape)
+
+    out_shape, params = init_fun(key, input_shape)
+    out = apply_fun(params, inputs)
+    means = onp.mean(out, axis=(0, 1, 2))
+    std_devs = onp.std(out, axis=(0, 1, 2))
+    assert onp.allclose(means, onp.zeros_like(means), atol=1e-4)
+    assert onp.allclose(std_devs, onp.ones_like(std_devs), atol=1e-4)
 
   def testBatchNormShapeNHWC(self):
     key = random.PRNGKey(0)

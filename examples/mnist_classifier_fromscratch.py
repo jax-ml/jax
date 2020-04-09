@@ -17,9 +17,6 @@
 The primary aim here is simplicity and minimal dependencies.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import time
 
@@ -49,7 +46,7 @@ def predict(params, inputs):
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(preds * targets)
+  return -np.mean(np.sum(preds * targets, axis=1))
 
 def accuracy(params, batch):
   inputs, targets = batch

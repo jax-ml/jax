@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
 from . import bernoulli
+from . import poisson
 from . import beta
 from . import cauchy
+from . import dirichlet
 from . import expon
 from . import gamma
 from . import laplace
@@ -24,3 +25,4 @@ from . import norm
 from . import pareto
 from . import t
 from . import uniform
+from . import logistic

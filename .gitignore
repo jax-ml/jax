@@ -9,3 +9,8 @@
 build/
 dist/
 .mypy_cache/
+.pytype/
+docs/notebooks/.ipynb_checkpoints/
+docs/_autosummary
+.idea
+.vscode

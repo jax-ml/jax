@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
 from . import linalg
+from . import ndimage
+from . import sparse
 from . import special
 from . import stats

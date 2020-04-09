@@ -63,9 +63,6 @@ Example invocations:
    --epochs=45 \
    --learning_rate=.25 \
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import itertools
 import time
@@ -127,7 +124,7 @@ def loss(params, batch):
   inputs, targets = batch
   logits = predict(params, inputs)
   logits = stax.logsoftmax(logits)  # log normalize
-  return -np.mean(np.sum(logits * targets, 1))  # cross entropy loss
+  return -np.mean(np.sum(logits * targets, axis=1))  # cross entropy loss
 
 
 def accuracy(params, batch):

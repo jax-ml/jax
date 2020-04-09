@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import collections
 
@@ -31,6 +28,8 @@ def _dummy_func(*args, **kwargs):
 
 ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
 
+class ANamedTupleSubclass(ATuple):
+  pass
 
 class AnObject(object):
 
@@ -48,12 +47,30 @@ class AnObject(object):
   def __repr__(self):
     return "AnObject({},{},{})".format(self.x, self.y, self.z)
 
-
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
 
-PYTREES = [
-    ("foo",),
+@tree_util.register_pytree_node_class
+class Special:
+  def __init__(self, x, y):
+    self.x = x
+    self.y = y
+
+  def __repr__(self):
+    return "Special(x={}, y={})".format(self.x, self.y)
+
+  def tree_flatten(self):
+    return ((self.x, self.y), None)
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    return cls(*children)
+
+  def __eq__(self, other):
+    return type(self) is type(other) and (self.x, self.y) == (other.x, other.y)
+
+TREES = (
+    (None,),
     ((),),
     (([()]),),
     ((1, 2),),
@@ -61,19 +78,31 @@ PYTREES = [
     ([3],),
     ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
     ([AnObject(3, None, [4, "foo"])],),
+    (Special(2, 3.),),
     ({"a": 1, "b": 2},),
-]
+    (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
+    (collections.defaultdict(dict,
+                             [("foo", 34), ("baz", 101), ("something", -42)]),),
+    (ANamedTupleSubclass(foo="hello", bar=3.5),),
+)
+
+LEAVES = (
+    ("foo",),
+    (0.1,),
+    (1,),
+    (object(),),
+)
 
 
 class TreeTest(jtu.JaxTestCase):
 
-  @parameterized.parameters(*PYTREES)
+  @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtrip(self, inputs):
     xs, tree = tree_util.tree_flatten(inputs)
     actual = tree_util.tree_unflatten(tree, xs)
     self.assertEqual(actual, inputs)
 
-  @parameterized.parameters(*PYTREES)
+  @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripWithFlattenUpTo(self, inputs):
     _, tree = tree_util.tree_flatten(inputs)
     if not hasattr(tree, "flatten_up_to"):
@@ -97,9 +126,9 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(actual.args, inputs.args)
     self.assertEqual(actual.keywords, inputs.keywords)
 
-  @parameterized.parameters(*PYTREES)
+  @parameterized.parameters(*(TREES + LEAVES))
   def testRoundtripViaBuild(self, inputs):
-    xs, tree = tree_util.process_pytree(tuple, inputs)
+    xs, tree = tree_util._process_pytree(tuple, inputs)
     actual = tree_util.build_tree(tree, xs)
     self.assertEqual(actual, inputs)
 
@@ -127,6 +156,15 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(out, (((1, [3]), (2, None)),
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
+  @parameterized.parameters(*TREES)
+  def testAllLeavesWithTrees(self, tree):
+    leaves = tree_util.tree_leaves(tree)
+    self.assertTrue(tree_util.all_leaves(leaves))
+    self.assertFalse(tree_util.all_leaves([tree]))
+
+  @parameterized.parameters(*LEAVES)
+  def testAllLeavesWithLeaves(self, leaf):
+    self.assertTrue(tree_util.all_leaves([leaf]))
 
 if __name__ == "__main__":
   absltest.main()

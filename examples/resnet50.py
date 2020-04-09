@@ -17,13 +17,8 @@
 This file uses the stax neural network definition library and the optimizers
 optimization library.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import numpy.random as npr
-
-from six.moves import xrange
 
 import jax.numpy as np
 from jax.config import config
@@ -101,7 +96,7 @@ if __name__ == "__main__":
   def loss(params, batch):
     inputs, targets = batch
     logits = predict_fun(params, inputs)
-    return np.sum(logits * targets)
+    return -np.sum(logits * targets)
 
   def accuracy(params, batch):
     inputs, targets = batch
@@ -126,7 +121,7 @@ if __name__ == "__main__":
     return opt_update(i, grad(loss)(params, batch), opt_state)
 
   opt_state = opt_init(init_params)
-  for i in xrange(num_steps):
+  for i in range(num_steps):
     opt_state = update(i, opt_state, next(batches))
   trained_params = get_params(opt_state)
 

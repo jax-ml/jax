@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
+import builtins
 import collections
 import itertools
 
@@ -23,7 +21,7 @@ import numpy as onp
 import opt_einsum
 import scipy.special
 
-from six.moves import builtins
+from . import dtypes
 
 _slice = builtins.slice
 _max = builtins.max
@@ -35,6 +33,7 @@ sign = onp.sign
 floor = onp.floor
 ceil = onp.ceil
 round = onp.round
+nextafter = onp.nextafter
 
 is_finite = onp.isfinite
 
@@ -57,21 +56,29 @@ acos = onp.arccos
 atan = onp.arctan
 sinh = onp.sinh
 cosh = onp.cosh
+asinh = onp.arcsinh
+acosh = onp.arccosh
+atanh = onp.arctanh
 
+betainc = scipy.special.betainc
 lgamma = scipy.special.gammaln
 digamma = scipy.special.digamma
+igamma = scipy.special.gammainc
+igammac = scipy.special.gammaincc
 erf = scipy.special.erf
 erfc = scipy.special.erfc
-erf_inv = scipy.special.erfi
+erf_inv = scipy.special.erfinv
+bessel_i0e = scipy.special.i0e
+bessel_i1e = scipy.special.i1e
 
 real = onp.real
 imag = onp.imag
 
 def conj(x):
-  return onp.asarray(onp.conj(x), dtype=onp.complex64)
+  return onp.conj(x) + onp.complex64(0)
 
 def complex(x, y):
-  return onp.asarray(x + 1j * y, dtype=onp.complex64)
+  return x + onp.complex64(1j) * y
 
 abs = onp.absolute
 pow = onp.power
@@ -86,7 +93,7 @@ sub = onp.subtract
 mul = onp.multiply
 
 def div(lhs, rhs):
-  if onp.issubdtype(onp.result_type(lhs), onp.integer):
+  if dtypes.issubdtype(dtypes.result_type(lhs), onp.integer):
     quotient = onp.floor_divide(lhs, rhs)
     select = onp.logical_and(onp.sign(lhs) != onp.sign(rhs),
                              onp.remainder(lhs, rhs) != 0)
@@ -174,15 +181,20 @@ def dot_general(lhs, rhs, dimension_numbers):
   not_none = lambda x: x is not None
   out_axis_ids = filter(not_none,
                         batch_ids + lhs_out_axis_ids + rhs_out_axis_ids)
-  return onp.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids)
+  assert lhs.dtype == rhs.dtype
+  dtype = onp.float32 if lhs.dtype == dtypes.bfloat16 else None
+  out = onp.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids,
+                   dtype=dtype)
+  return out.astype(dtypes.bfloat16) if lhs.dtype == dtypes.bfloat16 else out
 
 def broadcast(operand, sizes):
   return onp.broadcast_to(operand, sizes + onp.shape(operand))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
-  inshape = tuple(1 if i not in broadcast_dimensions else d
-                  for i, d in enumerate(shape))
-  return onp.broadcast_to(onp.reshape(operand, inshape), shape)
+  in_reshape = onp.ones(len(shape), dtype=onp.int32)
+  for i, bd in enumerate(broadcast_dimensions):
+    in_reshape[bd] = operand.shape[i]
+  return onp.broadcast_to(onp.reshape(operand, in_reshape), shape)
 
 sum = onp.sum
 
@@ -350,15 +362,15 @@ def _make_reducer(py_binop, init_val):
   monoid_record = _monoids.get(getattr(py_binop, '__name__'))
   if monoid_record:
     reducer, monoid_identity = monoid_record
-    if init_val == monoid_identity(onp.result_type(init_val)):
+    if init_val == monoid_identity(dtypes.result_type(init_val)):
       return reducer
   return _reducer_from_pyfunc(py_binop, init_val)
 
 def _get_max_identity(dt):
-  return -onp.inf if onp.issubdtype(dt, onp.floating) else onp.iinfo(dt).min
+  return -onp.inf if dtypes.issubdtype(dt, onp.floating) else onp.iinfo(dt).min
 
 def _get_min_identity(dt):
-  return onp.inf if onp.issubdtype(dt, onp.floating) else onp.iinfo(dt).max
+  return onp.inf if dtypes.issubdtype(dt, onp.floating) else onp.iinfo(dt).max
 
 def _identity_getter(op):
   return lambda dtype: onp.asarray(op.identity, dtype=dtype)
