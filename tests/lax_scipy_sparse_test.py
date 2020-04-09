@@ -113,7 +113,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
       for shape in [(2, 2)]
-      for dtype in float_types
+      for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   def test_cg_as_solve(self, shape, dtype, rng_factory):
 

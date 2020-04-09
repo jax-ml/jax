@@ -146,6 +146,10 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   cg_solve = partial(
       _cg_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter, M=M)
-  x = lax.custom_linear_solve(A, b, cg_solve, symmetric=True)
+  # real-valued positive-definite linear operators are symmetric
+  real_valued = lambda x: not issubclass(x.dtype.type, np.complexfloating)
+  symmetric = all(map(real_valued, tree_leaves(b)))
+  x = lax.custom_linear_solve(
+      A, b, solve=cg_solve, transpose_solve=cg_solve, symmetric=symmetric)
   info = None  # TODO(shoyer): return the real iteration count here
   return x, info
