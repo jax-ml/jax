@@ -370,8 +370,9 @@ class JaxprTracer(Tracer):
 
 # TODO(necula): this should return a TypedJaxpr
 def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
-                   instantiate=False, stage_out=False, bottom=False) \
-    -> Tuple[Jaxpr, Sequence[PartialVal], Sequence[core.Value]]:
+                   instantiate: Union[bool, Sequence[bool]] = False,
+                   stage_out=False, bottom=False) \
+    -> Tuple[Jaxpr, Tuple[PartialVal, ...], Tuple[core.Value, ...]]:
   """Traces a function into a Jaxpr, given PartialVals for inputs.
 
   Returns (`jaxpr`, `out_pvals`, `consts`).
@@ -548,7 +549,8 @@ def convert_constvars_jaxpr(jaxpr):
   return lifted_jaxpr
 
 def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
-                       instantiate: bool) -> Tuple[TypedJaxpr, TypedJaxpr, Sequence[bool]]:
+                       instantiate: Union[bool, Sequence[bool]]
+                       ) -> Tuple[TypedJaxpr, TypedJaxpr, Sequence[bool]]:
   """Specializes a Jaxpr given an indication of which inputs are known.
 
   Returns: (jaxpr_known, jaxpr_unknown, out_unknowns).
