@@ -61,15 +61,15 @@ is value dependent.
 
 The general implementation can therefore not be transformed with jit.
 If the coefficients are guaranteed to have no leading zeros, use the 
-keyword argument `strip_zeros=False` to get a jit-compatible variant:
+keyword argument `strip_zeros=False` to get a jit-compatible variant::
 
->>> roots_unsafe = jax.jit(jax.partial(np.roots, strip_zeros=False))
->>> roots_unsafe([1, 2])     # ok
-DeviceArray([-2.+0.j], dtype=complex64)
->>> roots_unsafe([0, 1, 2])  # problem
-DeviceArray([nan+nanj, nan+nanj], dtype=complex64)
->>> np.roots([0, 1, 2])         # use the no-jit version instead
-DeviceArray([-2.+0.j], dtype=complex64)
+    >>> roots_unsafe = jax.jit(jax.partial(np.roots, strip_zeros=False))
+    >>> roots_unsafe([1, 2])     # ok
+    DeviceArray([-2.+0.j], dtype=complex64)
+    >>> roots_unsafe([0, 1, 2])  # problem
+    DeviceArray([nan+nanj, nan+nanj], dtype=complex64)
+    >>> np.roots([0, 1, 2])         # use the no-jit version instead
+    DeviceArray([-2.+0.j], dtype=complex64)
 """)
 def roots(p, *, strip_zeros=True):
   # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/lib/polynomial.py#L168-L251
