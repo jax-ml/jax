@@ -2378,7 +2378,7 @@ def _conv_general_dilated_batch_rule(
       out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
       return out, out_spec[1]
     else:
-      # groups needs to be outermost, so we need to factor it out of the
+      # groups need to be outermost, so we need to factor them out of the
       # rhs output feature dim, then factor the batch dim into the remaining rhs
       # output feature dim, then put groups back in. We do something
       # similar on the output. An alternative which would require more FLOPs but
