@@ -83,7 +83,8 @@ class TestPolynomial(jtu.JaxTestCase):
     # order may differ (np.sort doesn't deal with complex numbers)
     np_fn = lambda arg: onp.sort(np.roots(arg, strip_zeros=False))
     onp_fn = lambda arg: onp.sort(onp.roots(arg))
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False)
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker,
+                            check_dtypes=False, tol=1e-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_trailing={}".format(
@@ -112,7 +113,10 @@ class TestPolynomial(jtu.JaxTestCase):
     roots_compiled = jit(partial(np.roots, strip_zeros=False))
     np_fn = lambda arg: onp.sort(roots_compiled(arg))
     onp_fn = lambda arg: onp.sort(onp.roots(arg))
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False)
+    # Using strip_zeros=False makes the algorithm less efficient
+    # and leads to slightly different values compared ot numpy
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker,
+                            check_dtypes=False, tol=1e-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_zeros={}_nonzeros={}".format(
@@ -123,7 +127,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for dtype in all_dtypes
     for rng_factory in [jtu.rand_default]
     for zeros in [1, 2, 5]
-    for nonzeros in [0, 1, 3]))
+    for nonzeros in [0, 3]))
   def testRootsInvalid(self, zeros, nonzeros, dtype, rng_factory):
     rng = rng_factory()
 
