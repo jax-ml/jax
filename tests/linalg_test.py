@@ -52,10 +52,6 @@ def _skip_if_unsupported_type(dtype):
       dtype in (onp.dtype('float64'), onp.dtype('complex128'))):
     raise unittest.SkipTest("--jax_enable_x64 is not set")
 
-# TODO(phawkins): bug https://github.com/google/jax/issues/432
-def _skip_on_mac_xla_bug():
-  if sys.platform == "darwin" and osp.version.version > "1.0.0":
-    raise unittest.SkipTest("Test fails on Mac with new scipy (issue #432)")
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
@@ -128,6 +124,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testTensorsolve(self, m, nq, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
+    if m == 23:
+      jtu.skip_on_mac_xla_bug()
     
     # According to numpy docs the shapes are as follows:
     # Coefficient tensor (a), of shape b.shape + Q. 
@@ -234,7 +232,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if shape == (50, 50) and dtype == onp.complex64:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -431,7 +429,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
              (isinstance(axis, tuple) and len(axis) == 1)
           else [None, 'fro', 1, 2, -1, -2, np.inf, -np.inf, 'nuc'])
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
+      for rng_factory in [jtu.rand_default]))  # type: ignore
   def testNorm(self, shape, dtype, ord, axis, keepdims, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
@@ -619,6 +617,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default]))
   def testTensorinv(self, shape, dtype, rng_factory):
     _skip_if_unsupported_type(dtype)
+    if shape[0] > 100:
+      jtu.skip_on_mac_xla_bug()
     rng = rng_factory()
 
     def tensor_maker():
@@ -674,7 +674,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if shape == (200, 200) and dtype == onp.float32:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     if jtu.device_under_test() == "gpu" and shape == (200, 200):
       raise unittest.SkipTest("Test is flaky on GPU")
 
@@ -705,7 +705,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if shape == (7, 10000) and dtype in [onp.complex64, onp.float32]:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
@@ -881,7 +881,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if n == 200 and dtype == onp.complex64:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     args_maker = lambda: [rng((n, n), dtype)]
 
     x, = args_maker()
@@ -1033,8 +1033,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for conjugate_a in (
           [False] if np.issubdtype(dtype, np.floating) else [False, True])
       for left_side, a_shape, b_shape in [
+          (False, (4, 4), (4,)),
           (False, (4, 4), (1, 4,)),
           (False, (3, 3), (4, 3)),
+          (True, (4, 4), (4,)),
           (True, (4, 4), (4, 1)),
           (True, (4, 4), (4, 3)),
           (True, (2, 8, 8), (2, 8, 10)),
@@ -1104,7 +1106,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
     if n == 50 and dtype in [onp.complex64, onp.float32]:
-      _skip_on_mac_xla_bug()
+      jtu.skip_on_mac_xla_bug()
     args_maker = lambda: [rng((n, n), dtype)]
 
     osp_fun = lambda a: osp.linalg.expm(a)
@@ -1127,13 +1129,43 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     for dtype in float_types + complex_types
   ))
   def testIssue2131(self, n, dtype):
-    _skip_on_mac_xla_bug()
+    jtu.skip_on_mac_xla_bug()
     args_maker_zeros = lambda: [onp.zeros((n, n), dtype)]
     osp_fun = lambda a: osp.linalg.expm(a)
     jsp_fun = lambda a: jsp.linalg.expm(a)
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker_zeros,
                             check_dtypes=True)
     self._CompileAndCheck(jsp_fun, args_maker_zeros, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_lhs={}_rhs={}_lower={}".format(
+          jtu.format_shape_dtype_string(lhs_shape, dtype),
+          jtu.format_shape_dtype_string(rhs_shape, dtype),
+          lower),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "rng_factory": rng_factory, "lower": lower}
+      for lhs_shape, rhs_shape in [
+          [(1, 1), (1,)],
+          [(4, 4), (4,)],
+          [(4, 4), (4, 4)],
+      ]
+      for dtype in float_types
+      for lower in [True, False]
+      for rng_factory in [jtu.rand_default]))
+  def testChoSolve(self, lhs_shape, rhs_shape, dtype, lower, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    def args_maker():
+      b = rng(rhs_shape, dtype)
+      if lower:
+        L = onp.tril(rng(lhs_shape, dtype))
+        return [(L, lower), b]
+      else:
+        U = onp.triu(rng(lhs_shape, dtype))
+        return [(U, lower), b]
+    self._CheckAgainstNumpy(osp.linalg.cho_solve, jsp.linalg.cho_solve,
+                            args_maker, check_dtypes=True, tol=1e-3)
+
 
 if __name__ == "__main__":
   absltest.main()

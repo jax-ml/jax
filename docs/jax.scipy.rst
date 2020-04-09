@@ -37,6 +37,16 @@ jax.scipy.ndimage
 
    map_coordinates
 
+jax.scipy.sparse.linalg
+-----------------------
+
+.. automodule:: jax.scipy.sparse.linalg
+
+.. autosummary::
+  :toctree: _autosummary
+
+   cg
+
 jax.scipy.special
 -----------------
 

@@ -18,6 +18,8 @@ import functools
 import re
 import itertools as it
 import os
+from typing import Dict, Sequence, Union
+import sys
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -25,6 +27,7 @@ from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
+import scipy
 
 from . import api
 from . import core
@@ -116,7 +119,7 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None):
   onp.testing.assert_allclose(a, b, **kw)
 
 def tolerance(dtype, tol=None):
-  tol = tol or {}
+  tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
   tol = {onp.dtype(key): value for key, value in tol.items()}
@@ -294,6 +297,15 @@ def count_jit_and_pmap_compiles():
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
 
+def if_device_under_test(device_type: Union[str, Sequence[str]],
+                         if_true, if_false):
+  """Chooses `if_true` of `if_false` based on device_under_test."""
+  if device_under_test() in ([device_type] if isinstance(device_type, str)
+                             else device_type):
+    return if_true
+  else:
+    return if_false
+
 def supported_dtypes():
   if device_under_test() == "tpu":
     return {onp.bool_, onp.int32, onp.uint32, dtypes.bfloat16, onp.float32,
@@ -303,6 +315,10 @@ def supported_dtypes():
             onp.uint8, onp.uint16, onp.uint32, onp.uint64,
             dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
             onp.complex64, onp.complex128}
+
+def skip_if_unsupported_type(dtype):
+  if dtype not in supported_dtypes():
+    raise SkipTest(f"Type {dtype} not supported on {device_under_test()}")
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
@@ -332,6 +348,11 @@ def skip_on_flag(flag_name, skip_value):
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
+
+# TODO(phawkins): bug https://github.com/google/jax/issues/432
+def skip_on_mac_xla_bug():
+  if sys.platform == "darwin" and scipy.version.version > "1.0.0":
+    raise absltest.SkipTest("Test fails on Mac with new scipy (issue #432)")
 
 
 def format_test_name_suffix(opname, shapes, dtypes):
@@ -441,8 +462,8 @@ def rand_small():
   return partial(_rand_dtype, randn, scale=1e-3)
 
 
-def rand_not_small():
-  post = lambda x: x + onp.where(x > 0, 10., -10.)
+def rand_not_small(offset=10.):
+  post = lambda x: x + onp.where(x > 0, offset, -offset)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3., post=post)
 
@@ -629,7 +650,7 @@ def assert_dot_precision(expected_precision, fun, *args):
     assert precision == expected_precision, msg
 
 
-_CACHED_INDICES = {}
+_CACHED_INDICES: Dict[int, Sequence[int]] = {}
 
 def cases_from_list(xs):
   xs = list(xs)
@@ -653,6 +674,9 @@ def cases_from_gens(*gens):
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
+
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
@@ -747,7 +771,7 @@ class JaxTestCase(parameterized.TestCase):
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
                          check_dtypes=False, tol=None):
     args = args_maker()
-    numpy_ans = numpy_reference_op(*args)
     lax_ans = lax_op(*args)
+    numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)

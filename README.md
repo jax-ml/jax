@@ -7,9 +7,11 @@
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
 | [**Install guide**](#installation)
+| [**Change logs**](https://jax.readthedocs.io/en/latest/CHANGELOG.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
+| [**Code search**](https://cs.opensource.google/jax/jax)
 
-**Announcement:** JAX 0.1.58 has dropped Python 2 support, and requires Python 3.5 or newer. See [CHANGELOG.md](https://github.com/google/jax/blob/master/CHANGELOG.md).
+**Announcement:** JAX has dropped Python 2 support, and requires Python 3.6 or newer. See [docs/CHANGELOG.rst](https://jax.readthedocs.io/en/latest/CHANGELOG.html).
 
 ## What is JAX?
 
@@ -135,7 +137,7 @@ print(grad(grad(grad(tanh)))(1.0))
 For more advanced autodiff, you can use
 [`jax.vjp`](https://jax.readthedocs.io/en/latest/jax.html#jax.vjp) for
 reverse-mode vector-Jacobian products and
-[`jax.jvp`](https://jax.readthedocs.io/en/latest/jax.html#jax.defjvp) for
+[`jax.jvp`](https://jax.readthedocs.io/en/latest/jax.html#jax.jvp) for
 forward-mode Jacobian-vector products. The two can be composed arbitrarily with
 one another, and with other JAX transformations. Here's one way to compose those
 to make a function that efficiently computes [full Hessian
@@ -407,11 +409,11 @@ cloud VM), you can run
 
 ```bash
 # install jaxlib
-PYTHON_VERSION=cp37  # alternatives: cp35, cp36, cp37, cp38
+PYTHON_VERSION=cp37  # alternatives: cp36, cp37, cp38
 CUDA_VERSION=cuda92  # alternatives: cuda92, cuda100, cuda101, cuda102
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.39-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.43-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -428,9 +430,15 @@ grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different pa
 ```
 
 The Python version must match your Python interpreter. There are prebuilt wheels
-for Python 3.5, 3.6, 3.7, and 3.8; for anything else, you must build from
-source. Jax requires Python 3.5 or above. Jax does not support Python 2 any
+for Python 3.6, 3.7, and 3.8; for anything else, you must build from
+source. Jax requires Python 3.6 or above. Jax does not support Python 2 any
 more.
+
+To try automatic detection of the correct version for your system, you can run: 
+
+```bash
+pip install --upgrade https://storage.googleapis.com/jax-releases/`nvcc -V | sed -En "s/.* release ([0-9]*)\.([0-9]*),.*/cuda\1\2/p"`/jaxlib-0.1.43-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
+```
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
 if you run into any errors or problems with the prebuilt wheels.

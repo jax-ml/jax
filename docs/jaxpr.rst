@@ -1,4 +1,4 @@
-Understanding JAXPR
+Understanding Jaxprs
 ====================
 
 Updated: February 14, 2020 (for commit 9e6fe64).
@@ -8,29 +8,29 @@ Updated: February 14, 2020 (for commit 9e6fe64).
 
 Conceptually, one can think of JAX transformations as first tracing the Python
 function to be transformed into a small and well-behaved intermediate form,
-the JAXPR, that is then transformed accordingly, and ultimately compiled and executed.
+the jaxpr, that is then transformed accordingly, and ultimately compiled and executed.
 One of the reasons JAX can pack so much power into such a small software package
 is that it starts with a familiar and flexible programming interface (Python with NumPy)
 and it uses the actual Python interpreter to do most of the heavy lifting to distill the
 essence of the computation into a simple statically-typed expression language
-with limited higher-order features: the JAXPR language.
+with limited higher-order features: the jaxpr language.
 
 Not all Python programs can be processed this way, but it turns out that many
 scientific computing and machine learning programs do have this property.
 
 Before we proceed, it is important to point out that not all JAX transformations
-materialize a JAXPR as described above; some, e.g., differentiation,
+materialize a jaxpr as described above; some, e.g., differentiation,
 will apply transformations incrementally during tracing.
 Nevertheless, if one wants to understand how JAX works internally, or to
-make use of the result of JAX tracing, it is useful to understand JAXPR.
+make use of the result of JAX tracing, it is useful to understand jaxpr.
 
-A JAXPR instance represents a function with one of more typed parameters (input variables)
+A jaxpr instance represents a function with one of more typed parameters (input variables)
 and one or more typed results. The results depend only on the input
 variables; there are no free variables captured from enclosing scopes.
 The inputs and outputs have types, which in JAX are represented as abstract
-values. There are two related representations in the code for JAXPRs. The main
+values. There are two related representations in the code for jaxprs. The main
 one is :py:class:`jax.core.TypedJaxpr` and is what you obtain when you
-use :py:func:`jax.make_jaxpr` to inspect JAXPRs. It has the following
+use :py:func:`jax.make_jaxpr` to inspect jaxprs. It has the following
 fields:
 
   * ``jaxpr``: is the actual computation content of the actual function (described below).
@@ -49,12 +49,12 @@ The most interesting part of the TypedJaxpr is the actual execution content,
 represented as a :py:class:`jax.core.Jaxpr` as printed using the following
 grammar::
 
-   JAXPR ::= { lambda Var* ; Var+.
+   jaxpr ::= { lambda Var* ; Var+.
                let Eqn*
                in  [Expr+] }
 
 where:
-  * The parameter of the JAXPR are shown as two lists of variables separated by
+  * The parameter of the jaxpr are shown as two lists of variables separated by
     ``;``. The first set of variables are the ones that have been introduced
     to stand for constants that have been hoisted out. These are called the
     `constvars`. The second list of variables are the real input variables.
@@ -62,7 +62,7 @@ where:
     intermediate expressions. Each equation defines one or more variables as the
     result of applying a primitive on some atomic expressions. Each equation uses only
     input variables and intermediate variables defined by previous equations.
-  * ``Expr+``: is a list of output atomic expressions for the JAXPR.
+  * ``Expr+``: is a list of output atomic expressions for the jaxpr.
 
 Equations are printed as follows::
 
@@ -79,14 +79,14 @@ where:
     square brackets. Each parameter is shown as ``Name = Value``.
 
 
-Most JAXPR primitives are first-order (they take just one or more Expr as arguments)::
+Most jaxpr primitives are first-order (they take just one or more Expr as arguments)::
 
   Primitive := add | sub | sin | mul | ...
 
 
-The JAXPR primitives are documented in the :py:mod:`jax.lax` module.
+The jaxpr primitives are documented in the :py:mod:`jax.lax` module.
 
-For example, here is the JAXPR produced for the function ``func1`` below::
+For example, here is the jaxpr produced for the function ``func1`` below::
 
     from jax import numpy as jnp
     def func1(first, second):
@@ -110,12 +110,12 @@ The ``reduce_sum`` primitive has named parameters ``axes`` and ``input_shape``, 
 addition to the operand ``e``.
 
 Note that JAX traces through Python-level control-flow and higher-order functions
-when it extracts the JAXPR. This means that just because a Python program contains
-functions and control-flow, the resulting JAXPR does not have
+when it extracts the jaxpr. This means that just because a Python program contains
+functions and control-flow, the resulting jaxpr does not have
 to contain control-flow or higher-order features.
 For example, when tracing the function ``func3`` JAX will inline the call to
 ``inner`` and the conditional ``if second.shape[0] > 4``, and will produce the same
-JAXPR as before::
+jaxpr as before::
 
     def func2(inner, first, second):
       temp = first + inner(second) * 3.
@@ -142,13 +142,13 @@ JAXPR as before::
 Handling PyTrees
 ----------------
 
-In JAXPR there are no tuple types; instead primitives take multiple inputs
+In jaxpr there are no tuple types; instead primitives take multiple inputs
 and produce multiple outputs. When processing a function that has structured
-inputs or outputs, JAX will flatten those and in JAXPR they will appear as lists
+inputs or outputs, JAX will flatten those and in jaxpr they will appear as lists
 of inputs and outputs. For more details, please see the documentation for
 PyTrees (:doc:`notebooks/JAX_pytrees`).
 
-For example, the following code produces an identical JAXPR to what we saw
+For example, the following code produces an identical jaxpr to what we saw
 before (with two input vars, one for each element of the input tuple)::
 
 
@@ -184,7 +184,7 @@ from the Python program, or from constant-folding. For example, the function
     print(api.make_jaxpr(func6)(jnp.ones(8)))
 
 
-JAX produces the following JAXPR::
+JAX produces the following jaxpr::
 
     { lambda b d a.
       let c = add a b
@@ -196,13 +196,13 @@ When tracing ``func6``, the function ``func5`` is invoked with a constant value
 ``jnp.sin(second) * 3.`` is constant-folded.
 There are two ConstVars, ``b`` (standing for ``jnp.sin(second) * 3.``) and ``d``
 (standing for ``jnp.ones(8)``). Unfortunately, it is not easy to tell from the
-JAXPR notation what constants the constant variables stand for.
+jaxpr notation what constants the constant variables stand for.
 
 Higher-order primitives
 -----------------------
 
-JAXPR includes several higher-order primitives. They are more complicated because
-they include sub-JAXPRs.
+jaxpr includes several higher-order primitives. They are more complicated because
+they include sub-jaxprs.
 
 Cond
 ^^^^
@@ -238,7 +238,7 @@ For example::
 
 The cond primitive has a number of parameters:
 
-  * `true_jaxpr` and `false_jaxpr` are JAXPRs that correspond to the true
+  * `true_jaxpr` and `false_jaxpr` are jaxprs that correspond to the true
     and false branch functionals. In this example, those functionals take each
     one input variable, corresponding to ``xtrue`` and ``xfalse`` respectively.
   * `linear` is a tuple of booleans that is used internally by the auto-differentiation
@@ -273,7 +273,7 @@ contains a constant ``jnp.ones(1)`` that is hoisted as a `constvar`::
                                  in a } ] d b c e b c
       in f }
 
-The top-level JAXPR has one `constvar` ``e`` (corresponding to ``jnp.ones(1)`` from the
+The top-level jaxpr has one `constvar` ``e`` (corresponding to ``jnp.ones(1)`` from the
 body of the ``false_jaxpr``) and three input variables ``a b c`` (corresponding to ``arg1``
 and the two elements of ``arg2``; note that ``arg2`` has been flattened).
 The ``true_jaxpr`` has two input variables (corresponding to the two elements of ``arg2``
@@ -286,10 +286,10 @@ The actual operands to the cond primitive are: ``d b c e b c``, which correspond
 
   * 1 operand for the predicate,
   * 2 operands for ``true_jaxpr``, i.e., ``b`` and ``c``, which are input vars,
-    corresponding to ``arg2`` for the top-level JAXPR,
-  * 1 constant for ``false_jaxpr``, i.e., ``e``, which is a consvar for the top-level JAXPR,
+    corresponding to ``arg2`` for the top-level jaxpr,
+  * 1 constant for ``false_jaxpr``, i.e., ``e``, which is a consvar for the top-level jaxpr,
   * 2 operands for ``true_jaxpr``, i.e., ``b`` and ``c``, which are the input vars
-    corresponding to ``arg2`` for the top-level JAXPR.
+    corresponding to ``arg2`` for the top-level jaxpr.
 
 While
 ^^^^^
@@ -328,7 +328,7 @@ For example, here is an example fori loop::
                          cond_nconsts=0 ] c a 0 b e
       in h }
 
-The top-level JAXPR has two constvars: ``c`` (corresponding to ``ones * 3.`` from the body
+The top-level jaxpr has two constvars: ``c`` (corresponding to ``ones * 3.`` from the body
 of the loop) and ``d`` (corresponding to the use of ``ones`` in the initial carry).
 There are also two input variables (``a`` corresponding to ``arg`` and ``b`` corresponding
 to ``n``).
@@ -375,45 +375,43 @@ For the example consider the function ``func11`` below::
      print(api.make_jaxpr(func11)(onp.ones(16), 5.))
     { lambda c ; a b.
       let d e = scan[ forward=True
-                      jaxpr={ lambda  ; a b c d e.
-                              let f = mul c e
-                                  g = add b f
-                                  h = add g a
-                              in (h, b) }
+                      jaxpr={ lambda  ; f a b c.
+                              let d = mul b c
+                                  e = add a d
+                                  g = add e f
+                              in (g, a) }
                       length=16
-                      linear=(False, False, False, True, False)
+                      linear=(False, False, False, False)
                       num_carry=1
-                      num_consts=1 ] b 0.0 a * c
+                      num_consts=1 ] b 0.0 a c
       in (d, e) }
 
-The top-level JAXPR has one constvar ``c`` corresponding to the ``ones`` constant,
+The top-level jaxpr has one constvar ``c`` corresponding to the ``ones`` constant,
 and two input variables corresponding to the arguments ``arr`` and ``extra``.
-The body of the scan has 5 input variables, of which:
+The body of the scan has 4 input variables, of which:
 
-  * one (``a``) is a constant (since ``num_consts = 1``), and stands for the
+  * one (``f``) is a constant (since ``num_consts = 1``), and stands for the
     captured variable ``extra`` used in the loop body,
-  * one (``b``) is the value of the carry (since ``num_carry = 1``)
-  * The remaining 3 are the input values. Notice that only ``c`` and ``e`` are used,
-    and stand respectively for the array element from the first array passed to
-    lax.scan (``arr``) and to the second array (``ones``). The input variables
-    (``d``) seems to be an artifact of the translation.
+  * one (``a``) is the value of the carry (since ``num_carry = 1``)
+  * The remaining 2 are the input values. ``b`` is the array element from the
+    first array passed to lax.scan (``arr``) and ``c`` is the second array
+    (``ones``).
 
 The ``linear`` parameter describes for each of the input variables whether they
-are guaranteed to be used linearly in the body. Here, only the unused input
-variable is marked linear. Once the scan goes through linearization, more arguments
-will be linear.
+are guaranteed to be used linearly in the body. Once the scan goes through
+linearization, more arguments will be linear.
 
-The scan primitive takes 5 arguments: ``b 0.0 a * c``, of which:
+The scan primitive takes 4 arguments: ``b 0.0 a c``, of which:
 
   * one is the free variable for the body
   * one is the initial value of the carry
-  * The next 3 are the arrays over which the scan operates. The middle one is not used (*).
+  * The next 2 are the arrays over which the scan operates.
 
 XLA_call
 ^^^^^^^^
 
 The call primitive arises from JIT compilation, and it encapsulates
-a sub-JAXPR along with parameters the specify the backend and the device the
+a sub-jaxpr along with parameters the specify the backend and the device the
 computation should run. For example::
 
     def func12(arg):
@@ -438,7 +436,7 @@ computation should run. For example::
 The top-level constvar ``b`` refers to the ``jnp.ones(1)`` constant, and
 the top-level input variable `a` refers to the ``arg`` parameter of ``func12``.
 The ``xla_call`` primitive stands for a call to the jitted ``inner`` function.
-The primitive has the function body in the ``call_jaxpr`` parameter, a JAXPR
+The primitive has the function body in the ``call_jaxpr`` parameter, a jaxpr
 with 3 input parameters:
 
   * ``c`` is a constvar and stands for the ``ones`` constant,
@@ -490,4 +488,3 @@ value of this parameter is a Jaxpr with 3 input variables:
 The parameter ``mapped_invars`` specify which of the input variables should be
 mapped and which should be broadcast. In our example, the value of ``extra``
 is broadcast, the other input values are mapped.
-

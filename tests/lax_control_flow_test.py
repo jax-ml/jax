@@ -17,6 +17,7 @@ import collections
 from functools import partial
 import itertools
 import re
+from typing import Callable
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -57,6 +58,10 @@ def scan_reference(f, init, xs):
 
 def high_precision_dot(a, b):
   return lax.dot(a, b, precision=lax.Precision.HIGHEST)
+
+
+def posify(matrix):
+  return high_precision_dot(matrix, matrix.T.conj())
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
@@ -349,7 +354,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testForiLoopBatchedIssue1190(self):
-    f = lambda x: lax.fori_loop(0, 4, lambda _, x: x + 1, x)
+    cond_fun = lambda carry: carry[0] < 4
+    body_fun = lambda carry: (carry[0] + 1, carry[1] + 1)
+    f = lambda x: lax.while_loop(cond_fun, body_fun, (0, x))
     jaxpr = api.make_jaxpr(api.vmap(f))(np.arange(3))
     eqn = jaxpr.jaxpr.eqns[0]
     self.assertIs(eqn.primitive, lax.while_p)
@@ -1269,6 +1276,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     actual = lax.map(f, xs)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
+  def testMapEmpty(self):
+    # https://github.com/google/jax/issues/2412
+    ans = lax.map(lambda x: x * x, np.array([]))
+    expected = np.array([])
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
   def testCaching(self):
     def cond(x):
       assert python_should_be_executing
@@ -1422,12 +1435,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def scalar_solve(f, y):
       return y / f(1.0)
 
-    def binary_search(func, x0, low=0.0, high=100.0, tolerance=1e-6):
+    def binary_search(func, x0, low=0.0, high=100.0):
       del x0  # unused
 
       def cond(state):
         low, high = state
-        return high - low > tolerance
+        midpoint = 0.5 * (low + high)
+        return (low < midpoint) & (midpoint < high)
 
       def body(state):
         low, high = state
@@ -1450,10 +1464,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         rtol=1e-7)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
-    # TODO(shoyer): reenable when batching works
-    # inputs = np.array([4.0, 5.0])
-    # results = api.vmap(sqrt_cubed)(inputs)
-    # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+    inputs = np.array([4.0, 5.0])
+    results = api.vmap(sqrt_cubed)(inputs)
+    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
@@ -1628,18 +1641,40 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    expected = np.linalg.solve(high_precision_dot(a, a.T), b)
-    actual = positive_definite_solve(high_precision_dot(a, a.T), b)
+    expected = np.linalg.solve(onp.asarray(posify(a)), b)
+    actual = positive_definite_solve(posify(a), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    actual = api.jit(positive_definite_solve)(high_precision_dot(a, a.T), b)
+    actual = api.jit(positive_definite_solve)(posify(a), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
     jtu.check_grads(
-        lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
+        lambda x, y: positive_definite_solve(posify(x), y),
         (a, b), order=2, rtol=1e-2)
+
+  def test_custom_linear_solve_complex(self):
+
+    def positive_definite_solve(a, b):
+      def solve(matvec, x):
+        return jsp.linalg.solve(a, x)
+      matvec = partial(high_precision_dot, a)
+      return lax.custom_linear_solve(matvec, b, solve, symmetric=True)
+
+    rng = onp.random.RandomState(0)
+    a = 0.5 * rng.randn(2, 2) + 0.5j * rng.randn(2, 2)
+    b = 0.5 * rng.randn(2) + 0.5j * rng.randn(2)
+
+    expected = np.linalg.solve(posify(a), b)
+    actual = positive_definite_solve(posify(a), b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+    # TODO(shoyer): remove this error when complex values work 
+    with self.assertRaises(NotImplementedError):
+      jtu.check_grads(
+          lambda x, y: positive_definite_solve(posify(x), y),
+          (a, b), order=2, rtol=1e-2)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):
@@ -1807,6 +1842,41 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = arange(10)
     expected = onp.arange(10)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_while_loop_of_pmap(self):
+    # code from jsnoek@
+
+    def body(i, x):
+      result = api.pmap(lambda z: lax.psum(np.sin(z), 'i'), axis_name='i')(x)
+      return result + x
+    f_loop = lambda x: lax.fori_loop(0, 3, body, x)
+    ans = f_loop(np.ones(api.device_count()))
+    del body, f_loop
+
+    def body2(i, x):
+      result = np.broadcast_to(np.sin(x).sum(), x.shape)
+      return result + x
+    g_loop = lambda x: lax.fori_loop(0, 3, body2, x)
+    expected = g_loop(np.ones(api.device_count()))
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_while_loop_of_pmap_error_message(self):
+
+    def body(i, x):
+      result = api.pmap(lambda z: lax.psum(np.sin(z), 'i'), axis_name='i')(x)
+      return result + x
+    f_loop = lambda x: lax.fori_loop(0, 3, body, x)
+
+    too_big = 2 * api.device_count()
+
+    self.assertRaisesRegex(
+        ValueError,
+        re.escape(
+            "compiling a primitive computation `while` that requires {} "
+            "replicas, but only {} XLA devices are available on backend {}."
+            .format(too_big, api.device_count(), jtu.device_under_test())),
+        lambda: f_loop(np.ones(too_big)))
 
 
 if __name__ == '__main__':

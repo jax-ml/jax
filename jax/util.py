@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import collections
 import functools
 import itertools as it
 import types

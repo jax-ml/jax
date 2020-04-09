@@ -136,6 +136,7 @@ class Scope(object):
   def __init__(self):
     self._mutable_state = {}  # state to be functionalized, indexed by name.
     self._active_ranges = []  # stack of active ranges, last one is the innermost.
+    self._count_subtraces = 0  # How many net started subtraces, for error recovery
 
   def range(self, first, second=None, third=None):
     """Creates an iterator for bounded iterations to be functionalized.
@@ -184,9 +185,9 @@ class Scope(object):
 
     try:
       pred_dtype = onp.result_type(pred)
-    except TypeError:
+    except TypeError as err:
       msg = ("Pred type must be either boolean or number, got {}.")
-      raise TypeError(msg.format(pred))
+      raise TypeError(msg.format(pred)) from err
 
     if pred_dtype.kind != 'b':
       if pred_dtype.kind in 'iuf':
@@ -246,7 +247,7 @@ class Scope(object):
 
     Called for *all* attribute setting.
     """
-    if key in ["_active_ranges", "_mutable_state"]:
+    if key in ["_active_ranges", "_mutable_state", "_count_subtraces"]:
       object.__setattr__(self, key, value)
     else:
       if self._active_ranges and key not in self._mutable_state:
@@ -258,15 +259,34 @@ class Scope(object):
     return self
 
   def __exit__(self, exc_type, exc_val, exc_tb):
-    if exc_type is None:
-      if self._active_ranges:  # We have some ranges that we did not exit properly
-        self._error_premature_exit_range()
-      return True
-    else:
-      # The exception may come from inside one or more ranges. We let the current
-      # exception propagate, assuming it terminates the tracing. If not, the
-      # tracers may be left in an inconsistent state.
-      return False  # re-raise
+    try:
+      if exc_type is None:
+        if self._active_ranges:  # We have some ranges that we did not exit properly
+          self._error_premature_exit_range()
+        return True
+      else:
+        # The exception may come from inside one or more ranges. We let the current
+        # exception propagate, assuming it terminates the tracing. If not, the
+        # tracers may be left in an inconsistent state.
+        return False  # re-raise
+    finally:
+      # Ensure we leave the global trace_state as we found it
+      while self._count_subtraces > 0:
+        self.end_subtrace()
+
+  def start_subtrace(self):
+    """Starts a nested trace, returns the Trace object."""
+    # TODO: This follows the __enter__ part of core.new_master.
+    level = core.trace_state.trace_stack.next_level(False)
+    master = core.MasterTrace(level, pe.JaxprTrace)
+    core.trace_state.trace_stack.push(master, False)
+    self._count_subtraces += 1
+    return pe.JaxprTrace(master, core.cur_sublevel())
+
+  def end_subtrace(self):
+    # TODO: This follows the __exit__ part of core.new_master
+    core.trace_state.trace_stack.pop(False)
+    self._count_subtraces -= 1
 
 
 class _BodyTracer(object):
@@ -333,17 +353,17 @@ class _BodyTracer(object):
     self.carried_state_names = sorted(self.scope._mutable_state.keys())
 
     # TODO: This is the first part of partial_eval.trace_to_subjaxpr. Share.
-    self.trace = _BodyTracer.start_subtrace()
+    self.trace = self.scope.start_subtrace()
     # Set the scope._mutable_state to new tracing variables.
     for key, initial in self.carried_state_initial.items():
       mt_aval = _BodyTracer.abstractify(initial)
-      mt_pval = pe.PartialVal((mt_aval, core.unit))
+      mt_pval = pe.PartialVal.unknown(mt_aval)
       mt_var = self.trace.new_arg(mt_pval)
       self.carried_state_vars[key] = mt_var
       self.scope._mutable_state[key] = mt_var
 
     index_var_aval = _BodyTracer.abstractify(0)
-    index_var_pval = pe.PartialVal((index_var_aval, core.unit))
+    index_var_pval = pe.PartialVal.unknown(index_var_aval)
     self._index_var = self.trace.new_arg(index_var_pval)
 
   def end_tracing_body(self):
@@ -370,13 +390,13 @@ class _BodyTracer(object):
         in_tracers=in_tracers,
         out_tracers=body_out_tracers,
         trace=self.trace)
-    except ValueError as e:
+    except core.UnexpectedTracerError as e:
       if "Tracer not among input tracers" in str(e):
         raise ValueError("Body of cond_range or while_range should not use the "
-                         "index variable returned by iterator.")
+                         "index variable returned by iterator.") from e
       raise
     # End the subtrace for the loop body, before we trace the condition
-    _BodyTracer.end_subtrace()
+    self.scope.end_subtrace()
 
     carried_init_val = tuple([self.carried_state_initial[ms]
                               for ms in self.carried_state_names])
@@ -391,20 +411,6 @@ class _BodyTracer(object):
     # Update the mutable state with the values of the changed vars, after the loop.
     for ms, mv in zip(self.carried_state_names, carried_mutable_state_unflattened):
       self.scope._mutable_state[ms] = mv
-
-  @staticmethod
-  def start_subtrace():
-    """Starts a nested trace, returns the Trace object."""
-    # TODO: This follows the __enter__ part of core.new_master. share
-    level = core.trace_state.trace_stack.next_level(False)
-    master = core.MasterTrace(level, pe.JaxprTrace)
-    core.trace_state.trace_stack.push(master, False)
-    return pe.JaxprTrace(master, core.cur_sublevel())
-
-  @staticmethod
-  def end_subtrace():
-    # TODO: This follows the __exit__ part of core.new_master
-    core.trace_state.trace_stack.pop(False)
 
   @staticmethod
   def abstractify(x):

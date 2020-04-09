@@ -68,9 +68,9 @@ class PmapTest(jtu.JaxTestCase):
     if any(size == -1 for size in device_mesh_shape):
       try:
         return onp.arange(device_count).reshape(device_mesh_shape).shape
-      except ValueError:
+      except ValueError as err:
         msg = "device mesh shape {} not compatible with device count {}"
-        raise SkipTest(msg.format(device_mesh_shape, device_count))
+        raise SkipTest(msg.format(device_mesh_shape, device_count)) from err
     else:
       if device_count % prod(device_mesh_shape):
         msg = "device mesh size {} does not divide available device count {}"
@@ -95,6 +95,15 @@ class PmapTest(jtu.JaxTestCase):
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
     expected = x - onp.broadcast_to(onp.mean(x, 0), x.shape)
 
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGather(self):
+    f = pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
+
+    shape = (xla_bridge.device_count(), 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = onp.array([x] * xla_bridge.device_count())
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -125,6 +134,22 @@ class PmapTest(jtu.JaxTestCase):
       # NOTE: all-to-all and ppermute only supported on TPU.
       assert_allclose(jax_f(ptranspose)(x), onp_transpose(x))
       assert_allclose(jax_f(protate)(x), onp_rotate(x))
+
+  def testCollectivesWithTreesOfDifferentDtypes(self):
+    n = len(jax.devices())
+    x = {'a': onp.arange(1 * n * n, 2 * n * n, dtype=onp.float32).reshape([n, n]),
+         'b': onp.arange(2 * n * n, 3 * n * n, dtype=onp.int32).reshape([n, n]),
+         'c': onp.arange(4 * n * n, 5 * n * n, dtype=onp.float32).reshape([n, n]),
+         'd': onp.arange(6 * n * n, 7 * n * n, dtype=onp.int32).reshape([n, n])}
+    tree_f = lambda f: partial(tree_util.tree_map, f)
+    jax_f = lambda p: pmap(lambda x: p(x, 'i'), 'i')
+    onp_f = lambda p: tree_f(lambda x: onp.broadcast_to(p(x, 0), x.shape))
+    assert_allclose = partial(tree_util.tree_multimap,
+                              partial(self.assertAllClose, check_dtypes=False))
+    assert_allclose(jax_f(lax.pmax)(x), onp_f(onp.max)(x))
+    assert_allclose(jax_f(lax.pmin)(x), onp_f(onp.min)(x))
+    assert_allclose(jax_f(lax.psum)(x), onp_f(onp.sum)(x))
+    assert_allclose(jax_f(lax.pmean)(x), onp_f(onp.mean)(x))
 
   def testComplexPsum(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')

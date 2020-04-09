@@ -30,7 +30,7 @@ from . import lax
 from . import numpy as np
 from . import tree_util
 from . import dtypes
-from .api import custom_transforms, defjvp, jit, vmap
+from .api import jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray, stack
 from jax.lib import xla_bridge
 from jax.lib import cuda_prng
@@ -192,9 +192,9 @@ threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
 xla.translations[threefry2x32_p] = xla.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=False), instantiate=True)
+    partial(_threefry2x32_lowering, use_rolled_loops=False))
 xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=True), instantiate=True)
+    partial(_threefry2x32_lowering, use_rolled_loops=True))
 if cuda_prng:
   xla.backend_specific_translations['gpu'][threefry2x32_p] = \
       _threefry2x32_gpu_translation_rule
@@ -290,9 +290,9 @@ def _random_bits(key, bit_width, shape):
 def _check_shape(name, shape, *param_shapes):
   try:
     shape = tuple(map(int, shape))
-  except TypeError:
+  except TypeError as err:
     msg = "{} requires a concrete tuple of integers as shape argument, got {}."
-    raise ValueError(msg.format(name, shape))
+    raise ValueError(msg.format(name, shape)) from err
   if param_shapes:
     shape_ = lax.broadcast_shapes(shape, *param_shapes)
     if shape != shape_:
@@ -927,7 +927,7 @@ random_gamma_p.multiple_results = True
 random_gamma_p.def_impl(_gamma_impl)
 random_gamma_p.def_abstract_eval(lambda key, a: (abstract_arrays.raise_to_shaped(a),))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_grad(ans[0], a),))
-xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, instantiate=True)
+xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key, a, shape=None, dtype=onp.float64):

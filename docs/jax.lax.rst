@@ -156,9 +156,11 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
+    all_gather
     all_to_all
     psum
     pmax
     pmin
     ppermute
     pswapaxes
+    axis_index

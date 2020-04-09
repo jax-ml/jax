@@ -18,6 +18,7 @@ Subpackages
     jax.random
     jax.tree_util
     jax.dlpack
+    jax.profiler
 
 Just-in-time compilation (:code:`jit`)
 --------------------------------------
@@ -27,6 +28,7 @@ Just-in-time compilation (:code:`jit`)
 .. autofunction:: xla_computation
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
+.. autofunction:: device_put
 
 Automatic differentiation
 -------------------------
@@ -39,19 +41,15 @@ Automatic differentiation
 .. autofunction:: jvp
 .. autofunction:: linearize
 .. autofunction:: vjp
-.. autofunction:: custom_transforms
-.. autofunction:: defjvp
-.. autofunction:: defjvp_all
-.. autofunction:: defvjp
-.. autofunction:: defvjp_all
-.. autofunction:: custom_gradient
+.. autofunction:: custom_jvp
+.. autofunction:: custom_vjp
 
 
 Vectorization (:code:`vmap`)
 ----------------------------
 
 .. autofunction:: vmap
-.. autofunction:: numpy.vectorize
+.. autofunction:: jax.numpy.vectorize
 
 Parallelization (:code:`pmap`)
 ------------------------------

@@ -37,7 +37,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-
 class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckCollisions(self, samples, nbits):
@@ -176,6 +175,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for p in [0.1, 0.5, 0.9]
       for dtype in [onp.float32, onp.float64]))
   def testBernoulli(self, p, dtype):
+    jtu.skip_on_mac_xla_bug()
     key = random.PRNGKey(0)
     p = onp.array(p, dtype=dtype)
     rand = lambda key, p: random.bernoulli(key, p, (10000,))
@@ -194,6 +194,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     for sample_shape in [(10000,), (5000, 2)]
     for dtype in [onp.float32, onp.float64]))
   def testCategorical(self, p, axis, dtype, sample_shape):
+    jtu.skip_on_mac_xla_bug()
     key = random.PRNGKey(0)
     p = onp.array(p, dtype=dtype)
     logits = onp.log(p) - 42 # test unnormalized
@@ -226,11 +227,10 @@ class LaxRandomTest(jtu.JaxTestCase):
        "a": a, "b": b, "dtype": onp.dtype(dtype).name}
       for a in [0.2, 5.]
       for b in [0.2, 5.]
-      for dtype in [onp.float32, onp.float64]))
-  # TODO(phawkins): slow compilation times on cpu and tpu.
-  # TODO(mattjj): test fails after https://github.com/google/jax/pull/1123
-  @jtu.skip_on_devices("cpu", "gpu", "tpu")
+      for dtype in [onp.float64]))  # NOTE: KS test fails with float32
   def testBeta(self, a, b, dtype):
+    if not FLAGS.jax_enable_x64:
+      raise SkipTest("skip test except on X64")
     key = random.PRNGKey(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
     crand = api.jit(rand)
@@ -245,6 +245,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testCauchy(self, dtype):
+    jtu.skip_on_mac_xla_bug()
     key = random.PRNGKey(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -263,6 +264,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       ]
       for dtype in [onp.float32, onp.float64]))
   def testDirichlet(self, alpha, dtype):
+    jtu.skip_on_mac_xla_bug()
     key = random.PRNGKey(0)
     rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
     crand = api.jit(rand)
@@ -280,6 +282,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testExponential(self, dtype):
+    jtu.skip_on_mac_xla_bug()
     key = random.PRNGKey(0)
     rand = lambda key: random.exponential(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -296,6 +299,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for a in [0.1, 1., 10.]
       for dtype in [onp.float32, onp.float64]))
   def testGamma(self, a, dtype):
+    jtu.skip_on_mac_xla_bug()
     key = random.PRNGKey(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
     crand = api.jit(rand)
@@ -342,6 +346,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testGumbel(self, dtype):
+    jtu.skip_on_mac_xla_bug()
     key = random.PRNGKey(0)
     rand = lambda key: random.gumbel(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -424,6 +429,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dim in [1, 3, 5]
       for dtype in [onp.float32, onp.float64]))
   def testMultivariateNormal(self, dim, dtype):
+    jtu.skip_on_mac_xla_bug()
     r = onp.random.RandomState(dim)
     mean = r.randn(dim)
     cov_factor = r.randn(dim, dim)
@@ -449,6 +455,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testMultivariateNormalCovariance(self):
     # test code based on https://github.com/google/jax/issues/1869
+    jtu.skip_on_mac_xla_bug()
     N = 100000
     cov = np.array([[ 0.19,  0.00, -0.13,  0.00],
                    [  0.00,  0.29,  0.00, -0.23],

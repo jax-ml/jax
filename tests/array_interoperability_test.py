@@ -46,11 +46,8 @@ torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
 empty_array_shapes = []
-# TODO(phawkins): size 0 and 1 dimensions are mishandled (with an error) when
-# being imported to JAX in jaxlib 0.1.38.
-if jax.lib.version > (0, 1, 38):
-  empty_array_shapes += [(0,), (0, 4), (3, 0),]
-  nonempty_nonscalar_array_shapes += [(3, 1), (1, 4), (2, 1, 4)]
+empty_array_shapes += [(0,), (0, 4), (3, 0),]
+nonempty_nonscalar_array_shapes += [(3, 1), (1, 4), (2, 1, 4)]
 
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 all_shapes = nonempty_array_shapes + empty_array_shapes
@@ -100,8 +97,7 @@ class DLPackTest(jtu.JaxTestCase):
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
      for dtype in torch_dtypes))
-  @unittest.skipIf(not torch or jax.lib.version <= (0, 1, 38),
-                   "Test requires PyTorch and jaxlib >= 0.1.39")
+  @unittest.skipIf(not torch, "Test requires PyTorch")
   # TODO(phawkins): the dlpack destructor issues errors in jaxlib 0.1.38.
   def testJaxToTorch(self, shape, dtype):
     rng = jtu.rand_default()
@@ -124,8 +120,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
      "shape": shape, "dtype": dtype}
      for shape in all_shapes
      for dtype in dlpack_dtypes))
-  @unittest.skipIf(not cupy or jax.lib.version <= (0, 1, 38),
-                   "Test requires CuPy and jaxlib >= 0.1.39")
+  @unittest.skipIf(not cupy, "Test requires CuPy")
   def testJaxToCuPy(self, shape, dtype):
     rng = jtu.rand_default()
     x = rng(shape, dtype)

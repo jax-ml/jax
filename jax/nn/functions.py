@@ -17,15 +17,15 @@
 
 import numpy as onp
 
+from jax import custom_jvp
 from jax import dtypes
 from jax import lax
-from jax import random
 from jax.scipy.special import expit
 import jax.numpy as np
-from jax import jarrett
 
 # activations
 
+@custom_jvp
 def relu(x):
   r"""Rectified linear unit activation function.
 
@@ -35,6 +35,7 @@ def relu(x):
     \mathrm{relu}(x) = \max(x, 0)
   """
   return np.maximum(x, 0)
+relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
 def softplus(x):
   r"""Softplus activation function.

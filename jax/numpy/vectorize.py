@@ -20,7 +20,6 @@ import numpy as onp
 
 from .. import api
 from .. import lax
-from .. import linear_util as lu
 from . import lax_numpy as np
 from ..util import safe_map as map, safe_zip as zip
 from .lax_numpy import _wraps
@@ -53,9 +52,10 @@ def _parse_gufunc_signature(
   if not re.match(_SIGNATURE, signature):
     raise ValueError(
         'not a valid gufunc signature: {}'.format(signature))
-  return tuple([tuple(re.findall(_DIMENSION_NAME, arg))
-                for arg in re.findall(_ARGUMENT, arg_list)]
-               for arg_list in signature.split('->'))
+  args, retvals = ([tuple(re.findall(_DIMENSION_NAME, arg))
+                   for arg in re.findall(_ARGUMENT, arg_list)]
+                   for arg_list in signature.split('->')) 
+  return args, retvals
 
 
 def _update_dim_sizes(
@@ -64,8 +64,7 @@ def _update_dim_sizes(
     core_dims: CoreDims,
     error_context: str = "",
     *,
-    is_input: bool,
-):
+    is_input: bool):
   """Incrementally check and update core dimension sizes for a single argument.
 
   Args:
@@ -118,7 +117,7 @@ def _parse_input_dimensions(
         'wrong number of positional arguments: expected %r, got %r %s'
         % (len(input_core_dims), len(args), error_context))
   shapes = []
-  dim_sizes = {}
+  dim_sizes: Dict[str, int] = {}
   for arg, core_dims in zip(args, input_core_dims):
     _update_dim_sizes(dim_sizes, arg.shape, core_dims, error_context,
                       is_input=True)

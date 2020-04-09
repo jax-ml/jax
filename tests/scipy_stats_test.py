@@ -260,24 +260,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-6)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
-  # TODO: currently it ignores the argument "shapes" and only tests dim=4
-  @genNamedParametersNArgs(3, jtu.rand_default)
-  def testMultivariateNormalLogPdf(self, rng_factory, shapes, dtypes):
-    rng = rng_factory()
-    scipy_fun = osp_stats.multivariate_normal.logpdf
-    lax_fun = lsp_stats.multivariate_normal.logpdf
-    dim = 4
-    shapex = (dim,)
-
-    def args_maker():
-      x, mean, cov = map(rng, (shapex, shapex, (dim, dim)), dtypes)
-      cov = random_correlation.rvs(onp.arange(1, 1+dim) * 2 / (dim + 1))
-      return [x, mean, cov]
-
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-      tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
-
   @genNamedParametersNArgs(3, jtu.rand_default)
   def testNormLogPdf(self, rng_factory, shapes, dtypes):
     rng = rng_factory()
@@ -399,6 +381,67 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       onp.ones((4,), onp.float32),
       lsp_stats.norm.cdf(onp.full((4,), onp.inf, onp.float32)),
       check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_x={}_mean={}_cov={}".format(
+          jtu.format_shape_dtype_string(x_shape, x_dtype),
+          jtu.format_shape_dtype_string(mean_shape, mean_dtype)
+          if mean_shape is not None else None,
+          jtu.format_shape_dtype_string(cov_shape, cov_dtype)
+          if cov_shape is not None else None),
+       "x_shape": x_shape, "x_dtype": x_dtype,
+       "mean_shape": mean_shape, "mean_dtype": mean_dtype,
+       "cov_shape": cov_shape, "cov_dtype": cov_dtype,
+       "rng_factory": rng_factory}
+      for x_shape, mean_shape, cov_shape in [
+          # # These test cases cover default values for mean/cov, but we don't
+          # # support those yet (and they seem not very valuable).
+          # [(), None, None],
+          # [(), (), None],
+          # [(2,), None, None],
+          # [(2,), (), None],
+          # [(2,), (2,), None],
+          # [(3, 2), (3, 2,), None],
+          # [(5, 3, 2), (5, 3, 2,), None],
+
+          [(), (), ()],
+          [(3,), (), ()],
+          [(3,), (3,), ()],
+          [(3,), (3,), (3, 3)],
+          [(3, 4), (4,), (4, 4)],
+
+          # # These test cases are where scipy flattens things, which has
+          # # different batch semantics than some might expect
+          # [(5, 3, 2), (5, 3, 2,), ()],
+          # [(5, 3, 2), (5, 3, 2,), (5, 3, 2, 2)],
+          # [(5, 3, 2), (3, 2,), (5, 3, 2, 2)],
+          # [(5, 3, 2), (3, 2,), (2, 2)],
+      ]
+      for x_dtype, mean_dtype, cov_dtype in CombosWithReplacement(float_dtypes, 3)
+      if (mean_shape is not None or mean_dtype == onp.float32)
+      and (cov_shape is not None or cov_dtype == onp.float32)
+      for rng_factory in [jtu.rand_default]))
+  def testMultivariateNormalLogpdf(self, x_shape, x_dtype, mean_shape,
+                                   mean_dtype, cov_shape, cov_dtype, rng_factory):
+    rng = rng_factory()
+    def args_maker():
+      args = [rng(x_shape, x_dtype)]
+      if mean_shape is not None:
+        args.append(5 * rng(mean_shape, mean_dtype))
+      if cov_shape is not None:
+        if cov_shape == ():
+          args.append(0.1 + rng(cov_shape, cov_dtype) ** 2)
+        else:
+          factor_shape = (*cov_shape[:-1], 2 * cov_shape[-1])
+          factor = rng(factor_shape, cov_dtype)
+          args.append(onp.matmul(factor, onp.swapaxes(factor, -1, -2)))
+      return args
+
+    self._CheckAgainstNumpy(osp_stats.multivariate_normal.logpdf,
+                            lsp_stats.multivariate_normal.logpdf,
+                            args_maker, check_dtypes=True, tol=1e-3)
+    self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
+                          check_dtypes=True, rtol=1e-4, atol=1e-4)
 
 
 if __name__ == "__main__":

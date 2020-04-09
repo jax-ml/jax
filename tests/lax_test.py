@@ -55,15 +55,16 @@ def num_float_bits(dtype):
 # For standard unops and binops, we can generate a large number of tests on
 # arguments of appropriate shapes and dtypes using the following table.
 
-float_dtypes = list(jtu.supported_dtypes().intersection(
-  {dtypes.bfloat16, onp.float16, onp.float32, onp.float64}))
-complex_elem_dtypes = list(jtu.supported_dtypes().intersection(
-    {onp.float32, onp.float64}))
-complex_dtypes = list(jtu.supported_dtypes().intersection(
-    {onp.complex64, onp.complex128}))
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
+                                 onp.float64])
+complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
+complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
 inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = list(jtu.supported_dtypes().intersection({onp.int32, onp.int64}))
-uint_dtypes = list(jtu.supported_dtypes().intersection({onp.uint32, onp.uint64}))
+int_dtypes = supported_dtypes([onp.int32, onp.int64])
+uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
 bool_dtypes = [onp.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -112,6 +113,9 @@ LAX_OPS = [
     op_record("asin", 1, float_dtypes, jtu.rand_small),
     op_record("acos", 1, float_dtypes, jtu.rand_small),
     op_record("atan", 1, float_dtypes, jtu.rand_small),
+    op_record("asinh", 1, float_dtypes, jtu.rand_default),
+    op_record("acosh", 1, float_dtypes, jtu.rand_positive),
+    op_record("atanh", 1, float_dtypes, jtu.rand_small),
     op_record("sinh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("cosh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("lgamma", 1, float_dtypes, jtu.rand_positive,
@@ -199,6 +203,9 @@ class LaxTest(jtu.JaxTestCase):
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
+    if (not FLAGS.jax_enable_x64 and op_name == "nextafter"
+        and dtype == onp.float64):
+      raise SkipTest("64-bit mode disabled")
     rng = rng_factory()
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     op = getattr(lax, op_name)
@@ -434,23 +441,22 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_dilation, rhs_dilation in itertools.product(
           [(1, 1), (1, 2), (2, 2)], repeat=2)
       for rng_factory in [jtu.rand_small]))
-  def DISABLED_testConvWithGeneralPaddingAgainstNumpy(
+  def testConvWithGeneralPaddingAgainstNumpy(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dilation,
       rhs_dilation, rng_factory):
     rng = rng_factory()
-    # TODO(mattjj): make this test pass
-    raise SkipTest("this test is incomplete")
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
     def fun(lhs, rhs):
       return lax.conv_with_general_padding(
-          lhs, rhs, strides, padding, lhs_dilation, rhs_dilation)
+          lhs, rhs, strides, padding, lhs_dilation, rhs_dilation,
+          precision=lax.Precision.HIGHEST)
 
     def numpy_fun(lhs, rhs):
       return lax_reference.conv_with_general_padding(
           lhs, rhs, strides, padding, lhs_dilation, rhs_dilation)
 
-    self._CheckAgainstNumpy(fun, numpy_fun, args_maker)
+    self._CheckAgainstNumpy(numpy_fun, fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_strides={}_padding={}"
@@ -497,7 +503,6 @@ class LaxTest(jtu.JaxTestCase):
 
   # TODO(mattjj): test conv_general_dilated against numpy
 
-  @jtu.skip_on_devices("gpu") # b/147488740
   def testConv0DIsDot(self):
     rng = jtu.rand_default()
     def args_maker():
@@ -819,6 +824,7 @@ class LaxTest(jtu.JaxTestCase):
           ([2], [2, 2], [1]),
           ([2], [2, 3], [0]),
           ([], [2, 3], []),
+          ([1], [2, 3], [1]),
       ]
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))
@@ -827,6 +833,30 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(inshape, dtype)]
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CompileAndCheck(op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
+      jtu.format_shape_dtype_string(inshape, onp.float32),
+      outshape, broadcast_dimensions),
+      "inshape": inshape, "outshape": outshape,
+      "broadcast_dimensions": broadcast_dimensions, "err_msg": err_msg}
+    for inshape, outshape, broadcast_dimensions, err_msg in [
+      ([2], [2, 2], [0, 1], ('broadcast_dimensions must have length equal to '
+                              'operand ndim')),
+      ([2, 2], [2], [0, 1], ('target broadcast shape must have equal or higher rank '
+                             'to the operand shape')),
+      ([2], [2, 3], [2], ('broadcast_in_dim broadcast_dimensions must be a subset of output '
+                          'dimensions')),
+      ([2], [3], [0], ('operand dimension sizes must either be 1, or be '
+                       'equal to their corresponding dimensions in the target broadcast shape')),
+      ([2, 2], [2, 2], [1, 0], ('broadcast_dimensions must be strictly increasing')),
+    ]))
+  def testBroadcastInDimShapeCheck(self, inshape, outshape, broadcast_dimensions, err_msg):
+    rng = jtu.rand_default()
+    x = rng(inshape, onp.float32)
+    with self.assertRaisesRegex(TypeError, err_msg):
+      lax.broadcast_in_dim(x, shape=outshape, broadcast_dimensions=broadcast_dimensions)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_bcdims={}".format(
@@ -839,6 +869,7 @@ class LaxTest(jtu.JaxTestCase):
           ([2], [2, 2], [1]),
           ([2], [2, 3], [0]),
           ([], [2, 3], []),
+          ([1], [2, 3], [1]),
       ]
       for dtype in default_dtypes
       for rng_factory in [jtu.rand_default]))
@@ -1237,6 +1268,29 @@ class LaxTest(jtu.JaxTestCase):
     # pylint: enable=cell-var-from-loop
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_axis={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
+       "op": op, "onp_op": onp_op, "shape": shape, "dtype": dtype,
+       "axis": axis, "rng_factory": rng_factory}
+      for op, onp_op, types in [
+          (lax.cumsum, onp.cumsum, default_dtypes),
+          (lax.cumprod, onp.cumprod, default_dtypes),
+      ]
+      for dtype in types
+      for shape in [[10], [3, 4, 5]]
+      for axis in range(len(shape))
+      for rng_factory in [
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          else jtu.rand_small]))
+  def testCumulativeReduce(self, op, onp_op, shape, dtype, axis, rng_factory):
+    rng = rng_factory()
+    fun = partial(op, axis=axis)
+    onp_fun = partial(onp_op, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(fun, onp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
@@ -1328,7 +1382,6 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(3,), (5, 3)]
       for k in [1, 3]
       for rng_factory in [jtu.rand_default]))
-  @unittest.skipIf(jax.lib.version <= (0, 1, 40), "Test requires jaxlib 0.1.40")
   def testTopK(self, shape, dtype, k, rng_factory):
     rng = rng_factory()
     perm_rng = onp.random.RandomState(0)
@@ -1342,6 +1395,7 @@ class LaxTest(jtu.JaxTestCase):
       return sorted_vals[..., :-k-1:-1], sorted_idxs[..., :-k-1:-1]
     op = lambda vs: lax.top_k(vs, k=k)
     self._CheckAgainstNumpy(op, reference_top_k, args_maker)
+    self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}"
@@ -2263,11 +2317,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for init_val, op, dtypes in [
           (0, lax.add, inexact_dtypes),
           # Precision problems for float16 tests.
-          (-onp.inf, lax.max, [t for t in inexact_dtypes if t != onp.float16]),
-          (onp.inf, lax.min, [t for t in inexact_dtypes if t != onp.float16]),
+          (-onp.inf, lax.max,
+           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
+          (onp.inf, lax.min,
+           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
           # The mul test overflows the range of a float16.
-          (1, lax.mul, [t for t in inexact_dtypes
-                        if t not in (onp.float16, dtypes.bfloat16)]),
+          (1, lax.mul,
+           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
       ]
       for dtype in dtypes
       for shape, dims in [
@@ -2291,7 +2347,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     eps = (1.0 if dtypes.finfo(dtype).bits == 16 and op is lax.add else
            1e-1 if dtype == dtypes.bfloat16 else
            1e-2 if dtypes.finfo(dtype).bits == 32 else None)
-    check_grads(reduce, (operand,), 1, ["fwd", "rev"], tol, tol, eps)
+    check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"
@@ -2349,6 +2405,26 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         eps = 1e-2
       check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], tol, tol,
                   eps)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_axis={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
+       "op": op, "shape": shape, "dtype": dtype,
+       "axis": axis, "rng_factory": rng_factory}
+      for op, types in [
+          (lax.cumsum, [onp.float32, onp.float64]),
+          (lax.cumprod, [onp.float32, onp.float64]),
+      ]
+      for dtype in types
+      for shape in [[10], [3, 4, 5]]
+      for axis in range(len(shape))
+      for rng_factory in [
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          else jtu.rand_small]))
+  def testCumulativeReduceGrad(self, op, shape, dtype, axis, rng_factory):
+    rng = rng_factory()
+    check_grads(partial(op, axis=axis), (rng(shape, dtype),), order=2)
+
 
   # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2593,16 +2669,17 @@ class LaxVmapTest(jtu.JaxTestCase):
             jtu.format_test_name_suffix(rec.op, shapes,
                                         itertools.repeat(dtype)), bdims),
          "op_name": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes,
-         "dtype": dtype, "bdims": bdims}
+         "dtype": dtype, "bdims": bdims, "tol": rec.tol}
         for shape_group in compatible_shapes
         for shapes in CombosWithReplacement(shape_group, rec.nargs)
         for bdims in all_bdims(*shapes)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
-  def testOp(self, op_name, rng_factory, shapes, dtype, bdims):
+  def testOp(self, op_name, rng_factory, shapes, dtype, bdims, tol):
     rng = rng_factory()
     op = getattr(lax, op_name)
-    self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng)
+    self._CheckBatching(op, 10, bdims, shapes, [dtype] * len(shapes), rng,
+                        atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -2990,6 +3067,28 @@ class LaxVmapTest(jtu.JaxTestCase):
         self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_axis={}_bdims={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis,
+               bdims),
+       "op": op, "shape": shape, "dtype": dtype, "bdims": bdims,
+       "axis": axis, "rng_factory": rng_factory}
+      for op, types in [
+          (lax.cumsum, [onp.float32, onp.float64]),
+          (lax.cumprod, [onp.float32, onp.float64]),
+      ]
+      for dtype in types
+      for shape in [[10], [3, 4, 5]]
+      for axis in range(len(shape))
+      for bdims in all_bdims(shape)
+      for rng_factory in [
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          else jtu.rand_small]))
+  def testCumulativeReduce(self, op, shape, dtype, axis, bdims, rng_factory):
+    rng = rng_factory()
+    self._CheckBatching(partial(op, axis=axis), 7, bdims, (shape,), (dtype,),
+                        rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_padding={}".format(onp.dtype(dtype).name,
                                                       padding),
        "dtype": dtype, "padding": padding, "rng_factory": rng_factory}
@@ -3090,6 +3189,11 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testShapeUsesBuiltinInt(self):
     x = lax.iota(onp.int32, 3) + 1
     self.assertIsInstance(x.shape[0], int)  # not np.int64
+
+  def testBroadcastShapesReturnsPythonInts(self):
+    shape1, shape2 = (1, 2, 3), (2, 3)
+    out_shape = lax.broadcast_shapes(shape1, shape2)
+    self.assertTrue(all(type(s) is int for s in out_shape))
 
   # TODO Concatenate
   # TODO Reverse

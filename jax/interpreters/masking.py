@@ -14,19 +14,20 @@
 
 
 from contextlib import contextmanager
-from collections import defaultdict, Counter, namedtuple
+from collections import Counter, namedtuple
 import functools
-from functools import partial, wraps
+from functools import partial
 import itertools as it
 import operator as op
 import string
+from typing import Callable, Dict
 
 import numpy as onp
 
 from .. import abstract_arrays
 from .. import core
 from ..core import Trace, Tracer
-from ..util import unzip2, safe_map, safe_zip, curry
+from ..util import unzip2, safe_map, safe_zip
 from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
 
@@ -386,12 +387,12 @@ class MaskTrace(Trace):
     else:
       return map(partial(MaskTracer, self), out, out_shape)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     raise NotImplementedError  # TODO mask-of-jit
 
-shape_parameterized_primitive_rules = {}
-masking_rules = {}
-shape_rules = {}
+shape_parameterized_primitive_rules: Dict[core.Primitive, Callable] = {}
+masking_rules: Dict[core.Primitive, Callable] = {}
+shape_rules: Dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
   masking_rules[prim] = partial(vectorized_masking_rule, prim)
@@ -412,7 +413,7 @@ def naryop_masking_rule(prim, padded_vals, logical_shapes):
 
 ### definition-time (import-time) shape checker tracer machinery
 
-def shapecheck(fun, in_shapes):
+def shapecheck(fun: lu.WrappedFun, in_shapes):
   with core.new_master(ShapeCheckTrace) as master:
     out_shapes = check_subtrace(fun, master).call_wrapped(in_shapes)
     del master
@@ -460,7 +461,7 @@ class ShapeCheckTrace(Trace):
     out_shape = shape_rule(*avals, **params)
     return ShapeCheckTracer(self, out_shape)
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     # TODO apply proper subtrace:
     return map(self.full_raise, f.call_wrapped(*tracers))
 
