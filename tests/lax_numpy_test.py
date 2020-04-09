@@ -823,6 +823,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       TypeError, "Number of tensordot axes.*exceeds input ranks.*",
       lambda: jnp.tensordot(a, b, axes=2))
 
+    self.assertRaisesRegex(
+      TypeError, "tensordot requires axes lists to have equal length.*",
+      lambda: jnp.tensordot(a, b, axes=([0], [0, 1])))
+
+    self.assertRaisesRegex(
+      TypeError, "tensordot requires both axes lists to be either ints, tuples or lists.*",
+      lambda: jnp.tensordot(a, b, axes=('bad', 'axes')))
+
+    self.assertRaisesRegex(
+      TypeError, "tensordot axes argument must be an int, a pair of ints, or a pair of lists.*",
+      lambda: jnp.tensordot(a, b, axes='badaxes'))
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),

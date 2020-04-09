@@ -2455,6 +2455,9 @@ def tensordot(a, b, axes=2, precision=None):
         raise TypeError(msg.format(ax1, ax2))
       contracting_dims = (tuple(_canonicalize_axis(i, a_ndim) for i in ax1),
                           tuple(_canonicalize_axis(i, b_ndim) for i in ax2))
+    else:
+        msg = "tensordot requires both axes lists to be either ints, tuples or lists, got {} and {}"
+        raise TypeError(msg.format(ax1, ax2))
   else:
     msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
            "of lists/tuples of ints.")
