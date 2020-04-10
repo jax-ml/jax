@@ -20,7 +20,8 @@ import itertools as it
 import os
 from typing import Dict, Sequence, Union
 import sys
-from unittest import SkipTest
+import unittest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -336,7 +337,8 @@ def supported_dtypes():
 
 def skip_if_unsupported_type(dtype):
   if dtype not in supported_dtypes():
-    raise SkipTest(f"Type {dtype} not supported on {device_under_test()}")
+    raise unittest.SkipTest(
+      f"Type {dtype} not supported on {device_under_test()}")
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
@@ -346,8 +348,8 @@ def skip_on_devices(*disabled_devices):
       device = device_under_test()
       if device in disabled_devices:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        raise SkipTest('{} not supported on {}.'
-                       .format(test_name, device.upper()))
+        raise unittest.SkipTest(
+          f"{test_name} not supported on {device.upper()}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
@@ -361,16 +363,17 @@ def skip_on_flag(flag_name, skip_value):
       flag_value = getattr(FLAGS, flag_name)
       if flag_value == skip_value:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        raise SkipTest('{} not supported when FLAGS.{} is {}'
-                       .format(test_name, flag_name, flag_value))
+        raise unittest.SkipTest(
+          f"{test_name} not supported when FLAGS.{flag_name} is {flag_value}")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
 
 # TODO(phawkins): bug https://github.com/google/jax/issues/432
-def skip_on_mac_xla_bug():
-  if sys.platform == "darwin" and scipy.version.version > "1.0.0":
-    raise absltest.SkipTest("Test fails on Mac with new scipy (issue #432)")
+skip_on_mac_linalg_bug = partial(
+  unittest.skipIf,
+  sys.platform == "darwin" and scipy.version.version > "1.1.0",
+  "Test fails on Mac with new scipy (issue #432)")
 
 
 def format_test_name_suffix(opname, shapes, dtypes):
@@ -793,3 +796,10 @@ class JaxTestCase(parameterized.TestCase):
     numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)
+
+
+@contextmanager
+def ignore_warning(**kw):
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", **kw)
+    yield

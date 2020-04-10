@@ -3378,7 +3378,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
 
 @_wraps(onp.corrcoef)
-def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
+def corrcoef(x, y=None, rowvar=True):
   c = cov(x, y, rowvar)
   if len(shape(c)) == 0:
       # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise

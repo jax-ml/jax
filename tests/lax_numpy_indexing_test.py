@@ -49,6 +49,11 @@ all_dtypes = float_dtypes + int_dtypes + bool_types
 IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
 
 
+suppress_deprecated_indexing_warnings = partial(
+  jtu.ignore_warning, category=FutureWarning,
+  message='Using a non-tuple sequence.*')
+
+
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   # TODO(mattjj,dougalm): add higher-order check
   default_tol = 1e-6 if FLAGS.jax_enable_x64 else 1e-2
@@ -548,7 +553,7 @@ class IndexingTest(jtu.JaxTestCase):
   def testAdvancedIntegerIndexing(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory()
     args_maker = lambda: [rng(shape, dtype), indexer]
-    fun = lambda x, idx: x[idx]
+    fun = lambda x, idx: jnp.asarray(x)[idx]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(
@@ -608,7 +613,7 @@ class IndexingTest(jtu.JaxTestCase):
     rng = rng_factory()
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
-    fun = lambda x: x[indexer]**2
+    fun = lambda x: jnp.asarray(x)[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)
 
   @parameterized.named_parameters(
@@ -629,7 +634,7 @@ class IndexingTest(jtu.JaxTestCase):
 
     def fun(x, indexer_with_dummies):
       idx = type(indexer)(util.subvals(indexer_with_dummies, substitutes))
-      return x[idx]
+      return jnp.asarray(x)[idx]
 
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
@@ -787,6 +792,7 @@ def _broadcastable_shapes(shape):
   for x in f(list(reversed(shape))):
     yield list(reversed(x))
 
+@suppress_deprecated_indexing_warnings()
 def _update_shape(shape, indexer):
   return onp.zeros(shape)[indexer].shape
 
@@ -797,6 +803,7 @@ class UpdateOps(enum.Enum):
   MIN = 2
   MAX = 3
 
+  @suppress_deprecated_indexing_warnings()
   def onp_fn(op, indexer, x, y):
     x = x.copy()
     x[indexer] = {

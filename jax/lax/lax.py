@@ -372,8 +372,6 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
       not dtypes.issubdtype(new_dtype, onp.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, onp.ComplexWarning, stacklevel=2)
-    operand = real(operand)
-    old_dtype = _dtype(operand)
   return convert_element_type_p.bind(
       operand, new_dtype=new_dtype, old_dtype=old_dtype)
 
@@ -2109,15 +2107,20 @@ def _convert_element_type_dtype_rule(operand, *, new_dtype, old_dtype):
   return new_dtype
 
 def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
+  if (dtypes.issubdtype(old_dtype, onp.complexfloating) and
+      not dtypes.issubdtype(new_dtype, onp.complexfloating)):
+    operand = c.Real(operand)
   new_etype = xla_client.dtype_to_etype(new_dtype)
   return c.ConvertElementType(operand, new_element_type=new_etype)
+
+def _convert_element_type_transpose_rule(t, *, new_dtype, old_dtype):
+  return [convert_element_type_p.bind(t, new_dtype=old_dtype,
+                                      old_dtype=new_dtype)]
 
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
     'convert_element_type', _convert_element_type_translation_rule)
-ad.deflinear(
-    convert_element_type_p,
-    lambda t, new_dtype, old_dtype: [convert_element_type(t, old_dtype)])
+ad.deflinear(convert_element_type_p, _convert_element_type_transpose_rule)
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
 
