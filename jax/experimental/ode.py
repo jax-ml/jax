@@ -136,7 +136,7 @@ def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       np.minimum(err_ratio**(1.0 / order) / safety, 1.0 / dfactor))
   return np.where(mean_error_ratio == 0, last_step * ifactor, last_step / factor)
 
-def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, init_step=-1., mxstep=np.inf):
+def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, init_step=None, mxstep=np.inf):
   """Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
 
   Args:
@@ -161,6 +161,11 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, init_step=-1., mxstep=n
 def _odeint_wrapper(func, rtol, atol, init_step, mxstep, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
   func = ravel_first_arg(func, unravel)
+  if init_step:
+    init_step = init_step
+  else:
+    f0 = func(y0, ts[0], *args)
+    init_step = initial_step_size(func, ts[0], y0, 4, rtol, atol, f0)
   out = _odeint(func, rtol, atol, init_step, mxstep, y0, ts, *args)
   return jax.vmap(unravel)(out)
 
@@ -193,9 +198,7 @@ def _odeint(func, rtol, atol, init_step, mxstep, y0, ts, *args):
     return carry, y_target
 
   f0 = func_(y0, ts[0])
-  dt = lax.cond(init_step <= 0,
-                None, lambda _: initial_step_size(func_, ts[0], y0, 4, rtol, atol, f0),
-                None, lambda _: init_step)
+  dt = init_step
   interp_coeff = np.array([y0] * 5)
   init_carry = [y0, f0, ts[0], dt, ts[0], interp_coeff]
   _, ys = lax.scan(scan_fun, init_carry, ts[1:])
