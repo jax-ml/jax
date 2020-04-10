@@ -354,6 +354,26 @@ def _div_taylor_rule(primals_in, series_in, **params):
   return primal_out, series_out
 jet_rules[lax.div_p] = _div_taylor_rule
 
+def _sinusoidal_rule(sign, prims, primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  s, c = prims
+  s = [s(x)] + [None] * len(series)
+  c = [c(x)] + [None] * len(series)
+  for k in range(1, len(s)):
+    s[k] = fact(k-1) * sum(_scale(k, j) * u[j] * c[k-j] for j in range(1, k + 1))
+    c[k] = fact(k-1) * sum(_scale(k, j) * u[j] * s[k-j] for j in range(1, k + 1)) * sign
+  return (s[0], s[1:]), (c[0], c[1:])
+
+def _get_ind(f, ind):
+  return lambda *args: f(*args)[ind]
+
+jet_rules[lax.sin_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 0)
+jet_rules[lax.cos_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 1)
+jet_rules[lax.sinh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 0)
+jet_rules[lax.cosh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 1)
+
 def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in
   x_terms, y_terms = series_in
