@@ -76,7 +76,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default,
        "jsp_op": getattr(jsp_signal, op),
        "osp_op": getattr(osp_signal, op)}
-      for mode in ['full', 'valid']
+      for mode in ['full', 'same', 'valid']
       for op in ['convolve2d', 'correlate2d']
       for dtype in default_dtypes
       for xshape in twodim_shapes

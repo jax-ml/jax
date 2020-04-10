@@ -66,14 +66,10 @@ def convolve(in1, in2, mode='full', method='auto'):
 
 @_wraps(osp_signal.convolve2d)
 def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
-  if mode == 'same':
-    # TODO: correctly handle 'same' padding in convolve2d. Scipy handles this differently
-    # than the 1D case, and the results are difficult to replicate.
-    raise NotImplementedError("convolve2d(): mode='same' not implemented")
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
   if jnp.issubdtype(in1.dtype, jnp.complexfloating) or jnp.issubdtype(in2.dtype, jnp.complexfloating):
-    raise NotImplementedError("convolve() does not support complex inputs")
+    raise NotImplementedError("convolve2d() does not support complex inputs")
   if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
     raise ValueError(f"convolve2d() only supports 2-dimensional inputs.")
   return _convolve_nd(in1, in2, mode)
@@ -92,13 +88,10 @@ def correlate(in1, in2, mode='full', method='auto'):
 
 @_wraps(osp_signal.correlate)
 def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
-  if mode == 'same':
-    # Handling of padding in convolve2d mode='same' is difficult to replicate.
-    raise NotImplementedError("correlate2d(): mode='same' not implemented")
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
   if jnp.issubdtype(in1.dtype, jnp.complexfloating) or jnp.issubdtype(in2.dtype, jnp.complexfloating):
-    raise NotImplementedError("correlate() does not support complex inputs")
+    raise NotImplementedError("correlate2d() does not support complex inputs")
   if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
     raise ValueError("correlate2d() only supports {ndim}-dimensional inputs.")
-  return _convolve_nd(in1, in2[::-1, ::-1], mode)
+  return _convolve_nd(in1[::-1, ::-1], in2, mode)[::-1, ::-1]
