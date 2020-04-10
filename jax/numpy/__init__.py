@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from .lax_numpy import *
+from .polynomial import *
 from . import fft
 from . import linalg
 from .vectorize import vectorize

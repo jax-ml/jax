@@ -22,7 +22,7 @@ import functools
 import itertools
 import operator
 import threading
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as onp
 
@@ -55,7 +55,7 @@ _reduce = functools.reduce
 
 @cache()
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   with core.initial_style_staging():
     jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
@@ -583,6 +583,7 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   num_t_res = len(true_jaxpr_1.out_avals) - len(out_uks)
   num_f_res = len(false_jaxpr_1.out_avals) - len(out_uks)
 
+  # Move the residuals to front
   move = [False] * len(true_jaxpr.in_avals) + [True] * num_t_res
   true_jaxpr_2 = pe.move_binders_to_front(true_jaxpr_2, move)
   move = [False] * len(false_jaxpr.in_avals) + [True] * num_f_res
@@ -971,6 +972,11 @@ def _prune_zeros(ts):
 
 def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
                        jaxpr, linear):
+  if trace.master.trace_type is pe.StagingJaxprTrace:
+    params = {"forward": forward, "length": length, "num_consts": num_consts,
+              "num_carry": num_carry, "jaxpr": jaxpr, "linear": linear}
+    return trace.default_process_primitive(scan_p, tracers, params)
+
   num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
 
@@ -999,9 +1005,9 @@ def _scan_partial_eval(trace, *tracers, forward, length, num_consts, num_carry,
   # The residuals are treated as extensive outputs of jaxpr_1 (and extensive
   # inputs to jaxpr_2), but residuals that are loop-invariant can be hoisted.
   # TODO(mattjj): hoist other loop-invariant values here too (instantiate=False)
-  invariant_pvals = [pe.PartialVal((None, core.unit if uk else t.pval[1]))
+  invariant_pvals = [pe.PartialVal.known(core.unit if uk else t.pval[1])
                      for uk, t in zip(unknowns[:num_consts], tracers[:num_consts])]
-  other_pvals = [pe.PartialVal((a, core.unit)) for a in jaxpr_1.in_avals[num_consts:]]
+  other_pvals = [pe.PartialVal.unknown(a) for a in jaxpr_1.in_avals[num_consts:]]
   in_pvals_1 = invariant_pvals + other_pvals
   untyped_jaxpr_1, out_pvals_1, consts_1 = pe.trace_to_jaxpr(
       lu.wrap_init(core.jaxpr_as_fun(jaxpr_1)), in_pvals_1,
@@ -1130,8 +1136,8 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
     return c_bar + a_bar
   return _make_typed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
-def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals):
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
+  pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
   out_avals, _ = unzip2(pvals_out)
   return core.TypedJaxpr(jaxpr, consts, in_avals, _map(raise_to_shaped, out_avals))
@@ -1404,27 +1410,22 @@ def custom_root(f, initial_guess, solve, tangent_solve):
   const_lengths = _RootTuple(*_map(len, all_consts))
   jaxprs = _RootTuple(f_jaxpr, solve_jaxpr, l_and_s_jaxpr)
 
-  out_flat = root_p.bind(
-      *(_flatten(all_consts) + guess_flat),
-      const_lengths=const_lengths, jaxprs=jaxprs)
+  out_flat = _custom_root(
+      const_lengths, jaxprs, *(_flatten(all_consts) + guess_flat))
   return tree_unflatten(out_tree, out_flat)
 
 
-def _root_abstract_eval(*args, **kwargs):
-  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
-
-
-def _root_impl(*args, **kwargs):
-  const_lengths, jaxprs = split_dict(kwargs, ['const_lengths', 'jaxprs'])
+@partial(jax.custom_jvp, nondiff_argnums=(0, 1))
+def _custom_root(const_lengths, jaxprs, *args):
   params, initial_guess = _split_root_args(args, const_lengths)
   solution = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + initial_guess))
   return solution
 
 
-def _root_jvp(primals, tangents, const_lengths, jaxprs):
+@_custom_root.defjvp
+def _root_jvp(const_lengths, jaxprs, primals, tangents):
   params, _ = _split_root_args(primals, const_lengths)
-  solution = tuple(root_p.bind(
-      *primals, const_lengths=const_lengths, jaxprs=jaxprs))
+  solution = _custom_root(const_lengths, jaxprs, *primals)
 
   params_dot, _ = _split_root_args(tangents, const_lengths)
 
@@ -1447,15 +1448,6 @@ def _root_jvp(primals, tangents, const_lengths, jaxprs):
       operator.neg, linearize_and_solve(*itertools.chain(solution, rhs)))
 
   return solution, solution_dot
-
-
-root_p = core.Primitive('root')
-root_p.multiple_results = True
-root_p.def_impl(_root_impl)
-root_p.def_abstract_eval(_root_abstract_eval)
-ad.primitive_jvps[root_p] = _root_jvp
-xla.initial_style_translations[root_p] = xla.lower_fun_initial_style(_root_impl)
-# TODO(shoyer): write batching rule
 
 
 class _LinearSolveTuple(collections.namedtuple(

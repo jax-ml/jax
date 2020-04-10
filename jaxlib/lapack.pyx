@@ -20,6 +20,7 @@
 
 from __future__ import print_function
 
+from libc.math cimport isnan
 from libc.stdlib cimport malloc, free
 from libc.stdint cimport int32_t, int64_t
 from libc.string cimport memcpy
@@ -1497,7 +1498,7 @@ cdef void _unpack_float_eigenvectors(
   cdef int j, k
   j = 0
   while j < n:
-    if im_eigenvalues[j] == 0.:
+    if im_eigenvalues[j] == 0. or isnan(im_eigenvalues[j]):
       for k in range(n):
         unpacked[j*n + k].real = packed[j*n + k]
         unpacked[j*n + k].imag = 0.
@@ -1539,8 +1540,9 @@ cdef void lapack_sgeev(void* out_tuple, void** data) nogil:
     memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float))
     sgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
           vr_work, &n, work, &lwork, info_out)
-    _unpack_float_eigenvectors(n, wi_out, vl_work, vl_out)
-    _unpack_float_eigenvectors(n, wi_out, vr_work, vr_out)
+    if info_out[0] == 0:
+      _unpack_float_eigenvectors(n, wi_out, vl_work, vl_out)
+      _unpack_float_eigenvectors(n, wi_out, vr_work, vr_out)
 
     a_in += n * n
     wr_out += n
@@ -1552,7 +1554,6 @@ cdef void lapack_sgeev(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_sgeev", <void*>(lapack_sgeev))
 
-
 cdef void _unpack_double_eigenvectors(
     int n, const double* im_eigenvalues, const double* packed,
     double complex* unpacked) nogil:
@@ -1560,7 +1561,7 @@ cdef void _unpack_double_eigenvectors(
   cdef int j, k
   j = 0
   while j < n:
-    if im_eigenvalues[j] == 0.:
+    if im_eigenvalues[j] == 0. or isnan(im_eigenvalues[j]):
       for k in range(n):
         unpacked[j*n + k].real = packed[j*n + k]
         unpacked[j*n + k].imag = 0.
@@ -1573,6 +1574,7 @@ cdef void _unpack_double_eigenvectors(
         unpacked[j*n + k].imag = im
         unpacked[(j + 1)*n + k].imag = -im
       j += 2
+
 
 cdef void lapack_dgeev(void* out_tuple, void** data) nogil:
   cdef int b = (<int32_t*>(data[0]))[0]
@@ -1602,8 +1604,9 @@ cdef void lapack_dgeev(void* out_tuple, void** data) nogil:
     memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double))
     dgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
           vr_work, &n, work, &lwork, info_out)
-    _unpack_double_eigenvectors(n, wi_out, vl_work, vl_out)
-    _unpack_double_eigenvectors(n, wi_out, vr_work, vr_out)
+    if info_out[0] == 0:
+      _unpack_double_eigenvectors(n, wi_out, vl_work, vl_out)
+      _unpack_double_eigenvectors(n, wi_out, vr_work, vr_out)
 
     a_in += n * n
     wr_out += n

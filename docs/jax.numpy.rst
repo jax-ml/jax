@@ -115,6 +115,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     floor
     floor_divide
     fmod
+    frexp
     full
     full_like
     gcd
@@ -145,6 +146,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     kaiser
     kron
     lcm
+    ldexp
     left_shift
     less
     less_equal
@@ -207,6 +209,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     result_type
     right_shift
     roll
+    roots
     rot90
     round
     row_stack

@@ -150,6 +150,10 @@ class JetTest(jtu.JaxTestCase):
   def test_abs(self):        self.unary_check(np.abs)
   @jtu.skip_on_devices("tpu")
   def test_fft(self):        self.unary_check(np.fft.fft)
+  @jtu.skip_on_devices("tpu")
+  def test_log1p(self):      self.unary_check(np.log1p, lims=[0, 4.])
+  @jtu.skip_on_devices("tpu")
+  def test_expm1(self):      self.unary_check(np.expm1)
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])

@@ -87,19 +87,19 @@ def linearize(traceable, *primals, **kwargs):
   else:
     jvpfun, aux = jvp(traceable, has_aux=True)
 
-  in_pvals = (tuple(pe.PartialVal((None, p)) for p in primals)
-            + tuple(pe.PartialVal((get_aval(p).at_least_vspace(), core.unit))
+  in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
+            + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
                     for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(jvpfun_flat, in_pvals)
-  pval_primals, pval_tangents = tree_unflatten(out_tree(), out_pvals)
-  aval_primals, const_primals = unzip2(pval_primals)
-  assert all(aval_primal is None for aval_primal in aval_primals)
+  out_primals_pvals, out_tangents_pvals = tree_unflatten(out_tree(), out_pvals)
+  assert all(out_primal_pval.is_known() for out_primal_pval in out_primals_pvals)
+  _, out_primals_consts = unzip2(out_primals_pvals)
   if not has_aux:
-    return const_primals, pval_tangents, jaxpr, consts
+    return out_primals_consts, out_tangents_pvals, jaxpr, consts
   else:
-    return const_primals, pval_tangents, jaxpr, consts, aux()
+    return out_primals_consts, out_tangents_pvals, jaxpr, consts, aux()
 
 def vjp(traceable, primals, has_aux=False):
   if not has_aux:
@@ -537,7 +537,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
   tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in avals_in]
+  pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
   jaxpr_out, pvals_out, literals_out = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
   avals_out, _ = unzip2(pvals_out)
   jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
@@ -621,7 +621,7 @@ def defvjp_all(prim, custom_vjp):
     if not prim.multiple_results:
       primals_out = [primals_out]
     out_avals = [raise_to_shaped(get_aval(x)) for x in primals_out]
-    ct_pvals = [pe.PartialVal((aval, core.unit)) for aval in out_avals]
+    ct_pvals = [pe.PartialVal.unknown(aval) for aval in out_avals]
     with core.initial_style_staging():
       jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals,
                                         instantiate=True)

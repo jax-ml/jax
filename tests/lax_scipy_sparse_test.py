@@ -113,7 +113,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
       for shape in [(2, 2)]
-      for dtype in float_types
+      for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   def test_cg_as_solve(self, shape, dtype, rng_factory):
 
@@ -133,6 +133,30 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     jtu.check_grads(
         lambda x, y: lax_cg(posify(x), y),
         (a, b), order=2, rtol=1e-2)
+
+  def test_cg_ndarray(self):
+    A = lambda x: 2 * x
+    b = jnp.arange(9.0).reshape((3, 3))
+    expected = b / 2
+    actual, _ = jax.scipy.sparse.linalg.cg(A, b)
+    self.assertAllClose(expected, actual, check_dtypes=True)
+
+  def test_cg_pytree(self):
+    A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}
+    b = {"a": 1.0, "b": -4.0}
+    expected = {"a": 4.0, "b": -6.0}
+    actual, _ = jax.scipy.sparse.linalg.cg(A, b)
+    self.assertEqual(expected.keys(), actual.keys())
+    self.assertAlmostEqual(expected["a"], actual["a"])
+    self.assertAlmostEqual(expected["b"], actual["b"])
+
+  def test_cg_errors(self):
+    A = lambda x: x
+    b = jnp.zeros((2, 1))
+    x0 = jnp.zeros((2,))
+    with self.assertRaisesRegexp(
+        ValueError, "x0 and b must have matching shape"):
+      jax.scipy.sparse.linalg.cg(A, b, x0)
 
 
 if __name__ == "__main__":

@@ -132,6 +132,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("signbit", 1, default_dtypes + bool_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, ["rev"]),
+    op_record("trunc", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan, []),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
               inexact=True),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
@@ -236,6 +237,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
     op_record("sign", 1, number_dtypes + uint_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, []),
+    op_record('copysign', 2, default_dtypes, all_shapes, jtu.rand_some_inf_and_nan, [],
+              check_dtypes=False),
     op_record("sinc", 1, [t for t in number_dtypes if t != jnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"],
               tolerance={onp.complex64: 1e-5}, inexact=True,
@@ -820,6 +823,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       TypeError, "Number of tensordot axes.*exceeds input ranks.*",
       lambda: jnp.tensordot(a, b, axes=2))
 
+    self.assertRaisesRegex(
+      TypeError, "tensordot requires axes lists to have equal length.*",
+      lambda: jnp.tensordot(a, b, axes=([0], [0, 1])))
+
+    self.assertRaisesRegex(
+      TypeError, "tensordot requires both axes lists to be either ints, tuples or lists.*",
+      lambda: jnp.tensordot(a, b, axes=('bad', 'axes')))
+
+    self.assertRaisesRegex(
+      TypeError, "tensordot axes argument must be an int, a pair of ints, or a pair of lists.*",
+      lambda: jnp.tensordot(a, b, axes='badaxes'))
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
@@ -1125,9 +1141,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
-    grad_dtypes = [onp.float32, onp.float64, onp.complex64, onp.complex128]
-    if dtype in grad_dtypes and out_dtype in grad_dtypes:
-      check_grads(jnp_fun, args_maker(), order=2, rtol=1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
@@ -2093,19 +2106,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name":
-           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}".format(
+           "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}_interpolation={}".format(
              op,
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              jtu.format_shape_dtype_string(q_shape, q_dtype),
-             axis, keepdims),
+             axis, keepdims, interpolation),
          "a_rng": jtu.rand_default(), "q_rng": q_rng, "op": op,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
-         "keepdims": keepdims}
+         "keepdims": keepdims,
+         "interpolation": interpolation}
         for (op, q_rng) in (
           ("percentile", jtu.rand_uniform(low=0., high=100.)),
           ("quantile", jtu.rand_uniform(low=0., high=1.)),
-          ("median", jtu.rand_uniform(low=0., high=1.)),
         )
         for a_dtype in float_dtypes
         for a_shape, axis in (
@@ -2115,26 +2128,59 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         )
         for q_dtype in [onp.float32]
         for q_shape in scalar_shapes + [(4,)]
-        for keepdims in [False, True]))
+        for keepdims in [False, True]
+        for interpolation in ['linear', 'lower', 'higher', 'nearest', 'midpoint']))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
-                   axis, keepdims):
+                   axis, keepdims, interpolation):
     if op == "quantile" and numpy_version < (1, 15):
       raise SkipTest("Numpy < 1.15 does not have np.quantile")
-    if op == "median":
-        args_maker = lambda: [a_rng(a_shape, a_dtype)]
-    else:
-        args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+    args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     def onp_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               onp.asarray(x, onp.float32) for x in args]
-      return getattr(onp, op)(*args, axis=axis, keepdims=keepdims)
-    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims)
+      return getattr(onp, op)(*args, axis=axis, keepdims=keepdims,
+                     interpolation=interpolation)
+    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims,
+                      interpolation=interpolation)
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
     tol_spec = {onp.float32: 2e-4, onp.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, rtol=tol)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name":
+           "_a_shape={}_axis={}_keepdims={}".format(
+             jtu.format_shape_dtype_string(a_shape, a_dtype),
+             axis, keepdims),
+         "a_rng": jtu.rand_default(), 
+         "a_shape": a_shape, "a_dtype": a_dtype,
+         "axis": axis,
+         "keepdims": keepdims}
+        for a_dtype in float_dtypes
+        for a_shape, axis in (
+          ((7,), None),
+          ((47, 7), 0),
+          ((4, 101), 1),
+        )
+        for keepdims in [False, True]))
+  def testMedian(self, a_rng, a_shape, a_dtype, axis, keepdims):
+    args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    def onp_fun(*args):
+      args = [x if jnp.result_type(x) != jnp.bfloat16 else
+              onp.asarray(x, onp.float32) for x in args]
+      return onp.median(*args, axis=axis, keepdims=keepdims)
+    jnp_fun = partial(jnp.median, axis=axis, keepdims=keepdims)
+    # TODO(phawkins): we currently set dtype=False because we aren't as
+    # aggressive about promoting to float64. It's not clear we want to mimic
+    # Numpy here.
+    tol_spec = {onp.float32: 2e-4, onp.float64: 5e-6}
+    tol = jtu.tolerance(a_dtype, tol_spec)
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, rtol=tol)
@@ -2711,8 +2757,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     f = lambda y: lax.fori_loop(0, 5, body, (y, y))
     wrapped = linear_util.wrap_init(f)
-    pv = partial_eval.PartialVal(
-      (jax.ShapedArray((3, 4), onp.float32), jax.core.unit))
+    pv = partial_eval.PartialVal.unknown(jax.ShapedArray((3, 4), onp.float32))
     _, _, consts = partial_eval.trace_to_jaxpr(wrapped, [pv])
     self.assertFalse(
       any(onp.array_equal(x, onp.full((3, 4), 2., dtype=onp.float32))

@@ -493,6 +493,14 @@ def sign(x):
   return lax.sign(x)
 
 
+@_wraps(onp.copysign)
+def copysign(x1, x2):
+  if issubdtype(_dtype(x1), complexfloating) or issubdtype(_dtype(x2), complexfloating):
+    raise TypeError("copysign does not support complex-valued inputs")
+  x1, x2 = _promote_shapes("copysign", x1, x2)
+  return where(signbit(x2), -lax.abs(x1), lax.abs(x1))
+
+
 @_wraps(onp.true_divide)
 def true_divide(x1, x2):
   x1, x2 = _promote_args_inexact("true_divide", x1, x2)
@@ -644,6 +652,12 @@ def signbit(x):
 
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), onp.bool)
+
+
+@_wraps(onp.trunc)
+def trunc(x):
+  return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
+
 
 def _normalize_float(x):
     info = finfo(_dtype(x))
@@ -1571,59 +1585,7 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   return td
 
 
-# Parallel prefix-scan. See:
-# https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
-# and
-# Blelloch, Guy E. 1990. "Prefix Sums and Their Applications.", Technical Report
-# CMU-CS-90-190, School of Computer Science, Carnegie Mellon University.
-#
-# Unlike the Blelloch algorithm, we use an out-of-place algorithm that uses 2n
-# space. This is somewhat wasteful if we are interested only in the output of
-# the forward pass, but more memory-efficient if we intend to differentiate
-# through the implementation of the scan.
-def _prescan_power_of_two(x, axis: int, op: Callable, unit):
-  n = x.shape[axis]
-  assert n != 0 and n & (n - 1) == 0, "n must be a power of 2"
-
-  # Upsweep
-  xs = []
-  for d in range(0, n.bit_length() - 1):
-    x1 = lax.slice_in_dim(x, 0, None, stride=2, axis=axis)
-    xs.append(x1)
-    x2 = lax.slice_in_dim(x, 1, None, stride=2, axis=axis)
-    x = op(x1, x2)
-  total = x
-
-  # Downsweep
-  x = full_like(total, unit)
-  pad_left = [(0, 0, 0)] * len(x.shape)
-  pad_left[axis] = (1, 0, 1)
-  pad_right = [(0, 0, 0)] * len(x.shape)
-  pad_right[axis] = (0, 1, 1)
-  for w in reversed(xs):
-    x1 = lax.pad(x, x.dtype.type(0), pad_right)
-    x2 = lax.pad(x, x.dtype.type(0), pad_left)
-    w = lax.pad(w, x.dtype.type(0), pad_left)
-    x = x1 + op(x2, w)
-
-  return x, total
-
-def _parallel_prefix_scan(x, axis: int, op: Callable, unit):
-  n = x.shape[axis]
-
-  # Pads to the next largest power of two
-  nbits = n.bit_length()
-  if n == (1 << (nbits - 1)):
-    nbits -= 1
-  padding = [(0, 0, 0)] * len(x.shape)
-  padding[axis] = (0, (1 << nbits) - n, 0)
-  x = lax.pad(x, x.dtype.type(unit), padding)
-  x, product = _prescan_power_of_two(x, axis, op, unit)
-  return concatenate((lax.slice_in_dim(x, 1, n, axis=axis), product), axis=axis)
-
-
-def _make_cumulative_reduction(onp_reduction, op, unit,
-                               squash_nan=False):
+def _make_cumulative_reduction(onp_reduction, reduction, squash_nan=False):
   # We want to allow XLA to fuse the pad and reduce-window operators to
   # avoid materializing the padded output.
   # Consider removing `jit` once again if reduce-window is generalized to
@@ -1652,9 +1614,7 @@ def _make_cumulative_reduction(onp_reduction, op, unit,
     if dtype:
       a = lax.convert_element_type(a, dtype)
 
-    if a_shape[axis] == 0:
-      return a
-    return _parallel_prefix_scan(a, axis, op, unit)
+    return reduction(a, axis)
 
   @_wraps(onp_reduction)
   def cumulative_reduction(a, axis=None, dtype=None):
@@ -1663,15 +1623,13 @@ def _make_cumulative_reduction(onp_reduction, op, unit,
   return cumulative_reduction
 
 
-cumsum = _make_cumulative_reduction(
-  onp.cumsum, add, 0, squash_nan=False)
-cumprod = _make_cumulative_reduction(
-  onp.cumprod, multiply, 1, squash_nan=False)
+cumsum = _make_cumulative_reduction(onp.cumsum, lax.cumsum, squash_nan=False)
+cumprod = _make_cumulative_reduction(onp.cumprod, lax.cumprod, squash_nan=False)
 cumproduct = cumprod
-nancumsum = _make_cumulative_reduction(
-  onp.nancumsum, add, 0, squash_nan=True)
-nancumprod = _make_cumulative_reduction(
-  onp.nancumprod, multiply, 1, squash_nan=True)
+nancumsum = _make_cumulative_reduction(onp.nancumsum, lax.cumsum,
+                                       squash_nan=True)
+nancumprod = _make_cumulative_reduction(onp.nancumprod, lax.cumprod,
+                                        squash_nan=True)
 
 
 ### Array-creation functions
@@ -2497,6 +2455,9 @@ def tensordot(a, b, axes=2, precision=None):
         raise TypeError(msg.format(ax1, ax2))
       contracting_dims = (tuple(_canonicalize_axis(i, a_ndim) for i in ax1),
                           tuple(_canonicalize_axis(i, b_ndim) for i in ax2))
+    else:
+        msg = "tensordot requires both axes lists to be either ints, tuples or lists, got {} and {}"
+        raise TypeError(msg.format(ax1, ax2))
   else:
     msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
            "of lists/tuples of ints.")
@@ -3443,12 +3404,12 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
     msg = ("jax.numpy.quantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  if interpolation != "linear":
-    raise NotImplementedError("Only interpolation='linear' is implemented")
-  return _quantile(a, q, axis, keepdims)
+  if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
+    raise ValueError("interpolation can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
+  return _quantile(a, q, axis, interpolation, keepdims)
 
-@partial(jit, static_argnums=(2, 3))
-def _quantile(a, q, axis, keepdims):
+@partial(jit, static_argnums=(2, 3, 4))
+def _quantile(a, q, axis, interpolation, keepdims):
   a = asarray(a)
   if axis is None:
     a = ravel(a)
@@ -3477,7 +3438,7 @@ def _quantile(a, q, axis, keepdims):
   n = a_shape[axis]
   q = lax.mul(q, _constant_like(q, n - 1))
   low = lax.floor(q)
-  high = lax.add(low, _constant_like(low, 1))
+  high = lax.ceil(q)
   high_weight = lax.sub(q, low)
   low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
 
@@ -3506,9 +3467,23 @@ def _quantile(a, q, axis, keepdims):
                                       broadcast_dimensions=(0,))
     high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
                                       broadcast_dimensions=(0,))
-  return lax.convert_element_type(
-    lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
-            lax.mul(high_value.astype(q.dtype), high_weight)), a.dtype)
+
+  if interpolation == "linear":
+    result = lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
+                     lax.mul(high_value.astype(q.dtype), high_weight))
+  elif interpolation == "lower":
+    result = low_value
+  elif interpolation == "higher":
+    result = high_value
+  elif interpolation == "nearest":
+    pred = lax.le(high_weight, _constant_like(high_weight, 0.5))
+    result = lax.select(pred, low_value, high_value)
+  elif interpolation == "midpoint":
+    result = lax.mul(lax.add(low_value, high_value), _constant_like(low_value, 0.5))
+  else:
+    raise ValueError(f"interpolation={interpolation!r} not recognized")
+
+  return lax.convert_element_type(result, a.dtype)
 
 
 @_wraps(onp.percentile)
@@ -3523,7 +3498,7 @@ def percentile(a, q, axis=None, out=None, overwrite_input=False,
 def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
     q = 0.5
     return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                    keepdims=keepdims)
+                    keepdims=keepdims, interpolation='midpoint')
 
 def _astype(arr, dtype):
   lax._check_user_dtype_supported(dtype, "astype")
