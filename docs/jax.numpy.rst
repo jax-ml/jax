@@ -209,6 +209,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     result_type
     right_shift
     roll
+    roots
     rot90
     round
     row_stack
