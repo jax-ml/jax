@@ -161,9 +161,7 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, init_step=None, mxstep=
 def _odeint_wrapper(func, rtol, atol, init_step, mxstep, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
   func = ravel_first_arg(func, unravel)
-  if init_step:
-    init_step = init_step
-  else:
+  if init_step is None:
     f0 = func(y0, ts[0], *args)
     init_step = initial_step_size(func, ts[0], y0, 4, rtol, atol, f0)
   out = _odeint(func, rtol, atol, init_step, mxstep, y0, ts, *args)
