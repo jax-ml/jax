@@ -94,9 +94,10 @@ def _rfft_transpose(t, fft_lengths):
   # asymptotic complexity and is also rather complicated), we rely JAX to
   # transpose a naive RFFT implementation.
   dummy_shape = t.shape[:-len(fft_lengths)] + fft_lengths
-  dummy_primals = lax.full_like(t, 0.0, onp.float64, dummy_shape)
+  dummy_primals = lax.full_like(t, 0.0, _real_dtype(t.dtype), dummy_shape)
   _, jvpfun = vjp(partial(_naive_rfft, fft_lengths=fft_lengths), dummy_primals)
   result, = jvpfun(t)
+  assert result.dtype == _real_dtype(t.dtype), (result.dtype, t.dtype)
   return result
 
 def _irfft_transpose(t, fft_lengths):
@@ -107,14 +108,16 @@ def _irfft_transpose(t, fft_lengths):
   x = fft(t, xla_client.FftType.RFFT, fft_lengths)
   n = x.shape[-1]
   is_odd = fft_lengths[-1] % 2
-  full = partial(lax.full_like, t, dtype=onp.float64)
+  full = partial(lax.full_like, t, dtype=t.dtype)
   mask = lax.concatenate(
       [full(1.0, shape=(1,)),
        full(2.0, shape=(n - 2 + is_odd,)),
        full(1.0, shape=(1 - is_odd,))],
       dimension=0)
   scale = 1 / prod(fft_lengths)
-  return scale * mask * x
+  out = scale * mask * x
+  assert out.dtype == _complex_dtype(t.dtype), (out.dtype, t.dtype)
+  return out
 
 def fft_transpose_rule(t, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
