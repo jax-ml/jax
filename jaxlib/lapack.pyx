@@ -20,6 +20,7 @@
 
 from __future__ import print_function
 
+from libc.math cimport isnan
 from libc.stdlib cimport malloc, free
 from libc.stdint cimport int32_t, int64_t
 from libc.string cimport memcpy
@@ -1487,8 +1488,6 @@ def jax_syevd(c, a, lower=False):
 
 # geev: Nonsymmetric eigendecomposition
 
-cdef double NAN = float("NaN")
-
 # LAPACK uses a packed representation to represent a mixture of real
 # eigenvectors and complex conjugate pairs. This helper unpacks the
 # representation into regular complex matrices.
@@ -1499,7 +1498,7 @@ cdef void _unpack_float_eigenvectors(
   cdef int j, k
   j = 0
   while j < n:
-    if im_eigenvalues[j] == 0. or im_eigenvalues[j] != im_eigenvalues[j]:
+    if im_eigenvalues[j] == 0. or isnan(im_eigenvalues[j]):
       for k in range(n):
         unpacked[j*n + k].real = packed[j*n + k]
         unpacked[j*n + k].imag = 0.
@@ -1562,7 +1561,7 @@ cdef void _unpack_double_eigenvectors(
   cdef int j, k
   j = 0
   while j < n:
-    if im_eigenvalues[j] == 0. or im_eigenvalues[j] != im_eigenvalues[j]:
+    if im_eigenvalues[j] == 0. or isnan(im_eigenvalues[j]):
       for k in range(n):
         unpacked[j*n + k].real = packed[j*n + k]
         unpacked[j*n + k].imag = 0.
