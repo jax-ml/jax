@@ -46,6 +46,7 @@ FLAGS = config.FLAGS
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
+one_dim_array_shapes = [(1,), (6,), (12,)]
 empty_array_shapes = [(0,), (0, 4), (3, 0),]
 
 scalar_shapes = [jtu.NUMPY_SCALAR_SHAPE, jtu.PYTHON_SCALAR_SHAPE]
@@ -1106,6 +1107,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(jnp_input, expected_jnp_input_after_call, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "op={}_xshape=[{}]_yshape=[{}]_mode={}".format(
+          op,
+          jtu.format_shape_dtype_string(xshape, dtype),
+          jtu.format_shape_dtype_string(yshape, dtype),
+          mode),
+       "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
+       "rng_factory": jtu.rand_default,
+       "jnp_op": getattr(jnp, op),
+       "onp_op": getattr(onp, op)}
+      for mode in ['full', 'same', 'valid']
+      for op in ['convolve', 'correlate']
+      for dtype in default_dtypes
+      for xshape in one_dim_array_shapes
+      for yshape in one_dim_array_shapes))
+  def testConvolutions(self, xshape, yshape, dtype, mode, rng_factory, jnp_op, onp_op):
+    rng = rng_factory()
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    onp_fun = partial(onp_op, mode=mode)
+    jnp_fun = partial(jnp_op, mode=mode)
+    tol = {onp.float16: 1e-2}
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
           op, jtu.format_shape_dtype_string(shape, dtype), axis,
           out_dtype.__name__),
@@ -1586,8 +1611,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_fun = lambda x, weights: jnp.average(x, axis, weights, returned)
       args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
     onp_fun = _promote_like_jnp(onp_fun, inexact=True)
-    tol = {jnp.bfloat16: 1e-1, onp.float16: 1e-1, onp.float32: 1e-3,
-           onp.float64: 1e-10, onp.complex64: 1e-3, onp.complex128: 1e-10}
+    tol = {onp.float16: 1e-2, onp.float32: 1e-6, onp.float64: 1e-12,}
     check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
     try:
         self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker,
