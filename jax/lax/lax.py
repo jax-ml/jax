@@ -374,13 +374,6 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
     warnings.warn(msg, onp.ComplexWarning, stacklevel=2)
     operand = real(operand)
     old_dtype = _dtype(operand)
-  # TODO(b/143311238, b/142974574): work around bfloat16 conversion bugs by
-  # introducing an intermediate cast via float32.
-  if ((old_dtype == dtypes.bfloat16 and new_dtype != onp.float32) or
-      (new_dtype == dtypes.bfloat16 and old_dtype != onp.float32)):
-    operand = convert_element_type_p.bind(
-        operand, new_dtype=onp.float32, old_dtype=old_dtype)
-    old_dtype = onp.float32
   return convert_element_type_p.bind(
       operand, new_dtype=new_dtype, old_dtype=old_dtype)
 
