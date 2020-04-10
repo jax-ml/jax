@@ -240,6 +240,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     w2 = np.linalg.eigvals(a)
     self.assertAllClose(w1, w2, check_dtypes=True)
 
+  @jtu.skip_on_devices("gpu", "tpu")
+  @unittest.skipIf(jax.lib.version <= (0, 1, 43), "jaxlib too old")
+  def testEigvalsInf(self):
+    # https://github.com/google/jax/issues/2661
+    x = np.array([[np.inf]], np.float64)
+    self.assertTrue(np.all(np.isnan(np.linalg.eigvals(x))))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
