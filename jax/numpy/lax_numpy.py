@@ -659,6 +659,44 @@ def trunc(x):
   return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
 
 
+def _conv(x, y, mode, op):
+  if issubdtype(x.dtype, complexfloating) or issubdtype(y.dtype, complexfloating):
+    raise NotImplementedError(f"{op}() does not support complex inputs")
+  if ndim(x) != 1 or ndim(y) != 1:
+    raise ValueError(f"{op}() only support 1-dimensional inputs.")
+  x, y = _promote_dtypes_inexact(x, y)
+  
+  out_order = slice(None)
+  if len(x) < len(y):
+    x, y = y, x
+    if op == "correlate":
+      out_order = slice(None, None, -1)
+  if op == 'convolve':
+    y = y[::-1]
+
+  if mode == 'valid':
+    padding = [(0, 0)]
+  elif mode == 'same':
+    padding = [(y.shape[0] // 2, y.shape[0] - y.shape[0] // 2 - 1)]
+  elif mode == 'full':
+    padding = [(y.shape[0] - 1, y.shape[0] - 1)]
+  else:
+    raise ValueError("mode must be one of ['full', 'same', 'valid']")
+
+  result = lax.conv_general_dilated(x[None, None, :], y[None, None, :], (1,), padding)
+  return result[0, 0, out_order]
+
+
+@_wraps(onp.convolve)
+def convolve(x, y, mode='full'):
+  return _conv(x, y, mode, 'convolve')
+
+
+@_wraps(onp.correlate)
+def correlate(x, y, mode='valid'):
+  return _conv(x, y, mode, 'correlate')
+
+
 def _normalize_float(x):
     info = finfo(_dtype(x))
     cond = lax.abs(x) < info.tiny
