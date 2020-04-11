@@ -1139,7 +1139,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     onp_fun = partial(onp_op, mode=mode)
     jnp_fun = partial(jnp_op, mode=mode)
-    tol = {onp.float16: 1e-2}
+    tol = {onp.float16: 1e-2} if jtu.device_under_test() != "tpu" else 0.5
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
