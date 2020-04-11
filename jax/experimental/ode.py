@@ -227,7 +227,7 @@ def _odeint_rev(func, rtol, atol, init_step, mxstep, res, g):
     # Run augmented system backwards to previous observation
     _, y_bar, t0_bar, args_bar = odeint(
         aug_dynamics, (ys[i], y_bar, t0_bar, args_bar), np.array([ts[i - 1], ts[i]]),
-        *args, rtol=rtol, atol=atol, init_step=init_step, mxstep=mxstep)
+        *args, rtol=rtol, atol=atol, mxstep=mxstep)
     y_bar, t0_bar, args_bar = tree_map(op.itemgetter(1), (y_bar, t0_bar, args_bar))
     # Add gradient from current output
     y_bar = y_bar + g[i - 1]
