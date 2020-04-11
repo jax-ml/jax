@@ -3140,6 +3140,9 @@ def _index_to_gather(x_shape, idx):
     # Handle basic int indexes.
     if (isinstance(abstract_i, ConcreteArray) or
         isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
+      if x_shape[x_axis] == 0:
+        # XLA gives error when indexing into an axis of size 0
+        raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis])
       i = lax.convert_element_type(i, index_dtype)
       i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
