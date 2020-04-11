@@ -13,7 +13,6 @@
 # limitations under the License.
 
 # JAX is Autograd and XLA
-
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 
 licenses(["notice"])  # Apache 2
@@ -24,11 +23,13 @@ sh_binary(
     name = "install_xla_in_source_tree",
     srcs = ["install_xla_in_source_tree.sh"],
     data = [
+        "@com_github_msgpack_c//:msgpack_c_lib",
         "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
         "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
         "//jaxlib",
         "//jaxlib:lapack.so",
         "//jaxlib:pytree",
+        "//jaxlib:host_callback",
     ] + if_cuda([
         "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",

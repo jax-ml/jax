@@ -194,3 +194,23 @@ pybind_extension(
         "@pybind11",
     ],
 )
+
+pybind_extension(
+    name = "host_callback",
+    srcs = ["host_callback.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+        "-Iexternal/com_github_msgpack_c/include",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "host_callback",
+    deps = [
+        ":kernel_pybind11_helpers",
+        "@com_github_msgpack_c//:msgpack_c_lib",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@pybind11",
+    ],
+)

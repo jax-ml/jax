@@ -86,7 +86,6 @@ bazel_packages = {
             "3eca4c96cfda97a9d5f8d3d0dec4155a5cc5ff339b10d3f35213c398bf13881e"),
 }
 
-
 def download_and_verify_bazel():
   """Downloads a bazel binary from Github, verifying its SHA256 hash."""
   package = bazel_packages.get(platform.system())
@@ -322,7 +321,7 @@ def main():
   parser.add_argument(
       "--bazel_options",
       action="append", default=[],
-      help="Additional options to pass to bazel.")
+      help="Additional options to pass to bazel (e.g., -s to show subcommands).")
   args = parser.parse_args()
 
   print(BANNER)

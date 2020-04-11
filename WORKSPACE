@@ -73,3 +73,33 @@ apple_support_dependencies()
 load("@upb//bazel:repository_defs.bzl", "bazel_version_repository")
 
 bazel_version_repository(name = "bazel_version")
+
+
+# To update msgpack to a new revision,
+# a) update URL and strip_prefix to the new git commit hash
+# b) get the sha256 hash of the commit by running:
+#    curl -L <url> | sha256sum
+#    and update the sha256 with the result.
+http_archive(
+    name = "com_github_msgpack_c",
+    sha256 = "433cbcd741e1813db9ae4b2e192b83ac7b1d2dd7968a3e11470eacc6f4ab58d2",
+    strip_prefix = "msgpack-3.2.1",
+    urls = [
+        "https://github.com/msgpack/msgpack-c/releases/download/cpp-3.2.1/msgpack-3.2.1.tar.gz",
+    ],
+    # Since msgpack_c does not come with a BUILD file, we add one
+    build_file_content = """
+
+cc_library(
+     name = "msgpack_c_lib",
+     srcs = glob(
+         include=["src/*.c", "include/**/*.hpp", "include/**/*.h"]),
+     copts=["-Iexternal/com_github_msgpack_c/include"],
+     visibility = ["//visibility:public"],
+)
+""",
+)
+
+
+ 
+

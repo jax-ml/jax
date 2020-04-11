@@ -38,7 +38,7 @@ std::string PackDescriptorAsString(const T& descriptor) {
 template <typename T>
 const T* UnpackDescriptor(const char* opaque, std::size_t opaque_len) {
   if (opaque_len != sizeof(T)) {
-    throw std::runtime_error("Invalid size for linalg operation descriptor.");
+    throw std::runtime_error("Invalid size for operation descriptor.");
   }
   return absl::bit_cast<const T*>(opaque);
 }
