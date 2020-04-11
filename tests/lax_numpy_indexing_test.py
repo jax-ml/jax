@@ -744,6 +744,22 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
 
+  def testIndexingEmptyDimension(self):
+    # Issue 2671: XLA error when indexing into dimension of size 0
+    x = jnp.ones((2, 0))
+    # The following work, even on axis 1 of size 0
+    _ = x[0, :] + x[0, None] + x[0, 1:] + x[0, 1:3:2]
+
+    with self.assertRaisesRegex(IndexError,
+                                "index .* is out of bounds for axis .* with size 0"):
+      _ = onp.ones((2, 0))[0, 0]  # The numpy error
+    with self.assertRaisesRegex(IndexError,
+                                "index is out of bounds for axis .* with size 0"):
+      _ = x[0, 0]  # JAX indexing
+    with self.assertRaisesRegex(IndexError,
+                                "index is out of bounds for axis .* with size 0"):
+      api.jit(lambda i: x[0, i])(0)  # JAX indexing under jit
+
   def testBooleanIndexingWithEmptyResult(self):
     # based on a TensorFlow Probability test that started failing after #1622
     x = jnp.array([-1])
