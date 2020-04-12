@@ -2836,6 +2836,22 @@ def roll(a, shift, axis=None):
   return _roll(a, shift, axis)
 
 
+@_wraps(onp.rollaxis)
+def rollaxis(a, axis, start=0):
+  a_ndim = ndim(a)
+  if not (-a_ndim <= axis < a_ndim):
+    raise ValueError(f"axis={axis} is out of bounds for array of dimension {a_ndim}")
+  if not (-a_ndim <= start <= a_ndim):
+    raise ValueError(f"start={start} must satisfy {-a_ndim}<=start<={a_ndim}")
+  if start < 0:
+    start += a_ndim
+  if axis < 0:
+    axis += a_ndim
+  if start > axis:
+    start -= 1
+  return moveaxis(a, axis, start)
+
+
 @_wraps(onp.take)
 def take(a, indices, axis=None, out=None, mode=None):
   if out:
