@@ -1997,6 +1997,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_start={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          axis, start),
+       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis,
+       "start": start}
+      for dtype in all_dtypes
+      for shape in [(1, 2, 3, 4)]
+      for axis in [-3, 0, 2, 3]
+      for start in [-4, -1, 2, 4]
+      for rng_factory in [jtu.rand_default]))
+  def testRollaxis(self, shape, dtype, start, axis, rng_factory):
+    rng = rng_factory()
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_op = partial(jnp.rollaxis, axis=axis, start=start)
+    onp_op = partial(onp.rollaxis, axis=axis, start=start)
+    self._CheckAgainstNumpy(jnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_index={}_axis={}_mode={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           jtu.format_shape_dtype_string(index_shape, index_dtype),
