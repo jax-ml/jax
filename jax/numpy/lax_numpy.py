@@ -33,22 +33,22 @@ import os
 import re
 import string
 import types
-from typing import Callable
+from typing import Sequence
 import warnings
 
 import numpy as onp
 import opt_einsum
 
 from jax import jit, device_put
-from .. import core
-from .. import dtypes
-from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
-from ..config import flags
-from ..interpreters.xla import DeviceArray
-from .. import lax
-from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
-from ..lib import pytree
-from ..lib import xla_client
+from jax import core
+from jax import dtypes
+from jax.abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
+from jax.config import flags
+from jax.interpreters.xla import DeviceArray
+from jax import lax
+from jax.util import partial, get_module_functions, unzip2, prod as _prod, subvals
+from jax.lib import pytree
+from jax.lib import xla_client
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -100,6 +100,10 @@ class _ArrayMeta(type(onp.ndarray)):  # type: ignore
       return isinstance(instance, _arraylike_types)
 
 class ndarray(onp.ndarray, metaclass=_ArrayMeta):
+  dtype: onp.dtype
+  shape: Sequence[int]
+  size: int
+
   def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
