@@ -39,7 +39,7 @@ for convenience, we provide aliases for some of the most popular ones.
 """
 
 
-from typing import Any, Callable, NamedTuple, Tuple
+from typing import Any, Callable, NamedTuple, Sequence, Tuple, Union
 
 from jax import numpy as jnp
 from jax import random as jrandom
@@ -59,7 +59,7 @@ Params = Any  # Parameters are nests of `jnp.ndarrays`.
 Updates = Params  # Gradient updates are of the same type as parameters.
 
 
-InitFn = Callable[[Params], OptState]
+InitFn = Callable[[Params], Union[OptState, Sequence[OptState]]]
 UpdateFn = Callable[[Updates, OptState], Tuple[Updates, OptState]]
 
 
