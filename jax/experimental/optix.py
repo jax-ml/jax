@@ -39,8 +39,7 @@ for convenience, we provide aliases for some of the most popular ones.
 """
 
 
-import collections
-from typing import Any, Callable, NamedTuple, Sequence, Tuple
+from typing import Any, Callable, NamedTuple, Tuple
 
 from jax import numpy as jnp
 from jax import random as jrandom
@@ -397,7 +396,7 @@ def apply_every(k: int = 1) -> InitUpdate:
 # Utilities for building and using custom optimizers.
 
 
-def chain(*args: Sequence[InitUpdate]) -> InitUpdate:
+def chain(*args: InitUpdate) -> InitUpdate:
   """Applies a list of chainable update transformations.
 
   Given a sequence of chainable transforms, `chain` returns an `init_fn`
