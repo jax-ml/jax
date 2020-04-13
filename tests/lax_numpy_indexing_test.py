@@ -816,8 +816,9 @@ def _update_shape(shape, indexer):
 class UpdateOps(enum.Enum):
   UPDATE = 0
   ADD = 1
-  MIN = 2
-  MAX = 3
+  MUL = 2
+  MIN = 3
+  MAX = 4
 
   @suppress_deprecated_indexing_warnings()
   def onp_fn(op, indexer, x, y):
@@ -825,6 +826,7 @@ class UpdateOps(enum.Enum):
     x[indexer] = {
       UpdateOps.UPDATE: lambda: y,
       UpdateOps.ADD: lambda: x[indexer] + y,
+      UpdateOps.MUL: lambda: x[indexer] * y,
       UpdateOps.MIN: lambda: onp.minimum(x[indexer], y),
       UpdateOps.MAX: lambda: onp.maximum(x[indexer], y),
     }[op]()
@@ -834,6 +836,7 @@ class UpdateOps(enum.Enum):
     return {
       UpdateOps.UPDATE: ops.index_update,
       UpdateOps.ADD: ops.index_add,
+      UpdateOps.MUL: ops.index_mul,
       UpdateOps.MIN: ops.index_min,
       UpdateOps.MAX: ops.index_max,
     }[op](x, indexer, y)
