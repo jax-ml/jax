@@ -2873,7 +2873,8 @@ def packbits(a, axis=None, bitorder='big'):
     a = pad(a, (a.ndim - 1) * [(0, 0)] + [(0, 8 - remainder)])
 
   a = a.reshape(a.shape[:-1] + (a.shape[-1] // 8, 8))
-  return swapaxes((a << bits).sum(-1), axis, -1)
+  packed = (a << bits).sum(-1).astype('uint8')
+  return swapaxes(packed, axis, -1)
 
 
 @_wraps(onp.unpackbits)
