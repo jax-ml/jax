@@ -39,7 +39,7 @@ import warnings
 import numpy as onp
 import opt_einsum
 
-from jax import jit, device_put
+from jax import jit, device_put, custom_jvp
 from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
@@ -583,6 +583,7 @@ def power(x1, x2):
   return acc
 
 
+@custom_jvp
 @_wraps(onp.logaddexp)
 def logaddexp(x1, x2):
   x1, x2 = _promote_shapes("logaddexp", *_promote_dtypes_inexact(x1, x2))
@@ -592,7 +593,21 @@ def logaddexp(x1, x2):
                     lax.add(x1, x2),  # NaNs or infinities of the same sign.
                     lax.add(amax, lax.log1p(lax.exp(-lax.abs(delta)))))
 
+@logaddexp.defjvp
+def _logaddexp_jvp(primals, tangents):
+  x1, x2 = primals
+  t1, t2 = tangents
+  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  primal_out = logaddexp(x1, x2)
+  tangent_out = (t1 * exp(_replace_inf(x1) - _replace_inf(primal_out)) +
+                 t2 * exp(_replace_inf(x2) - _replace_inf(primal_out)))
+  return primal_out, tangent_out
 
+def _replace_inf(x):
+  return lax.select(isposinf(x), zeros_like(x), x)
+
+
+@custom_jvp
 @_wraps(onp.logaddexp2)
 def logaddexp2(x1, x2):
   x1, x2 = _promote_shapes("logaddexp2", *_promote_dtypes_inexact(x1, x2))
@@ -602,6 +617,15 @@ def logaddexp2(x1, x2):
                     lax.add(x1, x2),  # NaNs or infinities of the same sign.
                     lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(delta))),
                                           _constant_like(x1, onp.log(2)))))
+@logaddexp2.defjvp
+def _logaddexp2_jvp(primals, tangents):
+  x1, x2 = primals
+  t1, t2 = tangents
+  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  primal_out = logaddexp2(x1, x2)
+  tangent_out = (t1 * 2 ** (_replace_inf(x1) - _replace_inf(primal_out)) +
+                 t2 * 2 ** (_replace_inf(x2) - _replace_inf(primal_out)))
+  return primal_out, tangent_out
 
 
 @_wraps(onp.log2)

@@ -2966,6 +2966,12 @@ GRAD_TEST_RECORDS = [
     grad_test_spec(jnp.arctanh, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, -0.9, 0.9),
                    dtypes=[onp.float64, onp.complex64], tol=1e-4),
+    grad_test_spec(jnp.logaddexp, nargs=2, order=1,
+                   rng_factory=partial(jtu.rand_uniform, -0.9, 0.9),
+                   dtypes=[onp.float64], tol=1e-4),
+    grad_test_spec(jnp.logaddexp2, nargs=2, order=2,
+                   rng_factory=partial(jtu.rand_uniform, -0.9, 0.9),
+                   dtypes=[onp.float64], tol=1e-4),
 ]
 
 GradSpecialValuesTestSpec = collections.namedtuple(
@@ -2975,7 +2981,7 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
     GradSpecialValuesTestSpec(jnp.arcsinh, [0., 1000.], 2),
     GradSpecialValuesTestSpec(jnp.arccosh, [1000.], 2),
     GradSpecialValuesTestSpec(jnp.arctanh, [0.], 2),
-    GradSpecialValuesTestSpec(jnp.sinc, [0.], 1)
+    GradSpecialValuesTestSpec(jnp.sinc, [0.], 1),
 ]
 
 def num_float_bits(dtype):
