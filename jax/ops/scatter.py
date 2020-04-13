@@ -139,7 +139,7 @@ def index_mul(x, idx, y):
   NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
     x[idx] *= y
 
-  Note the `index_add` operator is pure; `x` itself is
+  Note the `index_mul` operator is pure; `x` itself is
   not modified, instead the new value that `x` would have taken is returned.
 
   Unlike the NumPy code :code:`x[idx] *= y`, if multiple indices refer to the
