@@ -303,8 +303,8 @@ def _check_shape(name, shape, *param_shapes):
 def uniform(key: np.ndarray,
             shape: Sequence[int] = (),
             dtype: onp.dtype = onp.float64,
-            minval: float = 0.,
-            maxval: float = 1.) -> np.ndarray:
+            minval: Union[float, np.ndarray] = 0.,
+            maxval: Union[float, np.ndarray] = 1.) -> np.ndarray:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
