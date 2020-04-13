@@ -188,6 +188,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     ones
     ones_like
     outer
+    packbits
     pad
     percentile
     polyval
@@ -244,6 +245,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     triu
     triu_indices
     true_divide
+    unpackbits
     vander
     var
     vdot
