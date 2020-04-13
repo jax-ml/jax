@@ -858,6 +858,33 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers)
 
+def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
+                dimension_numbers: ScatterDimensionNumbers) -> Array:
+  """Scatter-multiply operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  multiplication is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(mul, _abstractify(_const(operand, 1)))
+  return scatter_mul_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers)
+
 def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
                 dimension_numbers: ScatterDimensionNumbers) -> Array:
   """Scatter-min operator.
@@ -3458,6 +3485,39 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
                       slice_sizes=slice_sizes)
   return [operand_t, None, update_t]
 
+def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
+                                update_jaxpr, update_consts, dimension_numbers):
+  assert not ad.is_undefined_primal(scatter_indices)
+  if ad.is_undefined_primal(updates):
+    updates_shape = updates.aval.shape
+  else:
+    updates_shape = updates.shape
+  if t is ad_util.zero:
+    return [ad_util.zero, None, ad_util.zero]
+
+  operand_t = update_t = None
+  if ad.is_undefined_primal(operand):
+    operand_t = scatter_mul(t, scatter_indices, updates,
+                            dimension_numbers=dimension_numbers)
+
+  if ad.is_undefined_primal(updates):
+    gather_dnums = GatherDimensionNumbers(
+      offset_dims=dimension_numbers.update_window_dims,
+      collapsed_slice_dims=dimension_numbers.inserted_window_dims,
+      start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
+    slice_sizes = []
+    pos = 0
+    for i in range(len(t.shape)):
+      if i in dimension_numbers.inserted_window_dims:
+        slice_sizes.append(1)
+      else:
+        slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
+        pos += 1
+    update_t = gather(mul(t, operand), scatter_indices,
+                      dimension_numbers=gather_dnums, slice_sizes=slice_sizes)
+  return [operand_t, None, update_t]
+
+
 def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
                            update_jaxpr, update_consts, dimension_numbers):
   operand, scatter_indices, updates = batched_args
@@ -3511,6 +3571,23 @@ ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
+
+
+scatter_mul_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
+    _scatter_translation_rule)
+
+def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers, **kw):
+  return mul(x, scatter_add(zeros_like_array(x), i, g,
+                            dimension_numbers=dimension_numbers))
+
+ad.defjvp(scatter_mul_p,
+          lambda g, x, i, y, **kw: scatter_mul_p.bind(g, i, y, **kw),
+          None,
+          _scatter_mul_jvp_rhs)
+ad.primitive_transposes[scatter_mul_p] = _scatter_mul_transpose_rule
+batching.primitive_batchers[scatter_mul_p] = (
+  partial(_scatter_batching_rule, scatter_mul))
 
 # TODO(jlebar): Add derivatives.
 scatter_min_p = standard_primitive(

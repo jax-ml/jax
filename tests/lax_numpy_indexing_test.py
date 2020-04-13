@@ -816,8 +816,9 @@ def _update_shape(shape, indexer):
 class UpdateOps(enum.Enum):
   UPDATE = 0
   ADD = 1
-  MIN = 2
-  MAX = 3
+  MUL = 2
+  MIN = 3
+  MAX = 4
 
   @suppress_deprecated_indexing_warnings()
   def onp_fn(op, indexer, x, y):
@@ -825,6 +826,7 @@ class UpdateOps(enum.Enum):
     x[indexer] = {
       UpdateOps.UPDATE: lambda: y,
       UpdateOps.ADD: lambda: x[indexer] + y,
+      UpdateOps.MUL: lambda: x[indexer] * y,
       UpdateOps.MIN: lambda: onp.minimum(x[indexer], y),
       UpdateOps.MAX: lambda: onp.maximum(x[indexer], y),
     }[op]()
@@ -834,6 +836,7 @@ class UpdateOps(enum.Enum):
     return {
       UpdateOps.UPDATE: ops.index_update,
       UpdateOps.ADD: ops.index_add,
+      UpdateOps.MUL: ops.index_mul,
       UpdateOps.MIN: ops.index_min,
       UpdateOps.MAX: ops.index_max,
     }[op](x, indexer, y)
@@ -919,7 +922,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
        "op": op
   } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
-    for op in UpdateOps
+    for op in [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE]
     for dtype in float_dtypes
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)
@@ -928,8 +931,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               rng_factory, indexer, op):
     rng = rng_factory()
-    jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
-    jax_fn = lambda x, y: jax_op(x, indexer, y)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
