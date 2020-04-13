@@ -922,7 +922,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
        "op": op
   } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
-    for op in UpdateOps
+    for op in [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE]
     for dtype in float_dtypes
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
     for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)
@@ -931,8 +931,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               rng_factory, indexer, op):
     rng = rng_factory()
-    jax_op = ops.index_update if op == UpdateOps.UPDATE else ops.index_add
-    jax_fn = lambda x, y: jax_op(x, indexer, y)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
     check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)

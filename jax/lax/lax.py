@@ -3576,10 +3576,15 @@ batching.primitive_batchers[scatter_add_p] = (
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
     _scatter_translation_rule)
+
+def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers, **kw):
+  return mul(x, scatter_add(zeros_like_array(x), i, g,
+                            dimension_numbers=dimension_numbers))
+
 ad.defjvp(scatter_mul_p,
-          lambda g, x, y, **kw: scatter_mul_p.bind(g, y, **kw),
+          lambda g, x, i, y, **kw: scatter_mul_p.bind(g, i, y, **kw),
           None,
-          lambda g, x, y, **kw: scatter_mul_p.bind(x, g, **kw))
+          _scatter_mul_jvp_rhs)
 ad.primitive_transposes[scatter_mul_p] = _scatter_mul_transpose_rule
 batching.primitive_batchers[scatter_mul_p] = (
   partial(_scatter_batching_rule, scatter_mul))
