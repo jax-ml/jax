@@ -2852,6 +2852,50 @@ def rollaxis(a, axis, start=0):
   return moveaxis(a, axis, start)
 
 
+@_wraps(onp.packbits)
+def packbits(a, axis=None, bitorder='big'):
+  a = asarray(a)
+  if not (issubdtype(dtype(a), integer) or issubdtype(dtype(a), bool_)):
+    raise TypeError('Expected an input array of integer or boolean data type')
+  if bitorder not in ['little', 'big']:
+    raise ValueError("'order' must be either 'little' or 'big'")
+  a = (a > 0).astype('uint8')
+  bits = arange(8, dtype='uint8')
+  if bitorder == 'big':
+    bits = bits[::-1]
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  a = swapaxes(a, axis, -1)
+
+  remainder = a.shape[-1] % 8
+  if remainder:
+    a = pad(a, (a.ndim - 1) * [(0, 0)] + [(0, 8 - remainder)])
+
+  a = a.reshape(a.shape[:-1] + (a.shape[-1] // 8, 8))
+  packed = (a << bits).sum(-1).astype('uint8')
+  return swapaxes(packed, axis, -1)
+
+
+@_wraps(onp.unpackbits)
+def unpackbits(a, axis=None, count=None, bitorder='big'):
+  a = asarray(a)
+  if dtype(a) != uint8:
+    raise TypeError("Expected an input array of unsigned byte data type")
+  if bitorder not in ['little', 'big']:
+    raise ValueError("'order' must be either 'little' or 'big'")
+  bits = asarray(1) << arange(8, dtype='uint8')
+  if bitorder == 'big':
+    bits = bits[::-1]
+  if axis is None:
+    a = a.ravel()
+    axis = 0
+  a = swapaxes(a, axis, -1)
+  unpacked = ((a[..., None] & bits) > 0).astype('uint8')
+  unpacked = unpacked.reshape(unpacked.shape[:-2] + (-1,))[..., :count]
+  return swapaxes(unpacked, axis, -1)
+
+
 @_wraps(onp.take)
 def take(a, indices, axis=None, out=None, mode=None):
   if out:
