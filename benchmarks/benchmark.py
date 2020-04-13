@@ -115,7 +115,7 @@ def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
 
   if FLAGS.baseline_dir:
     mean_idx = len(param_names)
-    means = _get_baseline_means(mean_idx, FLAGS.baseline_dir, name)
+    means = _get_baseline_means(FLAGS.baseline_dir, name)
     assert len(means) == len(data), (means, data)
     data_header.append("mean/baseline")
     for idx, mean in enumerate(means):
@@ -131,7 +131,7 @@ def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
     print()
 
 
-def _get_baseline_means(mean_idx, baseline_dir, name):
+def _get_baseline_means(baseline_dir, name):
   baseline_dir = os.path.expanduser(baseline_dir)
   filename = os.path.join(baseline_dir, name + ".csv")
   if not os.path.exists(filename):
@@ -139,11 +139,12 @@ def _get_baseline_means(mean_idx, baseline_dir, name):
   with open(filename, newline="") as csvfile:
     reader = csv.reader(csvfile)
     header = next(reader)
-    assert header[mean_idx] == "mean", (header, mean_idx)
+    mean_idx = header.index("mean")
     return [float(row[mean_idx]) for row in reader]
 
 
 def _export_results(data_header, data, export_dir, name):
+  assert "mean" in data_header # For future comparisons via _get_baseline_means
   export_dir = os.path.expanduser(export_dir)
   os.makedirs(export_dir, exist_ok=True)
   filename = os.path.join(export_dir, name + ".csv")
