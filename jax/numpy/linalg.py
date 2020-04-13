@@ -199,11 +199,10 @@ def _cofactor_solve(a, b):
   permutation = np.broadcast_to(permutation, batch_dims + (a_shape[-1],))
   iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
   x = x[iotas[:-1] + (permutation, slice(None))]
-  # TODO(pfau): return zero if the rank is less than n-1
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
                                   unit_diagonal=True)
-  x = ops.index_update(x, ops.index[..., :-1, :],
-                       x[..., :-1, :] * partial_det[..., -1, None, None])
+  x = np.concatenate((x[..., :-1, :] * partial_det[..., -1, None, None],
+                      x[..., -1:, :]), axis=-2)
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
   return partial_det[..., -1], np.where(np.isnan(x), np.zeros_like(x), x)
 
