@@ -78,7 +78,10 @@ Not every function in NumPy is implemented; contributions are welcome!
     concatenate
     conj
     conjugate
+    convolve
+    copysign
     corrcoef
+    correlate
     cos
     cosh
     count_nonzero
@@ -210,6 +213,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     result_type
     right_shift
     roll
+    rollaxis
     roots
     rot90
     round
@@ -245,6 +249,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     triu
     triu_indices
     true_divide
+    trunc
     unpackbits
     vander
     var
