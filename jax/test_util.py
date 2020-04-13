@@ -696,8 +696,10 @@ def cases_from_gens(*gens):
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
+  # TODO(mattjj): this obscures the error messages from failures, figure out how
+  # to re-enable it
+  # def tearDown(self) -> None:
+  #   assert core.reset_trace_state()
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
