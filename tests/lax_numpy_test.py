@@ -2030,6 +2030,43 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_bitorder={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, bitorder),
+       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis,
+       "bitorder": bitorder}
+      for dtype in [onp.uint8, onp.bool_]
+      for bitorder in ['big', 'little']
+      for shape in [(1, 2, 3, 4)]
+      for axis in [None, 0, 1, -2, -1]
+      for rng_factory in [jtu.rand_some_zero]))
+  def testPackbits(self, shape, dtype, axis, bitorder, rng_factory):
+    rng = rng_factory()
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_op = partial(jnp.packbits, axis=axis, bitorder=bitorder)
+    onp_op = partial(onp.packbits, axis=axis, bitorder=bitorder)
+    self._CheckAgainstNumpy(jnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_bitorder={}_count={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, bitorder, count),
+       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis,
+       "bitorder": bitorder, "count": count}
+      for dtype in [onp.uint8]
+      for bitorder in ['big', 'little']
+      for shape in [(1, 2, 3, 4)]
+      for axis in [None, 0, 1, -2, -1]
+      for count in [None, 20]
+      for rng_factory in [jtu.rand_int]))
+  def testUnpackbits(self, shape, dtype, axis, bitorder, count, rng_factory):
+    rng = rng_factory(0, 256)
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_op = partial(jnp.unpackbits, axis=axis, bitorder=bitorder)
+    onp_op = partial(onp.unpackbits, axis=axis, bitorder=bitorder)
+    self._CheckAgainstNumpy(jnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_index={}_axis={}_mode={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           jtu.format_shape_dtype_string(index_shape, index_dtype),
