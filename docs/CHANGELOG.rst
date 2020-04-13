@@ -9,7 +9,15 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.63 (unreleased)
+jax 0.1.64 (unreleased)
+---------------------------
+
+
+jaxlib 0.1.44 (unreleased)
+------------------------------
+
+
+jax 0.1.63
 ---------------------------
 
 * Added ``jax.custom_jvp`` and ``jax.custom_vjp`` from `#2026 <https://github.com/google/jax/pull/2026>`_, see the `tutorial notebook <https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html>`_. Deprecated ``jax.custom_transforms`` and removed it from the docs (though it still works).
@@ -20,7 +28,11 @@ jax 0.1.63 (unreleased)
 * Fixed ``jax.experimental.stax.BatchNorm`` when ``scale``/``center`` isn't provided.
 * Fix some missing cases of broadcasting in ``jax.numpy.einsum`` `#2512 <https://github.com/google/jax/pull/2512>`_.
 * Implement ``jax.numpy.cumsum`` and ``jax.numpy.cumprod`` in terms of a parallel prefix scan `#2596 <https://github.com/google/jax/pull/2596>`_ and make ``reduce_prod`` differentiable to arbitray order `#2597 <https://github.com/google/jax/pull/2597>`_.
-
+* Add ``batch_group_count`` to ``conv_general_dilated`` `#2635 <https://github.com/google/jax/pull/2635>`_.
+* Add docstring for ``test_util.check_grads`` `#2656 <https://github.com/google/jax/pull/2656>`_.
+* Add ``callback_transform`` `#2665 <https://github.com/google/jax/pull/2665>`_.
+* Implement ``rollaxis``, ``convolve``/``correlate`` 1d & 2d, ``copysign``,
+  ``trunc``, ``roots``, and ``quantile``/``percentile`` interpolation options.
 
 jaxlib 0.1.43 (March 31, 2020)
 ------------------------------
