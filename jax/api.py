@@ -597,7 +597,7 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                                  [[0.      , 0.      ], [0.      , 3.843624]]], dtype=float32)}}}
 
   If the usual dense matrix form of the Hessian is desired, one can
-  flatten and concatenate the arguments into a single 1D array before passing
+  flatten and concatenate the arguments into a single 1D array before
   computing the Hessian.
   """
   return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
