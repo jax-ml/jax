@@ -334,7 +334,9 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
-      ``argnums`` should be arrays, scalars, or standard Python containers. It
+      ``argnums`` should be arrays, scalars, or standard Python containers.
+      Argument arrays in the positions specified by ``argnums`` must be of
+      inexact (i.e., floating-point or complex) type. It
       should return a scalar (which includes arrays with shape ``()`` but not
       arrays with shape ``(1,)`` etc.)
     argnums: Optional, integer or sequence of integers. Specifies which
