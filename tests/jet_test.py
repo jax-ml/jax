@@ -215,6 +215,7 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_xor(self):   self.binary_check(lambda x, y: np.logical_xor(x, y))
   @jtu.skip_on_devices("tpu")
+  @jtu.ignore_warning(message="overflow encountered in power")
   def test_pow(self):  self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
 
   def test_process_call(self):
