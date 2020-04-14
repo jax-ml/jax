@@ -49,6 +49,8 @@ from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
 from ..lib import xla_client
+from ..ops.scatter import index_update
+from ..ops.scatter import index as ops_index
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -366,6 +368,52 @@ def _canonicalize_axis(axis, num_dims):
   return axis
 
 ### implementations of numpy functions in terms of lax
+
+@_wraps(onp.ediff1d)
+def ediff1d(ary, to_end=None, to_begin=None):
+  # convert into 1d array
+  ary = ravel(asarray(ary))
+
+  # default case
+  if to_begin is None and to_end is None:
+    return lax.sub(ary[1:], ary[:-1])
+
+  # enforce propagation of the dtype of input ary to returned ary
+  dtype_req = ary.dtype
+
+  if to_begin is None:
+    l_begin = 0
+  else:
+    # convert to_begin to flat array
+    _to_begin = asarray(to_begin, dtype=dtype_req)
+    if not array_equal(_to_begin, _to_begin):
+      raise ValueError("cannot convert 'to_begin' to array with type"
+              "'%r' as required for input ary" % dtype_req)
+    to_begin = ravel(_to_begin)
+    l_begin = len(to_begin)
+  
+  if to_end is None:
+    l_end = 0
+  else:
+    # convert to_end to flat array
+    _to_end = asarray(to_end, dtype=dtype_req)
+    if not array_equal(_to_end, to_end):
+      raise ValueError("cannot convert 'to_end' to array with type"
+              "'%r' as required for inpurt ary" % dtype_req)
+    to_end = ravel(_to_end)
+    l_end = len(to_end)
+  
+  # calculate difference and copy to_begin and to_end
+  l_diff = _max(len(ary)-1, 0)
+  result = zeros(l_diff + l_begin + l_end, dtype=ary.dtype)
+  if l_begin > 0:
+    result = index_update(result, ops_index[:l_begin], to_begin)
+  if l_end > 0:
+    result = index_update(result, ops_index[l_begin+l_diff:], to_end)
+  #result[l_begin : l_begin + l_diff] = lax.sub(ary[1:],ary[:-1])
+  result = index_update(result, ops_index[l_begin : l_begin+l_diff], lax.sub(ary[1:], ary[:-1]))
+  return result
+
 
 @_wraps(onp.finfo)
 def finfo(dtype): return dtypes.finfo(dtype)
