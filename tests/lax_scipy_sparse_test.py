@@ -24,6 +24,8 @@ from jax import lax
 from jax import test_util as jtu
 import jax.scipy.sparse.linalg
 
+from jax.config import config
+config.parse_flags_with_absl()
 
 float_types = [np.float32, np.float64]
 complex_types = [np.complex64, np.complex128]
