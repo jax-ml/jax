@@ -114,6 +114,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     float_power
     floor
     floor_divide
+    fmax
+    fmin
     fmod
     frexp
     full

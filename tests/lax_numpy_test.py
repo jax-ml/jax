@@ -194,6 +194,8 @@ JAX_COMPOUND_OP_RECORDS = [
               jtu.rand_nonzero, ["rev"]),
     op_record("floor_divide", 2, uint_dtypes, all_shapes,
               jtu.rand_nonzero, ["rev"]),
+    op_record("fmin", 2, float_dtypes, all_shapes, jtu.rand_some_nan, []),
+    op_record("fmax", 2, float_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default, [],
