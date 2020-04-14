@@ -33,7 +33,7 @@ import os
 import re
 import string
 import types
-from typing import Callable
+from typing import Tuple
 import warnings
 
 import numpy as onp
@@ -100,6 +100,10 @@ class _ArrayMeta(type(onp.ndarray)):  # type: ignore
       return isinstance(instance, _arraylike_types)
 
 class ndarray(onp.ndarray, metaclass=_ArrayMeta):
+  dtype: onp.dtype
+  shape: Tuple[int, ...]
+  size: int
+
   def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
