@@ -367,14 +367,25 @@ def _canonicalize_axis(axis, num_dims):
 
 ### implementations of numpy functions in terms of lax
 
+@_wraps(onp.fmin)
+def fmin(x1, x2):
+  return where((x1 < x2) | isnan(x2), x1, x2)
+
+@_wraps(onp.fmax)
+def fmax(x1, x2):
+  return where((x1 > x2) | isnan(x2), x1, x2)
+
 @_wraps(onp.finfo)
-def finfo(dtype): return dtypes.finfo(dtype)
+def finfo(dtype): 
+  return dtypes.finfo(dtype)
 
 @_wraps(onp.issubdtype)
-def issubdtype(arg1, arg2): return dtypes.issubdtype(arg1, arg2)
+def issubdtype(arg1, arg2):
+  return dtypes.issubdtype(arg1, arg2)
 
 @_wraps(onp.isscalar)
-def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
+def isscalar(num):
+  return dtypes.is_python_scalar(num) or onp.isscalar(num)
 
 iterable = onp.iterable
 
