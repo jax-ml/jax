@@ -21,7 +21,8 @@ from .lib import xla_bridge
 def to_dlpack(x: xla.DeviceArray):
   """Returns a DLPack tensor that encapsulates a DeviceArray `x`.
 
-  The DLPack shares memory with `x`.
+  Takes ownership of the contents of `x`; leaves `x` in an invalid/deleted
+  state.
 
   Args:
     x: a `DeviceArray`, on either CPU or GPU.
