@@ -294,6 +294,7 @@ jax.numpy.linalg
   :toctree: _autosummary
 
   cholesky
+  cond
   det
   eig
   eigh
@@ -308,3 +309,5 @@ jax.numpy.linalg
   slogdet
   solve
   svd
+  tensorinv
+  tensorsolve
