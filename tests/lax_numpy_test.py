@@ -2211,14 +2211,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              jtu.format_shape_dtype_string(q_shape, q_dtype),
              axis, keepdims, interpolation),
-         "a_rng": jtu.rand_default(), "q_rng": q_rng, "op": op,
+         "a_rng": jtu.rand_default, "q_rng": q_rng, "op": op,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "q_shape": q_shape, "q_dtype": q_dtype, "axis": axis,
          "keepdims": keepdims,
          "interpolation": interpolation}
         for (op, q_rng) in (
-          ("percentile", jtu.rand_uniform(low=0., high=100.)),
-          ("quantile", jtu.rand_uniform(low=0., high=1.)),
+          ("percentile", lambda: jtu.rand_uniform(low=0., high=100.)),
+          ("quantile", lambda: jtu.rand_uniform(low=0., high=1.)),
         )
         for a_dtype in float_dtypes
         for a_shape, axis in (
@@ -2234,6 +2234,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                    axis, keepdims, interpolation):
     if op == "quantile" and numpy_version < (1, 15):
       raise SkipTest("Numpy < 1.15 does not have np.quantile")
+    a_rng = a_rng()
+    q_rng = q_rng()
     args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     def onp_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
@@ -2258,7 +2260,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
            "_a_shape={}_axis={}_keepdims={}".format(
              jtu.format_shape_dtype_string(a_shape, a_dtype),
              axis, keepdims),
-         "a_rng": jtu.rand_default(),
+         "a_rng": jtu.rand_default,
          "a_shape": a_shape, "a_dtype": a_dtype,
          "axis": axis,
          "keepdims": keepdims}
@@ -2270,6 +2272,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         )
         for keepdims in [False, True]))
   def testMedian(self, a_rng, a_shape, a_dtype, axis, keepdims):
+    a_rng = a_rng()
     args_maker = lambda: [a_rng(a_shape, a_dtype)]
     def onp_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
