@@ -294,17 +294,22 @@ jax.numpy.linalg
   :toctree: _autosummary
 
   cholesky
+  cond
   det
   eig
   eigh
   eigvals
   eigvalsh
   inv
+  lstsq
   matrix_power
   matrix_rank
+  multi_dot
   norm
   pinv
   qr
   slogdet
   solve
   svd
+  tensorinv
+  tensorsolve
