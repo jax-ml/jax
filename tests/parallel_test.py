@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import functools
 import itertools
 import unittest
 from unittest import SkipTest, skip
@@ -32,6 +32,9 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+ignore_soft_pmap_warning = functools.partial(
+  jtu.ignore_warning, message="soft_pmap is an experimental.*")
+
 class PapplyTest(jtu.JaxTestCase):
 
   def testIdentity(self):
@@ -46,6 +49,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.sin(onp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSum(self):
     pfun, axis_name = _papply(lambda x: np.sum(x, axis=0))
 
@@ -59,6 +63,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.sum(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testMax(self):
     pfun, axis_name = _papply(lambda x: np.max(x, axis=0))
 
@@ -72,6 +77,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = onp.max(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSelect(self):
     p = onp.arange(15).reshape((5, 3)) % 4 == 1
     f = onp.zeros((5, 3))
@@ -101,6 +107,7 @@ class PapplyTest(jtu.JaxTestCase):
     expected = fun(onp.arange(1., 5.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testAdd(self):
     x = onp.array([[1, 2, 3], [4, 5, 6]])
     expected = x + x

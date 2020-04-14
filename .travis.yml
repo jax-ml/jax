@@ -47,5 +47,5 @@ script:
       echo "===== Checking with mypy ====" &&
       time mypy --config-file=mypy.ini jax ;
     else
-      pytest tests examples -W ignore ;
+      pytest tests examples ;
     fi

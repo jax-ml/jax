@@ -61,6 +61,9 @@ def tearDownModule():
     os.environ["XLA_FLAGS"] = prev_xla_flags
   xla_bridge.get_backend.cache_clear()
 
+ignore_soft_pmap_warning = partial(
+  jtu.ignore_warning, message="soft_pmap is an experimental.*")
+
 
 class PmapTest(jtu.JaxTestCase):
   def _getMeshShape(self, device_mesh_shape):
@@ -434,7 +437,7 @@ class PmapTest(jtu.JaxTestCase):
     g = lambda: pmap(f, "i")(onp.arange(device_count))
     self.assertRaisesRegex(
       AssertionError,
-      "Given `perm` does not represent a real permutation: \[1.*\]", g)
+      "Given `perm` does not represent a real permutation: \\[1.*\\]", g)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testPpermuteWithZipObject(self):
@@ -772,6 +775,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSoftPmapPsum(self):
     n = 4 * xla_bridge.device_count()
     def f(x):
@@ -780,6 +784,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.ones(n) / n
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSoftPmapAxisIndex(self):
     n = 4 * xla_bridge.device_count()
     def f(x):
@@ -788,6 +793,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = 2 * onp.arange(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSoftPmapOfJit(self):
     n = 4 * xla_bridge.device_count()
     def f(x):
@@ -796,6 +802,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = 3 * onp.arange(n)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSoftPmapNested(self):
     n = 4 * xla_bridge.device_count()
 
@@ -809,6 +816,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.arange(n ** 2).reshape(n, n).T
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testGradOfSoftPmap(self):
     n = 4 * xla_bridge.device_count()
 
@@ -820,6 +828,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = onp.repeat(onp.arange(n)[:, None], n, axis=1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSoftPmapDevicePersistence(self):
     device_count = xla_bridge.device_count()
     shape = (2 * 2 * device_count, 2, 3)

@@ -20,6 +20,7 @@ pure alternatives, namely :func:`jax.ops.index_update` and its relatives.
     index
     index_update
     index_add
+    index_mul
     index_min
     index_max
 

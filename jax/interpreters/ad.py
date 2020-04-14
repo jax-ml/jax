@@ -143,8 +143,11 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
-    if ct is not None and type(v) is not Literal:
+    if ct is not None and type(v) is not Literal and ct is not zero:
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
+      if not core.skip_checks:
+        ct_aval = core.get_aval(ct_env[v])
+        assert v.aval == core.lattice_join(v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.get(v, zero)
