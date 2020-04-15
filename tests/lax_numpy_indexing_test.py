@@ -834,11 +834,11 @@ class UpdateOps(enum.Enum):
   def sugar_fn(op, indexer, x, y):
     x = jnp.array(x)
     return {
-      UpdateOps.UPDATE: x.update,
-      UpdateOps.ADD: x.update_add,
-      UpdateOps.MIN: x.update_min,
-      UpdateOps.MAX: x.update_max,
-    }[op][indexer](y)
+      UpdateOps.UPDATE: x.at[indexer].set,
+      UpdateOps.ADD: x.at[indexer].add,
+      UpdateOps.MIN: x.at[indexer].min,
+      UpdateOps.MAX: x.at[indexer].max,
+    }[op](y)
 
 
 class IndexedUpdateTest(jtu.JaxTestCase):

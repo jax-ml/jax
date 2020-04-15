@@ -3692,61 +3692,100 @@ def _unstack(x):
 setattr(DeviceArray, "_unstack", _unstack)
 
 
-# Syntactic sugar for scatter operations
+# Syntactic sugar for scatter operations.
 class IndexUpdateHelper(object):
-  """Helper object to call indexed update functions.
+  # Note: this docstring will appear as the docstring for the `at` property.
+  """Indexable helper object to call indexed update functions.
 
-  This makes it possible to do :code:`x.update[idx](y)` instead of
-  :code:`jax.ops.index_update(x, jax.ops.index[idx], y)`.
+  The `at` property is syntactic sugar for calling the indexed update functions
+  defined in :mod:`jax.ops`, and acts as a pure equivalent of in-place
+  modificatons.
+
+  In particular:
+  - :code:`x = x.at[idx].set(y)` is a pure equivalent of :code:`x[idx] = y`.
+  - :code:`x = x.at[idx].add(y)` is a pure equivalent of :code:`x[idx] += y`.
+  - :code:`x = x.at[idx].min(y)` is a pure equivalent of
+      :code:`x[idx] = minimum(x[idx], y)`.
+  - :code:`x = x.at[idx].max(y)` is a pure equivalent of
+      :code:`x[idx] = maximum(x[idx], y)`.
   """
-  __slots__ = ("index_method", "array")
+  __slots__ = ("array",)
 
-  def __init__(self, index_method, array):
-    self.index_method = index_method
+  def __init__(self, array):
     self.array = array
 
   def __getitem__(self, index):
-    return partial(self.index_method, self.array, index)
+    return IndexUpdateRef(self.array, index)
 
   def __repr__(self):
-    return f"IndexUpdateHelper({self.index_method}, {self.array})"
+    return f"IndexUpdateHelper({repr(self.array)})"
 
 
-def _make_index_update_property(property_name, numpy_equiv, method_fn):
-  fn = partial(IndexUpdateHelper, method_fn)
-  fn.__doc__ = textwrap.dedent(f"""\
-      Pure equivalent of :code:`{numpy_equiv}`.
+class IndexUpdateRef(object):
+  """Helper object to call indexed update functions for an (advanced) index.
 
-      :code:`x.{property_name}[idx](y)` is syntactic sugar for
-      :code:`jax.ops.{method_fn.__name__}(x, jax.ops.index[idx], y)`, and
-      returns the value of `x` that would result from the NumPy-style
-      :mod:`indexed assignment <numpy.doc.indexing>` :code:`{numpy_equiv}`.
+  This object references a source array and a specific indexer into that array.
+  Methods on this object return copies of the source array that have been
+  modified at the positions specified by the indexer.
+  """
+  __slots__ = ("array", "index")
 
-      See :mod:`jax.ops` for details.""")
-  return fn
+  def __init__(self, array, index):
+    self.array = array
+    self.index = index
 
+  def __repr__(self):
+    return f"IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
 
-_update_helper = _make_index_update_property("update", "x[idx] = y",
-                                            ops.index_update)
-setattr(DeviceArray, "update", property(_update_helper))
-setattr(ShapedArray, "update", core.aval_property(_update_helper))
+  def set(self, values):
+    """Pure equivalent of :code:`x[idx] = y`.
 
-_add_helper = _make_index_update_property("add", "x[idx] += y", ops.index_add)
-setattr(DeviceArray, "add", property(_add_helper))
-setattr(ShapedArray, "add", core.aval_property(_add_helper))
+    :code:`x.at[idx].set(y)` is syntactic sugar for
+    :code:`jax.ops.index_update(x, jax.ops.index[idx], y)`, and
+    returns the value of `x` that would result from the NumPy-style
+    :mod:`indexed assignment <numpy.doc.indexing>` :code:`x[idx] = y`.
 
-_update_add_helper = _make_index_update_property("update_add", "x[idx] += y",
-                                                ops.index_add)
-setattr(DeviceArray, "update_add", property(_update_add_helper))
-setattr(ShapedArray, "update_add", core.aval_property(_update_add_helper))
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_update(self.array, self.index, values)
 
-_update_min_helper = _make_index_update_property(
-    "update_min", "x[idx] = minimum(x[idx], y)", ops.index_min)
-setattr(DeviceArray, "update_min", property(_update_min_helper))
-setattr(ShapedArray, "update_min", core.aval_property(_update_min_helper))
+  def add(self, values):
+    """Pure equivalent of :code:`x[idx] += y`.
 
-_update_max_helper = _make_index_update_property(
-    "update_max", "x[idx] = maximum(x[idx], y)", ops.index_max)
-setattr(DeviceArray, "update_max", property(_update_max_helper))
-setattr(ShapedArray, "update_max", core.aval_property(_update_max_helper))
+    :code:`x.at[idx].add(y)` is syntactic sugar for
+    :code:`jax.ops.index_add(x, jax.ops.index[idx], y)`, and
+    returns the value of `x` that would result from the NumPy-style
+    :mod:`indexed assignment <numpy.doc.indexing>` :code:`x[idx] += y`.
 
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_add(self.array, self.index, values)
+
+  def min(self, values):
+    """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
+
+    :code:`x.at[idx].min(y)` is syntactic sugar for
+    :code:`jax.ops.index_min(x, jax.ops.index[idx], y)`, and
+    returns the value of `x` that would result from the NumPy-style
+    :mod:`indexed assignment <numpy.doc.indexing>`
+    :code:`x[idx] = minimum(x[idx], y)`.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_min(self.array, self.index, values)
+
+  def max(self, values):
+    """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
+
+    :code:`x.at[idx].max(y)` is syntactic sugar for
+    :code:`jax.ops.index_max(x, jax.ops.index[idx], y)`, and
+    returns the value of `x` that would result from the NumPy-style
+    :mod:`indexed assignment <numpy.doc.indexing>`
+    :code:`x[idx] = maximum(x[idx], y)`.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_max(self.array, self.index, values)
+
+setattr(DeviceArray, "at", property(IndexUpdateHelper))
+setattr(ShapedArray, "at", core.aval_property(IndexUpdateHelper))
