@@ -1061,11 +1061,13 @@ def check_jaxpr(jaxpr: Jaxpr):
   def read_env(env: Set[Var], v: Var):
     if type(v) is not Literal and v not in env:
       raise Exception("Variable '{}' not defined".format(v) + context())
+    return v
 
   def write_env(env: Set[Var], v: Var):
     if v in env:
       raise Exception("Variable {} already bound".format(v) + context())
     env.add(v)
+    return v
 
   env: Set[Var] = set()
   read = partial(read_env, env)
@@ -1075,12 +1077,26 @@ def check_jaxpr(jaxpr: Jaxpr):
   map(write, jaxpr.constvars)
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
-    if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
+    prim = eqn.primitive
+
+    if prim.call_primitive or prim.map_primitive:
       if "call_jaxpr" not in eqn.params:
         raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
-                        .format(eqn.primitive))
-    map(read, eqn.invars)
-    map(write, eqn.outvars)
+                        .format(prim))
+
+    invars = map(read, eqn.invars)
+    outvars = map(write, eqn.outvars)
+
+    in_avals = [v.aval for v in invars]
+    out_avals = prim.abstract_eval(*in_avals, **eqn.params)
+    if not prim.multiple_results:
+      out_avals = [out_avals]
+
+    for outvar, out_aval in zip(outvars, out_avals):
+      if outvar.aval != out_aval:
+        raise Exception(
+            "Jaxpr equation LHS {} has aval {}, expected {}, in '{}'".format(
+                outvar, outvar.aval, out_aval, eqn))
 
   for subjaxpr in subjaxprs(jaxpr):
     check_jaxpr(subjaxpr)
