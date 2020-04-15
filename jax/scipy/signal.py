@@ -50,7 +50,8 @@ def _convolve_nd(in1, in2, mode, *, precision):
     padding = [(s - 1, s - 1) for s in shape]
 
   strides = tuple(1 for s in shape)
-  result = lax.conv_general_dilated(in1[None, None], in2[None, None], strides, padding)
+  result = lax.conv_general_dilated(in1[None, None], in2[None, None], strides,
+                                    padding, precision=precision)
   return result[0, 0]
 
 
