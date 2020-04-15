@@ -773,16 +773,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [[rng(shape, dtype) for shape in shapes]]
 
+    onp_fun = onp.linalg.multi_dot
+    jnp_fun = partial(np.linalg.multi_dot, precision=lax.Precision.HIGHEST)
     tol = {onp.float32: 1e-4, onp.float64: 1e-10,
            onp.complex64: 1e-4, onp.complex128: 1e-10}
-    if jtu.device_under_test() == "tpu":
-      tol[onp.float32] = tol[onp.complex64] = 1e-2
-      tol[onp.float64] = tol[onp.complex128] = 1e-4
 
-    self._CheckAgainstNumpy(onp.linalg.multi_dot, np.linalg.multi_dot,
-                            args_maker, check_dtypes=True, 
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True, 
                             tol=tol)
-    self._CompileAndCheck(np.linalg.multi_dot, args_maker, check_dtypes=True,
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True,
                           atol=tol, rtol=tol)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.

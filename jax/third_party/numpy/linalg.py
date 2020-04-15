@@ -107,13 +107,13 @@ def tensorsolve(a, b, axes=None):
 
 
 @_wraps(onp.linalg.multi_dot)
-def multi_dot(arrays):
+def multi_dot(arrays, *, precision=None):
     n = len(arrays)
     # optimization only makes sense for len(arrays) > 2
     if n < 2:
         raise ValueError("Expecting at least two arrays.")
     elif n == 2:
-        return np.dot(arrays[0], arrays[1])
+        return np.dot(arrays[0], arrays[1], precision=precision)
 
     arrays = [np.asarray(a) for a in arrays]
 
@@ -129,10 +129,10 @@ def multi_dot(arrays):
 
     # _multi_dot_three is much faster than _multi_dot_matrix_chain_order
     if n == 3:
-        result = _multi_dot_three(*arrays)
+        result = _multi_dot_three(*arrays, precision)
     else:
         order = _multi_dot_matrix_chain_order(arrays)
-        result = _multi_dot(arrays, order, 0, n - 1)
+        result = _multi_dot(arrays, order, 0, n - 1, precision)
 
     # return proper shape
     if ndim_first == 1 and ndim_last == 1:
@@ -143,7 +143,7 @@ def multi_dot(arrays):
         return result
 
 
-def _multi_dot_three(A, B, C):
+def _multi_dot_three(A, B, C, precision):
     """
     Find the best order for three arrays and do the multiplication.
     For three arguments `_multi_dot_three` is approximately 15 times faster
@@ -157,9 +157,9 @@ def _multi_dot_three(A, B, C):
     cost2 = a1b0 * c1 * (a0 + b1c0)
 
     if cost1 < cost2:
-        return np.dot(np.dot(A, B), C)
+        return np.dot(np.dot(A, B, precision=precision), C, precision=precision)
     else:
-        return np.dot(A, np.dot(B, C))
+        return np.dot(A, np.dot(B, C, precision=precision), precision=precision)
 
 
 def _multi_dot_matrix_chain_order(arrays, return_costs=False):
@@ -198,10 +198,11 @@ def _multi_dot_matrix_chain_order(arrays, return_costs=False):
     return (s, m) if return_costs else s
 
 
-def _multi_dot(arrays, order, i, j):
+def _multi_dot(arrays, order, i, j, precision):
     """Actually do the multiplication with the given order."""
     if i == j:
         return arrays[i]
     else:
-        return np.dot(_multi_dot(arrays, order, i, order[i, j]),
-                      _multi_dot(arrays, order, order[i, j] + 1, j))
+        return np.dot(_multi_dot(arrays, order, i, order[i, j], precision),
+                      _multi_dot(arrays, order, order[i, j] + 1, j, precision),
+                      precision=precision)
