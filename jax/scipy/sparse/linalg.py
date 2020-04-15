@@ -28,7 +28,7 @@ def _vdot_real_part(x, y):
   # all our uses of vdot() in CG are for computing an operator of the form
   # `z^T M z` where `M` is positive definite and Hermitian, so the result is
   # real valued:
-  https://en.wikipedia.org/wiki/Definiteness_of_a_matrix#Definitions_for_complex_matrices
+  # https://en.wikipedia.org/wiki/Definiteness_of_a_matrix#Definitions_for_complex_matrices
   vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
   result = vdot(x.real, y.real)
   if jnp.iscomplexobj(x) or jnp.iscomplexobj(y):
