@@ -194,6 +194,15 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
                                      map(read_primal, eqn.invars), params)
         map(write_primal, eqn.outvars, ans)
 
+  # Find the last use of each cotangent so that they can be removed
+  # as soon as possible.
+  drop_cts: Dict[int, Any] = {}
+  seen_vars: Set[Any] = set(jaxpr.invars)
+  for eqn in linear_eqns:
+    read_set = set(eqn.outvars)  # NOTE: eqn is not transposed yet!
+    drop_cts[id(eqn)] = read_set - seen_vars
+    seen_vars |= read_set
+
   ct_env: Dict[Any, Any] = {}
   map(write_cotangent, jaxpr.outvars, cotangents_in)
   for eqn in linear_eqns[::-1]:
@@ -208,6 +217,8 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
           params, call_jaxpr, invals, cts_in)
     else:
       cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
+    for var in drop_cts[id(eqn)]:
+      ct_env.pop(var, None)  # NB: Constant cotangents might be missing
     cts_out = [zero] * len(eqn.invars) if cts_out is zero else cts_out
     map(write_cotangent, eqn.invars, cts_out)
 
