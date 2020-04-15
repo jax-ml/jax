@@ -500,14 +500,12 @@ logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 
 @_wraps(onp.rint)
 def rint(x):
-  if issubdtype(_dtype(x), complexfloating):
+  dtype = _dtype(x)
+  if issubdtype(dtype, integer):
+    return x
+  if issubdtype(dtype, complexfloating):
     return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
-  y = floor(x)
-  r = x - y
-
-  # Tie break by rounding to nearest even
-  y_is_odd = lax.convert_element_type(y % 2, bool_)
-  return where((r > 0.5) | ((r == 0.5) & y_is_odd), y + 1, y)
+  return _round_to_nearest_even(x)
 
 
 @_wraps(onp.sign)
