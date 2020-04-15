@@ -11,7 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Implementation of pmap and related functionality.
 
+Note on ShardingSpecs and spec_to_indices():
+A ShardingSpec describes at a high level how a logical array is sharded across
+devices (each ShardedDeviceArray has a ShardingSpec, and ShardingSpecs also
+describe how to shard inputs to a parallel computation). spec_to_indices()
+encodes exactly how a given ShardingSpec is translated to device buffers,
+i.e. how the sharded array is "laid out" across devices. Given a sequence of
+devices, we shard the data across the devices in row-major order, with
+replication treated as an extra inner dimension.
+
+For example, given the logical data array [1, 2, 3, 4], if we were to partition
+this array 4 ways with a replication factor of 2, for a total of 8 devices, the
+data on each device would be: [1, 1], [2, 2], [3, 3], [4, 4].
+
+This encoding is assumed by various parts of the system, e.g. generating
+replica groups for collective operations.
+"""
 
 from collections import defaultdict
 from contextlib import contextmanager
@@ -94,8 +111,7 @@ def spec_to_indices(shape: Tuple[int, ...],
 
   Each index describes a shard of the array. The order of the indices is the
   same as the device_buffers of a ShardedDeviceArray (i.e. the data is laid out
-  row-major, with replication treated as an extra innermost dimension) and is
-  what's expected throughout the system.
+  row-major, with replication treated as an extra innermost dimension).
 
   Args:
     shape: The shape of the logical array being sharded.
@@ -421,10 +437,10 @@ class ShardedDeviceArray(xla.DeviceArray):
       is the same shape and on a different device. Buffers are in row-major
       order, with replication treated as an extra innermost dimension.
     indices: the result of spec_to_indices(sharding_spec). Can optionally be
-      precomputed for efficiency. A list the same length as `device_buffers`
-      (equal to `prod(sharding_spec.shards_per_axis)`). Each index indicates what
-      portion of the full array is stored in the corresponding device buffer,
-      i.e. `array[indices[i]] == device_buffers[i].to_py()`.
+      precomputed for efficiency. A list the same length as
+      `device_buffers`. Each index indicates what portion of the full array is
+      stored in the corresponding device buffer, i.e. `array[indices[i]] ==
+      device_buffers[i].to_py()`.
   """
   __slots__ = ["device_buffers", "sharding_spec", "indices"]
 
@@ -433,7 +449,7 @@ class ShardedDeviceArray(xla.DeviceArray):
                aval: ShapedArray,
                sharding_spec: ShardingSpec,
                device_buffers: List[xb.xla_client._xla.PyLocalBuffer],
-               indices: Tuple[Index, ...] = None):
+               indices: Optional[Tuple[Index, ...]] = None):
     # TODO(skye): assert invariants. Keep performance in mind though.
     if indices is None:
       indices = spec_to_indices(aval.shape, sharding_spec)
@@ -500,7 +516,6 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
   bufs = []
   for idx, device in safe_zip(indices, devices):
     # Look up all buffers that contain the correct slice of the logical array.
-    # TODO(skye): do we need to dedup equivalent indices?
     candidates_list = candidates[_hashable_index(idx)]
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
