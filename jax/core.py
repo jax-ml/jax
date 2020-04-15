@@ -1094,7 +1094,7 @@ def check_jaxpr(jaxpr: Jaxpr):
 
     for outvar, out_aval in zip(outvars, out_avals):
       if outvar.aval != out_aval:
-        raise Exception(
+        raise TypeError(
             "Jaxpr equation LHS {} has aval {}, expected {}, in '{}'".format(
                 outvar, outvar.aval, out_aval, eqn))
 
