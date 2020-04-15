@@ -1050,44 +1050,52 @@ call_p.def_impl(call_impl)
 
 # ------------------- Jaxpr checking -------------------
 
-def _read_env(env: Set[Var], v: Var):
-  if type(v) is not Literal and v not in env:
-    raise Exception("Variable '{}' not defined".format(v) + context())
-  return v
+class _JaxprContext(object):
+  __slots__ = ["env", "jaxpr"]
+  def __init__(self, jaxpr: Jaxpr):
+    self.env: Set[Var] = set()
+    self.jaxpr = jaxpr
 
-def _write_env(env: Set[Var], v: Var):
-  if v in env:
-    raise Exception("Variable {} already bound".format(v) + context())
-  env.add(v)
-  return v
+  def _msg_context(self):
+    return "\njaxpr:\n{}\n".format(self.jaxpr)
+
+  def read_env(self, v: Var):
+    if type(v) is not Literal and v not in self.env:
+      raise Exception(
+          "Variable '{}' not defined".format(v) + self._msg_context())
+    return v
+
+  def write_env(self, v: Var):
+    if v in self.env:
+      raise Exception(
+          "Variable {} already bound".format(v) + self._msg_context())
+    self.env.add(v)
+    return v
 
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
 
   Specifically it checks that all variabled used are previously defined.
   """
-  def context():
-    return "\njaxpr:\n{}\n".format(jaxpr)
-
-  env: Set[Var] = set()
-  read = partial(_read_env, env)
-  write = partial(_write_env, env)
+  ctx = _JaxprContext(jaxpr)
+  read = ctx.read_env
+  write = ctx.write_env
 
   write(unitvar)
   map(write, jaxpr.constvars)
   map(write, jaxpr.invars)
 
   for eqn in jaxpr.eqns:
-    check_jaxpr_eqn(env, jaxpr, eqn)
+    check_jaxpr_eqn(ctx, eqn)
 
   for subjaxpr in subjaxprs(jaxpr):
     check_jaxpr(subjaxpr)
 
   map(read, jaxpr.outvars)
 
-def check_jaxpr_eqn(env, jaxpr, eqn):
-  read = partial(_read_env, env)
-  write = partial(_write_env, env)
+def check_jaxpr_eqn(ctx, eqn):
+  read = ctx.read_env
+  write = ctx.write_env
   prim = eqn.primitive
 
   if prim.call_primitive or prim.map_primitive:
