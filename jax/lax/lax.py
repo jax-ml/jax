@@ -2835,18 +2835,14 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
       return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
-  if (type(operand) is pxla.ShardedDeviceArray and dimensions is None
-      and _is_axis_merge(old_sizes, new_sizes)):
-    aval = ShapedArray(new_sizes, operand.dtype)
-    return pxla.ChunkedDeviceArray(old_sizes[0], aval, operand.device_buffers)
-  elif (type(operand) is pxla.ChunkedDeviceArray and dimensions is None
-        and _is_axis_split(old_sizes, new_sizes)
-        and operand.axis_size == new_sizes[0]):
-    aval = ShapedArray(new_sizes, operand.dtype)
-    return pxla.ShardedDeviceArray(aval, operand.device_buffers)
-  else:
-    return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
-                               dimensions=dimensions)
+
+  if type(operand) is pxla.ShardedDeviceArray and dimensions is None:
+    array = _reshape_sharded_device_array(operand, new_sizes, old_sizes)
+    if array is not None:
+      return array
+
+  return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
+                             dimensions=dimensions)
 
 def _is_singleton_reshape(old, new):
   # A singleton reshape is one where only singleton dimensions are added. We
@@ -2867,6 +2863,48 @@ def _is_singleton_reshape(old, new):
       d2 = next(new, None)
     else:
       return None
+
+def _reshape_sharded_device_array(array, new_sizes, old_sizes):
+  """Returns None if `array` could not be efficiently reshaped.
+
+  This function is primarily to support soft_pmap, although these optimizations
+  could be useful when directly calling reshape as well.
+  """
+  # TODO(jekbradbury): the axis split/merge logic below assumes that
+  # ShardedDevicesArrays are always sharded across their leading axes. Remove
+  # this constraint, especially if/when we add APIs that produce sharding across
+  # interior axes.
+  if any(num_shards != 1 for num_shards
+         in array.sharding_spec.shards_per_axis[1:]):
+    return None
+
+  # TODO(skye): handle replicated buffers
+  if array.sharding_spec.replication_factor != 1:
+    return None
+
+  # ShardedDevicesArrays require all buffers to have the same shape
+  chunk_shape = array.device_buffers[0].shape().dimensions()
+
+  if _is_axis_merge(old_sizes, new_sizes):
+    num_chunks, ragged = divmod(new_sizes[0], chunk_shape[0])
+    if ragged: return None
+    aval = ShapedArray(new_sizes, array.dtype)
+    sharding_spec = pxla.ShardingSpec(
+        shards_per_axis=(num_chunks,) + (1,) * (len(new_sizes) - 1),
+        is_axis_materialized=(True,) * len(new_sizes),
+        replication_factor=1)
+    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
+
+  if _is_axis_split(old_sizes, new_sizes):
+    split_axis_size, ragged = divmod(old_sizes[0], chunk_shape[0])
+    assert not ragged
+    if new_sizes[0] != split_axis_size: return None
+    aval = ShapedArray(new_sizes, array.dtype)
+    sharding_spec = pxla._pmap_sharding_spec(new_sizes[0], new_sizes[0],
+                                             new_sizes[1:])
+    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
+
+  return None
 
 def _is_axis_merge(s1, s2):
   return s1[2:] == s2[1:] and s1[0] * s1[1] == s2[0]
