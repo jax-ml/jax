@@ -3803,6 +3803,7 @@ class IndexUpdateHelper(object):
   In particular:
   - :code:`x = x.at[idx].set(y)` is a pure equivalent of :code:`x[idx] = y`.
   - :code:`x = x.at[idx].add(y)` is a pure equivalent of :code:`x[idx] += y`.
+  - :code:`x = x.at[idx].mul(y)` is a pure equivalent of :code:`x[idx] *= y`.
   - :code:`x = x.at[idx].min(y)` is a pure equivalent of
       :code:`x[idx] = minimum(x[idx], y)`.
   - :code:`x = x.at[idx].max(y)` is a pure equivalent of
@@ -3859,6 +3860,18 @@ class IndexUpdateRef(object):
     See :mod:`jax.ops` for details.
     """
     return ops.index_add(self.array, self.index, values)
+
+  def mul(self, values):
+    """Pure equivalent of :code:`x[idx] += y`.
+
+    :code:`x.at[idx].mul(y)` is syntactic sugar for
+    :code:`jax.ops.index_mul(x, jax.ops.index[idx], y)`, and
+    returns the value of `x` that would result from the NumPy-style
+    :mod:`indexed assignment <numpy.doc.indexing>` :code:`x[idx] *= y`.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_mul(self.array, self.index, values)
 
   def min(self, values):
     """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.

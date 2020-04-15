@@ -846,6 +846,7 @@ class UpdateOps(enum.Enum):
     return {
       UpdateOps.UPDATE: x.at[indexer].set,
       UpdateOps.ADD: x.at[indexer].add,
+      UpdateOps.MUL: x.at[indexer].mul,
       UpdateOps.MIN: x.at[indexer].min,
       UpdateOps.MAX: x.at[indexer].max,
     }[op](y)
