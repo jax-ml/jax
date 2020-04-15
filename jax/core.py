@@ -1053,23 +1053,29 @@ call_p.def_impl(call_impl)
 class _JaxprContext(object):
   __slots__ = ["env", "jaxpr"]
   def __init__(self, jaxpr: Jaxpr):
-    self.env: Set[Var] = set()
+    self.env: Dict[Var, AbstractValue] = {}
     self.jaxpr = jaxpr
 
   def _msg_context(self):
     return "\njaxpr:\n{}\n".format(self.jaxpr)
 
   def read_env(self, v: Var):
-    if type(v) is not Literal and v not in self.env:
+    env = self.env
+    if type(v) is not Literal and v not in env:
       raise Exception(
           "Variable '{}' not defined".format(v) + self._msg_context())
+    if v.aval != env[v]:
+      raise TypeError(
+          "Variable '{}' inconsistently typed as {}, bound as {}".format(
+              v, v.aval, env[v]))
     return v
 
   def write_env(self, v: Var):
-    if v in self.env:
+    env = self.env
+    if v in env:
       raise Exception(
           "Variable {} already bound".format(v) + self._msg_context())
-    self.env.add(v)
+    env[v] = v.aval
     return v
 
 def check_jaxpr(jaxpr: Jaxpr):
@@ -1094,8 +1100,6 @@ def check_jaxpr(jaxpr: Jaxpr):
   map(read, jaxpr.outvars)
 
 def check_jaxpr_eqn(ctx, eqn):
-  read = ctx.read_env
-  write = ctx.write_env
   prim = eqn.primitive
 
   if prim.call_primitive or prim.map_primitive:
@@ -1103,8 +1107,8 @@ def check_jaxpr_eqn(ctx, eqn):
       raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
                       .format(prim))
 
-  invars = map(read, eqn.invars)
-  outvars = map(write, eqn.outvars)
+  invars = map(ctx.read_env, eqn.invars)
+  outvars = map(ctx.write_env, eqn.outvars)
 
   in_avals = [v.aval for v in invars]
   out_avals = prim.abstract_eval(*in_avals, **eqn.params)
