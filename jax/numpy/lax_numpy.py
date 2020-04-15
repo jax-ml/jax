@@ -498,6 +498,18 @@ logical_or = _logical_op(onp.logical_or, lax.bitwise_or)
 logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 
 
+@_wraps(onp.rint)
+def rint(x):
+  if issubdtype(_dtype(x), complexfloating):
+    return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
+  y = floor(x)
+  r = x - y
+
+  # Tie break by rounding to nearest even
+  y_is_odd = lax.convert_element_type(y % 2, bool_)
+  return where((r > 0.5) | ((r == 0.5) & y_is_odd), y + 1, y)
+
+
 @_wraps(onp.sign)
 def sign(x):
   dtype = _dtype(x)

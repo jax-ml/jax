@@ -238,6 +238,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero, [],
               tolerance={onp.float16: 1e-2}),
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
+    op_record("rint", 1, all_dtypes + uint_dtypes, all_shapes,
+              jtu.rand_some_inf_and_nan, []),
     op_record("sign", 1, number_dtypes + uint_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, []),
     op_record('copysign', 2, default_dtypes, all_shapes, jtu.rand_some_inf_and_nan, [],
