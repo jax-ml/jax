@@ -346,6 +346,23 @@ class PmapTest(jtu.JaxTestCase):
     # test that the repr doesn't crash
     repr(z)
 
+  # Tests edge cases in lax._reshape_sharded_device_array
+  @parameterized.named_parameters(
+      {"testcase_name": "_in={}_out={}".format(in_shape, out_shape)
+       .replace(" ", ""),
+       "in_shape": in_shape, "out_shape": out_shape}
+      for in_shape, out_shape in [
+          [(1,1), (1,)], [(1,), (1,1)], [(1,), ()], [(4,7), (2,2,7)]
+      ])
+  def testShardedDeviceArrayReshape(self, in_shape, out_shape):
+    if xla_bridge.device_count() < max(in_shape[:1] + out_shape[:1]):
+      raise SkipTest("not enough devices")
+
+    x = onp.arange(prod(in_shape)).reshape(in_shape)
+    sharded_x = pmap(lambda x: x)(x)
+    self.assertAllClose(sharded_x.reshape(out_shape), x.reshape(out_shape),
+                        check_dtypes=False)
+
   def testPsumMultiple(self):
     f = lambda x: lax.psum(x, ('i', 'j'))
     f = pmap(pmap(f, 'i'), 'j')
