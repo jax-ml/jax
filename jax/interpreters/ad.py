@@ -15,7 +15,7 @@
 
 import functools
 import itertools as it
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Set
 
 from . import partial_eval as pe
 from .. import core as core
