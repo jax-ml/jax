@@ -1048,7 +1048,18 @@ call_p.def_custom_bind(call)
 call_p.def_impl(call_impl)
 
 
-# ------------------- Jaxpr printed representation -------------------
+# ------------------- Jaxpr checking -------------------
+
+def _read_env(env: Set[Var], v: Var):
+  if type(v) is not Literal and v not in env:
+    raise Exception("Variable '{}' not defined".format(v) + context())
+  return v
+
+def _write_env(env: Set[Var], v: Var):
+  if v in env:
+    raise Exception("Variable {} already bound".format(v) + context())
+  env.add(v)
+  return v
 
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
@@ -1058,54 +1069,51 @@ def check_jaxpr(jaxpr: Jaxpr):
   def context():
     return "\njaxpr:\n{}\n".format(jaxpr)
 
-  def read_env(env: Set[Var], v: Var):
-    if type(v) is not Literal and v not in env:
-      raise Exception("Variable '{}' not defined".format(v) + context())
-    return v
-
-  def write_env(env: Set[Var], v: Var):
-    if v in env:
-      raise Exception("Variable {} already bound".format(v) + context())
-    env.add(v)
-    return v
-
   env: Set[Var] = set()
-  read = partial(read_env, env)
-  write = partial(write_env, env)
+  read = partial(_read_env, env)
+  write = partial(_write_env, env)
 
   write(unitvar)
   map(write, jaxpr.constvars)
   map(write, jaxpr.invars)
+
   for eqn in jaxpr.eqns:
-    prim = eqn.primitive
-
-    if prim.call_primitive or prim.map_primitive:
-      if "call_jaxpr" not in eqn.params:
-        raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
-                        .format(prim))
-
-    invars = map(read, eqn.invars)
-    outvars = map(write, eqn.outvars)
-
-    in_avals = [v.aval for v in invars]
-    out_avals = prim.abstract_eval(*in_avals, **eqn.params)
-    if not prim.multiple_results:
-      out_avals = [out_avals]
-
-    for outvar, out_aval in zip(outvars, out_avals):
-      if outvar.aval != out_aval:
-        raise TypeError(
-            "Jaxpr equation LHS {} has aval {}, expected {}, in '{}'".format(
-                outvar, outvar.aval, out_aval, eqn))
+    check_jaxpr_eqn(env, jaxpr, eqn)
 
   for subjaxpr in subjaxprs(jaxpr):
     check_jaxpr(subjaxpr)
 
   map(read, jaxpr.outvars)
 
+def check_jaxpr_eqn(env, jaxpr, eqn):
+  read = partial(_read_env, env)
+  write = partial(_write_env, env)
+  prim = eqn.primitive
+
+  if prim.call_primitive or prim.map_primitive:
+    if "call_jaxpr" not in eqn.params:
+      raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
+                      .format(prim))
+
+  invars = map(read, eqn.invars)
+  outvars = map(write, eqn.outvars)
+
+  in_avals = [v.aval for v in invars]
+  out_avals = prim.abstract_eval(*in_avals, **eqn.params)
+  if not prim.multiple_results:
+    out_avals = [out_avals]
+
+  for outvar, out_aval in zip(outvars, out_avals):
+    if outvar.aval != out_aval:
+      raise TypeError(
+          "Jaxpr equation LHS {} has aval {}, expected {}, in '{}'".format(
+              outvar, outvar.aval, out_aval, eqn))
+
+
+# ------------------- Jaxpr printed representation -------------------
 
 def pp_vars(vs) -> str:
-    return ' '.join(map(str, vs))
+  return ' '.join(map(str, vs))
 
 def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
   filtered_params = {k: v for k, v in params.items()
