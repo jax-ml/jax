@@ -14,10 +14,12 @@
 
 
 import collections
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax.lib
 from jax import test_util as jtu
 from jax import tree_util
 
@@ -157,11 +159,13 @@ class TreeTest(jtu.JaxTestCase):
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
   @parameterized.parameters(*TREES)
+  @unittest.skipIf(jax.lib.version < (0, 1, 44), "Jaxlib too old")
   def testAllLeavesWithTrees(self, tree):
     leaves = tree_util.tree_leaves(tree)
     self.assertTrue(tree_util.all_leaves(leaves))
     self.assertFalse(tree_util.all_leaves([tree]))
 
+  @unittest.skipIf(jax.lib.version < (0, 1, 44), "Jaxlib too old")
   @parameterized.parameters(*LEAVES)
   def testAllLeavesWithLeaves(self, leaf):
     self.assertTrue(tree_util.all_leaves([leaf]))

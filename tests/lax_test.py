@@ -1901,6 +1901,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
               jtu.tolerance(from_dtype, jtu.default_gradient_tolerance))
     args = (rng((2, 3), from_dtype),)
     convert_element_type = lambda x: lax.convert_element_type(x, to_dtype)
+    convert_element_type = jtu.ignore_warning(category=onp.ComplexWarning)(
+      convert_element_type)
     check_grads(convert_element_type, args, 2, ["fwd", "rev"], tol, tol, eps=1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -3111,6 +3113,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       for padding in ["VALID", "SAME"]
       for rng_factory in [jtu.rand_small]))
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  @jtu.ignore_warning(message="Using reduced precision for gradient.*")
   def testSelectAndGatherAdd(self, dtype, padding, rng_factory):
     if jtu.device_under_test() == "tpu" and dtype == dtypes.bfloat16:
       raise SkipTest("bfloat16 _select_and_gather_add doesn't work on tpu")

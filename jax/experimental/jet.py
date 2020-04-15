@@ -239,6 +239,21 @@ def _expm1_taylor(primals_in, series_in):
   return lax.expm1(x), series_out
 jet_rules[lax.expm1_p] = _expm1_taylor
 
+def _pow_taylor(primals_in, series_in):
+  u_, r_ = primals_in
+
+  x, series = jet(lambda x, y: lax.mul(y, lax.log(x)), primals_in, series_in)
+
+  u = [x] + series
+  v = [u_ ** r_] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum([_scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+  primal_out, *series_out = v
+
+  return primal_out, series_out
+jet_rules[lax.pow_p] = _pow_taylor
+
+
 def _log_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in

@@ -24,6 +24,8 @@ from jax import lax
 from jax import test_util as jtu
 import jax.scipy.sparse.linalg
 
+from jax.config import config
+config.parse_flags_with_absl()
 
 float_types = [np.float32, np.float64]
 complex_types = [np.complex64, np.complex128]
@@ -154,7 +156,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     A = lambda x: x
     b = jnp.zeros((2, 1))
     x0 = jnp.zeros((2,))
-    with self.assertRaisesRegexp(
+    with self.assertRaisesRegex(
         ValueError, "x0 and b must have matching shape"):
       jax.scipy.sparse.linalg.cg(A, b, x0)
 
