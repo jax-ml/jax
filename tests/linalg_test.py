@@ -757,6 +757,34 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(np.linalg.matrix_rank, args_maker,
                           check_dtypes=False, rtol=1e-3)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shapes={}".format(
+           ','.join(jtu.format_shape_dtype_string(s, dtype) for s in shapes)),
+       "shapes": shapes, "dtype": dtype, "rng_factory": rng_factory}
+      for shapes in [
+        [(3, ), (3, 1)],  # quick-out codepath
+        [(1, 3), (3, 5), (5, 2)],  # multi_dot_three codepath
+        [(1, 3), (3, 5), (5, 2), (2, 7), (7, )]  # dynamic programming codepath
+      ]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  def testMultiDot(self, shapes, dtype, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [[rng(shape, dtype) for shape in shapes]]
+
+    tol = {onp.float32: 1e-4, onp.float64: 1e-10,
+           onp.complex64: 1e-4, onp.complex128: 1e-10}
+    if jtu.device_under_test() == "tpu":
+      tol[onp.float32] = tol[onp.complex64] = 1e-2
+      tol[onp.float64] = tol[onp.complex128] = 1e-4
+
+    self._CheckAgainstNumpy(onp.linalg.multi_dot, np.linalg.multi_dot,
+                            args_maker, check_dtypes=True, 
+                            tol=tol)
+    self._CompileAndCheck(np.linalg.multi_dot, args_maker, check_dtypes=True,
+                          atol=tol, rtol=tol)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):

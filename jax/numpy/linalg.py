@@ -30,7 +30,7 @@ from .lax_numpy import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as np
 from ..util import get_module_functions
-from ..third_party.numpy.linalg import cond, tensorinv, tensorsolve
+from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 

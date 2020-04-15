@@ -305,6 +305,7 @@ jax.numpy.linalg
   inv
   matrix_power
   matrix_rank
+  multi_dot
   norm
   pinv
   qr
