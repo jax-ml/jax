@@ -233,16 +233,17 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
   # return val always set as a side-effect on c
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
-    rule(c, *xla_args, **params)
+    ans = rule(c, *xla_args, **params)
   elif prim in translations:
     rule = translations[prim]
-    rule(c, *xla_args, **params)
+    ans = rule(c, *xla_args, **params)
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
+    ans = rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
          *xla_args, **params)
   else:
     raise NotImplementedError("XLA translation rule for {} not found".format(prim))
+  assert isinstance(ans, xc._xla.XlaOp)
   c.ClearOpMetadata()
   try:
     return c.Build()
@@ -355,6 +356,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
       msg = "XLA translation rule for primitive '{}' not found"
       raise NotImplementedError(msg.format(eqn.primitive.name))
 
+    assert isinstance(ans, xc._xla.XlaOp)
     c.GetShape(ans)  # force xla to do shape error checking
     out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
     c.ClearOpMetadata()
