@@ -254,7 +254,7 @@ PxlaResultHandler = Callable[..., Callable[
     [List[xb.xla_client._xla.PyLocalBuffer]], Any]]
 pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
-def array_result_handler(size, sharding_spec, indices, aval):
+def array_result_handler(size, sharding_spec, indices, aval: ShapedArray):
   full_aval = ShapedArray((size,) + aval.shape, aval.dtype)
   return lambda bufs: ShardedDeviceArray(full_aval, sharding_spec, bufs,
                                          indices)
