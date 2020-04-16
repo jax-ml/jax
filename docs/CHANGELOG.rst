@@ -12,9 +12,18 @@ These are the release notes for JAX.
 jax 0.1.64 (unreleased)
 ---------------------------
 
-
-jaxlib 0.1.44 (unreleased)
+jaxlib 0.1.45 (unreleased)
 ------------------------------
+
+
+jaxlib 0.1.44 (April 16, 2020)
+------------------------------
+
+* Fixes a bug where if multiple GPUs of different models were present, JAX
+  would only compile programs suitable for the first GPU.
+* Bugfix for ``batch_group_count`` convolutions.
+* Added precompiled SASS for more GPU versions to avoid startup PTX compilation
+  hang.
 
 
 jax 0.1.63
