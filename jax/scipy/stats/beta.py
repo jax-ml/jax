@@ -34,7 +34,7 @@ def logpdf(x, a, b, loc=0, scale=1):
   log_linear_term = lax.add(lax.mul(lax.sub(a, one), lax.log(y)),
                             lax.mul(lax.sub(b, one), lax.log1p(lax.neg(y))))
   log_probs = lax.sub(lax.add(shape_term, log_linear_term), lax.log(scale))
-  return jnp.where(jsp.logical_or(lax.gt(x, lax.add(loc, scale)),
+  return jnp.where(jnp.logical_or(lax.gt(x, lax.add(loc, scale)),
                                   lax.lt(x, loc)), -jnp.inf, log_probs)
 
 
