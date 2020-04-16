@@ -15,4 +15,5 @@ docs/_autosummary
 .idea
 .vscode
 venv/
+.venv/
 jax.iml
