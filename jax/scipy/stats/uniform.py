@@ -15,19 +15,22 @@
 
 import scipy.stats as osp_stats
 
-from ... import lax
-from ...numpy.lax_numpy import (_constant_like, _promote_args_inexact, _wraps,
-                                where, inf, logical_or)
+from jax import lax
+from jax.numpy import lax_numpy as jnp
+from jax.scipy.stats._freezing import Freezer
 
 
-@_wraps(osp_stats.uniform.logpdf, update_doc=False)
+freeze = Freezer(__name__.split(".")[-1], loc=0, scale=1)
+
+
+@jnp._wraps(osp_stats.uniform.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_inexact("uniform.logpdf", x, loc, scale)
+  x, loc, scale = jnp._promote_args_inexact("uniform.logpdf", x, loc, scale)
   log_probs = lax.neg(lax.log(scale))
-  return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)),
-               -inf, log_probs)
+  return jnp.where(jnp.logical_or(lax.gt(x, lax.add(loc, scale)),
+                                  lax.lt(x, loc)),
+                   -jnp.inf, log_probs)
 
-@_wraps(osp_stats.uniform.pdf, update_doc=False)
+@jnp._wraps(osp_stats.uniform.pdf, update_doc=False)
 def pdf(x, loc=0, scale=1):
   return lax.exp(logpdf(x, loc, scale))
