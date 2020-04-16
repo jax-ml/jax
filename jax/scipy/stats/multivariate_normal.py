@@ -16,15 +16,19 @@
 import numpy as np
 import scipy.stats as osp_stats
 
-from ... import lax
-from ...lax_linalg import cholesky, triangular_solve
-from ... import numpy as jnp
-from ...numpy.lax_numpy import _promote_dtypes_inexact, _constant_like, _wraps
+from jax import lax, lax_linalg
+from jax.numpy import lax_numpy as jnp
+from jax.scipy import special
+from jax.scipy.stats._freezing import Freezer, _required
 
 
-@_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False)
+freeze = Freezer(__name__.split(".")[-1], mean=_required, cov=_required)
+
+
+@freeze.wrap
+@jnp._wraps(osp_stats.multivariate_normal.logpdf, update_doc=False)
 def logpdf(x, mean, cov):
-  x, mean, cov = _promote_dtypes_inexact(x, mean, cov)
+  x, mean, cov = jnp._promote_dtypes_inexact(x, mean, cov)
   if not mean.shape:
     return -1/2 * (x - mean) ** 2 / cov - 1/2 * (np.log(2*np.pi) + jnp.log(cov))
   else:
@@ -36,11 +40,13 @@ def logpdf(x, mean, cov):
     else:
       if cov.ndim < 2 or cov.shape[-2:] != (n, n):
         raise ValueError("multivariate_normal.logpdf got incompatible shapes")
-      L = cholesky(cov)
-      y = triangular_solve(L, x - mean, lower=True, transpose_a=True)
+      L = lax_linalg.cholesky(cov)
+      y = lax_linalg.triangular_solve(L, x - mean, lower=True, transpose_a=True)
       return (-1/2 * jnp.einsum('...i,...i->...', y, y) - n/2*np.log(2*np.pi)
               - jnp.log(L.diagonal()).sum())
 
-@_wraps(osp_stats.multivariate_normal.pdf, update_doc=False)
+
+@freeze.wrap
+@jnp._wraps(osp_stats.multivariate_normal.pdf, update_doc=False)
 def pdf(x, mean, cov):
   return lax.exp(logpdf(x, mean, cov))
