@@ -196,7 +196,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, args, cotangents_in):
 
   # Find the last use of each cotangent so that they can be removed
   # as soon as possible.
-  drop_cts = []
+  drop_cts: List[Set[Any]] = []
   seen_vars: Set[Any] = set(jaxpr.invars)
   for eqn in linear_eqns:
     read_set = set(eqn.outvars)  # NOTE: eqn is not transposed yet!
