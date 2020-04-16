@@ -447,8 +447,7 @@ class ShardedDeviceArray(xla.DeviceArray):
   # TODO(skye): expose PyLocalBuffers in xla_client
   def __init__(self,
                aval: ShapedArray,
-               sharding_spec: Union[ShardingSpec,
-                                    Sequence[xb.xla_client._xla.PyLocalBuffer]],
+               sharding_spec, # TODO(skye): add type annotation back, see below
                device_buffers: List[xb.xla_client._xla.PyLocalBuffer] = None,
                indices: Optional[Tuple[Index, ...]] = None):
     # TODO(skye): this is temporary staging while we switch users over to
