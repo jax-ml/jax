@@ -726,7 +726,10 @@ class Unit(object):
 unit = Unit()
 literalable_types.add(Unit)
 
-class UnitVar(object):
+class UnitVar(Var):
+  def __init__(self):
+    self.count = None
+    self.suffix = None
   @property
   def aval(self): return abstract_unit
   def __repr__(self): return '*'
