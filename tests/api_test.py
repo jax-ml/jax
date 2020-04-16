@@ -325,6 +325,15 @@ class APITest(jtu.JaxTestCase):
     y = api.device_put(x)
     self.assertEqual(y.device_buffer.device(), default_device)
 
+  def test_jit_on_all_devices(self):
+    # Verifies we can run the same computation on every device present, even
+    # if they are, for example, different models of GPU.
+    data = onp.random.rand(1000).astype(onp.float32)
+    f = api.jit(np.negative)
+    for device in jax.local_devices():
+      x = device_put(data, device=device)
+      onp.testing.assert_array_equal(-data, f(x))
+
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
     R = onp.random.RandomState(0).randn
