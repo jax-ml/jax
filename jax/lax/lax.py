@@ -2884,9 +2884,10 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
 
   # ShardedDevicesArrays require all buffers to have the same shape
   chunk_shape = array.device_buffers[0].shape().dimensions()
+  chunk_size = chunk_shape[0] if len(chunk_shape) > 0 else 1
 
   if _is_axis_merge(old_sizes, new_sizes):
-    num_chunks, ragged = divmod(new_sizes[0], chunk_shape[0])
+    num_chunks, ragged = divmod(new_sizes[0], chunk_size)
     if ragged: return None
     aval = ShapedArray(new_sizes, array.dtype)
     sharding_spec = pxla.ShardingSpec(
@@ -2896,8 +2897,8 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
     return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
 
   if _is_axis_split(old_sizes, new_sizes):
-    split_axis_size, ragged = divmod(old_sizes[0], chunk_shape[0])
-    assert not ragged
+    split_axis_size, ragged = divmod(old_sizes[0], chunk_size)
+    if ragged: return None
     if new_sizes[0] != split_axis_size: return None
     aval = ShapedArray(new_sizes, array.dtype)
     sharding_spec = pxla._pmap_sharding_spec(new_sizes[0], new_sizes[0],
@@ -2907,6 +2908,9 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
   return None
 
 def _is_axis_merge(s1, s2):
+  # TODO(skye): we might still be able to handle these cases as merges, I
+  # haven't thought about it much.
+  if len(s1) < 2 or len(s2) < 1: return False
   return s1[2:] == s2[1:] and s1[0] * s1[1] == s2[0]
 
 def _is_axis_split(s1, s2):
