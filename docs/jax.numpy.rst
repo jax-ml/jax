@@ -214,6 +214,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     reshape
     result_type
     right_shift
+    rint
     roll
     rollaxis
     roots
