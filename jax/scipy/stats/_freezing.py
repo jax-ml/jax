@@ -56,7 +56,7 @@ class FrozenDistribution:
         return f"{self.name}({self._get_assignment_str()}, funcs=[{self._get_func_str()}])"
 
     def _get_func_str(self):
-        return ', '.join(self.funcs.keys())
+        return ", ".join(self.funcs.keys())
 
     def _get_assignment_str(self):
         return ", ".join(f"{varname}={varvalue}" for varname, varvalue in self.assignment.items())
