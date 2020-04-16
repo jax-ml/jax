@@ -110,7 +110,7 @@ def _device_put_scalar(x, device):
   return xc.Buffer.from_pyval(dtypes.coerce_to_array(x), device,
                               backend=xb.get_device_backend(device))
 for _t in dtypes.python_scalar_dtypes.keys():
-  device_put_handlers[_t] = _device_put_array
+  device_put_handlers[_t] = _device_put_scalar
 
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
