@@ -15,21 +15,28 @@
 
 import scipy.stats as osp_stats
 
-from ... import lax
-from ...numpy import lax_numpy as jnp
-from ..special import xlogy, xlog1py
+from jax import lax
+from jax.numpy import lax_numpy as jnp
+from jax.scipy import special
+from jax.scipy.stats._freezing import Freezer, _required
 
 
+freeze = Freezer(__name__.split(".")[-1], p=_required, loc=0)
+
+
+@freeze.wrap
 @jnp._wraps(osp_stats.bernoulli.logpmf, update_doc=False)
 def logpmf(k, p, loc=0):
   k, p, loc = jnp._promote_args_inexact("bernoulli.logpmf", k, p, loc)
   zero = jnp._constant_like(k, 0)
   one = jnp._constant_like(k, 1)
   x = lax.sub(k, loc)
-  log_probs = xlogy(x, p) + xlog1py(lax.sub(one, x), -p)
+  log_probs = special.xlogy(x, p) + special.xlog1py(lax.sub(one, x), -p)
   return jnp.where(jnp.logical_or(lax.lt(x, zero), lax.gt(x, one)),
-                  -jnp.inf, log_probs)
+                   -jnp.inf, log_probs)
 
+
+@freeze.wrap
 @jnp._wraps(osp_stats.bernoulli.pmf, update_doc=False)
 def pmf(k, p, loc=0):
   return jnp.exp(logpmf(k, p, loc))
