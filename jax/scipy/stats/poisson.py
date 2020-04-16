@@ -15,19 +15,26 @@
 
 import scipy.stats as osp_stats
 
-from ... import lax
-from ...numpy import lax_numpy as np
-from ..special import xlogy, gammaln
+from jax import lax
+from jax.numpy import lax_numpy as jnp
+from jax.scipy import special
+from jax.scipy.stats._freezing import Freezer, _required
 
 
-@np._wraps(osp_stats.poisson.logpmf, update_doc=False)
+freeze = Freezer(__name__.split(".")[-1], mu=_required, loc=0)
+
+
+@freeze.wrap
+@jnp._wraps(osp_stats.poisson.logpmf, update_doc=False)
 def logpmf(k, mu, loc=0):
-  k, mu, loc = np._promote_args_inexact("poisson.logpmf", k, mu, loc)
-  zero = np._constant_like(k, 0)
+  k, mu, loc = jnp._promote_args_inexact("poisson.logpmf", k, mu, loc)
+  zero = jnp._constant_like(k, 0)
   x = lax.sub(k, loc)
-  log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
-  return np.where(lax.lt(x, zero), -np.inf, log_probs)
+  log_probs = special.xlogy(x, mu) - special.gammaln(x + 1) - mu
+  return jnp.where(lax.lt(x, zero), -jnp.inf, log_probs)
 
-@np._wraps(osp_stats.poisson.pmf, update_doc=False)
+
+@freeze.wrap
+@jnp._wraps(osp_stats.poisson.pmf, update_doc=False)
 def pmf(k, mu, loc=0):
-  return np.exp(logpmf(k, mu, loc))
+  return jnp.exp(logpmf(k, mu, loc))
