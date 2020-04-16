@@ -16,38 +16,47 @@
 import numpy as np
 import scipy.stats as osp_stats
 
-from ... import lax
-from ...numpy import lax_numpy as jnp
-from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
-from .. import special
+from jax import lax
+from jax.numpy import lax_numpy as jnp
+from jax.scipy import special
+from jax.scipy.stats._freezing import Freezer
 
-@_wraps(osp_stats.norm.logpdf, update_doc=False)
+
+freeze = Freezer(__name__.split(".")[-1], loc=0, scale=1)
+
+
+@freeze.wrap
+@jnp._wraps(osp_stats.norm.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_inexact("norm.logpdf", x, loc, scale)
-  two = _constant_like(x, 2)
+  x, loc, scale = jnp._promote_args_inexact("norm.logpdf", x, loc, scale)
+  two = jnp._constant_like(x, 2)
   scale_sqrd = lax.pow(scale, two)
-  log_normalizer = lax.log(lax.mul(_constant_like(x, 2 * np.pi), scale_sqrd))
+  log_normalizer = lax.log(lax.mul(jnp._constant_like(x, 2 * np.pi), scale_sqrd))
   quadratic = lax.div(lax.pow(lax.sub(x, loc), two), scale_sqrd)
   return lax.div(lax.neg(lax.add(log_normalizer, quadratic)), two)
 
 
-@_wraps(osp_stats.norm.pdf, update_doc=False)
+@freeze.wrap
+@jnp._wraps(osp_stats.norm.pdf, update_doc=False)
 def pdf(x, loc=0, scale=1):
   return lax.exp(logpdf(x, loc, scale))
 
 
-@_wraps(osp_stats.norm.cdf, update_doc=False)
+@freeze.wrap
+@jnp._wraps(osp_stats.norm.cdf, update_doc=False)
 def cdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_inexact("norm.cdf", x, loc, scale)
+  x, loc, scale = jnp._promote_args_inexact("norm.cdf", x, loc, scale)
   return special.ndtr(lax.div(lax.sub(x, loc), scale))
 
 
-@_wraps(osp_stats.norm.logcdf, update_doc=False)
+@freeze.wrap
+@jnp._wraps(osp_stats.norm.logcdf, update_doc=False)
 def logcdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_inexact("norm.logcdf", x, loc, scale)
+  x, loc, scale = jnp._promote_args_inexact("norm.logcdf", x, loc, scale)
   return special.log_ndtr(lax.div(lax.sub(x, loc), scale))
 
 
-@_wraps(osp_stats.norm.ppf, update_doc=False)
+@freeze.wrap
+@jnp._wraps(osp_stats.norm.ppf, update_doc=False)
 def ppf(q, loc=0, scale=1):
   return jnp.array(special.ndtri(q) * scale + loc, 'float64')
