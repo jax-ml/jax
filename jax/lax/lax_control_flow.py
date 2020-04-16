@@ -35,7 +35,7 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
-from jax.core import get_aval
+from jax.core import get_aval, typecheck, typematch
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -118,17 +118,6 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
 
 def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
-
-def typecheck(aval, x):
-  aval = raise_to_shaped(aval).strip_weak_type()
-  try:
-    return aval == core.lattice_join(aval, core.get_aval(x)).strip_weak_type()
-  except TypeError:
-    return False
-
-def typematch(aval1, aval2):
-  return (raise_to_shaped(aval1).strip_weak_type() ==
-          raise_to_shaped(aval2).strip_weak_type())
 
 def _disable_jit_impl(prim, interp, *args, **kwargs):
   if jax.api._jit_is_disabled():

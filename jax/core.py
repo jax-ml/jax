@@ -1050,6 +1050,21 @@ call_p.def_impl(call_impl)
 
 # ------------------- Jaxpr checking -------------------
 
+def typecheck(aval, x):
+  return typecompat(aval, get_aval(x))
+
+def typecompat(aval_ref, aval):
+  """Determine whether `aval` conforms to `aval_ref`"""
+  aval_ref = raise_to_shaped(aval_ref).strip_weak_type()
+  try:
+    return aval_ref == lattice_join(aval_ref, aval).strip_weak_type()
+  except TypeError:
+    return False
+
+def typematch(aval1, aval2):
+  return (raise_to_shaped(aval1).strip_weak_type() ==
+          raise_to_shaped(aval2).strip_weak_type())
+
 class _JaxprContext(object):
   __slots__ = ["env", "jaxpr"]
   def __init__(self, jaxpr: Jaxpr):
@@ -1111,15 +1126,15 @@ def check_jaxpr_eqn(ctx, eqn):
   outvars = map(ctx.write_env, eqn.outvars)
 
   in_avals = [v.aval for v in invars]
-  out_avals = prim.abstract_eval(*in_avals, **eqn.params)
+  inferred_out_avals = prim.abstract_eval(*in_avals, **eqn.params)
   if not prim.multiple_results:
-    out_avals = [out_avals]
+    inferred_out_avals = [inferred_out_avals]
 
-  for outvar, out_aval in zip(outvars, out_avals):
-    if outvar.aval != out_aval:
+  for outvar, inferred_out_aval in zip(outvars, inferred_out_avals):
+    if not typecompat(outvar.aval, inferred_out_aval):
       raise TypeError(
-          "Jaxpr equation LHS {} has aval {}, expected {}, in '{}'".format(
-              outvar, outvar.aval, out_aval, eqn))
+          "Jaxpr equation LHS {} is {}, RHS is inferred as {}, in '{}'".format(
+              outvar, outvar.aval, inferred_out_aval, eqn))
 
 
 # ------------------- Jaxpr printed representation -------------------
