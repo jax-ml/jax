@@ -60,6 +60,14 @@ flags.DEFINE_enum(
 
 newaxis = None
 
+# Common docstring additions:
+
+_PRECISION_DOC = """\
+In addition to the original NumPy arguments listed below, also supports
+``precision`` for extra control over matrix-multiplication precision
+on supported devices. See :py:func:`jax.lax.dot` for details.
+"""
+
 # We replace some builtin names to follow Numpy's API, so we capture here.
 _abs = builtins.abs
 _all = builtins.all
@@ -708,7 +716,7 @@ def trunc(x):
   return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
 
 
-def _conv(x, y, mode, op):
+def _conv(x, y, mode, op, precision):
   if issubdtype(x.dtype, complexfloating) or issubdtype(y.dtype, complexfloating):
     raise NotImplementedError(f"{op}() does not support complex inputs")
   if ndim(x) != 1 or ndim(y) != 1:
@@ -732,18 +740,19 @@ def _conv(x, y, mode, op):
   else:
     raise ValueError("mode must be one of ['full', 'same', 'valid']")
 
-  result = lax.conv_general_dilated(x[None, None, :], y[None, None, :], (1,), padding)
+  result = lax.conv_general_dilated(x[None, None, :], y[None, None, :], (1,),
+                                    padding, precision=precision)
   return result[0, 0, out_order]
 
 
-@_wraps(onp.convolve)
-def convolve(x, y, mode='full'):
-  return _conv(x, y, mode, 'convolve')
+@_wraps(onp.convolve, lax_description=_PRECISION_DOC)
+def convolve(x, y, mode='full', precision=None):
+  return _conv(x, y, mode, 'convolve', precision)
 
 
-@_wraps(onp.correlate)
-def correlate(x, y, mode='valid'):
-  return _conv(x, y, mode, 'correlate')
+@_wraps(onp.correlate, lax_description=_PRECISION_DOC)
+def correlate(x, y, mode='valid', precision=None):
+  return _conv(x, y, mode, 'correlate', precision)
 
 
 def _normalize_float(x):
@@ -2461,13 +2470,6 @@ def append(arr, values, axis=None):
 
 
 ### Tensor contraction operations
-
-
-_PRECISION_DOC = """\
-In addition to the original NumPy arguments listed below, also supports
-``precision`` for extra control over matrix-multiplication precision
-on supported devices. See :py:func:`jax.lax.dot` for details.
-"""
 
 
 @_wraps(onp.dot, lax_description=_PRECISION_DOC)
