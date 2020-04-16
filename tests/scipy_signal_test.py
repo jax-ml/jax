@@ -63,7 +63,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {onp.float16: 1e-2, onp.float32: 1e-5}
+    tol = {onp.float16: 1e-2, onp.float32: 1e-2}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
 
@@ -87,7 +87,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {onp.float16: 1e-2, onp.float32: 1e-5}
+    tol = {onp.float16: 1e-2, onp.float32: 1e-2}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
 
