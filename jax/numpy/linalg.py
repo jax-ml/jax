@@ -483,3 +483,46 @@ def solve(a, b):
 for func in get_module_functions(np.linalg):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)
+
+
+@_wraps(onp.linalg.lstsq, lax_description=textwrap.dedent("""\
+    It has two important differences:
+
+    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and shows a deprecation
+       warning. In jax.numpy, the default rcond is `None`.
+    2. In `np.linalg.lstsq` the residuals return an empty list for low-rank solutions.
+       Here, the residuals are returned in all cases, to make the function compatible
+       with jit. The non-jit compatible numpy behavior can be recovered by passing
+       numpy_resid=True.
+    """))
+def lstsq(a, b, rcond=None, *, numpy_resid=False):
+  # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
+  a, b = _promote_arg_dtypes(a, b)
+  dtype = a.dtype
+  b_ndim = b.ndim
+  if b_ndim == 1:
+    b = b[:, None]
+  if a.ndim != 2:
+    raise TypeError(
+      f"{a.ndim}-dimensional array given. Array must be two-dimensional")
+  if b.ndim != 2:
+    raise TypeError(
+      f"{b_ndim}-dimensional array given. Array must be one or two-dimensional")
+  m, n = a.shape
+  if rcond is None:
+    rcond = np.finfo(dtype).eps * max(n, m)
+  elif rcond < 0:
+    rcond = np.finfo(dtype).eps
+  u, s, vt = svd(a, full_matrices=False)
+  mask = s >= rcond * s[0]
+  rank = mask.sum()
+  s_inv = np.where(mask, 1 / s, 0)
+  x = vt.conj().T @ (u.conj().T @ b * s_inv[:, None])
+  resid = norm(b - a @ x, axis=0) ** 2
+  # To match numpy, we would add the following condition. We don't do
+  # this because it makes lstsq incompatible with jit.
+  if numpy_resid and (rank < n or m <= n):
+      resid = np.asarray([])
+  if b_ndim == 1:
+    x = x.ravel()
+  return x, resid, rank, s

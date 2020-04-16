@@ -842,6 +842,37 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True,
                           atol=tol, rtol=tol)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs={}_rhs={}_rcond={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype),
+           rcond),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "rcond": rcond, "rng_factory": rng_factory}
+      for lhs_shape, rhs_shape in [
+          ((1, 1), (1, 1)),
+          ((4, 6), (4,)),
+          ((6, 6), (6, 1)),
+          ((8, 6), (8, 4)),
+      ]
+      for rcond in [-1, None, 0.5]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("tpu")  # SVD not implemented on TPU.
+  def testLstsq(self, lhs_shape, rhs_shape, dtype, rcond, rng_factory):
+    rng = rng_factory()
+    _skip_if_unsupported_type(dtype)
+    onp_fun = partial(onp.linalg.lstsq, rcond=rcond)
+    jnp_fun = partial(np.linalg.lstsq, rcond=rcond)
+    jnp_fun_numpy = partial(np.linalg.lstsq, rcond=rcond, numpy_resid=True)
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+    tol = {onp.float32: 1e-6, onp.float64: 1e-12,
+           onp.complex64: 1e-6, onp.complex128: 1e-12}
+
+    self._CheckAgainstNumpy(onp_fun, jnp_fun_numpy, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, atol=tol, rtol=tol)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):

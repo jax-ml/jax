@@ -313,6 +313,7 @@ jax.numpy.linalg
   eigvals
   eigvalsh
   inv
+  leastsq
   matrix_power
   matrix_rank
   multi_dot
