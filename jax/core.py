@@ -1085,7 +1085,7 @@ class _JaxprContext(object):
     if v.aval != env[v]:
       raise TypeError(
           "Variable '{}' inconsistently typed as {}, bound as {}".format(
-              v, v.aval, env[v]))
+              v, v.aval, env[v]) + self._msg_context())
     return v
 
   def write_env(self, v: Var):
