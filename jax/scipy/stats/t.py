@@ -16,24 +16,31 @@
 import numpy as np
 import scipy.stats as osp_stats
 
-from ... import lax
-from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
+from jax import lax
+from jax.numpy import lax_numpy as jnp
+from jax.scipy.stats._freezing import Freezer, _required
 
 
-@_wraps(osp_stats.t.logpdf, update_doc=False)
+freeze = Freezer(__name__.split(".")[-1], df=_required, loc=0, scale=1)
+
+
+@freeze.wrap
+@jnp._wraps(osp_stats.t.logpdf, update_doc=False)
 def logpdf(x, df, loc=0, scale=1):
-  x, df, loc, scale = _promote_args_inexact("t.logpdf", x, df, loc, scale)
-  two = _constant_like(x, 2)
+  x, df, loc, scale = jnp._promote_args_inexact("t.logpdf", x, df, loc, scale)
+  two = jnp._constant_like(x, 2)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   df_over_two = lax.div(df, two)
-  df_plus_one_over_two = lax.add(df_over_two, _constant_like(x, 0.5))
-  normalize_term_const = lax.mul(lax.mul(scale, scale), _constant_like(x, np.pi))
+  df_plus_one_over_two = lax.add(df_over_two, jnp._constant_like(x, 0.5))
+  normalize_term_const = lax.mul(lax.mul(scale, scale), jnp._constant_like(x, np.pi))
   normalize_term_tmp = lax.div(lax.log(lax.mul(normalize_term_const, df)), two)
   normalize_term = lax.sub(lax.add(lax.lgamma(df_over_two), normalize_term_tmp),
                            lax.lgamma(df_plus_one_over_two))
   quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
   return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
 
-@_wraps(osp_stats.t.pdf, update_doc=False)
+
+@freeze.wrap
+@jnp._wraps(osp_stats.t.pdf, update_doc=False)
 def pdf(x, df, loc=0, scale=1):
   return lax.exp(logpdf(x, df, loc, scale))
