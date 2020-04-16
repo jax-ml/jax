@@ -60,6 +60,7 @@ FLAGS = config.FLAGS
 
 class _TestingOutputStream(object):
   """Use as `output_stream` for tests."""
+
   def __init__(self):
     self.output = ""
 
@@ -73,17 +74,19 @@ class _TestingOutputStream(object):
   def reset(self):
     self.output = ""
 
+
 testing_stream = _TestingOutputStream()
 
 
 def fun1(a):
   y = hcb.id_print(a * 2., what="a * 2", output_stream=testing_stream)
-  y = hcb.id_print(y * 3., what="y * 3", output_stream=testing_stream,
-                   tie_in=y)
-  return y ** 4  # Some computation to make the gradient interesting
+  y = hcb.id_print(y * 3., what="y * 3", output_stream=testing_stream, tie_in=y)
+  return y**4  # Some computation to make the gradient interesting
+
 
 def fun1_equiv(a):  # Numerical equivalent of fun`
-  return (a * 2.) ** 4
+  return (a * 2.)**4
+
 
 class HostCallbackTest(jtu.JaxTestCase):
 
@@ -93,7 +96,8 @@ class HostCallbackTest(jtu.JaxTestCase):
   def helper_set_devices(self, nr_devices):
     flags_str = os.getenv("XLA_FLAGS", "")
     os.environ["XLA_FLAGS"] = (
-        flags_str + " --xla_force_host_platform_device_count={}".format(nr_devices))
+        flags_str +
+        " --xla_force_host_platform_device_count={}".format(nr_devices))
     # Clear any cached backends so new CPU backend will pick up the env var.
     xla_bridge.get_backend.cache_clear()
     return api.devices()
@@ -103,10 +107,13 @@ class HostCallbackTest(jtu.JaxTestCase):
     anecula_utils.helper_set_hlo_dump()
 
   def test_with_tuple_result(self):
+
     def func2(x):
-      x1, y1 = hcb.id_print(x * 2. , x * 3., output_stream=testing_stream)
+      x1, y1 = hcb.id_print(x * 2., x * 3., output_stream=testing_stream)
       return x1 + y1
-    self.assertMultiLineStrippedEqual("""
+
+    self.assertMultiLineStrippedEqual(
+        """
 { lambda  ; a.
   let b = mul a 2.0
       c = mul a 3.0
@@ -119,7 +126,8 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_eval(self):
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 { lambda  ; a.
   let b = mul a 2.0
       c = id_print[ output_stream=TestingOutputStream
@@ -132,18 +140,19 @@ class HostCallbackTest(jtu.JaxTestCase):
   in (g,) }""", str(api.make_jaxpr(fun1)(5.)))
     self.assertEqual("", testing_stream.output)
 
-    self.assertEqual((5. * 2.) ** 4, fun1(5.))
-    self.assertMultiLineStrippedEqual("""
+    self.assertEqual((5. * 2.)**4, fun1(5.))
+    self.assertMultiLineStrippedEqual(
+        """
 (10.0,)  {'what': 'a * 2'}
 (30.0,)  {'what': 'y * 3'}""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_simple(self):
     self.helper_set_hlo_dump()
-    jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(2. * x,
-                                                   what="here",
-                                                   output_stream=testing_stream))
-    self.assertMultiLineStrippedEqual("""
+    jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
+        2. * x, what="here", output_stream=testing_stream))
+    self.assertMultiLineStrippedEqual(
+        """
 { lambda  ; a.
   let b = xla_call[ backend=None
                     call_jaxpr={ lambda  ; a.
@@ -159,30 +168,34 @@ class HostCallbackTest(jtu.JaxTestCase):
     res = jit_fun1(5.)
     self.assertAllClose(6. * 5., res, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"_shape_{shape}_dtype_{dtype}_nr_args={nr_args}",
-           shape=shape, dtype=dtype, nr_args=nr_args)
-      for nr_args in [1, 2]
-      for shape in [(), (2,), (2, 3), (2, 3, 4)]
-      for dtype in jtu.supported_dtypes()))
-  def test_jit_types(self, nr_args = 1, dtype = np.uint32, shape = ()):
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+          dict(
+              testcase_name=f"_shape_{shape}_dtype_{dtype}_nr_args={nr_args}",
+              shape=shape,
+              dtype=dtype,
+              nr_args=nr_args) for nr_args in [1, 2]
+          for shape in [(), (2,), (2, 3), (2, 3, 4)]
+          for dtype in jtu.supported_dtypes()))
+  def test_jit_types(self, nr_args=1, dtype=np.bfloat16, shape=()):
     self.helper_set_hlo_dump()
     args = [np.arange(np.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args
-    jit_fun1 = api.jit(lambda xs: hcb.id_print(*xs,
-                                               a_new_test="************",
-                                               testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
+    jit_fun1 = api.jit(lambda xs: hcb.id_print(
+        *xs,
+        a_new_test="************",
+        testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
     res = jit_fun1(args)
 
-
   def test_jit_large(self):
-    arg = np.arange(10000).reshape((10,10,5,-1))
+    arg = np.arange(10000).reshape((10, 10, 5, -1))
     api.jit(lambda x: hcb.id_print(x))(arg)
 
   def test_jvp(self):
     jvp_fun1 = lambda x, xt: api.jvp(fun1, (x,), (xt,))
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 { lambda  ; a b.
   let c = mul a 2.0
       d = id_print[ output_stream=TestingOutputStream
@@ -207,7 +220,8 @@ class HostCallbackTest(jtu.JaxTestCase):
   in (h, p) }""", str(api.make_jaxpr(jvp_fun1)(5., 0.1)))
 
     res_primals, res_tangents = jvp_fun1(5., .1)
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 (DeviceArray(10., dtype=float32),)  {'what': 'a * 2'}
 (DeviceArray(0.2, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp',)}
 (DeviceArray(30., dtype=float32),)  {'what': 'y * 3'}
@@ -217,7 +231,8 @@ class HostCallbackTest(jtu.JaxTestCase):
 
   def test_grad(self):
     grad_fun1 = api.grad(fun1)
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 { lambda  ; a.
   let b = mul a 2.0
       c = id_print[ output_stream=TestingOutputStream
@@ -236,26 +251,27 @@ class HostCallbackTest(jtu.JaxTestCase):
   in (k,) }""", str(api.make_jaxpr(grad_fun1)(5.)))
 
     # This comes from the actual partial evaluation
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 (Zero,)  {'what': 'y * 3', 'transforms': ('jvp', 'transpose')}
-  """,
-                                      testing_stream.output)
+  """, testing_stream.output)
     testing_stream.reset()
 
     res_grad = grad_fun1(5.)
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 (DeviceArray(10., dtype=float32),)  {'what': 'a * 2'}
 (DeviceArray(30., dtype=float32),)  {'what': 'y * 3'}
 (Zero,)  {'what': 'y * 3', 'transforms': ('jvp', 'transpose')}
 (DeviceArray(4000., dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp', 'transpose')}
-   """,
-                                      testing_stream.output)
+   """, testing_stream.output)
     testing_stream.reset()
 
   def test_vmap(self):
     vmap_fun1 = api.vmap(fun1)
     vargs = onp.array([4., 5.])
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 { lambda  ; a.
   let b = mul a 2.0
       c = id_print[ output_stream=TestingOutputStream
@@ -270,13 +286,12 @@ class HostCallbackTest(jtu.JaxTestCase):
   in (g,) }""", str(api.make_jaxpr(vmap_fun1)(vargs)))
 
     res_vmap = vmap_fun1(vargs)
-    self.assertMultiLineStrippedEqual("""
+    self.assertMultiLineStrippedEqual(
+        """
 (DeviceArray([ 8., 10.], dtype=float32),)  {'what': 'a * 2', 'transforms': ('batch',)}
 (DeviceArray([24., 30.], dtype=float32),)  {'what': 'y * 3', 'transforms': ('batch',)}
-     """,
-                                      testing_stream.output)
+     """, testing_stream.output)
     testing_stream.reset()
-
 
   def test_pmap(self):
     self.helper_set_devices(4)
@@ -286,5 +301,5 @@ class HostCallbackTest(jtu.JaxTestCase):
     res = pmap_fun1(vargs)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   absltest.main()

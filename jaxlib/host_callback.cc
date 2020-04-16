@@ -21,11 +21,13 @@ limitations under the License.
 #include "include/pybind11/stl.h"
 #include "include/pybind11/pytypes.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/msgpack.hpp"
+#include "llvm/BinaryFormat/MsgPackReader.h"
+#include "llvm/BinaryFormat/MsgPackDocument.h"
 
 namespace {
 
 namespace py = pybind11;
+namespace msgpack = llvm::msgpack;
 
 // The Python code will query the version of the metadata, and
 // it can abort or encode specially for backwards compatibility.
@@ -45,6 +47,7 @@ enum ElementType {
   I8, I16, I32, I64,
   U8, U16, U32, U64,
   F16, F32, F64,
+  BF16
 };
 
 struct TypeAndShape {
@@ -61,8 +64,38 @@ struct PrintMetadata {
   std::vector<TypeAndShape> args_type_and_shape;
 };
 
+size_t ParseInteger(msgpack::Reader &reader, const std::string &what) {
+  msgpack::Object obj;
+  if (!reader.read(obj) ||
+      (obj.Kind != msgpack::Type::UInt && obj.Kind != msgpack::Type::Int)) {
+    throw std::invalid_argument(absl::StrFormat("Cannot find integer %s", what));
+  }
+  size_t res = obj.Kind == msgpack::Type::Int ? obj.Int : obj.UInt;
+  //std::cout << "Parsed integer (" << what << ") = " << obj.UInt << std::endl;
+  return res;
+}
+
+std::string ParseString(msgpack::Reader &reader, const std::string &what) {
+  msgpack::Object obj;
+  if (!reader.read(obj) || obj.Kind != msgpack::Type::String) {
+    throw std::invalid_argument(absl::StrFormat("Cannot find string %s", what));
+  }
+  auto res = std::string(reinterpret_cast<const char*>(obj.Raw.data()), obj.Raw.size());
+  //std::cout << "Parsed string (" << what << ") = " << res << std::endl;
+  return res;
+}
+
+size_t ParseArrayLength(msgpack::Reader &reader, const std::string &what) {
+  msgpack::Object obj;
+  if (!reader.read(obj) || obj.Kind != msgpack::Type::Array) {
+    throw std::invalid_argument(absl::StrFormat("Cannot find array %s", what));
+  }
+  //std::cout << "Parsed array length (" << what << ") = " << obj.Length << std::endl;
+  return obj.Length;
+}
+
 // Converts a type descriptor and shape to TypeAndShape.
-TypeAndShape ParseTypeDescriptor(const std::tuple<std::string, Shape>& type_and_shape) {
+TypeAndShape ParseTypeDescriptor(msgpack::Reader &reader) {
   static auto* types = new absl::flat_hash_map<std::pair<char, int>, ElementType>({
       {{'f', 2}, ElementType::F16},
       {{'f', 4}, ElementType::F32},
@@ -74,9 +107,21 @@ TypeAndShape ParseTypeDescriptor(const std::tuple<std::string, Shape>& type_and_
       {{'u', 1}, ElementType::U8},
       {{'u', 2}, ElementType::U16},
       {{'u', 4}, ElementType::U32},
+      {{'V', 2}, ElementType::BF16},
       //{{'u', 8}, ElementType::U64},
   });
-  std::string type_descriptor = std::get<0>(type_and_shape);
+
+  int tuple_size = ParseArrayLength(reader, "tuple");
+  if (tuple_size != 2) {
+    throw std::invalid_argument("Expected tuple of size 2");
+  }
+  std::string type_descriptor = ParseString(reader, "type_descriptor");
+  int shape_length = ParseArrayLength(reader, "shape");
+  std::vector<int> shape;
+  for (int j = 0; j < shape_length; ++j) {
+    shape.push_back(static_cast<int>(ParseInteger(reader, "shape_dim")));
+  }
+
   size_t element_size;
   if (!absl::SimpleAtoi(type_descriptor.substr(1), &element_size)) {
     throw std::invalid_argument(
@@ -88,8 +133,9 @@ TypeAndShape ParseTypeDescriptor(const std::tuple<std::string, Shape>& type_and_
     throw std::invalid_argument(
         absl::StrFormat("Unsupported type descriptor %s", type_descriptor));
   }
-  return TypeAndShape{it->second, element_size, std::get<1>(type_and_shape)};
+  return TypeAndShape{it->second, element_size, shape};
 }
+
 
 // Parses PrintMetadata msgpack-encoded by Python.
 // The metadata has the following format:
@@ -99,21 +145,18 @@ TypeAndShape ParseTypeDescriptor(const std::tuple<std::string, Shape>& type_and_
 //         shape: Tuple[int, ...]) ]
 //
 PrintMetadata ParsePrintMetadata(std::string bytes) {
+  PrintMetadata meta;
+
   const char* buffer = bytes.data();
   const size_t len = bytes.size();
-  msgpack::object_handle oh; // deserialized object is valid while handle is alive.
+  llvm::StringRef buffer_s(buffer, len);
+  msgpack::Reader mp_reader(buffer_s);
 
-  PrintMetadata meta;
-  size_t offset = 0;
-  unpack(oh, buffer, len, offset);  // Updates oh and offset
-  meta.preamble = oh.get().as<std::string>();
-  unpack(oh, buffer, len, offset);
-  meta.separator = oh.get().as<std::string>();
-
-  unpack(oh, buffer, len, offset);
-  auto res = oh.get().as<std::vector<std::tuple<std::string, Shape>>>();
-  for (auto const &t_and_s : res) {
-    meta.args_type_and_shape.push_back(ParseTypeDescriptor(t_and_s));
+  meta.preamble = ParseString(mp_reader, "preamble");
+  meta.separator = ParseString(mp_reader, "separator");
+  int nr_args = ParseArrayLength(mp_reader, "args");
+  for (int i = 0; i < nr_args; ++i) {
+    meta.args_type_and_shape.push_back(ParseTypeDescriptor(mp_reader));
   }
   return meta;
 }
@@ -194,6 +237,7 @@ void Printer::EmitCurrentElement() {
       output_ << *reinterpret_cast<const uint64_t*>(current_ptr_);
       break;
     case F16:
+    case BF16:
       output_ << *reinterpret_cast<const uint16_t*>(current_ptr_); // TODO(float16)
       break;
     case F32:

@@ -20,7 +20,7 @@ import functools
 import itertools
 import operator
 import string
-from typing import (Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Union,
+from typing import (Any, Callable, List, NamedTuple, Optional, Sequence, Union,
                     Tuple, Type)
 import warnings
 
