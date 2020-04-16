@@ -16,9 +16,13 @@
 import numpy as np
 import scipy.stats as osp_stats
 
-from ... import lax
-from ...numpy import lax_numpy as jnp
-from ..special import gammaln, xlogy
+from jax import lax
+from jax.numpy import lax_numpy as jnp
+from jax.scipy import special
+from jax.scipy.stats._freezing import Freezer, _required
+
+
+freeze = Freezer(__name__.split(".")[-1], alpha=_required)
 
 
 def _is_simplex(x):
@@ -26,17 +30,25 @@ def _is_simplex(x):
     return jnp.all(x > 0, axis=-1) & (x_sum <= 1) & (x_sum > 1 - 1e-6)
 
 
+@freeze.wrap
 @jnp._wraps(osp_stats.dirichlet.logpdf, update_doc=False)
 def logpdf(x, alpha):
     args = (np.ones((0,), lax.dtype(x)), np.ones((1,), lax.dtype(alpha)))
     to_dtype = lax.dtype(osp_stats.dirichlet.logpdf(*args))
     x, alpha = [lax.convert_element_type(arg, to_dtype) for arg in (x, alpha)]
     one = jnp._constant_like(x, 1)
-    normalize_term = jnp.sum(gammaln(alpha), axis=-1) - gammaln(jnp.sum(alpha, axis=-1))
-    log_probs = lax.sub(jnp.sum(xlogy(lax.sub(alpha, one), x), axis=-1), normalize_term)
+    normalize_term = (
+        jnp.sum(special.gammaln(alpha), axis=-1) -
+        special.gammaln(jnp.sum(alpha, axis=-1))
+    )
+    log_probs = lax.sub(
+        jnp.sum(special.xlogy(lax.sub(alpha, one), x), axis=-1),
+        normalize_term
+    )
     return jnp.where(_is_simplex(x), log_probs, -jnp.inf)
 
 
+@freeze.wrap
 @jnp._wraps(osp_stats.dirichlet.pdf, update_doc=False)
 def pdf(x, alpha):
   return lax.exp(logpdf(x, alpha))
