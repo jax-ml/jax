@@ -1096,7 +1096,10 @@ class _JaxprContext(object):
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
 
-  Specifically it checks that all variabled used are previously defined.
+  Specifically, check that:
+  - variables that are read are bound beforehand
+  - variables are typed equally throughout a jaxpr
+  - variable type annotations are compatible with their binding expression
   """
   ctx = _JaxprContext(jaxpr)
   read = ctx.read_env
