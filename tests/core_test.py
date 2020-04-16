@@ -313,14 +313,27 @@ class CoreTest(jtu.JaxTestCase):
     def f(x):
       return np.sin(x) + np.cos(x)
 
-    jaxpr = make_jaxpr(f)(1.).jaxpr
+    def new_jaxpr():
+      return make_jaxpr(f)(1.).jaxpr
 
+    # jaxpr is:
+    #
+    # { lambda  ; a.
+    #   let b = sin a
+    #       c = cos a
+    #       d = add b c
+    #   in (d,) }
+    #
+    # NB: eqns[0].outvars[0] and eqns[2].invars[0] are both 'b'
+
+    jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(2)   # int, not float!
     jtu.check_raises_regexp(
         lambda: core.check_jaxpr(jaxpr),
         TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
                     "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
 
+    jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(np.ones((2, 3)))
     jtu.check_raises_regexp(
         lambda: core.check_jaxpr(jaxpr),
