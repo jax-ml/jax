@@ -502,7 +502,7 @@ logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 def rint(x):
   dtype = _dtype(x)
   if issubdtype(dtype, integer):
-    return x
+    return lax.convert_element_type(x, float_)
   if issubdtype(dtype, complexfloating):
     return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
   return _round_to_nearest_even(x)
