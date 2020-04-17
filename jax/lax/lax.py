@@ -275,6 +275,7 @@ def bitwise_xor(x: Array, y: Array) -> Array:
   return xor_p.bind(x, y)
 
 def population_count(x: Array) -> Array:
+  r"""Elementwise popcount, count the number of set bits in each element."""
   return population_count_p.bind(x)
 
 def add(x: Array, y: Array) -> Array:
