@@ -3773,7 +3773,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.GetShape(init_value)
   axis_env = xla.AxisEnv(1)  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("reduction_computation")
-  consts = [subc.ParameterWithShape(const) for const in consts]
+  assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [subc.ParameterWithShape(shape), subc.ParameterWithShape(shape)]
   out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
   return subc.Build(out)
