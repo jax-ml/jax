@@ -498,7 +498,8 @@ for func in get_module_functions(np.linalg):
 def lstsq(a, b, rcond=None, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   a, b = _promote_arg_dtypes(a, b)
-  dtype = a.dtype
+  if a.shape[0] != b.shape[0]:
+    raise ValueError("Leading dimensions of input arrays must match")
   b_ndim = b.ndim
   if b_ndim == 1:
     b = b[:, None]
@@ -509,6 +510,7 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
     raise TypeError(
       f"{b_ndim}-dimensional array given. Array must be one or two-dimensional")
   m, n = a.shape
+  dtype = a.dtype
   if rcond is None:
     rcond = np.finfo(dtype).eps * max(n, m)
   elif rcond < 0:
@@ -516,13 +518,16 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   u, s, vt = svd(a, full_matrices=False)
   mask = s >= rcond * s[0]
   rank = mask.sum()
-  s_inv = np.where(mask, 1 / s, 0)
-  x = vt.conj().T @ (u.conj().T @ b * s_inv[:, None])
-  resid = norm(b - a @ x, axis=0) ** 2
-  # To match numpy, we would add the following condition. We don't do
-  # this because it makes lstsq incompatible with jit.
+  safe_s = np.where(mask, s, 1)
+  s_inv = np.where(mask, 1 / safe_s, 0)[:, np.newaxis]
+  uTb = np.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
+  x = np.matmul(vt.conj().T, uTb * s_inv, precision=lax.Precision.HIGHEST)
+  # Numpy returns empty residuals in some cases. We return residuals
   if numpy_resid and (rank < n or m <= n):
-      resid = np.asarray([])
+    resid = np.asarray([])
+  else:
+    b_estimate = np.matmul(a, x, precision=lax.Precision.HIGHEST)
+    resid = norm(b - b_estimate, axis=0) ** 2
   if b_ndim == 1:
     x = x.ravel()
   return x, resid, rank, s
