@@ -3791,7 +3791,7 @@ setattr(DeviceArray, "_unstack", _unstack)
 
 
 # Syntactic sugar for scatter operations.
-class IndexUpdateHelper(object):
+class _IndexUpdateHelper:
   # Note: this docstring will appear as the docstring for the `at` property.
   """Indexable helper object to call indexed update functions.
 
@@ -3800,13 +3800,13 @@ class IndexUpdateHelper(object):
   modificatons.
 
   In particular:
-  - :code:`x = x.at[idx].set(y)` is a pure equivalent of :code:`x[idx] = y`.
-  - :code:`x = x.at[idx].add(y)` is a pure equivalent of :code:`x[idx] += y`.
-  - :code:`x = x.at[idx].mul(y)` is a pure equivalent of :code:`x[idx] *= y`.
-  - :code:`x = x.at[idx].min(y)` is a pure equivalent of
-      :code:`x[idx] = minimum(x[idx], y)`.
-  - :code:`x = x.at[idx].max(y)` is a pure equivalent of
-      :code:`x[idx] = maximum(x[idx], y)`.
+  - ``x = x.at[idx].set(y)`` is a pure equivalent of ``x[idx] = y``.
+  - ``x = x.at[idx].add(y)`` is a pure equivalent of ``x[idx] += y``.
+  - ``x = x.at[idx].mul(y)`` is a pure equivalent of ``x[idx] *= y``.
+  - ``x = x.at[idx].min(y)`` is a pure equivalent of
+      ``x[idx] = minimum(x[idx], y)``.
+  - ``x = x.at[idx].max(y)`` is a pure equivalent of
+      ``x[idx] = maximum(x[idx], y)``.
   """
   __slots__ = ("array",)
 
@@ -3814,13 +3814,13 @@ class IndexUpdateHelper(object):
     self.array = array
 
   def __getitem__(self, index):
-    return IndexUpdateRef(self.array, index)
+    return _IndexUpdateRef(self.array, index)
 
   def __repr__(self):
-    return f"IndexUpdateHelper({repr(self.array)})"
+    return f"_IndexUpdateHelper({repr(self.array)})"
 
 
-class IndexUpdateRef(object):
+class _IndexUpdateRef:
   """Helper object to call indexed update functions for an (advanced) index.
 
   This object references a source array and a specific indexer into that array.
@@ -3834,69 +3834,69 @@ class IndexUpdateRef(object):
     self.index = index
 
   def __repr__(self):
-    return f"IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
+    return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
 
   def set(self, values):
-    """Pure equivalent of :code:`x[idx] = y`.
+    """Pure equivalent of ``x[idx] = y``.
 
-    :code:`x.at[idx].set(y)` is syntactic sugar for
-    :code:`jax.ops.index_update(x, jax.ops.index[idx], y)`, and
-    returns the value of `x` that would result from the NumPy-style
-    :mod:`indexed assignment <numpy.doc.indexing>` :code:`x[idx] = y`.
+    ``x.at[idx].set(y)`` is syntactic sugar for
+    ``jax.ops.index_update(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] = y``.
 
     See :mod:`jax.ops` for details.
     """
     return ops.index_update(self.array, self.index, values)
 
   def add(self, values):
-    """Pure equivalent of :code:`x[idx] += y`.
+    """Pure equivalent of ``x[idx] += y``.
 
-    :code:`x.at[idx].add(y)` is syntactic sugar for
-    :code:`jax.ops.index_add(x, jax.ops.index[idx], y)`, and
-    returns the value of `x` that would result from the NumPy-style
-    :mod:`indexed assignment <numpy.doc.indexing>` :code:`x[idx] += y`.
+    ``x.at[idx].add(y)`` is syntactic sugar for
+    ``jax.ops.index_add(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] += y``.
 
     See :mod:`jax.ops` for details.
     """
     return ops.index_add(self.array, self.index, values)
 
   def mul(self, values):
-    """Pure equivalent of :code:`x[idx] += y`.
+    """Pure equivalent of ``x[idx] += y``.
 
-    :code:`x.at[idx].mul(y)` is syntactic sugar for
-    :code:`jax.ops.index_mul(x, jax.ops.index[idx], y)`, and
-    returns the value of `x` that would result from the NumPy-style
-    :mod:`indexed assignment <numpy.doc.indexing>` :code:`x[idx] *= y`.
+    ``x.at[idx].mul(y)`` is syntactic sugar for
+    ``jax.ops.index_mul(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] *= y``.
 
     See :mod:`jax.ops` for details.
     """
     return ops.index_mul(self.array, self.index, values)
 
   def min(self, values):
-    """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
+    """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
-    :code:`x.at[idx].min(y)` is syntactic sugar for
-    :code:`jax.ops.index_min(x, jax.ops.index[idx], y)`, and
-    returns the value of `x` that would result from the NumPy-style
-    :mod:`indexed assignment <numpy.doc.indexing>`
-    :code:`x[idx] = minimum(x[idx], y)`.
+    ``x.at[idx].min(y)`` is syntactic sugar for
+    ``jax.ops.index_min(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>`
+    ``x[idx] = minimum(x[idx], y)``.
 
     See :mod:`jax.ops` for details.
     """
     return ops.index_min(self.array, self.index, values)
 
   def max(self, values):
-    """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
+    """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
-    :code:`x.at[idx].max(y)` is syntactic sugar for
-    :code:`jax.ops.index_max(x, jax.ops.index[idx], y)`, and
-    returns the value of `x` that would result from the NumPy-style
-    :mod:`indexed assignment <numpy.doc.indexing>`
-    :code:`x[idx] = maximum(x[idx], y)`.
+    ``x.at[idx].max(y)`` is syntactic sugar for
+    ``jax.ops.index_max(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>`
+    ``x[idx] = maximum(x[idx], y)``.
 
     See :mod:`jax.ops` for details.
     """
     return ops.index_max(self.array, self.index, values)
 
-setattr(DeviceArray, "at", property(IndexUpdateHelper))
-setattr(ShapedArray, "at", core.aval_property(IndexUpdateHelper))
+setattr(DeviceArray, "at", property(_IndexUpdateHelper))
+setattr(ShapedArray, "at", core.aval_property(_IndexUpdateHelper))
