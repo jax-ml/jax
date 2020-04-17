@@ -50,6 +50,7 @@ try:
 except:
   tpu_client = None
 from jaxlib import xla_client
+from jaxlib import xla_extension as xe
 from jaxlib import lapack
 
 from jaxlib import pytree

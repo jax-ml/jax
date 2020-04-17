@@ -180,9 +180,10 @@ def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
   rank = len(shape)
   def _broadcast(x):
     ndims = c.GetShape(x).rank()
-    return c.BroadcastInDim(x, shape, tuple(range(rank - ndims, rank)))
+    return xops.BroadcastInDim(x, shape, tuple(range(rank - ndims, rank)))
   return cuda_prng.threefry2x32(
-      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+      xla_bridge.computation_builder_shim(c),
+      (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True

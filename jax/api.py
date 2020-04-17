@@ -48,6 +48,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                    split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
+from .lib import xla_client as xc
 # Unused imports to be exported
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
@@ -320,12 +321,12 @@ def xla_computation(fun: Callable,
                                          stage_out=True)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
-    xla_consts = map(c.Constant, consts)
+    xla_consts = map(partial(xb.constant, c), consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
-    return c.Build(c.Tuple(*outs))
+    return c.Build(xc.ops.Tuple(c, outs))
   return computation_maker
 
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
