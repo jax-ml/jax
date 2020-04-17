@@ -169,7 +169,7 @@ def _solve(a, b, sym_pos, lower):
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
-  factors = lax.stop_gradient(cho_factor)(a, lower=lower)
+  factors = cho_factor(lax.stop_gradient(a), lower=lower)
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: np_linalg._matvec_multiply(a, x),

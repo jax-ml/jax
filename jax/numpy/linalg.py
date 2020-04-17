@@ -350,7 +350,7 @@ def solve(a, b):
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
-  lu, pivots = lax.stop_gradient(lax_linalg.lu)(a)
+  lu, pivots = lax_linalg.lu(lax.stop_gradient(a))
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: _matvec_multiply(a, x),
