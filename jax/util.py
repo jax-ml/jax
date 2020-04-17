@@ -16,25 +16,24 @@
 import functools
 import itertools as it
 import types
-from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as onp
 
 
-def safe_zip(*args) -> List:
+def safe_zip(*args):
   n = len(args[0])
   for arg in args[1:]:
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
   return list(zip(*args))
 
-def safe_map(f, *args) -> List:
+def safe_map(f, *args):
   args = list(map(list, args))
   n = len(args[0])
   for arg in args[1:]:
     assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
   return list(map(f, *args))
 
-def unzip2(xys) -> Tuple[Tuple, Tuple]:
+def unzip2(xys):
   xs = []
   ys = []
   for x, y in xys:
@@ -42,7 +41,7 @@ def unzip2(xys) -> Tuple[Tuple, Tuple]:
     ys.append(y)
   return tuple(xs), tuple(ys)
 
-def unzip3(xyzs) -> Tuple[Tuple, Tuple, Tuple]:
+def unzip3(xyzs):
   xs = []
   ys = []
   zs = []
@@ -68,7 +67,7 @@ def split_list(args, ns):
   lists.append(args)
   return lists
 
-def split_dict(dct: Dict, names: Sequence[str]) -> Sequence:
+def split_dict(dct, names):
   dct = dict(dct)
   lst = [dct.pop(name) for name in names]
   assert not dct

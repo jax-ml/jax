@@ -195,23 +195,48 @@ pybind_extension(
     ],
 )
 
-pybind_extension(
-    name = "host_callback",
+cc_library(
+    name = "host_callback_cc",
     srcs = ["host_callback.cc"],
+    hdrs = ["host_callback.h"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
-        "-Iexternal/com_github_msgpack_c/include",
     ],
     features = ["-use_header_modules"],
-    module_name = "host_callback",
     deps = [
-        ":kernel_pybind11_helpers",
-        #"@com_github_msgpack_c//:msgpack_c_lib",
-        "@llvm-project//llvm:binary_format",
+        ":kernel_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@llvm-project//llvm:binary_format",
+    ],
+)
+
+# TODO(necula): this target does not run in OSS
+cc_test(
+    name = "host_callback_cc_test",
+    size = "small",
+    srcs = ["host_callback_cc_test.cc"],
+    deps = [
+        ":host_callback_cc",
+        "//testing/base/public:gunit_main",
+        "@com_google_absl//absl/base:core_headers",
+    ],
+)
+
+pybind_extension(
+    name = "host_callback_py",
+    srcs = ["host_callback_py.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "host_callback_py",
+    deps = [
+        ":host_callback_cc",
+        ":kernel_pybind11_helpers",
         "@pybind11",
     ],
 )

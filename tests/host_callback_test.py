@@ -16,43 +16,20 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import collections
-import functools
-from functools import partial, reduce
+
 import os
-import re
-import time
-from typing import Callable
-import unittest
-import warnings
-import weakref
 from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import numpy as onp
-import six
 
-if six.PY3:
-  import concurrent.futures
-
-from absl.testing import parameterized
-
-import jax
-import jax.numpy as np
-jnp = np
-from jax import api, lax, lax_reference
-from jax import core
-
+from jax import api
+from jax import numpy as np
 from jax import test_util as jtu
-from jax.experimental import host_callback as hcb
-from jax.lib import xla_bridge
-
-from benchmarks import benchmark
-
 from jax.config import config
 
-from jax.scipy.special import logsumexp
+from jax.experimental import host_callback as hcb
+from jax.lib import xla_bridge
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -80,7 +57,7 @@ testing_stream = _TestingOutputStream()
 
 def fun1(a):
   y = hcb.id_print(a * 2., what="a * 2", output_stream=testing_stream)
-  y = hcb.id_print(y * 3., what="y * 3", output_stream=testing_stream, tie_in=y)
+  y = hcb.id_print(y * 3., what="y * 3", output_stream=testing_stream, result=y)
   return y**4  # Some computation to make the gradient interesting
 
 
@@ -103,8 +80,10 @@ class HostCallbackTest(jtu.JaxTestCase):
     return api.devices()
 
   def helper_set_hlo_dump(self):
-    from jax import anecula_utils
-    anecula_utils.helper_set_hlo_dump()
+    flags_str = os.getenv("XLA_FLAGS", "")
+    os.environ["XLA_FLAGS"] = f"{flags_str} --xla_dump_to=/tmp/xla_dump"
+    # Clear any cached backends so new CPU backend will pick up the env var.
+    xla_bridge.get_backend.cache_clear()
 
   def test_with_tuple_result(self):
 
@@ -148,7 +127,6 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_jit_simple(self):
-    self.helper_set_hlo_dump()
     jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
         2. * x, what="here", output_stream=testing_stream))
     self.assertMultiLineStrippedEqual(
@@ -178,6 +156,8 @@ class HostCallbackTest(jtu.JaxTestCase):
           for shape in [(), (2,), (2, 3), (2, 3, 4)]
           for dtype in jtu.supported_dtypes()))
   def test_jit_types(self, nr_args=1, dtype=np.bfloat16, shape=()):
+    if dtype in (np.complex64, np.complex128, np.bool_):
+      raise SkipTest(f"id_print jit not implemented for {dtype}.")
     self.helper_set_hlo_dump()
     args = [np.arange(np.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
@@ -217,9 +197,10 @@ class HostCallbackTest(jtu.JaxTestCase):
       n = pow g 3.0
       o = mul 4.0 n
       p = mul m o
-  in (h, p) }""", str(api.make_jaxpr(jvp_fun1)(5., 0.1)))
+  in (h, p) }""", str(api.make_jaxpr(jvp_fun1)(np.float32(5.),
+                                               np.float32(0.1))))
 
-    res_primals, res_tangents = jvp_fun1(5., .1)
+    res_primals, res_tangents = jvp_fun1(np.float32(5.), np.float32(0.1))
     self.assertMultiLineStrippedEqual(
         """
 (DeviceArray(10., dtype=float32),)  {'what': 'a * 2'}
@@ -257,7 +238,7 @@ class HostCallbackTest(jtu.JaxTestCase):
   """, testing_stream.output)
     testing_stream.reset()
 
-    res_grad = grad_fun1(5.)
+    res_grad = grad_fun1(np.float32(5.))
     self.assertMultiLineStrippedEqual(
         """
 (DeviceArray(10., dtype=float32),)  {'what': 'a * 2'}
@@ -269,7 +250,7 @@ class HostCallbackTest(jtu.JaxTestCase):
 
   def test_vmap(self):
     vmap_fun1 = api.vmap(fun1)
-    vargs = onp.array([4., 5.])
+    vargs = np.array([np.float32(4.), np.float32(5.)])
     self.assertMultiLineStrippedEqual(
         """
 { lambda  ; a.

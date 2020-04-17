@@ -13,20 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/host_callback.h"
+
+#include <cstdint>
+#import <iostream>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
-#include "include/pybind11/pytypes.h"
-#include "jaxlib/kernel_pybind11_helpers.h"
+#include "jaxlib/kernel_helpers.h"
 #include "llvm/BinaryFormat/MsgPackReader.h"
-#include "llvm/BinaryFormat/MsgPackDocument.h"
+
+namespace jax {
 
 namespace {
 
-namespace py = pybind11;
 namespace msgpack = llvm::msgpack;
 
 // The Python code will query the version of the metadata, and
@@ -37,41 +39,15 @@ namespace msgpack = llvm::msgpack;
 // the end while being compatible with the library.
 int constexpr kPrintMetadataVersion = 1;
 
-int GetPrintMetadataVersion() {
-  return kPrintMetadataVersion;
-}
-
-// Metadata for id_print runtime functions.
-typedef std::vector<int> Shape;
-enum ElementType {
-  I8, I16, I32, I64,
-  U8, U16, U32, U64,
-  F16, F32, F64,
-  BF16
-};
-
-struct TypeAndShape {
-  ElementType element_type;
-  size_t element_size;
-  Shape shape;
-};
-struct PrintMetadata {
-  // The preamble to be printed before the arguments.
-  std::string preamble;
-  // The separator to be printed between the arguments.
-  std::string separator;
-  // Types and shapes for the arguments to be printed.
-  std::vector<TypeAndShape> args_type_and_shape;
-};
-
 size_t ParseInteger(msgpack::Reader &reader, const std::string &what) {
   msgpack::Object obj;
   if (!reader.read(obj) ||
       (obj.Kind != msgpack::Type::UInt && obj.Kind != msgpack::Type::Int)) {
-    throw std::invalid_argument(absl::StrFormat("Cannot find integer %s", what));
+    throw std::invalid_argument(
+        absl::StrFormat("Cannot find integer %s", what));
   }
   size_t res = obj.Kind == msgpack::Type::Int ? obj.Int : obj.UInt;
-  //std::cout << "Parsed integer (" << what << ") = " << obj.UInt << std::endl;
+  // std::cout << "Parsed integer (" << what << ") = " << obj.UInt << std::endl;
   return res;
 }
 
@@ -80,8 +56,9 @@ std::string ParseString(msgpack::Reader &reader, const std::string &what) {
   if (!reader.read(obj) || obj.Kind != msgpack::Type::String) {
     throw std::invalid_argument(absl::StrFormat("Cannot find string %s", what));
   }
-  auto res = std::string(reinterpret_cast<const char*>(obj.Raw.data()), obj.Raw.size());
-  //std::cout << "Parsed string (" << what << ") = " << res << std::endl;
+  auto res = std::string(reinterpret_cast<const char *>(obj.Raw.data()),
+                         obj.Raw.size());
+  // std::cout << "Parsed string (" << what << ") = " << res << std::endl;
   return res;
 }
 
@@ -90,26 +67,28 @@ size_t ParseArrayLength(msgpack::Reader &reader, const std::string &what) {
   if (!reader.read(obj) || obj.Kind != msgpack::Type::Array) {
     throw std::invalid_argument(absl::StrFormat("Cannot find array %s", what));
   }
-  //std::cout << "Parsed array length (" << what << ") = " << obj.Length << std::endl;
+  // std::cout << "Parsed array length (" << what << ") = "
+  //   << obj.Length << std::endl;
   return obj.Length;
 }
 
 // Converts a type descriptor and shape to TypeAndShape.
 TypeAndShape ParseTypeDescriptor(msgpack::Reader &reader) {
-  static auto* types = new absl::flat_hash_map<std::pair<char, int>, ElementType>({
-      {{'f', 2}, ElementType::F16},
-      {{'f', 4}, ElementType::F32},
-      {{'f', 8}, ElementType::F64},
-      {{'i', 1}, ElementType::I8},
-      {{'i', 2}, ElementType::I16},
-      {{'i', 4}, ElementType::I32},
-      {{'i', 8}, ElementType::I64},
-      {{'u', 1}, ElementType::U8},
-      {{'u', 2}, ElementType::U16},
-      {{'u', 4}, ElementType::U32},
-      {{'V', 2}, ElementType::BF16},
-      //{{'u', 8}, ElementType::U64},
-  });
+  static auto *types =
+      new absl::flat_hash_map<std::pair<char, int>, ElementType>({
+          {{'f', 2}, ElementType::F16},
+          {{'f', 4}, ElementType::F32},
+          {{'f', 8}, ElementType::F64},
+          {{'i', 1}, ElementType::I8},
+          {{'i', 2}, ElementType::I16},
+          {{'i', 4}, ElementType::I32},
+          {{'i', 8}, ElementType::I64},
+          {{'u', 1}, ElementType::U8},
+          {{'u', 2}, ElementType::U16},
+          {{'u', 4}, ElementType::U32},
+          {{'u', 8}, ElementType::U64},
+          {{'V', 2}, ElementType::BF16},
+      });
 
   int tuple_size = ParseArrayLength(reader, "tuple");
   if (tuple_size != 2) {
@@ -117,15 +96,15 @@ TypeAndShape ParseTypeDescriptor(msgpack::Reader &reader) {
   }
   std::string type_descriptor = ParseString(reader, "type_descriptor");
   int shape_length = ParseArrayLength(reader, "shape");
-  std::vector<int> shape;
+  std::vector<int> shape(shape_length);
   for (int j = 0; j < shape_length; ++j) {
-    shape.push_back(static_cast<int>(ParseInteger(reader, "shape_dim")));
+    shape[j] = static_cast<int>(ParseInteger(reader, "shape_dim"));
   }
 
   size_t element_size;
   if (!absl::SimpleAtoi(type_descriptor.substr(1), &element_size)) {
-    throw std::invalid_argument(
-        absl::StrFormat("Unsupported type descriptor %s (no size found)", type_descriptor));
+    throw std::invalid_argument(absl::StrFormat(
+        "Unsupported type descriptor %s (no size found)", type_descriptor));
   }
 
   auto it = types->find({type_descriptor.at(0), element_size});
@@ -135,7 +114,6 @@ TypeAndShape ParseTypeDescriptor(msgpack::Reader &reader) {
   }
   return TypeAndShape{it->second, element_size, shape};
 }
-
 
 // Parses PrintMetadata msgpack-encoded by Python.
 // The metadata has the following format:
@@ -147,7 +125,7 @@ TypeAndShape ParseTypeDescriptor(msgpack::Reader &reader) {
 PrintMetadata ParsePrintMetadata(std::string bytes) {
   PrintMetadata meta;
 
-  const char* buffer = bytes.data();
+  const char *buffer = bytes.data();
   const size_t len = bytes.size();
   llvm::StringRef buffer_s(buffer, len);
   msgpack::Reader mp_reader(buffer_s);
@@ -168,10 +146,12 @@ int constexpr kPrecision = 2;  // Decimal digits
 
 // TODO(necula): add unit tests
 class Printer {
-public:
-  Printer(std::ostringstream &output, // TODO: pointer
-          const TypeAndShape &type_and_shape, const uint8_t* data) :
-        output_{output}, type_and_shape_(type_and_shape), current_ptr_{data},
+ public:
+  Printer(std::ostringstream &output,  // TODO: pointer
+          const TypeAndShape &type_and_shape, const uint8_t *data)
+      : output_{output},
+        type_and_shape_(type_and_shape),
+        current_ptr_{data},
         shape_{type_and_shape.shape},
         element_size_{type_and_shape.element_size} {
     ndims_ = type_and_shape.shape.size();
@@ -188,10 +168,10 @@ public:
 
   void EmitArray();
 
-private:
+ private:
   std::ostringstream &output_;
   TypeAndShape type_and_shape_;
-  const uint8_t* current_ptr_;
+  const uint8_t *current_ptr_;
 
   Shape shape_;  // TODO(add accessors for these?)
 
@@ -213,38 +193,38 @@ private:
 void Printer::EmitCurrentElement() {
   switch (type_and_shape_.element_type) {
     case I8:
-      output_ << *reinterpret_cast<const int8_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const int8_t *>(current_ptr_);
       break;
     case I16:
-      output_ << *reinterpret_cast<const int16_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const int16_t *>(current_ptr_);
       break;
     case I32:
-      output_ << *reinterpret_cast<const int32_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const int32_t *>(current_ptr_);
       break;
     case I64:
-      output_ << *reinterpret_cast<const int64_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const int64_t *>(current_ptr_);
       break;
     case U8:
-      output_ << *reinterpret_cast<const uint8_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const uint8_t *>(current_ptr_);
       break;
     case U16:
-      output_ << *reinterpret_cast<const uint16_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const uint16_t *>(current_ptr_);
       break;
     case U32:
-      output_ << *reinterpret_cast<const uint32_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const uint32_t *>(current_ptr_);
       break;
     case U64:
-      output_ << *reinterpret_cast<const uint64_t*>(current_ptr_);
+      output_ << *reinterpret_cast<const uint64_t *>(current_ptr_);
       break;
     case F16:
-    case BF16:
-      output_ << *reinterpret_cast<const uint16_t*>(current_ptr_); // TODO(float16)
+    case BF16:  // TODO(float16)
+      output_ << *reinterpret_cast<const uint16_t *>(current_ptr_);
       break;
     case F32:
-      output_ << *reinterpret_cast<const float*>(current_ptr_);
+      output_ << *reinterpret_cast<const float *>(current_ptr_);
       break;
     case F64:
-      output_ << *reinterpret_cast<const double*>(current_ptr_);
+      output_ << *reinterpret_cast<const double *>(current_ptr_);
       break;
   }
 }
@@ -254,23 +234,23 @@ void Printer::EmitCurrentElement() {
 // Assumes current_index[ndims - 1] = 0, current_ptr points to first
 // element in the dimension to be printed.
 void Printer::EmitInnermostDimension() {
-  // Emit ndim spaces and [. As many [ as there are trailing 0s in current_index.
+  // Emit ndim spaces and [, as many [ as trailing 0s in current_index.
   assert(current_index_[ndims_ - 1] == 0);
   int count_start_spaces = ndims_ - 1;
-  while (count_start_spaces >= 1 && current_index_[count_start_spaces - 1] == 0) {
+  while (count_start_spaces >= 1 &&
+         current_index_[count_start_spaces - 1] == 0) {
     --count_start_spaces;
   }
   for (int i = 0; i < ndims_; ++i) {
     output_ << (i < count_start_spaces ? ' ' : '[');
   }
   // Now emit the elements
-  for (int idx = 0; idx < shape_[ndims_ - 1]; ++idx, current_ptr_ += element_size_) {
+  for (int idx = 0; idx < shape_[ndims_ - 1];
+       ++idx, current_ptr_ += element_size_) {
     EmitCurrentElement();
-    if (idx < shape_[ndims_ - 1] - 1)
-      output_ << ' ';
+    if (idx < shape_[ndims_ - 1] - 1) output_ << ' ';
     if (total_size_ > kSummarizeThreshold &&
-        shape_[ndims_ - 1] > 2 * kSideElements &&
-        idx == kSideElements - 1) {
+        shape_[ndims_ - 1] > 2 * kSideElements && idx == kSideElements - 1) {
       int skip_indices = shape_[ndims_ - 1] - kSideElements - 1 - idx;
       current_ptr_ += element_size_ * skip_indices;
       idx += skip_indices;
@@ -281,9 +261,7 @@ void Printer::EmitInnermostDimension() {
   current_index_[ndims_ - 1] = shape_[ndims_ - 1] - 1;
   int count_stop_brackets = 0;
   // Emit as many ] as how many inner dimensions have reached the end
-  for (int i = ndims_ - 1;
-       i >= 0 && current_index_[i] == shape_[i] - 1;
-       --i) {
+  for (int i = ndims_ - 1; i >= 0 && current_index_[i] == shape_[i] - 1; --i) {
     ++count_stop_brackets;
     output_ << ']';
   }
@@ -304,13 +282,13 @@ void Printer::EmitArray() {
   }
   while (true) {
     EmitInnermostDimension();
-    assert (current_index_[ndims_ - 1] == shape_[ndims_ - 1] - 1);
+    assert(current_index_[ndims_ - 1] == shape_[ndims_ - 1] - 1);
 
     // Advance to the next innermost dimension
     int dim_to_advance = ndims_ - 1;
-    for( ; dim_to_advance >= 0; --dim_to_advance) {
-      ++ current_index_[dim_to_advance];
-      if(current_index_[dim_to_advance] >= shape_[dim_to_advance]) {
+    for (; dim_to_advance >= 0; --dim_to_advance) {
+      ++current_index_[dim_to_advance];
+      if (current_index_[dim_to_advance] >= shape_[dim_to_advance]) {
         current_index_[dim_to_advance] = 0;
         continue;
       } else {
@@ -318,8 +296,10 @@ void Printer::EmitArray() {
         if (total_size_ > kSummarizeThreshold &&
             current_index_[dim_to_advance] == kSideElements &&
             shape_[dim_to_advance] > 2 * kSideElements) {
-          int skip_indices = shape_[dim_to_advance] - kSideElements - current_index_[dim_to_advance];
-          current_ptr_ += element_size_ * skip_values_[dim_to_advance] * skip_indices;
+          int skip_indices = shape_[dim_to_advance] - kSideElements -
+                             current_index_[dim_to_advance];
+          current_ptr_ +=
+              element_size_ * skip_values_[dim_to_advance] * skip_indices;
           current_index_[dim_to_advance] += skip_indices;
           for (int j = 0; j <= dim_to_advance; ++j) {
             output_ << ' ';
@@ -335,60 +315,51 @@ void Printer::EmitArray() {
   }
 }
 
-void DoPrint(const PrintMetadata &meta, std::vector<const void*> args) {
-  std::ostringstream oss;
-  oss << meta.preamble << "\n";
-  for (int i = 0; i < args.size(); ++i) {
-    const TypeAndShape &arg_type_and_shape = meta.args_type_and_shape[i];
-    oss << absl::StreamFormat("arg[%d] ", i);
-    oss << " shape = (";
-    for (const int &dim : arg_type_and_shape.shape) {
-      oss << dim << ", ";
-    }
-    oss << ")\n";
+}  // namespace
 
-    Printer printer(oss, arg_type_and_shape, reinterpret_cast<const uint8_t*>(args[i]));
-    printer.EmitArray();
-    if (i < args.size() - 1)
-        oss << meta.separator;
+int GetPrintMetadataVersion() { return kPrintMetadataVersion; }
+
+void EmitOneArray(std::ostringstream &output, const PrintMetadata &meta,
+                  int arg_idx, const uint8_t *data) {
+  Printer printer(output, meta.args_type_and_shape[arg_idx], data);
+  printer.EmitArray();
+}
+
+void EmitArrays(std::ostringstream &output, const PrintMetadata &meta,
+                const std::vector<const uint8_t *> &arrays) {
+  output << meta.preamble << "\n";
+  for (int i = 0; i < arrays.size(); ++i) {
+    const TypeAndShape &arg_type_and_shape = meta.args_type_and_shape[i];
+    output << absl::StreamFormat("arg[%d] ", i);
+    output << " shape = (";
+    for (const int &dim : arg_type_and_shape.shape) {
+      output << dim << ", ";
+    }
+    output << ")\n";
+    EmitOneArray(output, meta, i, arrays[i]);
+    if (i < arrays.size() - 1) output << meta.separator;
   }
-  std::cout << oss.str();
 }
 
 // Prints the arguments and returns True.
 //
-void PrintCPU(void* out, const void** args) {
+void PrintCPU(void *out, const void **args) {
   static constexpr int kReservedArgs = 2;
-  const int* opaque_len = static_cast<const int*>(args[0]);
-  const char* opaque = static_cast<const char*>(args[1]);
-  const PrintMetadata& meta = ParsePrintMetadata(std::string(opaque, *opaque_len));
+  const int *opaque_len = static_cast<const int *>(args[0]);
+  const char *opaque = static_cast<const char *>(args[1]);
+  const PrintMetadata &meta =
+      ParsePrintMetadata(std::string(opaque, *opaque_len));
 
-  std::vector<const void*> args_vector(meta.args_type_and_shape.size());
+  std::vector<const uint8_t *> args_vector(meta.args_type_and_shape.size());
   for (int i = 0; i < meta.args_type_and_shape.size(); i++) {
-    args_vector[i] = args[kReservedArgs + i];
+    args_vector[i] = reinterpret_cast<const uint8_t *>(args[kReservedArgs + i]);
   }
-  DoPrint(meta, args_vector);
+  std::ostringstream output;
+  EmitArrays(output, meta, args_vector);
+  std::cout << output.str();
 
   bool *resultPtr = static_cast<bool *>(out);
   *resultPtr = true;
 }
-
-}   // namespace
-
-namespace jax {
-
-// Returns a dictionary with CustomCall functions to register for CPU.
-py::dict CustomCallRegistrations() {
-  py::dict dict;
-  dict["jax_print_cpu"] = EncapsulateFunction(PrintCPU);
-  return dict;
-}
-
-PYBIND11_MODULE(host_callback, m) {
-  m.doc() = "Python bindings for the host_callback runtime";
-  m.def("customcall_registrations", &CustomCallRegistrations);
-  m.def("get_print_metadata_version", &GetPrintMetadataVersion);
-}
-
 
 }  // namespace jax
