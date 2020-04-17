@@ -2626,6 +2626,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+    with self.assertRaises(TypeError):
+      lax.stop_gradient(lambda x: x)
+
   # TODO(mattjj): make this a more systematic test
   def testRemainder(self):
     rng = onp.random.RandomState(0)
