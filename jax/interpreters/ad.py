@@ -96,6 +96,8 @@ def linearize(traceable, *primals, **kwargs):
   out_primals_pvals, out_tangents_pvals = tree_unflatten(out_tree(), out_pvals)
   assert all(out_primal_pval.is_known() for out_primal_pval in out_primals_pvals)
   _, out_primals_consts = unzip2(out_primals_pvals)
+  jaxpr.invars = jaxpr.invars[len(primals):]
+  jaxpr.outvars = jaxpr.outvars[len(out_primals_pvals):]
   if not has_aux:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts
   else:
@@ -108,10 +110,8 @@ def vjp(traceable, primals, has_aux=False):
     out_primals, pvals, jaxpr, consts, aux = linearize(traceable, *primals, has_aux=True)
   def vjp_(*cts):
     cts = tuple(map(ignore_consts, cts, pvals))
-    dummy_primals_and_cts = (core.unit,) * len(cts) + cts
     dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
-    arg_cts = backward_pass(jaxpr, consts, dummy_args, dummy_primals_and_cts)
-    arg_cts = arg_cts[len(primals):]
+    arg_cts = backward_pass(jaxpr, consts, dummy_args, cts)
     return map(instantiate_zeros, primals, arg_cts)
 
   if not has_aux:
