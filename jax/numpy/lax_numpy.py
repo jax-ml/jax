@@ -384,23 +384,23 @@ def ediff1d(ary, to_end=None, to_begin=None):
   if to_begin is None:
     l_begin = 0
   else:
-    # convert to_begin to flat array
-    _to_begin = asarray(to_begin, dtype=dtype_req)
-    if not array_equal(_to_begin, _to_begin):
+    # check if to_begin can be cast to ary dtype
+    if not can_cast(asarray(to_begin), dtype_req):
       raise ValueError("cannot convert 'to_begin' to array with type"
               "'%r' as required for input ary" % dtype_req)
-    to_begin = ravel(_to_begin)
+    # convert to_begin to flat array
+    to_begin = ravel(asarray(to_begin, dtype=dtype_req))
     l_begin = len(to_begin)
   
   if to_end is None:
     l_end = 0
   else:
-    # convert to_end to flat array
-    _to_end = asarray(to_end, dtype=dtype_req)
-    if not array_equal(_to_end, to_end):
+    # check if to_end can be cast to ary dtype
+    if not can_cast(asarray(to_end), dtype_req):
       raise ValueError("cannot convert 'to_end' to array with type"
-              "'%r' as required for inpurt ary" % dtype_req)
-    to_end = ravel(_to_end)
+              "'%r' as required for input ary" % dtype_req)
+    # convert to_end to flat array
+    to_end = ravel(asarray(to_end, dtype=dtype_req))
     l_end = len(to_end)
   
   # calculate difference and copy to_begin and to_end
