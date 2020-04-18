@@ -1083,6 +1083,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_ind={}_inv={}_count={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          return_index, return_inverse, return_counts),
+       "shape": shape, "dtype": dtype,
+       "return_index": return_index, "return_inverse": return_inverse,
+       "return_counts": return_counts, "rng": jtu.rand_default()}
+      for dtype in number_dtypes
+      for shape in all_shapes
+      for return_index in [False, True]
+      for return_inverse in [False, True]
+      for return_counts in [False, True]))
+  def testUnique(self, shape, dtype, return_index, return_inverse, return_counts, rng):
+    args_maker = lambda: [rng(shape, dtype)]
+    onp_fun = lambda x: onp.unique(x, return_index, return_inverse, return_counts)
+    jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+
   def testIssue1233(self):
     '''
     Following numpy test suite from `test_repeat` at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
