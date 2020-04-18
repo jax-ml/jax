@@ -877,7 +877,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(onp_fun, jnp_fun_numpy, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, atol=tol, rtol=tol)
-    # jtu.check_grads(jnp_fun, args_maker(), order=2, atol=tol, rtol=tol)
+
+    if np.finfo(dtype).bits == 64:
+      # Only check grad for first argument:
+      jtu.check_grads(lambda *args: jnp_fun(*args)[0], args_maker(), order=2, atol=1e-2, rtol=1e-2)
 
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.

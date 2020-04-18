@@ -488,27 +488,27 @@ for func in get_module_functions(np.linalg):
 @_wraps(onp.linalg.lstsq, lax_description=textwrap.dedent("""\
     It has two important differences:
 
-    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and shows a deprecation
-       warning. In jax.numpy, the default rcond is `None`.
-    2. In `np.linalg.lstsq` the residuals return an empty list for low-rank solutions.
-       Here, the residuals are returned in all cases, to make the function compatible
-       with jit. The non-jit compatible numpy behavior can be recovered by passing
-       numpy_resid=True.
+    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and warns that in the future
+       the default will be `None`. Here, the default rcond is `None`.
+    2. In `np.linalg.lstsq` the returned residuals are empty for low-rank or over-determined
+       solutions. Here, the residuals are returned in all cases, to make the function
+       compatible with jit. The non-jit compatible numpy behavior can be recovered by
+       passing numpy_resid=True.
     """))
 def lstsq(a, b, rcond=None, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   a, b = _promote_arg_dtypes(a, b)
   if a.shape[0] != b.shape[0]:
     raise ValueError("Leading dimensions of input arrays must match")
-  b_ndim = b.ndim
-  if b_ndim == 1:
+  b_orig_ndim = b.ndim
+  if b_orig_ndim == 1:
     b = b[:, None]
   if a.ndim != 2:
     raise TypeError(
       f"{a.ndim}-dimensional array given. Array must be two-dimensional")
   if b.ndim != 2:
     raise TypeError(
-      f"{b_ndim}-dimensional array given. Array must be one or two-dimensional")
+      f"{b_original_ndim}-dimensional array given. Array must be one or two-dimensional")
   m, n = a.shape
   dtype = a.dtype
   if rcond is None:
@@ -521,13 +521,14 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   safe_s = np.where(mask, s, 1)
   s_inv = np.where(mask, 1 / safe_s, 0)[:, np.newaxis]
   uTb = np.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
-  x = np.matmul(vt.conj().T, uTb * s_inv, precision=lax.Precision.HIGHEST)
-  # Numpy returns empty residuals in some cases. We return residuals
+  x = np.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
+  # Numpy returns empty residuals in some cases. To allow compilation, we
+  # default to returning full residuals in all cases.
   if numpy_resid and (rank < n or m <= n):
     resid = np.asarray([])
   else:
     b_estimate = np.matmul(a, x, precision=lax.Precision.HIGHEST)
     resid = norm(b - b_estimate, axis=0) ** 2
-  if b_ndim == 1:
+  if b_orig_ndim == 1:
     x = x.ravel()
   return x, resid, rank, s
