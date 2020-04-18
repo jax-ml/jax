@@ -13,10 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+// A library of functions needed for the CPU and GPU implementation of
+// host_callback_cpu_py and hostcallback_gpu_py, and also for unit testing.
+
 #include "jaxlib/host_callback.h"
 
 #include <cstdint>
 #import <iostream>
+#include <sstream>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/numbers.h"
@@ -47,7 +51,6 @@ size_t ParseInteger(msgpack::Reader &reader, const std::string &what) {
         absl::StrFormat("Cannot find integer %s", what));
   }
   size_t res = obj.Kind == msgpack::Type::Int ? obj.Int : obj.UInt;
-  // std::cout << "Parsed integer (" << what << ") = " << obj.UInt << std::endl;
   return res;
 }
 
@@ -58,7 +61,6 @@ std::string ParseString(msgpack::Reader &reader, const std::string &what) {
   }
   auto res = std::string(reinterpret_cast<const char *>(obj.Raw.data()),
                          obj.Raw.size());
-  // std::cout << "Parsed string (" << what << ") = " << res << std::endl;
   return res;
 }
 
@@ -67,8 +69,6 @@ size_t ParseArrayLength(msgpack::Reader &reader, const std::string &what) {
   if (!reader.read(obj) || obj.Kind != msgpack::Type::Array) {
     throw std::invalid_argument(absl::StrFormat("Cannot find array %s", what));
   }
-  // std::cout << "Parsed array length (" << what << ") = "
-  //   << obj.Length << std::endl;
   return obj.Length;
 }
 
@@ -115,39 +115,16 @@ TypeAndShape ParseTypeDescriptor(msgpack::Reader &reader) {
   return TypeAndShape{it->second, element_size, shape};
 }
 
-// Parses PrintMetadata msgpack-encoded by Python.
-// The metadata has the following format:
-//     (preamble: str,    # to be printed before the first argument
-//      separator: str,   # to be printed between arguments
-//      [ (type_descriptor: str,
-//         shape: Tuple[int, ...]) ]
-//
-PrintMetadata ParsePrintMetadata(std::string bytes) {
-  PrintMetadata meta;
-
-  const char *buffer = bytes.data();
-  const size_t len = bytes.size();
-  llvm::StringRef buffer_s(buffer, len);
-  msgpack::Reader mp_reader(buffer_s);
-
-  meta.preamble = ParseString(mp_reader, "preamble");
-  meta.separator = ParseString(mp_reader, "separator");
-  int nr_args = ParseArrayLength(mp_reader, "args");
-  for (int i = 0; i < nr_args; ++i) {
-    meta.args_type_and_shape.push_back(ParseTypeDescriptor(mp_reader));
-  }
-  return meta;
-}
 
 // TODO(necula): add parameters for these
 int constexpr kSideElements = 3;
 int constexpr kSummarizeThreshold = 100;
 int constexpr kPrecision = 2;  // Decimal digits
 
-// TODO(necula): add unit tests
+
 class Printer {
  public:
-  Printer(std::ostringstream &output,  // TODO: pointer
+  Printer(std::ostringstream &output,
           const TypeAndShape &type_and_shape, const uint8_t *data)
       : output_{output},
         type_and_shape_(type_and_shape),
@@ -163,7 +140,7 @@ class Printer {
       skip_values_[i] = current_skip;
       current_skip *= shape_[i];
     }
-    total_size_ = current_skip;
+    total_size_ = type_and_shape.ByteSize();
   }
 
   void EmitArray();
@@ -319,30 +296,39 @@ void Printer::EmitArray() {
 
 int GetPrintMetadataVersion() { return kPrintMetadataVersion; }
 
+
+PrintMetadata ParsePrintMetadata(std::string bytes) {
+  PrintMetadata meta;
+
+  const char *buffer = bytes.data();
+  const size_t len = bytes.size();
+  llvm::StringRef buffer_s(buffer, len);
+  msgpack::Reader mp_reader(buffer_s);
+
+  meta.preamble = ParseString(mp_reader, "preamble");
+  meta.separator = ParseString(mp_reader, "separator");
+  int nr_args = ParseArrayLength(mp_reader, "args");
+  for (int i = 0; i < nr_args; ++i) {
+    meta.args_type_and_shape.push_back(ParseTypeDescriptor(mp_reader));
+  }
+  return meta;
+}
+
 void EmitOneArray(std::ostringstream &output, const PrintMetadata &meta,
-                  int arg_idx, const uint8_t *data) {
-  Printer printer(output, meta.args_type_and_shape[arg_idx], data);
+                  int arg_idx, const void *data) {
+  TypeAndShape arg_ts = meta.args_type_and_shape[arg_idx];
+  Printer printer(output, arg_ts, static_cast<const uint8_t*>(data));
+  output << (arg_idx == 0 ? meta.preamble : meta.separator) << "\n";
+  output << absl::StreamFormat("arg[%d] ", arg_idx);
+  output << " shape = (";
+  for (const int &dim : arg_ts.shape) {
+    output << dim << ", ";
+  }
+  output << ")\n";
   printer.EmitArray();
 }
 
-void EmitArrays(std::ostringstream &output, const PrintMetadata &meta,
-                const std::vector<const uint8_t *> &arrays) {
-  output << meta.preamble << "\n";
-  for (int i = 0; i < arrays.size(); ++i) {
-    const TypeAndShape &arg_type_and_shape = meta.args_type_and_shape[i];
-    output << absl::StreamFormat("arg[%d] ", i);
-    output << " shape = (";
-    for (const int &dim : arg_type_and_shape.shape) {
-      output << dim << ", ";
-    }
-    output << ")\n";
-    EmitOneArray(output, meta, i, arrays[i]);
-    if (i < arrays.size() - 1) output << meta.separator;
-  }
-}
 
-// Prints the arguments and returns True.
-//
 void PrintCPU(void *out, const void **args) {
   static constexpr int kReservedArgs = 2;
   const int *opaque_len = static_cast<const int *>(args[0]);
@@ -350,12 +336,10 @@ void PrintCPU(void *out, const void **args) {
   const PrintMetadata &meta =
       ParsePrintMetadata(std::string(opaque, *opaque_len));
 
-  std::vector<const uint8_t *> args_vector(meta.args_type_and_shape.size());
-  for (int i = 0; i < meta.args_type_and_shape.size(); i++) {
-    args_vector[i] = reinterpret_cast<const uint8_t *>(args[kReservedArgs + i]);
-  }
   std::ostringstream output;
-  EmitArrays(output, meta, args_vector);
+  for (int i = 0; i < meta.args_type_and_shape.size(); i++) {
+    EmitOneArray(output, meta, i, args[kReservedArgs + i]);
+  }
   std::cout << output.str();
 
   bool *resultPtr = static_cast<bool *>(out);

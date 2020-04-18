@@ -18,6 +18,7 @@ from __future__ import print_function
 
 
 import os
+import re
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -42,6 +43,11 @@ class _TestingOutputStream(object):
     self.output = ""
 
   def write(self, other: str) -> None:
+    # Sometimes we get floating points in the output; we round them
+    def repl(match_group):
+      x = np.around(float(match_group.group(0)), decimals=2)
+      return f"{x:.2f}"
+    other = re.sub(r"\-?\d*\.[\-\def]*", repl, other)
     print(f"output_stream: {other}")
     self.output = other if not self.output else f"{self.output}\n{other}"
 
@@ -101,7 +107,7 @@ class HostCallbackTest(jtu.JaxTestCase):
   in (f,) }""", str(api.make_jaxpr(func2)(3.)))
     self.assertEqual(3. * (2. + 3.), func2(3.))
     self.assertMultiLineStrippedEqual("""
-(6.0, 9.0)  {}""", testing_stream.output)
+(6.00, 9.00)  {}""", testing_stream.output)
     testing_stream.reset()
 
   def test_eval(self):
@@ -122,8 +128,8 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertEqual((5. * 2.)**4, fun1(5.))
     self.assertMultiLineStrippedEqual(
         """
-(10.0,)  {'what': 'a * 2'}
-(30.0,)  {'what': 'y * 3'}""", testing_stream.output)
+(10.00,)  {'what': 'a * 2'}
+(30.00,)  {'what': 'y * 3'}""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_simple(self):
@@ -167,9 +173,10 @@ class HostCallbackTest(jtu.JaxTestCase):
         a_new_test="************",
         testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
     res = jit_fun1(args)
+    # self.assertAllClose(args, res, check_dtypes=True)
 
   def test_jit_large(self):
-    arg = np.arange(10000).reshape((10, 10, 5, -1))
+    arg = np.arange(10000, dtype=np.int32).reshape((10, 10, 5, -1))
     api.jit(lambda x: hcb.id_print(x))(arg)
 
   def test_jvp(self):
@@ -203,10 +210,10 @@ class HostCallbackTest(jtu.JaxTestCase):
     res_primals, res_tangents = jvp_fun1(np.float32(5.), np.float32(0.1))
     self.assertMultiLineStrippedEqual(
         """
-(DeviceArray(10., dtype=float32),)  {'what': 'a * 2'}
-(DeviceArray(0.2, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp',)}
-(DeviceArray(30., dtype=float32),)  {'what': 'y * 3'}
-(DeviceArray(0.6, dtype=float32),)  {'what': 'y * 3', 'transforms': ('jvp',)}
+(DeviceArray(10.00, dtype=float32),)  {'what': 'a * 2'}
+(DeviceArray(0.20, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp',)}
+(DeviceArray(30.00, dtype=float32),)  {'what': 'y * 3'}
+(DeviceArray(0.60, dtype=float32),)  {'what': 'y * 3', 'transforms': ('jvp',)}
   """, testing_stream.output)
     testing_stream.reset()
 
@@ -241,10 +248,10 @@ class HostCallbackTest(jtu.JaxTestCase):
     res_grad = grad_fun1(np.float32(5.))
     self.assertMultiLineStrippedEqual(
         """
-(DeviceArray(10., dtype=float32),)  {'what': 'a * 2'}
-(DeviceArray(30., dtype=float32),)  {'what': 'y * 3'}
+(DeviceArray(10.00, dtype=float32),)  {'what': 'a * 2'}
+(DeviceArray(30.00, dtype=float32),)  {'what': 'y * 3'}
 (Zero,)  {'what': 'y * 3', 'transforms': ('jvp', 'transpose')}
-(DeviceArray(4000., dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp', 'transpose')}
+(DeviceArray(4000.00, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp', 'transpose')}
    """, testing_stream.output)
     testing_stream.reset()
 
@@ -269,8 +276,8 @@ class HostCallbackTest(jtu.JaxTestCase):
     res_vmap = vmap_fun1(vargs)
     self.assertMultiLineStrippedEqual(
         """
-(DeviceArray([ 8., 10.], dtype=float32),)  {'what': 'a * 2', 'transforms': ('batch',)}
-(DeviceArray([24., 30.], dtype=float32),)  {'what': 'y * 3', 'transforms': ('batch',)}
+(DeviceArray([ 8.00, 10.00], dtype=float32),)  {'what': 'a * 2', 'transforms': ('batch',)}
+(DeviceArray([24.00, 30.00], dtype=float32),)  {'what': 'y * 3', 'transforms': ('batch',)}
      """, testing_stream.output)
     testing_stream.reset()
 

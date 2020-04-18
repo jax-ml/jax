@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+// This exposes the host_callback_py Python module with the implementation
+// of the CustomCalls for CPU and GPU.
+
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
 #include "include/pybind11/pytypes.h"
@@ -23,18 +26,20 @@ namespace jax {
 
 namespace py = pybind11;
 
-// Returns a dictionary with CustomCall functions to register for CPU.
+namespace {
+
+// Returns a dictionary with CustomCall functions to register.
 py::dict CustomCallRegistrations() {
   py::dict dict;
-  dict["jax_print_cpu"] = EncapsulateFunction(PrintCPU);
+  dict["jax_print"] = EncapsulateFunction(PrintCPU);
   return dict;
 }
 
-PYBIND11_MODULE(host_callback_py, m) {
-  m.doc() = "Python bindings for the host_callback runtime";
+PYBIND11_MODULE(host_callback_cpu_py, m) {
+  m.doc() = "Python bindings for the host_callback runtime for CPU.";
   m.def("customcall_registrations", &CustomCallRegistrations);
   m.def("get_print_metadata_version", &GetPrintMetadataVersion);
 }
 
-
+}  // namespace
 }  // namespace jax

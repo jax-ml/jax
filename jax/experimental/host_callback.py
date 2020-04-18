@@ -44,14 +44,22 @@ from jax.interpreters import ad, xla, batching
 from jax.interpreters import partial_eval as pe
 from jaxlib import xla_client
 from jaxlib import xla_extension
-from jaxlib import host_callback_py
 
 import msgpack
 import numpy as onp
 from typing import Any, Dict, List, Sequence, Tuple
 
-for _name, _value in host_callback_py.customcall_registrations().items():
+from jaxlib import host_callback_cpu_py
+for _name, _value in host_callback_cpu_py.customcall_registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu")
+
+try:
+  from jaxlib import host_callback_cuda_py  # type: ignore[import-error]
+  for _name, _value in host_callback_cuda_py.customcall_registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="gpu")
+except ImportError:
+  pass  # We may have built without CUDA support
+
 
 XlaOp = xla_extension.XlaOp
 XlaShape = xla_client.Shape
@@ -159,7 +167,7 @@ def _make_id_print_metadata(args_xla_shape: Sequence[XlaShape],
                             params: Dict) -> bytes:
   global _lib_print_metadata_version
   if _lib_print_metadata_version is None:
-    _lib_print_metadata_version = host_callback_py.get_print_metadata_version()
+    _lib_print_metadata_version = host_callback_cpu_py.get_print_metadata_version()
     if _lib_print_metadata_version < _MINIMUM_LIB_PRINT_METADATA_VERSION:
       raise NotImplementedError(f"id_print requires minimum metadata version "
                                 f"{_MINIMUM_LIB_PRINT_METADATA_VERSION}. "
@@ -199,7 +207,7 @@ def _id_print_translation_rule(platform: str, comp: XlaComputationBuilder,
   else:
     raise NotImplementedError(f"id_print not implemented for {platform}")
 
-  def _shape_with_default_layout(xla_shape: XlaShape):
+  def _shape_with_default_layout(xla_shape: XlaShape) -> XlaShape:
     return xla_client.Shape.array_shape(
         xla_shape.element_type(), xla_shape.dimensions(),
         tuple(range(xla_shape.rank() - 1, -1, -1)))
@@ -218,7 +226,7 @@ def _id_print_translation_rule(platform: str, comp: XlaComputationBuilder,
   ])
 
   print_out = comp.CustomCallWithLayout(
-      b"jax_print_cpu",
+      b"jax_print",
       operands=additional_ops + args_op,
       shape_with_layout=result_shape_with_layout,
       operand_shapes_with_layout=operand_shapes_with_layout,

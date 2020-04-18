@@ -30,11 +30,12 @@ sh_binary(
         "//jaxlib",
         "//jaxlib:lapack.so",
         "//jaxlib:pytree",
-        "//jaxlib:host_callback_py",
+        "//jaxlib:host_callback_cpu_py",
     ] + if_cuda([
         "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
         "//jaxlib:cuda_prng_kernels",
+        "//jaxlib:host_callback_cuda_py",
     ]),
     deps = ["@bazel_tools//tools/bash/runfiles"],
 )

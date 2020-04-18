@@ -54,7 +54,10 @@ fi
 # new location.
 cp -f "$(rlocation __main__/jaxlib/lapack.so)" "${TARGET}/jaxlib"
 cp -f "$(rlocation __main__/jaxlib/pytree.so)" "${TARGET}/jaxlib"
-cp -f "$(rlocation __main__/jaxlib/host_callback_py.so)" "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/host_callback_cpu_py.so)" "${TARGET}/jaxlib"
+if [[ -x "$(rlocation __main__/jaxlib/host_callback_cuda_py.so)" ]]; then
+  cp -f "$(rlocation __main__/jaxlib/host_callback_cuda_py.so)" "${TARGET}/jaxlib"
+fi
 if [[ -x "$(rlocation __main__/jaxlib/cusolver_kernels.so)" ]]; then
   cp -f "$(rlocation __main__/jaxlib/cublas_kernels.so)" "${TARGET}/jaxlib"
   cp -f "$(rlocation __main__/jaxlib/cusolver_kernels.so)" "${TARGET}/jaxlib"

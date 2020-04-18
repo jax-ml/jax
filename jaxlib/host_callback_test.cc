@@ -21,26 +21,33 @@ limitations under the License.
 namespace jax {
 namespace {
 
-typedef std::vector<const uint8_t *> Arrays;
+typedef std::vector<const void*> Arrays;
 
 template <class T>
-const uint8_t *InitializeData(T *data, size_t size_of_data) {
+const void *InitializeData(T *data, size_t size_of_data) {
   for (int i = 0; i < size_of_data / sizeof(data[0]); ++i) {
     data[i] = static_cast<T>(i);
   }
-  return reinterpret_cast<const uint8_t *>(data);
+  return reinterpret_cast<const void *>(data);
+}
+
+void EmitArrays(std::ostringstream &output, const PrintMetadata &meta,
+                std::vector<const void*> arrays) {
+  for (int i = 0; i < arrays.size(); i++) {
+    EmitOneArray(output, meta, i, arrays[i]);
+  }
 }
 
 TEST(HostCallbackTest, TestEmpty) {
-  PrintMetadata meta{"start", " sep "};
+  PrintMetadata meta{"start", ".separator."};
   std::ostringstream oss;
   Arrays empty;
   EmitArrays(oss, meta, empty);
-  ASSERT_EQ(oss.str(), "start\n");
+  ASSERT_EQ(oss.str(), "");
 }
 
 TEST(HostCallbackTest, TestScalar) {
-  PrintMetadata meta{"start", " sep "};
+  PrintMetadata meta{"start", ".separator."};
   std::ostringstream oss;
   meta.args_type_and_shape.push_back(
       TypeAndShape{ElementType::I32, 4, Shape{}});
@@ -53,7 +60,7 @@ TEST(HostCallbackTest, TestScalar) {
 }
 
 TEST(HostCallbackTest, TestUnidimensionalArray) {
-  PrintMetadata meta{"start", " sep "};
+  PrintMetadata meta{"start", ".separator."};
   int constexpr kSize0 = 10;
   meta.args_type_and_shape.push_back(
       TypeAndShape{ElementType::I32, 4, Shape{kSize0}});
@@ -67,7 +74,8 @@ TEST(HostCallbackTest, TestUnidimensionalArray) {
 }
 
 TEST(HostCallbackTest, TestBidimensionalArray) {
-  PrintMetadata meta{"start", " sep "};
+  PrintMetadata meta{"start", ".separator."};
+
   int constexpr kSize0 = 2;
   int constexpr kSize1 = 3;
   meta.args_type_and_shape.push_back(
@@ -83,7 +91,7 @@ TEST(HostCallbackTest, TestBidimensionalArray) {
 }
 
 TEST(HostCallbackTest, TestSummarize) {
-  PrintMetadata meta{"start", " sep "};
+  PrintMetadata meta{"start", ".separator."};
   int constexpr kSize0 = 10;
   meta.args_type_and_shape.push_back(
       TypeAndShape{ElementType::I32, 4, Shape{kSize0, kSize0, kSize0}});
@@ -146,7 +154,7 @@ arg[0]  shape = (10, 10, 10, )
 }
 
 TEST(HostCallbackTest, TestTwoArrays) {
-  PrintMetadata meta{"start", " sep "};
+  PrintMetadata meta{"start", ".separator."};
   std::ostringstream oss;
   meta.args_type_and_shape.push_back(
       TypeAndShape{ElementType::I32, 4, Shape{4}});
@@ -159,7 +167,8 @@ TEST(HostCallbackTest, TestTwoArrays) {
   ASSERT_EQ(oss.str(), R"EOS(start
 arg[0]  shape = (4, )
 [0 1 2 3]
- sep arg[1]  shape = (4, )
+.separator.
+arg[1]  shape = (4, )
 [0 1 2 3]
 )EOS");
 }
