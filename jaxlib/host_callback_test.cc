@@ -13,15 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/host_callback.h"
+
 #include <sstream>
 
-#include "jaxlib/host_callback.h"
 #include "testing/base/public/gunit.h"
 
 namespace jax {
 namespace {
 
-typedef std::vector<const void*> Arrays;
+typedef std::vector<const void *> Arrays;
 
 template <class T>
 const void *InitializeData(T *data, size_t size_of_data) {
@@ -32,14 +33,78 @@ const void *InitializeData(T *data, size_t size_of_data) {
 }
 
 void EmitArrays(std::ostringstream &output, const PrintMetadata &meta,
-                std::vector<const void*> arrays) {
+                std::vector<const void *> arrays) {
   for (int i = 0; i < arrays.size(); i++) {
     EmitOneArray(output, meta, i, arrays[i]);
   }
 }
 
+void CheckPrintMetadataEqual(const PrintMetadata &expected,
+                             const PrintMetadata &got) {
+  ASSERT_EQ(expected.preamble, got.preamble);
+  ASSERT_EQ(expected.separator, got.separator);
+  ASSERT_EQ(expected.arg_shapes.size(), got.arg_shapes.size());
+  for (int i = 0; i < got.arg_shapes.size(); ++i) {
+    Shape got_shape = got.arg_shapes[i];
+    Shape expected_shape = expected.arg_shapes[i];
+    ASSERT_EQ(expected_shape.element_type, got_shape.element_type);
+    ASSERT_EQ(expected_shape.element_size, got_shape.element_size);
+    ASSERT_EQ(expected_shape.dimensions.size(), got_shape.dimensions.size());
+    for (int j = 0; j < expected_shape.dimensions.size(); ++j) {
+      ASSERT_EQ(expected_shape.dimensions[j], got_shape.dimensions[j]);
+    }
+  }
+}
+
+// Tests decoding with msgpack.
+// I did not implement serialization in C++, so I use strings encoded by
+// the Python code (as in actual usage).
+// Uses strings encoded by
+//    //third_party/py/jax/jaxlib:host_callback_test:test_serialization
+// Search in the output for test_serialization followed by bytes.
+TEST(HostCallbackTest, TestParseDescriptorNoArgs) {
+  // no args, separator=sep, param=0
+  std::string bytes = {144, 168, 112, 97,  114, 97,  109,
+                       58,  32,  48,  163, 115, 101, 112};
+  PrintMetadata res = ParsePrintMetadata(bytes);
+  PrintMetadata meta{{}, "param: 0", "sep"};
+  CheckPrintMetadataEqual(meta, res);
+}
+
+TEST(HostCallbackTest, TestParseDescriptorOneScalar) {
+  // 1 scalar int, separator= param=1
+  std::string bytes = {145, 146, 162, 105, 52, 144, 168, 112,
+                       97,  114, 97,  109, 58, 32,  49,  160};
+  PrintMetadata res = ParsePrintMetadata(bytes);
+  PrintMetadata meta{
+      {Shape{ElementType::I32, 4, Dimensions{}}}, "param: 1", ""};
+  CheckPrintMetadataEqual(meta, res);
+}
+
+TEST(HostCallbackTest, TestParseDescriptorOneArray) {
+  // 1 array f32[2, 3], separator= param=2
+  std::string bytes = {145, 146, 162, 102, 52,  146, 2,  3,  168,
+                       112, 97,  114, 97,  109, 58,  32, 50, 160};
+  PrintMetadata res = ParsePrintMetadata(bytes);
+  PrintMetadata meta{
+      {Shape{ElementType::F32, 4, Dimensions{2, 3}}}, "param: 2", ""};
+  CheckPrintMetadataEqual(meta, res);
+}
+
+TEST(HostCallbackTest, TestParseDescriptorTwoArgs) {
+  // 1 array f32[2, 3] and 1 f64, separator= param=3
+  std::string bytes = {146, 146, 162, 102, 52,  146, 2,   3,  146, 162, 102, 56,
+                       144, 168, 112, 97,  114, 97,  109, 58, 32,  51,  160};
+  PrintMetadata res = ParsePrintMetadata(bytes);
+  PrintMetadata meta{{Shape{ElementType::F32, 4, Dimensions{2, 3}},
+                      Shape{ElementType::F64, 8, Dimensions{}}},
+                     "param: 3",
+                     ""};
+  CheckPrintMetadataEqual(meta, res);
+}
+
 TEST(HostCallbackTest, TestEmpty) {
-  PrintMetadata meta{"start", ".separator."};
+  PrintMetadata meta{{}, "start", ".separator."};
   std::ostringstream oss;
   Arrays empty;
   EmitArrays(oss, meta, empty);
@@ -47,10 +112,9 @@ TEST(HostCallbackTest, TestEmpty) {
 }
 
 TEST(HostCallbackTest, TestScalar) {
-  PrintMetadata meta{"start", ".separator."};
+  PrintMetadata meta{{}, "start", ".separator."};
   std::ostringstream oss;
-  meta.args_type_and_shape.push_back(
-      TypeAndShape{ElementType::I32, 4, Shape{}});
+  meta.arg_shapes.push_back(Shape{ElementType::I32, 4, Dimensions{}});
   int data[1];
   Arrays arrays{InitializeData(data, sizeof(data))};
   EmitArrays(oss, meta, arrays);
@@ -60,10 +124,9 @@ TEST(HostCallbackTest, TestScalar) {
 }
 
 TEST(HostCallbackTest, TestUnidimensionalArray) {
-  PrintMetadata meta{"start", ".separator."};
   int constexpr kSize0 = 10;
-  meta.args_type_and_shape.push_back(
-      TypeAndShape{ElementType::I32, 4, Shape{kSize0}});
+  PrintMetadata meta{
+      {Shape{ElementType::I32, 4, Dimensions{kSize0}}}, "start", ".separator."};
   int data[kSize0];
   Arrays arrays{InitializeData(data, sizeof(data))};
   std::ostringstream oss;
@@ -74,12 +137,12 @@ TEST(HostCallbackTest, TestUnidimensionalArray) {
 }
 
 TEST(HostCallbackTest, TestBidimensionalArray) {
-  PrintMetadata meta{"start", ".separator."};
-
   int constexpr kSize0 = 2;
   int constexpr kSize1 = 3;
-  meta.args_type_and_shape.push_back(
-      TypeAndShape{ElementType::F32, 4, Shape{kSize0, kSize1}});
+  PrintMetadata meta{{Shape{ElementType::F32, 4, Dimensions{kSize0, kSize1}}},
+                     "start",
+                     ".separator."};
+
   float data[kSize0 * kSize1];
   Arrays arrays{InitializeData(data, sizeof(data))};
   std::ostringstream oss;
@@ -91,10 +154,11 @@ TEST(HostCallbackTest, TestBidimensionalArray) {
 }
 
 TEST(HostCallbackTest, TestSummarize) {
-  PrintMetadata meta{"start", ".separator."};
   int constexpr kSize0 = 10;
-  meta.args_type_and_shape.push_back(
-      TypeAndShape{ElementType::I32, 4, Shape{kSize0, kSize0, kSize0}});
+  PrintMetadata meta{
+      {Shape{ElementType::I32, 4, Dimensions{kSize0, kSize0, kSize0}}},
+      "start",
+      ".separator."};
   int data[kSize0 * kSize0 * kSize0];
   Arrays arrays{InitializeData(data, sizeof(data))};
   std::ostringstream oss;
@@ -154,12 +218,12 @@ arg[0]  shape = (10, 10, 10, )
 }
 
 TEST(HostCallbackTest, TestTwoArrays) {
-  PrintMetadata meta{"start", ".separator."};
+  PrintMetadata meta{{Shape{ElementType::I32, 4, Dimensions{4}},
+                      Shape{ElementType::I32, 4, Dimensions{4}}},
+                     "start",
+                     ".separator."};
   std::ostringstream oss;
-  meta.args_type_and_shape.push_back(
-      TypeAndShape{ElementType::I32, 4, Shape{4}});
-  meta.args_type_and_shape.push_back(
-      TypeAndShape{ElementType::I32, 4, Shape{4}});
+
   int data[4];
   auto data_ptr = InitializeData(data, sizeof(data));
   Arrays arrays{data_ptr, data_ptr};

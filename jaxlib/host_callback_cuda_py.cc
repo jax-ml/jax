@@ -40,62 +40,25 @@ void PrintGPU(cudaStream_t stream, void **buffers, const char *opaque,
               std::size_t opaque_len) {
   const PrintMetadata meta =
       ParsePrintMetadata(std::string(opaque, opaque_len));
-  int nr_args = meta.args_type_and_shape.size();
+  int nr_args = meta.arg_shapes.size();
   // Start by writing the result, in case of errors.
   bool result = true;
-<<<<<<< HEAD
-  cudaError_t cuda_err = cudaMemcpy(buffers[nr_args], &result, sizeof(result),
-                                    cudaMemcpyHostToDevice);
-  if (cuda_err != cudaSuccess) {
-    LOG(ERROR) << "cudaMemcpy returned error " << cudaGetErrorString(cuda_err);
-    return;
-  }
 
-  void* host_memory = 0;  // Page-locked, device-accessible large-enough memory
-  cuda_err = cudaMallocHost(&host_memory, meta.MaximumByteSize());
-  if (cuda_err != cudaSuccess) {
-    LOG(ERROR) << "cudaMallocHost returned error " <<
-        cudaGetErrorString(cuda_err);
-    return;
-  }
-  std::ostringstream output_stream;
-
-  for (int arg = 0; arg < nr_args && cuda_err == cudaSuccess; ++arg) {
-    TypeAndShape arg_ts = meta.args_type_and_shape[arg];
-    cuda_err = cudaMemcpy(host_memory, buffers[arg], arg_ts.ByteSize(),
-                          cudaMemcpyDeviceToHost);
-    if (cuda_err != cudaSuccess) {
-      LOG(ERROR) << "cudaMemcpy returned error "
-          << cudaGetErrorString(cuda_err);
-      return;
-    }
-=======
   ThrowIfError(cudaMemcpy(buffers[nr_args], &result, sizeof(result),
                           cudaMemcpyHostToDevice));
-
   void* host_memory = 0;  // Page-locked, device-accessible large-enough memory
   ThrowIfError(cudaMallocHost(&host_memory, meta.MaximumByteSize()));
 
   std::ostringstream output_stream;
   for (int arg = 0; arg < nr_args; ++arg) {
-    TypeAndShape arg_ts = meta.args_type_and_shape[arg];
-    ThrowIfError(cudaMemcpy(host_memory, buffers[arg], arg_ts.ByteSize(),
+    Shape arg_s = meta.arg_shapes[arg];
+    ThrowIfError(cudaMemcpy(host_memory, buffers[arg], arg_s.ByteSize(),
                             cudaMemcpyDeviceToHost));
->>>>>>> origin/changelist/306845374
+
     EmitOneArray(output_stream, meta, arg, host_memory);
   }
   std::cout << output_stream.str();
-
-<<<<<<< HEAD
-  cuda_err = cudaFreeHost(host_memory);
-  if (cuda_err != cudaSuccess) {
-    LOG(ERROR) << "cudaFree returned error " << cudaGetErrorString(cuda_err);
-    return;
-  }
-  ThrowIfError(cudaGetLastError());
-=======
   ThrowIfError(cudaFreeHost(host_memory));
->>>>>>> origin/changelist/306845374
 }
 
 // Returns a dictionary with CustomCall functions to register.

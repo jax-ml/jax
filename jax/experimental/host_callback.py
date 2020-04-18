@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Implementation of an experimental primitive for printing, including
+
    from transformed and compiled code.
 
 See documentation for `id_print` below.
@@ -60,7 +61,6 @@ try:
 except ImportError:
   pass  # We may have built without CUDA support
 
-
 XlaOp = xla_extension.XlaOp
 XlaShape = xla_client.Shape
 XlaComputationBuilder = xla_bridge._JaxComputationBuilder
@@ -71,6 +71,7 @@ id_print_p.multiple_results = True
 
 def id_print(*args, **kwargs):
   """Behaves like the identify function for positional arguments, but prints all
+
      arguments on the host, even from transformed or compiled code.
 
      The return value is a tuple with the value of `args` or the value of the
@@ -149,11 +150,13 @@ def _id_print_impl(*args, **params):
 
   return args
 
+
 id_print_p.def_impl(_id_print_impl)
 
 def _id_print_abstract_eval(*args_a: pe.AbstractValue, **params) \
     -> Sequence[pe.AbstractValue]:
   return args_a
+
 
 id_print_p.def_abstract_eval(_id_print_abstract_eval)
 
@@ -163,11 +166,13 @@ _lib_print_metadata_version = None
 _MINIMUM_LIB_PRINT_METADATA_VERSION = 1
 _CURRENT_PRINT_METADATA_VERSION = 1
 
+
 def _make_id_print_metadata(args_xla_shape: Sequence[XlaShape],
                             params: Dict) -> bytes:
   global _lib_print_metadata_version
   if _lib_print_metadata_version is None:
-    _lib_print_metadata_version = host_callback_cpu_py.get_print_metadata_version()
+    _lib_print_metadata_version = host_callback_cpu_py.get_print_metadata_version(
+    )
     if _lib_print_metadata_version < _MINIMUM_LIB_PRINT_METADATA_VERSION:
       raise NotImplementedError(f"id_print requires minimum metadata version "
                                 f"{_MINIMUM_LIB_PRINT_METADATA_VERSION}. "
@@ -180,13 +185,17 @@ def _make_id_print_metadata(args_xla_shape: Sequence[XlaShape],
     dtype = onp.dtype(arg_xla_shape.element_type())
     return (f"{dtype.kind}{dtype.itemsize}", arg_xla_shape.dimensions())
 
-  preamble = ", ".join(
-      [f"{k}: {v}" for k, v in sorted(params.items()) if k != "output_stream"])
+  preamble = ", ".join([
+      f"{k}: {v}" for k, v in sorted(params.items())
+      if k not in ("output_stream", "separator")
+  ])
   iobuff = io.BytesIO()
+  iobuff.write(
+      msgpack.packb(
+          tuple(
+              _one_arg_descriptor(arg_shape) for arg_shape in args_xla_shape)))
   iobuff.write(msgpack.packb(preamble))
-  iobuff.write(msgpack.packb(", \n"))  # the separator
-  iobuff.write( msgpack.packb(
-    tuple(_one_arg_descriptor(arg_shape) for arg_shape in args_xla_shape)))
+  iobuff.write(msgpack.packb(params.get("separator", "")))  # the separator
   iobuff.seek(0)
   return iobuff.read()
 
@@ -271,6 +280,7 @@ def _id_print_jvp_rule(primals, tangents, **params):
   tangents_out = id_print(tangents, **_expand_params_transform(params, "jvp"))
   return primals_out, tangents_out
 
+
 ad.primitive_jvps[id_print_p] = _id_print_jvp_rule
 
 
@@ -280,6 +290,7 @@ def _id_print_transpose_rule(cts, *args, **params):
   ct_args = id_print_p.bind(*cts,
                             **_expand_params_transform(params, "transpose"))
   return ct_args
+
 
 ad.primitive_transposes[id_print_p] = _id_print_transpose_rule
 

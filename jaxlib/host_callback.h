@@ -18,6 +18,7 @@ limitations under the License.
 #ifndef JAXLIB_HOST_CALLBACK_H_
 #define JAXLIB_HOST_CALLBACK_H_
 
+#include <cstddef>
 #include <vector>
 
 #include "jaxlib/kernel_helpers.h"
@@ -25,7 +26,7 @@ limitations under the License.
 namespace jax {
 
 // Metadata for id_print runtime functions.
-typedef std::vector<int> Shape;
+typedef std::vector<int> Dimensions;
 enum ElementType {
   I8, I16, I32, I64,
   U8, U16, U32, U64,
@@ -33,33 +34,36 @@ enum ElementType {
   BF16
 };
 
-struct TypeAndShape {
+// An argument's element type and shape.
+// TODO(necula): add layout?
+// TODO(necula): maybe we should use Xla::Shape, and protobufs?
+struct Shape {
   ElementType element_type;
   size_t element_size;
-  Shape shape;
+  Dimensions dimensions;
 
   // The size of the array, in bytes.
   size_t ByteSize() const {
     size_t result = element_size;
-    for (int const &i : shape) {
+    for (int const &i : dimensions) {
       result *= i;
     }
     return result;
   }
 };
 struct PrintMetadata {
+  // Types and shapes for the arguments to be printed.
+  std::vector<Shape> arg_shapes;
   // The preamble to be printed before the arguments.
   std::string preamble;
   // The separator to be printed between the arguments.
   std::string separator;
-  // Types and shapes for the arguments to be printed.
-  std::vector<TypeAndShape> args_type_and_shape;
 
   // The maximum size in bytes of all the arrays.
   size_t MaximumByteSize() const {
     size_t res = 0;
-    for (TypeAndShape const &ts : args_type_and_shape) {
-      res = std::max(res, ts.ByteSize());
+    for (Shape const &s : arg_shapes) {
+      res = std::max(res, s.ByteSize());
     }
     return res;
   }
@@ -70,10 +74,10 @@ int GetPrintMetadataVersion();
 
 // Parses PrintMetadata msgpack-encoded by Python.
 // The metadata has the following format:
-//     (preamble: str,    # to be printed before the first argument
+//     [ (type_descriptor: str,
+//        shape: Tuple[int, ...]) ],
+//      preamble: str,    # to be printed before the first argument
 //      separator: str,   # to be printed between arguments
-//      [ (type_descriptor: str,
-//         shape: Tuple[int, ...]) ]
 //
 PrintMetadata ParsePrintMetadata(std::string bytes);
 

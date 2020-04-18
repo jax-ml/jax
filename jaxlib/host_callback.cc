@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstdint>
 #import <iostream>
+#include <vector>
 #include <sstream>
 
 #include "absl/container/flat_hash_map.h"
@@ -43,7 +44,15 @@ namespace msgpack = llvm::msgpack;
 // the end while being compatible with the library.
 int constexpr kPrintMetadataVersion = 1;
 
-size_t ParseInteger(msgpack::Reader &reader, const std::string &what) {
+// Template functions for parsing from descriptors.
+// "what" is used for error messages.
+template <class T>
+T ParseFromDescriptor(msgpack::Reader &reader, const std::string &what);
+
+// Parses size_t.
+template <>
+size_t ParseFromDescriptor<size_t>(msgpack::Reader &reader,
+                                   const std::string &what) {
   msgpack::Object obj;
   if (!reader.read(obj) ||
       (obj.Kind != msgpack::Type::UInt && obj.Kind != msgpack::Type::Int)) {
@@ -54,7 +63,17 @@ size_t ParseInteger(msgpack::Reader &reader, const std::string &what) {
   return res;
 }
 
-std::string ParseString(msgpack::Reader &reader, const std::string &what) {
+// Parses int.
+template <>
+int ParseFromDescriptor<int>(msgpack::Reader &reader,
+                                const std::string &what) {
+  return static_cast<int>(ParseFromDescriptor<size_t>(reader, what));
+}
+
+// Parses std::string.
+template <>
+std::string ParseFromDescriptor(msgpack::Reader &reader,
+                                const std::string &what) {
   msgpack::Object obj;
   if (!reader.read(obj) || obj.Kind != msgpack::Type::String) {
     throw std::invalid_argument(absl::StrFormat("Cannot find string %s", what));
@@ -64,6 +83,7 @@ std::string ParseString(msgpack::Reader &reader, const std::string &what) {
   return res;
 }
 
+// Parses the start of a vector.
 size_t ParseArrayLength(msgpack::Reader &reader, const std::string &what) {
   msgpack::Object obj;
   if (!reader.read(obj) || obj.Kind != msgpack::Type::Array) {
@@ -72,47 +92,53 @@ size_t ParseArrayLength(msgpack::Reader &reader, const std::string &what) {
   return obj.Length;
 }
 
-// Converts a type descriptor and shape to TypeAndShape.
-TypeAndShape ParseTypeDescriptor(msgpack::Reader &reader) {
-  static auto *types =
-      new absl::flat_hash_map<std::pair<char, int>, ElementType>({
-          {{'f', 2}, ElementType::F16},
-          {{'f', 4}, ElementType::F32},
-          {{'f', 8}, ElementType::F64},
-          {{'i', 1}, ElementType::I8},
-          {{'i', 2}, ElementType::I16},
-          {{'i', 4}, ElementType::I32},
-          {{'i', 8}, ElementType::I64},
-          {{'u', 1}, ElementType::U8},
-          {{'u', 2}, ElementType::U16},
-          {{'u', 4}, ElementType::U32},
-          {{'u', 8}, ElementType::U64},
-          {{'V', 2}, ElementType::BF16},
-      });
 
+// Parses a std::vector<T>
+template <class T>
+std::vector<T> ParseVectorFromDescriptor(msgpack::Reader &reader,
+                                         const std::string &what) {
+  int vector_size = ParseArrayLength(reader, what);
+  std::vector<T> res(vector_size);
+  for (int j = 0; j < vector_size; ++j) {
+    res[j] = ParseFromDescriptor<T>(reader, what);
+  }
+  return res;
+}
+
+// Parses a Shape.
+template <>
+Shape ParseFromDescriptor(msgpack::Reader &reader, const std::string &what) {
   int tuple_size = ParseArrayLength(reader, "tuple");
   if (tuple_size != 2) {
     throw std::invalid_argument("Expected tuple of size 2");
   }
-  std::string type_descriptor = ParseString(reader, "type_descriptor");
-  int shape_length = ParseArrayLength(reader, "shape");
-  std::vector<int> shape(shape_length);
-  for (int j = 0; j < shape_length; ++j) {
-    shape[j] = static_cast<int>(ParseInteger(reader, "shape_dim"));
-  }
-
-  size_t element_size;
-  if (!absl::SimpleAtoi(type_descriptor.substr(1), &element_size)) {
-    throw std::invalid_argument(absl::StrFormat(
-        "Unsupported type descriptor %s (no size found)", type_descriptor));
-  }
-
-  auto it = types->find({type_descriptor.at(0), element_size});
+  std::string type_descriptor = ParseFromDescriptor<std::string>(
+      reader, "type_descriptor");
+  std::vector<int> dimensions = ParseVectorFromDescriptor<int>(reader,
+                                                              "dimensions");
+  static auto *types =
+      new absl::flat_hash_map<std::string,
+                              std::tuple<ElementType, size_t>>({
+          {"f2", {ElementType::F16, 2}},
+          {"f4", {ElementType::F32, 4}},
+          {"f8", {ElementType::F64, 8}},
+          {"i1", {ElementType::I8, 1}},
+          {"i2", {ElementType::I16, 2}},
+          {"i4", {ElementType::I32, 4}},
+          {"i8", {ElementType::I8, 8}},
+          {"u1", {ElementType::U8, 1}},
+          {"u2", {ElementType::U16, 2}},
+          {"u4", {ElementType::U32, 4}},
+          {"u8", {ElementType::U64, 8}},
+          {"V2", {ElementType::BF16, 2}},
+      });
+  auto it = types->find(type_descriptor);
   if (it == types->end()) {
-    throw std::invalid_argument(
-        absl::StrFormat("Unsupported type descriptor %s", type_descriptor));
+    throw std::invalid_argument(absl::StrFormat(
+        "Unsupported type descriptor %s", type_descriptor));
   }
-  return TypeAndShape{it->second, element_size, shape};
+  return Shape{std::get<0>(it->second),
+               std::get<1>(it->second), dimensions};
 }
 
 
@@ -124,43 +150,39 @@ int constexpr kPrecision = 2;  // Decimal digits
 
 class Printer {
  public:
-  Printer(std::ostringstream &output,
-          const TypeAndShape &type_and_shape, const uint8_t *data)
+  Printer(std::ostringstream &output, const Shape &shape, const uint8_t *data)
       : output_{output},
-        type_and_shape_(type_and_shape),
-        current_ptr_{data},
-        shape_{type_and_shape.shape},
-        element_size_{type_and_shape.element_size} {
-    ndims_ = type_and_shape.shape.size();
+        shape_(shape),
+        current_ptr_{data} {
+    ndims_ = shape_.dimensions.size();
     current_index_.reserve(ndims_);
     skip_values_.reserve(ndims_);
     int current_skip = 1;
     for (int i = ndims_ - 1; i >= 0; --i) {
       current_index_[i] = 0;
       skip_values_[i] = current_skip;
-      current_skip *= shape_[i];
+      current_skip *= shape_.dimensions[i];
     }
-    total_size_ = type_and_shape.ByteSize();
+    total_size_ = shape_.ByteSize();
+    element_size_ = shape_.element_size;
   }
 
   void EmitArray();
 
  private:
   std::ostringstream &output_;
-  TypeAndShape type_and_shape_;
+  Shape shape_;
   const uint8_t *current_ptr_;
-
-  Shape shape_;  // TODO(add accessors for these?)
 
   size_t element_size_;
   int ndims_;
   size_t total_size_;
 
   // The current index to be emitted: [i0, i1, ..., in-1].
-  Shape current_index_;
+  Dimensions current_index_;
   // For each dimension, how many elements to skip to get
   // to the next value in the same dimension.
-  Shape skip_values_;
+  Dimensions skip_values_;
 
   void EmitInnermostDimension();
   void EmitCurrentElement();
@@ -168,7 +190,7 @@ class Printer {
 
 // Emits the element at current_ptr.
 void Printer::EmitCurrentElement() {
-  switch (type_and_shape_.element_type) {
+  switch (shape_.element_type) {
     case I8:
       output_ << *reinterpret_cast<const int8_t *>(current_ptr_);
       break;
@@ -221,24 +243,27 @@ void Printer::EmitInnermostDimension() {
   for (int i = 0; i < ndims_; ++i) {
     output_ << (i < count_start_spaces ? ' ' : '[');
   }
+
   // Now emit the elements
-  for (int idx = 0; idx < shape_[ndims_ - 1];
-       ++idx, current_ptr_ += element_size_) {
+  const size_t innermost_size = shape_.dimensions[ndims_ - 1];
+  const size_t element_size = shape_.element_size;
+  for (int idx = 0; idx < innermost_size; ++idx, current_ptr_ += element_size) {
     EmitCurrentElement();
-    if (idx < shape_[ndims_ - 1] - 1) output_ << ' ';
+    if (idx < innermost_size - 1) output_ << ' ';
     if (total_size_ > kSummarizeThreshold &&
-        shape_[ndims_ - 1] > 2 * kSideElements && idx == kSideElements - 1) {
-      int skip_indices = shape_[ndims_ - 1] - kSideElements - 1 - idx;
-      current_ptr_ += element_size_ * skip_indices;
+        innermost_size > 2 * kSideElements && idx == kSideElements - 1) {
+      int skip_indices = innermost_size - kSideElements - 1 - idx;
+      current_ptr_ += element_size * skip_indices;
       idx += skip_indices;
       output_ << "... ";
     }
   }
   // Update the index to last one emitted.
-  current_index_[ndims_ - 1] = shape_[ndims_ - 1] - 1;
+  current_index_[ndims_ - 1] = innermost_size - 1;
   int count_stop_brackets = 0;
   // Emit as many ] as how many inner dimensions have reached the end
-  for (int i = ndims_ - 1; i >= 0 && current_index_[i] == shape_[i] - 1; --i) {
+  for (int i = ndims_ - 1;
+      i >= 0 && current_index_[i] == shape_.dimensions[i] - 1; --i) {
     ++count_stop_brackets;
     output_ << ']';
   }
@@ -259,24 +284,26 @@ void Printer::EmitArray() {
   }
   while (true) {
     EmitInnermostDimension();
-    assert(current_index_[ndims_ - 1] == shape_[ndims_ - 1] - 1);
+    assert(current_index_[ndims_ - 1] == shape_.dimensions[ndims_ - 1] - 1);
 
     // Advance to the next innermost dimension
     int dim_to_advance = ndims_ - 1;
     for (; dim_to_advance >= 0; --dim_to_advance) {
       ++current_index_[dim_to_advance];
-      if (current_index_[dim_to_advance] >= shape_[dim_to_advance]) {
+      assert (current_index_[dim_to_advance] <=
+              shape_.dimensions[dim_to_advance]);
+      if (current_index_[dim_to_advance] == shape_.dimensions[dim_to_advance]) {
         current_index_[dim_to_advance] = 0;
         continue;
       } else {
         // Have not reached the end of the dim_to_advance.
         if (total_size_ > kSummarizeThreshold &&
             current_index_[dim_to_advance] == kSideElements &&
-            shape_[dim_to_advance] > 2 * kSideElements) {
-          int skip_indices = shape_[dim_to_advance] - kSideElements -
+            shape_.dimensions[dim_to_advance] > 2 * kSideElements) {
+          int skip_indices = shape_.dimensions[dim_to_advance] - kSideElements -
                              current_index_[dim_to_advance];
           current_ptr_ +=
-              element_size_ * skip_values_[dim_to_advance] * skip_indices;
+              shape_.element_size * skip_values_[dim_to_advance] * skip_indices;
           current_index_[dim_to_advance] += skip_indices;
           for (int j = 0; j <= dim_to_advance; ++j) {
             output_ << ' ';
@@ -296,7 +323,6 @@ void Printer::EmitArray() {
 
 int GetPrintMetadataVersion() { return kPrintMetadataVersion; }
 
-
 PrintMetadata ParsePrintMetadata(std::string bytes) {
   PrintMetadata meta;
 
@@ -305,23 +331,20 @@ PrintMetadata ParsePrintMetadata(std::string bytes) {
   llvm::StringRef buffer_s(buffer, len);
   msgpack::Reader mp_reader(buffer_s);
 
-  meta.preamble = ParseString(mp_reader, "preamble");
-  meta.separator = ParseString(mp_reader, "separator");
-  int nr_args = ParseArrayLength(mp_reader, "args");
-  for (int i = 0; i < nr_args; ++i) {
-    meta.args_type_and_shape.push_back(ParseTypeDescriptor(mp_reader));
-  }
+  meta.arg_shapes = ParseVectorFromDescriptor<Shape>(mp_reader, "arg_shapes");
+  meta.preamble = ParseFromDescriptor<std::string>(mp_reader, "preamble");
+  meta.separator = ParseFromDescriptor<std::string>(mp_reader, "separator");
   return meta;
 }
 
 void EmitOneArray(std::ostringstream &output, const PrintMetadata &meta,
                   int arg_idx, const void *data) {
-  TypeAndShape arg_ts = meta.args_type_and_shape[arg_idx];
-  Printer printer(output, arg_ts, static_cast<const uint8_t*>(data));
+  Shape arg_shape = meta.arg_shapes[arg_idx];
+  Printer printer(output, arg_shape, static_cast<const uint8_t*>(data));
   output << (arg_idx == 0 ? meta.preamble : meta.separator) << "\n";
   output << absl::StreamFormat("arg[%d] ", arg_idx);
   output << " shape = (";
-  for (const int &dim : arg_ts.shape) {
+  for (const int &dim : arg_shape.dimensions) {
     output << dim << ", ";
   }
   output << ")\n";
@@ -337,7 +360,7 @@ void PrintCPU(void *out, const void **args) {
       ParsePrintMetadata(std::string(opaque, *opaque_len));
 
   std::ostringstream output;
-  for (int i = 0; i < meta.args_type_and_shape.size(); i++) {
+  for (int i = 0; i < meta.arg_shapes.size(); i++) {
     EmitOneArray(output, meta, i, args[kReservedArgs + i]);
   }
   std::cout << output.str();

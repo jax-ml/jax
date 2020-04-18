@@ -16,7 +16,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-
 import os
 import re
 from unittest import SkipTest
@@ -28,9 +27,12 @@ from jax import api
 from jax import numpy as np
 from jax import test_util as jtu
 from jax.config import config
-
 from jax.experimental import host_callback as hcb
+from jax.interpreters import xla
+from jax.interpreters import partial_eval as pe
 from jax.lib import xla_bridge
+
+from jaxlib import xla_client
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -47,6 +49,7 @@ class _TestingOutputStream(object):
     def repl(match_group):
       x = np.around(float(match_group.group(0)), decimals=2)
       return f"{x:.2f}"
+
     other = re.sub(r"\-?\d*\.[\-\def]*", repl, other)
     print(f"output_stream: {other}")
     self.output = other if not self.output else f"{self.output}\n{other}"
@@ -90,6 +93,32 @@ class HostCallbackTest(jtu.JaxTestCase):
     os.environ["XLA_FLAGS"] = f"{flags_str} --xla_dump_to=/tmp/xla_dump"
     # Clear any cached backends so new CPU backend will pick up the env var.
     xla_bridge.get_backend.cache_clear()
+
+  def helper_print_serialization(self, description, np_vals, params):
+    """Encode a print_descriptor and print it.
+
+    Args:
+      np_vals: a list of np.ndarray from which to extract the shapes.
+    """
+    encoded = hcb._make_id_print_metadata(
+        [xla.aval_to_xla_shape(pe.get_aval(np_val)) for np_val in np_vals],
+        params)
+    print(f"test_serialization: {description}")
+    print(", ".join([f"{b}" for b in encoded]))
+
+  def test_serialization(self):
+    """Prints encodings used in host_callback_test::TestParseDescriptor."""
+    self.helper_print_serialization("no args, separator=sep, param=0", [],
+                                    dict(param=0, separator="sep"))
+    self.helper_print_serialization("1 scalar int, separator= param=1",
+                                    [np.int32(0)], dict(param=1, separator=""))
+    self.helper_print_serialization("1 array f32[2, 3], separator= param=2",
+                                    [np.ones((2, 3), dtype=np.float32)],
+                                    dict(param=2, separator=""))
+    self.helper_print_serialization(
+        "1 array f32[2, 3] and 1 f64, separator= param=3",
+        [np.ones((2, 3), dtype=np.float32),
+         np.float64(0)], dict(param=3, separator=""))
 
   def test_with_tuple_result(self):
 
@@ -204,8 +233,8 @@ class HostCallbackTest(jtu.JaxTestCase):
       n = pow g 3.0
       o = mul 4.0 n
       p = mul m o
-  in (h, p) }""", str(api.make_jaxpr(jvp_fun1)(np.float32(5.),
-                                               np.float32(0.1))))
+  in (h, p) }""",
+        str(api.make_jaxpr(jvp_fun1)(np.float32(5.), np.float32(0.1))))
 
     res_primals, res_tangents = jvp_fun1(np.float32(5.), np.float32(0.1))
     self.assertMultiLineStrippedEqual(
