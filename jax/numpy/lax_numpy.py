@@ -42,6 +42,7 @@ import opt_einsum
 from jax import jit, device_put
 from .. import core
 from .. import dtypes
+from .. import ops
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
@@ -49,8 +50,6 @@ from .. import lax
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
 from ..lib import xla_client
-from ..ops.scatter import index_update
-from ..ops.scatter import index as ops_index
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -378,7 +377,7 @@ def ediff1d(ary, to_end=None, to_begin=None):
   if to_begin is None and to_end is None:
     return lax.sub(ary[1:], ary[:-1])
 
-  # enforce propagation of the dtype of input ary to returned ary
+  # enforce propagation of the dtype of input ary to returned array
   dtype_req = ary.dtype
 
   if to_begin is None:
@@ -386,8 +385,8 @@ def ediff1d(ary, to_end=None, to_begin=None):
   else:
     # check if to_begin can be cast to ary dtype
     if not can_cast(asarray(to_begin), dtype_req):
-      raise ValueError("cannot convert 'to_begin' to array with type"
-              "'%r' as required for input ary" % dtype_req)
+      raise ValueError("cannot convert 'to_begin' to array with dtype "
+              "'%r' as required for input array operand" % dtype_req)
     # convert to_begin to flat array
     to_begin = ravel(asarray(to_begin, dtype=dtype_req))
     l_begin = len(to_begin)
@@ -397,21 +396,21 @@ def ediff1d(ary, to_end=None, to_begin=None):
   else:
     # check if to_end can be cast to ary dtype
     if not can_cast(asarray(to_end), dtype_req):
-      raise ValueError("cannot convert 'to_end' to array with type"
-              "'%r' as required for input ary" % dtype_req)
+      raise ValueError("cannot convert 'to_end' to array with dtype "
+              "'%r' as required for input array operand" % dtype_req)
     # convert to_end to flat array
     to_end = ravel(asarray(to_end, dtype=dtype_req))
     l_end = len(to_end)
   
   # calculate difference and copy to_begin and to_end
-  l_diff = _max(len(ary)-1, 0)
+  l_diff = _max(len(ary) - 1, 0)
   result = zeros(l_diff + l_begin + l_end, dtype=ary.dtype)
   if l_begin > 0:
-    result = index_update(result, ops_index[:l_begin], to_begin)
+    result = ops.index_update(result, ops.index[:l_begin], to_begin)
   if l_end > 0:
-    result = index_update(result, ops_index[l_begin+l_diff:], to_end)
-  #result[l_begin : l_begin + l_diff] = lax.sub(ary[1:],ary[:-1])
-  result = index_update(result, ops_index[l_begin : l_begin+l_diff], lax.sub(ary[1:], ary[:-1]))
+    result = ops.index_update(result, ops.index[l_begin+l_diff:], to_end)
+  result = ops.index_update(result, ops.index[l_begin:l_begin+l_diff],
+          lax.sub(ary[1:], ary[:-1]))
   return result
 
 
