@@ -1183,7 +1183,8 @@ def sort_key_val(keys: Array, values: Array, dimension: int = -1) -> Array:
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
 
-def top_k(operand: Array, k: int) -> Array:
+def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
+  """Returns top ``k`` values and their indices along the last axis of ``operand``."""
   k = int(k)
   if k < 0:
     raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
@@ -4618,12 +4619,53 @@ def _top_k_abstract_eval(operand, *, k):
   return (ShapedArray(shape, operand.dtype),
           ShapedArray(shape, onp.dtype(onp.int32)))
 
+def _top_k_jvp(primals, tangents, *, k):
+  operand, = primals
+  tangent, = tangents
+  primals_out = top_k(operand, k)
+  if tangent is ad_util.zero:
+    tangents_out = (ad_util.zero, ad_util.zero)
+  else:
+    _, k_idxs = primals_out
+    idx_shape = k_idxs.shape
+    rank = len(idx_shape)
+    gather_index_shape = idx_shape + (1,)
+    gather_indices = []
+    for i in range(rank-1):
+      _iota = iota(k_idxs.dtype, idx_shape[i])
+      _iota = tie_in(operand, _iota)
+      _iota = broadcast_in_dim(_iota, gather_index_shape, (i,))
+      gather_indices.append(_iota)
+    gather_indices.append(reshape(k_idxs, gather_index_shape))
+    gather_indices = concatenate(gather_indices, dimension=rank)
+    slice_sizes = (1,) * rank
+    dnums = GatherDimensionNumbers(
+      offset_dims=(),
+      collapsed_slice_dims=tuple(range(rank)),
+      start_index_map=tuple(range(rank)))
+    tangents_out = (gather(tangent, gather_indices, dnums, slice_sizes),
+                    ad_util.zero)
+  return primals_out, tangents_out
+
+def _top_k_batch_rule(batched_args, batch_dims, *, k):
+  operand, = batched_args
+  bdim, = batch_dims
+  if bdim == operand.ndim-1:
+    perm = onp.arange(operand.ndim)
+    perm[bdim-1], perm[bdim] = perm[bdim], perm[bdim-1]
+    top_k_v, top_k_i = top_k(transpose(operand, perm), k=k)
+    return (transpose(top_k_v, perm),
+            transpose(top_k_i, perm)), (bdim, bdim)
+  else:
+    return top_k(operand, k=k), (bdim, bdim)
+
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 xla.translations[top_k_p] = partial(standard_translate, 'top_k')
-
+ad.primitive_jvps[top_k_p] = _top_k_jvp
+batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
 def _tie_in_transpose_rule(t):
   return [ad_util.zero, t]
