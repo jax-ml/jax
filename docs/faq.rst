@@ -1,6 +1,13 @@
 JAX Frequently Asked Questions
 ==============================
 
+.. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
+.. comment Some links referenced here. Use JAX_sharp_bits_ (underscore at the end) to reference
+
+
+.. _JAX_sharp_bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
+.. _How_JAX_primitives_work: https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html
+
 We are collecting here answers to frequently asked questions.
 Contributions welcome!
 
@@ -63,7 +70,7 @@ with the same first value of ``y``.
 
 Additional reading:
 
-  * `JAX - The Sharp Bits: Pure Functions <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#%F0%9F%94%AA-Pure-functions>`_.
+  * JAX_sharp_bits_
 
 
 Gradients contain `NaN` where using ``where``
@@ -101,3 +108,20 @@ Additional reading:
 
   * `Issue: gradients through np.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
+
+Why do I get forward-mode differentiation error when I am trying to do reverse-mode differentiation?
+-----------------------------------------------------------------------------------------------------
+
+JAX implements reverse-mode differentiation as a composition of two operations:
+linearization and transposition. The linearization step (see :func:`jax.linearize`)
+uses the JVP rules to form the forward-computation of tangents along with the intermediate
+forward computations of intermediate values on which the tangents depend.
+The transposition step will turn the forward-computation of tangents
+into a reverse-mode computation.
+
+If the JVP rule is not implemented for a primitive, then neither the forward-mode
+nor the reverse-mode differentiation will work, but the error given will refer
+to the forward-mode because that is the one that fails.
+
+You can read more details at How_JAX_primitives_work_.
+
