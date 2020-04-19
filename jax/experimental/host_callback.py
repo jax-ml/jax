@@ -46,7 +46,7 @@ from jax.interpreters import partial_eval as pe
 from jaxlib import xla_client
 from jaxlib import xla_extension
 
-import msgpack
+import msgpack  # type: ignore
 import numpy as onp
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -61,9 +61,9 @@ try:
 except ImportError:
   pass  # We may have built without CUDA support
 
-XlaOp = xla_extension.XlaOp
-XlaShape = xla_client.Shape
-XlaComputationBuilder = xla_bridge._JaxComputationBuilder
+XlaOp = Any  # xla_extension.XlaOp
+XlaShape = Any # xla_client.Shape 
+XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
 
 id_print_p = core.Primitive("id_print")
 id_print_p.multiple_results = True
@@ -207,8 +207,9 @@ def _id_print_translation_rule(platform: str, comp: XlaComputationBuilder,
   descriptor: bytes = _make_id_print_metadata(args_xla_shape, params)
   if platform == "cpu":
     # Prepend the length of the descriptor and the descriptor.
-    additional_ops = (comp.ConstantS32Scalar(len(descriptor)),
-                      comp.Constant(onp.array(list(descriptor), onp.uint8)))
+    additional_ops: Tuple[XlaOp, ...] = (
+      comp.ConstantS32Scalar(len(descriptor)),
+      comp.Constant(onp.array(list(descriptor), onp.uint8)))
     opaque = b""
   elif platform == "gpu":
     additional_ops = ()
