@@ -1090,7 +1090,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype,
        "return_index": return_index, "return_inverse": return_inverse,
        "return_counts": return_counts, "rng": jtu.rand_default()}
-      for dtype in number_dtypes
+      for dtype in default_dtypes
       for shape in all_shapes
       for return_index in [False, True]
       for return_inverse in [False, True]

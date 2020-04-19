@@ -3114,6 +3114,11 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 @_wraps(onp.unique)
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis=None):
+
+  if iscomplexobj(ar):
+    raise NotImplementedError(
+          "np.unique is not implemented for complex valued arrays")
+
   if axis is None:
     ret = _unique1d(ar, return_index, return_inverse, return_counts)
     if len(ret) == 1:
