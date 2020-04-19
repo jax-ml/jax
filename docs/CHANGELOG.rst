@@ -12,6 +12,10 @@ These are the release notes for JAX.
 jax 0.1.64 (unreleased)
 ---------------------------
 
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.63...master>`_.
+* Improves error message for reverse-mode differentiation of :func:`lax.while_loop`
+  `#2129 <https://github.com/google/jax/issues/2129>`_.
+
 jaxlib 0.1.45 (unreleased)
 ------------------------------
 
@@ -29,6 +33,7 @@ jaxlib 0.1.44 (April 16, 2020)
 jax 0.1.63
 ---------------------------
 
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.62...jax-v0.1.63>`_.
 * Added ``jax.custom_jvp`` and ``jax.custom_vjp`` from `#2026 <https://github.com/google/jax/pull/2026>`_, see the `tutorial notebook <https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html>`_. Deprecated ``jax.custom_transforms`` and removed it from the docs (though it still works).
 * Add ``scipy.sparse.linalg.cg`` `#2566 <https://github.com/google/jax/pull/2566>`_.
 * Changed how Tracers are printed to show more useful information for debugging `#2591 <https://github.com/google/jax/pull/2591>`_.
@@ -51,6 +56,7 @@ jaxlib 0.1.43 (March 31, 2020)
 jax 0.1.62 (March 21, 2020)
 ---------------------------
 
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.61...jax-v0.1.62>`_.
 * JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
 * Removed the internal function ``lax._safe_mul``, which implemented the
   convention ``0. * nan == 0.``. This change means some programs when
@@ -69,14 +75,14 @@ jaxlib 0.1.42 (March 19, 2020)
 
 jax 0.1.61 (March 17, 2020)
 ---------------------------
-
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.60...jax-v0.1.61>`_.
 * Fixes Python 3.5 support. This will be the last JAX or jaxlib release that
   supports Python 3.5.
 
 jax 0.1.60 (March 17, 2020)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...jax-v0.1.60>`_.
 * New features:
 
   * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows
