@@ -171,6 +171,10 @@ Here is how the transformations introduce abstract or concrete tracers:
     introduce **abstract tracers** for all positional arguments.
   * :func:`jax.jvp` and :func:`jax.grad` introduce **concrete tracers**
     for all positional arguments.
+  * All higher-order control-flow primitives (:func:`lax.cond`, :func:`lax.while_loop`,
+    :func:`lax.fori_loop`, :func:`lax.scan`) when they process the functionals
+    introduce **abstract tracers**, whether or not there is a JAX transformation
+    in progress.
 
 All of this is relevant when you have code that can operate
 only on regular Python values, such as code that has conditional
