@@ -717,10 +717,10 @@ identity_p.def_custom_bind(lambda x: x)
 class ConcretizationTypeError(TypeError): pass
 
 def raise_concretization_error(val, context=""):
-  msg = (f"Abstract tracer value where concrete value is expected ({context}).\n"
+  msg = (f"Abstract tracer value encountered where concrete value is expected ({context}).\n"
           "Use transformation parameters such as `static_argnums` for `jit` "
           "to avoid tracing input values.\n"
-          "See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-where-concrete-value-is-expected-error`.\n"
+          "See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error`.\n"
           f"Encountered value: {val}")
   raise ConcretizationTypeError(msg)
 

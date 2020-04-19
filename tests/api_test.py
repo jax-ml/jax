@@ -225,7 +225,7 @@ class APITest(jtu.JaxTestCase):
     assert grad(f)(1.0) == 1.0
     assert grad(f)(-1.0) == -1.0
     with self.assertRaisesRegex(core.ConcretizationTypeError,
-                                "Abstract tracer value where concrete value is expected"):
+                                "Abstract tracer value encountered where concrete value is expected"):
       jit(f)(1)
 
   def test_range_err(self):
@@ -247,7 +247,7 @@ class APITest(jtu.JaxTestCase):
       self.assertRaisesRegex(
           TypeError,
           "('JaxprTracer' object cannot be interpreted as an integer"
-          "|Abstract tracer value where concrete value is expected .*)", lambda: jit(f)(0))
+          "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')

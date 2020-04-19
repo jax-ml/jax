@@ -67,11 +67,11 @@ Additional reading:
 
 .. comment We refer to the anchor below in JAX error messages
 
-`Abstract tracer value where concrete value is expected` error
----------------------------------------------------------------
+`Abstract tracer value encountered where concrete value is expected` error
+--------------------------------------------------------------------------
 
 If you are getting an error that a library function is called with
-*"Abstract tracer value where concrete value is expected"*, you may need to
+*"Abstract tracer value encountered where concrete value is expected"*, you may need to
 change how you invoke JAX transformations. We give first an example, and
 a couple of solutions, and then we explain in more detail what is actually
 happening, if you are curious or the simple solution does not work for you.
@@ -88,7 +88,7 @@ If you try the following code::
 
 you will get the following error::
 
-    ConcretizationTypeError: Abstract tracer value where concrete value is expected (in jax.numpy.split argument 1).
+    ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected (in jax.numpy.split argument 1).
     Use transformation parameters such as `static_argnums` for `jit` to avoid tracing input values.
     See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-where-concrete-value-is-expected-error`.
     Encountered value: Traced<ShapedArray(int32[], weak_type=True):JaxprTrace(level=-1/1)>

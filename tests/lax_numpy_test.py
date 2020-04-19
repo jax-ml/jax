@@ -1479,7 +1479,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # If we pass an ndarray for indices_or_sections -> no error
     self.assertEqual(3, len(jnp.split(jnp.zeros(3), jnp.array([1, 2]))))
 
-    CONCRETIZATION_MSG = "Abstract tracer value where concrete value is expected."
+    CONCRETIZATION_MSG = "Abstract tracer value encountered where concrete value is expected."
     with self.assertRaisesRegex(TypeError, CONCRETIZATION_MSG):
       # An abstract tracer for idx
       api.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), idx))(2.)
