@@ -3103,7 +3103,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
     ret += (perm[mask],)
   if return_inverse:
     imask = cumsum(mask) - 1
-    inv_idx = zeros(mask.shape, dtype=int32)
+    inv_idx = zeros(mask.shape, dtype=int_)
     inv_idx = ops.index_update(inv_idx, perm, imask)
     ret += (inv_idx,)
   if return_counts:
