@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Implementation of an experimental primitive for printing, including
-
    from transformed and compiled code.
 
 See documentation for `id_print` below.
@@ -20,11 +19,11 @@ For usage example, see tests/host_callback_test.py.
 
 Implementation plan:
   * Write the API for the `id_print` primitive, using data-dependence as
-    explained in `id_print` documentation.
+    explained in `id_print` documentation (DONE).
   * Implement the transformations. DONE (except pmap)
-  * Implement the JIT for CPU using CustomCall in C++.
-    DONE (except unit tests do not run in OSS)
-  * Implement the JIT for GPU using also CustomCall in C++. STARTED.
+  * Implement the JIT for CPU using CustomCall in C++. DONE (except unit tests
+    do not run in OSS; also missing float16 and bfloat16).
+  * Implement the JIT for GPU using also CustomCall in C++. DONE.
   * Explore how to pipe the printed data back to the Colab cell,
     when running in Colab. ?
   * Explore implementation using outfeed, hoping that it works for all
@@ -33,7 +32,6 @@ Implementation plan:
     primitive). ?
   * Explore a simpler API that uses Python program-order, instead of
     data dependency-order. Need to add support to JAX for stateful primitives.
-
 """
 
 from functools import partial
@@ -63,6 +61,7 @@ if os.getenv("JAX_ENABLE_JIT_PRINT", "false") != "false":
   except ImportError:
     pass  # We may have built without CUDA support
 
+# TODO(necula): fix mypy errors if I define the type aliases below
 XlaOp = Any  # xla_extension.XlaOp
 XlaShape = Any # xla_client.Shape 
 XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
@@ -73,7 +72,6 @@ id_print_p.multiple_results = True
 
 def id_print(*args, **kwargs):
   """Behaves like the identify function for positional arguments, but prints all
-
      arguments on the host, even from transformed or compiled code.
 
      The return value is a tuple with the value of `args` or the value of the

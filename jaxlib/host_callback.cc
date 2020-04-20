@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 // A library of functions needed for the CPU and GPU implementation of
-// host_callback_cpu_py and hostcallback_gpu_py, and also for unit testing.
+// host_callback_cpu_py and host_callback_cuda_py, and also for unit testing.
 
 #include "jaxlib/host_callback.h"
 

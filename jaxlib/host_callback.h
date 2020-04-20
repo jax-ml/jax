@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 // A library of functions needed for the CPU and GPU implementation of
-// host_callback_cpu_py and hostcallback_gpu_py, and also for unit testing.
+// host_callback_cpu_py and host_callback_cuda_py, and also for unit testing.
 #ifndef JAXLIB_HOST_CALLBACK_H_
 #define JAXLIB_HOST_CALLBACK_H_
 
@@ -27,6 +27,7 @@ namespace jax {
 
 // Metadata for id_print runtime functions.
 typedef std::vector<int> Dimensions;
+
 enum ElementType {
   I8, I16, I32, I64,
   U8, U16, U32, U64,
@@ -51,6 +52,7 @@ struct Shape {
     return result;
   }
 };
+
 struct PrintMetadata {
   // Types and shapes for the arguments to be printed.
   std::vector<Shape> arg_shapes;
@@ -74,8 +76,7 @@ int GetPrintMetadataVersion();
 
 // Parses PrintMetadata msgpack-encoded by Python.
 // The metadata has the following format:
-//     [ (type_descriptor: str,
-//        shape: Tuple[int, ...]) ],
+//     [ (type_descriptor: str, shape: Tuple[int, ...]), ... ],
 //      preamble: str,    # to be printed before the first argument
 //      separator: str,   # to be printed between arguments
 //

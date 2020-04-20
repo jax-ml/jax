@@ -24,6 +24,7 @@ namespace {
 
 typedef std::vector<const void *> Arrays;
 
+// Initializes an array of data, with 0, 1, 2, ...
 template <class T>
 const void *InitializeData(T *data, size_t size_of_data) {
   for (int i = 0; i < size_of_data / sizeof(data[0]); ++i) {
@@ -32,12 +33,14 @@ const void *InitializeData(T *data, size_t size_of_data) {
   return reinterpret_cast<const void *>(data);
 }
 
+// Wraps the EmitOneArray for testing.
 void EmitArrays(std::ostringstream &output, const PrintMetadata &meta,
                 std::vector<const void *> arrays) {
   for (int i = 0; i < arrays.size(); i++) {
     EmitOneArray(output, meta, i, arrays[i]);
   }
 }
+
 
 void CheckPrintMetadataEqual(const PrintMetadata &expected,
                              const PrintMetadata &got) {
@@ -64,42 +67,43 @@ void CheckPrintMetadataEqual(const PrintMetadata &expected,
 // Search in the output for test_serialization followed by bytes.
 TEST(HostCallbackTest, TestParseDescriptorNoArgs) {
   // no args, separator=sep, param=0
+  PrintMetadata meta{{}, "param: 0", "sep"};
   std::string bytes = {144, 168, 112, 97,  114, 97,  109,
                        58,  32,  48,  163, 115, 101, 112};
   PrintMetadata res = ParsePrintMetadata(bytes);
-  PrintMetadata meta{{}, "param: 0", "sep"};
   CheckPrintMetadataEqual(meta, res);
 }
 
 TEST(HostCallbackTest, TestParseDescriptorOneScalar) {
   // 1 scalar int, separator= param=1
+  PrintMetadata meta{
+      {Shape{ElementType::I32, 4, Dimensions{}}}, "param: 1", ""};
   std::string bytes = {145, 146, 162, 105, 52, 144, 168, 112,
                        97,  114, 97,  109, 58, 32,  49,  160};
   PrintMetadata res = ParsePrintMetadata(bytes);
-  PrintMetadata meta{
-      {Shape{ElementType::I32, 4, Dimensions{}}}, "param: 1", ""};
   CheckPrintMetadataEqual(meta, res);
 }
 
 TEST(HostCallbackTest, TestParseDescriptorOneArray) {
   // 1 array f32[2, 3], separator= param=2
+  PrintMetadata meta{
+      {Shape{ElementType::F32, 4, Dimensions{2, 3}}}, "param: 2", ""};
   std::string bytes = {145, 146, 162, 102, 52,  146, 2,  3,  168,
                        112, 97,  114, 97,  109, 58,  32, 50, 160};
   PrintMetadata res = ParsePrintMetadata(bytes);
-  PrintMetadata meta{
-      {Shape{ElementType::F32, 4, Dimensions{2, 3}}}, "param: 2", ""};
   CheckPrintMetadataEqual(meta, res);
 }
 
 TEST(HostCallbackTest, TestParseDescriptorTwoArgs) {
   // 1 array f32[2, 3] and 1 f64, separator= param=3
-  std::string bytes = {146, 146, 162, 102, 52,  146, 2,   3,  146, 162, 102, 56,
-                       144, 168, 112, 97,  114, 97,  109, 58, 32,  51,  160};
-  PrintMetadata res = ParsePrintMetadata(bytes);
   PrintMetadata meta{{Shape{ElementType::F32, 4, Dimensions{2, 3}},
                       Shape{ElementType::F64, 8, Dimensions{}}},
                      "param: 3",
                      ""};
+  std::string bytes = {146, 146, 162, 102, 52,  146, 2,   3,  146, 162, 102, 56,
+                       144, 168, 112, 97,  114, 97,  109, 58, 32,  51,  160};
+  PrintMetadata res = ParsePrintMetadata(bytes);
+
   CheckPrintMetadataEqual(meta, res);
 }
 
