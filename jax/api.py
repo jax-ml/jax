@@ -919,7 +919,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
 
   Each host passes in a different length-4 array, corresponding to its 4 local
   devices, and the psum operates over all 8 values. Conceptually, the two
-  length-4 arrays can be thought of as sharded length-16 array (in this example
+  length-4 arrays can be thought of as sharded length-8 array (in this example
   equivalent to np.arange(8)) that is mapped over, with the length-8 mapped axis
   given name 'i'. The pmap call on each host then returns the corresponding
   length-4 output shard.
