@@ -37,6 +37,9 @@ from jaxlib import xla_client
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+def skip_if_jit_not_enabled():
+  if os.getenv("JAX_ENABLE_JIT_PRINT", "false") == "false":
+    raise SkipTest("print jit not enabled yet; use JAX_ENABLE_JIT_PRINT env.")
 
 class _TestingOutputStream(object):
   """Use as `output_stream` for tests."""
@@ -162,6 +165,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_jit_simple(self):
+    skip_if_jit_not_enabled()
     jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
         2. * x, what="here", output_stream=testing_stream))
     self.assertMultiLineStrippedEqual(
@@ -193,6 +197,7 @@ class HostCallbackTest(jtu.JaxTestCase):
   def test_jit_types(self, nr_args=1, dtype=np.bfloat16, shape=()):
     if dtype in (np.complex64, np.complex128, np.bool_):
       raise SkipTest(f"id_print jit not implemented for {dtype}.")
+    skip_if_jit_not_enabled()
     self.helper_set_hlo_dump()
     args = [np.arange(np.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
@@ -205,6 +210,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     # self.assertAllClose(args, res, check_dtypes=True)
 
   def test_jit_large(self):
+    skip_if_jit_not_enabled()
     arg = np.arange(10000, dtype=np.int32).reshape((10, 10, 5, -1))
     api.jit(lambda x: hcb.id_print(x))(arg)
 
@@ -311,6 +317,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_pmap(self):
+    skip_if_jit_not_enabled()
     self.helper_set_devices(4)
     vargs = np.arange(api.local_device_count(), dtype=np.float32)
 

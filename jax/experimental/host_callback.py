@@ -48,18 +48,20 @@ from jaxlib import xla_extension
 
 import msgpack  # type: ignore
 import numpy as onp
+import os
 from typing import Any, Dict, List, Sequence, Tuple
 
-from jaxlib import host_callback_cpu_py
-for _name, _value in host_callback_cpu_py.customcall_registrations().items():
-  xla_client.register_custom_call_target(_name, _value, platform="cpu")
+if os.getenv("JAX_ENABLE_JIT_PRINT", "false") != "false":
+  from jaxlib import host_callback_cpu_py
+  for _name, _value in host_callback_cpu_py.customcall_registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform="cpu")
 
-try:
-  from jaxlib import host_callback_cuda_py  # type: ignore[import-error]
-  for _name, _value in host_callback_cuda_py.customcall_registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="gpu")
-except ImportError:
-  pass  # We may have built without CUDA support
+  try:
+    from jaxlib import host_callback_cuda_py  # type: ignore[import-error]
+    for _name, _value in host_callback_cuda_py.customcall_registrations().items():
+      xla_client.register_custom_call_target(_name, _value, platform="gpu")
+  except ImportError:
+    pass  # We may have built without CUDA support
 
 XlaOp = Any  # xla_extension.XlaOp
 XlaShape = Any # xla_client.Shape 
@@ -170,7 +172,7 @@ _CURRENT_PRINT_METADATA_VERSION = 1
 def _make_id_print_metadata(args_xla_shape: Sequence[XlaShape],
                             params: Dict) -> bytes:
   global _lib_print_metadata_version
-  if _lib_print_metadata_version is None:
+  if _lib_print_metadata_version is None and os.getenv("JAX_ENABLE_JIT_PRINT", "false") != "false":
     _lib_print_metadata_version = host_callback_cpu_py.get_print_metadata_version(
     )
     if _lib_print_metadata_version < _MINIMUM_LIB_PRINT_METADATA_VERSION:
@@ -269,11 +271,11 @@ def _id_print_translation_rule(platform: str, comp: XlaComputationBuilder,
   return comp.Conditional(print_out, args_tuple, true_comp, comp.CreateToken(),
                           false_comp)
 
-
-xla.backend_specific_translations["cpu"][id_print_p] = \
-  partial(_id_print_translation_rule, "cpu")
-xla.backend_specific_translations["gpu"][id_print_p] = \
-  partial(_id_print_translation_rule, "gpu")
+if os.getenv("JAX_ENABLE_JIT_PRINT", "false") != "false":
+  xla.backend_specific_translations["cpu"][id_print_p] = \
+    partial(_id_print_translation_rule, "cpu")
+  xla.backend_specific_translations["gpu"][id_print_p] = \
+    partial(_id_print_translation_rule, "gpu")
 
 
 def _id_print_jvp_rule(primals, tangents, **params):
