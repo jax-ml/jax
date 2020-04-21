@@ -1095,7 +1095,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for return_index in [False, True]
       for return_inverse in [False, True]
       for return_counts in [False, True]))
-  @jtu.skip_on_devices("gpu")  # https://github.com/google/jax/issues/2779
+  @jtu.skip_on_devices("gpu", "tpu")  # https://github.com/google/jax/issues/2779
   def testUnique(self, shape, dtype, return_index, return_inverse, return_counts, rng):
     args_maker = lambda: [rng(shape, dtype)]
     onp_fun = lambda x: onp.unique(x, return_index, return_inverse, return_counts)
@@ -1104,7 +1104,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue1233(self):
     '''
-    Following numpy test suite from `test_repeat` at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
+    Following numpy test suite from `test_repeat` at
+    https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
     '''
     tol = 1e-5
 
