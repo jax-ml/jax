@@ -112,7 +112,7 @@ Shape ParseFromDescriptor(msgpack::Reader &reader, const std::string &what) {
   if (tuple_size != 2) {
     throw std::invalid_argument("Expected tuple of size 2");
   }
-  std::string type_descriptor = ParseFromDescriptor<std::string>(
+  const std::string &type_descriptor = ParseFromDescriptor<std::string>(
       reader, "type_descriptor");
   std::vector<int> dimensions = ParseVectorFromDescriptor<int>(reader,
                                                               "dimensions");
@@ -323,7 +323,7 @@ void Printer::EmitArray() {
 
 int GetPrintMetadataVersion() { return kPrintMetadataVersion; }
 
-PrintMetadata ParsePrintMetadata(std::string bytes) {
+PrintMetadata ParsePrintMetadata(const std::string &bytes) {
   PrintMetadata meta;
 
   const char *buffer = bytes.data();
@@ -356,8 +356,8 @@ void PrintCPU(void *out, const void **args) {
   static constexpr int kReservedArgs = 2;
   const int *opaque_len = static_cast<const int *>(args[0]);
   const char *opaque = static_cast<const char *>(args[1]);
-  const PrintMetadata &meta =
-      ParsePrintMetadata(std::string(opaque, *opaque_len));
+  std::string opaque_str = std::string(opaque, *opaque_len);
+  const PrintMetadata &meta = ParsePrintMetadata(opaque_str);
 
   std::ostringstream output;
   for (int i = 0; i < meta.arg_shapes.size(); i++) {

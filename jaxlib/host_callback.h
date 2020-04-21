@@ -80,7 +80,7 @@ int GetPrintMetadataVersion();
 //      preamble: str,    # to be printed before the first argument
 //      separator: str,   # to be printed between arguments
 //
-PrintMetadata ParsePrintMetadata(std::string bytes);
+PrintMetadata ParsePrintMetadata(const std::string &bytes);
 
 // Emits one array to the output stream.
 // If this is the first argument, emits the preamble first, otherwise
