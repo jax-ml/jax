@@ -1405,6 +1405,33 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loop_lax, (x,), order=2, modes=["fwd"])
 
+  @parameterized.named_parameters(
+      dict(testcase_name="_loop={}".format(loop), loop=loop)
+      for loop in ["while", "fori", "fori_inside_cond", "fori_inside_scan"])
+  def testWhileGradError(self, loop: str = "fori_inside_scan"):
+    # Raise error for vjp for loops
+    if loop == "while":
+      func = lambda x: lax.while_loop(lambda i: i < 5., lambda i: i + 1., x)
+    elif loop == "fori":
+      func = lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x)
+    elif loop == "fori_inside_jit":
+      func = api.jit(lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x))
+    elif loop == "fori_inside_cond":
+      func = lambda x: lax.cond(True, x,
+                                lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
+                                 1., lambda x: x)
+    elif loop == "fori_inside_scan":
+      func = lambda x: lax.scan(lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x),
+                                              None),
+                                x, onp.ones(2))[0]
+    else:
+      assert False
+
+    with self.assertRaisesRegex(ValueError, "Reverse-mode differentiation does not work for lax.while_loop"):
+      api.grad(func)(1.)
+
+    api.linearize(func, 1.)  # Linearization works
+
   def testIssue1316(self):
     def f(carry, _):
       c, key = carry

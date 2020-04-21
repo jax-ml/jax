@@ -161,6 +161,7 @@ Parallelism support is experimental.
     psum
     pmax
     pmin
+    pmean
     ppermute
     pswapaxes
     axis_index

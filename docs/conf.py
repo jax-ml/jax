@@ -98,7 +98,9 @@ exclude_patterns = [
     'notebooks/score_matching.ipynb',
     'notebooks/maml.ipynb',
     # Fails with shape error in XL
-    'notebooks/XLA_in_Python.ipynb'
+    'notebooks/XLA_in_Python.ipynb',
+    # Sometimes sphinx reads its own outputs as inputs!
+    'build/html',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.

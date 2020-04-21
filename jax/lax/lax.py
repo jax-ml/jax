@@ -1275,23 +1275,23 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
 def stop_gradient(x):
   """Stops gradient computation.
 
-   Operationally `stop_gradient` is the identity function, that is, it returns
-   argument `x` unchanged. However, `stop_gradient` prevents the flow of
-   gradients during forward or reverse-mode automatic differentiation. If there
-   are multiple nested gradient computations, `stop_gradient` stops gradients
-   for all of them.
+  Operationally `stop_gradient` is the identity function, that is, it returns
+  argument `x` unchanged. However, `stop_gradient` prevents the flow of
+  gradients during forward or reverse-mode automatic differentiation. If there
+  are multiple nested gradient computations, `stop_gradient` stops gradients
+  for all of them.
 
-   For example:
+  For example:
 
-   >>> jax.grad(lambda x: x**2)(3.)
-   array(6., dtype=float32)
-   >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-   array(0., dtype=float32)
-   >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-   array(2., dtype=float32)
-   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-   array(0., dtype=float32)
-   """
+  >>> jax.grad(lambda x: x**2)(3.)
+  array(6., dtype=float32)
+  >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
+  array(0., dtype=float32)
+  >>> jax.grad(jax.grad(lambda x: x**2))(3.)
+  array(2., dtype=float32)
+  >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
+  array(0., dtype=float32)
+  """
   return tree_map(stop_gradient_p.bind, x)
 
 
@@ -3773,7 +3773,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.GetShape(init_value)
   axis_env = xla.AxisEnv(1)  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("reduction_computation")
-  consts = [subc.ParameterWithShape(const) for const in consts]
+  assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [subc.ParameterWithShape(shape), subc.ParameterWithShape(shape)]
   out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
   return subc.Build(out)
@@ -4608,6 +4608,12 @@ masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 ### stop-gradient
 
+def _stop_gradient_impl(x):
+  if not core.valid_jaxtype(x):
+    raise TypeError("stop_gradient only works on valid JAX arrays, but "
+                    f"input argument is: {x}")
+  return x
+
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
@@ -4619,7 +4625,7 @@ def _stop_gradient_batch_rule(batched_args, batch_dims):
   return stop_gradient(x), dim
 
 stop_gradient_p = Primitive('stop_gradient')
-stop_gradient_p.def_impl(_identity)
+stop_gradient_p.def_impl(_stop_gradient_impl)
 stop_gradient_p.def_abstract_eval(_identity)
 xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule

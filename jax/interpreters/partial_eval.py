@@ -17,7 +17,7 @@ import itertools as it
 from collections import namedtuple
 import contextlib
 import threading
-from typing import Callable, Dict, Optional, Sequence, Set, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Set, Tuple, Type, Union
 from weakref import ref
 
 import numpy as onp
@@ -84,6 +84,15 @@ class PartialVal(tuple):
     return known if known is not None else val
 
 
+# We form Jaxprs using `JaxprTrace` for three distinct purposes:
+#  (1) to stage program representations completely out of the JAX system
+#      (e.g. for XLA using jit or pmap). In this case we are using the
+#      `StagingJaxprTrace` subclass.
+#  (3) to linearize a function for reverse-mode AD. In this case we are
+#      using the `JaxprTrace` subclass.
+#  (2) to build a representation of a function that may require further JAX
+#     transformations (e.g. in "initial-style" higher-order primitives, like
+#     for control flow). In this case we use the `JaxprTrace` class.
 class JaxprTrace(Trace):
   def pure(self, val):
     return self.new_const(val)
@@ -133,6 +142,8 @@ class JaxprTrace(Trace):
       return self.default_process_primitive(primitive, tracers, params)
 
   def default_process_primitive(self, primitive, tracers, params):
+    """By default, if all the input tracers are known, then execute the primitive
+    and all the ouputs are known. Otherwise, all the outputs are unknown."""
     consts = tuple(t.pval.get_known() for t in tracers)
     if all(c is not None for c in consts):
       return primitive.bind(*consts, **params)
@@ -261,15 +272,9 @@ class JaxprTrace(Trace):
     return out, todo
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
-    # We form jaxprs using JaxprTraces for two distinct purposes: to stage
-    # program representations completely out of the JAX system (e.g. for XLA
-    # using jit or pmap), and to build a representation of a function that may
-    # require further JAX transformations (e.g. in "initial-style" higher-order
-    # primitives, like for control flow). In particular, in the latter case we
-    # need custom differentiation rules to stick around, but in the former we do
-    # not. This method call should only be reachable in the former case, and so
-    # we check that the former case is indicated (with a StagingJaxprTrace) and
-    # then drop the differentiation rules.
+    # See comment at top of `JaxprTrace`. This method should be reachable
+    # only when we stage out, and in that case we drop the custom differentiation
+    # rules, because we do not need them.
     assert self.master.trace_type is StagingJaxprTrace
     return fun.call_wrapped(*tracers)
 
@@ -278,9 +283,9 @@ class JaxprTrace(Trace):
     assert self.master.trace_type is StagingJaxprTrace
     return fun.call_wrapped(*tracers)
 
-# This subclass is used just for its type tag, which switches the behavior of
-# process_call to stage out into the jaxpr any call primitives encountered
-# (rather than doing partial evaluation into the call).
+# This subclass is used just for its type tag (see comment for `JaxprTrace`)
+# This switches the behavior of process_call to stage out into the jaxpr any
+# call primitives encountered (rather than doing partial evaluation into the call).
 class StagingJaxprTrace(JaxprTrace):
   pass
 
@@ -367,13 +372,17 @@ class JaxprTracer(Tracer):
     else:
       return self
 
-
 # TODO(necula): this should return a TypedJaxpr
+# TODO(necula): remove stage_out, replace trace_type=pe.StagingJaxprTrace
 def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
                    instantiate: Union[bool, Sequence[bool]] = False,
-                   stage_out=False, bottom=False) \
+                   stage_out=False, bottom=False,
+                   trace_type: Optional[Type[Trace]] = None) \
     -> Tuple[Jaxpr, Tuple[PartialVal, ...], Tuple[core.Value, ...]]:
   """Traces a function into a Jaxpr, given PartialVals for inputs.
+
+  `trace_type` can be one of `StagingJaxprTrace` or `JaxprTrace` (see
+  comments for that class).
 
   Returns (`jaxpr`, `out_pvals`, `consts`).
   The `jaxpr` contains only the computation that depends on unknown inputs.
@@ -415,7 +424,7 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
      out_pvals = [abstract(ConcreteArray(6)), abstract(ShapedArray)]  # all are unknown PartialVal
      consts = [3, 6]  # values for `ka` and `kb` constvars
   """
-  trace_type = StagingJaxprTrace if stage_out else JaxprTrace
+  trace_type = trace_type or (StagingJaxprTrace if stage_out else JaxprTrace)
   with new_master(trace_type, bottom=bottom) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
@@ -549,7 +558,8 @@ def convert_constvars_jaxpr(jaxpr):
   return lifted_jaxpr
 
 def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
-                       instantiate: Union[bool, Sequence[bool]]
+                       instantiate: Union[bool, Sequence[bool]],
+                       trace_type: Optional[Type[core.Trace]]
                        ) -> Tuple[TypedJaxpr, TypedJaxpr, Sequence[bool]]:
   """Specializes a Jaxpr given an indication of which inputs are known.
 
@@ -586,7 +596,8 @@ def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
   def fun(*vals):
     pvals = [PartialVal.unknown(aval) if uk else PartialVal.known(val)
              for aval, val, uk in zip(jaxpr.in_avals, vals, unknowns)]
-    jaxpr_2, out_pvals_2, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate)
+    jaxpr_2, out_pvals_2, consts_2 = trace_to_jaxpr(f, pvals, instantiate=instantiate,
+                                                    trace_type=trace_type)
     out_pvs_2, out_consts_2 = unzip2(out_pvals_2)
     cell.append((out_pvs_2, jaxpr_2, len(consts_2)))
     return out_consts_2 + consts_2
@@ -674,7 +685,9 @@ def _remat_partial_eval(trace, _, f, tracers, params):
                for var, pv, const in zip(jaxpr.outvars, out_pvs, out_pval_consts1)]
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   in_unknowns = [t.pval[0] is not None for t in it.chain(env, tracers)]
-  jaxpr_1, jaxpr_2, out_unknowns = partial_eval_jaxpr(typed_jaxpr, in_unknowns, False)
+  jaxpr_1, jaxpr_2, out_unknowns = partial_eval_jaxpr(typed_jaxpr, in_unknowns,
+                                                      instantiate=False,
+                                                      trace_type=trace.master.trace_type)
   num_res = len(jaxpr_1.out_avals) - len(jaxpr_2.out_avals)
 
   # First, we prune the jaxpr to be staged out not to have too many outputs.

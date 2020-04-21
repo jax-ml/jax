@@ -941,6 +941,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for trans in [0, 1, 2]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("cpu")  # TODO(frostig): Test fails on CPU sometimes
   def testLuSolve(self, lhs_shape, rhs_shape, dtype, trans, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
