@@ -168,10 +168,9 @@ class JaxprTrace(Trace):
     else:
       name = wrap_name(name, 'pe')
     params = dict(params, name=name)
+
     if call_primitive in call_partial_eval_rules:
       return call_partial_eval_rules[call_primitive](self, call_primitive, f, tracers, params)
-    if call_primitive in map_primitives:
-      return self.process_map(call_primitive, f, tracers, params)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     fun, aux = partial_eval(f, self, in_pvs)
     out_flat = call_primitive.bind(fun, *in_consts, **params)
@@ -190,7 +189,38 @@ class JaxprTrace(Trace):
       t.recipe = eqn
     return out_tracers
 
+  def post_process_call(self, call_primitive, out_tracers, params):
+    jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
+    out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
+    out = out_pv_consts + consts
+    del consts, out_pv_consts
+    master = self.master
+    def todo(x):
+      n = len(jaxpr.outvars)
+      out_pv_consts, consts = x[:n], x[n:]
+      trace = JaxprTrace(master, core.cur_sublevel())
+      const_tracers = map(trace.new_instantiated_const, consts)
+      env_tracers = map(trace.full_raise, env)
+      lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
+      out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
+                     for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
+      new_params = dict(params, call_jaxpr=lifted_jaxpr)
+      # The `jaxpr` already contains the env_vars at start of invars
+      eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers)),
+                           out_tracers, call_primitive, new_params)
+      for t in out_tracers:
+        t.recipe = eqn
+      return out_tracers
+    return out, todo
+
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
+    name = params.get('name', f.__name__)
+    if self.master.trace_type is StagingJaxprTrace:
+      tracers = map(self.instantiate_const_abstracted, tracers)
+    else:
+      name = wrap_name(name, 'pe')
+
+    params = dict(params, name=name)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     reduced_pvs = [None if pv is None else _mapped_aval(pv) for pv in in_pvs]
     fun, aux = partial_eval(f, self, reduced_pvs)
@@ -215,32 +245,6 @@ class JaxprTrace(Trace):
     for t in out_tracers:
       t.recipe = eqn
     return out_tracers
-
-  def post_process_call(self, call_primitive, out_tracers, params):
-    if call_primitive in map_primitives:
-      return self.post_process_map(call_primitive, out_tracers, params)
-    jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
-    out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
-    out = out_pv_consts + consts
-    del consts, out_pv_consts
-    master = self.master
-    def todo(x):
-      n = len(jaxpr.outvars)
-      out_pv_consts, consts = x[:n], x[n:]
-      trace = JaxprTrace(master, core.cur_sublevel())
-      const_tracers = map(trace.new_instantiated_const, consts)
-      env_tracers = map(trace.full_raise, env)
-      lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
-      out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
-                     for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-      new_params = dict(params, call_jaxpr=lifted_jaxpr)
-      # The `jaxpr` already contains the env_vars at start of invars
-      eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers)),
-                           out_tracers, call_primitive, new_params)
-      for t in out_tracers:
-        t.recipe = eqn
-      return out_tracers
-    return out, todo
 
   def post_process_map(self, map_primitive, out_tracers, params):
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
@@ -306,7 +310,6 @@ def _unmapped_aval(size, aval):
   else:
     raise TypeError(aval)
 
-map_primitives: Set[core.Primitive] = set()
 custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 call_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 

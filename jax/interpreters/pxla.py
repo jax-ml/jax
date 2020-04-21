@@ -816,7 +816,7 @@ def execute_replicated(compiled, backend, in_handler, out_handler, *args):
 xla_pmap_p = core.Primitive('xla_pmap')
 xla_pmap_p.call_primitive = True
 xla_pmap_p.multiple_results = True
-xla_pmap = partial(core.call_bind, xla_pmap_p)
+xla_pmap = partial(core.map_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
@@ -847,7 +847,6 @@ def _pmap_translation_rule(c, axis_env,
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
-pe.map_primitives.add(xla_pmap_p)
 
 def _xla_shard(c, aval, axis_env, x):
   if aval is core.abstract_unit:
@@ -1019,16 +1018,13 @@ class SplitAxisTrace(core.Trace):
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
-    if call_primitive in pe.map_primitives:
-      return self.process_map(call_primitive, f, tracers, params)
+    vals, names = unzip2((t.val, t.axis_name) for t in tracers)
+    if all(name is not_mapped for name in names):
+      return call_primitive.bind(f, *vals, **params)
     else:
-      vals, names = unzip2((t.val, t.axis_name) for t in tracers)
-      if all(name is not_mapped for name in names):
-        return call_primitive.bind(f, *vals, **params)
-      else:
-        f, names_out = split_axis_subtrace(f, self.master, names)
-        vals_out = call_primitive.bind(f, *vals, **params)
-        return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
+      f, names_out = split_axis_subtrace(f, self.master, names)
+      vals_out = call_primitive.bind(f, *vals, **params)
+      return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, names = unzip2((t.val, t.axis_name) for t in tracers)
@@ -1053,6 +1049,8 @@ class SplitAxisTrace(core.Trace):
       trace = SplitAxisTrace(master, core.cur_sublevel())
       return  SplitAxisTracer(trace, name, x)
     return  val, todo
+
+  post_process_map = post_process_call
 
 
 split_axis_rules: Dict[core.Primitive, Callable] = {}

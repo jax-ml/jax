@@ -350,6 +350,9 @@ class JVPTrace(Trace):
       return map(partial(JVPTracer, trace), primals, tangents)
     return out, todo
 
+  process_map = process_call
+  post_process_map = post_process_call
+
   def process_custom_jvp_call(self, _, __, f_jvp, tracers):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)

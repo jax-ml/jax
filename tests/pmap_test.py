@@ -1015,6 +1015,27 @@ class PmapTest(jtu.JaxTestCase):
                         np.array([sum(vals)] * ndevices),
                         check_dtypes=True)
 
+  def testPostProcessMap(self):
+    # code from https://github.com/google/jax/issues/2787
+    def vv(x, y):
+      """Vector-vector multiply"""
+      return np.dot(x, y)
+
+    def distributed_matrix_vector(x, y):
+      """Matrix vector multiply. First batch it and then row by row"""
+      fv = lambda z: lax.map(lambda j: vv(j, y), z)
+      res = pmap(fv)(x.reshape((jax.device_count(), -1) + tuple(x.shape[1:])))
+      res = res.reshape(res.shape[0] * res.shape[1], *res.shape[2:])
+      return res
+
+    key = random.PRNGKey(1)
+    x = random.normal(key, (800, 50))
+    batched_mvm = vmap(lambda b: distributed_matrix_vector(x, b), in_axes=0)
+    y = random.normal(key, (10, 50, 1))
+    result = batched_mvm(y)
+    expected = np.einsum('ij,njk->nik', x, y)
+    self.assertAllClose(result, expected, check_dtypes=False, atol=1e-3, rtol=1e-3)
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 

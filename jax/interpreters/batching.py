@@ -140,16 +140,21 @@ class BatchTrace(Trace):
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
-    if call_primitive in pe.map_primitives:
-      return self.process_map(call_primitive, f, tracers, params)
+    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    if all(bdim is not_mapped for bdim in dims):
+      return call_primitive.bind(f, *vals, **params)
     else:
-      vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
-      if all(bdim is not_mapped for bdim in dims):
-        return call_primitive.bind(f, *vals, **params)
-      else:
-        f, dims_out = batch_subtrace(f, self.master, dims)
-        vals_out = call_primitive.bind(f, *vals, **params)
-        return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+      f, dims_out = batch_subtrace(f, self.master, dims)
+      vals_out = call_primitive.bind(f, *vals, **params)
+      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+
+  def post_process_call(self, call_primitive, out_tracers, params):
+    vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    master = self.master
+    def todo(vals):
+      trace = BatchTrace(master, core.cur_sublevel())
+      return map(partial(BatchTracer, trace), vals, dims)
+    return vals, todo
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
@@ -166,12 +171,13 @@ class BatchTrace(Trace):
       dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
-  def post_process_call(self, call_primitive, out_tracers, params):
+  def post_process_map(self, call_primitive, out_tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
     master = self.master
-    def todo(x):
+    def todo(vals):
       trace = BatchTrace(master, core.cur_sublevel())
-      return map(partial(BatchTracer, trace), x, dims)
+      return [BatchTracer(trace, v, d + 1 if d is not not_mapped else d)
+              for v, d in zip(vals, dims)]
     return vals, todo
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
