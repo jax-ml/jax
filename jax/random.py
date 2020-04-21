@@ -626,7 +626,7 @@ def beta(key: np.ndarray,
          b: Union[float, np.ndarray],
          shape: Optional[Sequence[int]] = None,
          dtype: onp.dtype = onp.float64) -> np.ndarray:
-  """Sample Bernoulli random values with given shape and mean.
+  """Sample Beta random values with given shape and float dtype.
 
   Args:
     key: a PRNGKey used as the random key.
