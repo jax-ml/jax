@@ -362,9 +362,6 @@ class JaxprTracer(Tracer):
     else:
       return []
 
-  def ispure(self):
-    return self.pval.is_known()
-
   def full_lower(self):
     known = self.pval.get_known()
     if known is not None:
