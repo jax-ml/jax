@@ -182,6 +182,7 @@ common --experimental_repo_remote_exec
 build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
 build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
+build --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"
 build --distinct_host_configuration=false
 build --copt=-Wno-sign-compare
 build -c opt
@@ -311,6 +312,10 @@ def main():
       default=None,
       help="Path to CUDNN libraries.")
   parser.add_argument(
+      "--cuda_compute_capabilities",
+      default="3.5,5.2,6.0,6.1,7.0",
+      help="A comma-separated list of CUDA compute capabilities to support.")
+  parser.add_argument(
       "--bazel_startup_options",
       action="append", default=[],
       help="Additional startup options to pass to bazel.")
@@ -345,11 +350,13 @@ def main():
       print("CUDA toolkit path: {}".format(cuda_toolkit_path))
     if cudnn_install_path:
       print("CUDNN library path: {}".format(cudnn_install_path))
+    print("CUDA compute capabilities: {}".format(args.cuda_compute_capabilities))
   write_bazelrc(
       python_bin_path=python_bin_path,
       tf_need_cuda=1 if args.enable_cuda else 0,
       cuda_toolkit_path=cuda_toolkit_path,
-      cudnn_install_path=cudnn_install_path)
+      cudnn_install_path=cudnn_install_path,
+      cuda_compute_capabilities=args.cuda_compute_capabilities)
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options

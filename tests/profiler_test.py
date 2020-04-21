@@ -20,6 +20,7 @@ from absl.testing import absltest
 import jax
 import jax.profiler
 from jax.config import config
+import jax.test_util
 
 try:
   import portpicker

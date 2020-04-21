@@ -39,6 +39,27 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.softplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
+  def testSoftplusGradZero(self):
+    check_grads(nn.softplus, (0.,), order=1,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+
+  def testSoftplusGradInf(self):
+    self.assertAllClose(
+        1., jax.grad(nn.softplus)(float('inf')), check_dtypes=True)
+
+  def testSoftplusGradNegInf(self):
+    check_grads(nn.softplus, (-float('inf'),), order=1,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+
+  def testSoftplusGradNan(self):
+    check_grads(nn.softplus, (float('nan'),), order=1,
+                rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
+
+  @parameterized.parameters([
+      int, np.int32, float, np.float64, np.float32, np.float64,])
+  def testSoftplusZero(self, dtype):
+    self.assertEqual(np.log(dtype(2)), nn.softplus(dtype(0)))
+
   def testReluGrad(self):
     rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)

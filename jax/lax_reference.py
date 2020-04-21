@@ -266,7 +266,7 @@ sort = onp.sort
 def sort_key_val(keys, values, dimension=-1):
   idxs = list(onp.ix_(*[onp.arange(d) for d in keys.shape]))
   idxs[dimension] = onp.argsort(keys, axis=dimension)
-  return keys[idxs], values[idxs]
+  return keys[tuple(idxs)], values[tuple(idxs)]
 
 # TODO untake
 

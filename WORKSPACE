@@ -28,10 +28,10 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "a12bfe2d9fbccb52b22de69e5a72cd32888cc141da061f7a4619eff0986e9df1",
-    strip_prefix = "tensorflow-32c11108cee6b278d6f3af242ee4819c5f195910",
+    sha256 = "a7351296211d10b6dfb6de552eb88b2fba282985a29f459ffbf520bca2d71950",
+    strip_prefix = "tensorflow-4735df8ff40f31df3a3beb03c68d6967010ec4af",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/32c11108cee6b278d6f3af242ee4819c5f195910.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/4735df8ff40f31df3a3beb03c68d6967010ec4af.tar.gz",
     ],
 )
 

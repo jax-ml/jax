@@ -20,7 +20,10 @@
 
 from __future__ import print_function
 
-from libc.math cimport isnan
+cdef extern from "<cmath>" namespace "std":
+  bint isnan(float x) nogil
+  bint isnan(double x) nogil
+
 from libc.stdlib cimport malloc, free
 from libc.stdint cimport int32_t, int64_t
 from libc.string cimport memcpy

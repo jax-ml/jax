@@ -69,7 +69,7 @@ class DLPackTest(jtu.JaxTestCase):
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
-    self.assertAllClose(x, y, check_dtypes=True)
+    self.assertAllClose(np.astype(x.dtype), y, check_dtypes=True)
 
     self.assertRaisesRegex(RuntimeError,
                            "DLPack tensor may be consumed at most once",
