@@ -157,17 +157,18 @@ class JaxprTrace(Trace):
     avals = [t.aval for t in tracers]
     out_aval = primitive.abstract_eval(*avals, **params)
     source = source_info_util.current()
-    if primitive.multiple_results:
+
+    def create_output_tracers(out_avals):
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
-                     for aval in out_aval]
+                     for aval in out_avals]
       eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, source)
       for t in out_tracers: t.recipe = eqn
       return out_tracers
+
+    if primitive.multiple_results:
+      return create_output_tracers(out_aval)
     else:
-      out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
-      out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive,
-                                         params, source)
-      return out_tracer
+      return create_output_tracers([out_aval])[0]
 
   def process_call(self, primitive, f: lu.WrappedFun, tracers, params):
     if (self.master.trace_type is StagingJaxprTrace
