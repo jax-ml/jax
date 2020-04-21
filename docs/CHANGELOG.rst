@@ -12,8 +12,14 @@ These are the release notes for JAX.
 jax 0.1.64 (unreleased)
 ---------------------------
 
-jaxlib 0.1.45 (unreleased)
+jaxlib 0.1.46 (unreleased)
 ------------------------------
+
+jaxlib 0.1.45 (April 21, 2020)
+------------------------------
+
+* Fixes segfault: https://github.com/google/jax/issues/2755
+* Plumb is_stable option on Sort HLO through to Python.
 
 jax 0.1.64 (April 21, 2020)
 ---------------------------
