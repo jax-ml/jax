@@ -1095,6 +1095,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for return_index in [False, True]
       for return_inverse in [False, True]
       for return_counts in [False, True]))
+  @jtu.skip_on_devices("gpu")  # https://github.com/google/jax/issues/2779
   def testUnique(self, shape, dtype, return_index, return_inverse, return_counts, rng):
     args_maker = lambda: [rng(shape, dtype)]
     onp_fun = lambda x: onp.unique(x, return_index, return_inverse, return_counts)
