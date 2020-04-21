@@ -12,12 +12,31 @@ These are the release notes for JAX.
 jax 0.1.64 (unreleased)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.63...master>`_.
-* Improves error message for reverse-mode differentiation of :func:`lax.while_loop`
-  `#2129 <https://github.com/google/jax/issues/2129>`_.
-
 jaxlib 0.1.45 (unreleased)
 ------------------------------
+
+jax 0.1.64 (April 21, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.63...master>`_.
+* New features:
+  * Add syntactic sugar for functional indexed updates
+    `#2684 <https://github.com/google/jax/issues/2684>`_.
+  * Add :func:`jax.numpy.linalg.multi_dot` `#2726 <https://github.com/google/jax/issues/2726>`_.
+  * Add :func:`jax.numpy.unique` `#2760 <https://github.com/google/jax/issues/2760>`_.
+  * Add :func:`jax.numpy.rint` `#2724 <https://github.com/google/jax/issues/2724>`_.
+  * Add :func:`jax.numpy.rint` `#2724 <https://github.com/google/jax/issues/2724>`_.
+  * Add more primitive rules for :`func:`jax.experimental.jet`.
+
+* Bug fixes:
+  * Fix :func:`logaddexp` and :func:`logaddexp2` differentiation at zero `#2107
+    <https://github.com/google/jax/issues/2107>`_.
+  * Improve memory usage in reverse-mode autodiff without :func:`jit`
+    `#2719 <https://github.com/google/jax/issues/2719>`_.
+
+* Better errors:
+  * Improves error message for reverse-mode differentiation of :func:`lax.while_loop`
+    `#2129 <https://github.com/google/jax/issues/2129>`_.
 
 
 jaxlib 0.1.44 (April 16, 2020)
@@ -30,7 +49,7 @@ jaxlib 0.1.44 (April 16, 2020)
   hang.
 
 
-jax 0.1.63
+jax 0.1.63 (April 12, 2020)
 ---------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.62...jax-v0.1.63>`_.
