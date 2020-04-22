@@ -101,7 +101,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         check_dtypes=True,
         tol=3e-5)
 
-    # TODO(mattjj): I had to loosen the tolerance for complex64[7,7]
+    # TODO(shoyer,mattjj): I had to loosen the tolerance for complex64[7,7]
     # with preconditioner=random
     self._CheckAgainstNumpy(
         partial(scipy_cg, M=M, maxiter=3),
