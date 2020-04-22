@@ -3524,7 +3524,7 @@ def _slice_indices(idx, size):
     start += size if start < 0 else 0
 
   if idx.stop is None:
-    stop = (-1 if step < 0 else size)
+    stop = -1 if step < 0 else size
   else:
     stop = idx.stop if type(size) is Poly else _min(idx.stop, size)
     stop += size if stop < 0 else 0
