@@ -728,6 +728,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(np.array([[0., -1.], [ 0., 0.]], np.float32), j,
                         check_dtypes=True)
 
+    expected = np.array([[[[-1., 0.], [ 0., 0.]], [[0., -1.], [0.,  0.]]],
+                         [[[0.,  0.], [-1., 0.]], [[0.,  0.], [0., -1.]]]],
+                         dtype=np.float32)
+    self.assertAllClose(
+      expected, jax.jacobian(np.linalg.pinv)(np.eye(2, dtype=np.float32)),
+      check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}".format(
           jtu.format_shape_dtype_string(shape, dtype), n),

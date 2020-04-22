@@ -207,8 +207,8 @@ def pinv(a, rcond=None):
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
-  s = np.where(s > cutoff, np.divide(1, s), 0)
-  res = np.matmul(_T(v), np.multiply(s[..., np.newaxis], _T(u)))
+  s = np.where(s > cutoff, s, np.inf)
+  res = np.matmul(_T(v), np.divide(_T(u), s[..., np.newaxis]))
   return lax.convert_element_type(res, a.dtype)
 
 
@@ -222,6 +222,7 @@ def _pinv_jvp(rcond, primals, tangents):
   a_dot, = tangents
   p = pinv(a, rcond=rcond)
   m, n = a.shape[-2:]
+  # TODO(phawkins): on TPU, we would need to opt into high precision here.
   p_dot = -p @ a_dot @ p
   p_dot = p_dot + p @ _H(p) @ _H(a_dot) @ (np.eye(m, dtype=a.dtype) - a @ p)
   p_dot = p_dot + (np.eye(n, dtype=a.dtype) - p @ a) @ _H(a_dot) @ _H(p) @ p
