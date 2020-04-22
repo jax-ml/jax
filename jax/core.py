@@ -714,20 +714,38 @@ identity_p = Primitive('id')
 identity_p.def_impl(lambda x: x)
 identity_p.def_custom_bind(lambda x: x)
 
-def concretization_err_msg(fun, context=None):
-  fname = getattr(fun, "__name__", fun)
-  if context is None:
-    context = ("The function to be transformed can't be traced at the required level "
-               "of abstraction. If using `jit`, try using `static_argnums` or "
-               "applying `jit` to smaller subfunctions instead.")
-  msg = "Abstract value passed to `{}`, which requires a concrete value. {}"
-  return msg.format(fname, context)
+class ConcretizationTypeError(TypeError): pass
 
-def concretization_function_error(fun, context=None):
-  def error(self, *args):
-    raise TypeError(concretization_err_msg(fun, context))
+def raise_concretization_error(val, context=""):
+  msg = (f"Abstract tracer value encountered where concrete value is expected ({context}).\n"
+          "Use transformation parameters such as `static_argnums` for `jit` "
+          "to avoid tracing input values.\n"
+          "See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error`.\n"
+          f"Encountered value: {val}")
+  raise ConcretizationTypeError(msg)
+
+
+def concretization_function_error(fun, context=""):
+  fname = getattr(fun, "__name__", fun)
+  fname_context = f"in `{fname}`"
+  if context:
+    fname_context += f" {context}"
+  def error(self, arg):
+    raise_concretization_error(arg, fname_context)
   return error
 
+
+def concrete_or_error(typ: Type, val: Any, context=""):
+  """Like typ(val), but gives the context in the error message.
+  Use with typ either `int`, or `bool`.
+  """
+  if isinstance(val, Tracer):
+    if isinstance(val.aval, ConcreteArray):
+      return typ(val.aval.val)
+    else:
+      raise_concretization_error(val, context)
+  else:
+    return typ(val)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']

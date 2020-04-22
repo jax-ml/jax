@@ -35,7 +35,6 @@ from jax import api, core, lax, lax_reference
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
-from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
@@ -225,7 +224,9 @@ class APITest(jtu.JaxTestCase):
 
     assert grad(f)(1.0) == 1.0
     assert grad(f)(-1.0) == -1.0
-    jtu.check_raises(lambda: jit(f)(1), TypeError, concretization_err_msg(bool))
+    with self.assertRaisesRegex(core.ConcretizationTypeError,
+                                "Abstract tracer value encountered where concrete value is expected"):
+      jit(f)(1)
 
   def test_range_err(self):
     def f(x, n):
@@ -246,7 +247,7 @@ class APITest(jtu.JaxTestCase):
       self.assertRaisesRegex(
           TypeError,
           "('JaxprTracer' object cannot be interpreted as an integer"
-          "|Abstract value passed to .*)", lambda: jit(f)(0))
+          "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
