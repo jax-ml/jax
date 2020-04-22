@@ -2296,10 +2296,6 @@ def _conv_general_dilated_transpose_lhs(
     out = _reshape_axis_into(lhs_spec[1], lhs_spec[0], out)
   return out
 
-# TODO(phawkins): remove when the minimum jaxlib version is incremented past
-# 0.1.43.
-_jaxlib_has_working_batch_group_count = lib.version > (0, 1, 43)
-
 def _conv_general_dilated_transpose_rhs(
     g, lhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: ConvDimensionNumbers, feature_group_count: int,
@@ -2315,12 +2311,8 @@ def _conv_general_dilated_transpose_rhs(
     feature_group_count = batch_group_count
     batch_group_count = 1
   elif feature_group_count > 1:
-    if _jaxlib_has_working_batch_group_count:
-      batch_group_count = feature_group_count
-      feature_group_count = 1
-    else:
-      lhs = _reshape_axis_out_of(lhs_trans[0], feature_group_count, lhs)
-      lhs = _reshape_axis_into(lhs_trans[0], lhs_trans[1], lhs)
+    batch_group_count = feature_group_count
+    feature_group_count = 1
   trans_dimension_numbers = ConvDimensionNumbers(lhs_trans, out_trans, rhs_trans)
   padding = _conv_general_vjp_rhs_padding(
       onp.take(lhs_shape, lhs_sdims), onp.take(rhs_shape, rhs_sdims),
