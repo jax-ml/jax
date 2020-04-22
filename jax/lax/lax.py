@@ -4494,6 +4494,7 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension):
 
 sort_p = standard_primitive(sort_shape, _input_dtype, 'sort')
 ad.defjvp(sort_p, _sort_jvp_rule)
+xla.translations[sort_p] = partial(standard_translate, 'sort', is_stable=True)
 batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 def _sort_key_val_abstract_eval(keys, values, *, dimension):
@@ -4562,7 +4563,8 @@ sort_key_val_p = Primitive('sort_key_val')
 sort_key_val_p.multiple_results = True
 sort_key_val_p.def_impl(partial(xla.apply_primitive, sort_key_val_p))
 sort_key_val_p.def_abstract_eval(_sort_key_val_abstract_eval)
-xla.translations[sort_key_val_p] = partial(standard_translate, 'sort_key_val')
+xla.translations[sort_key_val_p] = partial(standard_translate, 'sort_key_val',
+                                           is_stable=True)
 ad.primitive_jvps[sort_key_val_p] = _sort_key_val_jvp
 ad.primitive_transposes[sort_key_val_p] = _sort_key_val_transpose_rule
 batching.primitive_batchers[sort_key_val_p] = _sort_key_val_batch_rule
