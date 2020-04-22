@@ -28,6 +28,8 @@ import collections
 import functools
 import inspect
 import itertools as it
+import os
+import string
 import threading
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
@@ -52,6 +54,7 @@ from .lib import xla_bridge as xb
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
 from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
+from .interpreters.masking import eval_polymorphic_shape, Poly, Mon
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
@@ -59,7 +62,6 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters.masking import ensure_poly
 from .custom_derivatives import custom_jvp, custom_vjp
 from .config import flags, config, bool_env
 
@@ -1126,24 +1128,23 @@ def mask(fun: Callable, in_shapes, out_shape) -> Callable:
     out_shapes = map(masking.finalize_spec, out_specs, map(onp.shape, outs))
     if not out_shapes == list(out_shapes_):
       raise masking.ShapeError
-    if not all(onp.shape(out) == masking.eval_shape_expr(padded_env, expr)
-               for out, expr in zip(outs, out_shapes)):
+    if not all(onp.shape(out) == eval_polymorphic_shape(shape, padded_env)
+               for out, shape in zip(outs, out_shapes)):
       raise masking.ShapeError
     return tree_unflatten(out_tree(), outs)
   return wrapped_fun
 
 def _remap_ids(names, shape_spec):
-  ShapeSpec, Poly, Mon = masking.ShapeSpec, masking.Poly, masking.Mon
-  mdim = masking.monomorphic_dim
-  return ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
+  return masking.ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
                           : coeff for mon, coeff in poly.items()})
-                   if poly is not mdim else mdim for poly in shape_spec)
+                   if poly is not masking._monomorphic_dim else
+                   masking._monomorphic_dim for poly in shape_spec)
 
 def _bind_shapes(shape_exprs, shapes):
   env = {}
   for shape_expr, shape in zip(shape_exprs, shapes):
     for poly, d in zip(shape_expr, shape):
-      if ensure_poly(poly).is_constant:
+      if type(poly) is not Poly or poly.is_constant:
         continue
       else:
         (binder,), = poly  # TODO generalize to handle striding
@@ -1159,15 +1160,12 @@ def shapecheck(in_shapes, out_shape, fun):
   out_shapes, out_tree = tree_flatten(out_shape)
   out_shapes = map(masking.parse_spec, out_shapes)
   flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  out_shapes_ = masking.shapecheck(flat_fun, in_shapes)
+  avals = map(partial(ShapedArray, dtype=onp.float32), in_shapes)
+  out_shapes_ = [o.shape for o in pe.abstract_eval_fun(flat_fun.call_wrapped, *avals)]
   if out_tree != out_tree_(): raise TypeError("pytree mismatch")
-  if not all(map(_shape_spec_consistent, out_shapes, out_shapes_)):
+  if not all(map(masking._shape_spec_consistent, out_shapes, out_shapes_)):
     raise masking.ShapeError
   return fun
-
-def _shape_spec_consistent(spec, expr):
-  return all(a == b for a, b in zip(spec, expr) if a is not masking.monomorphic_dim)
-
 
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
   """Computes a (forward-mode) Jacobian-vector product of ``fun``.
