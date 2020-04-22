@@ -1029,12 +1029,13 @@ class PmapTest(jtu.JaxTestCase):
       return res
 
     key = random.PRNGKey(1)
-    x = random.normal(key, (800, 50))
+    x = random.normal(key, (80, 50))
     batched_mvm = vmap(lambda b: distributed_matrix_vector(x, b), in_axes=0)
     y = random.normal(key, (10, 50, 1))
     result = batched_mvm(y)
     expected = np.einsum('ij,njk->nik', x, y)
-    self.assertAllClose(result, expected, check_dtypes=False, atol=1e-3, rtol=1e-3)
+    tol = 1e-1 if jtu.device_under_test() == "tpu" else 1e-3
+    self.assertAllClose(result, expected, check_dtypes=False, atol=tol, rtol=tol)
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
