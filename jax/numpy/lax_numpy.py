@@ -3517,8 +3517,17 @@ def _slice_indices(idx, size):
   assert isinstance(idx, slice)
 
   step = 1 if idx.step is None else idx.step
-  start = (size - 1 if step < 0 else 0) if idx.start is None else idx.start + (size if idx.start < 0 else 0)
-  stop = (-1 if step < 0 else size) if idx.stop is None else idx.stop + (size if idx.stop < 0 else 0)
+  if idx.start is None:
+    start = size - 1 if step < 0 else 0
+  else:
+    start = idx.start if type(size) is Poly else _max(idx.start, -size)
+    start += size if start < 0 else 0
+
+  if idx.stop is None:
+    stop = (-1 if step < 0 else size)
+  else:
+    stop = idx.stop if type(size) is Poly else _min(idx.stop, size)
+    stop += size if stop < 0 else 0
   return start, stop, step
 
 def _static_idx(idx, size):

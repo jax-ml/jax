@@ -23,6 +23,7 @@ from jax.interpreters.masking import shape_as_value, ShapeError, \
 from jax import numpy as np, test_util as jtu, mask, vmap, jit, grad, lax, \
   shapecheck, api
 from jax.config import config
+from jax.numpy.lax_numpy import _slice_indices
 from jax.scipy.special import expit
 
 config.parse_flags_with_absl()
@@ -530,6 +531,15 @@ class MaskingTest(jtu.JaxTestCase):
     expected = onp.array([3, 2, 6])
     self.assertAllClose(ans[:3], expected, check_dtypes=False)
 
+  def test_slice_indices(self):
+    s = slice(None, 10, None)
+    assert _slice_indices(s, 5) == s.indices(5)
+
+    s = slice(-10, None, None)
+    assert _slice_indices(s, 5) == s.indices(5)
+
+    self.assertAllClose(np.ones(5), np.ones(5)[:10], check_dtypes=True)
+    self.assertAllClose(np.ones(5), np.ones(5)[-10:], check_dtypes=True)
 
 if __name__ == '__main__':
   absltest.main()
