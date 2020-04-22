@@ -126,11 +126,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testTensorsolve(self, m, nq, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
-    
+
     # According to numpy docs the shapes are as follows:
-    # Coefficient tensor (a), of shape b.shape + Q. 
-    # And prod(Q) == prod(b.shape) 
-    # Therefore, n = prod(q) 
+    # Coefficient tensor (a), of shape b.shape + Q.
+    # And prod(Q) == prod(b.shape)
+    # Therefore, n = prod(q)
     n, q = nq
     b_shape = (n, m)
     # To accomplish prod(Q) == prod(b.shape) we append the m extra dim
@@ -714,7 +714,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
-                            check_dtypes=True, tol=1e-3)
+                            check_dtypes=True, tol=1e-2)
     self._CompileAndCheck(np.linalg.pinv, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
