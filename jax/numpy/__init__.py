@@ -16,4 +16,5 @@ from .lax_numpy import *
 from .polynomial import *
 from . import fft
 from . import linalg
+from . import random
 from .vectorize import vectorize
