@@ -942,8 +942,8 @@ def canonicalize_shape(shape):
             "smaller subfunctions.")
   raise TypeError(msg.format(shape))
 
-# ------------------- Call -------------------
 
+# ------------------- Call and map -------------------
 
 def apply_todos(todos, outs):
   todos_list = list(todos)
@@ -952,7 +952,8 @@ def apply_todos(todos, outs):
   return outs
 
 @lu.transformation_with_aux
-def process_env_traces(primitive, level, params_tuple, *args):
+def process_env_traces(post_processor: str, primitive: Primitive,
+                           level: int, params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
@@ -964,28 +965,33 @@ def process_env_traces(primitive, level, params_tuple, *args):
       break
     trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
-    outs, cur_todo = trace.post_process_call(primitive, outs, params)
+    post_process = getattr(trace, post_processor)
+    outs, cur_todo = post_process(primitive, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def call_bind(primitive, f: lu.WrappedFun, *args, **params):
+def _call_bind(processor: str, post_processor: str, primitive: Primitive,
+              f: lu.WrappedFun, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
-  f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
+  f, env_trace_todo = process_env_traces(f, post_processor, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
       outs = primitive.impl(f, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    outs = map(full_lower, top_trace.process_call(primitive, f, tracers, params))
+    process = getattr(top_trace, processor)
+    outs = map(full_lower, process(primitive, f, tracers, params))
   return apply_todos(env_trace_todo(), outs)
+
+call_bind = partial(_call_bind, 'process_call', 'post_process_call')
+map_bind = partial(_call_bind, 'process_map', 'post_process_map')
 
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
-
 
 call_p = Primitive('call')
 call_p.multiple_results = True
