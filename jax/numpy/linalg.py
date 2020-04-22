@@ -223,6 +223,7 @@ def _pinv_jvp(rcond, primals, tangents):
   p = pinv(a, rcond=rcond)
   m, n = a.shape[-2:]
   # TODO(phawkins): on TPU, we would need to opt into high precision here.
+  # TODO(phawkins): consider if this can be considered in the Hermitian case.
   p_dot = -p @ a_dot @ p
   p_dot = p_dot + p @ _H(p) @ _H(a_dot) @ (np.eye(m, dtype=a.dtype) - a @ p)
   p_dot = p_dot + (np.eye(n, dtype=a.dtype) - p @ a) @ _H(a_dot) @ _H(p) @ p
