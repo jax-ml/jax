@@ -224,7 +224,7 @@ def _pinv_jvp(rcond, primals, tangents):
   m, n = a.shape[-2:]
   p_dot = -p @ a_dot @ p
   p_dot = p_dot + p @ _H(p) @ _H(a_dot) @ (np.eye(m, dtype=a.dtype) - a @ p)
-  p_dot = p_dot + (np.eye(n, dtype=a.dtyp) - p @ a) @ _H(a_dot) @ _H(p) @ p
+  p_dot = p_dot + (np.eye(n, dtype=a.dtype) - p @ a) @ _H(a_dot) @ _H(p) @ p
   return p, p_dot
 
 
