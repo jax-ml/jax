@@ -32,8 +32,8 @@ from .. import linear_util as lu
 map = safe_map
 zip = safe_zip
 
-shape_parameterized_primitive_rules = {}
-masking_rules = {}
+shape_parameterized_primitive_rules: Dict[core.Primitive, Callable] = {}
+masking_rules: Dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
   masking_rules[prim] = partial(vectorized_masking_rule, prim)

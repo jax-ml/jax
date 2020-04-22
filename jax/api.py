@@ -1153,7 +1153,7 @@ def _bind_shapes(shape_exprs, shapes):
 
 
 @curry
-def shapecheck(in_shapes, out_shape, fun):
+def shapecheck(in_shapes, out_shape, fun: Callable):
   _check_callable(fun)
   in_shapes, in_tree = tree_flatten(in_shapes)
   in_shapes = map(masking.parse_spec, in_shapes)
