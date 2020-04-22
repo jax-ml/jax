@@ -13,8 +13,10 @@
 # limitations under the License.
 
 
+from contextlib import contextmanager
 from functools import partial
 from unittest import SkipTest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -32,10 +34,22 @@ from jax import random
 from jax import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
+from jax.util import JaxDeprecationWarning
 
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
+
+
+@contextmanager
+def assertNoWarnings(cls=Warning):
+  with warnings.catch_warnings(record=True) as record:
+    warnings.simplefilter("always")
+    yield
+    for w in record:
+      if issubclass(w.category, cls):
+        raise ValueError(f"Expected no warning of type {cls}; got {w.message}")
+
 
 class LaxRandomTest(jtu.JaxTestCase):
 
@@ -168,6 +182,39 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
     self.assertTrue(onp.all(onp.sort(perm1) == x))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(dtype, axis),
+       "dtype": onp.dtype(dtype).name, "axis": axis}
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]
+      for axis in [0, 1, 2]))
+  def testShuffleIndependent(self, dtype, axis):
+    key = random.PRNGKey(0)
+    x = onp.arange(120).reshape(4, 5, 6).astype(dtype)
+    rand = lambda key: random.shuffle_independent(key, x, axis)
+    crand = api.jit(rand)
+
+    perm1 = rand(key)
+    perm2 = crand(key)
+
+    self.assertTrue(onp.all(perm1 == perm2))
+    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
+    self.assertTrue(onp.all(onp.sort(perm1, axis) == x))
+
+  def testShuffleDeprecationWarning(self):
+    key = random.PRNGKey(0)
+    x1 = np.arange(12)
+    x3 = onp.arange(24).reshape(2, 3, 4)
+
+    with self.assertWarns(JaxDeprecationWarning):
+      random.shuffle(key, x3)
+
+    with assertNoWarnings(JaxDeprecationWarning):
+      random.shuffle(key, x1)  # Don't warn for 1D inputs.
+
+    with assertNoWarnings(JaxDeprecationWarning):
+      random.shuffle(key, x3, axis=None)  # Don't warn for axis=None.
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_p={}_{}".format(p, dtype),

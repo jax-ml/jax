@@ -230,3 +230,7 @@ def wrap_name(name, transform_name):
 
 def extend_name_stack(stack, name=''):
   return stack + name + '/'
+
+
+class JaxDeprecationWarning(UserWarning):
+  pass

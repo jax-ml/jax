@@ -23,6 +23,7 @@ https://github.com/google/jax/blob/master/design_notes/prng.md
 
 from functools import partial
 from typing import Optional, Sequence, Union
+import warnings
 
 import numpy as onp
 
@@ -40,7 +41,7 @@ from jax.scipy.special import logit
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
-from jax.util import prod
+from jax.util import prod, JaxDeprecationWarning
 
 
 def PRNGKey(seed: int) -> np.ndarray:
@@ -417,18 +418,65 @@ def _randint(key, shape, minval, maxval, dtype):
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
-def shuffle(key: np.ndarray, x: np.ndarray, axis: int = 0) -> np.ndarray:
-  """Shuffle the elements of an array uniformly at random along an axis.
+def shuffle(key: np.ndarray, x: np.ndarray, axis: Optional[int]=0) -> np.ndarray:
+  """Shuffle the elements of an array uniformly along the first axis.
 
   Args:
     key: a PRNGKey used as the random key.
     x: the array to be shuffled.
-    axis: optional, an int axis along which to shuffle (default 0).
+    axis: (deprecated) an int axis along which to shuffle (default 0). If not None,
+      subarrays are shuffled independently along the specified axis, as in
+      :func:`~jax.random.shuffle_axis`. If `None`, subarrays are shuffled as a group.
+      along the leading axis, as in :func:`numpy.random.shuffle`.
+      In a future release, the default will be changed to `None` and support for
+      integer axis values will be dropped.
 
   Returns:
     A shuffled version of x.
+
+  >>> import jax.numpy as np
+  >>> from jax import random
+  >>> x = np.arange(9).reshape(3, 3)
+  >>> random.shuffle(random.PRGKey(0), x, axis=None)
+  DeviceArray([[3, 4, 5],
+               [6, 7, 8],
+               [0, 1, 2]], dtype=int32)
+  """
+  # TODO: drop support for int axis after Jax version 0.1.67
+  if axis is None:
+    return x[_shuffle(key, np.arange(x.shape[0]), 0)]
+  if x.ndim != 1:
+    warnings.warn("shuffle(): int axis with multi-dimenstional input is deprecated. "
+      "Set axis=None to sort groups along the first axis, or use shuffle_independent() "
+      "to sort subarrays independently along a specified axis.", JaxDeprecationWarning)
+  return _shuffle(key, x, axis)
+
+
+def shuffle_independent(key: np.ndarray, x: np.ndarray, axis: int=0) -> np.ndarray:
+  """Shuffle elements of an array uniformly along an axis.
+
+  Note that this function shuffles each subarray independently along the
+  specified axis (see Example below). To shuffle subarrays as a group, see
+  :func:`~jax.random.shuffle`
+
+  Args:
+    key: a PRNGKey used as the random key.
+    x: the array to be shuffled.
+    axis: optional, an int axis along which to shuffle (default 0)
+
+  Returns:
+    A shuffled version of x.
+
+  >>> import jax.numpy as np 
+  >>> from jax import random 
+  >>> x = np.arange(9).reshape(3, 3) 
+  >>> random.shuffle_axis(random.PRNGKey(0), x)
+  DeviceArray([[6, 7, 2],
+               [0, 4, 8],
+               [3, 1, 5]], dtype=int32)
   """
   return _shuffle(key, x, axis)
+
 
 @partial(jit, static_argnums=(2,))
 def _shuffle(key, x, axis):
