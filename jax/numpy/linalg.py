@@ -33,6 +33,7 @@ from ..util import get_module_functions
 from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve
 
 _T = lambda x: np.swapaxes(x, -1, -2)
+_H = lambda x: np.conj(np.swapaxes(x, -1, -2))
 
 
 def _promote_arg_dtypes(*args):
@@ -188,30 +189,43 @@ def eigvalsh(a, UPLO='L'):
   return w
 
 
+@partial(custom_jvp, nondiff_argnums=(1,))
 @_wraps(onp.linalg.pinv, lax_description=textwrap.dedent("""\
     It differs only in default value of `rcond`. In `numpy.linalg.pinv`, the
     default `rcond` is `1e-15`. Here the default is
     `10. * max(num_rows, num_cols) * np.finfo(dtype).eps`.
     """))
 def pinv(a, rcond=None):
-  # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
+  # Uses same algorithm as
+  # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
   a = np.conj(a)
-  # copied from https://github.com/tensorflow/probability/blob/master/tensorflow_probability/python/math/linalg.py#L442
   if rcond is None:
-      max_rows_cols = max(a.shape[-2:])
-      rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
+    max_rows_cols = max(a.shape[-2:])
+    rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
   rcond = np.asarray(rcond)
   u, s, v = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
-  large = s > cutoff
-  s = np.divide(1, s)
-  s = np.where(large, s, 0)
-  vT = np.swapaxes(v, -1, -2)
-  uT = np.swapaxes(u, -1, -2)
-  res = np.matmul(vT, np.multiply(s[..., np.newaxis], uT))
+  s = np.where(s > cutoff, np.divide(1, s), 0)
+  res = np.matmul(_T(v), np.multiply(s[..., np.newaxis], _T(u)))
   return lax.convert_element_type(res, a.dtype)
+
+
+@pinv.defjvp
+def _pinv_jvp(rcond, primals, tangents):
+  # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
+  # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM
+  # Journal on Numerical Analysis, Vol. 10, No. 2 (Apr., 1973), pp. 413-432.
+  # (via https://en.wikipedia.org/wiki/Moore%E2%80%93Penrose_inverse#Derivative)
+  a, = primals
+  a_dot, = tangents
+  p = pinv(a, rcond=rcond)
+  m, n = a.shape[-2:]
+  p_dot = -p @ a_dot @ p
+  p_dot = p_dot + p @ _H(p) @ _H(a_dot) @ (np.eye(m, dtype=a.dtype) - a @ p)
+  p_dot = p_dot + (np.eye(n, dtype=a.dtyp) - p @ a) @ _H(a_dot) @ _H(p) @ p
+  return p, p_dot
 
 
 @_wraps(onp.linalg.inv)

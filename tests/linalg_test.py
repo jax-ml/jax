@@ -703,7 +703,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
-      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 10000), (70, 7, 2)]
+      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
@@ -716,6 +716,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
                             check_dtypes=True, tol=1e-3)
     self._CompileAndCheck(np.linalg.pinv, args_maker, check_dtypes=True)
+    jtu.check_grads(np.linalg.pinv, args_maker(), 2)
+
+
+  def testPinvGradIssue2792(self):
+    def f(p):
+      a = np.array([[0., 0.],[-p, 1.]], np.float32) * 1 / (1 + p**2)
+      return np.linalg.pinv(a)
+    j = jax.jacobian(f)(np.float32(2.))
+    self.assertAllClose(np.array([[0., -1.], [ 0., 0.]], np.float32), j,
+                        check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}".format(

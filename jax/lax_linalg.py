@@ -852,17 +852,18 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   s_dim = s[..., None, :]
   dS = np.matmul(np.matmul(Ut, dA), V)
   ds = np.real(np.diagonal(dS, 0, -2, -1))
-  F = 1 / (np.square(s_dim) - np.square(_T(s_dim)) + np.eye(k)) - np.eye(k)
+  F = 1 / (np.square(s_dim) - np.square(_T(s_dim)) + np.eye(k, dtype=A.dtype))
+  F = F - np.eye(k, dtype=A.dtype)
   dSS = s_dim * dS
   SdS = _T(s_dim) * dS
   dU = np.matmul(U, F * (dSS + _T(dSS)))
   dV = np.matmul(V, F * (SdS + _T(SdS)))
 
-  m, n = A.shape[-2], A.shape[-1]
+  m, n = A.shape[-2:]
   if m > n:
-    dU = dU + np.matmul(np.eye(m) - np.matmul(U, Ut), np.matmul(dA, V)) / s_dim
+    dU = dU + np.matmul(np.eye(m, dtype=A.dtype) - np.matmul(U, Ut), np.matmul(dA, V)) / s_dim
   if n > m:
-    dV = dV + np.matmul(np.eye(n) - np.matmul(V, Vt), np.matmul(_H(dA), U)) / s_dim
+    dV = dV + np.matmul(np.eye(n, dtype=A.dtype) - np.matmul(V, Vt), np.matmul(_H(dA), U)) / s_dim
   return (s, U, Vt), (ds, dU, _T(dV))
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
