@@ -142,20 +142,22 @@ transformations, or computed solely from other regular Python values.
 These are the values that are used everywhere in absence of JAX transformations.
 
 A tracer value carries an **abstract** value, e.g., ``ShapedArray`` with information
-about the shape and dtype of an array. Some tracers, e.g., those that are
+about the shape and dtype of an array. We will refer here to such tracers as
+**abstract tracers**. Some tracers, e.g., those that are
 introduced for arguments of autodiff transformations, carry ``ConcreteArray``
 abstract values that actually include the regular array data, and are used,
-e.g., for resolving conditionals. Tracer values computed from these
-concrete tracers, perhaps in combination with regular values, result
-in **concrete tracers**. A **concrete value** is either a regular value or
-a concrete tracer.
+e.g., for resolving conditionals. We will refer here to such tracers
+as **concrete tracers**. Tracer values computed from these concrete tracers,
+perhaps in combination with regular values, result in concrete tracers.
+A **concrete value** is either a regular value or a concrete tracer.
 
 Most often values computed from tracer values are themselves tracer values.
 There are very few exceptions, when a computation can be entirely done
 using the abstract value carried by a tracer, in which case the result
 can be a regular value. For example, getting the shape of a tracer
 with ``ShapedArray`` abstract value. Another example, is when explicitly
-casting a concrete tracer value to a regular type: ``int(x)`` or ``float(x)``.
+casting a concrete tracer value to a regular type, e.g., ``int(x)`` or
+``x.astype(float)``.
 Another such situation is for ``bool(x)``, which produces a Python bool when
 concreteness makes it possible. That case is especially salient because
 of how often it arises in control flow.
