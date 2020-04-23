@@ -719,7 +719,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # TODO(phawkins): 1e-1 seems like a very loose tolerance.
     jtu.check_grads(np.linalg.pinv, args_maker(), 2, rtol=1e-1)
 
-
+  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   def testPinvGradIssue2792(self):
     def f(p):
       a = np.array([[0., 0.],[-p, 1.]], np.float32) * 1 / (1 + p**2)
