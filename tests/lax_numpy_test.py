@@ -587,6 +587,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for end_shape in all_shapes))
   def testEDiff1d(self, shape, dtype, end_shape, end_dtype, begin_shape,
           begin_dtype, rng):
+    if ((jtu.NUMPY_SCALAR_SHAPE in [shape, end_shape, begin_shape]) and
+            (jtu.PYTHON_SCALAR_SHAPE in [shape, end_shape, begin_shape])):
+      self.skipTest("can not conert NUMPY_SCALAR_SHAPE and PYTHON_SCALAR_SHAPE into each other")
     args_maker = lambda: [rng(shape, dtype),
             (None if end_dtype is None else rng(end_shape, end_dtype)),
             (None if begin_dtype is None else rng(begin_shape, begin_dtype))]
@@ -633,7 +636,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for end_shape in [jtu.NUMPY_SCALAR_SHAPE]))
   def testEDiff1dWithInvalidDtypes(self, shape, dtype, end_shape, end_dtype, begin_shape,
           begin_dtype, rng):    
-    self.assertRaisesRegex(ValueError, "cannot convert .* as required for input array operand", lambda: jnp.ediff1d(
+    self.assertRaisesRegex(ValueError,
+            "cannot convert .* as required for input array operand", lambda: jnp.ediff1d(
         rng(shape,dtype), rng(end_shape, end_dtype), rng(begin_shape, begin_dtype)))
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
