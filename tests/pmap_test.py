@@ -13,9 +13,11 @@
 # limitations under the License.
 
 
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import os
 from random import shuffle
+import threading
 from unittest import SkipTest
 
 import numpy as onp
@@ -1178,6 +1180,35 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     ans = f(x, y)
     expected = onp.sin(x + y[None])
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+
+class ShardedDeviceArrayTest(jtu.JaxTestCase):
+
+  def testThreadsafeIndexing(self):
+    # NOTE(skye): I picked these values to be big enough to cause interesting
+    # execution overlap, but small enough to not use too much memory. YMMV.
+    shape = (8, 8000, 1000)
+
+    if jax.device_count() < shape[0]:
+      raise SkipTest(f"requires {shape[0]} devices")
+
+    x = np.arange(np.prod(shape)).reshape(shape)
+    sharded_x = pmap(lambda x: x)(x)
+
+    num_threads = 10
+    futures = []
+    expected = []
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+      for i in range(num_threads):
+        idx = i % shape[0]
+        # Mix together different kinds of indices
+        if i % 2 == 0:
+          idx = slice(idx, idx + 1)
+        futures.append(executor.submit(
+            lambda: [sharded_x[idx] for _ in range(10)][0]))
+        expected.append(x[idx])
+      actual = [f.result() for f in futures]
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
 
 class SpecToIndicesTest(jtu.JaxTestCase):

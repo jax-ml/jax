@@ -501,10 +501,11 @@ class ShardedDeviceArray(xla.DeviceArray):
   def _value(self):
     if self._npy_value is None:
       self.copy_to_host_async()
-      self._npy_value = onp.empty(self.aval.shape, self.aval.dtype)
+      npy_value = onp.empty(self.aval.shape, self.aval.dtype)
       for i in range(0, len(self.device_buffers),
                      self.sharding_spec.replication_factor):
-        self._npy_value[self.indices[i]] = self.device_buffers[i].to_py()
+        npy_value[self.indices[i]] = self.device_buffers[i].to_py()
+      self._npy_value = npy_value
     return self._npy_value
 
   def __getitem__(self, idx):
