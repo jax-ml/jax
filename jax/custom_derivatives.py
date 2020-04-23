@@ -24,7 +24,7 @@ from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
 from .util import safe_zip, safe_map, unzip2, split_list, curry
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
-from .ad_util import zero
+from .ad_util import zero, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
@@ -81,6 +81,15 @@ def sum_tangents(x, *xs):
 
 def zeros_like_pytree(x):
   return tree_map(lambda _: zero, x)
+
+def stop_gradient(x):
+  return tree_map(_stop_gradient, x)
+
+def _stop_gradient(x):
+  if isinstance(x, core.Tracer) or core.valid_jaxtype(x):
+    return stop_gradient_p.bind(x)
+  else:
+    return x
 
 
 ### JVPs
@@ -199,7 +208,10 @@ class custom_jvp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args, left=True)
@@ -436,7 +448,10 @@ class custom_vjp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)

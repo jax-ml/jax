@@ -1293,7 +1293,7 @@ def stop_gradient(x):
   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
   array(0., dtype=float32)
   """
-  return tree_map(stop_gradient_p.bind, x)
+  return tree_map(ad_util.stop_gradient_p.bind, x)
 
 
 ### convenience wrappers around traceables
@@ -4599,14 +4599,6 @@ batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 
-### stop-gradient
-
-def _stop_gradient_impl(x):
-  if not core.valid_jaxtype(x):
-    raise TypeError("stop_gradient only works on valid JAX arrays, but "
-                    f"input argument is: {x}")
-  return x
-
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
@@ -4617,12 +4609,10 @@ def _stop_gradient_batch_rule(batched_args, batch_dims):
   dim, = batch_dims
   return stop_gradient(x), dim
 
-stop_gradient_p = Primitive('stop_gradient')
-stop_gradient_p.def_impl(_stop_gradient_impl)
-stop_gradient_p.def_abstract_eval(_identity)
-xla.translations[stop_gradient_p] = lambda c, x: x
-ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
-batching.primitive_batchers[stop_gradient_p] = _stop_gradient_batch_rule
+xla.translations[ad_util.stop_gradient_p] = lambda c, x: x
+ad.primitive_jvps[ad_util.stop_gradient_p] = _stop_gradient_jvp_rule
+batching.primitive_batchers[ad_util.stop_gradient_p] = _stop_gradient_batch_rule
+
 
 def create_token(x):
   """Creates an XLA token value with no preconditions for sequencing effects.

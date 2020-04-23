@@ -269,7 +269,7 @@ For parallel programming of multiple accelerators, like multiple GPUs, use
 With `pmap` you write single-program multiple-data (SPMD) programs, including
 fast parallel collective communication operations. Applying `pmap` will mean
 that the function you write is compiled by XLA (similarly to `jit`), then
-replicated and executed in parallel accross devices.
+replicated and executed in parallel across devices.
 
 Here's an example on an 8-GPU machine:
 
