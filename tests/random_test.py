@@ -337,6 +337,27 @@ class LaxRandomTest(jtu.JaxTestCase):
     api.vjp(f, a, b)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_lam={}_{}".format(lam, dtype),
+       "lam": lam, "dtype": onp.dtype(dtype).name}
+      for lam in [5.0, 50.0]
+      for dtype in [onp.int32, onp.int64]))
+  def testPoisson(self, lam, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, lam)
+    compiled_samples = crand(key, lam)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
+
+  def testPoissonShape(self):
+    key = random.PRNGKey(0)
+    x = random.poisson(key, onp.array([2.0, 20.0]), shape=(3, 2))
+    assert x.shape == (3, 2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testGumbel(self, dtype):

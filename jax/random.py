@@ -987,6 +987,118 @@ def _gamma(key, a, shape, dtype):
   return random_gamma_p.bind(key, a)[0]
 
 
+@partial(jit, static_argnums=(2, 3, 4))
+def _poisson_knuth(key, lam, shape, dtype, max_iters):
+  # Knuth's algorithm for generating Poisson random variates.
+  # Reference:
+  # https://en.wikipedia.org/wiki/Poisson_distribution#Generating_Poisson-distributed_random_variables
+
+  def body_fn(carry):
+    i, k, rng, log_prod = carry
+    rng, subkey = split(rng)
+    k = lax.select(log_prod > -lam, k + 1, k)
+    u = uniform(subkey, shape, onp.float32)
+    return i + 1, k, rng, log_prod + np.log(u)
+
+  def cond_fn(carry):
+    i, log_prod = carry[0], carry[3]
+    return (log_prod > -lam).any() & (i < max_iters)
+
+  k_init = lax.full_like(lam, 0, dtype, shape)
+  log_rate_init = lax.full_like(lam, 0, onp.float32, shape)
+  k = lax.while_loop(cond_fn, body_fn, (0, k_init, key, log_rate_init))[1]
+  return (k - 1).astype(dtype)
+
+
+@partial(jit, static_argnums=(2, 3, 4))
+def _poisson_rejection(key, lam, shape, dtype, max_iters):
+  # Transformed rejection due to Hormann.
+  # Reference:
+  # http://citeseer.ist.psu.edu/viewdoc/citations;jsessionid=1BEB35946CC807879F55D42512E5490C?doi=10.1.1.48.3054.
+  log_lam = lax.log(lam)
+
+  b = 0.931 + 2.53 * lax.sqrt(lam)
+  a = -0.059 + 0.02483 * b
+
+  inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
+
+  v_r = 0.9277 - 3.6224 / (b - 2)
+  u_r = 0.43
+
+  def body_fn(carry):
+    i, k_out, accepted, key = carry
+    key, subkey_0, subkey_1 = split(key, 3)
+
+    u = uniform(subkey_0, shape, lam.dtype) - 0.5
+    v = uniform(subkey_1, shape, lam.dtype)
+    u_shifted = 0.5 - abs(u)
+
+    k = (2 * a / u_shifted + b) * u + lam + u_r
+    s = lax.log(v * inv_alpha / (a / (u_shifted * u_shifted) + b))
+    t = -lam + k * log_lam - lax.lgamma(k + 1)
+
+    int_max = np.iinfo(dtype).max
+    reject = (k < 0) | (k > int_max) | (u_shifted < 0.013) & (v > u_shifted)
+    accept = (u_shifted >= 0.07) & (v <= v_r) & (s <= t) & ~reject
+
+    k_out = lax.select(accept, k, k_out)
+    accepted |= accept
+
+    return i, k_out, accepted, key
+
+  def cond_fn(carry):
+    i, k_out, accepted, key = carry
+    return (~accepted).any() & (i < max_iters)
+
+  k_init = lax.full_like(lam, -1, lam.dtype, shape)
+  accepted = lax.full_like(lam, False, np.bool_, shape)
+  k = lax.while_loop(cond_fn, body_fn, (0, k_init, accepted, key))[1]
+  return k.astype(dtype)
+
+
+@partial(jit, static_argnums=(2, 3))
+def _poisson(key, lam, shape, dtype):
+  # The implementation matches TensorFlow and NumPy:
+  # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_poisson_op.cc
+  # https://github.com/numpy/numpy/blob/v1.18.3/numpy/random/src/distributions/distributions.c#L574
+  # For lambda < 10, we use the Knuth algorithm; otherwise, we use transformed
+  # rejection sampling.
+  use_knuth = lam < 10
+  lam_knuth = lax.select(use_knuth, lam, lax.full_like(lam, 0.0))
+  # The acceptance probability for rejection sampling maxes out at 89% as
+  # λ -> ∞, so pick some arbitrary large value.
+  lam_rejection = lax.select(use_knuth, lax.full_like(lam, 1e5), lam)
+  max_iters = np.iinfo(dtype).max  # insanely conservative
+  return lax.select(
+      use_knuth,
+      _poisson_knuth(key, lam_knuth, shape, dtype, max_iters),
+      _poisson_rejection(key, lam_rejection, shape, dtype, max_iters),
+  )
+
+
+def poisson(key, lam, shape=(), dtype=onp.int64):
+  """Sample Poisson random values with given shape and integer dtype.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    lam: rate parameter (mean of the distribution), must be >= 0.
+    shape: optional, a tuple of nonnegative integers representing the result
+      shape. Default ().
+    dtype: optional, a integer dtype for the returned values (default int64 if
+      jax_enable_x64 is true, otherwise int32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  dtype = dtypes.canonicalize_dtype(dtype)
+  shape = abstract_arrays.canonicalize_shape(shape)
+  if onp.shape(lam) != shape:
+    lam = np.broadcast_to(lam, shape)
+  # TODO(shoyer): support JVPs with respect to `lam`? Currently this will raise
+  # an error because our implementation relies on while_loop.
+  return _poisson(key, lam, shape, dtype)
+
+
 def gumbel(key, shape=(), dtype=onp.float64):
   """Sample Gumbel random values with given shape and float dtype.
 
@@ -1009,6 +1121,7 @@ def _gumbel(key, shape, dtype):
   _check_shape("gumbel", shape)
   return -np.log(-np.log(
       uniform(key, shape, dtype, minval=np.finfo(dtype).eps, maxval=1.)))
+
 
 def categorical(key, logits, axis=-1, shape=None):
   """Sample random values from categorical distributions.
@@ -1038,6 +1151,7 @@ def categorical(key, logits, axis=-1, shape=None):
 
   sample_shape = shape[:len(shape)-len(batch_shape)]
   return np.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
+
 
 def laplace(key, shape=(), dtype=onp.float64):
   """Sample Laplace random values with given shape and float dtype.
