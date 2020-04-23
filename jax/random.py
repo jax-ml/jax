@@ -1094,8 +1094,6 @@ def poisson(key, lam, shape=(), dtype=onp.int64):
   shape = abstract_arrays.canonicalize_shape(shape)
   if onp.shape(lam) != shape:
     lam = np.broadcast_to(lam, shape)
-  # TODO(shoyer): support JVPs with respect to `lam`? Currently this will raise
-  # an error because our implementation relies on while_loop.
   return _poisson(key, lam, shape, dtype)
 
 
