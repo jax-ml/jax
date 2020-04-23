@@ -30,7 +30,7 @@ from .lax_numpy import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as np
 from ..util import get_module_functions
-from ..third_party.numpy.linalg import cond, tensorinv, tensorsolve
+from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve
 
 _T = lambda x: np.swapaxes(x, -1, -2)
 
@@ -350,7 +350,7 @@ def solve(a, b):
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
-  lu, pivots = lax.stop_gradient(lax_linalg.lu)(a)
+  lu, pivots = lax_linalg.lu(lax.stop_gradient(a))
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: _matvec_multiply(a, x),

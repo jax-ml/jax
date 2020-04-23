@@ -33,13 +33,13 @@ import os
 import re
 import string
 import types
-from typing import Callable
+from typing import Tuple
 import warnings
 
 import numpy as onp
 import opt_einsum
 
-from jax import jit, device_put
+from jax import jit, device_put, custom_jvp
 from .. import core
 from .. import dtypes
 from .. import ops
@@ -47,6 +47,7 @@ from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
+from .. import ops
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
 from ..lib import xla_client
@@ -60,6 +61,14 @@ flags.DEFINE_enum(
     '("allow", "warn", or "raise").')
 
 newaxis = None
+
+# Common docstring additions:
+
+_PRECISION_DOC = """\
+In addition to the original NumPy arguments listed below, also supports
+``precision`` for extra control over matrix-multiplication precision
+on supported devices. See :py:func:`jax.lax.dot` for details.
+"""
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
 _abs = builtins.abs
@@ -101,6 +110,10 @@ class _ArrayMeta(type(onp.ndarray)):  # type: ignore
       return isinstance(instance, _arraylike_types)
 
 class ndarray(onp.ndarray, metaclass=_ArrayMeta):
+  dtype: onp.dtype
+  shape: Tuple[int, ...]
+  size: int
+
   def __init__(shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):
     raise TypeError("jax.numpy.ndarray() should not be instantiated explicitly."
@@ -368,60 +381,25 @@ def _canonicalize_axis(axis, num_dims):
 
 ### implementations of numpy functions in terms of lax
 
-@_wraps(onp.ediff1d)
-def ediff1d(ary, to_end=None, to_begin=None):
-  # convert into 1d array
-  ary = ravel(asarray(ary))
+@_wraps(onp.fmin)
+def fmin(x1, x2):
+  return where((x1 < x2) | isnan(x2), x1, x2)
 
-  # default case
-  if to_begin is None and to_end is None:
-    return lax.sub(ary[1:], ary[:-1])
-
-  # enforce propagation of the dtype of input ary to returned array
-  dtype_req = ary.dtype
-
-  if to_begin is None:
-    l_begin = 0
-  else:
-    # check if to_begin can be cast to ary dtype
-    if not can_cast(asarray(to_begin), dtype_req):
-      raise ValueError("cannot convert 'to_begin' to array with dtype "
-              "'%r' as required for input array operand" % dtype_req)
-    # convert to_begin to flat array
-    to_begin = ravel(asarray(to_begin, dtype=dtype_req))
-    l_begin = len(to_begin)
-  
-  if to_end is None:
-    l_end = 0
-  else:
-    # check if to_end can be cast to ary dtype
-    if not can_cast(asarray(to_end), dtype_req):
-      raise ValueError("cannot convert 'to_end' to array with dtype "
-              "'%r' as required for input array operand" % dtype_req)
-    # convert to_end to flat array
-    to_end = ravel(asarray(to_end, dtype=dtype_req))
-    l_end = len(to_end)
-  
-  # calculate difference and copy to_begin and to_end
-  l_diff = _max(len(ary) - 1, 0)
-  result = zeros(l_diff + l_begin + l_end, dtype=ary.dtype)
-  if l_begin > 0:
-    result = ops.index_update(result, ops.index[:l_begin], to_begin)
-  if l_end > 0:
-    result = ops.index_update(result, ops.index[l_begin+l_diff:], to_end)
-  result = ops.index_update(result, ops.index[l_begin:l_begin+l_diff],
-          lax.sub(ary[1:], ary[:-1]))
-  return result
-
+@_wraps(onp.fmax)
+def fmax(x1, x2):
+  return where((x1 > x2) | isnan(x2), x1, x2)
 
 @_wraps(onp.finfo)
-def finfo(dtype): return dtypes.finfo(dtype)
+def finfo(dtype): 
+  return dtypes.finfo(dtype)
 
 @_wraps(onp.issubdtype)
-def issubdtype(arg1, arg2): return dtypes.issubdtype(arg1, arg2)
+def issubdtype(arg1, arg2):
+  return dtypes.issubdtype(arg1, arg2)
 
 @_wraps(onp.isscalar)
-def isscalar(num): return dtypes.is_python_scalar(num) or onp.isscalar(num)
+def isscalar(num):
+  return dtypes.is_python_scalar(num) or onp.isscalar(num)
 
 iterable = onp.iterable
 
@@ -530,6 +508,16 @@ logical_or = _logical_op(onp.logical_or, lax.bitwise_or)
 logical_xor = _logical_op(onp.logical_xor, lax.bitwise_xor)
 
 
+@_wraps(onp.rint)
+def rint(x):
+  dtype = _dtype(x)
+  if issubdtype(dtype, integer):
+    return lax.convert_element_type(x, float_)
+  if issubdtype(dtype, complexfloating):
+    return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
+  return _round_to_nearest_even(x)
+
+
 @_wraps(onp.sign)
 def sign(x):
   dtype = _dtype(x)
@@ -630,6 +618,7 @@ def power(x1, x2):
   return acc
 
 
+@custom_jvp
 @_wraps(onp.logaddexp)
 def logaddexp(x1, x2):
   x1, x2 = _promote_shapes("logaddexp", *_promote_dtypes_inexact(x1, x2))
@@ -639,7 +628,21 @@ def logaddexp(x1, x2):
                     lax.add(x1, x2),  # NaNs or infinities of the same sign.
                     lax.add(amax, lax.log1p(lax.exp(-lax.abs(delta)))))
 
+@logaddexp.defjvp
+def _logaddexp_jvp(primals, tangents):
+  x1, x2 = primals
+  t1, t2 = tangents
+  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  primal_out = logaddexp(x1, x2)
+  tangent_out = (t1 * exp(_replace_inf(x1) - _replace_inf(primal_out)) +
+                 t2 * exp(_replace_inf(x2) - _replace_inf(primal_out)))
+  return primal_out, tangent_out
 
+def _replace_inf(x):
+  return lax.select(isposinf(x), zeros_like(x), x)
+
+
+@custom_jvp
 @_wraps(onp.logaddexp2)
 def logaddexp2(x1, x2):
   x1, x2 = _promote_shapes("logaddexp2", *_promote_dtypes_inexact(x1, x2))
@@ -649,6 +652,15 @@ def logaddexp2(x1, x2):
                     lax.add(x1, x2),  # NaNs or infinities of the same sign.
                     lax.add(amax, lax.div(lax.log1p(exp2(-lax.abs(delta))),
                                           _constant_like(x1, onp.log(2)))))
+@logaddexp2.defjvp
+def _logaddexp2_jvp(primals, tangents):
+  x1, x2 = primals
+  t1, t2 = tangents
+  x1, x2, t1, t2 = broadcast_arrays(x1, x2, t1, t2)
+  primal_out = logaddexp2(x1, x2)
+  tangent_out = (t1 * 2 ** (_replace_inf(x1) - _replace_inf(primal_out)) +
+                 t2 * 2 ** (_replace_inf(x2) - _replace_inf(primal_out)))
+  return primal_out, tangent_out
 
 
 @_wraps(onp.log2)
@@ -706,7 +718,7 @@ def trunc(x):
   return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
 
 
-def _conv(x, y, mode, op):
+def _conv(x, y, mode, op, precision):
   if issubdtype(x.dtype, complexfloating) or issubdtype(y.dtype, complexfloating):
     raise NotImplementedError(f"{op}() does not support complex inputs")
   if ndim(x) != 1 or ndim(y) != 1:
@@ -730,18 +742,19 @@ def _conv(x, y, mode, op):
   else:
     raise ValueError("mode must be one of ['full', 'same', 'valid']")
 
-  result = lax.conv_general_dilated(x[None, None, :], y[None, None, :], (1,), padding)
+  result = lax.conv_general_dilated(x[None, None, :], y[None, None, :], (1,),
+                                    padding, precision=precision)
   return result[0, 0, out_order]
 
 
-@_wraps(onp.convolve)
-def convolve(x, y, mode='full'):
-  return _conv(x, y, mode, 'convolve')
+@_wraps(onp.convolve, lax_description=_PRECISION_DOC)
+def convolve(x, y, mode='full', precision=None):
+  return _conv(x, y, mode, 'convolve', precision)
 
 
-@_wraps(onp.correlate)
-def correlate(x, y, mode='valid'):
-  return _conv(x, y, mode, 'correlate')
+@_wraps(onp.correlate, lax_description=_PRECISION_DOC)
+def correlate(x, y, mode='valid', precision=None):
+  return _conv(x, y, mode, 'correlate', precision)
 
 
 def _normalize_float(x):
@@ -1007,6 +1020,52 @@ def diff(a, n=1, axis=-1,):
     a = op(a[slice1], a[slice2])
 
   return a
+
+
+@_wraps(onp.ediff1d)
+def ediff1d(ary, to_end=None, to_begin=None):
+  # convert into 1d array
+  ary = ravel(asarray(ary))
+
+  # default case
+  if to_begin is None and to_end is None:
+    return lax.sub(ary[1:], ary[:-1])
+
+  # enforce propagation of the dtype of input ary to returned array
+  dtype_req = ary.dtype
+
+  if to_begin is None:
+    l_begin = 0
+  else:
+    # check if to_begin can be cast to ary dtype
+    if not can_cast(asarray(to_begin), dtype_req):
+      raise ValueError("cannot convert 'to_begin' to array with dtype "
+              "'%r' as required for input array operand" % dtype_req)
+    # convert to_begin to flat array
+    to_begin = ravel(asarray(to_begin, dtype=dtype_req))
+    l_begin = len(to_begin)
+  
+  if to_end is None:
+    l_end = 0
+  else:
+    # check if to_end can be cast to ary dtype
+    if not can_cast(asarray(to_end), dtype_req):
+      raise ValueError("cannot convert 'to_end' to array with dtype "
+              "'%r' as required for input array operand" % dtype_req)
+    # convert to_end to flat array
+    to_end = ravel(asarray(to_end, dtype=dtype_req))
+    l_end = len(to_end)
+  
+  # calculate difference and copy to_begin and to_end
+  l_diff = _max(len(ary) - 1, 0)
+  result = zeros(l_diff + l_begin + l_end, dtype=ary.dtype)
+  if l_begin > 0:
+    result = ops.index_update(result, ops.index[:l_begin], to_begin)
+  if l_end > 0:
+    result = ops.index_update(result, ops.index[l_begin+l_diff:], to_end)
+  result = ops.index_update(result, ops.index[l_begin:l_begin+l_diff],
+          lax.sub(ary[1:], ary[:-1]))
+  return result
 
 
 @partial(jit, static_argnums=1)
@@ -2461,13 +2520,6 @@ def append(arr, values, axis=None):
 ### Tensor contraction operations
 
 
-_PRECISION_DOC = """\
-In addition to the original NumPy arguments listed below, also supports
-``precision`` for extra control over matrix-multiplication precision
-on supported devices. See :py:func:`jax.lax.dot` for details.
-"""
-
-
 @_wraps(onp.dot, lax_description=_PRECISION_DOC)
 def dot(a, b, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("dot", a, b)
@@ -2883,6 +2935,66 @@ def roll(a, shift, axis=None):
   return _roll(a, shift, axis)
 
 
+@_wraps(onp.rollaxis)
+def rollaxis(a, axis, start=0):
+  a_ndim = ndim(a)
+  if not (-a_ndim <= axis < a_ndim):
+    raise ValueError(f"axis={axis} is out of bounds for array of dimension {a_ndim}")
+  if not (-a_ndim <= start <= a_ndim):
+    raise ValueError(f"start={start} must satisfy {-a_ndim}<=start<={a_ndim}")
+  if start < 0:
+    start += a_ndim
+  if axis < 0:
+    axis += a_ndim
+  if start > axis:
+    start -= 1
+  return moveaxis(a, axis, start)
+
+
+@_wraps(onp.packbits)
+def packbits(a, axis=None, bitorder='big'):
+  a = asarray(a)
+  if not (issubdtype(dtype(a), integer) or issubdtype(dtype(a), bool_)):
+    raise TypeError('Expected an input array of integer or boolean data type')
+  if bitorder not in ['little', 'big']:
+    raise ValueError("'order' must be either 'little' or 'big'")
+  a = (a > 0).astype('uint8')
+  bits = arange(8, dtype='uint8')
+  if bitorder == 'big':
+    bits = bits[::-1]
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  a = swapaxes(a, axis, -1)
+
+  remainder = a.shape[-1] % 8
+  if remainder:
+    a = pad(a, (a.ndim - 1) * [(0, 0)] + [(0, 8 - remainder)])
+
+  a = a.reshape(a.shape[:-1] + (a.shape[-1] // 8, 8))
+  packed = (a << bits).sum(-1).astype('uint8')
+  return swapaxes(packed, axis, -1)
+
+
+@_wraps(onp.unpackbits)
+def unpackbits(a, axis=None, count=None, bitorder='big'):
+  a = asarray(a)
+  if dtype(a) != uint8:
+    raise TypeError("Expected an input array of unsigned byte data type")
+  if bitorder not in ['little', 'big']:
+    raise ValueError("'order' must be either 'little' or 'big'")
+  bits = asarray(1) << arange(8, dtype='uint8')
+  if bitorder == 'big':
+    bits = bits[::-1]
+  if axis is None:
+    a = a.ravel()
+    axis = 0
+  a = swapaxes(a, axis, -1)
+  unpacked = ((a[..., None] & bits) > 0).astype('uint8')
+  unpacked = unpacked.reshape(unpacked.shape[:-2] + (-1,))[..., :count]
+  return swapaxes(unpacked, axis, -1)
+
+
 @_wraps(onp.take)
 def take(a, indices, axis=None, out=None, mode=None):
   if out:
@@ -2994,6 +3106,76 @@ def _take_along_axis(arr, indices, axis):
 @_wraps(getattr(onp, "take_along_axis", None), update_doc=False)
 def take_along_axis(arr, indices, axis):
   return _take_along_axis(arr, indices, axis)
+
+
+### SetOps
+
+@partial(jit, static_argnums=1)
+def _unique1d_sorted_mask(ar, optional_indices=False):
+  """
+  Helper function for unique which is jit-able
+  """
+
+  ar = asarray(ar).flatten()
+
+  if optional_indices:
+    perm = ar.argsort()
+    aux = ar[perm]
+  else:
+    aux = ar.sort()
+
+  mask = empty(aux.shape, dtype=bool_)
+  mask = ops.index_update(mask, ops.index[:1], True)
+  mask = ops.index_update(mask, ops.index[1:], aux[1:] != aux[:-1])
+
+  if optional_indices:
+    return aux, mask, perm
+  else:
+    return aux, mask
+
+def _unique1d(ar, return_index=False, return_inverse=False,
+              return_counts=False):
+  """
+  Find the unique elements of an array, ignoring shape.
+  """
+
+  optional_indices = return_index or return_inverse
+
+  if optional_indices:
+    aux, mask, perm = _unique1d_sorted_mask(ar, optional_indices)
+  else:
+    aux, mask = _unique1d_sorted_mask(ar, optional_indices)
+
+  ret = (aux[mask],)
+  if return_index:
+    ret += (perm[mask],)
+  if return_inverse:
+    imask = cumsum(mask) - 1
+    inv_idx = zeros(mask.shape, dtype=int_)
+    inv_idx = ops.index_update(inv_idx, perm, imask)
+    ret += (inv_idx,)
+  if return_counts:
+    idx = concatenate(nonzero(mask) + (array([mask.size]),))
+    ret += (diff(idx),)
+  return ret
+
+@_wraps(onp.unique)
+def unique(ar, return_index=False, return_inverse=False,
+           return_counts=False, axis=None):
+
+  if iscomplexobj(ar):
+    raise NotImplementedError(
+          "np.unique is not implemented for complex valued arrays")
+
+  if axis is None:
+    ret = _unique1d(ar, return_index, return_inverse, return_counts)
+    if len(ret) == 1:
+      return ret[0]
+    else:
+      return ret
+
+  raise NotImplementedError(
+        "np.unique is not implemented for the axis argument")
 
 ### Indexing
 
@@ -3466,7 +3648,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
 
 @_wraps(onp.corrcoef)
-def corrcoef(x, y=None, rowvar=True, bias=None, ddof=None):
+def corrcoef(x, y=None, rowvar=True):
   c = cov(x, y, rowvar)
   if len(shape(c)) == 0:
       # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
@@ -3735,3 +3917,115 @@ def _unstack(x):
     raise ValueError("Argument to _unstack must be non-scalar")
   return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
 setattr(DeviceArray, "_unstack", _unstack)
+
+
+# Syntactic sugar for scatter operations.
+class _IndexUpdateHelper:
+  # Note: this docstring will appear as the docstring for the `at` property.
+  """Indexable helper object to call indexed update functions.
+
+  The `at` property is syntactic sugar for calling the indexed update functions
+  defined in :mod:`jax.ops`, and acts as a pure equivalent of in-place
+  modificatons.
+
+  In particular:
+  - ``x = x.at[idx].set(y)`` is a pure equivalent of ``x[idx] = y``.
+  - ``x = x.at[idx].add(y)`` is a pure equivalent of ``x[idx] += y``.
+  - ``x = x.at[idx].mul(y)`` is a pure equivalent of ``x[idx] *= y``.
+  - ``x = x.at[idx].min(y)`` is a pure equivalent of
+      ``x[idx] = minimum(x[idx], y)``.
+  - ``x = x.at[idx].max(y)`` is a pure equivalent of
+      ``x[idx] = maximum(x[idx], y)``.
+  """
+  __slots__ = ("array",)
+
+  def __init__(self, array):
+    self.array = array
+
+  def __getitem__(self, index):
+    return _IndexUpdateRef(self.array, index)
+
+  def __repr__(self):
+    return f"_IndexUpdateHelper({repr(self.array)})"
+
+
+class _IndexUpdateRef:
+  """Helper object to call indexed update functions for an (advanced) index.
+
+  This object references a source array and a specific indexer into that array.
+  Methods on this object return copies of the source array that have been
+  modified at the positions specified by the indexer.
+  """
+  __slots__ = ("array", "index")
+
+  def __init__(self, array, index):
+    self.array = array
+    self.index = index
+
+  def __repr__(self):
+    return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
+
+  def set(self, values):
+    """Pure equivalent of ``x[idx] = y``.
+
+    ``x.at[idx].set(y)`` is syntactic sugar for
+    ``jax.ops.index_update(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] = y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_update(self.array, self.index, values)
+
+  def add(self, values):
+    """Pure equivalent of ``x[idx] += y``.
+
+    ``x.at[idx].add(y)`` is syntactic sugar for
+    ``jax.ops.index_add(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] += y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_add(self.array, self.index, values)
+
+  def mul(self, values):
+    """Pure equivalent of ``x[idx] += y``.
+
+    ``x.at[idx].mul(y)`` is syntactic sugar for
+    ``jax.ops.index_mul(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] *= y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_mul(self.array, self.index, values)
+
+  def min(self, values):
+    """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
+
+    ``x.at[idx].min(y)`` is syntactic sugar for
+    ``jax.ops.index_min(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>`
+    ``x[idx] = minimum(x[idx], y)``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_min(self.array, self.index, values)
+
+  def max(self, values):
+    """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
+
+    ``x.at[idx].max(y)`` is syntactic sugar for
+    ``jax.ops.index_max(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>`
+    ``x[idx] = maximum(x[idx], y)``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_max(self.array, self.index, values)
+
+setattr(DeviceArray, "at", property(_IndexUpdateHelper))
+setattr(ShapedArray, "at", core.aval_property(_IndexUpdateHelper))

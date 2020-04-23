@@ -380,7 +380,8 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   return grad_f_aux if has_aux else grad_f
 
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-                   has_aux: bool = False, holomorphic: bool = False) -> Callable:
+                   has_aux: bool = False, holomorphic: bool = False
+                   ) -> Callable[..., Tuple[Any, Any]]:
   """Create a function which evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
@@ -918,7 +919,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
 
   Each host passes in a different length-4 array, corresponding to its 4 local
   devices, and the psum operates over all 8 values. Conceptually, the two
-  length-4 arrays can be thought of as sharded length-16 array (in this example
+  length-4 arrays can be thought of as sharded length-8 array (in this example
   equivalent to np.arange(8)) that is mapped over, with the length-8 mapped axis
   given name 'i'. The pmap call on each host then returns the corresponding
   length-4 output shard.

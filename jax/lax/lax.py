@@ -372,8 +372,6 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
       not dtypes.issubdtype(new_dtype, onp.complexfloating)):
     msg = "Casting complex values to real discards the imaginary part"
     warnings.warn(msg, onp.ComplexWarning, stacklevel=2)
-    operand = real(operand)
-    old_dtype = _dtype(operand)
   return convert_element_type_p.bind(
       operand, new_dtype=new_dtype, old_dtype=old_dtype)
 
@@ -860,6 +858,33 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers)
 
+def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
+                dimension_numbers: ScatterDimensionNumbers) -> Array:
+  """Scatter-multiply operator.
+
+  Wraps `XLA's Scatter operator
+  <https://www.tensorflow.org/xla/operation_semantics#scatter>`_, where
+  multiplication is used to combine updates and values from `operand`.
+
+  The semantics of scatter are complicated and its API is subject to change.
+
+  Args:
+    operand: an array to which the scatter should be applied
+    scatter_indices: an array that gives the indices in `operand` to which each
+      update in `updates` should be applied.
+    updates: the updates that should be scattered onto `operand`.
+    dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
+      how dimensions of `operand`, `start_indices`, `updates` and the output
+      relate.
+
+  Returns:
+    An array containing the sum of `operand` and the scattered updates.
+  """
+  jaxpr, consts = _reduction_jaxpr(mul, _abstractify(_const(operand, 1)))
+  return scatter_mul_p.bind(
+      operand, scatter_indices, updates, update_jaxpr=jaxpr,
+      update_consts=consts, dimension_numbers=dimension_numbers)
+
 def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
                 dimension_numbers: ScatterDimensionNumbers) -> Array:
   """Scatter-min operator.
@@ -1250,23 +1275,23 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
 def stop_gradient(x):
   """Stops gradient computation.
 
-   Operationally `stop_gradient` is the identity function, that is, it returns
-   argument `x` unchanged. However, `stop_gradient` prevents the flow of
-   gradients during forward or reverse-mode automatic differentiation. If there
-   are multiple nested gradient computations, `stop_gradient` stops gradients
-   for all of them.
+  Operationally `stop_gradient` is the identity function, that is, it returns
+  argument `x` unchanged. However, `stop_gradient` prevents the flow of
+  gradients during forward or reverse-mode automatic differentiation. If there
+  are multiple nested gradient computations, `stop_gradient` stops gradients
+  for all of them.
 
-   For example:
+  For example:
 
-   >>> jax.grad(lambda x: x**2)(3.)
-   array(6., dtype=float32)
-   >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-   array(0., dtype=float32)
-   >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-   array(2., dtype=float32)
-   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-   array(0., dtype=float32)
-   """
+  >>> jax.grad(lambda x: x**2)(3.)
+  array(6., dtype=float32)
+  >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
+  array(0., dtype=float32)
+  >>> jax.grad(jax.grad(lambda x: x**2))(3.)
+  array(2., dtype=float32)
+  >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
+  array(0., dtype=float32)
+  """
   return tree_map(stop_gradient_p.bind, x)
 
 
@@ -2109,15 +2134,21 @@ def _convert_element_type_dtype_rule(operand, *, new_dtype, old_dtype):
   return new_dtype
 
 def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
+  if (dtypes.issubdtype(old_dtype, onp.complexfloating) and
+      not dtypes.issubdtype(new_dtype, onp.complexfloating)):
+    operand = c.Real(operand)
   new_etype = xla_client.dtype_to_etype(new_dtype)
   return c.ConvertElementType(operand, new_element_type=new_etype)
+
+def _convert_element_type_transpose_rule(t, *, new_dtype, old_dtype):
+  assert t.dtype == new_dtype, (t.dtype, new_dtype)
+  return [convert_element_type_p.bind(t, new_dtype=old_dtype,
+                                      old_dtype=new_dtype)]
 
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
     'convert_element_type', _convert_element_type_translation_rule)
-ad.deflinear(
-    convert_element_type_p,
-    lambda t, new_dtype, old_dtype: [convert_element_type(t, old_dtype)])
+ad.deflinear(convert_element_type_p, _convert_element_type_transpose_rule)
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
 
@@ -2804,18 +2835,14 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
       return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
-  if (type(operand) is pxla.ShardedDeviceArray and dimensions is None
-      and _is_axis_merge(old_sizes, new_sizes)):
-    aval = ShapedArray(new_sizes, operand.dtype)
-    return pxla.ChunkedDeviceArray(old_sizes[0], aval, operand.device_buffers)
-  elif (type(operand) is pxla.ChunkedDeviceArray and dimensions is None
-        and _is_axis_split(old_sizes, new_sizes)
-        and operand.axis_size == new_sizes[0]):
-    aval = ShapedArray(new_sizes, operand.dtype)
-    return pxla.ShardedDeviceArray(aval, operand.device_buffers)
-  else:
-    return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
-                               dimensions=dimensions)
+
+  if type(operand) is pxla.ShardedDeviceArray and dimensions is None:
+    array = _reshape_sharded_device_array(operand, new_sizes, old_sizes)
+    if array is not None:
+      return array
+
+  return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
+                             dimensions=dimensions)
 
 def _is_singleton_reshape(old, new):
   # A singleton reshape is one where only singleton dimensions are added. We
@@ -2837,7 +2864,53 @@ def _is_singleton_reshape(old, new):
     else:
       return None
 
+def _reshape_sharded_device_array(array, new_sizes, old_sizes):
+  """Returns None if `array` could not be efficiently reshaped.
+
+  This function is primarily to support soft_pmap, although these optimizations
+  could be useful when directly calling reshape as well.
+  """
+  # TODO(jekbradbury): the axis split/merge logic below assumes that
+  # ShardedDevicesArrays are always sharded across their leading axes. Remove
+  # this constraint, especially if/when we add APIs that produce sharding across
+  # interior axes.
+  if any(num_shards != 1 for num_shards
+         in array.sharding_spec.shards_per_axis[1:]):
+    return None
+
+  # TODO(skye): handle replicated buffers
+  if array.sharding_spec.replication_factor != 1:
+    return None
+
+  # ShardedDevicesArrays require all buffers to have the same shape
+  chunk_shape = array.device_buffers[0].shape().dimensions()
+  chunk_size = chunk_shape[0] if len(chunk_shape) > 0 else 1
+
+  if _is_axis_merge(old_sizes, new_sizes):
+    num_chunks, ragged = divmod(new_sizes[0], chunk_size)
+    if ragged: return None
+    aval = ShapedArray(new_sizes, array.dtype)
+    sharding_spec = pxla.ShardingSpec(
+        shards_per_axis=(num_chunks,) + (1,) * (len(new_sizes) - 1),
+        is_axis_materialized=(True,) * len(new_sizes),
+        replication_factor=1)
+    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
+
+  if _is_axis_split(old_sizes, new_sizes):
+    split_axis_size, ragged = divmod(old_sizes[0], chunk_size)
+    if ragged: return None
+    if new_sizes[0] != split_axis_size: return None
+    aval = ShapedArray(new_sizes, array.dtype)
+    sharding_spec = pxla._pmap_sharding_spec(new_sizes[0], new_sizes[0],
+                                             new_sizes[1:])
+    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
+
+  return None
+
 def _is_axis_merge(s1, s2):
+  # TODO(skye): we might still be able to handle these cases as merges, I
+  # haven't thought about it much.
+  if len(s1) < 2 or len(s2) < 1: return False
   return s1[2:] == s2[1:] and s1[0] * s1[1] == s2[0]
 
 def _is_axis_split(s1, s2):
@@ -3454,6 +3527,39 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
                       slice_sizes=slice_sizes)
   return [operand_t, None, update_t]
 
+def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
+                                update_jaxpr, update_consts, dimension_numbers):
+  assert not ad.is_undefined_primal(scatter_indices)
+  if ad.is_undefined_primal(updates):
+    updates_shape = updates.aval.shape
+  else:
+    updates_shape = updates.shape
+  if t is ad_util.zero:
+    return [ad_util.zero, None, ad_util.zero]
+
+  operand_t = update_t = None
+  if ad.is_undefined_primal(operand):
+    operand_t = scatter_mul(t, scatter_indices, updates,
+                            dimension_numbers=dimension_numbers)
+
+  if ad.is_undefined_primal(updates):
+    gather_dnums = GatherDimensionNumbers(
+      offset_dims=dimension_numbers.update_window_dims,
+      collapsed_slice_dims=dimension_numbers.inserted_window_dims,
+      start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
+    slice_sizes = []
+    pos = 0
+    for i in range(len(t.shape)):
+      if i in dimension_numbers.inserted_window_dims:
+        slice_sizes.append(1)
+      else:
+        slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
+        pos += 1
+    update_t = gather(mul(t, operand), scatter_indices,
+                      dimension_numbers=gather_dnums, slice_sizes=slice_sizes)
+  return [operand_t, None, update_t]
+
+
 def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
                            update_jaxpr, update_consts, dimension_numbers):
   operand, scatter_indices, updates = batched_args
@@ -3507,6 +3613,23 @@ ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
+
+
+scatter_mul_p = standard_primitive(
+    _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
+    _scatter_translation_rule)
+
+def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers, **kw):
+  return mul(x, scatter_add(zeros_like_array(x), i, g,
+                            dimension_numbers=dimension_numbers))
+
+ad.defjvp(scatter_mul_p,
+          lambda g, x, i, y, **kw: scatter_mul_p.bind(g, i, y, **kw),
+          None,
+          _scatter_mul_jvp_rhs)
+ad.primitive_transposes[scatter_mul_p] = _scatter_mul_transpose_rule
+batching.primitive_batchers[scatter_mul_p] = (
+  partial(_scatter_batching_rule, scatter_mul))
 
 # TODO(jlebar): Add derivatives.
 scatter_min_p = standard_primitive(
@@ -3650,7 +3773,7 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.GetShape(init_value)
   axis_env = xla.AxisEnv(1)  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("reduction_computation")
-  consts = [subc.ParameterWithShape(const) for const in consts]
+  assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [subc.ParameterWithShape(shape), subc.ParameterWithShape(shape)]
   out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
   return subc.Build(out)
@@ -4485,6 +4608,12 @@ masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 ### stop-gradient
 
+def _stop_gradient_impl(x):
+  if not core.valid_jaxtype(x):
+    raise TypeError("stop_gradient only works on valid JAX arrays, but "
+                    f"input argument is: {x}")
+  return x
+
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
@@ -4496,7 +4625,7 @@ def _stop_gradient_batch_rule(batched_args, batch_dims):
   return stop_gradient(x), dim
 
 stop_gradient_p = Primitive('stop_gradient')
-stop_gradient_p.def_impl(_identity)
+stop_gradient_p.def_impl(_stop_gradient_impl)
 stop_gradient_p.def_abstract_eval(_identity)
 xla.translations[stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[stop_gradient_p] = _stop_gradient_jvp_rule
