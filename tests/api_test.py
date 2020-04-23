@@ -879,6 +879,13 @@ class APITest(jtu.JaxTestCase):
     out_shape, = xla_comp.GetReturnValueShape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
 
+  def test_xla_computation_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
+    self.assertIn('constant(3)', xla_comp.GetHloText())
+
   def test_jit_device(self):
     device = xb.devices()[-1]
     x = api.jit(lambda x: x, device=device)(3.)
