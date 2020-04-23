@@ -1388,7 +1388,7 @@ def _memcpy(axis, num, src, dst, offset):
     return lax.dynamic_update_index_in_dim(dst, update, i + offset, axis)
   return fori_loop(0, num, body, dst)
 
-masking.masking_rules[lax.concatenate_p] = _concat_masking_rule
+masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
 
 
 def _check_tree(func_name, expected_name, actual_tree, expected_tree):
