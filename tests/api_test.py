@@ -2853,6 +2853,28 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(g, argnums=(1,))(F(2.0), 0.)  # doesn't crash
 
+  def test_nondiff_argnums_stop_gradient(self):
+    # https://github.com/google/jax/issues/2784
+    @partial(api.custom_vjp, nondiff_argnums=(0, 1))
+    def _clip_gradient(lo, hi, x):
+      return x  # identity function
+
+    def clip_gradient_fwd(lo, hi, x):
+        # return x, None
+        return x, (hi, )
+
+    def clip_gradient_bwd(lo, hi, _, g):
+        return (np.clip(g, lo, hi),)
+
+    _clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
+
+    def clip_gradient(x):
+        lo = -1
+        hi = x + 1  # causes things to break
+        return _clip_gradient(lo, hi, x)
+
+    jax.grad(clip_gradient)(1.)  # doesn't crash
+
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
 
