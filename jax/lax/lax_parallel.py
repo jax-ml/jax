@@ -372,8 +372,12 @@ def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups,
   if len(replica_groups[0]) == 1:
     return x
   else:
+    split_count = len(replica_groups[0])
+    if not all(split_count == len(g) for g in replica_groups):
+      raise ValueError('Replica groups must be equally sized')
     replica_groups_protos = xc.make_replica_groups(replica_groups)
-    return xops.AllToAll(x, split_axis, concat_axis, replica_groups_protos)
+    return xops.AllToAll(x, split_axis, concat_axis, split_count,
+                         replica_groups_protos)
 
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
                                 axis_name):
