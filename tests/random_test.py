@@ -339,7 +339,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lam={}_{}".format(lam, dtype),
        "lam": lam, "dtype": onp.dtype(dtype).name}
-      for lam in [5.0, 50.0]
+      for lam in [5.0, 50.0, 5e6]
       for dtype in [onp.int32, onp.int64]))
   def testPoisson(self, lam, dtype):
     key = random.PRNGKey(0)
