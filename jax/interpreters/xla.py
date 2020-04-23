@@ -124,8 +124,8 @@ def _canonicalize_ndarray_dtype(x):
   return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
 
 def _canonicalize_python_scalar_dtype(typ, x):
-  dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ])
-  return onp.asarray(x).astype(dtype, casting='safe')
+  return onp.asarray(
+      x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
 
 canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
 canonicalize_dtype_handlers.update(
