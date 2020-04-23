@@ -18,6 +18,7 @@ import inspect
 import itertools as it
 import operator as op
 
+import jax
 from . import core
 from . import linear_util as lu
 from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
@@ -81,6 +82,15 @@ def sum_tangents(x, *xs):
 
 def zeros_like_pytree(x):
   return tree_map(lambda _: zero, x)
+
+def stop_gradient(x):
+  return tree_map(_stop_gradient, x)
+
+def _stop_gradient(x):
+  if isinstance(x, core.Tracer) or core.valid_jaxtype(x):
+    return jax.lax.stop_gradient(x)
+  else:
+    return x
 
 
 ### JVPs
@@ -199,7 +209,10 @@ class custom_jvp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args, left=True)
@@ -436,7 +449,10 @@ class custom_vjp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)
