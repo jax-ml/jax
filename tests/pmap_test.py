@@ -1155,6 +1155,10 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     # NOTE(skye): I picked these values to be big enough to cause interesting
     # execution overlap, but small enough to not use too much memory. YMMV.
     shape = (8, 8000, 1000)
+
+    if jax.device_count() < shape[0]:
+      raise SkipTest(f"requires {shape[0]} devices")
+
     x = np.arange(np.prod(shape)).reshape(shape)
     sharded_x = pmap(lambda x: x)(x)
 
