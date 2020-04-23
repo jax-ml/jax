@@ -26,6 +26,7 @@ from typing import Callable, Dict
 import warnings
 
 from absl import logging
+import numpy as np
 
 from ..config import flags
 from .. import util
@@ -39,6 +40,8 @@ except ImportError:
   tpu_client = None
 from . import version
 from . import xla_client
+
+xops = xla_client.ops
 
 FLAGS = flags.FLAGS
 
@@ -266,66 +269,39 @@ def normalize_to_xla_dtypes(val):
     return tuple(normalize_to_xla_dtypes(x) for x in val)
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
 
+def _numpy_array_constant(builder, value, canonicalize_types=True):
+  if canonicalize_types:
+    value = normalize_to_xla_dtypes(value)
+  return xops.ConstantLiteral(builder, value)
 
-class _JaxComputationBuilder(xla_client.ComputationBuilder):
-  """Base class implementing all of JaxComputationBuilder.
+def parameter(builder, num, shape, name=None, replicated=False):
+  if name is None:
+    name = ''
+  if isinstance(replicated, bool):
+    replicated = [replicated] * shape.leaf_count()
 
-  This class is intended to override and augment the interface of an XLA
-  ComputationBuilder to form JaxComputationBuilder
+  return xops.Parameter(builder, num,
+                        shape.with_major_to_minor_layout_if_absent(), name,
+                        replicated)
+
+
+def constant(builder, py_val, canonicalize_types=True):
+  """Translate constant `py_val` to a constant, canonicalizing its dtype.
+
+  Args:
+    py_val: a Python value to be translated to a constant.
+
+  Returns:
+    A representation of the constant, either a ComputationDataHandle or None
   """
-
-  # Method name case follows that of the XLA ComputationBuilder
-  # pylint: disable=invalid-name
-
-  def Build(self, *args, **kwargs):
-    return super(_JaxComputationBuilder, self).Build(
-        *args, **kwargs)
-
-  def NumpyArrayConstant(self, value, canonicalize_types=True):
-    if canonicalize_types:
-      value = normalize_to_xla_dtypes(value)
-    return super(_JaxComputationBuilder, self).Constant(value)
-
-  def ConstantLike(self, example_value, value, canonicalize_types=True):
-    example_value = onp.asarray(example_value)
-    return self.Constant(onp.array(value, dtype=example_value.dtype))
-
-  def Constant(self, py_val, canonicalize_types=True):
-    """Translate constant `py_val` to a constant for this ComputationBuilder.
-
-    Args:
-      py_val: a Python value to be translated to a constant.
-
-    Returns:
-      A representation of the constant, either a ComputationDataHandle or None
-    """
-    py_type = type(py_val)
-    if py_type in _constant_handlers:
-      return _constant_handlers[py_type](self, py_val, canonicalize_types)
-    else:
-      raise TypeError("No constant handler for type: {}".format(py_type))
-
-  # TODO(mattjj): remove when CrossReplicaSum is added to XLA:CPU
-  def CrossReplicaSum(self, operand, replica_groups):
-    """Workaround for CrossReplicaSum not being implemented on some backends."""
-    if len(replica_groups[0]) == 1:
-      return operand
-    else:
-      return super(_JaxComputationBuilder, self).CrossReplicaSum(
-          operand, replica_groups)
-
-  # TODO(mattjj): remove when AllToAll is added to XLA:CPU
-  def AllToAll(self, operand, split_axis, concat_axis, replica_groups):
-    """Workaround for AllToAll not being implemented on some backends."""
-    if len(replica_groups[0]) == 1:
-      return operand
-    else:
-      return super(_JaxComputationBuilder, self).AllToAll(
-          operand, split_axis, concat_axis, replica_groups)
-
+  py_type = type(py_val)
+  if py_type in _constant_handlers:
+    return _constant_handlers[py_type](builder, py_val, canonicalize_types)
+  else:
+    raise TypeError("No constant handler for type: {}".format(py_type))
 
 def make_computation_builder(name):
-  return _JaxComputationBuilder(name)
+  return xla_client.XlaBuilder(name)
 
 
 def register_constant_handler(type_, handler_fun):
@@ -336,7 +312,7 @@ _constant_handlers: Dict[type, Callable] = {}
 def _ndarray_constant_handler(c, val, canonicalize_types=True):
   """Constant handler for ndarray literals, handling zero-size strides.
 
-  This function essentially calls c.NumpyArrayConstant(val) except it has
+  This function essentially calls _numpy_array_constant(val) except it has
   special handling of arrays with any strides of size zero: for those, it
   generates appropriate calls to NumpyArrayConstant, Broadcast, and Transpose
   to avoid staging in large literals that might arise from np.zeros or np.ones
@@ -344,31 +320,31 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
   uses size-zero strides).
 
   Args:
-    c: XLA client ComputationBuilder.
+    c: an XlaBuilder
     val: an ndarray.
 
   Returns:
     An XLA ComputationDataHandle / XlaOp representing the constant ndarray
     staged into the XLA Computation.
   """
-  # TODO(mattjj): revise this to use c.BroadcastInDim rather than Transpose
+  # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
   if onp.any(onp.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = onp.where(onp.equal(0, val.strides))
     other_axes, = onp.where(onp.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
-    xla_val = c.Broadcast(
-        c.NumpyArrayConstant(collapsed_val, canonicalize_types),
+    xla_val = xops.Broadcast(
+        _numpy_array_constant(c, collapsed_val, canonicalize_types),
         onp.take(val.shape, zero_stride_axes))
     permutation = onp.argsort(tuple(zero_stride_axes) + tuple(other_axes))
-    return c.Transpose(xla_val, permutation)
+    return xops.Transpose(xla_val, permutation)
   else:
-    return c.NumpyArrayConstant(val, canonicalize_types)
+    return _numpy_array_constant(c, val, canonicalize_types)
 register_constant_handler(onp.ndarray, _ndarray_constant_handler)
 
 
 def _scalar_constant_handler(c, val, canonicalize_types=True):
-  return c.NumpyArrayConstant(val, canonicalize_types)
+  return _numpy_array_constant(c, val, canonicalize_types)
 
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
@@ -377,7 +353,57 @@ for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
-  return c.NumpyArrayConstant(dtype.type(val))
+  return _numpy_array_constant(c, dtype.type(val))
 
 for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
+
+
+# Backwards-compatibility shim that provides a ComputationBuilder-like API to
+# older jaxlib releases.
+# TODO(phawkins): Remove when the minimum Jaxlib release is 0.1.46 or newer.
+class ComputationBuilderShim(object):
+  def __init__(self, builder):
+    self._builder = builder
+
+  def GetShape(self, op):
+    return self._builder.GetShape(op)
+
+  def Constant(self, value):
+    return xops.Constant(self._builder, value)
+
+  def ConstantS32Scalar(self, value):
+    return xops.Constant(self._builder, np.int32(value))
+
+  def CustomCallWithLayout(self,
+                           call_target_name,
+                           operands,
+                           shape_with_layout,
+                           operand_shapes_with_layout,
+                           opaque=None):
+    return xops.CustomCallWithLayout(self._builder, call_target_name,
+                                     list(operands), shape_with_layout,
+                                     list(operand_shapes_with_layout),
+                                     opaque or b'')
+
+  def GetTupleElement(self, op, i):
+    return xops.GetTupleElement(op, i)
+
+  def Complex(self, re, im):
+    return xops.Complex(re, im)
+
+  def Transpose(self, op, perm):
+    return xops.Transpose(op, perm)
+
+  def Conj(self, op):
+    return xops.Conj(op)
+
+  def Slice(self, operand, start_indices, limit_indices, strides=None):
+    if strides is None:
+      start_indices = list(start_indices)
+      strides = [1] * len(start_indices)
+    return xops.Slice(operand, start_indices, limit_indices, strides)
+
+
+def computation_builder_shim(b):
+  return b if version > (0, 1, 45) else ComputationBuilderShim(b)

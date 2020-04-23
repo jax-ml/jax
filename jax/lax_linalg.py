@@ -34,6 +34,11 @@ from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
 from jax.lib import lapack
 from jax.lib import cusolver
 
+from jax.lib import xla_client
+from jax.lib import xla_bridge as xb
+
+xops = xla_client.ops
+
 
 # traceables
 
@@ -90,7 +95,7 @@ def symmetrize(x): return (x + _H(x)) / 2
 def _unpack_tuple(f, n):
   def g(c, *args, **kwargs):
     t = f(c, *args, **kwargs)
-    return (c.GetTupleElement(t, i) for i in range(n))
+    return (xops.GetTupleElement(t, i) for i in range(n))
   return g
 
 # primitives
@@ -131,19 +136,19 @@ def _nan_like(c, operand):
   shape = c.GetShape(operand)
   dtype = shape.element_type()
   if np.issubdtype(dtype, onp.complexfloating):
-    nan = c.Constant(onp.array(onp.nan * (1. + 1j), dtype=dtype))
+    nan = xb.constant(c, onp.array(onp.nan * (1. + 1j), dtype=dtype))
   else:
-    nan = c.Constant(onp.array(onp.nan, dtype=dtype))
-  return c.Broadcast(nan, shape.dimensions())
+    nan = xb.constant(c, onp.array(onp.nan, dtype=dtype))
+  return xops.Broadcast(nan, shape.dimensions())
 
 def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
   dtype = shape.element_type().type
-  result, info = potrf_impl(c, operand, lower=True)
-  ok = c.Eq(info, c.ConstantS32Scalar(0))
+  result, info = potrf_impl(xb.computation_builder_shim(c), operand, lower=True)
+  ok = xops.Eq(info, xops.ConstantLiteral(c, onp.array(0, onp.int32)))
   return _broadcasting_select(c,
-                              c.Reshape(ok, None, batch_dims + (1, 1)), result,
+                              xops.Reshape(ok, batch_dims + (1, 1)), result,
                               _nan_like(c, result))
 
 xla.backend_specific_translations['cpu'][cholesky_p] = partial(
@@ -182,15 +187,15 @@ _cpu_geev = lapack.geev
 def eig_cpu_translation_rule(c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  w, vl, vr, info = _cpu_geev(c, operand)
-  ok = c.Eq(info, c.ConstantS32Scalar(0))
-  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
+  w, vl, vr, info = _cpu_geev(xb.computation_builder_shim(c), operand)
+  ok = xops.Eq(info, xops.ConstantLiteral(c, onp.array(0, onp.int32)))
+  w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
-  vl = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vl,
+  vl = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vl,
                             _nan_like(c, vl))
-  vr = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vr,
+  vr = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vr,
                             _nan_like(c, vr))
-  return c.Tuple(w, vl, vr)
+  return xops.Tuple(c, [w, vl, vr])
 
 def eig_batching_rule(batched_args, batch_dims):
   x, = batched_args
@@ -217,11 +222,11 @@ def eigh_translation_rule(c, operand, lower):
   shape = c.GetShape(operand)
   dims = shape.dimensions()
   if dims[-1] == 0:
-    return c.Tuple(operand, c.Reshape(operand, None, dims[:-1]))
+    return xops.Tuple(c, [operand, xops.Reshape(operand, dims[:-1])])
   if not lower:
     n = len(dims)
-    operand = c.Transpose(operand, list(range(n - 2)) + [n - 1, n - 2])
-  return c.Eigh(operand)
+    operand = xops.Transpose(operand, list(range(n - 2)) + [n - 1, n - 2])
+  return xops.Tuple(c, xops.Eigh(operand))
 
 def eigh_abstract_eval(operand, lower):
   if isinstance(operand, ShapedArray):
@@ -241,13 +246,13 @@ def eigh_abstract_eval(operand, lower):
 def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  v, w, info = syevd_impl(c, operand, lower=lower)
-  ok = c.Eq(info, c.ConstantS32Scalar(0))
-  v = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), v,
+  v, w, info = syevd_impl(xb.computation_builder_shim(c), operand, lower=lower)
+  ok = xops.Eq(info, xops.ConstantLiteral(c, onp.array(0, onp.int32)))
+  v = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), v,
                            _nan_like(c, v))
-  w = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), w,
+  w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
-  return c.Tuple(v, w)
+  return xops.Tuple(c, [v, w])
 
 def eigh_jvp_rule(primals, tangents, lower):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
@@ -399,9 +404,21 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
                             transpose_a=transpose_a, conjugate_a=conjugate_a,
                             unit_diagonal=unit_diagonal), 0
 
+def _triangular_solve_translation_rule(
+    c, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+  if conjugate_a and not transpose_a:
+    a = xops.Conj(a)
+    conjugate_a = False
+  if not transpose_a:
+    transpose = xops.TriangularSolveOptions_Transpose.NO_TRANSPOSE
+  else:
+    transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
+                 else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
+  return xops.TriangularSolve(a, b, left_side, lower, unit_diagonal, transpose)
+
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,
-    'triangular_solve')
+    'triangular_solve', translation_rule=_triangular_solve_translation_rule)
 ad.defjvp2(triangular_solve_p,
            triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
@@ -414,18 +431,22 @@ def _triangular_solve_cpu_translation_rule(
   shape = c.GetShape(a)
   dtype = shape.element_type().type
 
+  if conjugate_a and not transpose_a:
+    a = xops.Conj(a)
+    conjugate_a = False
   if len(shape.dimensions()) == 2 and onp.dtype(dtype) in _cpu_lapack_types:
-    if conjugate_a and not transpose_a:
-      a = c.Conj(a)
-      conjugate_a = False
     return lapack.jax_trsm(
-      c, c.Constant(onp.array(1, dtype=dtype)), a, b, left_side, lower,
-                    transpose_a, conjugate_a, unit_diagonal)
+      xb.computation_builder_shim(c), xb.constant(c, onp.array(1, dtype=dtype)),
+      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
-    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
-                             unit_diagonal)
+    if not transpose_a:
+      transpose = xops.TriangularSolveOptions_Transpose.NO_TRANSPOSE
+    else:
+      transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
+                   else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
+    return xops.TriangularSolve(a, b, left_side, lower, unit_diagonal, transpose)
 
 xla.backend_specific_translations['cpu'][triangular_solve_p] = \
   _triangular_solve_cpu_translation_rule
@@ -437,16 +458,22 @@ def _triangular_solve_gpu_translation_rule(
   dims = shape.dimensions()
   m, n = dims[-2:]
   batch = prod(dims[:-2])
+  if conjugate_a and not transpose_a:
+    a = xops.Conj(a)
+    conjugate_a = False
   if batch > 1 and m <= 32 and n <= 32:
-    if conjugate_a and not transpose_a:
-      a = c.Conj(a)
-      conjugate_a = False
     return cusolver.trsm(
-      c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
+      xb.computation_builder_shim(c), a, b, left_side, lower, transpose_a,
+      conjugate_a, unit_diagonal)
   else:
     # Use the XLA implementation for unbatched triangular_solve.
-    return c.TriangularSolve(a, b, left_side, lower, transpose_a, conjugate_a,
-                             unit_diagonal)
+    if not transpose_a:
+      transpose = xops.TriangularSolveOptions_Transpose.NO_TRANSPOSE
+    else:
+      transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
+                   else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
+    return xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
+                                transpose)
 
 xla.backend_specific_translations['gpu'][triangular_solve_p] = \
     _triangular_solve_gpu_translation_rule
@@ -607,13 +634,13 @@ def _lu_batching_rule(batched_args, batch_dims):
 def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  lu, pivot, info = getrf_impl(c, operand)
+  lu, pivot, info = getrf_impl(xb.computation_builder_shim(c), operand)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = c.Sub(pivot, c.ConstantS32Scalar(1))
-  ok = c.Ge(info, c.ConstantS32Scalar(0))
-  lu = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), lu,
+  pivot = xops.Sub(pivot, xops.ConstantLiteral(c, onp.array(1, onp.int32)))
+  ok = xops.Ge(info, xops.ConstantLiteral(c, onp.array(0, onp.int32)))
+  lu = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
-  return c.Tuple(lu, pivot)
+  return xops.Tuple(c, [lu, pivot])
 
 
 lu_p = Primitive('lu')
@@ -730,7 +757,7 @@ def qr_impl(operand, full_matrices):
   return q, r
 
 def qr_translation_rule(c, operand, full_matrices):
-  return c.QR(operand, full_matrices=full_matrices)
+  return xops.Tuple(c, xops.QR(operand, full_matrices))
 
 def qr_abstract_eval(operand, full_matrices):
   if isinstance(operand, ShapedArray):
@@ -774,27 +801,31 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
   dims = shape.dimensions()
   m, n = dims[-2:]
   batch_dims = dims[:-2]
-  r, tau, info_geqrf = geqrf_impl(c, operand)
+  cs = xb.computation_builder_shim(c)
+  r, tau, info_geqrf = geqrf_impl(cs, operand)
   if m < n:
-    q = c.Slice(r, [0] * len(dims), list(batch_dims) + [m, m])
-    q, info_orgqr = orgqr_impl(c, q, tau)
+    q = xops.Slice(r, [0] * len(dims), list(batch_dims) + [m, m],
+                   [1] * len(dims))
+    q, info_orgqr = orgqr_impl(cs, q, tau)
   elif not full_matrices:
-    q, info_orgqr = orgqr_impl(c, r, tau)
-    r = c.Slice(r, [0] * len(dims), list(batch_dims) + [n, n])
+    q, info_orgqr = orgqr_impl(cs, r, tau)
+    r = xops.Slice(r, [0] * len(dims), list(batch_dims) + [n, n],
+                   [1] * len(dims))
   else:
     padding_config = [(0, 0, 0)] * len(dims)
     padding_config[-1] = (0, m - n, 0)
-    q = c.Pad(r, c.Constant(onp.array(0, dtype=shape.element_type())),
-              padding_config)
-    q, info_orgqr = orgqr_impl(c, q, tau)
+    q = xops.Pad(r, xops.Constant(c, onp.array(0, dtype=shape.element_type())),
+                 xla_client.make_padding_config(padding_config))
+    q, info_orgqr = orgqr_impl(cs, q, tau)
 
-  ok = c.And(c.Eq(info_geqrf, c.ConstantS32Scalar(0)),
-             c.Eq(info_orgqr, c.ConstantS32Scalar(0)))
-  q = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), q,
+  ok = xops.And(
+    xops.Eq(info_geqrf, xops.ConstantLiteral(c, onp.array(0, onp.int32))),
+    xops.Eq(info_orgqr, xops.ConstantLiteral(c, onp.array(0, onp.int32))))
+  q = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), q,
                            _nan_like(c, q))
-  r = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), r,
+  r = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), r,
                            _nan_like(c, r))
-  return c.Tuple(q, r)
+  return xops.Tuple(c, [q, r])
 
 qr_p = Primitive('qr')
 qr_p.multiple_results = True
@@ -870,16 +901,17 @@ def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute
 
   shape = c.GetShape(operand)
   batch_dims = shape.dimensions()[:-2]
-  s, u, vt, info = gesvd_impl(c, operand, full_matrices=full_matrices,
+  s, u, vt, info = gesvd_impl(xb.computation_builder_shim(c), operand,
+                              full_matrices=full_matrices,
                               compute_uv=compute_uv)
-  ok = c.Eq(info, c.ConstantS32Scalar(0))
-  s = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1,)), s,
+  ok = xops.Eq(info, xops.ConstantLiteral(c, onp.array(0, onp.int32)))
+  s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
                            _nan_like(c, s))
-  u = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), u,
+  u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
                            _nan_like(c, u))
-  vt = _broadcasting_select(c, c.Reshape(ok, None, batch_dims + (1, 1)), vt,
+  vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
                             _nan_like(c, vt))
-  return c.Tuple(s, u, vt)
+  return xops.Tuple(c, [s, u, vt])
 
 def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
   x, = batched_args

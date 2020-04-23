@@ -50,12 +50,16 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
 from ..util import (partial, unzip2, prod, safe_map, safe_zip,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
+from ..lib import xla_client as xc
 from ..tree_util import tree_map
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
 from . import xla
 from . import ad
+
+
+xops = xc.ops
 
 FLAGS = flags.FLAGS
 
@@ -406,10 +410,10 @@ def _axis_index_bind(*, axis_name):
     return SplitAxisTracer(frame.soft_trace, axis_name, val_out)
 
 def _axis_index_translation_rule(c, nreps, sizes, soft_size, axis_name):
-  div = c.Constant(onp.array(nreps // prod(sizes), dtype=onp.uint32))
-  mod = c.Constant(onp.array(sizes[-1], dtype=onp.uint32))
-  unsigned_index = c.Rem(c.Div(c.ReplicaId(), div), mod)
-  return c.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+  div = xb.constant(c, onp.array(nreps // prod(sizes), dtype=onp.uint32))
+  mod = xb.constant(c, onp.array(sizes[-1], dtype=onp.uint32))
+  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
+  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
 
 axis_index_p = core.Primitive('axis_index')
 axis_index_p.def_custom_bind(_axis_index_bind)
@@ -543,7 +547,7 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array_slow_path
 
 def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
-  return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
+  return xb.constant(c, onp.asarray(val), canonicalize_types=canonicalize_types)
 xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_handler)
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
@@ -650,11 +654,11 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   tuple_args = len(sharded_avals) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
-  xla_consts = _map(c.Constant, consts)
+  xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
-  built = c.Build(c.Tuple(*out_nodes))
+  built = c.Build(xops.Tuple(c, out_nodes))
 
   if devices is None:
     if num_global_replicas > xb.device_count(backend):
@@ -695,8 +699,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
           num_partitions=1,
           device_assignment=device_assignment)
   compile_options.tuple_arguments = tuple_args
-  compiled = built.Compile(compile_options=compile_options,
-                           backend=xb.get_backend(backend))
+  backend = xb.get_backend(backend)
+  compiled = backend.compile(built, compile_options=compile_options)
 
   input_sharding_specs = [_pmap_sharding_spec(num_local_replicas, axis_size,
                                               aval.shape)
@@ -844,7 +848,7 @@ def _pmap_translation_rule(c, axis_env,
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_xla_unshard(c, aval, new_env, shard, backend=backend)
           for aval, shard in zip(out_avals, sharded_outs)]
-  return c.Tuple(*outs)
+  return xops.Tuple(c, outs)
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
@@ -854,9 +858,9 @@ def _xla_shard(c, aval, axis_env, x):
     return x
   elif isinstance(aval, ShapedArray):
     dims = list(c.GetShape(x).dimensions())
-    zero = c.Constant(onp.zeros((), dtype=onp.uint32))
+    zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
-    return c.Reshape(c.DynamicSlice(x, idxs, [1] + dims[1:]), None, dims[1:])
+    return xops.Reshape(xops.DynamicSlice(x, idxs, [1] + dims[1:]), dims[1:])
   else:
     raise TypeError((aval, c.GetShape(x)))
 
@@ -869,29 +873,31 @@ def _xla_unshard(c, aval, axis_env, x, backend):
     convert_bool = (onp.issubdtype(aval.dtype, onp.bool_)
                     and xb.get_backend(backend).platform in ('cpu', 'gpu'))
     if convert_bool:
-      x = c.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
+      x = xops.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
 
     xla_shape = c.GetShape(x)
     dims = list(xla_shape.dimensions())
-    padded = c.Broadcast(c.Constant(onp.array(0, xla_shape.numpy_dtype())),
+    padded = xops.Broadcast(xb.constant(c, onp.array(0, xla_shape.numpy_dtype())),
                          [axis_env.sizes[-1]] + dims)
-    zero = c.Constant(onp.zeros((), dtype=onp.uint32))
+    zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
-    padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims), idxs)
-    out = c.CrossReplicaSum(padded, xla.axis_groups(axis_env, axis_env.names[-1]))
+    padded = xops.DynamicUpdateSlice(padded, xops.Reshape(x, [1] + dims), idxs)
+    replica_groups_protos = xc.make_replica_groups(
+      xla.axis_groups(axis_env, axis_env.names[-1]))
+    out = xops.CrossReplicaSum(padded, replica_groups_protos)
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
-      nonzero = c.Ne(out, c.Constant(onp.array(0, dtype=onp.float32)))
-      out = c.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
+      nonzero = xops.Ne(out, xb.constant(c, onp.array(0, dtype=onp.float32)))
+      out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
     return out
   else:
     raise TypeError((aval, c.GetShape(x)))
 
 def _unravel_index(c, axis_env):
-  div = c.Constant(onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))
-  mod = c.Constant(onp.array(axis_env.sizes[-1], onp.uint32))
-  return c.Rem(c.Div(c.ReplicaId(), div), mod)
+  div = xb.constant(c, onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))
+  mod = xb.constant(c, onp.array(axis_env.sizes[-1], onp.uint32))
+  return xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
 
 
 ### soft_pmap axis split transformation
