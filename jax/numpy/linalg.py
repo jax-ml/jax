@@ -198,40 +198,36 @@ def _cofactor_solve(a, b):
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, a_shape[-1])
   permutation = np.broadcast_to(permutation, batch_dims + (a_shape[-1],))
   iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
+  # filter out any matrices that are not full rank
+  d = np.ones(x.shape[:-1], x.dtype)
+  d = lax_linalg.triangular_solve(lu, d, left_side=True, lower=False)
+  d = np.any(np.logical_or(np.isnan(d), np.isinf(d)), axis=-1)
+  d = np.tile(d[..., None, None], d.ndim*(1,) + x.shape[-2:])
+  x = np.where(d, np.zeros_like(x), x)  # first filter
   x = x[iotas[:-1] + (permutation, slice(None))]
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
                                   unit_diagonal=True)
   x = np.concatenate((x[..., :-1, :] * partial_det[..., -1, None, None],
                       x[..., -1:, :]), axis=-2)
   x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
-  return partial_det[..., -1], np.where(np.isnan(x), np.zeros_like(x), x)
+  x = np.where(d, np.zeros_like(x), x)  # second filter
+
+  return partial_det[..., -1], x
 
 
-# TODO(pfau): get it so you can do both VJP and JVP
-@custom_vjp
 @custom_jvp
 @_wraps(onp.linalg.det)
 def det(a):
   sign, logdet = slogdet(a)
   return sign * np.exp(logdet)
+
+
+@det.defjvp
 def _det_jvp(primals, tangents):
   x, = primals
   g, = tangents
   y, z = _cofactor_solve(x, g)
   return y, np.trace(z, axis1=-1, axis2=-2)
-def _det_vjp_fwd(a):
-  m = np.shape(a)[-1]
-  ndim = len(np.shape(a))
-  eye = np.broadcast_to(np.eye(m), (ndim-2)*[1] + [m, m])
-  det, cof = _cofactor_solve(a, eye)
-  return det, (cof,)
-def _det_vjp_rev(res, g):
-  cof, = res
-  gs = np.expand_dims(np.expand_dims(g, -1), -1)
-  gs = np.broadcast_to(gs, cof.shape)
-  return (gs * _T(cof),)
-det.defjvp(_det_jvp)
-det.defvjp(_det_vjp_fwd, _det_vjp_rev)
 
 
 @_wraps(onp.linalg.eig)
