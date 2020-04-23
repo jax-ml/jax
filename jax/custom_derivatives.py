@@ -18,14 +18,13 @@ import inspect
 import itertools as it
 import operator as op
 
-import jax
 from . import core
 from . import linear_util as lu
 from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
 from .util import safe_zip, safe_map, unzip2, split_list, curry
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
-from .ad_util import zero
+from .ad_util import zero, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
@@ -88,7 +87,7 @@ def stop_gradient(x):
 
 def _stop_gradient(x):
   if isinstance(x, core.Tracer) or core.valid_jaxtype(x):
-    return jax.lax.stop_gradient(x)
+    return stop_gradient_p.bind(x)
   else:
     return x
 
