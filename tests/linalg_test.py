@@ -126,19 +126,24 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jtu.check_grads(np.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
     # make sure there are no NaNs when a matrix is zero
     if len(shape) == 2:
+      pass
       jtu.check_grads(
-        np.linalg.det, (np.zeros_like(a),), 2, atol=1e-1, rtol=1e-1)
+        np.linalg.det, (np.zeros_like(a),), 1, atol=1e-1, rtol=1e-1)
     else:
       a[0] = 0
-      jtu.check_grads(np.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
+      jtu.check_grads(np.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
 
   def testDetGradOfSingularMatrix(self):
-    # This matrix was known to lead to NaN gradients in previous version of det
-    a = np.array([[-0.00653029,  0.04353099, -0.00590861, -0.00494686],
-                  [-0.00245923,  0.08541009,  0.04338968, -0.01178439],
-                  [-0.01464201,  0.08210193,  0.07912003, -0.03005431],
-                  [ 0.01381988, -0.07361154, -0.06589139,  0.02652415]])
-    jtu.check_grads(np.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
+    # Rank 2 matrix with nonzero gradient
+    a = np.array([[ 50, -30,  45],
+                  [-30,  90, -81],
+                  [ 45, -81,  81]], dtype=np.float32)
+    # Rank 1 matrix with zero gradient
+    b = np.array([[ 36, -42,  18],
+                  [-42,  49, -21],
+                  [ 18, -21,   9]], dtype=np.float32)
+    jtu.check_grads(np.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(np.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
