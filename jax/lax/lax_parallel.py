@@ -302,7 +302,7 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
       xs = [xops.GetTupleElement(all_reduce, i) for i in range(n)]
     for i, x in zip(indices, xs):
       out[i] = x
-  return xops.Tuple(*out)
+  return xops.Tuple(c, out)
 
 # TODO(b/150476027): CPU doesn't support tuple all-reduce correctly. But
 # fortunately we don't really need it in that case because CPU doesn't support

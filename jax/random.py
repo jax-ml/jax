@@ -32,6 +32,7 @@ from . import dtypes
 from .api import jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
+from jax.lib import xla_client
 from jax.lib import cuda_prng
 from jax import core
 from jax import abstract_arrays
@@ -180,7 +181,8 @@ def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
   rank = len(shape)
   def _broadcast(x):
     ndims = c.GetShape(x).rank()
-    return xops.BroadcastInDim(x, shape, tuple(range(rank - ndims, rank)))
+    return xla_client.ops.BroadcastInDim(x, shape,
+                                         tuple(range(rank - ndims, rank)))
   return cuda_prng.threefry2x32(
       xla_bridge.computation_builder_shim(c),
       (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
