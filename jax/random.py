@@ -1044,7 +1044,7 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters):
     k_out = lax.select(accept, k, k_out)
     accepted |= accept
 
-    return i, k_out, accepted, key
+    return i + 1, k_out, accepted, key
 
   def cond_fn(carry):
     i, k_out, accepted, key = carry
