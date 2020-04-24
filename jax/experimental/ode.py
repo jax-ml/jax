@@ -25,7 +25,6 @@ Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 
 from functools import partial
 import operator as op
-import time
 
 import jax
 import jax.numpy as np
@@ -33,11 +32,8 @@ from jax import lax
 from jax import ops
 from jax.util import safe_map, safe_zip
 from jax.flatten_util import ravel_pytree
-from jax.test_util import check_grads
 from jax.tree_util import tree_map
 from jax import linear_util as lu
-import numpy as onp
-import scipy.integrate as osp_integrate
 
 map = safe_map
 zip = safe_zip
@@ -240,69 +236,3 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
   return (y_bar, ts_bar, *args_bar)
 
 _odeint.defvjp(_odeint_fwd, _odeint_rev)
-
-
-def pend(np, y, _, m, g):
-  theta, omega = y
-  return [omega, -m * omega - g * np.sin(theta)]
-
-def benchmark_odeint(fun, y0, tspace, *args):
-  """Time performance of JAX odeint method against scipy.integrate.odeint."""
-  n_trials = 10
-  n_repeat = 100
-  y0, tspace = onp.array(y0), onp.array(tspace)
-  onp_fun = partial(fun, onp)
-  scipy_times = []
-  for k in range(n_trials):
-    start = time.time()
-    for _ in range(n_repeat):
-      scipy_result = osp_integrate.odeint(onp_fun, y0, tspace, args)
-    end = time.time()
-    print('scipy odeint elapsed time ({} of {}): {}'.format(k+1, n_trials, end-start))
-    scipy_times.append(end - start)
-  y0, tspace = np.array(y0), np.array(tspace)
-  jax_fun = partial(fun, np)
-  jax_times = []
-  for k in range(n_trials):
-    start = time.time()
-    for _ in range(n_repeat):
-      jax_result = odeint(jax_fun, y0, tspace, *args)
-    jax_result.block_until_ready()
-    end = time.time()
-    print('JAX odeint elapsed time ({} of {}): {}'.format(k+1, n_trials, end-start))
-    jax_times.append(end - start)
-  print('(avg scipy time) / (avg jax time) = {}'.format(
-      onp.mean(scipy_times[1:]) / onp.mean(jax_times[1:])))
-  print('norm(scipy result-jax result): {}'.format(
-      np.linalg.norm(np.asarray(scipy_result) - jax_result)))
-  return scipy_result, jax_result
-
-def pend_benchmark_odeint():
-  _, _ = benchmark_odeint(pend, [np.pi - 0.1, 0.0], np.linspace(0., 10., 101),
-                          0.25, 9.8)
-
-def pend_check_grads():
-  def f(y0, ts, *args):
-    return odeint(partial(pend, np), y0, ts, *args)
-
-  y0 = [np.pi - 0.1, 0.0]
-  ts = np.linspace(0., 1., 11)
-  args = (0.25, 9.8)
-
-  check_grads(f, (y0, ts, *args), modes=["rev"], order=2,
-              atol=1e-1, rtol=1e-1)
-
-def weird_time_pendulum_check_grads():
-  """Test that gradients are correct when the dynamics depend on t."""
-  def f(y0, ts):
-    return odeint(lambda y, t: np.array([y[1] * -t, -1 * y[1] - 9.8 * np.sin(y[0])]), y0, ts)
-
-  y0 = [np.pi - 0.1, 0.0]
-  ts = np.linspace(0., 1., 11)
-
-  check_grads(f, (y0, ts), modes=["rev"], order=2)
-
-if __name__ == '__main__':
-  pend_benchmark_odeint()
-  pend_check_grads()
-  weird_time_pendulum_check_grads()
