@@ -444,11 +444,14 @@ def permutation(key, x):
   Returns:
     A shuffled version of x or array range
   """
-  if isinstance(x, (int, onp.integer)):
-    arr = _shuffle(key, onp.arange(x), 0)
+  if not onp.shape(x):
+    # scalar case, must be a concrete integer
+    if not onp.issubdtype(lax.dtype(x), onp.integer):
+      raise TypeError("x must be an integer or at least 1-dimensional")
+    x = int(x)  # TODO(mattjj): concrete tracer error from core.py
+    return _shuffle(key, np.arange(x), 0)
   else:
-    arr = _shuffle(key, x, 0)
-  return arr
+    return _shuffle(key, x, 0)
 
 
 @partial(jit, static_argnums=(2,))

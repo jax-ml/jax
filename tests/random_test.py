@@ -25,6 +25,7 @@ import scipy.special
 import scipy.stats
 
 from jax import api
+from jax import core
 from jax import grad
 from jax import lax
 from jax import numpy as np
@@ -201,6 +202,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
     self.assertFalse(onp.all(perm1 == onp.arange(100)))  # seems unlikely!
     self.assertTrue(onp.all(onp.sort(perm1) == onp.arange(100)))
+
+  def testPermutationErrors(self):
+    key = random.PRNGKey(0)
+    with self.assertRaises(TypeError):
+      random.permutation(key, 10.)
+    with self.assertRaises(core.ConcretizationTypeError):
+      api.jit(random.permutation)(key, 10)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_p={}_{}".format(p, dtype),
