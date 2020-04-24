@@ -25,6 +25,7 @@ import scipy.special
 import scipy.stats
 
 from jax import api
+from jax import core
 from jax import grad
 from jax import lax
 from jax import numpy as np
@@ -164,10 +165,49 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm1 = rand(key)
     perm2 = crand(key)
 
-    self.assertTrue(onp.all(perm1 == perm2))
-    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
-    self.assertTrue(onp.all(onp.sort(perm1) == x))
+    self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]))
+  def testPermutationArray(self, dtype):
+    key = random.PRNGKey(0)
+    x = onp.arange(100).astype(dtype)
+    rand = lambda key: random.permutation(key, x)
+    crand = api.jit(rand)
+
+    perm1 = rand(key)
+    perm2 = crand(key)
+
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertEqual(perm1.dtype, perm2.dtype)
+    self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
+    self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
+    self.assertArraysAllClose(x, onp.arange(100).astype(dtype),
+                              check_dtypes=True)
+
+  def testPermutationInteger(self):
+    key = random.PRNGKey(0)
+    x = 100
+    rand = lambda key: random.permutation(key, x)
+    crand = api.jit(rand)
+
+    perm1 = rand(key)
+    perm2 = crand(key)
+
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertEqual(perm1.dtype, perm2.dtype)
+    self.assertFalse(onp.all(perm1 == onp.arange(100)))  # seems unlikely!
+    self.assertAllClose(onp.sort(perm1), onp.arange(100), check_dtypes=False)
+
+  def testPermutationErrors(self):
+    key = random.PRNGKey(0)
+    with self.assertRaises(TypeError):
+      random.permutation(key, 10.)
+    with self.assertRaises(core.ConcretizationTypeError):
+      api.jit(random.permutation)(key, 10)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_p={}_{}".format(p, dtype),
