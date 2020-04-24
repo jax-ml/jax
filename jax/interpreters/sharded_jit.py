@@ -273,11 +273,8 @@ def _sharded_call_impl(fun: lu.WrappedFun, *args, **params):
   return compiled_fun(*args)
 
 
-sharded_call_p = core.Primitive("sharded_call")
-sharded_call_p.call_primitive = True
-sharded_call_p.multiple_results = True
-sharded_call = partial(core.call_bind, sharded_call_p)
-sharded_call_p.def_custom_bind(sharded_call)
+sharded_call_p = core.CallPrimitive("sharded_call")
+sharded_call = sharded_call_p.bind
 sharded_call_p.def_impl(_sharded_call_impl)
 xla.call_translations[sharded_call_p] = _sharded_jit_translation_rule
 

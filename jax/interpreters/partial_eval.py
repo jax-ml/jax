@@ -480,11 +480,10 @@ def new_eqn_recipe(invars, outvars, primitive, params):
     primitive: the primitive.
     params: the primitive params
   """
-  # TODO(necula): move these checks to core.check_jaxpr, and call in more places
-  if primitive.call_primitive or primitive.map_primitive:
+  if isinstance(primitive, core.CallPrimitive):
     assert "call_jaxpr" in params
-  if primitive.map_primitive:
-    assert "mapped_invars" in params
+  if isinstance(primitive, core.MapPrimitive):
+    assert "call_jaxpr" in params and "mapped_invars" in params
   return JaxprEqnRecipe(object(), tuple(invars), map(ref, outvars), primitive,
                         params)
 
@@ -650,12 +649,9 @@ def _split_aval(unknown, aval):
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
 
-remat_call_p = core.Primitive('remat_call')
-remat_call_p.call_primitive = True
-remat_call = partial(core.call_bind, remat_call_p)
-remat_call_p.def_custom_bind(remat_call)
+remat_call_p = core.CallPrimitive('remat_call')
+remat_call = remat_call_p.bind
 remat_call_p.def_impl(core.call_impl)
-remat_call_p.multiple_results = True
 
 def _remat_partial_eval(trace, _, f, tracers, params):
   concrete = params['concrete']

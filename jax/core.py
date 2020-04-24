@@ -21,7 +21,7 @@ from functools import total_ordering
 import itertools as it
 from weakref import ref
 import threading
-from typing import Dict, Generator, Iterator, Sequence, Type
+from typing import Dict, Generator, Iterator, Sequence, Type, Union
 import types
 from typing import Any, Callable, ClassVar, Dict, List, Optional, Set
 
@@ -180,10 +180,8 @@ class Literal(object):
 
 literalable_types: Set[type] = set()
 
-class Primitive(object):
+class Primitive:
   multiple_results = False  # set for multi-output primitives
-  call_primitive = False    # set for call primitives processed in final style
-  map_primitive = False     # set for map primitives processed in final style
 
   def __init__(self, name):
     self.name = name
@@ -225,25 +223,28 @@ class Primitive(object):
     raise NotImplementedError("Abstract evaluation for '{}' not implemented"
                               .format(self.name))
 
+class CallPrimitive(Primitive):
+  multiple_results = True
+
+  def bind(self, f: lu.WrappedFun, *args, **params):
+    return higher_order_bind(self, f, *args, **params)
+
+class MapPrimitive(Primitive):
+  multiple_results = True
+
+  def bind(self, f: lu.WrappedFun, *args, mapped_invars, **params):
+    assert len(args) == len(mapped_invars)
+    return higher_order_bind(self, f, *args, mapped_invars=mapped_invars, **params)
+
+
 
 # -------------------- lifting --------------------
 
-# TODO(necula): this belongs next to pe.new_eqn_recipe, but is needed in
-# core.py. Plan to move all these utilities to jaxpr.py.
-def extract_call_jaxpr(primitive, params):
-  """Extract the call primitive subjaxpr from the params.
 
-  Returns the subjaxpr and the params without the "call_jaxpr" value. If this is
-  not a call primitive then returns (None, params).
-  """
-  if not (primitive.call_primitive or primitive.map_primitive):
-    return (None, params)
-  else:
-    assert "call_jaxpr" in params
-    new_params = dict(params)
-    del new_params["call_jaxpr"]
-    return (params["call_jaxpr"], new_params)
-
+def extract_call_jaxpr(params):
+  params = dict(params)
+  call_jaxpr = params.pop('call_jaxpr')
+  return call_jaxpr, params
 
 def eval_jaxpr(jaxpr, consts, *args):
   def read(v):
@@ -261,12 +262,12 @@ def eval_jaxpr(jaxpr, consts, *args):
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
-    call_jaxpr, params = extract_call_jaxpr(eqn.primitive, eqn.params)
-    if call_jaxpr:
-      subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
+    if isinstance(eqn.primitive, (CallPrimitive, MapPrimitive)):
+      call_jaxpr, params = extract_call_jaxpr(eqn.params)
+      subfun = lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))
+      ans = eqn.primitive.bind(subfun, *in_vals, **params)
     else:
-      subfuns = []
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
+      ans = eqn.primitive.bind(*in_vals, **eqn.params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -963,15 +964,15 @@ def canonicalize_shape(shape):
 
 # ------------------- Call and map -------------------
 
-def apply_todos(todos, outs):
+def apply_todos(todos: Sequence[Callable], outs: list):
   todos_list = list(todos)
   while todos_list:
     outs = map(full_lower, todos_list.pop()(outs))
   return outs
 
 @lu.transformation_with_aux
-def process_env_traces(post_processor: str, primitive: Primitive,
-                           level: int, params_tuple: tuple, *args):
+def process_env_traces(primitive: Union[CallPrimitive, MapPrimitive],
+                       level: int, params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
@@ -983,39 +984,43 @@ def process_env_traces(post_processor: str, primitive: Primitive,
       break
     trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
-    post_process = getattr(trace, post_processor)
+    if isinstance(primitive, CallPrimitive):
+      post_process = trace.post_process_call
+    elif isinstance(primitive, MapPrimitive):
+      post_process = trace.post_process_map
+    else:
+      raise TypeError(primitive)
     outs, cur_todo = post_process(primitive, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def _call_bind(processor: str, post_processor: str, primitive: Primitive,
-               f: lu.WrappedFun, *args, **params):
+def higher_order_bind(primitive: Union[CallPrimitive, MapPrimitive],
+                      f: lu.WrappedFun, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
-  f, env_trace_todo = process_env_traces(f, post_processor, primitive, level, params_tuple)
+  f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
       outs = primitive.impl(f, *args, **params)
   else:
+    if isinstance(primitive, CallPrimitive):
+      process = top_trace.process_call
+    elif isinstance(primitive, MapPrimitive):
+      process = top_trace.process_map
+    else:
+      raise TypeError(primitive)
     tracers = map(top_trace.full_raise, args)
-    process = getattr(top_trace, processor)
     outs = map(full_lower, process(primitive, f, tracers, params))
   return apply_todos(env_trace_todo(), outs)
-
-call_bind = partial(_call_bind, 'process_call', 'post_process_call')
-map_bind = partial(_call_bind, 'process_map', 'post_process_map')
 
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
 
-call_p = Primitive('call')
-call_p.multiple_results = True
-call_p.call_primitive = True
-call = partial(call_bind, call_p)
-call_p.def_custom_bind(call)
+call_p = CallPrimitive('call')
+call = call_p.bind
 call_p.def_impl(call_impl)
 
 
@@ -1046,10 +1051,17 @@ def check_jaxpr(jaxpr: Jaxpr):
   map(write, jaxpr.constvars)
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
-    if eqn.primitive.call_primitive or eqn.map_primitive:
+    if isinstance(eqn.primitive, CallPrimitive):
       if "call_jaxpr" not in eqn.params:
         raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
                         .format(eqn.primitive))
+    if isinstance(eqn.primitive, MapPrimitive):
+      if "call_jaxpr" not in eqn.params:
+        raise Exception("Map primitive {} should have a 'call_jaxpr' parameter"
+                        .format(eqn.primitive))
+      if "mapped_invars" not in eqn.params:
+        raise Exception("Map primitive {} should have a 'mapped_invars' "
+                        "parameter".format(eqn.primitive))
     map(read, eqn.invars)
     map(write, eqn.outvars)
 

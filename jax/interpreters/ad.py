@@ -179,7 +179,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   linear_eqns = []
   for eqn in jaxpr.eqns:
     prim = eqn.primitive
-    if not (prim.call_primitive or prim.map_primitive):
+    if not isinstance(prim, (core.CallPrimitive, core.MapPrimitive)):
       if any(is_linear(v) for v in eqn.invars):
         linear_eqns.append(eqn)
       else:
@@ -190,13 +190,14 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      call_jaxpr, params = core.extract_call_jaxpr(prim, eqn.params)
       if any(is_linear(v) for v in eqn.invars):
         linear_eqns.append(eqn)
       if any(not is_linear(v) for v in eqn.invars):
         # FIXME: Some invars correspond to tangents
+        call_jaxpr, params = core.extract_call_jaxpr(eqn.params)
         ans = _eval_subjaxpr_primals(prim, call_jaxpr,
                                      map(read_primal, eqn.invars), params)
+        assert prim.multiple_results
         map(write_primal, eqn.outvars, ans)
 
   # Find the last use of each cotangent so that they can be removed
@@ -217,10 +218,10 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       cts_in = map(read_cotangent, eqn.outvars)
     else:
       cts_in, = map(read_cotangent, eqn.outvars)
-    if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
-      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
-      cts_out = get_primitive_transpose(eqn.primitive)(
-          params, call_jaxpr, invals, cts_in)
+    if isinstance(eqn.primitive, (core.CallPrimitive, core.MapPrimitive)):
+      call_jaxpr, params = core.extract_call_jaxpr(eqn.params)
+      transpose_rule = get_primitive_transpose(eqn.primitive)
+      cts_out = transpose_rule(params, call_jaxpr, invals, cts_in)
     else:
       cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
     cts_out = [zero] * len(eqn.invars) if cts_out is zero else cts_out
@@ -237,8 +238,8 @@ def _eval_subjaxpr_primals(prim, jaxpr, in_vals, params):
   all_args, in_tree_def = tree_flatten((in_vals,))
   fun = lu.hashable_partial(lu.wrap_init(_eval_primals), jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  assert prim.map_primitive ^ prim.call_primitive
-  if prim.map_primitive:
+  assert isinstance(prim, (core.CallPrimitive, core.MapPrimitive))
+  if isinstance(prim, core.MapPrimitive):
     new_mapped_invars = [m for m, x in zip(params['mapped_invars'], in_vals)
                          if not is_undefined_primal(x)]
     new_params = dict(params, mapped_invars=tuple(new_mapped_invars))
@@ -270,7 +271,7 @@ def _eval_primals(jaxpr, args):
   assert not jaxpr.constvars
   map(write_primal, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    if not (eqn.primitive.call_primitive or eqn.primitive.map_primitive):
+    if not isinstance(eqn.primitive, (core.CallPrimitive, core.MapPrimitive)):
       if not any(is_linear(v) for v in eqn.invars):
         in_vals = map(read_primal, eqn.invars)
         ans = eqn.primitive.bind(*in_vals, **eqn.params)
@@ -279,7 +280,7 @@ def _eval_primals(jaxpr, args):
         else:
           write_primal(eqn.outvars[0], ans)
     else:
-      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+      call_jaxpr, params = core.extract_call_jaxpr(eqn.params)
       if any(not is_linear(v) for v in eqn.invars):
         ans = _eval_subjaxpr_primals(eqn.primitive, call_jaxpr,
                                      map(read_primal, eqn.invars), params)
