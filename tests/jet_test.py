@@ -215,6 +215,16 @@ class JetTest(jtu.JaxTestCase):
   def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
   def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
+  @jtu.skip_on_devices("tpu")
+  def test_sqrt(self):       self.unary_check(np.sqrt, lims=[0, 5.])
+  @jtu.skip_on_devices("tpu")
+  def test_rsqrt(self):      self.unary_check(lax.rsqrt, lims=[0, 5000.])
+  @jtu.skip_on_devices("tpu")
+  def test_asinh(self):      self.unary_check(lax.asinh, lims=[-100, 100])
+  @jtu.skip_on_devices("tpu")
+  def test_acosh(self):      self.unary_check(lax.acosh, lims=[-100, 100])
+  @jtu.skip_on_devices("tpu")
+  def test_atanh(self):      self.unary_check(lax.atanh, lims=[-1, 1])
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
@@ -245,6 +255,8 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   @jtu.ignore_warning(message="overflow encountered in power")
   def test_pow(self):  self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
+  @jtu.skip_on_devices("tpu")
+  def test_atan2(self):      self.binary_check(lax.atan2, lims=[-40, 40])
 
   def test_process_call(self):
     def f(x):
