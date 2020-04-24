@@ -1852,6 +1852,14 @@ class JaxprTest(jtu.JaxTestCase):
   in (d,) }
                               """, str(jaxpr))
 
+  def test_make_jaxpr_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    jaxpr = api.make_jaxpr(f, static_argnums=(1,))(2, 3)
+    self.assertIn('3', str(jaxpr))
+
+
 class LazyTest(jtu.JaxTestCase):
 
   @contextmanager
