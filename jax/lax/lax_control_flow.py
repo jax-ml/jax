@@ -23,6 +23,7 @@ import itertools
 import operator
 import threading
 from typing import Callable, Sequence
+import warnings
 
 import numpy as onp
 
@@ -496,23 +497,32 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 ### cond
 
-def cond(pred, true_operand, true_fun, false_operand, false_fun):
+def cond(pred, operand, true_fun: Callable, false_fun: Callable, *unused_args):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Has equivalent semantics to this Python implementation::
 
-    def cond(pred, true_operand, true_fun, false_operand, false_fun):
+    def cond(pred, operand, true_fun, false_fun):
       if pred:
-        return true_fun(true_operand)
+        return true_fun(operand)
       else:
-        return false_fun(false_operand)
+        return false_fun(operand)
 
-  Pred has to be a scalar type, collection types (list, tuple) are not supported
-
+  Pred must be a scalar type. Collections (list, tuple) are not supported.
   """
 
+  # detect an attempt to call the former, deprecated cond
+  if len(unused_args) == 1:
+    true_op, false_op, false_fun = operand, false_fun, unused_args[0]
+    return cond_deprecated(pred, true_op, true_fun, false_op, false_fun)
+  elif len(unused_args) > 0:
+    raise TypeError(
+        "cond() takes 4 positional arguments but {} were given".format(
+            4 + len(unused_args)))
+
   if len(onp.shape(pred)) != 0:
-    raise TypeError("Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
+    raise TypeError("Pred must be a scalar, got {} of shape {}.".format(
+        pred, onp.shape(pred)))
 
   try:
     pred_dtype = dtypes.result_type(pred)
@@ -533,21 +543,61 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
     else:
       return false_fun(false_operand)
 
-  true_ops, true_tree = tree_flatten((true_operand,))
-  true_avals = tuple(_map(_abstractify, true_ops))
-  true_jaxpr, true_consts, true_out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
-  false_ops, false_tree = tree_flatten((false_operand,))
-  false_avals = tuple(_map(_abstractify, false_ops))
-  false_jaxpr, false_consts, false_out_tree = _initial_style_jaxpr(false_fun, false_tree, false_avals)
+  ops, ops_tree = tree_flatten((operand,))
+  ops_avals = tuple(_map(_abstractify, ops))
+  true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(
+      true_fun, ops_tree, ops_avals)
+  false_jaxpr, false_consts, false_out_tree = _initial_style_jaxpr(
+      false_fun, ops_tree, ops_avals)
   _check_tree_and_avals("true_fun and false_fun output",
-                        true_out_tree, true_jaxpr.out_avals,
+                        out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
-  linear = (False,) * (len(true_consts) + len(true_ops) + len(false_consts) +
-                       len(false_ops))
+  # TODO(frostig): The following uses the current cond primitive, which we want
+  # to change to support only one common operand list for both branches. We will
+  # then bind something like the following:
+  #
+  # linear = (False,) * (len(true_consts) + len(false_consts) + len(ops))
+  # out = cond_p.bind(
+  #     *itertools.chain([pred], true_consts, false_consts, ops),
+  #     true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
+  linear = (False,) * (len(true_consts) + len(ops) + len(false_consts) + len(ops))
   out = cond_p.bind(
-      *itertools.chain([pred], true_consts, true_ops, false_consts, false_ops),
+      *itertools.chain([pred], true_consts, ops, false_consts, ops),
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
-  return tree_unflatten(true_out_tree, out)
+  return tree_unflatten(out_tree, out)
+
+def cond_deprecated(pred,
+                    true_operand, true_fun: Callable,
+                    false_operand, false_fun: Callable):
+  """Conditionally apply ``true_fun`` or ``false_fun``.
+
+  Has equivalent semantics to this Python implementation::
+
+    def cond(pred, true_operand, true_fun, false_operand, false_fun):
+      if pred:
+        return true_fun(true_operand)
+      else:
+        return false_fun(false_operand)
+
+  Pred has to be a scalar type, collection types (list, tuple) are not supported
+
+  """
+  msg = ("Detected deprecated five-argument call to cond() with separate "
+         "true_operands and false_operands arguments. Use "
+         "cond(pred, operand, true_fun, false_fun) instead.")
+  warnings.warn(msg)
+
+  operand = (true_operand, false_operand)
+
+  def true_fun_aug(operand):
+    x, _ = operand
+    return true_fun(x)
+
+  def false_fun_aug(operand):
+    _, x = operand
+    return false_fun(x)
+
+  return cond(pred, operand, true_fun_aug, false_fun_aug)
 
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
