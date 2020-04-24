@@ -155,8 +155,33 @@ def _cofactor_solve(a, b):
   This function borrows heavily from jax.numpy.linalg.solve and
   jax.numpy.linalg.slogdet to compute the gradient of the determinant
   in a way that is well defined even for low rank matrices.
-  * assumes a is at least rank n-1
-  * assumes u_{nn} is the element set to 0 in rank n-1 cases.
+
+  This function handles two different cases:
+  * rank(a) == n or n-1
+  * rank(a) < n-1
+
+  For rank n-1 matrices, the gradient of the determinant is a rank 1 matrix.
+  Rather than computing det(a)*solve(a, b), which would return NaN, we work
+  directly with the LU decomposition. If a = p @ l @ u, then
+  det(a)*solve(a, b) =
+  prod(diag(u)) * u^-1 @ l^-1 @ p^-1 b =
+  prod(diag(u)) * triangular_solve(u, solve(p @ l, b))
+  If a is rank n-1, then the lower right corner of u will be zero and the
+  triangular_solve will fail.
+  Let x = solve(p @ l, b) and y = det(a)*solve(a, b).
+  Then y_{nn} = 
+  x_{nn} / u_{nn} * prod_{i=1...n}(u_{ii}) =
+  x_{nn} * prod_{i=1...n-1}(u_{ii})
+  So by replacing the lower-right corner of u with prod_{i=1...n-1}(u_{ii})^-1
+  we can avoid the triangular_solve failing.
+  To correctly compute the rest of x_{ii} for i != n, we simply multiply
+  x_{ii} by det(a) for all i != n, which will be zero if rank(a) = n-1.
+  
+  For the second case, a check is done on the matrix to see if `solve`
+  returns NaN or Inf, and gives a matrix of zeros as a result, as the
+  gradient of the determinant of a matrix with rank less than n-1 is 0.
+  This will still return the correct value for rank n-1 matrices, as the check
+  is applied *after* the lower right corner of u has been updated.
 
   Args:
     a: A square matrix or batch of matrices, possibly singular.
@@ -192,7 +217,6 @@ def _cofactor_solve(a, b):
   sign = np.array(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains U_{nn} / det{U}.
-  # TODO(pfau): make sure this is as numerically stable as using slogdet
   partial_det = np.cumprod(diag, axis=-1) * sign[..., None]
   lu = ops.index_update(lu, ops.index[..., -1, -1], 1.0 / partial_det[..., -2])
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, a_shape[-1])
