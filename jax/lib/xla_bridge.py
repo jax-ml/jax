@@ -20,9 +20,10 @@ XLA. There are also a handful of related casting utilities.
 """
 
 
+from collections import OrderedDict
 from functools import partial
 import os
-from typing import Callable, Dict, Sequence, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 import warnings
 
 from absl import logging
@@ -110,61 +111,77 @@ def get_compile_options(num_replicas, num_partitions, device_assignment=None):
 
   return compile_options
 
-_backends = {}
+_backend_factories = {}
 
-def register_backend(name, factory):
-  _backends[name] = factory
+def register_backend(name: str, factory: Callable[[], xla_client.LocalBackend]):
+  _backend_factories[name] = factory
 
-def _get_local_backend(platform=None):
-  if not platform:
-    platform = FLAGS.jax_platform_name or None
 
+# TODO(skye): remove this function once xla_client.get_local_backend() never
+# returns None.
+def _get_local_backend(platform):
   backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
-
-  if backend.platform == 'cpu' and platform != 'cpu':
-    warnings.warn('No GPU/TPU found, falling back to CPU.')
-
   return backend
 
-
-register_backend('xla', _get_local_backend)
-
-# memoize the TPU driver to be consistent with xla_client behavior
-_tpu_backend = None
-
-def _get_tpu_driver_backend(platform):
-  del platform
-  global _tpu_backend
-  if _tpu_backend is None:
-    backend_target = FLAGS.jax_backend_target
-    if backend_target is None:
-      raise ValueError('When using TPU Driver as the backend, you must specify '
-                       '--jax_backend_target=<hostname>:8470.')
-    _tpu_backend = tpu_client.TpuBackend.create(worker=backend_target)
-  return _tpu_backend
+register_backend('cpu', lambda: _get_local_backend("cpu"))
+register_backend('gpu', lambda: _get_local_backend("gpu"))
 
 
-if tpu_client:
-  register_backend('tpu_driver', _get_tpu_driver_backend)
+def _get_tpu_driver_backend():
+  backend_target = FLAGS.jax_backend_target
+  if backend_target is None:
+    raise ValueError('When using TPU Driver as the backend, you must specify '
+                     '--jax_backend_target=<hostname>:8470.')
+  return tpu_client.TpuBackend.create(worker=backend_target)
+
+if tpu_client and FLAGS.jax_xla_backend == 'tpu_driver':
+  register_backend('tpu', _get_tpu_driver_backend)
 
 
+_backends = None
 _backend_lock = threading.Lock()
 
 @util.memoize
-def get_backend(platform=None):
+def get_backend(platform: Optional[str] = None) -> xla_client.LocalBackend:
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
   if not isinstance(platform, (type(None), str)):
     return platform
 
   with _backend_lock:
-    backend = _backends.get(FLAGS.jax_xla_backend)
-    if backend is None:
-      msg = 'Unknown jax_xla_backend value "{}".'
-      raise ValueError(msg.format(FLAGS.jax_xla_backend))
-    return backend(platform)
+    if _backends is None:
+      _initialize_backends()
+  assert _backends is not None
+
+  if platform is None:
+    return list(_backends.values())[-1]
+
+  return _backends[platform]
+
+
+def _initialize_backends():
+  global _backends
+  assert _backends is None, "_initialize_backends() should only called once!"
+  _backends = OrderedDict()
+  for name, factory in _backend_factories.items():
+    logging.vlog(2, f"Initializing backend '{name}'")
+    try:
+      backend = factory()
+    except RuntimeError as err:
+      if name == 'cpu':
+        # We always expect CPU to initialize successfully.
+        raise
+      else:
+        # If the backend isn't built into the binary, or if it has no devices,
+        # we expect a RuntimeError.
+        logging.vlog(1, f"Failed to initialize backend '{name}': {err}")
+        continue
+    _backends[name] = backend
+
+  if len(_backends) == 1 and list(_backends.keys())[0] == "cpu":
+    warnings.warn('No GPU/TPU found, falling back to CPU.')
 
 
 def get_device_backend(device=None):
