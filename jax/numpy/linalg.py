@@ -216,7 +216,7 @@ def _cofactor_solve(a, b):
   parity = np.count_nonzero(pivots != np.arange(a_shape[-1]), axis=-1)
   sign = np.array(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
-  # partial_det[:, -2] contains U_{nn} / det{U}.
+  # partial_det[:, -2] contains det(u) / u_{nn}.
   partial_det = np.cumprod(diag, axis=-1) * sign[..., None]
   lu = ops.index_update(lu, ops.index[..., -1, -1], 1.0 / partial_det[..., -2])
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, a_shape[-1])
