@@ -112,7 +112,7 @@ def _get_local_backend(platform=None):
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
 
-  if backend.platform == cpu and platform != cpu:
+  if backend.platform == 'cpu' and platform != 'cpu':
     warnings.warn('No GPU/TPU found, falling back to CPU.')
 
   return backend
