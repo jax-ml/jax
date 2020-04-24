@@ -165,10 +165,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm1 = rand(key)
     perm2 = crand(key)
 
-    self.assertTrue(onp.all(perm1 == perm2))
-    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
-    self.assertTrue(onp.all(onp.sort(perm1) == x))
+    self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -182,10 +181,10 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm1 = rand(key)
     perm2 = crand(key)
 
-    self.assertTrue(onp.all(perm1 == perm2))
-    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertEqual(perm1.dtype, perm2.dtype)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
-    self.assertTrue(onp.all(onp.sort(perm1) == x))
+    self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
     self.assertArraysAllClose(x, onp.arange(100).astype(dtype),
                               check_dtypes=True)
 
@@ -198,10 +197,10 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm1 = rand(key)
     perm2 = crand(key)
 
-    self.assertTrue(onp.all(perm1 == perm2))
-    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertEqual(perm1.dtype, perm2.dtype)
     self.assertFalse(onp.all(perm1 == onp.arange(100)))  # seems unlikely!
-    self.assertTrue(onp.all(onp.sort(perm1) == onp.arange(100)))
+    self.assertAllClose(onp.sort(perm1), onp.arange(100), check_dtypes=False)
 
   def testPermutationErrors(self):
     key = random.PRNGKey(0)
