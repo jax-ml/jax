@@ -435,7 +435,8 @@ def shuffle(key: np.ndarray, x: np.ndarray, axis: int = 0) -> np.ndarray:
 
 
 def permutation(key, x):
-  """Permute the elements of an array along its first axis or return a permuted range
+  """
+  Permute elements of an array along its first axis or return a permuted range.
 
   Args:n
     key: a PRNGKey used as the random key.
@@ -444,14 +445,18 @@ def permutation(key, x):
   Returns:
     A shuffled version of x or array range
   """
-  if not onp.shape(x):
+  if not onp.ndim(x):
     # scalar case, must be a concrete integer
     if not onp.issubdtype(lax.dtype(x), onp.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
-    x = int(x)  # TODO(mattjj): concrete tracer error from core.py
+    x = int(x)
     return _shuffle(key, np.arange(x), 0)
-  else:
+  elif onp.ndim(x) == 1:
     return _shuffle(key, x, 0)
+  else:
+    msg = ("permutation for >1d inputs x not yet implemented, see "
+           "https://github.com/google/jax/issues/2066 for updates.")
+    raise NotImplementedError(msg)
 
 
 @partial(jit, static_argnums=(2,))
