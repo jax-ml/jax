@@ -294,8 +294,9 @@ def xla_computation(fun: Callable,
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
-  del static_argnums  # Unused.
   _check_callable(fun)
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
   fun_name = getattr(fun, '__name__', 'unknown')
 
   def make_axis_env(nreps):
@@ -312,6 +313,11 @@ def xla_computation(fun: Callable,
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
+    if static_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      wrapped, dyn_args = argnums_partial(wrapped, dyn_argnums, args)
+    else:
+      dyn_args = args
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
@@ -1403,17 +1409,20 @@ def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
-def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
+def make_jaxpr(fun: Callable,
+               static_argnums: Union[int, Iterable[int]] = ()
+               ) -> Callable[..., core.TypedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
     fun: The function whose ``jaxpr`` is to be computed. Its positional
       arguments and return value should be arrays, scalars, or standard Python
       containers (tuple/list/dict) thereof.
+    static_argnums: See the ``jax.jit`` docstring.
 
   Returns:
-    A wrapped version of ``fun`` that when applied to example arguments returns a
-    ``TypedJaxpr`` representation of ``fun`` on those arguments.
+    A wrapped version of ``fun`` that when applied to example arguments returns
+      a ``TypedJaxpr`` representation of ``fun`` on those arguments.
 
   A ``jaxpr`` is JAX's intermediate representation for program traces. The
   ``jaxpr`` language is based on the simply-typed first-order lambda calculus
@@ -1444,6 +1453,8 @@ def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
     in [g] }
   """
   _check_callable(fun)
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
 
   def pv_like(x):
     aval = xla.abstractify(x)
@@ -1452,6 +1463,11 @@ def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
+    if static_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      wrapped, dyn_args = argnums_partial(wrapped, dyn_argnums, args)
+    else:
+      dyn_args = args
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_pvals = map(pv_like, jax_args)
