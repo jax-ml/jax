@@ -206,10 +206,15 @@ def _odeint_fwd(func, rtol, atol, mxstep, y0, ts, *args):
 def _odeint_rev(func, rtol, atol, mxstep, res, g):
   ys, ts, args = res
 
-  def aug_dynamics(augmented_state, t, *args):
+  def aug_dynamics(augmented_state, t, *res):
     """Original system augmented with vjp_y, vjp_t and vjp_args."""
     y, y_bar, *_ = augmented_state
-    y_dot, vjpfun = jax.vjp(func, y, -t, *args)
+    # Even though `aug_dynamics` is a closure with `ts` defined in its
+    # environment we need to pass in `res` to keep the tracer happy, avoiding
+    # UnexpectedTracerError exceptions.
+    _, ts, args = res
+    # `t` here is backwards time from `ts[-1]`, not forwards time.
+    y_dot, vjpfun = jax.vjp(func, y, ts[-1] - t, *args)
     return (-y_dot, *vjpfun(y_bar))
 
   y_bar = g[-1]
@@ -223,8 +228,9 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
     t0_bar = t0_bar - t_bar
     # Run augmented system backwards to previous observation
     _, y_bar, t0_bar, args_bar = odeint(
-        aug_dynamics, (ys[i], y_bar, t0_bar, args_bar), np.array([ts[i - 1], ts[i]]),
-        *args, rtol=rtol, atol=atol, mxstep=mxstep)
+        aug_dynamics, (ys[i], y_bar, t0_bar, args_bar),
+        np.array([ts[-1] - ts[i], ts[-1] - ts[i - 1]]),
+        *res, rtol=rtol, atol=atol, mxstep=mxstep)
     y_bar, t0_bar, args_bar = tree_map(op.itemgetter(1), (y_bar, t0_bar, args_bar))
     # Add gradient from current output
     y_bar = y_bar + g[i - 1]
@@ -289,7 +295,17 @@ def pend_check_grads():
   check_grads(f, (y0, ts, *args), modes=["rev"], order=2,
               atol=1e-1, rtol=1e-1)
 
+def weird_time_pendulum_check_grads():
+  """Test that gradients are correct when the dynamics depend on t."""
+  def f(y0, ts):
+    return odeint(lambda y, t: np.array([y[1] * -t, -1 * y[1] - 9.8 * np.sin(y[0])]), y0, ts)
+
+  y0 = [np.pi - 0.1, 0.0]
+  ts = np.linspace(0., 1., 11)
+
+  check_grads(f, (y0, ts), modes=["rev"], order=2)
 
 if __name__ == '__main__':
   pend_benchmark_odeint()
   pend_check_grads()
+  weird_time_pendulum_check_grads()
