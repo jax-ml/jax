@@ -106,7 +106,7 @@ def register_backend(name, factory):
 
 def _get_local_backend(platform=None):
   if not platform:
-    platform = FLAGS.jax_platform_name
+    platform = FLAGS.jax_platform_name or None
 
   backend = xla_client.get_local_backend(platform)
   if backend is None:
@@ -147,9 +147,6 @@ def get_backend(platform=None):
   # 'backend' values are handled
   if isinstance(platform, xla_client.Backend):
     return platform
-
-  if platform == '':
-    platform = None
 
   with _backend_lock:
     backend = _backends.get(FLAGS.jax_xla_backend)
