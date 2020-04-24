@@ -294,6 +294,8 @@ def xla_computation(fun: Callable,
   }
   """
   _check_callable(fun)
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
   fun_name = getattr(fun, '__name__', 'unknown')
 
   def make_axis_env(nreps):
@@ -1450,6 +1452,8 @@ def make_jaxpr(fun: Callable,
     in [g] }
   """
   _check_callable(fun)
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
 
   def pv_like(x):
     aval = xla.abstractify(x)
