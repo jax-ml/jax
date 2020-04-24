@@ -582,9 +582,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dtype in number_dtypes
       for end_dtype in [None] + [dtype]
       for begin_dtype in [None] + [dtype]
-      for shape in all_shapes
-      for begin_shape in all_shapes
-      for end_shape in all_shapes))
+      for shape in [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE]
+      for begin_shape in [s for s in all_shapes if s!=jtu.PYTHON_SCALAR_SHAPE]
+      for end_shape in [s for s in all_shapes if s!=jtu.PYTHON_SCALAR_SHAPE]))
   def testEDiff1d(self, shape, dtype, end_shape, end_dtype, begin_shape,
           begin_dtype, rng):
     if ((jtu.NUMPY_SCALAR_SHAPE in [shape, end_shape, begin_shape]) and
