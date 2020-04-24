@@ -18,12 +18,17 @@ from absl.testing import absltest
 import numpy as onp
 
 from jax import jit
+from jax import dtypes
 from jax import test_util as jtu
 import jax.numpy as np
 from jax.experimental.ode import odeint
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+
+def num_float_bits(dtype):
+  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
 
 
 class JetTest(jtu.JaxTestCase):
@@ -41,8 +46,9 @@ class JetTest(jtu.JaxTestCase):
     ts = np.linspace(0., 1., 11)
     args = (0.25, 9.8)
 
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
     jtu.check_grads(f, (y0, ts, *args), modes=["rev"], order=2,
-                    atol=1e-1, rtol=1e-1)
+                    atol=tol, rtol=tol)
 
   @jtu.skip_on_devices("tpu")
   def test_weird_time_pendulum_grads(self):
@@ -55,7 +61,9 @@ class JetTest(jtu.JaxTestCase):
     y0 = [np.pi - 0.1, 0.0]
     ts = np.linspace(0., 1., 11)
 
-    jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2)
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
+                    rtol=tol, atol=tol)
 
 
 if __name__ == '__main__':
