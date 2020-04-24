@@ -714,20 +714,38 @@ identity_p = Primitive('id')
 identity_p.def_impl(lambda x: x)
 identity_p.def_custom_bind(lambda x: x)
 
-def concretization_err_msg(fun, context=None):
-  fname = getattr(fun, "__name__", fun)
-  if context is None:
-    context = ("The function to be transformed can't be traced at the required level "
-               "of abstraction. If using `jit`, try using `static_argnums` or "
-               "applying `jit` to smaller subfunctions instead.")
-  msg = "Abstract value passed to `{}`, which requires a concrete value. {}"
-  return msg.format(fname, context)
+class ConcretizationTypeError(TypeError): pass
 
-def concretization_function_error(fun, context=None):
-  def error(self, *args):
-    raise TypeError(concretization_err_msg(fun, context))
+def raise_concretization_error(val, context=""):
+  msg = (f"Abstract tracer value encountered where concrete value is expected ({context}).\n"
+          "Use transformation parameters such as `static_argnums` for `jit` "
+          "to avoid tracing input values.\n"
+          "See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error`.\n"
+          f"Encountered value: {val}")
+  raise ConcretizationTypeError(msg)
+
+
+def concretization_function_error(fun, context=""):
+  fname = getattr(fun, "__name__", fun)
+  fname_context = f"in `{fname}`"
+  if context:
+    fname_context += f" {context}"
+  def error(self, arg):
+    raise_concretization_error(arg, fname_context)
   return error
 
+
+def concrete_or_error(typ: Type, val: Any, context=""):
+  """Like typ(val), but gives the context in the error message.
+  Use with typ either `int`, or `bool`.
+  """
+  if isinstance(val, Tracer):
+    if isinstance(val.aval, ConcreteArray):
+      return typ(val.aval.val)
+    else:
+      raise_concretization_error(val, context)
+  else:
+    return typ(val)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
@@ -942,8 +960,8 @@ def canonicalize_shape(shape):
             "smaller subfunctions.")
   raise TypeError(msg.format(shape))
 
-# ------------------- Call -------------------
 
+# ------------------- Call and map -------------------
 
 def apply_todos(todos, outs):
   todos_list = list(todos)
@@ -952,7 +970,8 @@ def apply_todos(todos, outs):
   return outs
 
 @lu.transformation_with_aux
-def process_env_traces(primitive, level, params_tuple, *args):
+def process_env_traces(post_processor: str, primitive: Primitive,
+                           level: int, params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
@@ -964,28 +983,33 @@ def process_env_traces(primitive, level, params_tuple, *args):
       break
     trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
-    outs, cur_todo = trace.post_process_call(primitive, outs, params)
+    post_process = getattr(trace, post_processor)
+    outs, cur_todo = post_process(primitive, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def call_bind(primitive, f: lu.WrappedFun, *args, **params):
+def _call_bind(processor: str, post_processor: str, primitive: Primitive,
+              f: lu.WrappedFun, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
-  f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
+  f, env_trace_todo = process_env_traces(f, post_processor, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
       outs = primitive.impl(f, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    outs = map(full_lower, top_trace.process_call(primitive, f, tracers, params))
+    process = getattr(top_trace, processor)
+    outs = map(full_lower, process(primitive, f, tracers, params))
   return apply_todos(env_trace_todo(), outs)
+
+call_bind = partial(_call_bind, 'process_call', 'post_process_call')
+map_bind = partial(_call_bind, 'process_map', 'post_process_map')
 
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
-
 
 call_p = Primitive('call')
 call_p.multiple_results = True

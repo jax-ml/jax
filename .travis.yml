@@ -25,14 +25,14 @@ before_install:
   - conda config --add channels conda-forge
   - conda update -q conda
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy=0.770
   - if [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       pip install pytype ;
     fi
   # The jaxlib version should match the minimum jaxlib version in
   # jax/lib/__init__.py. This tests JAX PRs against the oldest permitted
   # jaxlib.
-  - pip install jaxlib==0.1.43
+  - pip install jaxlib==0.1.45
   - pip install -v .
   # The following are needed to test the Colab notebooks and the documentation building
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then

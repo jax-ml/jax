@@ -50,12 +50,16 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
 from ..util import (partial, unzip2, prod, safe_map, safe_zip,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
+from ..lib import xla_client as xc
 from ..tree_util import tree_map
 from .batching import broadcast, not_mapped
 from . import batching
 from . import partial_eval as pe
 from . import xla
 from . import ad
+
+
+xops = xc.ops
 
 FLAGS = flags.FLAGS
 
@@ -383,36 +387,37 @@ def axis_index(axis_name):
    [0 1]
    [0 1]]
   """
+  return axis_index_p.bind(axis_name=axis_name)
+
+def _axis_index_bind(*, axis_name):
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   frame = dynamic_axis_env[axis_name]
   sizes = dynamic_axis_env.sizes[:dynamic_axis_env.index(frame)+1]
   nreps = dynamic_axis_env.nreps
-  dummy_arg = frame.pmap_trace.pure(core.unit)
-  if frame.soft_trace:
-    dummy_arg = frame.soft_trace.pure(dummy_arg)
+  trace = frame.pmap_trace
 
-  return axis_index_p.bind(dummy_arg, nreps=nreps, sizes=sizes,
-                           soft_size=frame.soft_size, axis_name=axis_name)
-
-def _axis_index_partial_eval(trace, _, **params):
-  # This partial_eval rule adds the axis_index primitive into the jaxpr formed
-  # during pmap lowering. It is like the standard JaxprTrace.process_primitive
-  # rule except that we don't attempt to lower out of the trace.
   out_aval = ShapedArray((), onp.int32)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
-  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p, params)
+  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
+                          dict(nreps=nreps, sizes=sizes,
+                               soft_size=frame.soft_size, axis_name=axis_name))
   out_tracer.recipe = eqn
-  return out_tracer
+
+  if not frame.soft_trace:
+    return out_tracer
+  else:
+    val_out = out_tracer * frame.soft_size + onp.arange(frame.soft_size)
+    return SplitAxisTracer(frame.soft_trace, axis_name, val_out)
 
 def _axis_index_translation_rule(c, nreps, sizes, soft_size, axis_name):
-  div = c.Constant(onp.array(nreps // prod(sizes), dtype=onp.uint32))
-  mod = c.Constant(onp.array(sizes[-1], dtype=onp.uint32))
-  unsigned_index = c.Rem(c.Div(c.ReplicaId(), div), mod)
-  return c.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+  div = xb.constant(c, onp.array(nreps // prod(sizes), dtype=onp.uint32))
+  mod = xb.constant(c, onp.array(sizes[-1], dtype=onp.uint32))
+  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
+  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
 
 axis_index_p = core.Primitive('axis_index')
+axis_index_p.def_custom_bind(_axis_index_bind)
 xla.translations[axis_index_p] = _axis_index_translation_rule
-pe.custom_partial_eval_rules[axis_index_p] = _axis_index_partial_eval
 
 
 ### lazy device-memory persistence and result handling
@@ -496,10 +501,11 @@ class ShardedDeviceArray(xla.DeviceArray):
   def _value(self):
     if self._npy_value is None:
       self.copy_to_host_async()
-      self._npy_value = onp.empty(self.aval.shape, self.aval.dtype)
+      npy_value = onp.empty(self.aval.shape, self.aval.dtype)
       for i in range(0, len(self.device_buffers),
                      self.sharding_spec.replication_factor):
-        self._npy_value[self.indices[i]] = self.device_buffers[i].to_py()
+        npy_value[self.indices[i]] = self.device_buffers[i].to_py()
+      self._npy_value = npy_value
     return self._npy_value
 
   def __getitem__(self, idx):
@@ -542,7 +548,7 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array_slow_path
 
 def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
-  return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
+  return xb.constant(c, onp.asarray(val), canonicalize_types=canonicalize_types)
 xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_handler)
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
@@ -649,11 +655,11 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   tuple_args = len(sharded_avals) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
-  xla_consts = _map(c.Constant, consts)
+  xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
-  built = c.Build(c.Tuple(*out_nodes))
+  built = c.Build(xops.Tuple(c, out_nodes))
 
   if devices is None:
     if num_global_replicas > xb.device_count(backend):
@@ -694,8 +700,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
           num_partitions=1,
           device_assignment=device_assignment)
   compile_options.tuple_arguments = tuple_args
-  compiled = built.Compile(compile_options=compile_options,
-                           backend=xb.get_backend(backend))
+  backend = xb.get_backend(backend)
+  compiled = backend.compile(built, compile_options=compile_options)
 
   input_sharding_specs = [_pmap_sharding_spec(num_local_replicas, axis_size,
                                               aval.shape)
@@ -816,7 +822,7 @@ def execute_replicated(compiled, backend, in_handler, out_handler, *args):
 xla_pmap_p = core.Primitive('xla_pmap')
 xla_pmap_p.call_primitive = True
 xla_pmap_p.multiple_results = True
-xla_pmap = partial(core.call_bind, xla_pmap_p)
+xla_pmap = partial(core.map_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
 
@@ -843,20 +849,19 @@ def _pmap_translation_rule(c, axis_env,
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_xla_unshard(c, aval, new_env, shard, backend=backend)
           for aval, shard in zip(out_avals, sharded_outs)]
-  return c.Tuple(*outs)
+  return xops.Tuple(c, outs)
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
-pe.map_primitives.add(xla_pmap_p)
 
 def _xla_shard(c, aval, axis_env, x):
   if aval is core.abstract_unit:
     return x
   elif isinstance(aval, ShapedArray):
     dims = list(c.GetShape(x).dimensions())
-    zero = c.Constant(onp.zeros((), dtype=onp.uint32))
+    zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
-    return c.Reshape(c.DynamicSlice(x, idxs, [1] + dims[1:]), None, dims[1:])
+    return xops.Reshape(xops.DynamicSlice(x, idxs, [1] + dims[1:]), dims[1:])
   else:
     raise TypeError((aval, c.GetShape(x)))
 
@@ -869,29 +874,31 @@ def _xla_unshard(c, aval, axis_env, x, backend):
     convert_bool = (onp.issubdtype(aval.dtype, onp.bool_)
                     and xb.get_backend(backend).platform in ('cpu', 'gpu'))
     if convert_bool:
-      x = c.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
+      x = xops.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
 
     xla_shape = c.GetShape(x)
     dims = list(xla_shape.dimensions())
-    padded = c.Broadcast(c.Constant(onp.array(0, xla_shape.numpy_dtype())),
+    padded = xops.Broadcast(xb.constant(c, onp.array(0, xla_shape.numpy_dtype())),
                          [axis_env.sizes[-1]] + dims)
-    zero = c.Constant(onp.zeros((), dtype=onp.uint32))
+    zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
-    padded = c.DynamicUpdateSlice(padded, c.Reshape(x, None, [1] + dims), idxs)
-    out = c.CrossReplicaSum(padded, xla.axis_groups(axis_env, axis_env.names[-1]))
+    padded = xops.DynamicUpdateSlice(padded, xops.Reshape(x, [1] + dims), idxs)
+    replica_groups_protos = xc.make_replica_groups(
+      xla.axis_groups(axis_env, axis_env.names[-1]))
+    out = xops.CrossReplicaSum(padded, replica_groups_protos)
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
-      nonzero = c.Ne(out, c.Constant(onp.array(0, dtype=onp.float32)))
-      out = c.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
+      nonzero = xops.Ne(out, xb.constant(c, onp.array(0, dtype=onp.float32)))
+      out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
     return out
   else:
     raise TypeError((aval, c.GetShape(x)))
 
 def _unravel_index(c, axis_env):
-  div = c.Constant(onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))
-  mod = c.Constant(onp.array(axis_env.sizes[-1], onp.uint32))
-  return c.Rem(c.Div(c.ReplicaId(), div), mod)
+  div = xb.constant(c, onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))
+  mod = xb.constant(c, onp.array(axis_env.sizes[-1], onp.uint32))
+  return xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
 
 
 ### soft_pmap axis split transformation
@@ -1019,16 +1026,13 @@ class SplitAxisTrace(core.Trace):
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
-    if call_primitive in pe.map_primitives:
-      return self.process_map(call_primitive, f, tracers, params)
+    vals, names = unzip2((t.val, t.axis_name) for t in tracers)
+    if all(name is not_mapped for name in names):
+      return call_primitive.bind(f, *vals, **params)
     else:
-      vals, names = unzip2((t.val, t.axis_name) for t in tracers)
-      if all(name is not_mapped for name in names):
-        return call_primitive.bind(f, *vals, **params)
-      else:
-        f, names_out = split_axis_subtrace(f, self.master, names)
-        vals_out = call_primitive.bind(f, *vals, **params)
-        return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
+      f, names_out = split_axis_subtrace(f, self.master, names)
+      vals_out = call_primitive.bind(f, *vals, **params)
+      return [SplitAxisTracer(self, a, x) for a, x in zip(names_out(), vals_out)]
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, names = unzip2((t.val, t.axis_name) for t in tracers)
@@ -1053,6 +1057,8 @@ class SplitAxisTrace(core.Trace):
       trace = SplitAxisTrace(master, core.cur_sublevel())
       return  SplitAxisTracer(trace, name, x)
     return  val, todo
+
+  post_process_map = post_process_call
 
 
 split_axis_rules: Dict[core.Primitive, Callable] = {}

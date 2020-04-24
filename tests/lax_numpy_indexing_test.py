@@ -18,6 +18,7 @@ import enum
 from functools import partial
 import itertools
 import unittest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -982,6 +983,14 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     ans = ops.segment_sum(data, segment_ids)
     expected = onp.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testIndexDtypeError(self):
+    # https://github.com/google/jax/issues/2795
+    jnp.array(1)  # get rid of startup warning
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("error")
+      jnp.zeros(5).at[::2].set(1)
+      self.assertLen(w, 0)
 
 
 if __name__ == "__main__":

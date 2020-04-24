@@ -126,11 +126,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testTensorsolve(self, m, nq, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
-    
+
     # According to numpy docs the shapes are as follows:
-    # Coefficient tensor (a), of shape b.shape + Q. 
-    # And prod(Q) == prod(b.shape) 
-    # Therefore, n = prod(q) 
+    # Coefficient tensor (a), of shape b.shape + Q.
+    # And prod(Q) == prod(b.shape)
+    # Therefore, n = prod(q)
     n, q = nq
     b_shape = (n, m)
     # To accomplish prod(Q) == prod(b.shape) we append the m extra dim
@@ -703,7 +703,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
-      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 10000), (70, 7, 2)]
+      for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
@@ -714,8 +714,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(onp.linalg.pinv, np.linalg.pinv, args_maker,
-                            check_dtypes=True, tol=1e-3)
+                            check_dtypes=True, tol=1e-2)
     self._CompileAndCheck(np.linalg.pinv, args_maker, check_dtypes=True)
+    # TODO(phawkins): 1e-1 seems like a very loose tolerance.
+    jtu.check_grads(np.linalg.pinv, args_maker(), 2, rtol=1e-1)
+
+  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
+  def testPinvGradIssue2792(self):
+    def f(p):
+      a = np.array([[0., 0.],[-p, 1.]], np.float32) * 1 / (1 + p**2)
+      return np.linalg.pinv(a)
+    j = jax.jacobian(f)(np.float32(2.))
+    self.assertAllClose(np.array([[0., -1.], [ 0., 0.]], np.float32), j,
+                        check_dtypes=True)
+
+    expected = np.array([[[[-1., 0.], [ 0., 0.]], [[0., -1.], [0.,  0.]]],
+                         [[[0.,  0.], [-1., 0.]], [[0.,  0.], [0., -1.]]]],
+                         dtype=np.float32)
+    self.assertAllClose(
+      expected, jax.jacobian(np.linalg.pinv)(np.eye(2, dtype=np.float32)),
+      check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}".format(
