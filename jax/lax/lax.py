@@ -4778,7 +4778,8 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
   return ShapedArray(shape, a.dtype)
 
 def _rng_uniform_translation_rule(c, a, b, *, shape):
-  return xops.RngUniform(a, b, shape)
+  xla_shape = xc.Shape.array_shape(c.GetShape(a).xla_element_type(), shape)
+  return xops.RngUniform(a, b, xla_shape)
 
 rng_uniform_p = Primitive("rng_uniform")
 rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
