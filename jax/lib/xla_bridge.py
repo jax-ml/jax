@@ -106,23 +106,13 @@ def register_backend(name, factory):
 
 def _get_local_backend(platform=None):
   if not platform:
-    platform = FLAGS.jax_platform_name
-
-  # Canonicalize platform names.
-  cpu = 'cpu'
-  gpu = 'gpu'
-  if platform == 'Host':
-    platform = cpu
-  elif platform == 'CUDA':
-    platform = gpu
-  elif platform == '':
-    platform = None
+    platform = FLAGS.jax_platform_name or None
 
   backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
 
-  if backend.platform == cpu and platform != cpu:
+  if backend.platform == 'cpu' and platform != 'cpu':
     warnings.warn('No GPU/TPU found, falling back to CPU.')
 
   return backend
