@@ -148,6 +148,9 @@ def get_backend(platform=None):
   if isinstance(platform, xla_client.Backend):
     return platform
 
+  if platform == '':
+    platform = None
+
   with _backend_lock:
     backend = _backends.get(FLAGS.jax_xla_backend)
     if backend is None:
