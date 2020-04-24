@@ -433,6 +433,32 @@ def shuffle(key: np.ndarray, x: np.ndarray, axis: int = 0) -> np.ndarray:
   """
   return _shuffle(key, x, axis)
 
+
+def permutation(key, x):
+  """
+  Permute elements of an array along its first axis or return a permuted range.
+
+  Args:n
+    key: a PRNGKey used as the random key.
+    x: the array or integer range to be shuffled.
+
+  Returns:
+    A shuffled version of x or array range
+  """
+  if not onp.ndim(x):
+    # scalar case, must be a concrete integer
+    if not onp.issubdtype(lax.dtype(x), onp.integer):
+      raise TypeError("x must be an integer or at least 1-dimensional")
+    x = int(x)
+    return _shuffle(key, np.arange(x), 0)
+  elif onp.ndim(x) == 1:
+    return _shuffle(key, x, 0)
+  else:
+    msg = ("permutation for >1d inputs x not yet implemented, see "
+           "https://github.com/google/jax/issues/2066 for updates.")
+    raise NotImplementedError(msg)
+
+
 @partial(jit, static_argnums=(2,))
 def _shuffle(key, x, axis):
   # On parallel architectures, Fisher-Yates is more expensive than doing
