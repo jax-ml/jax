@@ -560,7 +560,7 @@ xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
 def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size, global_axis_size,
-                  devices, name, mapped_invars=None):
+                  devices, name, mapped_invars):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
                                    global_axis_size, devices, name, *abstract_args)
@@ -820,7 +820,7 @@ def execute_replicated(compiled, backend, in_handler, out_handler, *args):
 
 
 xla_pmap_p = core.Primitive('xla_pmap')
-xla_pmap_p.call_primitive = True
+xla_pmap_p.map_primitive = True
 xla_pmap_p.multiple_results = True
 xla_pmap = partial(core.map_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)

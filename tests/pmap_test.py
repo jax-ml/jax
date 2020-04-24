@@ -902,8 +902,8 @@ class PmapTest(jtu.JaxTestCase):
     x = x.reshape(2 * device_count, 2, 2, 3)  # axis merge of the wrong size
     self.assertIsInstance(x, xla.DeviceArray)  # should have forced collection
 
-  @jtu.skip_on_devices("gpu")
-  def DISABLED_testSoftPmapAllToAll(self):
+  @jtu.skip_on_devices("gpu", "cpu")
+  def testSoftPmapAllToAll(self):
     n = 4 * xla_bridge.device_count()
     def f(x):
       return lax.all_to_all(x, 'i', 0, 0)

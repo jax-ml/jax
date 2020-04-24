@@ -181,9 +181,9 @@ class Literal(object):
 literalable_types: Set[type] = set()
 
 class Primitive(object):
-  multiple_results = False  # override for multi-output primitives
-  call_primitive = False  # override for higher-order primitives that are
-                          # processed in final style.
+  multiple_results = False  # set for multi-output primitives
+  call_primitive = False    # set for call primitives processed in final style
+  map_primitive = False     # set for map primitives processed in final style
 
   def __init__(self, name):
     self.name = name
@@ -236,7 +236,7 @@ def extract_call_jaxpr(primitive, params):
   Returns the subjaxpr and the params without the "call_jaxpr" value. If this is
   not a call primitive then returns (None, params).
   """
-  if not primitive.call_primitive:
+  if not (primitive.call_primitive or primitive.map_primitive):
     return (None, params)
   else:
     assert "call_jaxpr" in params
@@ -990,6 +990,9 @@ def process_env_traces(post_processor: str, primitive: Primitive,
 
 def _call_bind(processor: str, post_processor: str, primitive: Primitive,
               f: lu.WrappedFun, *args, **params):
+  # TODO add a check like this, clean up to get rid of strings
+  if processor == 'process_map':
+    assert len(args) == len(params['mapped_invars'])
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
@@ -1046,7 +1049,7 @@ def check_jaxpr(jaxpr: Jaxpr):
   map(write, jaxpr.constvars)
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
-    if eqn.primitive.call_primitive:
+    if eqn.primitive.call_primitive or eqn.map_primitive:
       if "call_jaxpr" not in eqn.params:
         raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
                         .format(eqn.primitive))

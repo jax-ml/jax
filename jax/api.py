@@ -982,7 +982,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
         axis_size=local_axis_size,
         global_axis_size=axis_size,
         devices=tuple(devices) if devices is not None else devices,
-        name=flat_fun.__name__)
+        name=flat_fun.__name__,
+        mapped_invars=(True,) * len(args))
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -1039,7 +1040,8 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None,
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args, backend=backend,
                                   axis_name=axis_name, axis_size=num_chunks,
                                   global_axis_size=None, devices=None,
-                                  name=soft_mapped_fun.__name__)
+                                  name=soft_mapped_fun.__name__,
+                                  mapped_invars=(True,) * len(reshaped_args))
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
