@@ -108,16 +108,6 @@ def _get_local_backend(platform=None):
   if not platform:
     platform = FLAGS.jax_platform_name
 
-  # Canonicalize platform names.
-  cpu = 'cpu'
-  gpu = 'gpu'
-  if platform == 'Host':
-    platform = cpu
-  elif platform == 'CUDA':
-    platform = gpu
-  elif platform == '':
-    platform = None
-
   backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
