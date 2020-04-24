@@ -20,6 +20,7 @@ from absl.testing import parameterized
 import numpy as onp
 
 from jax import test_util as jtu
+from jax import nn
 from jax import random
 from jax.experimental import stax
 
@@ -43,6 +44,10 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   inputs = random_inputs(onp.random.RandomState(0), input_shape)
   result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
+
+
+def identity_initializer(unused_key, shape, dtype=onp.float32):
+  return onp.identity(shape[0], dtype=dtype)
 
 
 class StaxTest(jtu.JaxTestCase):
@@ -256,6 +261,85 @@ class StaxTest(jtu.JaxTestCase):
     self.assertEqual(beta.shape, (5,))
     self.assertEqual(gamma.shape, (5,))
     self.assertEqual(out_shape, out.shape)
+
+  def testAttentionShape(self):
+    batch_size = 7
+    nhead = 2
+    query_dim, value_dim, out_dim = (nhead * 3, nhead * 5, 29)
+    query_src_dim, key_src_dim, value_src_dim = (11, 13, 17)
+    kv_len, q_len = (19, 23)
+
+    input_shape = [(batch_size, q_len, query_src_dim),
+                   (batch_size, kv_len, key_src_dim),
+                   (batch_size, kv_len, value_src_dim),
+                   (batch_size, kv_len)]
+
+    init_fun, apply_fun = stax.GeneralAttention(
+        out_dim, nhead=nhead, query_dim=query_dim, value_dim=value_dim)
+
+    _CheckShapeAgreement(self, init_fun, apply_fun, input_shape)
+
+  def testAttentionBehavior(self):
+    key = random.PRNGKey(0)
+
+    batch_size = 7
+    nhead = 2
+    query_dim, value_dim, out_dim = (nhead * 3, nhead * 3, nhead * 3)
+    query_src_dim, key_src_dim, value_src_dim = (out_dim, out_dim, out_dim)
+    kv_len, q_len = (19, 19)  # Use same lengths for testing causal mask
+
+    input_shape = [(batch_size, q_len, query_src_dim),
+                   (batch_size, kv_len, key_src_dim),
+                   (batch_size, kv_len, value_src_dim),
+                   (batch_size, kv_len)]
+
+    init_fun, apply_fun = stax.GeneralAttention(
+        out_dim, nhead=nhead, query_dim=query_dim, value_dim=value_dim,
+        W_init=identity_initializer, b_init=nn.initializers.zeros)
+
+    unused_output_shape, params = init_fun(key, input_shape)
+    query, key, value = [onp.zeros(shape) for shape in input_shape[:3]]
+    mask = onp.ones(input_shape[3])
+    output = apply_fun(params, (query, key, value, mask))
+
+    # Attention to zero values with zero keys must be zero
+    self.assertAllClose(output, onp.zeros(output.shape), check_dtypes=True)
+
+    # Make score(K[0, 4], Q[0, 3]) and score(K[0, 4], Q[0, 8]) to be a huge
+    #  value for all heads
+    for n in range(nhead):
+      head_offset = out_dim // nhead * n
+      key[0, 4, 0 + head_offset] = 100.0
+      query[0, 3, 0 + head_offset] = 100.0
+      query[0, 8, 0 + head_offset] = 100.0
+
+    rand_vec = onp.random.RandomState(0).randn(out_dim)
+    value[0, 4] = rand_vec
+
+    # With identity initializers and the above key and query,
+    #  output[0, 3] must be close enough to value[0, 4].
+    output = apply_fun(params, (query, key, value, mask))
+    expected = onp.zeros(output.shape)
+    expected[0, :, :] = rand_vec / kv_len
+    expected[0, 3, :] = rand_vec
+    expected[0, 8, :] = rand_vec
+    self.assertAllClose(output, expected, check_dtypes=True)
+
+    def causal_mask(shape):
+      mask = onp.cumsum(onp.identity(shape[2]), axis=0)
+      return mask
+
+    init_fun, apply_fun = stax.GeneralAttention(
+        out_dim, nhead=nhead, query_dim=query_dim, value_dim=value_dim,
+        att_prob_mask_fun=causal_mask,
+        W_init=identity_initializer, b_init=nn.initializers.zeros)
+
+    output = apply_fun(params, (query, key, value, mask))
+
+    # Check that it cannot attend to the future value.
+    self.assertAllClose(output[0, 3, :], onp.zeros(out_dim), check_dtypes=True)
+    # But, for 8th query, 3rd value must be retrieved.
+    self.assertAllClose(output[0, 8, :], rand_vec, check_dtypes=True)
 
 if __name__ == "__main__":
   absltest.main()

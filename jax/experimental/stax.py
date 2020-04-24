@@ -26,6 +26,7 @@ import numpy as onp
 
 from jax import lax
 from jax import random
+from jax import vmap
 import jax.numpy as np
 
 from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
@@ -139,6 +140,104 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     if center: return z + beta[ed]
     if scale: return gamma[ed] * z
     return z
+  return init_fun, apply_fun
+
+
+def GeneralAttention(out_dim, query_dim, value_dim, nhead, att_prob_mask_fun=None,
+                     logepsilon=-1000000.0,
+                     W_init=glorot_normal(), b_init=normal()):
+  """Make stax pair for attention mechanism.
+
+  Arguments:
+    out_dim: Output dimensionality
+    query_dim: Dimensionality for internal query vector (Default: out_dim)
+    value_dim: Dimensionality for internal value vector (Default: out_dim)
+    nhead: Number of head in multi-head attention
+    att_prob_mask_fun: Function that computes constant attention probability
+      mask specific to the given shapes
+    W_init: Initializer for weight parameters in affine transformations
+    b_init: Initializer for bias parameters in affine transformations
+
+  Returns:
+    StaxPair computing attention mechanism
+
+  Apply function of this layer takes four separate inputs
+  `(query_src, key_src, value_src, kv_mask)` where `query_src`, `key_src`, and
+  `value_src` are sources of query, key and value vectors those are obtained
+  by applying selarate affine transforms with internal parameters.
+  `kv_mask` is a mask array with shape `(batch_size, length)` where
+  `kv_mask[n][t] == 0.0` indicates that `t`-th element of `n`-th input will
+  always have attention probability of zero.
+  """
+  query_dim = out_dim if query_dim is None else query_dim
+  value_dim = out_dim if value_dim is None else value_dim
+
+  # All dims here are concatenated multi-head results
+  assert query_dim % nhead == 0
+  assert value_dim % nhead == 0
+
+  single_query_dim = query_dim // nhead
+  single_value_dim = value_dim // nhead
+
+  Q_init, Q_apply = Dense(query_dim, W_init, b_init)
+  K_init, K_apply = Dense(query_dim, W_init, b_init)
+  V_init, V_apply = Dense(value_dim, W_init, b_init)
+  O_init, O_apply = Dense(out_dim, W_init, b_init)
+
+  def init_fun(rng, input_shape):
+    query_src_shape, key_src_shape, value_src_shape, unused_mask_shape = input_shape
+    output_shape = query_src_shape[:-1] + (out_dim,)
+
+    Q_rng, K_rng, V_rng, O_rng = random.split(rng, num=4)
+
+    head_shape = query_src_shape[:-1] + (value_dim,)
+
+    Q_param = Q_init(Q_rng, query_src_shape)[1]
+    K_param = K_init(K_rng, key_src_shape)[1]
+    V_param = V_init(V_rng, value_src_shape)[1]
+    O_param = O_init(O_rng, head_shape)[1]
+    return output_shape, (Q_param, K_param, V_param, O_param)
+
+  def apply_fun(params, inputs, **unused_kwargs):
+    query_src, key_src, value_src, kv_mask = inputs
+    Q_param, K_param, V_param, O_param = params
+
+    batch_size, kv_maxlen = kv_mask.shape
+    q_maxlen = query_src.shape[1]
+
+    Q = Q_apply(Q_param, query_src)  # (B, N, query_dim)
+    K = K_apply(K_param, key_src)  # (B, T, query_dim)
+    V = V_apply(V_param, value_src)  # (B, T, value_dim)
+
+    # Reshape to expand head-wise vars
+    Q = Q.reshape(Q.shape[:-1] + (nhead, single_query_dim))
+    Q = Q.transpose((0, 2, 1, 3))  # Q: (B, nhead, N, single_query_dim)
+    K = K.reshape(K.shape[:-1] + (nhead, single_query_dim))
+    K = K.transpose((0, 2, 1, 3))  # K: (B, nhead, T, single_query_dim)
+
+    score = np.einsum('bhnd,bhtd->bhnt', Q, K)
+    scaled_score = score / np.sqrt(single_query_dim)
+
+    masked_score = (
+        scaled_score +
+        (1.0 - kv_mask.reshape(batch_size, 1, 1, kv_maxlen)) * logepsilon)
+
+    if att_prob_mask_fun is not None:
+      extra_mask = att_prob_mask_fun(score.shape)
+      masked_score = masked_score + (1.0 - extra_mask) * logepsilon
+
+    att_probs = softmax(masked_score)  # (B, nhead, N, T)
+
+    V = V.reshape(V.shape[:-1] + (nhead, single_value_dim))
+    V = V.transpose((0, 2, 1, 3))  # V: (B, nhead, T, single_value_dim)
+
+    head = np.einsum('bhnt,bhtd->bhnd', att_probs, V)
+
+    head = head.transpose((0, 2, 1, 3)).reshape(
+        (batch_size, q_maxlen, value_dim))  # collapse heads
+
+    return O_apply(O_param, head)
+
   return init_fun, apply_fun
 
 
