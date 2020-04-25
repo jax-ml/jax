@@ -989,7 +989,7 @@ def process_env_traces(post_processor: str, primitive: Primitive,
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 def _call_bind(processor: str, post_processor: str, primitive: Primitive,
-              f: lu.WrappedFun, *args, **params):
+               f: lu.WrappedFun, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())

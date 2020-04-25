@@ -163,7 +163,8 @@ class JaxprTrace(Trace):
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     name = params.get('name', f.__name__)
-    if self.master.trace_type is StagingJaxprTrace:
+    if (self.master.trace_type is StagingJaxprTrace
+        and call_primitive in staged_out_calls):
       tracers = map(self.instantiate_const_abstracted, tracers)
     else:
       name = wrap_name(name, 'pe')
@@ -312,6 +313,7 @@ def _unmapped_aval(size, aval):
 
 custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 call_partial_eval_rules: Dict[core.Primitive, Callable] = {}
+staged_out_calls: Set[core.Primitive] = set()
 
 
 def partial_eval(f, trace, pvs: Sequence[Optional[AbstractValue]], instantiate=False):
