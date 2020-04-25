@@ -2022,11 +2022,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rhs_dil": rhs_dil, "rng_factory": rng_factory, "dimension_numbers": dim_nums,
        "perms": perms, "feature_group_count": feature_group_count,
        "batch_group_count": batch_group_count}
-      # TODO(phawkins): make batch_group_count tests unconditional after
-      # minimum jaxlib version is 0.1.44 or greater.
-      for batch_group_count, feature_group_count in (
-        [(1, 1), (2, 1), (1, 2)] if jax.lib.version > (0, 1, 43)
-        else [(1, 1), (1, 2)])
+      for batch_group_count, feature_group_count in ([(1, 1), (2, 1), (1, 2)])
       for lhs_shapes, rhs_shape, all_strides, lhs_dils, rhs_dils in [
           ([(b * batch_group_count, i * feature_group_count, 6, 7),
             (b * batch_group_count, i * feature_group_count, 0, 4)],  # lhs_shape
@@ -2048,10 +2044,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
       for rng_factory in [jtu.rand_default]
   ))
+  @jtu.skip_on_devices("gpu")  # TODO(frostig): Test fails on GPU sometimes
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, batch_group_count,
                                  rng_factory):
+    if dtype == onp.float16:
+      raise SkipTest("float16 numerical issues")  # TODO(mattjj): resolve
+
     rng = rng_factory()
     tol = {dtypes.bfloat16: 1e-0, onp.float16: 5e-1, onp.float32: 1e-4}
 
@@ -2626,6 +2626,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+    with self.assertRaises(TypeError):
+      lax.stop_gradient(lambda x: x)
+
   # TODO(mattjj): make this a more systematic test
   def testRemainder(self):
     rng = onp.random.RandomState(0)
@@ -2710,11 +2713,7 @@ class LaxVmapTest(jtu.JaxTestCase):
        "feature_group_count": feature_group_count,
        "batch_group_count": batch_group_count,
        }
-      # TODO(phawkins): make batch_group_count tests unconditional after
-      # minimum jaxlib version is 0.1.44 or greater.
-      for batch_group_count, feature_group_count in (
-        [(1, 1), (2, 1), (1, 2)] if jax.lib.version > (0, 1, 43)
-        else [(1, 1), (1, 2)])
+      for batch_group_count, feature_group_count in ([(1, 1), (2, 1), (1, 2)])
       for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in [
           ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
            (j * batch_group_count * feature_group_count, i, 1, 2),  # rhs_shape

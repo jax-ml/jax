@@ -74,7 +74,7 @@ class FoundValue(Exception):
 
 def _contains_query(vals, query):
   if isinstance(query, tuple):
-    return map(partial(contains_query, vals), query)
+    return map(partial(_contains_query, vals), query)
 
   if np.isnan(query):
     if np.any(np.isnan(vals)):
@@ -147,7 +147,7 @@ class CallbackTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in = [t.val for t in tracers]
-    vals_out = self.master.callback(primitive, vals_in, params)
+    vals_out = self.master.callback(primitive, vals_in, params)  # type: ignore
     if primitive.multiple_results:
       return [CallbackTracer(self, val) for val in vals_out]
     return CallbackTracer(self, vals_out)

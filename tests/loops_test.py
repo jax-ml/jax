@@ -285,9 +285,9 @@ class LoopsTest(jtu.JaxTestCase):
     self.assertAllClose(16., f_op(0, 4, 4.), check_dtypes=True)
     # Ok to jit, as long as the start and end are static
     self.assertAllClose(16., api.jit(f_op, static_argnums=(0, 1))(0, 4, 4.), check_dtypes=True)
-    with self.assertRaisesRegex(TypeError, "Abstract value passed to `int`, which requires a concrete value"):
+    with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
       self.assertAllClose(16., api.jit(f_op)(0, 4, 4.), check_dtypes=True)
-    with self.assertRaisesRegex(TypeError, "Abstract value passed to `int`, which requires a concrete value"):
+    with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
       self.assertAllClose(16., api.vmap(f_op)(np.zeros(10), np.ones(10), np.array([4.] * 10)), check_dtypes=True)
 
   def test_cond(self):
