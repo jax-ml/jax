@@ -60,8 +60,9 @@ _scalar_types = dtypes.python_scalar_dtypes.keys()
 def _make_unit(c): return xb.constant(c, onp.zeros((), dtype=onp.dtype('bool')))
 def _make_abstract_unit(_): return xc.Shape.array_shape(onp.dtype('bool'), ())
 def _device_put_unit(_, device):
-  return xc.Buffer.from_pyval(onp.zeros((), dtype=onp.dtype('bool')), device,
-                              backend=xb.get_device_backend(device))
+  backend = xb.get_device_backend(device)
+  return backend.buffer_from_pyval(onp.zeros((), dtype=onp.dtype('bool')),
+                                   device)
 def _make_array_shape(a):
   return xc.Shape.array_shape(a.dtype, a.shape)
 
@@ -104,7 +105,8 @@ def device_put(x, device=None):
     raise TypeError(f"No device_put handler for type: {type(x)}") from err
 
 def _device_put_array(x, device):
-  return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
+  backend = xb.get_device_backend(device)
+  return backend.buffer_from_pyval(x, device)
 
 def _device_put_scalar(x, device):
   return _device_put_array(dtypes.coerce_to_array(x), device)
@@ -927,8 +929,8 @@ def _copy_device_array_to_device(x, device):
       moved_buf = x.device_buffer.copy_to_device(device)
   else:
     # Buffers from different XLA backends are passed through the host.
-    moved_buf = xc.Buffer.from_pyval(x.device_buffer.to_py(), device,
-                                     backend=xb.get_device_backend(device))
+    backend = xb.get_device_backend(device)
+    moved_buf = backend.buffer_from_pyval(x.device_buffer.to_py(), device)
   return DeviceArray(x.aval, device, x._lazy_expr, moved_buf)
 
 def _force(x: DeviceArray) -> DeviceArray:
