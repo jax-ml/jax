@@ -225,12 +225,14 @@ class Primitive:
 
 class CallPrimitive(Primitive):
   multiple_results = True
+  staged_out = False
 
   def bind(self, f: lu.WrappedFun, *args, **params):  # type: ignore[override]
     return higher_order_bind(self, f, *args, **params)
 
 class MapPrimitive(Primitive):
   multiple_results = True
+  staged_out = False
 
   def bind(self, f: lu.WrappedFun, *args, mapped_invars, **params):  # type: ignore[override]
     assert len(args) == len(mapped_invars)

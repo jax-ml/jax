@@ -820,6 +820,7 @@ def execute_replicated(compiled, backend, in_handler, out_handler, *args):
 
 
 xla_pmap_p = core.MapPrimitive('xla_pmap')
+xla_pmap_p.staged_out = True
 xla_pmap = xla_pmap_p.bind
 xla_pmap_p.def_impl(xla_pmap_impl)
 

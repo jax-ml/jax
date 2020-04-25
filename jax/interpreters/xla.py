@@ -603,9 +603,9 @@ def _get_device(device, backend):
   return out
 
 xla_call_p = core.CallPrimitive('xla_call')
+xla_call_p.staged_out = True
 xla_call = xla_call_p.bind
 xla_call_p.def_impl(_xla_call_impl)
-pe.staged_out_calls.add(xla_call_p)
 
 def _xla_call_translation_rule(c, axis_env,
                                in_nodes, name_stack, backend, name,
