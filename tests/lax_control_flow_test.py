@@ -514,7 +514,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
           x, lambda x: lax.cond(lax.lt(x, 5),
                                 x, lambda x: lax.mul(3, x),
                                 4, lambda y: lax.mul(y, x)))
-
+    print(api.xla_computation(cfun)(1).GetHloText())
     self.assertEqual(cfun(1), 2)
     self.assertEqual(cfun(3), 9)
     self.assertEqual(cfun(6), 24)

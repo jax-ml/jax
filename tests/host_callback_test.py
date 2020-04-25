@@ -53,9 +53,9 @@ class _TestingOutputStream(object):
   def write(self, what: str) -> None:
     # Sometimes we get floating points in the output; we round them
     def repl(match_group):
-      # TODO: why can't we use here np.around?
       matched = match_group.group(0)
       if matched == ".": return matched
+      # TODO: why can't we use here np.around?
       x = onp.around(float(matched), decimals=2)
       return f"{x:.2f}"
 
@@ -80,11 +80,11 @@ testing_stream = _TestingOutputStream()
 def fun1(a):
   y = hcb.id_print(a * 2., what="a * 2", output_stream=testing_stream)
   y = hcb.id_print(y * 3., what="y * 3", output_stream=testing_stream, result=y)
-  return y**4  # Some computation to make the gradient interesting
+  return y**2  # Some computation to make the gradient interesting
 
 
 def fun1_equiv(a):  # Numerical equivalent of fun`
-  return (a * 2.)**4
+  return (a * 2.)**2
 
 
 class HostCallbackTest(jtu.JaxTestCase):
@@ -107,32 +107,6 @@ class HostCallbackTest(jtu.JaxTestCase):
     # Clear any cached backends so new CPU backend will pick up the env var.
     xla_bridge.get_backend.cache_clear()
 
-  def helper_print_serialization(self, description, np_vals, params):
-    """Encode a print_descriptor and print it.
-
-    Args:
-      np_vals: a list of np.ndarray from which to extract the shapes.
-    """
-    encoded = hcb._make_id_print_metadata(
-        [xla.aval_to_xla_shape(pe.get_aval(np_val)) for np_val in np_vals],
-        params)
-    print(f"test_serialization: {description}")
-    print(", ".join([f"{b}" for b in encoded]))
-
-  def test_serialization(self):
-    """Prints encodings used in host_callback_test::TestParseDescriptor."""
-    raise SkipTest("Not implemented")
-    self.helper_print_serialization("no args, separator=sep, param=0", [],
-                                    dict(param=0, separator="sep"))
-    self.helper_print_serialization("1 scalar int, separator= param=1",
-                                    [np.int32(0)], dict(param=1, separator=""))
-    self.helper_print_serialization("1 array f32[2, 3], separator= param=2",
-                                    [np.ones((2, 3), dtype=np.float32)],
-                                    dict(param=2, separator=""))
-    self.helper_print_serialization(
-        "1 array f32[2, 3] and 1 f64, separator= param=3",
-        [np.ones((2, 3), dtype=np.float32),
-         np.float64(0)], dict(param=3, separator=""))
 
   def test_with_tuple_result(self):
 
@@ -164,11 +138,11 @@ class HostCallbackTest(jtu.JaxTestCase):
       e f = id_print[ nr_results=1
                       output_stream=TestingOutputStream
                       what=y * 3 ] d c
-      g = pow f 4.0
+      g = pow f 2.0
   in (g,) }""", str(api.make_jaxpr(fun1)(5.)))
     self.assertEqual("", testing_stream.output)
 
-    self.assertEqual((5. * 2.)**4, fun1(5.))
+    self.assertEqual((5. * 2.)**2, fun1(5.))
     self.assertMultiLineStrippedEqual(
         """
 (10.00,)  {'what': 'a * 2'}
@@ -176,8 +150,8 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_jit_simple(self):
-    jit_fun1 = api.jit(lambda x: hcb.end_printing(3. * hcb.id_print(
-        2. * x, what="here")))
+    jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
+        2. * x, what="here"))
     self.assertMultiLineStrippedEqual(
         """
 { lambda  ; a.
@@ -186,8 +160,7 @@ class HostCallbackTest(jtu.JaxTestCase):
                                  let b = mul a 2.0
                                      c = id_print[ what=here ] b
                                      d = mul c 3.0
-                                     e f = id_print[ nr_results=1 ] 12345678 d
-                                 in (f,) }
+                                 in (d,) }
                     device=None
                     name=<lambda> ] a
   in (b,) }""", str(api.make_jaxpr(jit_fun1)(5.)))
@@ -196,17 +169,17 @@ class HostCallbackTest(jtu.JaxTestCase):
     with hcb.print_receiver(output_stream=testing_stream,
                             receiver_name=self._testMethodName):
       res = jit_fun1(5.)
+
     self.assertAllClose(6. * 5., res, check_dtypes=True)
     self.assertMultiLineStrippedEqual(
       """
 10.00""", testing_stream.output)
     testing_stream.reset()
 
-  def test_simple_jit_sequencing(self):
+  def test_jit_sequence1(self):
     def func(x):
       x1 = hcb.id_print(x, where="1")
-      x2 = hcb.id_print(x1 + 1, where="2")
-      return hcb.end_printing(x2)
+      return hcb.id_print(x1 + 1, where="2")
 
     logging.info("%s: %s", self._testMethodName,
           api.make_jaxpr(func)(1))
@@ -233,8 +206,6 @@ class HostCallbackTest(jtu.JaxTestCase):
                             receiver_name=self._testMethodName):
       self.assertEqual(2, api.jit(func)(1))
       self.assertEqual(11, api.jit(func)(10))
-      # Now send the end of printing
-      api.jit(lambda x: hcb.end_printing(x))(0)
 
     self.assertMultiLineStrippedEqual(
       """
@@ -248,24 +219,40 @@ class HostCallbackTest(jtu.JaxTestCase):
     def func(x):
       x1 = hcb.id_print(x, where="1")
       def func_nested(x):
-        x2 = hcb.id_print(x, where="nested")
+        x2 = hcb.id_print(x + 1, where="nested")
         return x2
       x3 = api.jit(func_nested)(x1)
-      x2 = hcb.id_print(x3 + 1, where="2")
-      return hcb.end_printing(x2)
+      return hcb.id_print(x3 + 1, where="2")
 
     logging.warning("%s: %s", self._testMethodName,
                  api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
                  api.xla_computation(func)(1).GetHloText())
-    return
     with hcb.print_receiver(output_stream=testing_stream,
                             receiver_name=self._testMethodName):
-      pass # self.assertEqual(2, api.jit(func)(1))
+      self.assertEqual(3, api.jit(func)(1))
     self.assertMultiLineStrippedEqual(
       """
 1
-2""", testing_stream.output)
+2
+3""", testing_stream.output)
+    testing_stream.reset()
+
+  def test_jit_devices(self):
+    """Running on multiple devices."""
+    devices = api.local_devices()
+    def func(x, device_id):
+      x1 = hcb.id_print(x, dev=str(device_id))
+      x2 = hcb.id_print(x1 + 1, dev=str(device_id))
+      return x2
+
+    with hcb.print_receiver(output_stream=testing_stream,
+                            receiver_name=self._testMethodName):
+      for d in devices:
+        self.assertEqual(2, api.jit(func, device=d, static_argnums=1)(1, d.id))
+
+    self.assertEqual(len(devices), len(re.findall(r"1", testing_stream.output)))
+    self.assertEqual(len(devices), len(re.findall(r"2", testing_stream.output)))
     testing_stream.reset()
 
   def test_jit_cond1(self):
@@ -278,7 +265,7 @@ class HostCallbackTest(jtu.JaxTestCase):
                     x2 + 1, lambda x: hcb.id_print(x, where="cond_t"),
                     x2 + 1, lambda x: hcb.id_print(-1, where="cond_f", result=x))
       x5 = hcb.id_print(x4 + 1, where="w.2")
-      return hcb.end_printing(x5)
+      return x5
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
@@ -307,7 +294,7 @@ class HostCallbackTest(jtu.JaxTestCase):
         return hcb.id_print(x4 + 1, where="w.2")
       x10 = lax.while_loop(lambda x: x < 10, body, x2)
       res = hcb.id_print(x10, where="10")
-      return hcb.end_printing(res)
+      return res
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
           api.xla_computation(func)(1).GetHloText())
@@ -334,6 +321,45 @@ class HostCallbackTest(jtu.JaxTestCase):
 10""", testing_stream.output)
     testing_stream.reset()
 
+  def test_jit_scan_cond(self):
+    def func(x):
+      x1 = hcb.id_print(x, where="1")
+      x2 = hcb.id_print(x1 + 1, where="2")
+
+      def body(c, x):
+        x3 = hcb.id_print(x, where="s.1")
+        x4 = lax.cond(x % 2 == 0,
+                      x3 + 1, lambda x: hcb.id_print(x, where="s.t"),
+                      x3 + 1, lambda x: hcb.id_print(-1, where="s.f", result=x))
+        return (c, hcb.id_print(x4 + 1, where="w.2"))
+
+      _, x10 = lax.scan(body, x2, np.arange(3))
+      res = hcb.id_print(x10, where="10")
+      return res
+
+    logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
+    logging.warning("%s: %s", self._testMethodName,
+                    api.xla_computation(func)(1).GetHloText())
+
+    with hcb.print_receiver(output_stream=testing_stream,
+                            receiver_name=self._testMethodName):
+      res = api.jit(func)(1)
+      self.assertAllClose(np.array([2, 3, 4]), res, check_dtypes=True)
+    self.assertMultiLineStrippedEqual(
+      """
+1
+2
+0
+1
+2
+1
+-1
+3
+2
+3
+4
+[2 3 4]""", testing_stream.output)
+    testing_stream.reset()
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
@@ -354,11 +380,10 @@ class HostCallbackTest(jtu.JaxTestCase):
     args = [np.arange(np.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args
-    jit_fun1 = api.jit(lambda xs: hcb.end_printing(
-                       hcb.id_print(
+    jit_fun1 = api.jit(lambda xs: hcb.id_print(
         *xs,
         a_new_test="************",
-        testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}")))
+        testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
     with hcb.print_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(args)
     # self.assertAllClose(args, res, check_dtypes=True)
@@ -367,7 +392,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     arg = np.arange(10000, dtype=np.int32).reshape((10, 10, 5, -1))
     with hcb.print_receiver(output_stream=testing_stream,
                             receiver_name=self._testMethodName):
-      api.jit(lambda x: hcb.end_printing(hcb.id_print(x)))(arg)
+      api.jit(hcb.id_print)(arg)
 
   def test_jvp(self):
     jvp_fun1 = lambda x, xt: api.jvp(fun1, (x,), (xt,))
@@ -381,7 +406,7 @@ class HostCallbackTest(jtu.JaxTestCase):
       f g = id_print[ nr_results=1
                       output_stream=TestingOutputStream
                       what=y * 3 ] e d
-      h = pow g 4.0
+      h = pow g 2.0
       i = mul b 2.0
       j = id_print[ output_stream=TestingOutputStream
                     transforms=('jvp',)
@@ -391,8 +416,8 @@ class HostCallbackTest(jtu.JaxTestCase):
                       output_stream=TestingOutputStream
                       transforms=('jvp',)
                       what=y * 3 ] k j
-      n = pow g 3.0
-      o = mul 4.0 n
+      n = pow g 1.0
+      o = mul 2.0 n
       p = mul m o
   in (h, p) }""",
         str(api.make_jaxpr(jvp_fun1)(np.float32(5.), np.float32(0.1))))
@@ -408,7 +433,6 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_grad(self):
-    raise SkipTest("failing with new implementation")
     grad_fun1 = api.grad(fun1)
     self.assertMultiLineStrippedEqual(
         """
@@ -417,32 +441,32 @@ class HostCallbackTest(jtu.JaxTestCase):
       c = id_print[ output_stream=TestingOutputStream
                     what=a * 2 ] b
       d = mul c 3.0
-      e = id_print[ output_stream=TestingOutputStream
-                    what=y * 3 ] d
-      f = tie_in e c
-      g = pow f 3.0
-      h = mul 4.0 g
+      e f = id_print[ nr_results=1
+                      output_stream=TestingOutputStream
+                      what=y * 3 ] d c
+      g = pow f 1.0
+      h = mul 2.0 g
       i = mul 1.0 h
-      j = id_print[ output_stream=TestingOutputStream
+      j k = id_print[ nr_results=1
+                      output_stream=TestingOutputStream
+                      transforms=('jvp', 'transpose')
+                      what=y * 3 ] 0.0 i
+      l = mul j 3.0
+      m = add_any k l
+      n = id_print[ output_stream=TestingOutputStream
                     transforms=('jvp', 'transpose')
-                    what=a * 2 ] i
-      k = mul j 2.0
-  in (k,) }""", str(api.make_jaxpr(grad_fun1)(5.)))
+                    what=a * 2 ] m
+      o = mul n 2.0
+  in (o,) }""", str(api.make_jaxpr(grad_fun1)(5.)))
 
-    # This comes from the actual partial evaluation
-    self.assertMultiLineStrippedEqual(
-        """
-(Zero,)  {'what': 'y * 3', 'transforms': ('jvp', 'transpose')}
-  """, testing_stream.output)
-    testing_stream.reset()
 
     res_grad = grad_fun1(np.float32(5.))
     self.assertMultiLineStrippedEqual(
         """
 (DeviceArray(10.00, dtype=float32),)  {'what': 'a * 2'}
-(DeviceArray(30.00, dtype=float32),)  {'what': 'y * 3'}
-(Zero,)  {'what': 'y * 3', 'transforms': ('jvp', 'transpose')}
-(DeviceArray(4000.00, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp', 'transpose')}
+(DeviceArray(30.00, dtype=float32), DeviceArray(10.00, dtype=float32))  {'what': 'y * 3', 'nr_results': 1}
+(array(0.00, dtype=float32), DeviceArray(20.00, dtype=float32))  {'what': 'y * 3', 'nr_results': 1, 'transforms': ('jvp', 'transpose')}
+(DeviceArray(20.00, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp', 'transpose')}
    """, testing_stream.output)
     testing_stream.reset()
 
@@ -461,7 +485,7 @@ class HostCallbackTest(jtu.JaxTestCase):
                       output_stream=TestingOutputStream
                       transforms=('batch',)
                       what=y * 3 ] d c
-      g = pow f 4.0
+      g = pow f 2.0
   in (g,) }""", str(api.make_jaxpr(vmap_fun1)(vargs)))
 
     res_vmap = vmap_fun1(vargs)
@@ -473,12 +497,14 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_pmap(self):
-    skip_if_jit_not_enabled()
-    self.helper_set_devices(4)
-    vargs = np.arange(api.local_device_count(), dtype=np.float32)
+    vargs = 2. + np.arange(api.local_device_count(), dtype=np.float32)
 
     pmap_fun1 = api.pmap(fun1, axis_name="i")
-    res = pmap_fun1(vargs)
+    with hcb.print_receiver(output_stream=testing_stream,
+                            receiver_name=self._testMethodName):
+      res = pmap_fun1(vargs)
+    expected_res = np.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
+    self.assertAllClose(expected_res, res, check_dtypes=False)
 
 
 if __name__ == "__main__":
