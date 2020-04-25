@@ -1510,6 +1510,16 @@ class APITest(jtu.JaxTestCase):
 
     jax.grad(scan_bug)(1.0)  # doesn't crash
 
+  def test_remat_jit_static_argnum(self):
+    # https://github.com/google/jax/issues/2833
+    def f(a_bool, y):
+      if a_bool:
+        return y + 1
+      else:
+        return y
+
+    api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
