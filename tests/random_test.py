@@ -55,9 +55,19 @@ class LaxRandomTest(jtu.JaxTestCase):
   def _CheckChiSquared(self, samples, pmf):
     alpha = 0.01  # significance level, threshold for p-value
     values, actual_freq = onp.unique(samples, return_counts=True)
-    expected_freq = pmf(values) * len(values)
-    _, p_value = scipy.stats.chisquare(actual_freq, expected_freq)
-    self.assertLess(p_value, alpha)
+    expected_freq = pmf(values) * samples.size
+    # per scipy: "A typical rule is that all of the observed and expected
+    # frequencies should be at least 5."
+    valid = (actual_freq > 5) & (expected_freq > 5)
+    self.assertGreater(valid.sum(), 1,
+                       msg='not enough valid frequencies for chi-squared test')
+    _, p_value = scipy.stats.chisquare(
+        actual_freq[valid], expected_freq[valid])
+    self.assertGreater(
+        p_value, alpha,
+        msg=f'Failed chi-squared test with p={p_value}.\n'
+            'Expected vs. actual frequencies:\n'
+            f'{expected_freq[valid]}\n{actual_freq[valid]}')
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -339,7 +349,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lam={}_{}".format(lam, dtype),
        "lam": lam, "dtype": onp.dtype(dtype).name}
-      for lam in [5.0, 50.0, 5e6]
+      for lam in [0.5, 5, 50, 500]
       for dtype in [onp.int32, onp.int64]))
   def testPoisson(self, lam, dtype):
     key = random.PRNGKey(0)
