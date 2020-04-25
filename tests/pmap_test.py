@@ -902,8 +902,8 @@ class PmapTest(jtu.JaxTestCase):
     x = x.reshape(2 * device_count, 2, 2, 3)  # axis merge of the wrong size
     self.assertIsInstance(x, xla.DeviceArray)  # should have forced collection
 
-  @jtu.skip_on_devices("gpu")
-  def DISABLED_testSoftPmapAllToAll(self):
+  def testSoftPmapAllToAll(self):
+    raise SkipTest("the underlying code here is broken")  # TODO(mattjj)
     n = 4 * xla_bridge.device_count()
     def f(x):
       return lax.all_to_all(x, 'i', 0, 0)
@@ -1049,6 +1049,38 @@ class PmapTest(jtu.JaxTestCase):
 
     keys = random.split(random.PRNGKey(0), n)
     jax.pmap(jax.remat(f), axis_name='i')(keys)
+
+  def testPmapMapVmapCombinations(self):
+    # https://github.com/google/jax/issues/2822
+    def vv(x, y):
+      """Vector-vector multiply"""
+      return np.dot(x, y)
+
+    def matrix_vector(x, y, parallel=True):
+      """Matrix vector multiply. First batch it and then row by row"""
+      fv = lambda z: lax.map(lambda j: vv(j, y), z)
+      if parallel:
+        # split leading axis in two
+        new_x = x.reshape((jax.device_count(), -1, *x.shape[1:]))
+        # apply map
+        new_res = pmap(fv)(new_x)
+        # reshape back out
+        res = new_res.reshape(x.shape[0], *new_res.shape[2:])
+      else:
+        res = fv(x)
+      return res
+
+    x = random.normal(random.PRNGKey(1), (80, 5))
+    y = random.normal(random.PRNGKey(1), (10, 5))
+
+    result1 = vmap(lambda b: matrix_vector(x, b, True))(y)       # vmap + pmap
+    result2 = lax.map(lambda b: matrix_vector(x, b, False), y)   # map + map
+    result3 = lax.map(lambda b: matrix_vector(x, b, True), y)    # map + pmap
+    result4 = np.stack([matrix_vector(x, b, False) for b in y])  # none + map
+
+    self.assertAllClose(result1, result2, check_dtypes=False, atol=1e-3, rtol=1e-3)
+    self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-3, rtol=1e-3)
+    self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-3, rtol=1e-3)
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):

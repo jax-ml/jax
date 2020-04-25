@@ -223,7 +223,9 @@ class JaxprTrace(Trace):
 
     params = dict(params, name=name)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
-    reduced_pvs = [None if pv is None else _mapped_aval(pv) for pv in in_pvs]
+    reduced_pvs = [None if pv is None else
+                   _mapped_aval(params['axis_size'], pv) if m else pv
+                   for pv, m in zip(in_pvs, params['mapped_invars'])]
     fun, aux = partial_eval(f, self, reduced_pvs)
     out_flat = map_primitive.bind(fun, *in_consts, **params)
     out_pvs_reduced, jaxpr, env = aux()
@@ -237,10 +239,12 @@ class JaxprTrace(Trace):
                    for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
     # The `jaxpr` already contains the env_vars at start of invars
     new_params = dict(params,
-                      mapped_invars=tuple([True] * len(const_tracers) +
-                                          [False] * len(env_tracers) +
-                                          [True] * len(tracers)),
+                      mapped_invars=((True,) * len(const_tracers) +
+                                     (False,) * len(env_tracers) +
+                                     params['mapped_invars']),
                       call_jaxpr=lifted_jaxpr)
+    assert (len(new_params['mapped_invars'])
+            == len(const_tracers) + len(env_tracers) + len(tracers))
     eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
                          out_tracers, map_primitive, new_params)
     for t in out_tracers:
@@ -294,11 +298,12 @@ class JaxprTrace(Trace):
 class StagingJaxprTrace(JaxprTrace):
   pass
 
-def _mapped_aval(aval):
+def _mapped_aval(size, aval):
   if aval is core.abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
     # might be raising abstraction level from Concrete here
+    assert aval.shape[0] == size
     return ShapedArray(aval.shape[1:], aval.dtype)
   else:
     raise TypeError(aval)
@@ -475,10 +480,11 @@ def new_eqn_recipe(invars, outvars, primitive, params):
     primitive: the primitive.
     params: the primitive params
   """
-  if primitive.call_primitive:
-    # TODO(necula): move these checks to core.check_jaxpr, and call it
-    # in more places.
+  # TODO(necula): move these checks to core.check_jaxpr, and call in more places
+  if primitive.call_primitive or primitive.map_primitive:
     assert "call_jaxpr" in params
+  if primitive.map_primitive:
+    assert "mapped_invars" in params
   return JaxprEqnRecipe(object(), tuple(invars), map(ref, outvars), primitive,
                         params)
 
