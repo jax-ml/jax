@@ -466,7 +466,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("gpu", "tpu")  # TODO(b/145608614): SVD crashes on GPU.
+  @jtu.skip_on_devices("tpu")
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
@@ -763,7 +763,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("gpu", "tpu")  # TODO(b/145608614): SVD crashes on GPU.
+  @jtu.skip_on_devices("tpu")
   def testMatrixRank(self, shape, dtype, rng_factory):
     rng = rng_factory()
     _skip_if_unsupported_type(dtype)
