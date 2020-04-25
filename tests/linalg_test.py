@@ -242,7 +242,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(w1, w2, check_dtypes=True)
 
   @jtu.skip_on_devices("gpu", "tpu")
-  @unittest.skipIf(jax.lib.version <= (0, 1, 43), "jaxlib too old")
   def testEigvalsInf(self):
     # https://github.com/google/jax/issues/2661
     x = np.array([[np.inf]], np.float64)
