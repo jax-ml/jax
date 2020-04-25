@@ -49,9 +49,8 @@ Shape = xla_client.Shape
 
 
 cdef register_cpu_custom_call_target(fn_name, void* fn):
-  cdef const char* name = "xla._CPU_CUSTOM_CALL_TARGET"
-  xla_client.register_cpu_custom_call_target(
-    fn_name, PyCapsule_New(fn, name, NULL))
+  cdef const char* name = "xla._CUSTOM_CALL_TARGET"
+  xla_client.register_custom_call_target(fn_name, PyCapsule_New(fn, name, NULL))
 
 def _constant_s32_scalar(c, x):
   return _ops.Constant(c, np.int32(x))
