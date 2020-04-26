@@ -717,7 +717,7 @@ def trunc(x):
   return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
 
 
-def _conv(x, y, mode, op, *, precision):
+def _conv(x, y, mode, op, precision):
   if issubdtype(x.dtype, complexfloating) or issubdtype(y.dtype, complexfloating):
     raise NotImplementedError(f"{op}() does not support complex inputs")
   if ndim(x) != 1 or ndim(y) != 1:
@@ -748,12 +748,12 @@ def _conv(x, y, mode, op, *, precision):
 
 @_wraps(onp.convolve, lax_description=_PRECISION_DOC)
 def convolve(x, y, mode='full', *, precision=None):
-  return _conv(x, y, mode, 'convolve', precision=precision)
+  return _conv(x, y, mode, 'convolve', precision)
 
 
 @_wraps(onp.correlate, lax_description=_PRECISION_DOC)
 def correlate(x, y, mode='valid', *, precision=None):
-  return _conv(x, y, mode, 'correlate', precision=precision)
+  return _conv(x, y, mode, 'correlate', precision)
 
 
 def _normalize_float(x):
@@ -2576,7 +2576,7 @@ def einsum(*operands, **kwargs):
   operands, contractions = opt_einsum.contract_path(
       *operands, einsum_call=True, use_blas=True, optimize=optimize)
   contractions = tuple(data[:3] for data in contractions)
-  return _einsum(operands, contractions, precision=precision)
+  return _einsum(operands, contractions, precision)
 
 @_wraps(onp.einsum_path)
 def einsum_path(subscripts, *operands, **kwargs):
@@ -2588,7 +2588,7 @@ def _removechars(s, chars):
   return s.translate(str.maketrans(dict.fromkeys(chars)))
 
 @partial(jit, static_argnums=(1, 2))
-def _einsum(operands, contractions, *, precision):
+def _einsum(operands, contractions, precision):
   operands = list(_promote_dtypes(*operands))
   def sum(x, axes):
     return lax.reduce(x, onp.array(0, x.dtype),
