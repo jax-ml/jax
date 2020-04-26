@@ -67,6 +67,7 @@ XlaDevice = Any  # xla_client.Device
 
 id_print_p = core.Primitive("id_print")
 id_print_p.multiple_results = True
+xla.stateful_primitives.add(id_print_p)
 
 xops = xla_client._xla.ops
 
@@ -80,18 +81,18 @@ def id_print(*args, result=None, **kwargs):
 
      The positional arguments must be JAX values. The keyword arguments are
      serialized to a string and printed along with the positional arguments.
-     There are a few special keywork arguments that are not printed:
+     There are a few special keyword arguments that are not printed:
 
       * `result`: is the result of `id_print`, must be a JAX value or a
         pytree of values.
       * `output_stream`: is the output stream where the values should be
-      printed. (Note: does not yet work from under JIT).
+        printed. (Note: does not yet work from under JIT).
 
      Usage:
      >>> y = id_print(x * 2)  # prints and returns 2x
      >>> y, z = id_print(x * 2, x * 3)  # prints and returns 2x and 3x
      >>> y = id_print(x * 2, result=y)  # prints 2x and returns y
-     >>> y = id_print(x * 2, what='x')  # prints what=x followed by 2x
+     >>> y = id_print(x * 2, what='x')  # prints "what=x" followed by 2x
 
      The order of execution is by data dependency: after all the arguments are
      computed and before the result is used. At least one of the returned values
@@ -110,7 +111,6 @@ def id_print(*args, result=None, **kwargs):
         adjoints of the results, with transforms=('vjp').
   """
   flat_args, args_treedef = pytree.flatten(args)
-
   params = dict(kwargs)  #  copy
   if result is not None:
     flat_results, results_treedef = pytree.flatten(result)
@@ -118,7 +118,7 @@ def id_print(*args, result=None, **kwargs):
     all_args = flat_args + flat_results
   else:
     all_args = flat_args
-  flat_outs = id_print_p.bind(*all_args, **params)  # Always returns a tuple of all args
+  flat_outs = id_print_p.bind(*all_args, **params)  # Always a tuple of all args
   if result is not None:
     return results_treedef.unflatten(flat_outs[-params["nr_results"]:])
   else:
@@ -288,23 +288,30 @@ def _id_print_translation_rule_outfeed(
     comp: XlaComputationBuilder,
     *args_op: XlaOp, **params):
 
-  prev_token = xla.computation_state_carry.current_token(comp)
+  prev_token = xla.state_carry.current_token(comp)
   nr_args_to_emit = len(args_op) - params.get("nr_results", 0)
   next_token = _emit_outfeed(comp, prev_token,
                              _OUTFEED_CONSUMER_ID_PRINT,
                              args_op[0:nr_args_to_emit], {})
-  xla.computation_state_carry.set_current_token(comp, next_token)
+  xla.state_carry.set_current_token(comp, next_token)
+  if xla.USE_ADD_DEPENDENCY:
+    args_op = tuple([xops.AddDependency(a, next_token)
+                    for a in args_op])
   return xops.Tuple(comp, args_op)
 
 xla.translations[id_print_p] = _id_print_translation_rule_outfeed
 
-_END_PRINTING = onp.int32(987654321)
+
 @contextmanager
 def print_receiver(output_stream=None,
                    receiver_name="",
                    timeout_sec=10):
   # TODO: better timeout management
   """Starts a receiver for the id_print outfeed.
+
+  Args:
+    output_stream: (optional) a Python stream to write the output to
+    receiver_name: (optional) a name to use with debuging logging
 
   Usage:
     with print_receiver():
@@ -315,9 +322,9 @@ def print_receiver(output_stream=None,
   devices = api.devices()
   executor = futures.ThreadPoolExecutor(thread_name_prefix="outfeed",
                                         max_workers=len(devices))
-
+  _END_PRINTING = onp.int32(987654321)
   def device_receiver_loop(device: XlaDevice) -> XlaDevice:
-    i = 0
+    """Polls the outfeed for a device in a loop."""
     while (True):
       consumer_id, arrays, kwargs = _receive_outfeed(device, receiver_name)
       if consumer_id != _OUTFEED_CONSUMER_ID_PRINT:
@@ -327,20 +334,19 @@ def print_receiver(output_stream=None,
           logging.info(f"[{receiver_name}:{device}] Outfeed received END_PRINTING")
           return device
         a_str = onp.array2string(a, threshold=1024)
-        logging.info(f"[{receiver_name}:{device}] Outfeed received {i} "
+        logging.info(f"[{receiver_name}:{device}] Outfeed received "
                      f"({a.dtype}{a.shape}): {a_str}")
         if output_stream is not None:
           output_stream.write(a_str)
-        i += 1
 
   receiver_futures = [executor.submit(device_receiver_loop, d) for d in devices]
   try:
     yield
   finally:
-    for d in devices:
+    for d in devices:  # Signal the end of printing
       api.jit(lambda x: id_print(_END_PRINTING, result=x), device=d)(0)
     for f in futures.as_completed(receiver_futures, timeout=timeout_sec):
-      finished_device = f.result()
+      finished_device = f.result()  # Throw exceptions here
       logging.info(f"[{receiver_name}:{finished_device} Outfeed receiver finished")
 
 

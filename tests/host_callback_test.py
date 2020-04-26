@@ -164,7 +164,7 @@ class HostCallbackTest(jtu.JaxTestCase):
                     device=None
                     name=<lambda> ] a
   in (b,) }""", str(api.make_jaxpr(jit_fun1)(5.)))
-    logging.info("%s: %s",
+    logging.warning("%s: %s",
                  self._testMethodName, api.xla_computation(jit_fun1)(5.).GetHloText())
     with hcb.print_receiver(output_stream=testing_stream,
                             receiver_name=self._testMethodName):
@@ -321,6 +321,34 @@ class HostCallbackTest(jtu.JaxTestCase):
 10""", testing_stream.output)
     testing_stream.reset()
 
+  def test_jit_while_pred_printing(self):
+    raise SkipTest("Not yet implemented")
+    """While with printing in the conditional."""
+    def func(x):
+      x1 = hcb.id_print(x, where="1")
+
+      def body(x):
+        x3 = hcb.id_print(x, where="w.1")
+        return hcb.id_print(x3 + 1, where="w.2")
+
+      x10 = lax.while_loop(lambda x: hcb.id_print(x < 10, where="w.p"),
+                           body, x1)
+      res = hcb.id_print(x10, where="10")
+      return res
+
+    logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
+    logging.warning("%s: %s", self._testMethodName,
+                    api.xla_computation(func)(1).GetHloText())
+
+    with hcb.print_receiver(output_stream=testing_stream,
+                            receiver_name=self._testMethodName):
+      self.assertEqual(10, api.jit(func)(1))
+    self.assertMultiLineStrippedEqual(
+      """
+""", testing_stream.output)
+    testing_stream.reset()
+
+
   def test_jit_scan_cond(self):
     def func(x):
       x1 = hcb.id_print(x, where="1")
@@ -431,6 +459,22 @@ class HostCallbackTest(jtu.JaxTestCase):
 (DeviceArray(0.60, dtype=float32), DeviceArray(0.20, dtype=float32))  {'what': 'y * 3', 'nr_results': 1, 'transforms': ('jvp',)}
   """, testing_stream.output)
     testing_stream.reset()
+
+
+
+  def test_jit_nested_cond_no_print(self):
+    """A nested conditional, without any prints"""
+    # raise SkipTest("skip this")
+    @api.jit
+    def cfun(x):
+      return lax.cond(
+          lax.lt(x, 2),
+          x, lambda x: x,
+          x, lambda x: lax.cond(x < 5,
+                                3, lambda x: x,
+                                4, lambda y: y))
+    print(self._testMethodName, api.xla_computation(cfun)(1).GetHloText())
+    cfun(1)
 
   def test_grad(self):
     grad_fun1 = api.grad(fun1)

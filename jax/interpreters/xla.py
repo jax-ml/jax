@@ -14,11 +14,10 @@
 
 
 from collections import defaultdict
-from contextlib import contextmanager
 import itertools as it
 import operator as op
 import threading
-from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tuple
 
 from absl import logging
 import numpy as onp
@@ -35,13 +34,12 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
 from ..core import Literal, pp_eqn_compact
 from ..pprint_util import pp
 from ..util import (partial, partialmethod, cache, prod, unzip2, memoize,
-                    extend_name_stack, wrap_name, split_list)
+                    extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
 from . import masking
-
 
 xe = xc._xla
 xops = xc._xla.ops
@@ -170,13 +168,32 @@ pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
 pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 
+USE_ADD_DEPENDENCY = False  # We can only use AddDependency once we land the HLO change
+
+# Keep track of which primitives are stateful (they read or read/write state).
+# This helps avoid threading the state through control-flow primitives that
+# do not need it. This is a worthwhile optimization because it seems that XLA
+# may not be good at dealing with tokens (b/154992062).
+stateful_primitives: Set[core.Primitive] = set()
+def jaxpr_uses_state(jaxpr):
+  """Whether there is a stateful primitive anywhere inside a Jaxpr."""
+  if type(jaxpr) is core.TypedJaxpr:
+    jaxpr = jaxpr.jaxpr
+  for eqn in jaxpr.eqns:
+    if eqn.primitive in stateful_primitives:
+      return True
+  for subjaxpr in core.subjaxprs(jaxpr):
+    if jaxpr_uses_state(subjaxpr):
+      return True
+  return False
+
 class _ComputationStateCarry(threading.local):
-  """Carries some state in global state.
+  """Carries some state globally as we build the HLO.
 
   For now the state is only a token, obtained from the last OutFeed.
   The translation rules for primitives can read-write from this class.
 
-  This assumes that the primitives are processed in order!
+  This assumes that the primitives are processed in program-order!
   """
   _current_computation: Optional[XlaComputationBuilder]
   _current_token: Optional[XlaOp]
@@ -185,47 +202,47 @@ class _ComputationStateCarry(threading.local):
     self._current_computation = None
     self._current_token = None
 
-  def state_len(self):
-    return 1
+  def end_computation(self):
+    self._current_computation = None
+    self._current_token = None
 
-  def current_state(self, comp: XlaComputationBuilder) -> List[XlaOp]:
-    if comp is not self._current_computation:
-      if self._current_computation is not None:
-        # TODO: add more error checking
-        logging.warning("Overwriting previous computation")
+  def decompose_tuple_op(self, comp: XlaComputationBuilder,
+                         tuple_op: XlaOp, nr_regular: int,
+                         uses_state: bool) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
+    """Decomposes a tuple, returns the regular elements and the state.
+
+    We assume that the `tuple_op` represents a tuple with `nr_regular` regular
+    elements, followed by some elements encoding the state.
+    Stores the new state.
+    """
+    regular_ops = [xops.GetTupleElement(tuple_op, i) for i in range(nr_regular)]
+    if uses_state:
+      self._current_computation = comp
+      self._current_token = xops.GetTupleElement(tuple_op, nr_regular)
+      return regular_ops, self.current_state(comp, uses_state)
+    else:
+      return regular_ops, []
+
+  def current_state(self, comp: XlaComputationBuilder, uses_state: bool) -> List[XlaOp]:
+    """Create new state if new computation, returns the state. """
+    if not uses_state:
+      return []
+    if self._current_computation is None:
       self._current_computation = comp
       self._current_token = xops.CreateToken(comp)
+    else:
+      assert comp is self._current_computation, "Overwriting previous computation"
     return [self._current_token]
 
   def current_token(self, comp: XlaComputationBuilder) -> XlaOp:
-    state = self.current_state(comp)
+    state = self.current_state(comp, True)
     return state[0]
 
   def set_current_token(self, comp: XlaComputationBuilder, token: XlaOp):
     assert comp == self._current_computation
     self._current_token = token
 
-  def set_comp_and_current_state(self, comp: XlaComputationBuilder,
-                                 state: Sequence[XlaOp]):
-    self._current_computation = comp
-    self._current_token = state[0]
-
-  def extract_state_from_tuple_op(self, comp: XlaComputationBuilder,
-                                  tuple_op: XlaOp, nr_regular: int):
-    """Given a tuple extract the state from its tail.
-
-    We assume that the `tuple_op` represents a tuple with `nr_outs` regular
-    elements, followed by some elements encoding the state. Stores the new state,
-    and returns a Tuple with the regular elemennts.
-    """
-    regular_ops = [xops.GetTupleElement(tuple_op, i) for i in range(nr_regular)]
-    self._current_computation = comp
-    current_state = [xops.GetTupleElement(tuple_op, i)
-                     for i in range(nr_regular, nr_regular + self.state_len())]
-    self._current_token = current_state[0]
-    return xops.Tuple(comp, regular_ops)
-
-computation_state_carry = _ComputationStateCarry()
+state_carry = _ComputationStateCarry()
 
 ### op-by-op execution
 
@@ -583,6 +600,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
+  state_carry.end_computation()
   built = c.Build(xops.Tuple(c, out_nodes))
 
   options = xb.get_compile_options(
@@ -687,22 +705,26 @@ def _xla_call_translation_rule(c, axis_env,
                                in_nodes, name_stack, backend, name,
                                call_jaxpr, device=None):
   del device  # Ignored.
-  prev_state = computation_state_carry.current_state(c)
-  all_in_nodes = list(in_nodes) + list(prev_state)
-
   subc = xb.make_computation_builder(f"jit_{name}")
 
-  all_args = [xb.parameter(subc, i, c.GetShape(n))
-              for i, n in enumerate(all_in_nodes)]
-  args, input_state = split_list(all_args, [len(in_nodes)])
-  computation_state_carry.set_comp_and_current_state(subc, input_state)
+  uses_state = jaxpr_uses_state(call_jaxpr)
+  prev_state = state_carry.current_state(c, uses_state)
+  input_op = xops.Tuple(c, list(in_nodes) + list(prev_state))
+  arg = xb.parameter(subc, 0, c.GetShape(input_op))
+  nr_regular_args = len(in_nodes)
+  args, input_state = state_carry.decompose_tuple_op(subc, arg, nr_regular_args, uses_state)
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, wrap_name(name, 'jit')), *args)
-  result_state = computation_state_carry.current_state(subc)
+                            extend_name_stack(name_stack, wrap_name(name, 'jit')),
+                            *(args + input_state))
+  result_state = state_carry.current_state(subc, uses_state)
   subc = subc.Build(xops.Tuple(subc, list(out_nodes) + result_state))
-  call_op = xops.Call(c, subc, all_in_nodes)
+  call_op = xops.Call(c, subc, [input_op])
+  if not uses_state:
+    return call_op
   nr_outs = len(out_nodes)
-  return computation_state_carry.extract_state_from_tuple_op(c, call_op, nr_outs)
+  regular_outs, _ = state_carry.decompose_tuple_op(c, call_op, nr_outs, uses_state)
+  return xops.Tuple(c, regular_outs)
+
 
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 

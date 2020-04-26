@@ -697,6 +697,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
+  xla.state_carry.end_computation()
   built = c.Build(xops.Tuple(c, out_nodes))
 
   if devices is None:

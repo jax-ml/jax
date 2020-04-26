@@ -332,6 +332,7 @@ def xla_computation(fun: Callable,
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
+    xla.state_carry.end_computation()
     return c.Build(xc.ops.Tuple(c, outs))
   return computation_maker
 
