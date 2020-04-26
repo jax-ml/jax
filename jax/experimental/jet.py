@@ -20,6 +20,7 @@ import numpy as onp
 import jax
 from jax import core
 from jax.util import unzip2
+from jax import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
 import jax.linear_util as lu
@@ -177,7 +178,7 @@ defzero(lax.floor_p)
 defzero(lax.ceil_p)
 defzero(lax.round_p)
 defzero(lax.sign_p)
-defzero(lax.stop_gradient_p)
+defzero(ad_util.stop_gradient_p)
 
 
 def deflinear(prim):
@@ -291,6 +292,41 @@ def _log_taylor(primals_in, series_in):
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.log_p] = _log_taylor
+
+def _sqrt_taylor(primals_in, series_in):
+  return jet(lambda x: x ** 0.5, primals_in, series_in)
+jet_rules[lax.sqrt_p] = _sqrt_taylor
+
+def _rsqrt_taylor(primals_in, series_in):
+  return jet(lambda x: x ** -0.5, primals_in, series_in)
+jet_rules[lax.rsqrt_p] = _rsqrt_taylor
+
+def _asinh_taylor(primals_in, series_in):
+  return jet(lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)), primals_in, series_in)
+jet_rules[lax.asinh_p] = _asinh_taylor
+
+def _acosh_taylor(primals_in, series_in):
+  return jet(lambda x: lax.log(x + lax.sqrt(lax.square(x) - 1)), primals_in, series_in)
+jet_rules[lax.acosh_p] = _acosh_taylor
+
+def _atanh_taylor(primals_in, series_in):
+  return jet(lambda x: 0.5 * lax.log(lax.div(1 + x, 1 - x)), primals_in, series_in)
+jet_rules[lax.atanh_p] = _atanh_taylor
+
+def _atan2_taylor(primals_in, series_in):
+  x, y = primals_in
+  primal_out = lax.atan2(x, y)
+
+  x, series = jet(lax.div, primals_in, series_in)
+  c0, cs = jet(lambda x: lax.div(1, 1 + lax.square(x)), (x, ), (series, ))
+  c = [c0] + cs
+  u = [x] + series
+  v = [primal_out] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+  primal_out, *series_out = v
+  return primal_out, series_out
+jet_rules[lax.atan2_p] = _atan2_taylor
 
 def _log1p_taylor(primals_in, series_in):
   x, = primals_in

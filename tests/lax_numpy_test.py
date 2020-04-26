@@ -1730,7 +1730,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = jnp.array(a)
     assert ans == 3.
 
-  @jtu.skip_on_devices("tpu")  # TODO(b/32368900): TPUs don't support uint8 yet.
   def testMemoryView(self):
     ans = jnp.array(bytearray(b'\x2a'))
     self.assertAllClose(
@@ -2577,13 +2576,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for x in (onp.nan, -onp.inf, -100., -2., -1., 0., 1., 2., 100., onp.inf,
               jnp.finfo(dtype).max, onp.sqrt(jnp.finfo(dtype).max),
               onp.sqrt(jnp.finfo(dtype).max) * 2.):
-      if onp.isnan(x) and op in ("sinh", "cosh", "expm1", "exp"):
-        # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
-        # NaN inputs.
-        continue
-      if (op in ("sin", "cos", "tan", "arctan") and
+      if (op in ("sin", "cos", "tan") and
           jtu.device_under_test() == "tpu"):
-        continue  # TODO(b/132196789, b/134175194): fix and reenable.
+        continue  # TODO(b/132196789): fix and reenable.
       x = dtype(x)
       expected = onp_op(x)
       actual = jnp_op(x)

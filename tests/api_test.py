@@ -876,8 +876,15 @@ class APITest(jtu.JaxTestCase):
       return np.zeros((3, 4))
 
     xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
-    out_shape, = xla_comp.GetReturnValueShape().tuple_shapes()
+    out_shape, = xla_comp.GetProgramShape().result_shape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
+
+  def test_xla_computation_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
+    self.assertIn('constant(3)', xla_comp.GetHloText())
 
   def test_jit_device(self):
     device = xb.devices()[-1]
@@ -1503,6 +1510,16 @@ class APITest(jtu.JaxTestCase):
 
     jax.grad(scan_bug)(1.0)  # doesn't crash
 
+  def test_remat_jit_static_argnum(self):
+    # https://github.com/google/jax/issues/2833
+    def f(a_bool, y):
+      if a_bool:
+        return y + 1
+      else:
+        return y
+
+    api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -1844,6 +1861,14 @@ class JaxprTest(jtu.JaxTestCase):
                     name=inner ] c b a
   in (d,) }
                               """, str(jaxpr))
+
+  def test_make_jaxpr_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    jaxpr = api.make_jaxpr(f, static_argnums=(1,))(2, 3)
+    self.assertIn('3', str(jaxpr))
+
 
 class LazyTest(jtu.JaxTestCase):
 

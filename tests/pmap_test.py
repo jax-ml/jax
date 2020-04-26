@@ -13,9 +13,11 @@
 # limitations under the License.
 
 
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import os
 from random import shuffle
+import threading
 from unittest import SkipTest
 
 import numpy as onp
@@ -900,8 +902,8 @@ class PmapTest(jtu.JaxTestCase):
     x = x.reshape(2 * device_count, 2, 2, 3)  # axis merge of the wrong size
     self.assertIsInstance(x, xla.DeviceArray)  # should have forced collection
 
-  @jtu.skip_on_devices("gpu")
-  def DISABLED_testSoftPmapAllToAll(self):
+  def testSoftPmapAllToAll(self):
+    raise SkipTest("the underlying code here is broken")  # TODO(mattjj)
     n = 4 * xla_bridge.device_count()
     def f(x):
       return lax.all_to_all(x, 'i', 0, 0)
@@ -1037,6 +1039,49 @@ class PmapTest(jtu.JaxTestCase):
     tol = 1e-1 if jtu.device_under_test() == "tpu" else 1e-3
     self.assertAllClose(result, expected, check_dtypes=False, atol=tol, rtol=tol)
 
+  def testAxisIndexRemat(self):
+    # https://github.com/google/jax/issues/2716
+    n = len(jax.devices())
+
+    def f(key):
+      key = random.fold_in(key, jax.lax.axis_index('i'))
+      return random.bernoulli(key, p=0.5)
+
+    keys = random.split(random.PRNGKey(0), n)
+    jax.pmap(jax.remat(f), axis_name='i')(keys)
+
+  def testPmapMapVmapCombinations(self):
+    # https://github.com/google/jax/issues/2822
+    def vv(x, y):
+      """Vector-vector multiply"""
+      return np.dot(x, y)
+
+    def matrix_vector(x, y, parallel=True):
+      """Matrix vector multiply. First batch it and then row by row"""
+      fv = lambda z: lax.map(lambda j: vv(j, y), z)
+      if parallel:
+        # split leading axis in two
+        new_x = x.reshape((jax.device_count(), -1, *x.shape[1:]))
+        # apply map
+        new_res = pmap(fv)(new_x)
+        # reshape back out
+        res = new_res.reshape(x.shape[0], *new_res.shape[2:])
+      else:
+        res = fv(x)
+      return res
+
+    x = random.normal(random.PRNGKey(1), (80, 5))
+    y = random.normal(random.PRNGKey(1), (10, 5))
+
+    result1 = vmap(lambda b: matrix_vector(x, b, True))(y)       # vmap + pmap
+    result2 = lax.map(lambda b: matrix_vector(x, b, False), y)   # map + map
+    result3 = lax.map(lambda b: matrix_vector(x, b, True), y)    # map + pmap
+    result4 = np.stack([matrix_vector(x, b, False) for b in y])  # none + map
+
+    self.assertAllClose(result1, result2, check_dtypes=False, atol=1e-3, rtol=1e-3)
+    self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-3, rtol=1e-3)
+    self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-3, rtol=1e-3)
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
@@ -1167,6 +1212,35 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     ans = f(x, y)
     expected = onp.sin(x + y[None])
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+
+class ShardedDeviceArrayTest(jtu.JaxTestCase):
+
+  def testThreadsafeIndexing(self):
+    # NOTE(skye): I picked these values to be big enough to cause interesting
+    # execution overlap, but small enough to not use too much memory. YMMV.
+    shape = (8, 8000, 1000)
+
+    if jax.device_count() < shape[0]:
+      raise SkipTest(f"requires {shape[0]} devices")
+
+    x = np.arange(np.prod(shape)).reshape(shape)
+    sharded_x = pmap(lambda x: x)(x)
+
+    num_threads = 10
+    futures = []
+    expected = []
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+      for i in range(num_threads):
+        idx = i % shape[0]
+        # Mix together different kinds of indices
+        if i % 2 == 0:
+          idx = slice(idx, idx + 1)
+        futures.append(executor.submit(
+            lambda: [sharded_x[idx] for _ in range(10)][0]))
+        expected.append(x[idx])
+      actual = [f.result() for f in futures]
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
 
 class SpecToIndicesTest(jtu.JaxTestCase):

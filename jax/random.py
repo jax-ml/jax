@@ -32,6 +32,7 @@ from . import dtypes
 from .api import jit, vmap
 from .numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
+from jax.lib import xla_client
 from jax.lib import cuda_prng
 from jax import core
 from jax import abstract_arrays
@@ -180,9 +181,11 @@ def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
   rank = len(shape)
   def _broadcast(x):
     ndims = c.GetShape(x).rank()
-    return c.BroadcastInDim(x, shape, tuple(range(rank - ndims, rank)))
+    return xla_client.ops.BroadcastInDim(x, shape,
+                                         tuple(range(rank - ndims, rank)))
   return cuda_prng.threefry2x32(
-      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+      xla_bridge.computation_builder_shim(c),
+      (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True
@@ -429,6 +432,32 @@ def shuffle(key: np.ndarray, x: np.ndarray, axis: int = 0) -> np.ndarray:
     A shuffled version of x.
   """
   return _shuffle(key, x, axis)
+
+
+def permutation(key, x):
+  """
+  Permute elements of an array along its first axis or return a permuted range.
+
+  Args:n
+    key: a PRNGKey used as the random key.
+    x: the array or integer range to be shuffled.
+
+  Returns:
+    A shuffled version of x or array range
+  """
+  if not onp.ndim(x):
+    # scalar case, must be a concrete integer
+    if not onp.issubdtype(lax.dtype(x), onp.integer):
+      raise TypeError("x must be an integer or at least 1-dimensional")
+    x = int(x)
+    return _shuffle(key, np.arange(x), 0)
+  elif onp.ndim(x) == 1:
+    return _shuffle(key, x, 0)
+  else:
+    msg = ("permutation for >1d inputs x not yet implemented, see "
+           "https://github.com/google/jax/issues/2066 for updates.")
+    raise NotImplementedError(msg)
+
 
 @partial(jit, static_argnums=(2,))
 def _shuffle(key, x, axis):
