@@ -206,15 +206,12 @@ def _odeint_fwd(func, rtol, atol, mxstep, y0, ts, *args):
 def _odeint_rev(func, rtol, atol, mxstep, res, g):
   ys, ts, args = res
 
-  def aug_dynamics(augmented_state, t, *res):
+  def aug_dynamics(augmented_state, t, *args):
     """Original system augmented with vjp_y, vjp_t and vjp_args."""
     y, y_bar, *_ = augmented_state
-    # Even though `aug_dynamics` is a closure with `ts` defined in its
-    # environment we need to pass in `res` to keep the tracer happy, avoiding
-    # UnexpectedTracerError exceptions.
-    _, ts, args = res
-    # `t` here is backwards time from `ts[-1]`, not forwards time.
-    y_dot, vjpfun = jax.vjp(func, y, ts[-1] - t, *args)
+    # `t` here is negatice time, so we need to negate again to get back to
+    # normal time. See the `odeint` invocation in `scan_fun` below.
+    y_dot, vjpfun = jax.vjp(func, y, -t, *args)
     return (-y_dot, *vjpfun(y_bar))
 
   y_bar = g[-1]
@@ -229,8 +226,8 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
     # Run augmented system backwards to previous observation
     _, y_bar, t0_bar, args_bar = odeint(
         aug_dynamics, (ys[i], y_bar, t0_bar, args_bar),
-        np.array([ts[-1] - ts[i], ts[-1] - ts[i - 1]]),
-        *res, rtol=rtol, atol=atol, mxstep=mxstep)
+        np.array([-ts[i], -ts[i - 1]]),
+        *args, rtol=rtol, atol=atol, mxstep=mxstep)
     y_bar, t0_bar, args_bar = tree_map(op.itemgetter(1), (y_bar, t0_bar, args_bar))
     # Add gradient from current output
     y_bar = y_bar + g[i - 1]
