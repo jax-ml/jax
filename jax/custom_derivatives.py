@@ -24,7 +24,7 @@ from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
 from .util import safe_zip, safe_map, unzip2, split_list, curry
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
-from .ad_util import zero
+from .ad_util import zero, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
@@ -68,7 +68,7 @@ def _memoize(thunk):
   return memoized
 
 def _initial_style_jaxpr(fun, in_avals):
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
                                                bottom=True, stage_out=False)
   assert not any(isinstance(c, core.Tracer) for c in consts)
@@ -81,6 +81,15 @@ def sum_tangents(x, *xs):
 
 def zeros_like_pytree(x):
   return tree_map(lambda _: zero, x)
+
+def stop_gradient(x):
+  return tree_map(_stop_gradient, x)
+
+def _stop_gradient(x):
+  if isinstance(x, core.Tracer) or core.valid_jaxtype(x):
+    return stop_gradient_p.bind(x)
+  else:
+    return x
 
 
 ### JVPs
@@ -96,7 +105,7 @@ class custom_jvp:
   differentiation of the underlying function's implementation. There is a single
   instance method, ``defjvp``, which defines the custom JVP rule.
 
-  For example:
+  For example::
 
     import jax.numpy as np
 
@@ -139,7 +148,7 @@ class custom_jvp:
     Returns:
       None.
 
-    Example:
+    Example::
 
       import jax.numpy as np
 
@@ -158,7 +167,28 @@ class custom_jvp:
     self.jvp = jvp
 
   def defjvps(self, *jvps):
-    """Convenience wrapper for defining JVPs for each argument separately."""
+    """Convenience wrapper for defining JVPs for each argument separately.
+
+    This convenience wrapper cannot be used together with ``nondiff_argnums``.
+
+    Args:
+      *jvps: a sequence of functions, one for each positional argument of the
+        ``custom_jvp`` function. Each function takes as arguments the tangent
+        value for the corresponding primal input, the primal output, and the
+        primal inputs. See the example below.
+
+    Returns:
+      None.
+
+    Example::
+
+      @jax.custom_jvp
+      def f(x, y):
+        return np.sin(x) * y
+
+      f.defjvps(lambda x_dot, primal_out, x, y: np.cos(x) * x_dot * y,
+                lambda y_dot, primal_out, x, y: -np.sin(x) * y_dot)
+    """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
 
@@ -178,7 +208,10 @@ class custom_jvp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args, left=True)
@@ -231,6 +264,7 @@ def _flatten_jvp(in_tree, *args):
   yield primals_out + tangents_out, out_tree
 
 def _custom_jvp_call_bind(prim, fun, jvp, *args):
+  args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
   level = (core.trace_state.trace_stack.next_level(True)
            if top_trace is None else top_trace.level)
@@ -272,7 +306,8 @@ custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 
 def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk):
   jvp_jaxpr = jvp_jaxpr_thunk()
-  outs = core.jaxpr_as_fun(jvp_jaxpr)(*(primals + tangents))
+  tangents = map(ad.instantiate_zeros, primals, tangents)
+  outs = core.jaxpr_as_fun(jvp_jaxpr)(*primals, *tangents)
   return split_list(outs, [len(outs) // 2])
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
@@ -333,7 +368,7 @@ class custom_vjp:
 
   This decorator precludes the use of forward-mode automatic differentiation.
 
-  For example:
+  For example::
 
     import jax.numpy as np
 
@@ -387,7 +422,7 @@ class custom_vjp:
     Returns:
       None.
 
-    Example:
+    Example::
 
       import jax.numpy as np
 
@@ -413,7 +448,10 @@ class custom_vjp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)
@@ -469,6 +507,7 @@ def _flatten_bwd(in_tree, out_trees, *args):
   yield cts_in
 
 def _custom_vjp_call_bind(prim, fun, fwd, bwd, *args, out_trees):
+  args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
   level = (core.trace_state.trace_stack.next_level(True)
            if top_trace is None else top_trace.level)

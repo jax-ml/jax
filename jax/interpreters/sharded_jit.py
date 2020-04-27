@@ -138,7 +138,7 @@ result_handlers[ConcreteArray] = _array_result_handler
 def _sharded_callable(fun: lu.WrappedFun, partitions, name, *abstract_args):
   nrep = 1  # TODO generalize
 
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
+  in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
 
   if not jaxpr.eqns and all(outvar is core.unitvar for outvar in jaxpr.outvars):
@@ -203,8 +203,7 @@ def _sharded_jit_translation_rule(c, axis_env, freevar_nodes,
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecuteOnLocalDevices(
-      list(input_bufs), tuple_arguments=False)
+  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
   return out_handler(out_bufs)
 
 

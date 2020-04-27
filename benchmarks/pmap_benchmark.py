@@ -25,7 +25,7 @@ from jax import numpy as np
 from jax import pmap
 from jax.config import config
 
-import benchmark
+from benchmarks import benchmark
 
 import numpy as onp
 
@@ -50,12 +50,12 @@ def pmap_shard_args_benchmark():
     return benchmark_fn
 
   params = []
-  for nargs in (10, 100, 101, 500):
-    nshards = min(4, jax.local_device_count())
+  for nargs in (10, 100, 101, 500, 1000, 5000):
+    nshards = min(8, jax.local_device_count())
     params.append({"nargs": nargs, "nshards": nshards})
   for nshards in (2, 4, 8, 100, 500):
     if nshards > jax.local_device_count(): continue
-    params.append({"nargs": 10, "nshards": nshards})
+    params.append({"nargs": 100, "nshards": nshards})
   benchmark.benchmark_suite(get_benchmark_fn, params, "pmap_shard_args")
 
 
@@ -75,18 +75,46 @@ def pmap_shard_outputs_benchmark():
     return benchmark_fn
 
   params = []
-  for nouts in (10, 100, 500):
-    nshards = min(4, jax.local_device_count())
+  for nouts in (10, 100, 500, 1000, 5000):
+    nshards = min(8, jax.local_device_count())
     params.append({"nouts": nouts, "nshards": nshards})
   for nshards in (2, 4, 8, 100, 500):
     if nshards > jax.local_device_count(): continue
-    params.append({"nouts": 10, "nshards": nshards})
+    params.append({"nouts": 100, "nshards": nshards})
   benchmark.benchmark_suite(get_benchmark_fn, params, "pmap_shard_outputs")
+
+
+def sharded_device_array_indexing_benchmark():
+  """Benchmark focusing on ShardedDeviceArray indexing."""
+  def get_benchmark_fn(indices_fn):
+    nshards = min(8, jax.local_device_count())
+    shape = (nshards, 8, 8)
+    def benchmark_fn():
+      arr = pmap(lambda x: x)(np.arange(np.prod(shape)).reshape(shape))
+      indices = indices_fn()
+      for idx in indices:
+        arr[idx]
+    return benchmark_fn
+
+  num_internal_iters = 1000
+
+  def integer_indices():
+    return (i for _ in range(num_internal_iters) for i in range(8))
+
+  def integer_2D_indices():
+    return ((i,i) for _ in range(num_internal_iters) for i in range(8))
+
+  params = []
+  params.append({"indices_fn": integer_indices})
+  params.append({"indices_fn": integer_2D_indices})
+  benchmark.benchmark_suite(get_benchmark_fn, params,
+                            "ShardedDeviceArray_indexing")
 
 
 def run_all_benchmarks():
   pmap_shard_args_benchmark()
   pmap_shard_outputs_benchmark()
+  sharded_device_array_indexing_benchmark()
 
 
 def main(unused_argv):

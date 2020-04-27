@@ -84,7 +84,8 @@ def erfinv(x):
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-logit.defjvp(lambda g, ans, x: g / (x * (1 - x)))
+logit.defjvps(
+    lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(lax._const(x, 1), x))))
 
 
 @api.custom_jvp

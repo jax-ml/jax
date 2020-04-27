@@ -50,15 +50,19 @@ def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, sum_match=False):
   return _batch_fun(fun, sum_match, in_dims, out_dims, out_dim_dests)
 
 @lu.transformation
-def _batch_fun(sum_match, in_dims, out_dims, out_dim_dests, *in_vals, **params):
+def _batch_fun(sum_match, in_dims, out_dims_thunk, out_dim_dests, *in_vals, **params):
   in_dims = in_dims() if callable(in_dims) else in_dims
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   with new_master(BatchTrace) as master:
     out_vals = yield (master, in_dims,) + in_vals, params
     del master
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-  out_vals = map(partial(matchaxis, size, sum_match=sum_match),
-                 out_dims(), out_dim_dests, out_vals)
+  out_dims = out_dims_thunk()
+  for od, od_dest in zip(out_dims, out_dim_dests):
+    if od is not None and not isinstance(od_dest, int) and not od_dest is last and not sum_match:
+      msg = f"vmap has mapped output but out_axes is {od_dest}"
+      raise ValueError(msg)
+  out_vals = map(partial(matchaxis, size, sum_match=sum_match), out_dims, out_dim_dests, out_vals)
   yield out_vals
 
 def batch_fun2(fun : lu.WrappedFun, in_dims):
@@ -136,16 +140,21 @@ class BatchTrace(Trace):
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
-    if call_primitive in pe.map_primitives:
-      return self.process_map(call_primitive, f, tracers, params)
+    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    if all(bdim is not_mapped for bdim in dims):
+      return call_primitive.bind(f, *vals, **params)
     else:
-      vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
-      if all(bdim is not_mapped for bdim in dims):
-        return call_primitive.bind(f, *vals, **params)
-      else:
-        f, dims_out = batch_subtrace(f, self.master, dims)
-        vals_out = call_primitive.bind(f, *vals, **params)
-        return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+      f, dims_out = batch_subtrace(f, self.master, dims)
+      vals_out = call_primitive.bind(f, *vals, **params)
+      return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out())]
+
+  def post_process_call(self, call_primitive, out_tracers, params):
+    vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    master = self.master
+    def todo(vals):
+      trace = BatchTrace(master, core.cur_sublevel())
+      return map(partial(BatchTracer, trace), vals, dims)
+    return vals, todo
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
@@ -162,12 +171,13 @@ class BatchTrace(Trace):
       dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
-  def post_process_call(self, call_primitive, out_tracers, params):
+  def post_process_map(self, call_primitive, out_tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
     master = self.master
-    def todo(x):
+    def todo(vals):
       trace = BatchTrace(master, core.cur_sublevel())
-      return map(partial(BatchTracer, trace), x, dims)
+      return [BatchTracer(trace, v, d + 1 if d is not not_mapped else d)
+              for v, d in zip(vals, dims)]
     return vals, todo
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
@@ -354,7 +364,7 @@ def batch_jaxpr(jaxpr, size, batched, instantiate):
   f, batched_out = batched_traceable(f, size, batched, instantiate)
   avals_in = [_promote_aval_rank(size, a) if b else a
               for a, b in zip(jaxpr.in_avals, batched)]
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in avals_in]
+  in_pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
   jaxpr_out, pvals_out, consts_out = pe.trace_to_jaxpr(f, in_pvals, instantiate=True)
   avals_out, _ = unzip2(pvals_out)
   jaxpr_out = core.TypedJaxpr(jaxpr_out, consts_out, avals_in, avals_out)

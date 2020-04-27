@@ -19,13 +19,16 @@ import re
 import itertools as it
 import os
 from typing import Dict, Sequence, Union
-from unittest import SkipTest
+import sys
+import unittest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
+import scipy
 
 from . import api
 from . import core
@@ -229,6 +232,24 @@ def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
 
 def check_grads(f, args, order,
                 modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
+  """Check gradients from automatic differentiation against finite differences.
+
+  Gradients are only checked in a single randomly chosen direction, which
+  ensures that the finite difference calculation does not become prohibitively
+  expensive even for large input/output spaces.
+
+  Args:
+    f: function to check at ``f(*args)``.
+    args: tuple of argument values.
+    order: forward and backwards gradients up to this order are checked.
+    modes: lists of gradient modes to check ('fwd' and/or 'rev').
+    atol: absolute tolerance for gradient equality.
+    rtol: relative tolerance for gradient equality.
+    eps: step size used for finite differences.
+
+  Raises:
+    AssertionError: if gradients do not match.
+  """
   args = tuple(args)
   eps = eps or EPS
 
@@ -314,6 +335,11 @@ def supported_dtypes():
             dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
             onp.complex64, onp.complex128}
 
+def skip_if_unsupported_type(dtype):
+  if dtype not in supported_dtypes():
+    raise unittest.SkipTest(
+      f"Type {dtype} not supported on {device_under_test()}")
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
@@ -322,8 +348,8 @@ def skip_on_devices(*disabled_devices):
       device = device_under_test()
       if device in disabled_devices:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        raise SkipTest('{} not supported on {}.'
-                       .format(test_name, device.upper()))
+        raise unittest.SkipTest(
+          f"{test_name} not supported on {device.upper()}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
@@ -337,11 +363,17 @@ def skip_on_flag(flag_name, skip_value):
       flag_value = getattr(FLAGS, flag_name)
       if flag_value == skip_value:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        raise SkipTest('{} not supported when FLAGS.{} is {}'
-                       .format(test_name, flag_name, flag_value))
+        raise unittest.SkipTest(
+          f"{test_name} not supported when FLAGS.{flag_name} is {flag_value}")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
+
+# TODO(phawkins): bug https://github.com/google/jax/issues/432
+skip_on_mac_linalg_bug = partial(
+  unittest.skipIf,
+  sys.platform == "darwin" and scipy.version.version > "1.1.0",
+  "Test fails on Mac with new scipy (issue #432)")
 
 
 def format_test_name_suffix(opname, shapes, dtypes):
@@ -451,8 +483,8 @@ def rand_small():
   return partial(_rand_dtype, randn, scale=1e-3)
 
 
-def rand_not_small():
-  post = lambda x: x + onp.where(x > 0, 10., -10.)
+def rand_not_small(offset=10.):
+  post = lambda x: x + onp.where(x > 0, offset, -offset)
   randn = npr.RandomState(0).randn
   return partial(_rand_dtype, randn, scale=3., post=post)
 
@@ -664,6 +696,11 @@ def cases_from_gens(*gens):
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
 
+  # TODO(mattjj): this obscures the error messages from failures, figure out how
+  # to re-enable it
+  # def tearDown(self) -> None:
+  #   assert core.reset_trace_state()
+
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
@@ -761,3 +798,10 @@ class JaxTestCase(parameterized.TestCase):
     numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)
+
+
+@contextmanager
+def ignore_warning(**kw):
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", **kw)
+    yield

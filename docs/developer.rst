@@ -110,6 +110,16 @@ JAX_SKIP_SLOW_TESTS=1.
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
+Type checking
+=============
+
+We use ``mypy`` to check the type hints. To check types locally the same way
+as Travis checks them::
+
+  pip install mypy
+  mypy --config=mypy.ini --show-error-codes jax
+
+
 Update documentation
 ====================
 

@@ -35,7 +35,6 @@ from jax import api, core, lax, lax_reference
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
-from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
@@ -204,7 +203,7 @@ class APITest(jtu.JaxTestCase):
     self.assertRaisesRegex(
       TypeError, "Incompatible shapes for dot: got \\(3L?,\\) and \\(4L?,\\).",
       lambda: grad(f)(onp.zeros(3), onp.zeros(4)))
-  
+
   def test_abstract_error_message(self):
     for castfun in [float, complex, int]:
       def f(x):
@@ -212,7 +211,7 @@ class APITest(jtu.JaxTestCase):
 
       self.assertRaisesRegex(
           TypeError,
-          "Try using `value.astype\({}\)` instead".format(castfun.__name__),
+          f"Try using `x.astype\\({castfun.__name__}\\)` instead.",
           lambda: jit(f)(1.0))
 
   def test_switch_value_jit(self):
@@ -225,7 +224,9 @@ class APITest(jtu.JaxTestCase):
 
     assert grad(f)(1.0) == 1.0
     assert grad(f)(-1.0) == -1.0
-    jtu.check_raises(lambda: jit(f)(1), TypeError, concretization_err_msg(bool))
+    with self.assertRaisesRegex(core.ConcretizationTypeError,
+                                "Abstract tracer value encountered where concrete value is expected"):
+      jit(f)(1)
 
   def test_range_err(self):
     def f(x, n):
@@ -241,12 +242,12 @@ class APITest(jtu.JaxTestCase):
         lambda: jit(f)(0, 5))
 
   def test_casts(self):
-    for castfun in [float, complex, hex, oct, int]:
+    for castfun in [hex, oct, int]:
       f = lambda x: castfun(x)
       self.assertRaisesRegex(
           TypeError,
           "('JaxprTracer' object cannot be interpreted as an integer"
-          "|Abstract value passed to .*)", lambda: jit(f)(0))
+          "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
@@ -324,6 +325,15 @@ class APITest(jtu.JaxTestCase):
 
     y = api.device_put(x)
     self.assertEqual(y.device_buffer.device(), default_device)
+
+  def test_jit_on_all_devices(self):
+    # Verifies we can run the same computation on every device present, even
+    # if they are, for example, different models of GPU.
+    data = onp.random.rand(1000).astype(onp.float32)
+    f = api.jit(np.negative)
+    for device in jax.local_devices():
+      x = device_put(data, device=device)
+      onp.testing.assert_array_equal(-data, f(x))
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
@@ -838,6 +848,23 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(param_shapes[0].xla_element_type(),
                      xb.xla_client.PrimitiveType.TUPLE)
 
+  def test_xla_computation_duck_typing(self):
+    def foo(x, y, z):
+      return x + y + z
+
+    x = jax.ShapeDtypeStruct((), onp.float32)
+    y = jax.ShapeDtypeStruct((), onp.float32)
+    z = jax.ShapeDtypeStruct((), onp.float32)
+
+    c = api.xla_computation(foo)(x, y, z)
+    self.assertEqual(len(c.GetProgramShape().parameter_shapes()), 3)
+
+    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
+    param_shapes = c.GetProgramShape().parameter_shapes()
+    self.assertEqual(len(param_shapes), 1)
+    self.assertEqual(param_shapes[0].xla_element_type(),
+                     xb.xla_client.PrimitiveType.TUPLE)
+
   def test_staging_out_multi_replica(self):
     def f(x):
       return api.pmap(np.mean)(x)
@@ -849,8 +876,15 @@ class APITest(jtu.JaxTestCase):
       return np.zeros((3, 4))
 
     xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
-    out_shape, = xla_comp.GetReturnValueShape().tuple_shapes()
+    out_shape, = xla_comp.GetProgramShape().result_shape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
+
+  def test_xla_computation_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
+    self.assertIn('constant(3)', xla_comp.GetHloText())
 
   def test_jit_device(self):
     device = xb.devices()[-1]
@@ -860,7 +894,13 @@ class APITest(jtu.JaxTestCase):
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
-                            lambda: api.jit(3))
+                           lambda: api.jit(3))
+
+  def test_jit_of_generator(self):
+    def gen(x):
+      yield x
+    self.assertRaisesRegex(TypeError, "Expected a function, got a generator function.*",
+                           lambda: api.jit(gen))
 
   def test_issue_1062(self):
     # code from https://github.com/google/jax/issues/1062 @shoyer
@@ -995,17 +1035,17 @@ class APITest(jtu.JaxTestCase):
     X = onp.random.randn(10, 4)
     U = onp.random.randn(10, 2)
 
-    self.assertRaisesRegex(
+    with self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
         r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
         "so\n"
         "arg 0 has an axis to be mapped of size 10\n"
-        "arg 1 has an axis to be mapped of size 2",
-        lambda: api.vmap(h, in_axes=(0, 1))(X, U))
+        "arg 1 has an axis to be mapped of size 2"):
+      api.vmap(h, in_axes=(0, 1))(X, U)
 
-    self.assertRaisesRegex(
+    with self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
@@ -1013,15 +1053,44 @@ class APITest(jtu.JaxTestCase):
         r"arg 2 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
         "so\n"
         "args 0, 2 have axes to be mapped of size 10\n"
-        "arg 1 has an axis to be mapped of size 2",
-        lambda: api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X))
+        "arg 1 has an axis to be mapped of size 2"):
+      api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X)
 
-    self.assertRaisesRegex(
+    with self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
         "the tree of axis sizes is:\n"
-        r"\(10, \[2, 2\]\)",
-        lambda: api.vmap(h, in_axes=(0, 1))(X, [U, U]))
+        r"\(10, \[2, 2\]\)"):
+      api.vmap(h, in_axes=(0, 1))(X, [U, U])
+
+    with self.assertRaisesRegex(
+        ValueError, "vmap got arg 0 of rank 0 but axis to be mapped 0"):
+      # The mapped inputs cannot be scalars
+      api.vmap(lambda x: x)(1.)
+
+    with self.assertRaisesRegex(
+        ValueError, re.escape("vmap got arg 0 of rank 1 but axis to be mapped [1. 2.]")):
+      api.vmap(lambda x: x, in_axes=(np.array([1., 2.]),))(np.array([1., 2.]))
+
+    with self.assertRaisesRegex(
+        ValueError, "vmap must have at least one non-None in_axes"):
+      # If the output is mapped, there must be a non-None in_axes
+      api.vmap(lambda x: x, in_axes=None)(np.array([1., 2.]))
+
+    with self.assertRaisesRegex(
+        ValueError, "vmap got arg 0 of rank 1 but axis to be mapped 1"):
+      api.vmap(lambda x: x, in_axes=1)(np.array([1., 2.]))
+
+    # Error is: TypeError: only integer scalar arrays can be converted to a scalar index
+    with self.assertRaisesRegex(
+        ValueError, "axes specification must be a tree prefix of the corresponding value"):
+      api.vmap(lambda x: x, in_axes=0, out_axes=(2, 3))(np.array([1., 2.]))
+
+    with self.assertRaisesRegex(
+        ValueError, "vmap has mapped output but out_axes is None"):
+      # If the output is mapped, then there must be some out_axes specified
+      api.vmap(lambda x: x, out_axes=None)(np.array([1., 2.]))
+
 
   def test_vmap_structured_in_axes(self):
 
@@ -1441,6 +1510,16 @@ class APITest(jtu.JaxTestCase):
 
     jax.grad(scan_bug)(1.0)  # doesn't crash
 
+  def test_remat_jit_static_argnum(self):
+    # https://github.com/google/jax/issues/2833
+    def f(a_bool, y):
+      if a_bool:
+        return y + 1
+      else:
+        return y
+
+    api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -1719,18 +1798,19 @@ class JaxprTest(jtu.JaxTestCase):
       return lax.scan(body, 0., (arr, ones))
 
     jaxpr = api.make_jaxpr(func11)(onp.ones(16), 5.)
+    # TODO(#2640): update docs/jaxpr.rst to reflect new jaxpr
     self.assertMultiLineStrippedEqual("""
 { lambda c ; a b.
   let d e = scan[ forward=True
-                  jaxpr={ lambda  ; a b c d e.
-                          let f = mul c e
-                              g = add b f
-                              h = add g a
-                          in (h, b) }
+                  jaxpr={ lambda  ; f a b c.
+                          let d = mul b c
+                              e = add a d
+                              g = add e f
+                          in (g, a) }
                   length=16
-                  linear=(False, False, False, True, False)
+                  linear=(False, False, False, False)
                   num_carry=1
-                  num_consts=1 ] b 0.0 a * c
+                  num_consts=1 ] b 0.0 a c
   in (d, e) }
                         """, str(jaxpr))
 
@@ -1781,6 +1861,14 @@ class JaxprTest(jtu.JaxTestCase):
                     name=inner ] c b a
   in (d,) }
                               """, str(jaxpr))
+
+  def test_make_jaxpr_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    jaxpr = api.make_jaxpr(f, static_argnums=(1,))(2, 3)
+    self.assertIn('3', str(jaxpr))
+
 
 class LazyTest(jtu.JaxTestCase):
 
@@ -2399,6 +2487,34 @@ class CustomJVPTest(jtu.JaxTestCase):
     api.eval_shape(expit, np.ones((2, 3)))
     api.eval_shape(api.grad(lambda x: expit(x).sum()), np.ones((2, 3)))
 
+  def test_jaxpr_zeros(self):
+    # from https://github.com/google/jax/issues/2657
+    @api.custom_jvp
+    def f(A, b):
+        return A @ b
+
+    def f_jvp(primals, tangents):
+        A, b = primals
+        dA, db = tangents
+        z = f(A, b)
+        dz = A @ db + dA @ b
+        return z, dz
+
+    f.defjvp(f_jvp)
+
+    def experiment(theta):
+        def step(q, _):
+            z = f(np.eye(3), np.ones(3) * theta)
+            q += z[0]
+            return q, q
+
+        q = 0.
+        q, _ = lax.scan(step, q, None, 4)
+        return q
+
+    grad(experiment)(1.)  # doesn't crash
+
+
 class CustomVJPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -2748,6 +2864,41 @@ class CustomVJPTest(jtu.JaxTestCase):
     ans = jax.grad(g)(2.)  # don't crash
     expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_lowering_out_of_traces(self):
+    # https://github.com/google/jax/issues/2578
+
+    class F(collections.namedtuple("F", ["a"])):
+      def __call__(self, x):
+        return jax.nn.relu(self.a) * x
+
+    @jax.jit
+    def g(f, x):
+      return f(x)
+
+    jax.grad(g, argnums=(1,))(F(2.0), 0.)  # doesn't crash
+
+  def test_nondiff_argnums_stop_gradient(self):
+    # https://github.com/google/jax/issues/2784
+    @partial(api.custom_vjp, nondiff_argnums=(0, 1))
+    def _clip_gradient(lo, hi, x):
+      return x  # identity function
+
+    def clip_gradient_fwd(lo, hi, x):
+        # return x, None
+        return x, (hi, )
+
+    def clip_gradient_bwd(lo, hi, _, g):
+        return (np.clip(g, lo, hi),)
+
+    _clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
+
+    def clip_gradient(x):
+        lo = -1
+        hi = x + 1  # causes things to break
+        return _clip_gradient(lo, hi, x)
+
+    jax.grad(clip_gradient)(1.)  # doesn't crash
 
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
