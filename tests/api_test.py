@@ -2863,7 +2863,10 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     ans = jax.grad(g)(2.)  # don't crash
     expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    atol = {onp.float64: 5e-15}
+    rtol = {onp.float64: 2e-15}
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
 
   def test_lowering_out_of_traces(self):
     # https://github.com/google/jax/issues/2578
