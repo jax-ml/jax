@@ -171,8 +171,8 @@ def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
   def scan_fun(carry, target_t):
 
     def cond_fun(state):
-      i, _, _, t, _, _, _ = state
-      return (t < target_t) & (i < mxstep)
+      i, _, _, t, dt, _, _ = state
+      return (t < target_t) & (i < mxstep) & (dt > 0)
 
     def body_fun(state):
       i, y, f, t, dt, last_t, interp_coeff = state
