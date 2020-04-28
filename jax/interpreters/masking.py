@@ -102,25 +102,18 @@ def _ensure_poly(p):
   return Poly({Mon(): p})
 
 class Poly(dict):
-  """Polynomial with integer coefficients,
-  usable as element in a polymorphic shape.
-
-  type Poly = Map Mon Int -- monomials to coeffs
-  type Mon = Map Str Int
-  """
+  """Polynomial with nonnegative integer coefficients for polymorphic shapes."""
 
   def __init__(self, coeffs):
-    # Makes sure Polynomials are always in canonical form to simplify operators:
+    # Makes sure Polynomials are always in canonical form
     coeffs = {mon: op.index(coeff) for mon, coeff in coeffs.items() if coeff != 0}
-    coeffs = {Mon(): 0} if len(coeffs) == 0 else coeffs
+    coeffs = coeffs or {Mon(): 0}
     super().__init__(coeffs)
 
   def __add__(self, other):
     coeffs = self.copy()
-
     for mon, coeff in _ensure_poly(other).items():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
-
     return Poly(coeffs)
 
   def __sub__(self, other):
@@ -130,19 +123,18 @@ class Poly(dict):
     return Poly({mon: -coeff for mon, coeff in self.items()})
 
   def __mul__(self, other):
-    coeffs = dict()
-    for (mon1, coeff1), (mon2, coeff2) \
-            in product(self.items(), _ensure_poly(other).items()):
+    other = _ensure_poly(other)
+    coeffs = {}
+    for (mon1, coeff1), (mon2, coeff2) in product(self.items(), other.items()):
       mon = mon1 * mon2
       coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
-
     return Poly(coeffs)
 
   def __rmul__(self, other):
-    return self * other
+    return self * other  # multiplication commutes
 
   def __radd__(self, other):
-    return self + other
+    return self + other  # addition commutes
 
   def __rsub__(self, other):
     return _ensure_poly(other) - self
@@ -158,23 +150,23 @@ class Poly(dict):
   def __divmod__(self, divisor):
     if self.is_constant:
       return divmod(int(self), divisor)
+    else:
+      def divided(count):
+        q, r = divmod(count, divisor)
+        if r != 0:
+          raise ValueError('shapecheck currently only supports strides '
+                          'that exactly divide the strided axis length.')
+        return q
 
-    def divided(count):
-      q, r = divmod(count, divisor)
-      if r != 0:
-        raise ValueError('shapecheck currently only supports strides '
-                         'that exactly divide the strided axis length.')
-      return q
-
-    return Poly(
-      {k: coeff // divisor if k.degree == 0 else divided(coeff)
-       for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
+      return Poly(
+        {k: coeff // divisor if k.degree == 0 else divided(coeff)
+        for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
 
   def __hash__(self):
     return hash(tuple(sorted(self.items())))
 
   def __eq__(self, other):
-    return dict.__eq__(self, _ensure_poly(other))
+    return super().__eq__(_ensure_poly(other))
 
   def __ne__(self, other):
     return not self == other
@@ -184,15 +176,12 @@ class Poly(dict):
 
     if other.is_constant and self.is_constant:
       return int(self) >= int(other)
-
-    if other.is_constant and int(other) <= 1:
-      # Assume polynomials > 0, allowing to use shape rules of binops, conv:
+    elif other.is_constant and int(other) <= 1:
+      # Assume nonzero polynomials are positive, allows use in shape rules
       return True
-
-    if self.is_constant and int(self) <= 0:
+    elif self.is_constant and int(self) <= 0:
       return False  # See above.
-
-    if self == other:
+    elif self == other:
       return True
 
     raise ValueError('Polynomials comparison "{} >= {}" is inconclusive.'
@@ -214,7 +203,6 @@ class Poly(dict):
 
   def __int__(self):
     assert self.is_constant
-
     return op.index(next(iter(self.values())))
 
   def evaluate(self, values_dict):
@@ -228,7 +216,7 @@ class Poly(dict):
 abstract_arrays._DIMENSION_TYPES.add(Poly)
 
 
-class Mon(dict):  # type Mon = Map Id Int -- ids to degrees
+class Mon(dict):
   def __hash__(self):
     return hash(tuple(self.items()))
 
@@ -268,8 +256,8 @@ class ShapeSyntaxError(Exception): pass
 #   dims       ::= dim ',' dims | ''
 #   dim        ::= str | int | dim '*' dim | dim '+' dim | '_'
 #
-# ShapeSpecs can have some monomorphic dims inside them,
-# which must be replaced with concrete shapes when known.
+# ShapeSpecs can have some monomorphic dims inside them, which must be replaced
+# with concrete shapes when known.
 
 class ShapeSpec(tuple):
   def __str__(self):

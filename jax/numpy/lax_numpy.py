@@ -3321,7 +3321,8 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  index_dtype = int64 if _any([type(dim) is Poly or dim >= (1 << 31) for dim in x_shape]) else int32
+  use_64bit_index = _any([type(d) is Poly or d >= (1 << 31) for d in x_shape])
+  index_dtype = int64 if use_64bit_index else int32
   gather_indices = onp.zeros((0,), dtype=index_dtype)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
@@ -3380,8 +3381,11 @@ def _index_to_gather(x_shape, idx):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis])
-      # dummy index if is polynomial, doesn't matter for shape inference:
-      i = 0 if type(i) is Poly else lax.convert_element_type(i, index_dtype)
+      if type(i) is Poly:
+        # dummy index if i is polynomial, doesn't matter for shape inference
+        # TODO(mattjj,j-towns,juliuskunze): revise this logic
+        i = 0
+      i = lax.convert_element_type(i, index_dtype)
       i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
       gather_indices = concatenate((gather_indices, i), -1)
       collapsed_slice_dims.append(x_axis)
@@ -3403,7 +3407,8 @@ def _index_to_gather(x_shape, idx):
       x_axis += 1
     # Handle slice index (only static, otherwise an error is raised)
     elif isinstance(i, slice):
-      if not _all(elt is None or type(elt) is Poly or type(core.get_aval(elt)) is ConcreteArray
+      if not _all(elt is None or type(elt) is Poly
+                  or type(core.get_aval(elt)) is ConcreteArray
                   for elt in (i.start, i.stop, i.step)):
         msg = ("Array slice indices must have static start/stop/step to be used "
                "with Numpy indexing syntax. Try lax.dynamic_slice/"
@@ -3554,7 +3559,7 @@ def _canonicalize_tuple_index(arr_ndim, idx):
   return idx
 
 def _slice_indices(idx, size):
-  # like idx.indices(size), but allows for polymorphic slice and size
+  # like idx.indices(size), but allows for polymorphic start and size
   assert isinstance(idx, slice)
 
   step = 1 if idx.step is None else idx.step
