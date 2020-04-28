@@ -612,7 +612,9 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   shape ``(out_1, out_2, ...)`` and the corresponding array leaves of ``x`` have
   shape ``(in_1_1, in_1_2, ...)`` and ``(in_2_1, in_2_2, ...)`` respectively,
   then the Hessian leaf has shape ``(out_1, out_2, ..., in_1_1, in_1_2, ...,
-  in_2_1, in_2_2, ...)``.
+  in_2_1, in_2_2, ...)``. In other words, the Python tree structure represents
+  the block structure of the Hessian, with blocks determined by the input and
+  output pytrees.
 
   In particular, an array is produced (with no pytrees involved) when the
   function input ``x`` and output ``fun(x)`` are each a single array, as in the
