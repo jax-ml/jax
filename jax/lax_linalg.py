@@ -786,11 +786,11 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
   qt_dx_rinv = np.matmul(_H(q), dx_rinv)
   qt_dx_rinv_lower = np.tril(qt_dx_rinv, -1)
-  domega = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
+  do = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
   # The following correction is necessary for complex inputs
-  domega = domega + np.eye(n) * (qt_dx_rinv - np.real(qt_dx_rinv))
-  dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
-  dr = np.matmul(qt_dx_rinv - domega, r)
+  do = do + np.eye(n, dtype=do.dtype) * (qt_dx_rinv - np.real(qt_dx_rinv))
+  dq = np.matmul(q, do - qt_dx_rinv) + dx_rinv
+  dr = np.matmul(qt_dx_rinv - do, r)
   return (q, r), (dq, dr)
 
 def qr_batching_rule(batched_args, batch_dims, full_matrices):
