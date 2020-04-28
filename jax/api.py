@@ -595,7 +595,7 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   the structure of ``x``. A tree product of two tree structures is formed by
   replacing each leaf of the first tree with a copy of the second. For example:
 
-  >>> f = lambda inp: {"c": jnp.power(inp["a"], inp["b"])}
+  >>> f = lambda dct: {"c": jnp.power(dct["a"], dct["b"])}
   >>> print(jax.hessian(f)({"a": jnp.arange(2.) + 1., "b": jnp.arange(2.) + 2.}))
   {'c': {'a': {'a': DeviceArray([[[ 2.,  0.], [ 0.,  0.]],
                                  [[ 0.,  0.], [ 0., 12.]]], dtype=float32),
@@ -615,11 +615,11 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   in_2_1, in_2_2, ...)``.
 
   In particular, an array is produced (with no pytrees involved) when the
-  function input ``x`` and output ``fun(x)`` is a single array, as in the ``g``
-  example above. If ``fun(x)`` has shape ``(out1, out2, ...)`` and ``x`` has
-  shape ``(in1, in2, ...)`` then ``jax.hessian(fun)(x)`` has shape
+  function input ``x`` and output ``fun(x)`` are each a single array, as in the
+  ``g`` example above. If ``fun(x)`` has shape ``(out1, out2, ...)`` and ``x``
+  has shape ``(in1, in2, ...)`` then ``jax.hessian(fun)(x)`` has shape
   ``(out1, out2, ..., in1, in2, ..., in1, in2, ...)``. To flatten pytrees into
-  flat vectors, consider using ``jax.flatten_util.flatten_pytree``.
+  1D vectors, consider using ``jax.flatten_util.flatten_pytree``.
   """
   return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
 
