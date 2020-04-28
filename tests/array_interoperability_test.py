@@ -98,7 +98,6 @@ class DLPackTest(jtu.JaxTestCase):
      for shape in all_shapes
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
-  # TODO(phawkins): the dlpack destructor issues errors in jaxlib 0.1.38.
   def testJaxToTorch(self, shape, dtype):
     rng = jtu.rand_default()
     np = rng(shape, dtype)
