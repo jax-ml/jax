@@ -113,7 +113,7 @@ def get_compile_options(num_replicas, num_partitions, device_assignment=None):
 
 _backend_factories = {}
 
-def register_backend(name: str, factory: Callable[[], xla_client.LocalBackend]):
+def register_backend(name: str, factory: Callable[[Optional[str]], xla_client.LocalBackend]):
   _backend_factories[name] = factory
 
 
@@ -125,11 +125,11 @@ def _get_local_backend(platform):
     raise RuntimeError("No local XLA backends found.")
   return backend
 
-register_backend('cpu', lambda: _get_local_backend("cpu"))
-register_backend('gpu', lambda: _get_local_backend("gpu"))
+register_backend('cpu', lambda unused_platform=None: _get_local_backend("cpu")) # type: ignore
+register_backend('gpu', lambda unused_platform=None: _get_local_backend("gpu")) # type: ignore
 
 
-def _get_tpu_driver_backend():
+def _get_tpu_driver_backend(unused_platform=None):
   backend_target = FLAGS.jax_backend_target
   if backend_target is None:
     raise ValueError('When using TPU Driver as the backend, you must specify '
@@ -168,7 +168,9 @@ def _initialize_backends():
   for name, factory in _backend_factories.items():
     logging.vlog(2, f"Initializing backend '{name}'")
     try:
-      backend = factory()
+      # TODO(skye): remove name parameter once all backend factories create a
+      # single platform.
+      backend = factory(name)
     except RuntimeError as err:
       if name == 'cpu':
         # We always expect CPU to initialize successfully.
