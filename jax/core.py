@@ -623,8 +623,10 @@ def find_top_trace(xs):
 @contextmanager
 def initial_style_staging():
   prev, trace_state.initial_style = trace_state.initial_style, True
-  yield
-  trace_state.initial_style = prev
+  try:
+    yield
+  finally:
+    trace_state.initial_style = prev
 
 
 # -------------------- abstract values --------------------

@@ -145,7 +145,7 @@ _backend_lock = threading.Lock()
 def get_backend(platform=None):
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
-  if isinstance(platform, xla_client.Backend):
+  if not isinstance(platform, (type(None), str)):
     return platform
 
   with _backend_lock:

@@ -152,6 +152,7 @@ LAX_OPS = [
     op_record("bitwise_not", 1, bool_dtypes, jtu.rand_small),
     op_record("bitwise_or", 2, bool_dtypes, jtu.rand_small),
     op_record("bitwise_xor", 2, bool_dtypes, jtu.rand_small),
+    op_record("population_count", 1, uint_dtypes, partial(jtu.rand_int, 1 << 32)),
 
     op_record("add", 2, default_dtypes + complex_dtypes, jtu.rand_small),
     op_record("sub", 2, default_dtypes + complex_dtypes, jtu.rand_small),
@@ -2484,6 +2485,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(fun, (keys, values), 2, ["fwd", "rev"], 1e-2, 1e-2, 1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_k={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), k),
+       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "k": k}
+      for dtype in [onp.float32,]
+      for shape in [(4,), (5, 5), (2, 1, 4)]
+      for k in [1, 3]
+      for rng_factory in [jtu.rand_default]))
+  def testTopKGrad(self, shape, dtype, k, rng_factory):
+    rng = rng_factory()
+    perm_rng = onp.random.RandomState(0)
+    flat_values = onp.arange(onp.prod(shape, dtype=int), dtype=dtype)
+    values = perm_rng.permutation(flat_values).reshape(shape)
+    fun = lambda vs: lax.top_k(vs, k=k)[0]
+    check_grads(fun, (values,), 2, ["fwd", "rev"], eps=1e-2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_axes={}".format(
           jtu.format_shape_dtype_string(shape, dtype), idxs, axes),
        "shape": shape, "dtype": dtype, "idxs": idxs, "axes": axes,
@@ -3211,6 +3228,27 @@ class LaxVmapTest(jtu.JaxTestCase):
     shape1, shape2 = (1, 2, 3), (2, 3)
     out_shape = lax.broadcast_shapes(shape1, shape2)
     self.assertTrue(all(type(s) is int for s in out_shape))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_k={}_bdims={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), k, bdims),
+       "shape": shape, "dtype": dtype, "k": k, "bdims": bdims, "rng_factory": rng_factory}
+      for shape in [(4,), (3, 4, 5)]
+      for k in [1, 3]
+      for bdims in all_bdims(shape)
+      # TODO(b/155170120): test with repeats once the XLA:CPU stable top_k bug is fixed:
+      # The top_k indices for integer arrays with identical entries won't match between
+      # vmap'd version and manual reference, so only test unique integer arrays for int_dtypes.
+      for dtype, rng_factory in itertools.chain(
+        zip(float_dtypes, itertools.repeat(jtu.rand_default)),
+        zip(int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
+  def testTopK(self, shape, dtype, k, bdims, rng_factory):
+    rng = rng_factory()
+    # _CheckBatching doesn't work with tuple outputs, so test outputs separately.
+    op1 = lambda x: lax.top_k(x, k=k)[0]
+    self._CheckBatching(op1, 5, bdims, (shape,), (dtype,), rng)
+    op2 = lambda x: lax.top_k(x, k=k)[1]
+    self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
 
   # TODO Concatenate
   # TODO Reverse

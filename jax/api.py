@@ -341,7 +341,9 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
-      ``argnums`` should be arrays, scalars, or standard Python containers. It
+      ``argnums`` should be arrays, scalars, or standard Python containers.
+      Argument arrays in the positions specified by ``argnums`` must be of
+      inexact (i.e., floating-point or complex) type. It
       should return a scalar (which includes arrays with shape ``()`` but not
       arrays with shape ``(1,)`` etc.)
     argnums: Optional, integer or sequence of integers. Specifies which
@@ -568,7 +570,10 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   """Hessian of ``fun`` as a dense array.
 
   Args:
-    fun: Function whose Hessian is to be computed.
+    fun: Function whose Hessian is to be computed.  Its arguments at positions
+      specified by ``argnums`` should be arrays, scalars, or standard Python
+      containers thereof. It should return arrays, scalars, or standard Python
+      containers thereof.
     argnums: Optional, integer or sequence of integers. Specifies which
       positional argument(s) to differentiate with respect to (default ``0``).
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
@@ -582,6 +587,28 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   >>> print(jax.hessian(g)(jax.numpy.array([1., 2.])))
   [[   6.,   -2.],
    [  -2., -480.]]
+
+   :py:func:`hessian` is a generalization of the usual definition of the Hessian
+   that supports Python trees as inputs and outputs. The structure of the output
+   is a composition of the output Python tree structure with two nested copies
+   of the input Python tree structure. The Python tree structure of the output
+   captures the block-sparsity structure of the generated Hessian viewed in its
+   usual matrix form. For example:
+
+   >>> f = lambda inp: {"c": jnp.power(inp["a"], inp["b"])}
+   >>> print(jax.hessian(f)({"a": jnp.arange(2.) + 1., "b": jnp.arange(2.) + 2.}))
+   {'c': {'a': {'a': DeviceArray([[[ 2.,  0.], [ 0.,  0.]],
+                                  [[ 0.,  0.], [ 0., 12.]]], dtype=float32),
+                'b': DeviceArray([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
+                                  [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32)},
+          'b': {'a': DeviceArray([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
+                                  [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32),
+                'b': DeviceArray([[[0.      , 0.      ], [0.      , 0.      ]],
+                                 [[0.      , 0.      ], [0.      , 3.843624]]], dtype=float32)}}}
+
+  If the usual dense matrix form of the Hessian is desired, one can
+  flatten and concatenate the arguments into a single 1D array before
+  computing the Hessian.
   """
   return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
 
@@ -1336,7 +1363,7 @@ def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
   if in_tree != in_tree_expected:
     msg = ("Tree structure of cotangent input {}, does not match structure of "
            "primal output {}")
-    raise TypeError(msg.format(in_tree_expected, in_tree))
+    raise TypeError(msg.format(in_tree, in_tree_expected))
   for a, dtype in safe_zip(args, cotangent_dtypes):
     if _dtype(a) != dtype:
       msg = ("Type of cotangent input to vjp pullback function ({}) does not "
