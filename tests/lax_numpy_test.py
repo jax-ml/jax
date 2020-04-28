@@ -295,6 +295,8 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
 JAX_ARGMINMAX_RECORDS = [
     op_record("argmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
     op_record("argmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
+    op_record("nanargmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
+    op_record("nanargmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
 ]
 
 JAX_OPERATOR_OVERLOADS = [
@@ -744,6 +746,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory()
     if dtype == onp.complex128 and jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("complex128 reductions not supported on GPU")
+    if "nan" in onp_op.__name__ and dtype == jnp.bfloat16:
+      raise unittest.SkipTest("NumPy doesn't correctly handle bfloat16 arrays")
 
     def onp_fun(array_to_reduce):
       return onp_op(array_to_reduce, axis).astype(jnp.int_)
@@ -752,7 +756,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return jnp_op(array_to_reduce, axis)
 
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    try:
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    except ValueError as e:
+      if str(e) == "All-NaN slice encountered":
+        self.skipTest("JAX doesn't support checking for all-NaN slices")
+      else:
+        raise
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1164,7 +1174,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for return_index in [False, True]
       for return_inverse in [False, True]
       for return_counts in [False, True]))
-  @jtu.skip_on_devices("gpu", "tpu")  # https://github.com/google/jax/issues/2779
   def testUnique(self, shape, dtype, return_index, return_inverse, return_counts, rng):
     args_maker = lambda: [rng(shape, dtype)]
     onp_fun = lambda x: onp.unique(x, return_index, return_inverse, return_counts)
@@ -1564,6 +1573,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  def testSplitTypeError(self):
+    # If we pass an ndarray for indices_or_sections -> no error
+    self.assertEqual(3, len(jnp.split(jnp.zeros(3), jnp.array([1, 2]))))
+
+    CONCRETIZATION_MSG = "Abstract tracer value encountered where concrete value is expected."
+    with self.assertRaisesRegex(TypeError, CONCRETIZATION_MSG):
+      # An abstract tracer for idx
+      api.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), idx))(2.)
+    with self.assertRaisesRegex(TypeError, CONCRETIZATION_MSG):
+      # A list including an abstract tracer
+      api.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), [2, idx]))(2.)
+
+    # A concrete tracer -> no error
+    api.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), idx),
+            (2.,), (1.,))
+    # A tuple including a concrete tracer -> no error
+    api.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), (1, idx)),
+            (2,), (1,))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
@@ -1781,7 +1809,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = jnp.array(a)
     assert ans == 3.
 
-  @jtu.skip_on_devices("tpu")  # TODO(b/32368900): TPUs don't support uint8 yet.
   def testMemoryView(self):
     ans = jnp.array(bytearray(b'\x2a'))
     self.assertAllClose(
@@ -2628,13 +2655,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for x in (onp.nan, -onp.inf, -100., -2., -1., 0., 1., 2., 100., onp.inf,
               jnp.finfo(dtype).max, onp.sqrt(jnp.finfo(dtype).max),
               onp.sqrt(jnp.finfo(dtype).max) * 2.):
-      if onp.isnan(x) and op in ("sinh", "cosh", "expm1", "exp"):
-        # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
-        # NaN inputs.
-        continue
-      if (op in ("sin", "cos", "tan", "arctan") and
+      if (op in ("sin", "cos", "tan") and
           jtu.device_under_test() == "tpu"):
-        continue  # TODO(b/132196789, b/134175194): fix and reenable.
+        continue  # TODO(b/132196789): fix and reenable.
       x = dtype(x)
       expected = onp_op(x)
       actual = jnp_op(x)
@@ -3048,20 +3071,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-        {"testcase_name": ("_shape={}_axis={}_dtype={}").format(shape, axis, dtype),
+        {"testcase_name": ("_shape={}_varargs={} axis={}_dtype={}")
+         .format(shape, varargs, axis, dtype),
          "shape": shape,
+         "varargs": varargs,
          "axis": axis,
          "dtype": dtype, "rng_factory": rng_factory}
         for shape in [(10,), (10, 15), (10, 15, 20)]
         for _num_axes in range(len(shape))
+        for varargs in itertools.combinations(range(1, len(shape) + 1), _num_axes)
         for axis in itertools.combinations(range(len(shape)), _num_axes)
         for dtype in inexact_dtypes
         for rng_factory in [jtu.rand_default]))
-  def testGradient(self, shape, axis, dtype, rng_factory):
+  def testGradient(self, shape, varargs, axis, dtype, rng_factory):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
-    jnp_fun = lambda y: jnp.gradient(y, axis=axis)
-    onp_fun = lambda y: onp.gradient(y, axis=axis)
+    jnp_fun = lambda y: jnp.gradient(y, *varargs, axis=axis)
+    onp_fun = lambda y: onp.gradient(y, *varargs, axis=axis)
     self._CheckAgainstNumpy(
         onp_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)

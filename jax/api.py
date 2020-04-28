@@ -48,6 +48,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                    split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
+from .lib import xla_client as xc
 # Unused imports to be exported
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
@@ -293,8 +294,9 @@ def xla_computation(fun: Callable,
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
-  del static_argnums  # Unused.
   _check_callable(fun)
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
   fun_name = getattr(fun, '__name__', 'unknown')
 
   def make_axis_env(nreps):
@@ -311,6 +313,11 @@ def xla_computation(fun: Callable,
   @wraps(fun)
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
+    if static_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      wrapped, dyn_args = argnums_partial(wrapped, dyn_argnums, args)
+    else:
+      dyn_args = args
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
@@ -320,12 +327,12 @@ def xla_computation(fun: Callable,
                                          stage_out=True)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
-    xla_consts = map(c.Constant, consts)
+    xla_consts = map(partial(xb.constant, c), consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
-    return c.Build(c.Tuple(*outs))
+    return c.Build(xc.ops.Tuple(c, outs))
   return computation_maker
 
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
@@ -334,7 +341,9 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   Args:
     fun: Function to be differentiated. Its arguments at positions specified by
-      ``argnums`` should be arrays, scalars, or standard Python containers. It
+      ``argnums`` should be arrays, scalars, or standard Python containers.
+      Argument arrays in the positions specified by ``argnums`` must be of
+      inexact (i.e., floating-point or complex) type. It
       should return a scalar (which includes arrays with shape ``()`` but not
       arrays with shape ``(1,)`` etc.)
     argnums: Optional, integer or sequence of integers. Specifies which
@@ -561,7 +570,10 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   """Hessian of ``fun`` as a dense array.
 
   Args:
-    fun: Function whose Hessian is to be computed.
+    fun: Function whose Hessian is to be computed.  Its arguments at positions
+      specified by ``argnums`` should be arrays, scalars, or standard Python
+      containers thereof. It should return arrays, scalars, or standard Python
+      containers thereof.
     argnums: Optional, integer or sequence of integers. Specifies which
       positional argument(s) to differentiate with respect to (default ``0``).
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
@@ -575,6 +587,28 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   >>> print(jax.hessian(g)(jax.numpy.array([1., 2.])))
   [[   6.,   -2.],
    [  -2., -480.]]
+
+   :py:func:`hessian` is a generalization of the usual definition of the Hessian
+   that supports Python trees as inputs and outputs. The structure of the output
+   is a composition of the output Python tree structure with two nested copies
+   of the input Python tree structure. The Python tree structure of the output
+   captures the block-sparsity structure of the generated Hessian viewed in its
+   usual matrix form. For example:
+
+   >>> f = lambda inp: {"c": jnp.power(inp["a"], inp["b"])}
+   >>> print(jax.hessian(f)({"a": jnp.arange(2.) + 1., "b": jnp.arange(2.) + 2.}))
+   {'c': {'a': {'a': DeviceArray([[[ 2.,  0.], [ 0.,  0.]],
+                                  [[ 0.,  0.], [ 0., 12.]]], dtype=float32),
+                'b': DeviceArray([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
+                                  [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32)},
+          'b': {'a': DeviceArray([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
+                                  [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32),
+                'b': DeviceArray([[[0.      , 0.      ], [0.      , 0.      ]],
+                                 [[0.      , 0.      ], [0.      , 3.843624]]], dtype=float32)}}}
+
+  If the usual dense matrix form of the Hessian is desired, one can
+  flatten and concatenate the arguments into a single 1D array before
+  computing the Hessian.
   """
   return jacfwd(jacrev(fun, argnums, holomorphic), argnums, holomorphic)
 
@@ -975,7 +1009,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None,
         axis_size=local_axis_size,
         global_axis_size=axis_size,
         devices=tuple(devices) if devices is not None else devices,
-        name=flat_fun.__name__)
+        name=flat_fun.__name__,
+        mapped_invars=(True,) * len(args))
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -1032,7 +1067,8 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None,
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args, backend=backend,
                                   axis_name=axis_name, axis_size=num_chunks,
                                   global_axis_size=None, devices=None,
-                                  name=soft_mapped_fun.__name__)
+                                  name=soft_mapped_fun.__name__,
+                                  mapped_invars=(True,) * len(reshaped_args))
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -1327,7 +1363,7 @@ def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
   if in_tree != in_tree_expected:
     msg = ("Tree structure of cotangent input {}, does not match structure of "
            "primal output {}")
-    raise TypeError(msg.format(in_tree_expected, in_tree))
+    raise TypeError(msg.format(in_tree, in_tree_expected))
   for a, dtype in safe_zip(args, cotangent_dtypes):
     if _dtype(a) != dtype:
       msg = ("Type of cotangent input to vjp pullback function ({}) does not "
@@ -1402,17 +1438,20 @@ def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
-def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
+def make_jaxpr(fun: Callable,
+               static_argnums: Union[int, Iterable[int]] = ()
+               ) -> Callable[..., core.TypedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
     fun: The function whose ``jaxpr`` is to be computed. Its positional
       arguments and return value should be arrays, scalars, or standard Python
       containers (tuple/list/dict) thereof.
+    static_argnums: See the ``jax.jit`` docstring.
 
   Returns:
-    A wrapped version of ``fun`` that when applied to example arguments returns a
-    ``TypedJaxpr`` representation of ``fun`` on those arguments.
+    A wrapped version of ``fun`` that when applied to example arguments returns
+      a ``TypedJaxpr`` representation of ``fun`` on those arguments.
 
   A ``jaxpr`` is JAX's intermediate representation for program traces. The
   ``jaxpr`` language is based on the simply-typed first-order lambda calculus
@@ -1443,6 +1482,8 @@ def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
     in [g] }
   """
   _check_callable(fun)
+  if isinstance(static_argnums, int):
+    static_argnums = (static_argnums,)
 
   def pv_like(x):
     aval = xla.abstractify(x)
@@ -1451,6 +1492,11 @@ def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
+    if static_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      wrapped, dyn_args = argnums_partial(wrapped, dyn_argnums, args)
+    else:
+      dyn_args = args
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_pvals = map(pv_like, jax_args)

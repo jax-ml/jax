@@ -748,12 +748,12 @@ def _conv(x, y, mode, op, precision):
 
 
 @_wraps(onp.convolve, lax_description=_PRECISION_DOC)
-def convolve(x, y, mode='full', precision=None):
+def convolve(x, y, mode='full', *, precision=None):
   return _conv(x, y, mode, 'convolve', precision)
 
 
 @_wraps(onp.correlate, lax_description=_PRECISION_DOC)
-def correlate(x, y, mode='valid', precision=None):
+def correlate(x, y, mode='valid', *, precision=None):
   return _conv(x, y, mode, 'correlate', precision)
 
 
@@ -1021,7 +1021,6 @@ def diff(a, n=1, axis=-1,):
 
   return a
 
-
 @_wraps(onp.ediff1d)
 def ediff1d(ary, to_end=None, to_begin=None):
   # convert into 1d array
@@ -1068,16 +1067,16 @@ def ediff1d(ary, to_end=None, to_begin=None):
   return result
 
 
-@partial(jit, static_argnums=1)
-def _gradient(a, axis):
-  def gradient_along_axis(a, axis):
+@partial(jit, static_argnums=(1, 2))
+def _gradient(a, varargs, axis):
+  def gradient_along_axis(a, h, axis):
     sliced = partial(lax.slice_in_dim, a, axis=axis)
     a_grad = concatenate((
-      sliced(1, 2) - sliced(0, 1),
-      (sliced(2, None) - sliced(0, -2)) * 0.5,
-      sliced(-1, None) - sliced(-2, -1),
+      (sliced(1, 2) - sliced(0, 1)),  # upper edge
+      (sliced(2, None) - sliced(None, -2)) * 0.5,  # inner
+      (sliced(-1, None) - sliced(-2, -1)),  # lower edge
     ), axis)
-    return a_grad
+    return a_grad / h
 
   if axis is None:
     axis = range(a.ndim)
@@ -1086,14 +1085,32 @@ def _gradient(a, axis):
       axis = (axis,)
     if not isinstance(axis, tuple) and not isinstance(axis, list):
       raise ValueError("Give `axis` either as int or iterable")
+    elif len(axis) == 0:
+      return []
     axis = [_canonicalize_axis(i, a.ndim) for i in axis]
 
   if min([s for i, s in enumerate(a.shape) if i in axis]) < 2:
-    raise ValueError(
-      "Shape of array too small to calculate a numerical gradient")
+    raise ValueError("Shape of array too small to calculate "
+                     "a numerical gradient, "
+                     "at least 2 elements are required.")
+  len_axes = len(axis)
+  n = len(varargs)
+  if n == 0 or varargs is None:
+    # no spacing
+    dx = [1.0] * len_axes
+  elif n == 1:
+    # single value for all axes
+    dx = varargs * len_axes
+  elif n == len_axes:
+    dx = varargs
+  else:
+    TypeError("Invalid number of spacing arguments %d" % n)
+
+  if ndim(dx[0]) != 0:
+    raise NotImplementedError("Non-constant spacing not implemented")
 
   # TODO: use jax.lax loop tools if possible
-  a_grad = [gradient_along_axis(a, ax) for ax in axis]
+  a_grad = [gradient_along_axis(a, h, ax) for ax, h in zip(axis, dx)]
 
   if len(axis) == 1:
     a_grad = a_grad[0]
@@ -1104,11 +1121,9 @@ def _gradient(a, axis):
 @_wraps(onp.gradient)
 def gradient(a, *args, **kwargs):
   axis = kwargs.pop("axis", None)
-  if not len(args) == 0:
-    raise ValueError("*args (sample distances) not implemented")
   if not len(kwargs) == 0:
     raise ValueError("Only `axis` keyword is implemented")
-  return _gradient(a, axis)
+  return _gradient(a, args, axis)
 
 
 @_wraps(onp.isrealobj)
@@ -1345,6 +1360,14 @@ def broadcast_to(arr, shape):
 @_wraps(onp.split)
 def split(ary, indices_or_sections, axis=0):
   dummy_val = onp.broadcast_to(0, ary.shape)  # zero strides
+  if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
+    indices_or_sections = [core.concrete_or_error(int, i_s, "in jax.numpy.split argument 1")
+                           for i_s in indices_or_sections]
+  else:
+    indices_or_sections = core.concrete_or_error(int, indices_or_sections,
+                                                 "in jax.numpy.split argument 1")
+  axis = core.concrete_or_error(int, axis, "in jax.numpy.split argument `axis`")
+
   subarrays = onp.split(dummy_val, indices_or_sections, axis)  # shapes
   split_indices = onp.cumsum([0] + [onp.shape(sub)[axis] for sub in subarrays])
   starts, ends = [0] * ndim(ary), shape(ary)
@@ -2521,7 +2544,7 @@ def append(arr, values, axis=None):
 
 
 @_wraps(onp.dot, lax_description=_PRECISION_DOC)
-def dot(a, b, precision=None):  # pylint: disable=missing-docstring
+def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("dot", a, b)
   a, b = _promote_dtypes(a, b)
   a_ndim, b_ndim = ndim(a), ndim(b)
@@ -2539,7 +2562,7 @@ def dot(a, b, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(onp.matmul, lax_description=_PRECISION_DOC)
-def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
+def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
   a = lax.reshape(a, (1,) + shape(a)) if a_is_vec else a
@@ -2563,14 +2586,14 @@ def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(onp.vdot, lax_description=_PRECISION_DOC)
-def vdot(a, b, precision=None):
+def vdot(a, b, *, precision=None):
   if issubdtype(_dtype(a), complexfloating):
     a = conj(a)
   return dot(a.ravel(), b.ravel(), precision=precision)
 
 
 @_wraps(onp.tensordot, lax_description=_PRECISION_DOC)
-def tensordot(a, b, axes=2, precision=None):
+def tensordot(a, b, axes=2, *, precision=None):
   _check_arraylike("tensordot", a, b)
   a_ndim = ndim(a)
   b_ndim = ndim(b)
@@ -2605,7 +2628,7 @@ def tensordot(a, b, axes=2, precision=None):
 
 @_wraps(onp.einsum, lax_description=_PRECISION_DOC)
 def einsum(*operands, **kwargs):
-  optimize = kwargs.pop('optimize', 'auto')
+  optimize = kwargs.pop('optimize', True)
   optimize = 'greedy' if optimize is True else optimize
   precision = kwargs.pop('precision', None)
   if kwargs:
@@ -2770,7 +2793,7 @@ def _movechars(s, src, dst):
 
 
 @_wraps(onp.inner, lax_description=_PRECISION_DOC)
-def inner(a, b, precision=None):
+def inner(a, b, *, precision=None):
   if ndim(a) == 0 or ndim(b) == 0:
     return a * b
   return tensordot(a, b, (-1, -1), precision=precision)
@@ -2853,12 +2876,37 @@ def argmax(a, axis=None):
   return _argminmax(max, a, axis)
 
 
+_NANARG_DOC = """\
+Warning: jax.numpy.arg{} returns -1 for all-NaN slices and does not raise
+an error.
+"""
+
+@_wraps(onp.nanargmax, lax_description=_NANARG_DOC.format("max"))
+def nanargmax(a, axis=None):
+  if not issubdtype(_dtype(a), inexact):
+    return argmax(a, axis=axis)
+  nan_mask = isnan(a)
+  a = where(nan_mask, -inf, a)
+  res = argmax(a, axis=axis)
+  return where(all(nan_mask, axis=axis), -1, res)
+
+
 @_wraps(onp.argmin)
 def argmin(a, axis=None):
   if axis is None:
     a = ravel(a)
     axis = 0
   return _argminmax(min, a, axis)
+
+
+@_wraps(onp.nanargmin, lax_description=_NANARG_DOC.format("min"))
+def nanargmin(a, axis=None):
+  if not issubdtype(_dtype(a), inexact):
+    return argmin(a, axis=axis)
+  nan_mask = isnan(a)
+  a = where(nan_mask, inf, a)
+  res = argmin(a, axis=axis)
+  return where(all(nan_mask, axis=axis), -1, res)
 
 
 # TODO(mattjj): redo this lowering with a call to variadic lax.reduce
@@ -3314,7 +3362,7 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  index_dtype = int64 if max(x_shape) >= (1 << 31) else int32
+  index_dtype = int64 if _max(x_shape, default=0) >= (1 << 31) else int32
   gather_indices = onp.zeros((0,), dtype=index_dtype)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:

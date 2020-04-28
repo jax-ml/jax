@@ -44,7 +44,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "op={}_xshape=[{}]_yshape=[{}]_mode={}".format(
+      {"testcase_name": "_op={}_xshape=[{}]_yshape=[{}]_mode={}".format(
           op,
           jtu.format_shape_dtype_string(xshape, dtype),
           jtu.format_shape_dtype_string(yshape, dtype),
@@ -63,7 +63,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {onp.float16: 1e-2, onp.float32: 1e-2}
+    tol = {onp.float16: 1e-2, onp.float32: 1e-2, onp.float64: 1e-8}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
 
