@@ -3140,6 +3140,7 @@ def unique(ar, return_index=False, return_inverse=False,
 
 ### Indexing
 
+@partial(jit, static_argnums=(1,))
 def _rewriting_take(arr, idx):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
