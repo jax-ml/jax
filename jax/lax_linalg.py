@@ -61,7 +61,8 @@ def lu(x):
   lu, pivots = lu_p.bind(x)
   return lu, pivots
 
-def qr(x, full_matrices=True):
+@partial(api.custom_jvp, nondiff_argnums=[1])
+def qr(x, full_matrices):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, np.triu(r)
 
@@ -774,7 +775,11 @@ def qr_abstract_eval(operand, full_matrices):
     r = operand
   return q, r
 
-def qr_jvp_rule(primals, tangents, full_matrices):
+# We use a custom jvp rule because the primitive qr_p returns junk values
+# (rather than zeros) in the lower triangle of r, and thus its derivative is not
+# well defined.
+@qr.defjvp
+def qr_jvp_rule(full_matrices, primals, tangents):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
   x, = primals
   dx, = tangents
@@ -832,7 +837,7 @@ qr_p.multiple_results = True
 qr_p.def_impl(qr_impl)
 qr_p.def_abstract_eval(qr_abstract_eval)
 xla.translations[qr_p] = qr_translation_rule
-ad.primitive_jvps[qr_p] = qr_jvp_rule
+# ad.primitive_jvps[qr_p] = qr_jvp_rule
 batching.primitive_batchers[qr_p] = qr_batching_rule
 
 xla.backend_specific_translations['cpu'][qr_p] = partial(
