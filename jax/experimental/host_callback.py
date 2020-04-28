@@ -46,7 +46,7 @@ from jax import core
 from jax import dtypes
 from jax import lax
 from jax.lib import pytree, xla_bridge
-from jax.interpreters import ad, xla, batching
+from jax.interpreters import ad, xla, batching, masking
 from jax.interpreters import partial_eval as pe
 from jax import util
 from jaxlib import xla_client
@@ -126,7 +126,7 @@ def id_print(*args, result=None, **kwargs):
     return res if len(args) > 1 else res[0]
 
 
-def _expand_params_transform(params: Dict, transform: str) -> Dict:
+def _add_transform_name(params: Dict, transform: str) -> Dict:
   """Adds the `transform` to the params["transforms"]."""
   return dict(params, transforms=params.get("transforms", ()) + (transform,))
 
@@ -142,6 +142,7 @@ def _id_print_impl(*args, **params):
     print_params = params
 
   # TODO: use the JITed version to do the actual printing.
+  # TODO: print parameters sorted
   to_print = f"{args}  {print_params}"
   output_stream.write(to_print)
 
@@ -352,7 +353,7 @@ def print_receiver(output_stream=None,
 
 def _id_print_jvp_rule(primals, tangents, **params):
   primals_out = id_print(primals, **params)
-  tangents_out = id_print(tangents, **_expand_params_transform(params, "jvp"))
+  tangents_out = id_print(tangents, **_add_transform_name(params, "jvp"))
   return primals_out, tangents_out
 
 
@@ -365,7 +366,7 @@ def _id_print_transpose_rule(cts, *args, **params):
   cts_zeros = [ad.instantiate_zeros_aval(a.aval, ct)
                for a, ct in zip(args, cts)]
   ct_args = id_print_p.bind(*cts_zeros,
-                            **_expand_params_transform(params, "transpose"))
+                            **_add_transform_name(params, "transpose"))
   return ct_args
 
 
@@ -373,9 +374,24 @@ ad.primitive_transposes[id_print_p] = _id_print_transpose_rule
 
 
 def _id_print_batching_rule(batched_args, batch_dims, **params):
-  res = id_print_p.bind(*batched_args,
-                        **_expand_params_transform(params, "batch"))
+  new_params = _add_transform_name(params, "batch")
+  new_params["batch_dims"] = batch_dims
+  res = id_print_p.bind(*batched_args, **new_params)
   return res, batch_dims
 
 
 batching.primitive_batchers[id_print_p] = _id_print_batching_rule
+
+def _id_print_shape_rule(*operands, **params):
+  return tuple([op.shape for op in operands])
+
+
+masking.shape_rules[id_print_p] = _id_print_shape_rule
+
+def _id_print_masking_rule(operands, operands_logical_shapes, **params):
+  new_params = _add_transform_name(params, "mask")
+  new_params["logical_shapes"] = operands_logical_shapes
+  return id_print_p.bind(*operands, **new_params)
+
+
+masking.masking_rules[id_print_p] = _id_print_masking_rule

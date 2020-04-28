@@ -16,6 +16,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from functools import partial
 import logging
 import numpy as onp
 import os
@@ -521,11 +522,13 @@ class HostCallbackTest(jtu.JaxTestCase):
         """
 { lambda  ; a.
   let b = mul a 2.0
-      c = id_print[ output_stream=TestingOutputStream
+      c = id_print[ batch_dims=(0,)
+                    output_stream=TestingOutputStream
                     transforms=('batch',)
                     what=a * 2 ] b
       d = mul c 3.0
-      e f = id_print[ nr_results=1
+      e f = id_print[ batch_dims=(0, 0)
+                      nr_results=1
                       output_stream=TestingOutputStream
                       transforms=('batch',)
                       what=y * 3 ] d c
@@ -535,10 +538,36 @@ class HostCallbackTest(jtu.JaxTestCase):
     res_vmap = vmap_fun1(vargs)
     self.assertMultiLineStrippedEqual(
         """
-(DeviceArray([ 8.00, 10.00], dtype=float32),)  {'what': 'a * 2', 'transforms': ('batch',)}
-(DeviceArray([24.00, 30.00], dtype=float32), DeviceArray([ 8.00, 10.00], dtype=float32))  {'what': 'y * 3', 'nr_results': 1, 'transforms': ('batch',)}
+(DeviceArray([ 8.00, 10.00], dtype=float32),)  {'what': 'a * 2', 'transforms': ('batch',), 'batch_dims': (0,)}
+(DeviceArray([24.00, 30.00], dtype=float32), DeviceArray([ 8.00, 10.00], dtype=float32))  {'what': 'y * 3', 'nr_results': 1, 'transforms': ('batch',), 'batch_dims': (0, 0)}
      """, testing_stream.output)
     testing_stream.reset()
+
+  def test_vmap_not_batched(self):
+    x = 3.
+    def func(y):
+      # x is not mapped, y is mapped
+      _, y = hcb.id_print(x, y, output_stream=testing_stream)
+      return x + y
+
+    vmap_func = api.vmap(func)
+    vargs = np.array([np.float32(4.), np.float32(5.)])
+    self.assertMultiLineStrippedEqual(
+      """
+{ lambda  ; a.
+  let b c = id_print[ batch_dims=(None, 0)
+                      output_stream=TestingOutputStream
+                      transforms=('batch',) ] 3.0 a
+      d = add c 3.0
+  in (d,) }""", str(api.make_jaxpr(vmap_func)(vargs)))
+
+    res_vmap = vmap_func(vargs)
+    self.assertMultiLineStrippedEqual(
+      """
+(3.00, DeviceArray([4.00, 5.00], dtype=float32))  {'transforms': ('batch',), 'batch_dims': (None, 0)}
+   """, testing_stream.output)
+    testing_stream.reset()
+
 
   def test_pmap(self):
     vargs = 2. + np.arange(api.local_device_count(), dtype=np.float32)
@@ -550,6 +579,30 @@ class HostCallbackTest(jtu.JaxTestCase):
     expected_res = np.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
     self.assertAllClose(expected_res, res, check_dtypes=False)
 
+  def test_mask(self):
+
+    @partial(api.mask, in_shapes=['n'], out_shape='')
+    def padded_sum(x):
+      return np.sum(hcb.id_print(x, what="x", output_stream=testing_stream))
+    args = [np.arange(4)], dict(n=2)
+    self.assertMultiLineStrippedEqual(
+      """
+{ lambda c f ; a b.
+  let d = lt c b
+      e = id_print[ logical_shapes=[(Traced<ShapedArray(int32[], weak_type=True):JaxprTrace(level=0/0)>,)]
+                    output_stream=TestingOutputStream
+                    transforms=('mask',)
+                    what=x ] a
+      g = select d e f
+      h = reduce_sum[ axes=(0,) ] g
+  in (h,) }""", str(api.make_jaxpr(padded_sum)(*args)))
+
+    res = padded_sum(*args)
+    self.assertMultiLineStrippedEqual(
+      """
+(DeviceArray([0, 1, 2, 3], dtype=int32),)  {'what': 'x', 'transforms': ('mask',), 'logical_shapes': [(2,)]}
+   """, testing_stream.output)
+    testing_stream.reset()
 
 if __name__ == "__main__":
   absltest.main()
