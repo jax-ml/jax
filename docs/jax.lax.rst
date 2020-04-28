@@ -38,6 +38,7 @@ Operators
     bitwise_and
     bitwise_or
     bitwise_xor
+    population_count
     broadcast
     broadcasted_iota
     broadcast_in_dim
