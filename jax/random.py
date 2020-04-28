@@ -25,7 +25,7 @@ for i in xrange(num_steps):
 
 Context:
 
-Among other requirements, Jax PRNG should:
+Among other requirements, Jax PRNG aims at:
 (a) ensure reproducibility,
 (b) parallelize well, both in terms of vectorization (generating array values)
 and multi-replica, multi-core computation. In particular it should not use 
