@@ -1236,8 +1236,10 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
         # Mix together different kinds of indices
         if i % 2 == 0:
           idx = slice(idx, idx + 1)
+        # Use the "kwarg trick" to work around late-binding closures. See
+        # https://docs.python-guide.org/writing/gotchas/#late-binding-closures.
         futures.append(executor.submit(
-            lambda: [sharded_x[idx] for _ in range(10)][0]))
+            lambda idx=idx: [sharded_x[idx] for _ in range(10)][0]))
         expected.append(x[idx])
       actual = [f.result() for f in futures]
     self.assertAllClose(actual, expected, check_dtypes=False)
