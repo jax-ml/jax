@@ -778,13 +778,16 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
   x, = primals
   dx, = tangents
-  q, r = qr_p.bind(x, full_matrices=False)
-  if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
+  q, r = qr(x, full_matrices=False)
+  *_, m, n = x.shape
+  if full_matrices or m < n:
     raise NotImplementedError
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
   qt_dx_rinv = np.matmul(_H(q), dx_rinv)
   qt_dx_rinv_lower = np.tril(qt_dx_rinv, -1)
   domega = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
+  # The following correction is necessary for complex inputs
+  domega = domega + np.eye(n) * (qt_dx_rinv - np.real(qt_dx_rinv))
   dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
   dr = np.matmul(qt_dx_rinv - domega, r)
   return (q, r), (dq, dr)
