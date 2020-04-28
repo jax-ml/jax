@@ -2992,20 +2992,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
-        {"testcase_name": ("_shape={}_axis={}_dtype={}").format(shape, axis, dtype),
+        {"testcase_name": ("_shape={}_varargs={} axis={}_dtype={}")
+         .format(shape, varargs, axis, dtype),
          "shape": shape,
+         "varargs": varargs,
          "axis": axis,
          "dtype": dtype, "rng_factory": rng_factory}
         for shape in [(10,), (10, 15), (10, 15, 20)]
         for _num_axes in range(len(shape))
+        for varargs in itertools.combinations(range(1, len(shape) + 1), _num_axes)
         for axis in itertools.combinations(range(len(shape)), _num_axes)
         for dtype in inexact_dtypes
         for rng_factory in [jtu.rand_default]))
-  def testGradient(self, shape, axis, dtype, rng_factory):
+  def testGradient(self, shape, varargs, axis, dtype, rng_factory):
     rng = rng_factory()
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
-    jnp_fun = lambda y: jnp.gradient(y, axis=axis)
-    onp_fun = lambda y: onp.gradient(y, axis=axis)
+    jnp_fun = lambda y: jnp.gradient(y, *varargs, axis=axis)
+    onp_fun = lambda y: onp.gradient(y, *varargs, axis=axis)
     self._CheckAgainstNumpy(
         onp_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
