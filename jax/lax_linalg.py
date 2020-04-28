@@ -778,7 +778,7 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
   x, = primals
   dx, = tangents
-  q, r = qr_p.bind(x, full_matrices=False)
+  q, r = qr(x, full_matrices=False)
   if full_matrices or np.shape(x)[-2] < np.shape(x)[-1]:
     raise NotImplementedError
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
