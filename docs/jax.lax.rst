@@ -124,6 +124,7 @@ Operators
     sub
     tan
     tie_in
+    top_k
     transpose
 
 
