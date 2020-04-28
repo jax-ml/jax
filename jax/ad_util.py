@@ -13,7 +13,8 @@
 # limitations under the License.
 
 
-from .core import lattice_join, Primitive, Unit, unit, AbstractUnit
+from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
+                   valid_jaxtype)
 from .tree_util import register_pytree_node
 from typing import Any, Dict
 from .util import safe_map
@@ -64,3 +65,14 @@ class Zero(object):
 zero = Zero()
 
 register_pytree_node(Zero, lambda z: ((), None), lambda _, xs: zero)
+
+
+def _stop_gradient_impl(x):
+  if not valid_jaxtype(x):
+    raise TypeError("stop_gradient only works on valid JAX arrays, but "
+                    f"input argument is: {x}")
+  return x
+
+stop_gradient_p = Primitive('stop_gradient')
+stop_gradient_p.def_impl(_stop_gradient_impl)
+stop_gradient_p.def_abstract_eval(lambda x: x)

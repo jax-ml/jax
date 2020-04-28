@@ -46,6 +46,7 @@ from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
 from ..config import flags
 from ..interpreters.xla import DeviceArray
 from .. import lax
+from .. import ops
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
 from ..lib import pytree
 from ..lib import xla_client
@@ -746,12 +747,12 @@ def _conv(x, y, mode, op, precision):
 
 
 @_wraps(onp.convolve, lax_description=_PRECISION_DOC)
-def convolve(x, y, mode='full', precision=None):
+def convolve(x, y, mode='full', *, precision=None):
   return _conv(x, y, mode, 'convolve', precision)
 
 
 @_wraps(onp.correlate, lax_description=_PRECISION_DOC)
-def correlate(x, y, mode='valid', precision=None):
+def correlate(x, y, mode='valid', *, precision=None):
   return _conv(x, y, mode, 'correlate', precision)
 
 
@@ -1297,6 +1298,14 @@ def broadcast_to(arr, shape):
 @_wraps(onp.split)
 def split(ary, indices_or_sections, axis=0):
   dummy_val = onp.broadcast_to(0, ary.shape)  # zero strides
+  if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
+    indices_or_sections = [core.concrete_or_error(int, i_s, "in jax.numpy.split argument 1")
+                           for i_s in indices_or_sections]
+  else:
+    indices_or_sections = core.concrete_or_error(int, indices_or_sections,
+                                                 "in jax.numpy.split argument 1")
+  axis = core.concrete_or_error(int, axis, "in jax.numpy.split argument `axis`")
+
   subarrays = onp.split(dummy_val, indices_or_sections, axis)  # shapes
   split_indices = onp.cumsum([0] + [onp.shape(sub)[axis] for sub in subarrays])
   starts, ends = [0] * ndim(ary), shape(ary)
@@ -2473,7 +2482,7 @@ def append(arr, values, axis=None):
 
 
 @_wraps(onp.dot, lax_description=_PRECISION_DOC)
-def dot(a, b, precision=None):  # pylint: disable=missing-docstring
+def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("dot", a, b)
   a, b = _promote_dtypes(a, b)
   a_ndim, b_ndim = ndim(a), ndim(b)
@@ -2491,7 +2500,7 @@ def dot(a, b, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(onp.matmul, lax_description=_PRECISION_DOC)
-def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
+def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
   a = lax.reshape(a, (1,) + shape(a)) if a_is_vec else a
@@ -2515,14 +2524,14 @@ def matmul(a, b, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(onp.vdot, lax_description=_PRECISION_DOC)
-def vdot(a, b, precision=None):
+def vdot(a, b, *, precision=None):
   if issubdtype(_dtype(a), complexfloating):
     a = conj(a)
   return dot(a.ravel(), b.ravel(), precision=precision)
 
 
 @_wraps(onp.tensordot, lax_description=_PRECISION_DOC)
-def tensordot(a, b, axes=2, precision=None):
+def tensordot(a, b, axes=2, *, precision=None):
   _check_arraylike("tensordot", a, b)
   a_ndim = ndim(a)
   b_ndim = ndim(b)
@@ -2557,7 +2566,7 @@ def tensordot(a, b, axes=2, precision=None):
 
 @_wraps(onp.einsum, lax_description=_PRECISION_DOC)
 def einsum(*operands, **kwargs):
-  optimize = kwargs.pop('optimize', 'auto')
+  optimize = kwargs.pop('optimize', True)
   optimize = 'greedy' if optimize is True else optimize
   precision = kwargs.pop('precision', None)
   if kwargs:
@@ -2722,7 +2731,7 @@ def _movechars(s, src, dst):
 
 
 @_wraps(onp.inner, lax_description=_PRECISION_DOC)
-def inner(a, b, precision=None):
+def inner(a, b, *, precision=None):
   if ndim(a) == 0 or ndim(b) == 0:
     return a * b
   return tensordot(a, b, (-1, -1), precision=precision)
@@ -3059,6 +3068,76 @@ def _take_along_axis(arr, indices, axis):
 def take_along_axis(arr, indices, axis):
   return _take_along_axis(arr, indices, axis)
 
+
+### SetOps
+
+@partial(jit, static_argnums=1)
+def _unique1d_sorted_mask(ar, optional_indices=False):
+  """
+  Helper function for unique which is jit-able
+  """
+
+  ar = asarray(ar).flatten()
+
+  if optional_indices:
+    perm = ar.argsort()
+    aux = ar[perm]
+  else:
+    aux = ar.sort()
+
+  mask = empty(aux.shape, dtype=bool_)
+  mask = ops.index_update(mask, ops.index[:1], True)
+  mask = ops.index_update(mask, ops.index[1:], aux[1:] != aux[:-1])
+
+  if optional_indices:
+    return aux, mask, perm
+  else:
+    return aux, mask
+
+def _unique1d(ar, return_index=False, return_inverse=False,
+              return_counts=False):
+  """
+  Find the unique elements of an array, ignoring shape.
+  """
+
+  optional_indices = return_index or return_inverse
+
+  if optional_indices:
+    aux, mask, perm = _unique1d_sorted_mask(ar, optional_indices)
+  else:
+    aux, mask = _unique1d_sorted_mask(ar, optional_indices)
+
+  ret = (aux[mask],)
+  if return_index:
+    ret += (perm[mask],)
+  if return_inverse:
+    imask = cumsum(mask) - 1
+    inv_idx = zeros(mask.shape, dtype=int_)
+    inv_idx = ops.index_update(inv_idx, perm, imask)
+    ret += (inv_idx,)
+  if return_counts:
+    idx = concatenate(nonzero(mask) + (array([mask.size]),))
+    ret += (diff(idx),)
+  return ret
+
+@_wraps(onp.unique)
+def unique(ar, return_index=False, return_inverse=False,
+           return_counts=False, axis=None):
+
+  if iscomplexobj(ar):
+    raise NotImplementedError(
+          "np.unique is not implemented for complex valued arrays")
+
+  if axis is None:
+    ret = _unique1d(ar, return_index, return_inverse, return_counts)
+    if len(ret) == 1:
+      return ret[0]
+    else:
+      return ret
+
+  raise NotImplementedError(
+        "np.unique is not implemented for the axis argument")
+
 ### Indexing
 
 def _rewriting_take(arr, idx):
@@ -3196,7 +3275,7 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  index_dtype = int64 if max(x_shape) >= (1 << 31) else int32
+  index_dtype = int64 if _max(x_shape, default=0) >= (1 << 31) else int32
   gather_indices = onp.zeros((0,), dtype=index_dtype)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
@@ -3799,3 +3878,115 @@ def _unstack(x):
     raise ValueError("Argument to _unstack must be non-scalar")
   return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
 setattr(DeviceArray, "_unstack", _unstack)
+
+
+# Syntactic sugar for scatter operations.
+class _IndexUpdateHelper:
+  # Note: this docstring will appear as the docstring for the `at` property.
+  """Indexable helper object to call indexed update functions.
+
+  The `at` property is syntactic sugar for calling the indexed update functions
+  defined in :mod:`jax.ops`, and acts as a pure equivalent of in-place
+  modificatons.
+
+  In particular:
+  - ``x = x.at[idx].set(y)`` is a pure equivalent of ``x[idx] = y``.
+  - ``x = x.at[idx].add(y)`` is a pure equivalent of ``x[idx] += y``.
+  - ``x = x.at[idx].mul(y)`` is a pure equivalent of ``x[idx] *= y``.
+  - ``x = x.at[idx].min(y)`` is a pure equivalent of
+      ``x[idx] = minimum(x[idx], y)``.
+  - ``x = x.at[idx].max(y)`` is a pure equivalent of
+      ``x[idx] = maximum(x[idx], y)``.
+  """
+  __slots__ = ("array",)
+
+  def __init__(self, array):
+    self.array = array
+
+  def __getitem__(self, index):
+    return _IndexUpdateRef(self.array, index)
+
+  def __repr__(self):
+    return f"_IndexUpdateHelper({repr(self.array)})"
+
+
+class _IndexUpdateRef:
+  """Helper object to call indexed update functions for an (advanced) index.
+
+  This object references a source array and a specific indexer into that array.
+  Methods on this object return copies of the source array that have been
+  modified at the positions specified by the indexer.
+  """
+  __slots__ = ("array", "index")
+
+  def __init__(self, array, index):
+    self.array = array
+    self.index = index
+
+  def __repr__(self):
+    return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
+
+  def set(self, values):
+    """Pure equivalent of ``x[idx] = y``.
+
+    ``x.at[idx].set(y)`` is syntactic sugar for
+    ``jax.ops.index_update(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] = y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_update(self.array, self.index, values)
+
+  def add(self, values):
+    """Pure equivalent of ``x[idx] += y``.
+
+    ``x.at[idx].add(y)`` is syntactic sugar for
+    ``jax.ops.index_add(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] += y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_add(self.array, self.index, values)
+
+  def mul(self, values):
+    """Pure equivalent of ``x[idx] += y``.
+
+    ``x.at[idx].mul(y)`` is syntactic sugar for
+    ``jax.ops.index_mul(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>` ``x[idx] *= y``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_mul(self.array, self.index, values)
+
+  def min(self, values):
+    """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
+
+    ``x.at[idx].min(y)`` is syntactic sugar for
+    ``jax.ops.index_min(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>`
+    ``x[idx] = minimum(x[idx], y)``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_min(self.array, self.index, values)
+
+  def max(self, values):
+    """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
+
+    ``x.at[idx].max(y)`` is syntactic sugar for
+    ``jax.ops.index_max(x, jax.ops.index[idx], y)``, and
+    returns the value of ``x`` that would result from the NumPy-style
+    :mod:indexed assignment <numpy.doc.indexing>`
+    ``x[idx] = maximum(x[idx], y)``.
+
+    See :mod:`jax.ops` for details.
+    """
+    return ops.index_max(self.array, self.index, values)
+
+setattr(DeviceArray, "at", property(_IndexUpdateHelper))
+setattr(ShapedArray, "at", core.aval_property(_IndexUpdateHelper))

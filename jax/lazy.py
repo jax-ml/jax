@@ -22,6 +22,9 @@ import numpy as onp
 
 from .util import safe_map, safe_zip, unzip2, subvals
 from .lib import xla_bridge as xb
+from .lib import xla_client as xc
+
+xops = xc.ops
 
 map = safe_map
 zip = safe_zip
@@ -210,35 +213,39 @@ def stage_lexpr(c, lexpr, x):
     assert x is not None
   elif t is Iota:
     assert x is None
-    x = c.Iota(input_.dtype, input_.size)
+    x = xops.Iota(c, xb.dtype_to_etype(input_.dtype), input_.size)
   elif t is Eye:
     assert x is None
     N, M = input_.shape
-    bool_eye = c.Eq(c.Add(c.BroadcastedIota(onp.int32, (N, M), 0),
-                          c.Constant(onp.array(input_.offset, onp.int32))),
-                    c.BroadcastedIota(onp.int32, (N, M), 1))
-    x = c.ConvertElementType(bool_eye, xb.dtype_to_etype(input_.dtype))
+    xla_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, (N, M))
+    bool_eye = xops.Eq(
+      xops.Add(xops.Iota(c, xla_shape, 0),
+               xb.constant(c, onp.array(input_.offset, onp.int32))),
+      xops.Iota(c, xla_shape, 1))
+    x = xops.ConvertElementType(bool_eye, xb.dtype_to_etype(input_.dtype))
   elif t is Tri:
     assert x is None
     N, M = input_.shape
-    bool_tri = c.Ge(c.Add(c.BroadcastedIota(onp.int32, (N, M), 0),
-                          c.Constant(onp.array(input_.offset, onp.int32))),
-                    c.BroadcastedIota(onp.int32, (N, M), 1))
-    x = c.ConvertElementType(bool_tri, xb.dtype_to_etype(input_.dtype))
+    xla_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, (N, M))
+    bool_tri = xops.Ge(
+      xops.Add(xops.Iota(c, xla_shape, 0),
+               xb.constant(c, onp.array(input_.offset, onp.int32))),
+      xops.Iota(c, xla_shape, 1))
+    x = xops.ConvertElementType(bool_tri, xb.dtype_to_etype(input_.dtype))
   elif t is Delta:
     etype = xb.dtype_to_etype(input_.dtype)
-    iotas = [c.BroadcastedIota(onp.uint32, input_.shape, i)
+    iotas = [xops.Iota(c, xc.Shape.array_shape(xc.PrimitiveType.U32, input_.shape), i)
              for i in range(len(input_.shape))]
-    eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    x = c.ConvertElementType(functools.reduce(c.And, eyes), etype)
+    eyes = [xops.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
+    x = xops.ConvertElementType(functools.reduce(xops.And, eyes), etype)
   else:
     assert False
 
   # then apply the operations encoded in reindex
   bcast_dims, perm = unzip2((i, d) for i, d in enumerate(dims) if d is not None)
   if tuple(perm) != tuple(range(len(perm))):
-    x = c.Transpose(x, perm)
+    x = xops.Transpose(x, perm)
   if shape != c.GetShape(x).dimensions():
-    x = c.BroadcastInDim(x, shape, bcast_dims)
+    x = xops.BroadcastInDim(x, shape, bcast_dims)
 
   return x

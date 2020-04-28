@@ -26,7 +26,6 @@ ConcreteArray = core.ConcreteArray
 AbstractToken = core.AbstractToken
 abstract_token = core.abstract_token
 canonicalize_shape = core.canonicalize_shape
-concretization_err_msg = core.concretization_err_msg
 raise_to_shaped = core.raise_to_shaped
 
 

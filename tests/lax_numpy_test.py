@@ -1083,9 +1083,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_ind={}_inv={}_count={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          return_index, return_inverse, return_counts),
+       "shape": shape, "dtype": dtype,
+       "return_index": return_index, "return_inverse": return_inverse,
+       "return_counts": return_counts, "rng": jtu.rand_default()}
+      for dtype in default_dtypes
+      for shape in all_shapes
+      for return_index in [False, True]
+      for return_inverse in [False, True]
+      for return_counts in [False, True]))
+  def testUnique(self, shape, dtype, return_index, return_inverse, return_counts, rng):
+    args_maker = lambda: [rng(shape, dtype)]
+    onp_fun = lambda x: onp.unique(x, return_index, return_inverse, return_counts)
+    jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+
   def testIssue1233(self):
     '''
-    Following numpy test suite from `test_repeat` at https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
+    Following numpy test suite from `test_repeat` at
+    https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
     '''
     tol = 1e-5
 
@@ -1475,6 +1494,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  def testSplitTypeError(self):
+    # If we pass an ndarray for indices_or_sections -> no error
+    self.assertEqual(3, len(jnp.split(jnp.zeros(3), jnp.array([1, 2]))))
+
+    CONCRETIZATION_MSG = "Abstract tracer value encountered where concrete value is expected."
+    with self.assertRaisesRegex(TypeError, CONCRETIZATION_MSG):
+      # An abstract tracer for idx
+      api.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), idx))(2.)
+    with self.assertRaisesRegex(TypeError, CONCRETIZATION_MSG):
+      # A list including an abstract tracer
+      api.jit(lambda idx: jnp.split(jnp.zeros((12, 2)), [2, idx]))(2.)
+
+    # A concrete tracer -> no error
+    api.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), idx),
+            (2.,), (1.,))
+    # A tuple including a concrete tracer -> no error
+    api.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), (1, idx)),
+            (2,), (1,))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
@@ -1692,7 +1730,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = jnp.array(a)
     assert ans == 3.
 
-  @jtu.skip_on_devices("tpu")  # TODO(b/32368900): TPUs don't support uint8 yet.
   def testMemoryView(self):
     ans = jnp.array(bytearray(b'\x2a'))
     self.assertAllClose(
@@ -2539,13 +2576,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for x in (onp.nan, -onp.inf, -100., -2., -1., 0., 1., 2., 100., onp.inf,
               jnp.finfo(dtype).max, onp.sqrt(jnp.finfo(dtype).max),
               onp.sqrt(jnp.finfo(dtype).max) * 2.):
-      if onp.isnan(x) and op in ("sinh", "cosh", "expm1", "exp"):
-        # TODO(b/133842876, b/133842870): these return wrong outputs on CPU for
-        # NaN inputs.
-        continue
-      if (op in ("sin", "cos", "tan", "arctan") and
+      if (op in ("sin", "cos", "tan") and
           jtu.device_under_test() == "tpu"):
-        continue  # TODO(b/132196789, b/134175194): fix and reenable.
+        continue  # TODO(b/132196789): fix and reenable.
       x = dtype(x)
       expected = onp_op(x)
       actual = jnp_op(x)

@@ -35,7 +35,6 @@ from jax import api, core, lax, lax_reference
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
-from jax.abstract_arrays import concretization_err_msg
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
@@ -225,7 +224,9 @@ class APITest(jtu.JaxTestCase):
 
     assert grad(f)(1.0) == 1.0
     assert grad(f)(-1.0) == -1.0
-    jtu.check_raises(lambda: jit(f)(1), TypeError, concretization_err_msg(bool))
+    with self.assertRaisesRegex(core.ConcretizationTypeError,
+                                "Abstract tracer value encountered where concrete value is expected"):
+      jit(f)(1)
 
   def test_range_err(self):
     def f(x, n):
@@ -246,7 +247,7 @@ class APITest(jtu.JaxTestCase):
       self.assertRaisesRegex(
           TypeError,
           "('JaxprTracer' object cannot be interpreted as an integer"
-          "|Abstract value passed to .*)", lambda: jit(f)(0))
+          "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
@@ -875,8 +876,15 @@ class APITest(jtu.JaxTestCase):
       return np.zeros((3, 4))
 
     xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
-    out_shape, = xla_comp.GetReturnValueShape().tuple_shapes()
+    out_shape, = xla_comp.GetProgramShape().result_shape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
+
+  def test_xla_computation_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
+    self.assertIn('constant(3)', xla_comp.GetHloText())
 
   def test_jit_device(self):
     device = xb.devices()[-1]
@@ -1502,6 +1510,16 @@ class APITest(jtu.JaxTestCase):
 
     jax.grad(scan_bug)(1.0)  # doesn't crash
 
+  def test_remat_jit_static_argnum(self):
+    # https://github.com/google/jax/issues/2833
+    def f(a_bool, y):
+      if a_bool:
+        return y + 1
+      else:
+        return y
+
+    api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -1843,6 +1861,14 @@ class JaxprTest(jtu.JaxTestCase):
                     name=inner ] c b a
   in (d,) }
                               """, str(jaxpr))
+
+  def test_make_jaxpr_static_argnums(self):
+    def f(x, y):
+      return x + y
+
+    jaxpr = api.make_jaxpr(f, static_argnums=(1,))(2, 3)
+    self.assertIn('3', str(jaxpr))
+
 
 class LazyTest(jtu.JaxTestCase):
 
@@ -2808,37 +2834,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     foo = lambda x: api.vmap(np.linalg.det, (0,))(x)
     api.jit(foo)(arr)  # doesn't crash
 
-  def test_odeint_vmap_grad(self):
-    # https://github.com/google/jax/issues/2531
-    # TODO(mattjj): factor out an ode tests file
-    try:
-      from jax.experimental.ode import odeint
-    except ImportError:
-      raise unittest.SkipTest("missing jax.experimental") from None
-
-    def dx_dt(x, *args):
-      return 0.1 * x
-
-    def f(x, y):
-      y0 = np.array([x, y])
-      t = np.array([0., 5.])
-      y = odeint(dx_dt, y0, t)
-      return y[-1].sum()
-
-    def g(x):
-      # Two initial values for the ODE
-      y0_arr = np.array([[x, 0.1],
-                         [x, 0.2]])
-
-      # Run ODE twice
-      t = np.array([0., 5.])
-      y = jax.vmap(lambda y0: odeint(dx_dt, y0, t))(y0_arr)
-      return y[:,-1].sum()
-
-    ans = jax.grad(g)(2.)  # don't crash
-    expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
   def test_lowering_out_of_traces(self):
     # https://github.com/google/jax/issues/2578
 
@@ -2851,6 +2846,28 @@ class CustomVJPTest(jtu.JaxTestCase):
       return f(x)
 
     jax.grad(g, argnums=(1,))(F(2.0), 0.)  # doesn't crash
+
+  def test_nondiff_argnums_stop_gradient(self):
+    # https://github.com/google/jax/issues/2784
+    @partial(api.custom_vjp, nondiff_argnums=(0, 1))
+    def _clip_gradient(lo, hi, x):
+      return x  # identity function
+
+    def clip_gradient_fwd(lo, hi, x):
+        # return x, None
+        return x, (hi, )
+
+    def clip_gradient_bwd(lo, hi, _, g):
+        return (np.clip(g, lo, hi),)
+
+    _clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
+
+    def clip_gradient(x):
+        lo = -1
+        hi = x + 1  # causes things to break
+        return _clip_gradient(lo, hi, x)
+
+    jax.grad(clip_gradient)(1.)  # doesn't crash
 
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
