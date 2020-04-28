@@ -1336,7 +1336,7 @@ def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
   if in_tree != in_tree_expected:
     msg = ("Tree structure of cotangent input {}, does not match structure of "
            "primal output {}")
-    raise TypeError(msg.format(in_tree_expected, in_tree))
+    raise TypeError(msg.format(in_tree, in_tree_expected))
   for a, dtype in safe_zip(args, cotangent_dtypes):
     if _dtype(a) != dtype:
       msg = ("Type of cotangent input to vjp pullback function ({}) does not "
