@@ -1181,7 +1181,9 @@ def sort(operand: Array, dimension: int = -1) -> Array:
   """
   return sort_p.bind(operand, dimension=dimension)
 
-def sort_key_val(keys: Array, values: Array, dimension: int = -1) -> Array:
+def sort_key_val(keys: Array, values: Array,
+                 dimension: int = -1) -> Tuple[Array, Array]:
+  """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
   # TODO(mattjj): new sort_key_val is variadic
   result = sort_key_val_p.bind(keys, values, dimension=dimension)
   sorted_keys, sorted_values = result
