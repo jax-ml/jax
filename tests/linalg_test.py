@@ -603,8 +603,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertTrue(onp.all(
         norm(onp.eye(k) -onp.matmul(onp.conj(T(lq)), lq)) < 5))
 
-    if (not full_matrices and m >= n
-        and not np.issubdtype(dtype, np.complexfloating)):
+    if not full_matrices and m >= n:
         jtu.check_jvp(np.linalg.qr, partial(jvp, np.linalg.qr), (a,), atol=3e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(

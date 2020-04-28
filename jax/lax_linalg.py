@@ -779,16 +779,18 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   x, = primals
   dx, = tangents
   q, r = qr_p.bind(x, full_matrices=False)
-  if (full_matrices or np.shape(x)[-2] < np.shape(x)[-1] or
-      np.issubdtype(x.dtype, np.complexfloating)):
+  *_, m, n = x.shape
+  if full_matrices or m < n:
     raise NotImplementedError(
       "Unimplemented case of QR decomposition derivative")
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
   qt_dx_rinv = np.matmul(_H(q), dx_rinv)
   qt_dx_rinv_lower = np.tril(qt_dx_rinv, -1)
-  domega = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
-  dq = np.matmul(q, domega - qt_dx_rinv) + dx_rinv
-  dr = np.matmul(qt_dx_rinv - domega, r)
+  do = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
+  # The following correction is necessary for complex inputs
+  do = do + np.eye(n, dtype=do.dtype) * (qt_dx_rinv - np.real(qt_dx_rinv))
+  dq = np.matmul(q, do - qt_dx_rinv) + dx_rinv
+  dr = np.matmul(qt_dx_rinv - do, r)
   return (q, r), (dq, dr)
 
 def qr_batching_rule(batched_args, batch_dims, full_matrices):
