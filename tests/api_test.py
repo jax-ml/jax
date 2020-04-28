@@ -2834,40 +2834,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     foo = lambda x: api.vmap(np.linalg.det, (0,))(x)
     api.jit(foo)(arr)  # doesn't crash
 
-  def test_odeint_vmap_grad(self):
-    # https://github.com/google/jax/issues/2531
-    # TODO(mattjj): factor out an ode tests file
-    try:
-      from jax.experimental.ode import odeint
-    except ImportError:
-      raise unittest.SkipTest("missing jax.experimental") from None
-
-    def dx_dt(x, *args):
-      return 0.1 * x
-
-    def f(x, y):
-      y0 = np.array([x, y])
-      t = np.array([0., 5.])
-      y = odeint(dx_dt, y0, t)
-      return y[-1].sum()
-
-    def g(x):
-      # Two initial values for the ODE
-      y0_arr = np.array([[x, 0.1],
-                         [x, 0.2]])
-
-      # Run ODE twice
-      t = np.array([0., 5.])
-      y = jax.vmap(lambda y0: odeint(dx_dt, y0, t))(y0_arr)
-      return y[:,-1].sum()
-
-    ans = jax.grad(g)(2.)  # don't crash
-    expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
-
-    atol = {onp.float64: 5e-15}
-    rtol = {onp.float64: 2e-15}
-    self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
-
   def test_lowering_out_of_traces(self):
     # https://github.com/google/jax/issues/2578
 
