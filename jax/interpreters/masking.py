@@ -145,7 +145,7 @@ class Poly(dict):
     return self + other
 
   def __rsub__(self, other):
-    return self + -other
+    return _ensure_poly(other) - self
 
   def __floordiv__(self, divisor):
     q, _ = divmod(self, divisor)  # pytype: disable=wrong-arg-types

@@ -95,6 +95,10 @@ class ShapesTest(jtu.JaxTestCase):
     assert (2*n, 0) == divmod(10*n, 5)
     assert (2*n+4, 3) == divmod(10*n+23, 5)
 
+  def test_Poly_rsub(self):
+    n = Poly({Mon({'n': 1}): 1})
+    assert -1 - n == -n - 1
+
   def test_add_broadcast(self):
     @shapecheck(['(m, n)', 'n'], '(m, n)')
     @shapecheck(['n', ''], 'n')
