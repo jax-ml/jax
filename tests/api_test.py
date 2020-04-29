@@ -2043,7 +2043,7 @@ class LazyTest(jtu.JaxTestCase):
       x = np.ones(3) + np.zeros(3)
       y = np.ones(3) + np.ones(3)
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(1, count[0])
     self.assertAllClose(x, onp.ones(3), check_dtypes=False)
     self.assertAllClose(y, onp.ones(3) + onp.ones(3), check_dtypes=False)
 

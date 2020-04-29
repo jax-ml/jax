@@ -46,6 +46,7 @@ xops = xc._xla.ops
 # Types
 Backend = Any  # xc.LocalBackend (why does mypy not like this?)
 Device = Any  # xc.Device
+PyLocalBuffer = Any
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -494,7 +495,6 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to force their (potentially lazy) arguments.
   if not jaxpr.eqns:
-    device = device or xb.get_backend(None).get_default_device_assignment(1)[0]
     return partial(_execute_trivial, jaxpr, device, consts, result_handlers)
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
@@ -587,7 +587,7 @@ def _execute_replicated(compiled, handlers, *args):
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_trivial(jaxpr, device, consts, handlers, *args):
+def _execute_trivial(jaxpr, device: Optional[Device], consts, handlers, *args):
   env = {core.unitvar: core.unit}
   _map(env.setdefault, jaxpr.invars, args)
   _map(env.setdefault, jaxpr.constvars, consts)
@@ -755,7 +755,7 @@ class DeviceArray(DeviceValue):
   __array_priority__ = 100
 
   def __init__(self, aval: core.ShapedArray, device: Optional[Device],
-               lazy_expr, device_buffer):
+               lazy_expr: lazy.LazyExpr, device_buffer: PyLocalBuffer):
     self.aval = aval
     self.device_buffer = device_buffer
     self._device = device
@@ -938,7 +938,10 @@ def _copy_device_array_to_device(x: DeviceArray, device: Optional[xc.Device]) ->
     # source and target platforms are the same
     if x.device_buffer.device() == device:
       # no copying to be done because source equals target
-      return x
+      if x._device == device:
+        return x
+      else:
+        moved_buf = x.device_buffer  # We need to change stickyness
     else:
       # move the buffer with a device-to-device copy
       moved_buf = x.device_buffer.copy_to_device(device)
@@ -955,17 +958,16 @@ def _force(x: DeviceArray) -> DeviceArray:
     # force x on the device where it lives, but preserve stickiness on result
     if x._device:
       device = x._device
-      sticky = True
     else:
       device = x.device_buffer.device()
-      sticky = False
-    force_fun = _lazy_force_computation(sticky, x.aval, device, x._lazy_expr)
-    return force_fun(x)
+    force_fun = _lazy_force_computation(x.aval, device, x._lazy_expr)
+    result = force_fun(x)
+    return DeviceArray(x.aval, x._device, lazy.array(x.aval.shape), result)
 
 @cache()
-def _lazy_force_computation(sticky: bool, aval: core.ShapedArray,
+def _lazy_force_computation(aval: core.ShapedArray,
                             device: Device, lexpr: lazy.LazyExpr
-                            ) -> Callable[[DeviceArray], DeviceArray]:
+                            ) -> Callable[[DeviceArray], PyLocalBuffer]:
   c = xb.make_computation_builder("lazy_force")
   if lazy.is_constant(lexpr):
     param = None
@@ -986,15 +988,13 @@ def _lazy_force_computation(sticky: bool, aval: core.ShapedArray,
   backend = xb.get_device_backend(device)
   compiled = backend.compile(built_c, compile_options=options)
 
-  result_device = device if sticky else None
-  handler = partial(DeviceArray, aval, result_device, lazy.array(aval.shape))
   force_fun: Callable[[DeviceValue], DeviceArray]
   if lazy.is_constant(lexpr):
     def force_fun(_):
-      return handler(compiled.Execute([])[0])
+      return compiled.Execute([])[0]
   else:
     def force_fun(x):
-      return handler(compiled.Execute([x.device_buffer])[0])
+      return compiled.Execute([x.device_buffer])[0]
   return force_fun
 
 

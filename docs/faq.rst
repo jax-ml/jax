@@ -106,6 +106,11 @@ committed device, and the result will be committed on the
 same device. It is an error to invoke an operation on
 arguments that are committed to more than one device.
 
+You can also use :func:`jax.device_put` without a ``device`` parameter,
+in which case the data is left as is if already on a device (whether
+committed or not), or a Python value that is not on any device is
+placed uncommitted on the default device.
+
 Jitted functions behave as any other primitive operation
 (will follow the data and will error if invoked on data
 committed on more than one device).
