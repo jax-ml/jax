@@ -106,23 +106,13 @@ def register_backend(name, factory):
 
 def _get_local_backend(platform=None):
   if not platform:
-    platform = FLAGS.jax_platform_name
-
-  # Canonicalize platform names.
-  cpu = 'cpu'
-  gpu = 'gpu'
-  if platform == 'Host':
-    platform = cpu
-  elif platform == 'CUDA':
-    platform = gpu
-  elif platform == '':
-    platform = None
+    platform = FLAGS.jax_platform_name or None
 
   backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
 
-  if backend.platform == cpu and platform != cpu:
+  if backend.platform == 'cpu' and platform != 'cpu':
     warnings.warn('No GPU/TPU found, falling back to CPU.')
 
   return backend
@@ -155,7 +145,7 @@ _backend_lock = threading.Lock()
 def get_backend(platform=None):
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
-  if isinstance(platform, xla_client.Backend):
+  if not isinstance(platform, (type(None), str)):
     return platform
 
   with _backend_lock:
@@ -274,10 +264,12 @@ def _numpy_array_constant(builder, value, canonicalize_types=True):
     value = normalize_to_xla_dtypes(value)
   return xops.ConstantLiteral(builder, value)
 
-def parameter(builder, num, shape, name=None, replicated=False):
+def parameter(builder, num, shape, name=None, replicated=None):
   if name is None:
     name = ''
-  if isinstance(replicated, bool):
+  if replicated is None:
+    replicated = []
+  elif isinstance(replicated, bool):
     replicated = [replicated] * shape.leaf_count()
 
   return xops.Parameter(builder, num,

@@ -1510,6 +1510,16 @@ class APITest(jtu.JaxTestCase):
 
     jax.grad(scan_bug)(1.0)  # doesn't crash
 
+  def test_remat_jit_static_argnum(self):
+    # https://github.com/google/jax/issues/2833
+    def f(a_bool, y):
+      if a_bool:
+        return y + 1
+      else:
+        return y
+
+    api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
+
   def test_trivial_computations(self):
     x = np.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -2823,37 +2833,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     arr = np.ones((5, 2, 2))
     foo = lambda x: api.vmap(np.linalg.det, (0,))(x)
     api.jit(foo)(arr)  # doesn't crash
-
-  def test_odeint_vmap_grad(self):
-    # https://github.com/google/jax/issues/2531
-    # TODO(mattjj): factor out an ode tests file
-    try:
-      from jax.experimental.ode import odeint
-    except ImportError:
-      raise unittest.SkipTest("missing jax.experimental") from None
-
-    def dx_dt(x, *args):
-      return 0.1 * x
-
-    def f(x, y):
-      y0 = np.array([x, y])
-      t = np.array([0., 5.])
-      y = odeint(dx_dt, y0, t)
-      return y[-1].sum()
-
-    def g(x):
-      # Two initial values for the ODE
-      y0_arr = np.array([[x, 0.1],
-                         [x, 0.2]])
-
-      # Run ODE twice
-      t = np.array([0., 5.])
-      y = jax.vmap(lambda y0: odeint(dx_dt, y0, t))(y0_arr)
-      return y[:,-1].sum()
-
-    ans = jax.grad(g)(2.)  # don't crash
-    expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
-    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_lowering_out_of_traces(self):
     # https://github.com/google/jax/issues/2578

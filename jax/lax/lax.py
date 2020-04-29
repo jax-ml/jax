@@ -278,6 +278,10 @@ def bitwise_xor(x: Array, y: Array) -> Array:
   r"""Elementwise exclusive OR: :math:`x \oplus y`."""
   return xor_p.bind(x, y)
 
+def population_count(x: Array) -> Array:
+  r"""Elementwise popcount, count the number of set bits in each element."""
+  return population_count_p.bind(x)
+
 def add(x: Array, y: Array) -> Array:
   r"""Elementwise addition: :math:`x + y`."""
   return add_p.bind(x, y)
@@ -1177,13 +1181,16 @@ def sort(operand: Array, dimension: int = -1) -> Array:
   """
   return sort_p.bind(operand, dimension=dimension)
 
-def sort_key_val(keys: Array, values: Array, dimension: int = -1) -> Array:
+def sort_key_val(keys: Array, values: Array,
+                 dimension: int = -1) -> Tuple[Array, Array]:
+  """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
   # TODO(mattjj): new sort_key_val is variadic
   result = sort_key_val_p.bind(keys, values, dimension=dimension)
   sorted_keys, sorted_values = result
   return sorted_keys, sorted_values
 
-def top_k(operand: Array, k: int) -> Array:
+def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
+  """Returns top ``k`` values and their indices along the last axis of ``operand``."""
   k = int(k)
   if k < 0:
     raise ValueError("k argument to top_k must be nonnegative, got {}".format(k))
@@ -2022,6 +2029,8 @@ ad.defjvp_zero(or_p)
 
 xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
+
+population_count_p = standard_unop(_bool_or_int, 'population_count')
 
 def _add_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases we
@@ -4618,12 +4627,53 @@ def _top_k_abstract_eval(operand, *, k):
   return (ShapedArray(shape, operand.dtype),
           ShapedArray(shape, onp.dtype(onp.int32)))
 
+def _top_k_jvp(primals, tangents, *, k):
+  operand, = primals
+  tangent, = tangents
+  primals_out = top_k(operand, k)
+  if tangent is ad_util.zero:
+    tangents_out = (ad_util.zero, ad_util.zero)
+  else:
+    _, k_idxs = primals_out
+    idx_shape = k_idxs.shape
+    rank = len(idx_shape)
+    gather_index_shape = idx_shape + (1,)
+    gather_indices = []
+    for i in range(rank-1):
+      _iota = iota(k_idxs.dtype, idx_shape[i])
+      _iota = tie_in(operand, _iota)
+      _iota = broadcast_in_dim(_iota, gather_index_shape, (i,))
+      gather_indices.append(_iota)
+    gather_indices.append(reshape(k_idxs, gather_index_shape))
+    gather_indices = concatenate(gather_indices, dimension=rank)
+    slice_sizes = (1,) * rank
+    dnums = GatherDimensionNumbers(
+      offset_dims=(),
+      collapsed_slice_dims=tuple(range(rank)),
+      start_index_map=tuple(range(rank)))
+    tangents_out = (gather(tangent, gather_indices, dnums, slice_sizes),
+                    ad_util.zero)
+  return primals_out, tangents_out
+
+def _top_k_batch_rule(batched_args, batch_dims, *, k):
+  operand, = batched_args
+  bdim, = batch_dims
+  if bdim == operand.ndim-1:
+    perm = onp.arange(operand.ndim)
+    perm[bdim-1], perm[bdim] = perm[bdim], perm[bdim-1]
+    top_k_v, top_k_i = top_k(transpose(operand, perm), k=k)
+    return (transpose(top_k_v, perm),
+            transpose(top_k_i, perm)), (bdim, bdim)
+  else:
+    return top_k(operand, k=k), (bdim, bdim)
+
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 xla.translations[top_k_p] = partial(standard_translate, 'top_k')
-
+ad.primitive_jvps[top_k_p] = _top_k_jvp
+batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
 def _tie_in_transpose_rule(t):
   return [ad_util.zero, t]
@@ -4778,7 +4828,8 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
   return ShapedArray(shape, a.dtype)
 
 def _rng_uniform_translation_rule(c, a, b, *, shape):
-  return xops.RngUniform(a, b, shape)
+  xla_shape = xc.Shape.array_shape(c.GetShape(a).xla_element_type(), shape)
+  return xops.RngUniform(a, b, xla_shape)
 
 rng_uniform_p = Primitive("rng_uniform")
 rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
@@ -5122,8 +5173,13 @@ def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
 
+
 def _check_user_dtype_supported(dtype, fun_name=None):
-  if dtype is not None and onp.dtype(dtype) != dtypes.canonicalize_dtype(dtype):
+  onp_dtype = onp.dtype(dtype)
+  if onp_dtype.kind not in "biufc" and onp_dtype.type != dtypes.bfloat16:
+    msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
+    raise TypeError(msg)
+  if dtype is not None and onp_dtype != dtypes.canonicalize_dtype(dtype):
     msg = ("Explicitly requested dtype {} {} is not available, "
            "and will be truncated to dtype {}. To enable more dtypes, set the "
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
