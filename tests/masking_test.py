@@ -537,14 +537,16 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(ans[:3], expected, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_start={}_stop={}_step={}".format(start, stop, step),
-       "start": start, "stop": stop, "step": step}
+      {"testcase_name": "_start={}_stop={}_step={}_length={}"
+       .format(start, stop, step, length),
+       "start": start, "stop": stop, "step": step, "length": length}
+      for length in range(1, 5)
       for start, stop, step
       in it.product(it.chain([None], range(-10, 10)), repeat=3)
       if step != 0))
-  def test_slice_indices(self, start, stop, step):
+  def test_slice_indices(self, start, stop, step, length):
     s = slice(start, stop, step)
-    assert _polymorphic_slice_indices(s, 5) == s.indices(5)
+    assert _polymorphic_slice_indices(s, length) == s.indices(length)
 
   def test_slice_oob_indexing(self):
     # https://github.com/google/jax/issues/2245
