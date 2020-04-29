@@ -33,7 +33,7 @@ import os
 import re
 import string
 import types
-from typing import Tuple
+from typing import Tuple, Union
 import warnings
 
 import numpy as onp
@@ -3558,29 +3558,57 @@ def _canonicalize_tuple_index(arr_ndim, idx):
     idx = tuple(idx) + colons
   return idx
 
-def _slice_indices(idx, size):
+def _polymorphic_slice_indices(idx: slice, size: Union[int, Poly]):
   # like idx.indices(size), but allows for polymorphic start and size
+  # see https://github.com/python/cpython/blob/6d6508765514c7c10719478a0430f5e47c9a96ac/Objects/sliceobject.c#L372
   assert isinstance(idx, slice)
 
   step = 1 if idx.step is None else idx.step
-  if idx.start is None:
-    start = size - 1 if step < 0 else 0
+  step_is_negative = step < 0
+
+  if step_is_negative:
+    lower = -1
+    upper = size + lower
   else:
-    start = idx.start if type(size) is Poly else _max(idx.start, -size)
-    start += size if start < 0 else 0
+    lower = 0
+    upper = size
+
+  if idx.start is None:
+    start = upper if step_is_negative else lower
+  elif type(idx.start) is Poly:
+    raise NotImplementedError  # TODO
+  else:
+    # TODO(mattjj): would like to only handle idx.start as int here, but because
+    # of _normalize_index in the caller that may not be the case.
+    start = idx.start
+    if start < 0:
+      start = _max(start + size, lower)
+    else:
+      start = _min(start, upper)
 
   if idx.stop is None:
-    stop = -1 if step < 0 else size
+    stop = lower if step_is_negative else upper
+  elif type(idx.stop) is Poly:
+    raise NotImplementedError  # TODO
   else:
-    stop = idx.stop if type(size) is Poly else _min(idx.stop, size)
-    stop += size if stop < 0 else 0
+    # TODO(mattjj): would like to only handle idx.start as int here, but because
+    # of _normalize_index in the caller that may not be the case.
+    stop = idx.stop
+    if stop < 0:
+      stop = _max(stop + size, lower)
+    else:
+      stop = _min(stop, upper)
+
   return start, stop, step
 
-def _static_idx(idx, size):
+def _static_idx(idx: slice, size: Union[int, Poly]):
   """Helper function to compute the static slice start/limit/stride values."""
-  start, stop, step = _slice_indices(idx, size)
-  if (type(start) is not Poly and type(stop) is not Poly and
-      ((step < 0 and stop >= start) or (step > 0 and start >= stop))):
+  if _any(type(s) is Poly for s in (idx.start, idx.stop, idx.step, size)):
+    start, stop, step = _polymorphic_slice_indices(idx, size)
+  else:
+    start, stop, step = idx.indices(size)
+
+  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
     return 0, 0, 1, False  # sliced to size zero
 
   if step > 0:
