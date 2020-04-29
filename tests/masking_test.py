@@ -253,6 +253,14 @@ class ShapesTest(jtu.JaxTestCase):
     def slice(x):
       return x[:-1]
 
+    @shapecheck(['n'], 'n+-1')
+    def inverse(x):
+      return x[:0:-1]
+
+    @shapecheck(['n'], 'n+-1')
+    def inverse(x):
+      return x[-2::-1]
+
   def test_poly_slicing(self):
     @shapecheck(['n'], 'n+-1')
     def slice_poly_stop(x):
