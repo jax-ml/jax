@@ -2635,7 +2635,7 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
     lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
-    return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+    return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
                                broadcast_dimensions=broadcast_dimensions)
@@ -2845,7 +2845,7 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
     if bcast_dims is not None:
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
-      return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+      return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
 
   if type(operand) is pxla.ShardedDeviceArray and dimensions is None:
     array = _reshape_sharded_device_array(operand, new_sizes, old_sizes)
@@ -2999,7 +2999,7 @@ def _transpose_impl(operand, *, permutation):
   if type(operand) is xla.DeviceArray:
     lazy_expr = lazy.transpose(operand._lazy_expr, permutation)
     aval = ShapedArray(lazy_expr.shape, operand.dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+    return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(transpose_p, operand, permutation=permutation)
 
