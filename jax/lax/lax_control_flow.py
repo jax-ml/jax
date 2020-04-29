@@ -597,7 +597,6 @@ def _cond_abstract_eval(*args, **kwargs):
 def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
                            pred, *args, true_jaxpr, false_jaxpr, linear):
   del linear  # Unused.
-  true_ops, false_ops = split_list(args, [len(true_jaxpr.in_avals)])
 
   def make_computation(name, jaxpr, op_shape):
     c = xb.make_computation_builder(name + '_comp')
@@ -608,13 +607,11 @@ def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
                              extend_name_stack(name_stack, name + '_fun'), *ops)
     return c.build(xops.Tuple(c, outs))
 
-  true_op = xops.Tuple(c, true_ops)
-  true_c = make_computation('true', true_jaxpr, c.get_shape(true_op))
-
-  false_op = xops.Tuple(c, false_ops)
-  false_c = make_computation('false', false_jaxpr, c.get_shape(false_op))
-
-  return xops.Conditional(pred, true_op, true_c, false_op, false_c)
+  op = xops.Tuple(c, args)
+  op_shape = c.get_shape(op)
+  true_c = make_computation('true', true_jaxpr, op_shape)
+  false_c = make_computation('false', false_jaxpr, op_shape)
+  return xops.Conditional(pred, op, true_c, op, false_c)
 
 def _cond_pred_bcast_select(pred, x, y):
   if core.get_aval(x) is core.get_aval(y) is core.abstract_unit:
