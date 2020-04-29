@@ -86,11 +86,6 @@ def mask_subtrace(master, in_vals, shape_exprs):
   out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
   yield out_vals, out_shapes
 
-def to_index(x):
-  """Like operator.index, but allowing polymorphic dimensions.
-  Not implemented as `Poly.__index__`, since operator.index only allows ints."""
-  return x if type(x) is Poly else op.index(x)
-
 def eval_polymorphic_shape(shape, values_dict):
   return tuple(dim.evaluate(values_dict) if type(dim) is Poly else dim
                for dim in shape)

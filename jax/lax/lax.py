@@ -36,11 +36,10 @@ from .. import dtypes
 from .. import lazy
 from .. import lib
 from ..config import flags
-from ..core import _canonicalize_dimension, Primitive
+from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
                                raise_to_shaped, abstract_token, canonicalize_shape)
-from ..interpreters.masking import to_index
 from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
@@ -80,7 +79,7 @@ def broadcast_shapes(*shapes):
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
-  return tuple(map(_canonicalize_dimension, result_shape))
+  return canonicalize_shape(result_shape)
 
 def _identity(x): return x
 
@@ -1235,10 +1234,10 @@ def iota(dtype: DType, size: int) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  size = to_index(size)
+  shape = canonicalize_shape((size,))
   dtype = dtypes.canonicalize_dtype(dtype)
-  lazy_expr = lazy.iota(dtype, size)
-  aval = ShapedArray((size,), dtype)
+  lazy_expr = lazy.iota(dtype, shape[0])
+  aval = ShapedArray(shape, dtype)
   return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:

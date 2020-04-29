@@ -42,10 +42,10 @@ import opt_einsum
 from jax import jit, device_put, custom_jvp
 from .. import core
 from .. import dtypes
-from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
+from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags
 from ..interpreters.xla import DeviceArray
-from ..interpreters.masking import Poly, to_index
+from ..interpreters.masking import Poly
 from .. import lax
 from .. import ops
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
@@ -1296,7 +1296,7 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) else array(arr)
-  shape = tuple(map(to_index, shape))  # check that shape is concrete
+  shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
     return arr

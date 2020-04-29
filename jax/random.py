@@ -42,7 +42,6 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
 from jax.util import prod
-from jax.interpreters.masking import to_index
 
 
 def PRNGKey(seed: int) -> np.ndarray:
@@ -290,11 +289,8 @@ def _random_bits(key, bit_width, shape):
 
 
 def _check_shape(name, shape, *param_shapes):
-  try:
-    shape = tuple(map(to_index, shape))
-  except TypeError as err:
-    msg = "{} requires a concrete tuple of integers as shape argument, got {}."
-    raise ValueError(msg.format(name, shape)) from err
+  shape = abstract_arrays.canonicalize_shape(shape)
+
   if param_shapes:
     shape_ = lax.broadcast_shapes(shape, *param_shapes)
     if shape != shape_:
