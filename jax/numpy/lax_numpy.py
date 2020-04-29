@@ -3415,7 +3415,7 @@ def _index_to_gather(x_shape, idx):
         offset_dims.append(collapsed_y_axis)
         start_index_map.append(x_axis)
       else:
-        i = arange(start, limit, stride, dtype=index_dtype)
+        i = arange(start, limit, stride, dtype=dtypes.canonicalize_dtype(index_dtype))
         size = i.shape[0]
         slice_shape.append(size)
         gather_slice_shape.append(1)
