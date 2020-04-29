@@ -14,18 +14,18 @@
 
 """JAX pseudo-random number generators (PRNGs).
 
-Usage:
+Example usage:
 
 ```python
 rng = jax.random.PRNGKey(seed)
-for i in xrange(num_steps):
+for i in range(num_steps):
   rng, rng_input = jax.random.split(rng)
   params = compiled_update(rng_input, params, next(batches))
 ```
 
 Context:
 
-Among other requirements, Jax PRNG aims at:
+Among other requirements, the JAX PRNG aims to:
 (a) ensure reproducibility,
 (b) parallelize well, both in terms of vectorization (generating array values)
 and multi-replica, multi-core computation. In particular it should not use 
@@ -37,7 +37,7 @@ The approach is based on:
 (Claessen et al. 2013)
 
 See also https://github.com/google/jax/blob/master/design_notes/prng.md
-for the historical design and its motivation.
+for the design and its motivation.
 """
 
 
