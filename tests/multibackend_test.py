@@ -144,6 +144,33 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertEqual(api.jit(f, backend='cpu')().device_buffer.device(),
                      api.devices('cpu')[0])
 
+  @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
+  def test_jit_on_nondefault_backend(self):
+    cpus = api.devices("cpu")
+    self.assertNotEmpty(cpus)
+
+    # Since we are not on CPU, some other backend will be the default
+    default_dev = api.devices()[0]
+    self.assertNotEqual(default_dev.platform, "cpu")
+
+    data_on_cpu = api.device_put(1, device=cpus[0])
+    self.assertEqual(data_on_cpu.device_buffer.device(), cpus[0])
+
+    def my_sin(x): return np.sin(x)
+    # jit without any device spec follows the data
+    result1 = api.jit(my_sin)(2)
+    self.assertEqual(result1.device_buffer.device(), default_dev)
+    result2 = api.jit(my_sin)(data_on_cpu)
+    self.assertEqual(result2.device_buffer.device(), cpus[0])
+
+    # jit with `device` spec places the data on the specified device
+    result3 = api.jit(my_sin, device=cpus[0])(2)
+    self.assertEqual(result1.device_buffer.device(), cpus[0])
+
+    # jit with `backend` spec places the data on the specified backend
+    result4 = api.jit(my_sin, backend="cpu")(2)
+    self.assertEqual(result1.device_buffer.device(), cpus[0])
+
 
 if __name__ == "__main__":
   absltest.main()
