@@ -3565,34 +3565,21 @@ def _polymorphic_slice_indices(idx: slice, size: Union[int, Poly]):
 
   step = 1 if idx.step is None else idx.step
   step_is_negative = step < 0
+  lower = -1 if step_is_negative else 0
+  upper = size + lower
 
-  if step_is_negative:
-    lower = -1
-    upper = size + lower
-  else:
-    lower = 0
-    upper = size
+  def sanitize(index, default):
+    if index is None:
+      return default
+    elif type(index) is Poly:
+      return index
+    elif index < 0:
+      return _max(index + size, lower)
+    else:
+      return _min(index, upper)
 
-  if idx.start is None:
-    start = upper if step_is_negative else lower
-  else:
-    start = idx.start
-    if type(start) is not Poly:
-      if start < 0:
-        start = _max(start + size, lower)
-      else:
-        start = _min(start, upper)
-
-  if idx.stop is None:
-    stop = lower if step_is_negative else upper
-  else:
-    stop = idx.stop
-    if type(stop) is not Poly:
-      if stop < 0:
-        stop = _max(stop + size, lower)
-      else:
-        stop = _min(stop, upper)
-
+  start = sanitize(idx.start, default=upper if step_is_negative else lower)
+  stop = sanitize(idx.stop, default=lower if step_is_negative else upper)
   return start, stop, step
 
 def _static_idx(idx: slice, size: Union[int, Poly]):
