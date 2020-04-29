@@ -552,17 +552,9 @@ def cond(pred, operand, true_fun: Callable, false_fun: Callable, *unused_args):
   _check_tree_and_avals("true_fun and false_fun output",
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
-  # TODO(frostig): The following uses the current cond primitive, which we want
-  # to change to support only one common operand list for both branches. We will
-  # then bind something like the following:
-  #
-  # linear = (False,) * (len(true_consts) + len(false_consts) + len(ops))
-  # out = cond_p.bind(
-  #     *itertools.chain([pred], true_consts, false_consts, ops),
-  #     true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
-  linear = (False,) * (len(true_consts) + len(ops) + len(false_consts) + len(ops))
+  linear = (False,) * (len(true_consts) + len(false_consts) + len(ops))
   out = cond_p.bind(
-      *itertools.chain([pred], true_consts, ops, false_consts, ops),
+      *itertools.chain([pred], true_consts, false_consts, ops),
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
   return tree_unflatten(out_tree, out)
 
@@ -851,10 +843,14 @@ def _cond_transpose(cts, *args, true_jaxpr, false_jaxpr, linear):
 def cond_bind(*args, true_jaxpr, false_jaxpr, linear):
   if not core.skip_checks:
     assert len(linear) + 1 == len(args)
-    assert len(args) == 1 + len(true_jaxpr.in_avals) + len(false_jaxpr.in_avals)
-    (pred,), tops, fops = split_list(args, [1, len(true_jaxpr.in_avals)])
-    assert all(_map(typecheck, true_jaxpr.in_avals, tops))
-    assert all(_map(typecheck, false_jaxpr.in_avals, fops))
+    assert len(args) == 1 + len(true_jaxpr.in_avals)
+    assert len(true_jaxpr.in_avals) == len(false_jaxpr.in_avals)
+    assert len(true_jaxpr.out_avals) == len(false_jaxpr.out_avals)
+    assert all(_map(typematch, true_jaxpr.in_avals, false_jaxpr.in_avals))
+    assert all(_map(typematch, true_jaxpr.out_avals, false_jaxpr.out_avals))
+    (pred,), ops = split_list(args, [1, len(true_jaxpr.in_avals)])
+    assert all(_map(typecheck, true_jaxpr.in_avals, ops))
+    assert all(_map(typecheck, false_jaxpr.in_avals, ops))
     core.check_jaxpr(true_jaxpr.jaxpr)
     core.check_jaxpr(false_jaxpr.jaxpr)
   return core.Primitive.bind(cond_p, *args, true_jaxpr=true_jaxpr,
