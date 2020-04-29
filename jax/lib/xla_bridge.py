@@ -264,10 +264,12 @@ def _numpy_array_constant(builder, value, canonicalize_types=True):
     value = normalize_to_xla_dtypes(value)
   return xops.ConstantLiteral(builder, value)
 
-def parameter(builder, num, shape, name=None, replicated=False):
+def parameter(builder, num, shape, name=None, replicated=None):
   if name is None:
     name = ''
-  if isinstance(replicated, bool):
+  if replicated is None:
+    replicated = []
+  elif isinstance(replicated, bool):
     replicated = [replicated] * shape.leaf_count()
 
   return xops.Parameter(builder, num,
