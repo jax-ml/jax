@@ -1728,6 +1728,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  def testArrayUnsupportedDtypeError(self):
+    with self.assertRaisesRegex(TypeError,
+                                "JAX only supports number and bool dtypes.*"):
+      jnp.array(3, [('a','<i4'),('b','<i4')])
+
   def testIssue121(self):
     assert not onp.isscalar(jnp.array(3))
 

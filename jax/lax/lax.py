@@ -5173,8 +5173,13 @@ def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
 
+
 def _check_user_dtype_supported(dtype, fun_name=None):
-  if dtype is not None and onp.dtype(dtype) != dtypes.canonicalize_dtype(dtype):
+  onp_dtype = onp.dtype(dtype)
+  if onp_dtype.kind not in "biufc" and onp_dtype.type != dtypes.bfloat16:
+    msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
+    raise TypeError(msg)
+  if dtype is not None and onp_dtype != dtypes.canonicalize_dtype(dtype):
     msg = ("Explicitly requested dtype {} {} is not available, "
            "and will be truncated to dtype {}. To enable more dtypes, set the "
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
