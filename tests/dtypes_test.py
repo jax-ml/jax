@@ -24,6 +24,7 @@ from absl.testing import parameterized
 import numpy as onp
 
 import jax
+from jax import core
 from jax import dtypes
 from jax import numpy as np
 from jax import test_util as jtu
@@ -167,7 +168,9 @@ class DtypesTest(jtu.JaxTestCase):
       A = 42
       B = 101
     onp.testing.assert_equal(onp.array(42), onp.array(AnEnum.A))
-    onp.testing.assert_equal(np.array(42), np.array(AnEnum.A))
+    with core.skipping_checks():
+      # Passing AnEnum.A to np.array fails the type check in bind
+      onp.testing.assert_equal(np.array(42), np.array(AnEnum.A))
     onp.testing.assert_equal(onp.int32(101), onp.int32(AnEnum.B))
     onp.testing.assert_equal(np.int32(101), np.int32(AnEnum.B))
 

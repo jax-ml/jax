@@ -22,6 +22,7 @@ from absl.testing import parameterized
 
 import numpy as onp
 
+from jax import core
 from jax import test_util as jtu
 from jax.test_util import check_grads
 from jax import nn
@@ -92,12 +93,14 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("gpu", "tpu")
   def testEluMemory(self):
     # see https://github.com/google/jax/pull/1640
-    jax.make_jaxpr(nn.elu)(np.ones((10 ** 12,)))  # don't oom
+    with core.skipping_checks():  # With checks we materialize the array
+      jax.make_jaxpr(nn.elu)(np.ones((10 ** 12,)))  # don't oom
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testHardTanhMemory(self):
     # see https://github.com/google/jax/pull/1640
-    jax.make_jaxpr(nn.hard_tanh)(np.ones((10 ** 12,)))  # don't oom
+    with core.skipping_checks():  # With checks we materialize the array
+      jax.make_jaxpr(nn.hard_tanh)(np.ones((10 ** 12,)))  # don't oom
 
   def testOneHot(self):
     actual = nn.one_hot(np.array([0, 1, 2]), 3)
