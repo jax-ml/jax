@@ -111,6 +111,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     # A jitted computation with an device specification behaves as if the
     # arguments are first device_put to the specified device. The result
     # will be committed on the specified.
+    # The `device` parameter is experimental, and subject to change.
     jit_add_on4 = jax.jit(lambda a, b: a + b, device=devices[4])
     self.assert_committed_to_device(jit_add_on4(1, 2), devices[4])
     self.assert_committed_to_device(jit_add_on4(1, jax.device_put(2, devices[2])),

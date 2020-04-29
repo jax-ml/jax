@@ -16,11 +16,7 @@
 from collections import defaultdict
 import itertools as it
 import operator as op
-<<<<<<< HEAD
-from typing import Any, Callable, Dict, Sequence, Type, Optional
-=======
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Type
->>>>>>> af1db4eb... Fixed a few places where device sitckyness was lost. Added FAQ for device
 
 from absl import logging
 import numpy as onp
@@ -48,8 +44,8 @@ xe = xc._xla
 xops = xc._xla.ops
 
 # Types
-Backend = xc.LocalBackend
-Device = xc.Device
+Backend = Any  # xc.LocalBackend (why does mypy not like this?)
+Device = Any  # xc.Device
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -90,13 +86,13 @@ xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {
     ConcreteArray: _make_array_shape,
 }
 
-def aval_to_result_handler(device: Optional[Device], aval: Optional[Device]):
+def aval_to_result_handler(device: Optional[Device], aval: core.ShapedArray):
   try:
     return xla_result_handlers[type(aval)](device, aval)
   except KeyError as err:
     raise TypeError(f"No xla_result_handler for type: {type(aval)}") from err
 
-def array_result_handler(device: Optional[Device], aval: Optional[Device]):
+def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
   return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
@@ -758,7 +754,7 @@ class DeviceArray(DeviceValue):
   __slots__ = ["_npy_value", "_device", "_lazy_expr"]
   __array_priority__ = 100
 
-  def __init__(self, aval: core.AbstractValue, device: Optional[Device],
+  def __init__(self, aval: core.ShapedArray, device: Optional[Device],
                lazy_expr, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
@@ -942,8 +938,6 @@ def _copy_device_array_to_device(x: DeviceArray, device: Optional[xc.Device]) ->
     # source and target platforms are the same
     if x.device_buffer.device() == device:
       # no copying to be done because source equals target
-      return x
-    elif x.device_buffer.device() == device:
       moved_buf = x.device_buffer  # Perhaps we need to change stickyness
     else:
       # move the buffer with a device-to-device copy
@@ -969,7 +963,7 @@ def _force(x: DeviceArray) -> DeviceArray:
     return force_fun(x)
 
 @cache()
-def _lazy_force_computation(sticky: bool, aval: core.AbstractValue,
+def _lazy_force_computation(sticky: bool, aval: core.ShapedArray,
                             device: Device, lexpr: lazy.LazyExpr
                             ) -> Callable[[DeviceArray], DeviceArray]:
   c = xb.make_computation_builder("lazy_force")
@@ -984,7 +978,7 @@ def _lazy_force_computation(sticky: bool, aval: core.AbstractValue,
   xla_out = lazy.stage_lexpr(c, lexpr, param)
   built_c = c.Build(xla_out)
 
-  device: Optional[Device] = _device_from_arg_devices([device])
+  device = _device_from_arg_devices([device])
   options = xb.get_compile_options(
       num_replicas=1,
       num_partitions=1,
@@ -1013,7 +1007,7 @@ def _device_put_impl(x, device: Optional[Device] = None):
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
-  handler = aval_to_result_handler(device, a)
+  handler = aval_to_result_handler(device, a)  # type: ignore[arg-type]
   return handler(device_put(x, device))
 
 device_put_p = core.Primitive('device_put')

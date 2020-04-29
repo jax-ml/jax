@@ -73,8 +73,8 @@ Additional reading:
   * JAX_sharp_bits_
 
 
-How can I control on which device the computation is executed?
---------------------------------------------------------------
+Controlling data and computation placement on devices
+-----------------------------------------------------
 
 We describe first the principles of data and computation placement
 in JAX.
@@ -94,8 +94,8 @@ gpu:0
 Computations involving uncommitted data are performed on the default
 device and the results are uncommitted on the default device.
 
-Data can also be placed explicitly on a device using :func:`jax.device_put`,
-in which case if becomes **committed** to the device:
+Data can also be placed explicitly on a device using :func:`jax.device_put`
+with a ``device`` parameter, in which case if becomes **committed** to the device:
 
 >>> from jax import device_put
 >>> print(device_put(1, jax.devices()[2]).device_buffer.device())
@@ -106,15 +106,14 @@ committed device, and the result will be committed on the
 same device. It is an error to invoke an operation on
 arguments that are committed to more than one device.
 
-JAX also have a ``device`` parameter for :func:`jax.jit`.
-Jitted functions without a ``device`` parameter behave as any other
-primitive operation (will follow the data and will error
-if invoked on data committed on more than one device).
+Jitted functions behave as any other primitive operation
+(will follow the data and will error if invoked on data
+committed on more than one device).
 
-Jitted computations that have a ``device`` parameter behave as
-if prior to the computation the arguments are ``device_put`` to
-the specified device. This means that the result is committed
-to the specified device.
+(As of April 2020, :func:`jax.jit` has a `device` parameter
+that affects slightly the device placement. That parameter
+is experimental, is likely to be removed or changed, and
+its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
