@@ -426,7 +426,7 @@ def shuffle(key: np.ndarray, x: np.ndarray, axis: Optional[int]=0) -> np.ndarray
     x: the array to be shuffled.
     axis: (deprecated) an int axis along which to shuffle (default 0). If not None,
       subarrays are shuffled independently along the specified axis, as in
-      :func:`~jax.random.shuffle_axis`. If `None`, subarrays are shuffled as a group.
+      :func:`~jax.random.shuffle_independent`. If `None`, subarrays are shuffled as a group.
       along the leading axis, as in :func:`numpy.random.shuffle`.
       In a future release, the default will be changed to `None` and support for
       integer axis values will be dropped.
