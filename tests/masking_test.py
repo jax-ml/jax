@@ -253,6 +253,15 @@ class ShapesTest(jtu.JaxTestCase):
     def slice(x):
       return x[:-1]
 
+  def test_poly_slicing(self):
+    @shapecheck(['n'], 'n+-1')
+    def slice_poly_stop(x):
+      return x[:x.shape[0] - 1]
+
+    # TODO: @shapecheck(['n'], '1')
+    def slice_poly_start(x):
+      return x[x.shape[0] - 1:]
+
   def test_iota(self):
     @shapecheck(['n'], 'n')
     def range_like(x):
@@ -547,6 +556,12 @@ class MaskingTest(jtu.JaxTestCase):
   def test_slice_indices(self, start, stop, step, length):
     s = slice(start, stop, step)
     assert _polymorphic_slice_indices(s, length) == s.indices(length)
+
+  def test_slice_index_poly_start(self):
+    n = Poly({Mon({'n': 1}): 1})
+    s = slice(n, None, None)
+    assert (n, 2 * n, 1) == _polymorphic_slice_indices(s, 2 * n)
+
 
   def test_slice_oob_indexing(self):
     # https://github.com/google/jax/issues/2245

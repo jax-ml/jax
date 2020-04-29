@@ -3559,7 +3559,7 @@ def _canonicalize_tuple_index(arr_ndim, idx):
   return idx
 
 def _polymorphic_slice_indices(idx: slice, size: Union[int, Poly]):
-  # like idx.indices(size), but allows for polymorphic start and size
+  # like idx.indices(size), but allows for polymorphic indices and size
   # see https://github.com/python/cpython/blob/6d6508765514c7c10719478a0430f5e47c9a96ac/Objects/sliceobject.c#L372
   assert isinstance(idx, slice)
 
@@ -3575,29 +3575,23 @@ def _polymorphic_slice_indices(idx: slice, size: Union[int, Poly]):
 
   if idx.start is None:
     start = upper if step_is_negative else lower
-  elif type(idx.start) is Poly:
-    raise NotImplementedError  # TODO
   else:
-    # TODO(mattjj): would like to only handle idx.start as int here, but because
-    # of _normalize_index in the caller that may not be the case.
     start = idx.start
-    if start < 0:
-      start = _max(start + size, lower)
-    else:
-      start = _min(start, upper)
+    if type(start) is not Poly:
+      if start < 0:
+        start = _max(start + size, lower)
+      else:
+        start = _min(start, upper)
 
   if idx.stop is None:
     stop = lower if step_is_negative else upper
-  elif type(idx.stop) is Poly:
-    raise NotImplementedError  # TODO
   else:
-    # TODO(mattjj): would like to only handle idx.start as int here, but because
-    # of _normalize_index in the caller that may not be the case.
     stop = idx.stop
-    if stop < 0:
-      stop = _max(stop + size, lower)
-    else:
-      stop = _min(stop, upper)
+    if type(stop) is not Poly:
+      if stop < 0:
+        stop = _max(stop + size, lower)
+      else:
+        stop = _min(stop, upper)
 
   return start, stop, step
 
