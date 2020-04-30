@@ -763,7 +763,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
     in_axes_flat = _flatten_axes(in_tree, in_axes)
-    _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat)
+    _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap")
     out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
                               lambda: _flatten_axes(out_tree(), out_axes))
     return tree_unflatten(out_tree(), out_flat)
@@ -776,7 +776,7 @@ def _get_axis_size(i:int, shape: Tuple[int, ...], axis: int):
   except (IndexError, TypeError) as e:
     raise ValueError(f"vmap got arg {i} of rank {len(shape)} but axis to be mapped {axis}") from e
 
-def _mapped_axis_size(tree, vals, dims):
+def _mapped_axis_size(tree, vals, dims, name):
   mapped_axis_sizes = {_get_axis_size(i, onp.shape(x), d) for i, (x, d) in enumerate(zip(vals, dims))
                         if d is not None}
   try:
@@ -784,8 +784,8 @@ def _mapped_axis_size(tree, vals, dims):
     return size
   except ValueError as e:
     if not mapped_axis_sizes:
-      raise ValueError("vmap and pmap must have at least one non-None in_axes") from e
-    msg = "vmap or pmap got inconsistent sizes for array axes to be mapped:\n{}"
+      raise ValueError("{} must have at least one non-None in_axes".format(name)) from e
+    msg = "{} got inconsistent sizes for array axes to be mapped:\n".format(name) + "{}"
     # we switch the error message based on whether args is a tuple of arrays,
     # in which case we can produce an error message based on argument indices,
     # or if it has nested containers.
@@ -1034,7 +1034,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
     in_axes_flat = _flatten_axes(in_tree, (dyn_in_axes, 0))
     assert all(axis in (0, None) for axis in in_axes_flat), \
         "pmap currently only supports mapping over the leading axis"
-    local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat)
+    local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     _check_args(args)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = pxla.xla_pmap(
@@ -1078,7 +1078,7 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
     assert all(axis in (0, None) for axis in in_axes_flat), \
         "soft_pmap currently only supports mapping over the leading axis"
     mapped_invars = tuple(axis is not None for axis in in_axes_flat)
-    axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat)
+    axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     _check_args(args_flat)
     flat_fun, out_tree = flatten_fun(f, in_tree)
 

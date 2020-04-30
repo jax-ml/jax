@@ -187,7 +187,7 @@ class PmapTest(jtu.JaxTestCase):
     f = pmap(lambda x, y: x + y)
     self.assertRaisesRegex(
         ValueError,
-        "vmap or pmap got inconsistent sizes for array axes to be mapped",
+        "pmap got inconsistent sizes for array axes to be mapped",
         lambda: f(onp.random.randn(n), onp.random.randn(n - 1)))
 
   @parameterized.named_parameters(
