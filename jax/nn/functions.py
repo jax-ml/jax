@@ -264,8 +264,9 @@ def one_hot(x, num_classes, *, dtype=np.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   x = np.asarray(x)
-  return np.array(x[..., np.newaxis] == np.arange(num_classes, dtype=x.dtype),
-                  dtype=dtype)
+  lhs = x[..., np.newaxis]
+  rhs = lax.broadcast_to_rank(np.arange(num_classes, dtype=x.dtype), lhs.ndim)
+  return np.array(lhs == rhs, dtype=dtype)
 
 def relu6(x):
   r"""Rectified Linear Unit 6 activation function.
