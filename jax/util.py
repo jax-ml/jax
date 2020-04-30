@@ -51,6 +51,18 @@ def unzip3(xyzs):
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
 
+def unzip4(wxyzs):
+  ws = []
+  xs = []
+  ys = []
+  zs = []
+  for w, x, y, z in wxyzs:
+    ws.append(w)
+    xs.append(x)
+    ys.append(y)
+    zs.append(z)
+  return tuple(ws), tuple(xs), tuple(ys), tuple(zs)
+
 def subvals(lst, replace):
   lst = list(lst)
   for i, v in replace:

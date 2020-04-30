@@ -30,6 +30,7 @@ import numpy as onp
 import jax
 from jax import core
 from jax import dtypes
+from jax import util
 from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
@@ -42,7 +43,7 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
+from jax.util import (partial, unzip2, unzip4, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_leaves,
@@ -56,18 +57,58 @@ zip = safe_zip
 _reduce = functools.reduce
 
 
-@cache()
-def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
+def _initial_style_untyped_jaxpr(fun: Callable, in_tree, in_avals):
   in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   with core.initial_style_staging():
     jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
       wrapped_fun, in_pvals, instantiate=True, stage_out=False)
+  return jaxpr, out_pvals, consts, out_tree
+
+@cache()
+def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
+  jaxpr, out_pvals, consts, out_tree = _initial_style_untyped_jaxpr(
+      fun, in_tree, in_avals)
   out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                 (), const_avals + in_avals, out_avals)
   return typed_jaxpr, consts, out_tree()
+
+# TODO(frostig): Cache, as in _initial_style_jaxpr, or their common subroutine
+def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
+                                             in_tree, in_avals):
+  jaxprs, all_out_pvals, all_consts, all_out_trees = unzip4([
+      _initial_style_untyped_jaxpr(fun, in_tree, in_avals) for fun in funs])
+
+  newvar = core.gensym('_')     # TODO(frostig): safer gensym
+  all_const_avals = tuple(
+      tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
+      for consts in all_consts)
+  unused_const_vars = tuple(
+      tuple(newvar(aval) for aval in const_avals)
+      for const_avals in all_const_avals)
+
+  def pad_jaxpr_constvars(i, jaxpr):
+    prefix = util.concatenate(unused_const_vars[:i])
+    suffix = util.concatenate(unused_const_vars[i+1:])
+    constvars = prefix + jaxpr.constvars + suffix
+    return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
+                      outvars=jaxpr.outvars, eqns=jaxpr.eqns)
+
+  const_avals = tuple(util.concatenate(all_const_avals))
+
+  def type_and_const_convert_jaxpr(jaxpr, out_pvals):
+    out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
+    return core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
+                           (), const_avals + in_avals, out_avals)
+
+  jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
+  typed_jaxprs = _map(type_and_const_convert_jaxpr, jaxprs, all_out_pvals)
+
+  return (tuple(typed_jaxprs),
+          tuple(util.concatenate(all_consts)),
+          tuple(out_tree() for out_tree in all_out_trees))
 
 def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
@@ -545,16 +586,19 @@ def cond(pred, operand, true_fun: Callable, false_fun: Callable, *unused_args):
 
   ops, ops_tree = tree_flatten((operand,))
   ops_avals = tuple(_map(_abstractify, ops))
-  true_jaxpr, true_consts, out_tree = _initial_style_jaxpr(
-      true_fun, ops_tree, ops_avals)
-  false_jaxpr, false_consts, false_out_tree = _initial_style_jaxpr(
-      false_fun, ops_tree, ops_avals)
+
+  jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
+      (true_fun, false_fun), ops_tree, ops_avals)
+  true_jaxpr, false_jaxpr = jaxprs
+  out_tree, false_out_tree = out_trees
+
   _check_tree_and_avals("true_fun and false_fun output",
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
-  linear = (False,) * (len(true_consts) + len(false_consts) + len(ops))
+
+  linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
-      *itertools.chain([pred], true_consts, false_consts, ops),
+      *itertools.chain([pred], consts, ops),
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
   return tree_unflatten(out_tree, out)
 
@@ -845,7 +889,7 @@ def cond_bind(*args, true_jaxpr, false_jaxpr, linear):
     assert len(true_jaxpr.out_avals) == len(false_jaxpr.out_avals)
     assert all(_map(typematch, true_jaxpr.in_avals, false_jaxpr.in_avals))
     assert all(_map(typematch, true_jaxpr.out_avals, false_jaxpr.out_avals))
-    (pred,), ops = split_list(args, [1, len(true_jaxpr.in_avals)])
+    pred, *ops = args
     assert all(_map(typecheck, true_jaxpr.in_avals, ops))
     assert all(_map(typecheck, false_jaxpr.in_avals, ops))
     core.check_jaxpr(true_jaxpr.jaxpr)

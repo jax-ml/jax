@@ -827,6 +827,38 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = f(4.)
     self.assertAllClose(y, expected, check_dtypes=False)
 
+  def testCondWithConsts(self):
+    def f(x):
+      return lax.cond(x < 2, x,
+                      lambda x: np.array([1., 2.]) * x,
+                      lambda x: np.array([3., 4.]) * np.sin(x))
+
+    def f_ref(x):
+      if x < 2:
+        return np.array([1., 2.]) * x
+      else:
+        return np.array([3., 4.]) * np.sin(x)
+
+    y = f(1.)
+    expected = f_ref(1.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+    y = f(4.)
+    expected = f_ref(4.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+
+  def testCondJitWithConsts(self):
+    def f(x):
+      return lax.cond(x < 2, x,
+                      lambda x: np.array([1., 2.]) * x,
+                      lambda x: np.array([3., 4.]) * np.sin(x))
+
+    y = api.jit(f)(1.)
+    expected = f(1.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+    y = api.jit(f)(4.)
+    expected = f(4.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+
   def testCondVmapGrad(self):
     # https://github.com/google/jax/issues/2264
     def f_1(x): return x ** 2
