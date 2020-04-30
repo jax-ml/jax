@@ -171,6 +171,24 @@ class MultiBackendTest(jtu.JaxTestCase):
     result4 = api.jit(my_sin, backend="cpu")(2)
     self.assertEqual(result4.device_buffer.device(), cpus[0])
 
+  @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
+  def test_indexing(self):
+    # https://github.com/google/jax/issues/2905
+    cpus = api.devices("cpu")
+
+    x = api.device_put(onp.ones(2), cpus[0])
+    y = x[0]
+    self.assertEqual(y.device_buffer.device(), cpus[0])
+
+  @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
+  def test_sum(self):
+    # https://github.com/google/jax/issues/2905
+    cpus = api.devices("cpu")
+
+    x = api.device_put(onp.ones(2), cpus[0])
+    y = x.sum()
+    self.assertEqual(y.device_buffer.device(), cpus[0])
+
 
 if __name__ == "__main__":
   absltest.main()

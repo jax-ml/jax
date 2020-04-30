@@ -16,7 +16,7 @@
 from collections import defaultdict
 import itertools as it
 import operator as op
-from typing import Any, Callable, Dict, Sequence, Type
+from typing import Any, Callable, Dict, Sequence, Type, Optional
 
 from absl import logging
 import numpy as onp
@@ -920,16 +920,23 @@ def _device_put_device_array(x, device):
   return _force(x).device_buffer
 device_put_handlers[DeviceArray] = _device_put_device_array
 
-def _copy_device_array_to_device(x, device):
-  if is_device_constant(x):
+def _copy_device_array_to_device(x: DeviceArray, device: Optional[xc.Device]):
+  if device is None:
+    # no copying to be done because there's no target specified
+    return x
+  elif is_device_constant(x):
+    # create a new DeviceArray with the same lazy expr, no copying
     return DeviceArray(x.aval, device, x._lazy_expr, DeviceConstant(device))
   elif xb.get_device_backend(device).platform == x.device_buffer.platform():
-    if device is None or x.device_buffer.device() == device:
+    # source and target platforms are the same
+    if x.device_buffer.device() == device:
+      # no copying to be done because source equals target
       return x
     else:
+      # move the buffer with a device-to-device copy
       moved_buf = x.device_buffer.copy_to_device(device)
   else:
-    # Buffers from different XLA backends are passed through the host.
+    # buffers from different XLA backends are passed through the host.
     backend = xb.get_device_backend(device)
     moved_buf = backend.buffer_from_pyval(x.device_buffer.to_py(), device)
   return DeviceArray(x.aval, device, x._lazy_expr, moved_buf)
