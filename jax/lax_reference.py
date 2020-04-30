@@ -32,7 +32,7 @@ neg = onp.negative
 sign = onp.sign
 floor = onp.floor
 ceil = onp.ceil
-round = onp.round
+round = lambda x: onp.trunc(x + onp.copysign(.5, x))
 nextafter = onp.nextafter
 
 is_finite = onp.isfinite
