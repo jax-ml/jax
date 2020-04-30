@@ -9,13 +9,18 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.65 (unreleased)
+jax 0.1.66 (unreleased)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.64...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.65...master>`_.
 
 jaxlib 0.1.46 (unreleased)
 ------------------------------
+
+jax 0.1.65 (April 30, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.64...jax-v0.1.65>`_.
 
 jaxlib 0.1.45 (April 21, 2020)
 ------------------------------
