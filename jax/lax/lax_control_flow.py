@@ -701,27 +701,24 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
 def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, linear):
   nonzeros = [t is not ad_util.zero for t in tangents]
 
-  (pred_nz,), t_nz, f_nz = split_list(nonzeros, [1, len(true_jaxpr.in_avals)])
+  pred_nz, *ops_nz = nonzeros
   assert pred_nz is False
 
-  _, true_out_nz = ad.jvp_jaxpr(true_jaxpr, t_nz, instantiate=False)
-  _, false_out_nz = ad.jvp_jaxpr(false_jaxpr, f_nz, instantiate=False)
+  _, true_out_nz = ad.jvp_jaxpr(true_jaxpr, ops_nz, instantiate=False)
+  _, false_out_nz = ad.jvp_jaxpr(false_jaxpr, ops_nz, instantiate=False)
   out_nz = [a or b for a, b in zip(true_out_nz, false_out_nz)]
 
-  true_jvp, _ = ad.jvp_jaxpr(true_jaxpr, t_nz, instantiate=out_nz)
-  false_jvp, _ = ad.jvp_jaxpr(false_jaxpr, f_nz, instantiate=out_nz)
+  true_jvp, _ = ad.jvp_jaxpr(true_jaxpr, ops_nz, instantiate=out_nz)
+  false_jvp, _ = ad.jvp_jaxpr(false_jaxpr, ops_nz, instantiate=out_nz)
 
-  (pred,), tops, fops = split_list(primals, [1, len(true_jaxpr.in_avals)])
-  _, tops_dot, fops_dot = split_list(tangents, [1, len(true_jaxpr.in_avals)])
+  pred, *ops = primals
+  _, *ops_dot = tangents
+  ops_dot = _prune_zeros(ops_dot)
 
-  tops_dot = _prune_zeros(tops_dot)
-  fops_dot = _prune_zeros(fops_dot)
-
-  tops_lin, fops_lin = _map(tuple, split_list(linear, [len(tops)]))
-  linear_jvp = (tops_lin + (True,) * len(tops_dot) +
-                fops_lin + (True,) * len(fops_dot))
+  ops_lin = tuple(linear)
+  linear_jvp = ops_lin + (True,) * len(ops_dot)
   out = cond_p.bind(
-      *itertools.chain([pred], tops, tops_dot, fops, fops_dot),
+      pred, *ops, *ops_dot,
       true_jaxpr=true_jvp, false_jaxpr=false_jvp, linear=linear_jvp)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
