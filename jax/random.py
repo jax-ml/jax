@@ -1058,7 +1058,7 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters):
     v = uniform(subkey_1, shape, lam.dtype)
     u_shifted = 0.5 - abs(u)
 
-    k = (2 * a / u_shifted + b) * u + lam + 0.43
+    k = lax.floor((2 * a / u_shifted + b) * u + lam + 0.43)
     s = lax.log(v * inv_alpha / (a / (u_shifted * u_shifted) + b))
     t = -lam + k * log_lam - lax.lgamma(k + 1)
 

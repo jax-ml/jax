@@ -397,7 +397,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lam={}_{}".format(lam, dtype),
        "lam": lam, "dtype": onp.dtype(dtype).name}
-      for lam in [0.5, 5, 50, 500]
+      for lam in [0.5, 3, 9, 11, 50, 500]
       for dtype in [onp.int32, onp.int64]))
   def testPoisson(self, lam, dtype):
     key = random.PRNGKey(0)
@@ -411,8 +411,15 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
       # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
       # based on the central limit theorem).
-      self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
-      self.assertAllClose(samples.var(), lam, rtol=0.02, check_dtypes=False)
+      self.assertAllClose(samples.mean(), lam, rtol=0.01, check_dtypes=False)
+      self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
+
+  def testPoissonBatched(self):
+    key = random.PRNGKey(0)
+    lam = np.concatenate([2 * np.ones(10000), 20 * np.ones(10000)])
+    samples = random.poisson(key, lam, shape=(20000,))
+    self._CheckChiSquared(samples[:10000], scipy.stats.poisson(2.0).pmf)
+    self._CheckChiSquared(samples[10000:], scipy.stats.poisson(20.0).pmf)
 
   def testPoissonShape(self):
     key = random.PRNGKey(0)
