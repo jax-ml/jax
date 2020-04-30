@@ -2827,7 +2827,7 @@ def argmax(a, axis=None):
   if axis is None:
     a = ravel(a)
     axis = 0
-  return _argminmax(max, a, axis)
+  return _argminmax("argmax", max, a, axis)
 
 
 _NANARG_DOC = """\
@@ -2850,7 +2850,7 @@ def argmin(a, axis=None):
   if axis is None:
     a = ravel(a)
     axis = 0
-  return _argminmax(min, a, axis)
+  return _argminmax("argmin", min, a, axis)
 
 
 @_wraps(onp.nanargmin, lax_description=_NANARG_DOC.format("min"))
@@ -2864,7 +2864,9 @@ def nanargmin(a, axis=None):
 
 
 # TODO(mattjj): redo this lowering with a call to variadic lax.reduce
-def _argminmax(op, a, axis):
+def _argminmax(name, op, a, axis):
+  if size(a) == 0:
+    raise ValueError("attempt to get {} of an empty sequence".format(name))
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
   idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
