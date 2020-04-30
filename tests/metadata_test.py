@@ -27,42 +27,15 @@ config.parse_flags_with_absl()
 
 class MetadataTest(jtu.JaxTestCase):
 
-  def setUp(self):
-    xla.xla_primitive_callable.cache_clear()
-    xla._xla_callable.cache_clear()
-    self.op_names = []
-    self.op_types = []
-    def SetOpMetadata(builder, metadata):
-      self.op_names.append(metadata.op_name)
-      self.op_types.append(metadata.op_type)
-      return super(xb._JaxComputationBuilder, builder).SetOpMetadata(metadata)
-    xb._JaxComputationBuilder.SetOpMetadata = SetOpMetadata
-
-  def tearDown(self):
-    self.op_names = []
-    self.op_types = []
-    del xb._JaxComputationBuilder.SetOpMetadata
-
-  def test_primitive_metadata(self):
-    raise SkipTest              # TODO(jekbradbury)
-    _ = jnp.sin(1.)
-    assert self.op_types[-1] == 'sin'
-    assert self.op_names[-1] == 'sin'
-    _ = jnp.reshape(1., (1,))
-    assert self.op_types[-1] == 'reshape'
-    assert self.op_names[-1] == 'reshape[ dimensions=None\n' \
-                                '         new_sizes=(1,)\n' \
-                                '         old_sizes=() ]'
-
   def test_jit_metadata(self):
-    _ = jax.jit(jnp.sin)(1.)
-    assert self.op_types[-1] == 'sin'
-    assert self.op_names[-1] == 'jit(sin)/sin'
+    hlo = jax.xla_computation(jnp.sin)(1.).get_hlo_module().to_string()
+    self.assertRegex(hlo, 'op_type="sin"')
+    self.assertRegex(hlo, 'op_name="xla_computation\\(sin\\)/sin"')
     def foo(x):
       return jnp.sin(x)
-    _ = jax.jit(foo)(1.)
-    assert self.op_types[-1] == 'sin'
-    assert self.op_names[-1] == 'jit(foo)/sin'
+    hlo = jax.xla_computation(foo)(1.).get_hlo_module().to_string()
+    self.assertRegex(hlo, 'op_type="sin"')
+    self.assertRegex(hlo, 'op_name="xla_computation\\(foo\\)/sin"')
 
   def test_nested_jit_metadata(self):
     raise SkipTest              # TODO(jekbradbury)
@@ -90,26 +63,29 @@ class MetadataTest(jtu.JaxTestCase):
     @jax.jit
     def foo(x):
       return jnp.sin(x)
-    _ = jax.grad(foo)(1.)
-    assert self.op_types[-3] == 'sin'
-    assert self.op_names[-3] == 'jit(pe(jvp(foo)))/sin'
-    assert self.op_types[-2] == 'cos'
-    assert self.op_names[-2] == 'jit(pe(jvp(foo)))/cos'
-    assert self.op_types[-1] == 'mul'
-    assert self.op_names[-1] == 'jit(transpose(pe(jvp(foo))))/mul'
+    hlo = jax.xla_computation(jax.grad(foo))(1.).get_hlo_module().to_string()
+    self.assertRegex(hlo, 'op_type="sin"')
+    self.assertRegex(hlo, 'op_type="cos"')
+    self.assertRegex(hlo, 'op_type="mul"')
+    self.assertRegex(hlo, 'op_name=".*jit\\(pe\\(jvp\\(foo\\)\\)\\)/sin"')
+    self.assertRegex(hlo, 'op_name=".*jit\\(pe\\(jvp\\(foo\\)\\)\\)/cos"')
+    self.assertRegex(hlo, 'op_name=".*jit\\(transpose\\('
+                          'pe\\(jvp\\(foo\\)\\)\\)\\)/mul"')
 
   def test_cond_metadata(self):
     def true_fun(x):
       return jnp.sin(x)
     def false_fun(x):
       return jnp.cos(x)
-    _ = jax.lax.cond(True, 1., true_fun, 1., false_fun)
-    assert self.op_types[-3] == 'cond'
-    assert self.op_names[-3] == 'cond[ linear=(False, False) ]'
-    assert self.op_types[-2] == 'sin'
-    assert self.op_names[-2] == 'cond/true_fun/sin'
-    assert self.op_types[-1] == 'cos'
-    assert self.op_names[-1] == 'cond/false_fun/cos'
+    def f(x):
+      return jax.lax.cond(True, x, true_fun, x, false_fun)
+    hlo = jax.xla_computation(f)(1.).get_hlo_module().to_string()
+    self.assertRegex(hlo, 'op_type="cond"')
+    self.assertRegex(hlo, 'op_name=".*cond\\[ linear=\\(False, False\\) \\]"')
+    self.assertRegex(hlo, 'op_type="sin"')
+    self.assertRegex(hlo, 'op_name=".*cond/true_fun/sin"')
+    self.assertRegex(hlo, 'op_type="cos"')
+    self.assertRegex(hlo, 'op_name=".*cond/false_fun/cos"')
 
 
 if __name__ == "__main__":

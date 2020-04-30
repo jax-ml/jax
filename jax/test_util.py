@@ -634,6 +634,13 @@ def rand_int(low, high=None):
     return randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
+def rand_unique_int():
+  randchoice = npr.RandomState(0).choice
+  def fn(shape, dtype):
+    return randchoice(onp.arange(onp.prod(shape), dtype=dtype),
+                      size=shape, replace=False)
+  return fn
+
 def rand_bool():
   rng = npr.RandomState(0)
   def generator(shape, dtype):
