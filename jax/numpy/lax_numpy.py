@@ -1058,16 +1058,11 @@ def ediff1d(ary, to_end=None, to_begin=None):
   
   # calculate difference and copy to_begin and to_end
   l_diff = _max(len(ary) - 1, 0)
-  #result = zeros(l_diff + l_begin + l_end, dtype=ary.dtype)
   result = lax.sub(ary[1:], ary[:-1])
   if l_begin > 0:
-    #result = ops.index_update(result, ops.index[:l_begin], to_begin)
     result = concatenate((to_begin, result))
   if l_end > 0:
-    #result = ops.index_update(result, ops.index[l_begin+l_diff:], to_end)
     result = concatenate((result, to_end))
-  #result = ops.index_update(result, ops.index[l_begin:l_begin+l_diff],
-          #lax.sub(ary[1:], ary[:-1]))
   return result
 
 
