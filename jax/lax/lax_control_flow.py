@@ -598,7 +598,7 @@ def cond(pred, operand, true_fun: Callable, false_fun: Callable, *unused_args):
 
   linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
-      *itertools.chain([pred], consts, ops),
+      pred, *consts, *ops,
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
   return tree_unflatten(out_tree, out)
 
@@ -671,19 +671,19 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
           else x for x, d in zip(args, dims)]
   orig_bat = [d is not batching.not_mapped for d in dims]
   del dims
-  (pred,), true_ops, false_ops = split_list(args, [1, len(true_jaxpr.in_avals)])
-  (pred_bat,), t_bat, f_bat = split_list(orig_bat, [1, len(true_jaxpr.in_avals)])
+  pred, *ops = args
+  pred_bat, *bat = orig_bat
 
-  _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, t_bat, False)
-  _, false_out_bat = batching.batch_jaxpr(false_jaxpr, size, f_bat, False)
+  _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, bat, False)
+  _, false_out_bat = batching.batch_jaxpr(false_jaxpr, size, bat, False)
   out_bat = [a or b for a, b in zip(true_out_bat, false_out_bat)]
 
-  true_jaxpr_batched, _ = batching.batch_jaxpr(true_jaxpr, size, t_bat, out_bat)
-  false_jaxpr_batched, _ = batching.batch_jaxpr(false_jaxpr, size, f_bat, out_bat)
+  true_jaxpr_batched, _ = batching.batch_jaxpr(true_jaxpr, size, bat, out_bat)
+  false_jaxpr_batched, _ = batching.batch_jaxpr(false_jaxpr, size, bat, out_bat)
 
   if pred_bat:
-    true_out = core.jaxpr_as_fun(true_jaxpr_batched)(*true_ops)
-    false_out = core.jaxpr_as_fun(false_jaxpr_batched)(*false_ops)
+    true_out = core.jaxpr_as_fun(true_jaxpr_batched)(*ops)
+    false_out = core.jaxpr_as_fun(false_jaxpr_batched)(*ops)
     true_out = [batching.broadcast(x, size, 0) if not b else x
                 for x, b in zip(true_out, out_bat)]
     false_out = [batching.broadcast(x, size, 0) if not b else x
@@ -693,8 +693,9 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   else:
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
     out = cond_p.bind(
-      *itertools.chain([pred], true_ops, false_ops),
-      true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched, linear=linear)
+        pred, *ops,
+        true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched,
+        linear=linear)
     return out, out_dims
 
 def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, linear):
