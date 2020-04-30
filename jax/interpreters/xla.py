@@ -482,6 +482,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
+  backend = device.platform if device else backend
   result_handlers = tuple(map(partial(_pval_to_result_handler, device), pvals))
 
   # Computations that only produce constants and/or only rearrange their inputs,
