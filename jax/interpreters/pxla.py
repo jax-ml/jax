@@ -459,7 +459,6 @@ class ShardedDeviceArray(xla.DeviceArray):
     # providing sharding_spec. It assumes that any pre-existing callers are
     # creating pmap-style ShardedDeviceArrays.
     if device_buffers is None:
-      assert isinstance(sharding_spec[0], xb.xla_client._xla.PyLocalBuffer)
       device_buffers = sharding_spec
       sharding_spec = _pmap_sharding_spec(aval.shape[0], aval.shape[0],
                                           aval.shape[1:])
