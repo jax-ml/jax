@@ -208,6 +208,17 @@ class PmapTest(jtu.JaxTestCase):
     self.assertEqual(ans.shape, expected.shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPartiallyMapped(self):
+    f = pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
+
+    shape = (xla_bridge.device_count(), 4)
+    x = 3.
+    y = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    expected = onp.broadcast_to(x - onp.sum(y, 0), shape)
+
+    ans = f(x, y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testJvpAndPartialEval(self):
     @partial(pmap, axis_name='i')
     def f(x):
