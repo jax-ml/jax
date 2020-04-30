@@ -165,11 +165,11 @@ class MultiBackendTest(jtu.JaxTestCase):
 
     # jit with `device` spec places the data on the specified device
     result3 = api.jit(my_sin, device=cpus[0])(2)
-    self.assertEqual(result1.device_buffer.device(), cpus[0])
+    self.assertEqual(result3.device_buffer.device(), cpus[0])
 
     # jit with `backend` spec places the data on the specified backend
     result4 = api.jit(my_sin, backend="cpu")(2)
-    self.assertEqual(result1.device_buffer.device(), cpus[0])
+    self.assertEqual(result4.device_buffer.device(), cpus[0])
 
 
 if __name__ == "__main__":
