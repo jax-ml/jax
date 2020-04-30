@@ -2865,7 +2865,7 @@ def nanargmin(a, axis=None):
 
 # TODO(mattjj): redo this lowering with a call to variadic lax.reduce
 def _argminmax(name, op, a, axis):
-  if size(a) == 0:
+  if a.shape[axis] == 0:
     raise ValueError("attempt to get {} of an empty sequence".format(name))
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
