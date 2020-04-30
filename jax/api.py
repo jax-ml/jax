@@ -1129,7 +1129,7 @@ def _papply(fun):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(f, in_tree)
-    axis_size = _pmap_axis_size(args_flat)
+    axis_size = _mapped_axis_size(in_tree, args_flat, 0, "papply")
     out_flat = parallel.papply(flat_fun, axis_name, args_flat, axis_size)
     return tree_unflatten(out_tree(), out_flat)
 
@@ -1143,7 +1143,7 @@ def _parallelize(fun):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten(args)
     f, out_tree = flatten_fun_nokwargs(f, in_tree)
-    axis_size = _pmap_axis_size(args_flat)
+    axis_size = _mapped_axis_size(in_tree, args_flat, 0, "parallelize")
 
     chunk_size, leftover = divmod(axis_size, pxla.unmapped_device_count())
     if chunk_size == 0 and leftover:

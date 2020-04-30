@@ -2912,8 +2912,8 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
     if ragged: return None
     if new_sizes[0] != split_axis_size: return None
     aval = ShapedArray(new_sizes, array.dtype)
-    sharding_spec = pxla._pmap_sharding_spec(new_sizes[0], new_sizes[0],
-                                             new_sizes[1:])
+    sharding_spec = pxla._pmap_sharding_spec(
+        new_sizes[0], new_sizes[0], ShapedArray(new_sizes[1:], array.dtype), True)
     return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
 
   return None
