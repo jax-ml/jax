@@ -14,3 +14,5 @@ docs/notebooks/.ipynb_checkpoints/
 docs/_autosummary
 .idea
 .vscode
+venv/
+jax.iml

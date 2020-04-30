@@ -37,6 +37,29 @@ jax.scipy.ndimage
 
    map_coordinates
 
+jax.scipy.signal
+----------------
+
+.. automodule:: jax.scipy.signal
+
+.. autosummary::
+  :toctree: _autosummary
+
+   convolve
+   convolve2d
+   correlate
+   correlate2d
+
+jax.scipy.sparse.linalg
+-----------------------
+
+.. automodule:: jax.scipy.sparse.linalg
+
+.. autosummary::
+  :toctree: _autosummary
+
+   cg
+
 jax.scipy.special
 -----------------
 

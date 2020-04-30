@@ -111,8 +111,6 @@ class PapplyTrace(Trace):
       return PapplyTracer(self, name, size, val_out, axis_out)
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
-    if call_primitive in pe.map_primitives:
-      return self.process_map(call_primitive, f, tracers, params)
     names, vals, axes = unzip3((t.name, t.val, t.axis) for t in tracers)
     if all(axis is not_sharded for axis in axes):
       return call_primitive.bind(f, *vals, **params)
@@ -132,9 +130,6 @@ class PapplyTrace(Trace):
       trace = PapplyTrace(master, core.cur_sublevel())
       return PapplyTracer(trace, name, size, x, axis)
     return val, todo
-
-  def process_map(self, map_primitive, f :lu.WrappedFun, tracers, params):
-    raise NotImplementedError  # TODO(mattjj,frostig)
 
 
 papply_primitive_rules: Dict[core.Primitive, Callable] = {}

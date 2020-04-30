@@ -69,7 +69,7 @@ class DLPackTest(jtu.JaxTestCase):
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
-    self.assertAllClose(x, y, check_dtypes=True)
+    self.assertAllClose(np.astype(x.dtype), y, check_dtypes=True)
 
     self.assertRaisesRegex(RuntimeError,
                            "DLPack tensor may be consumed at most once",
@@ -98,7 +98,6 @@ class DLPackTest(jtu.JaxTestCase):
      for shape in all_shapes
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
-  # TODO(phawkins): the dlpack destructor issues errors in jaxlib 0.1.38.
   def testJaxToTorch(self, shape, dtype):
     rng = jtu.rand_default()
     np = rng(shape, dtype)

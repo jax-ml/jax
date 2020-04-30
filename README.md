@@ -9,6 +9,7 @@
 | [**Install guide**](#installation)
 | [**Change logs**](https://jax.readthedocs.io/en/latest/CHANGELOG.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
+| [**Code search**](https://cs.opensource.google/jax/jax)
 
 **Announcement:** JAX has dropped Python 2 support, and requires Python 3.6 or newer. See [docs/CHANGELOG.rst](https://jax.readthedocs.io/en/latest/CHANGELOG.html).
 
@@ -268,7 +269,7 @@ For parallel programming of multiple accelerators, like multiple GPUs, use
 With `pmap` you write single-program multiple-data (SPMD) programs, including
 fast parallel collective communication operations. Applying `pmap` will mean
 that the function you write is compiled by XLA (similarly to `jit`), then
-replicated and executed in parallel accross devices.
+replicated and executed in parallel across devices.
 
 Here's an example on an 8-GPU machine:
 
@@ -412,7 +413,7 @@ PYTHON_VERSION=cp37  # alternatives: cp36, cp37, cp38
 CUDA_VERSION=cuda92  # alternatives: cuda92, cuda100, cuda101, cuda102
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.43-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.45-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -433,10 +434,10 @@ for Python 3.6, 3.7, and 3.8; for anything else, you must build from
 source. Jax requires Python 3.6 or above. Jax does not support Python 2 any
 more.
 
-To try automatic detection of the correct version for your system, you can run: 
+To try automatic detection of the correct version for your system, you can run:
 
 ```bash
-pip install --upgrade https://storage.googleapis.com/jax-releases/`nvcc -V | sed -En "s/.* release ([0-9]*)\.([0-9]*),.*/cuda\1\2/p"`/jaxlib-0.1.43-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
+pip install --upgrade https://storage.googleapis.com/jax-releases/`nvidia-smi | sed -En "s/.* CUDA Version: ([0-9]*)\.([0-9]*).*/cuda\1\2/p"`/jaxlib-0.1.45-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
 ```
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)

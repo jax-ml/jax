@@ -17,6 +17,7 @@ import collections
 from functools import partial
 import itertools
 import re
+from typing import Callable
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -57,6 +58,10 @@ def scan_reference(f, init, xs):
 
 def high_precision_dot(a, b):
   return lax.dot(a, b, precision=lax.Precision.HIGHEST)
+
+
+def posify(matrix):
+  return high_precision_dot(matrix, matrix.T.conj())
 
 
 class LaxControlFlowTest(jtu.JaxTestCase):
@@ -1400,6 +1405,33 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     jtu.check_grads(loop_lax, (x,), order=2, modes=["fwd"])
 
+  @parameterized.named_parameters(
+      dict(testcase_name="_loop={}".format(loop), loop=loop)
+      for loop in ["while", "fori", "fori_inside_cond", "fori_inside_scan"])
+  def testWhileGradError(self, loop: str = "fori_inside_scan"):
+    # Raise error for vjp for loops
+    if loop == "while":
+      func = lambda x: lax.while_loop(lambda i: i < 5., lambda i: i + 1., x)
+    elif loop == "fori":
+      func = lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x)
+    elif loop == "fori_inside_jit":
+      func = api.jit(lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x))
+    elif loop == "fori_inside_cond":
+      func = lambda x: lax.cond(True, x,
+                                lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
+                                 1., lambda x: x)
+    elif loop == "fori_inside_scan":
+      func = lambda x: lax.scan(lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x),
+                                              None),
+                                x, onp.ones(2))[0]
+    else:
+      assert False
+
+    with self.assertRaisesRegex(ValueError, "Reverse-mode differentiation does not work for lax.while_loop"):
+      api.grad(func)(1.)
+
+    api.linearize(func, 1.)  # Linearization works
+
   def testIssue1316(self):
     def f(carry, _):
       c, key = carry
@@ -1430,12 +1462,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def scalar_solve(f, y):
       return y / f(1.0)
 
-    def binary_search(func, x0, low=0.0, high=100.0, tolerance=1e-6):
+    def binary_search(func, x0, low=0.0, high=100.0):
       del x0  # unused
 
       def cond(state):
         low, high = state
-        return high - low > tolerance
+        midpoint = 0.5 * (low + high)
+        return (low < midpoint) & (midpoint < high)
 
       def body(state):
         low, high = state
@@ -1458,10 +1491,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         rtol=1e-7)
     jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
 
-    # TODO(shoyer): reenable when batching works
-    # inputs = np.array([4.0, 5.0])
-    # results = api.vmap(sqrt_cubed)(inputs)
-    # self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
+    inputs = np.array([4.0, 5.0])
+    results = api.vmap(sqrt_cubed)(inputs)
+    self.assertAllClose(results, inputs ** 1.5, check_dtypes=False)
 
     results = api.jit(sqrt_cubed)(5.0)
     self.assertAllClose(results, 5.0 ** 1.5, check_dtypes=False,
@@ -1636,18 +1668,33 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = rng.randn(2, 2)
     b = rng.randn(2)
 
-    expected = np.linalg.solve(high_precision_dot(a, a.T), b)
-    actual = positive_definite_solve(high_precision_dot(a, a.T), b)
+    expected = np.linalg.solve(onp.asarray(posify(a)), b)
+    actual = positive_definite_solve(posify(a), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
-    actual = api.jit(positive_definite_solve)(high_precision_dot(a, a.T), b)
+    actual = api.jit(positive_definite_solve)(posify(a), b)
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
     jtu.check_grads(
-        lambda x, y: positive_definite_solve(high_precision_dot(x, x.T), y),
+        lambda x, y: positive_definite_solve(posify(x), y),
         (a, b), order=2, rtol=1e-2)
+
+  def test_custom_linear_solve_complex(self):
+
+    def solve(a, b):
+      def solve(matvec, x):
+        return jsp.linalg.solve(a, x)
+      def tr_solve(matvec, x):
+        return jsp.linalg.solve(a.T, x)
+      matvec = partial(high_precision_dot, a)
+      return lax.custom_linear_solve(matvec, b, solve, tr_solve)
+
+    rng = onp.random.RandomState(0)
+    a = 0.5 * rng.randn(2, 2) + 0.5j * rng.randn(2, 2)
+    b = 0.5 * rng.randn(2) + 0.5j * rng.randn(2)
+    jtu.check_grads(solve, (a, b), order=2, rtol=1e-2)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_lu(self):

@@ -30,9 +30,10 @@ from .lax_numpy import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as np
 from ..util import get_module_functions
-from ..third_party.numpy.linalg import cond, tensorinv, tensorsolve
+from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve
 
 _T = lambda x: np.swapaxes(x, -1, -2)
+_H = lambda x: np.conj(np.swapaxes(x, -1, -2))
 
 
 def _promote_arg_dtypes(*args):
@@ -148,10 +149,110 @@ def _slogdet_jvp(primals, tangents):
   return (sign, ans), (sign_dot, ans_dot)
 
 
+def _cofactor_solve(a, b):
+  """Equivalent to det(a)*solve(a, b) for nonsingular mat.
+
+  Intermediate function used for jvp and vjp of det.
+  This function borrows heavily from jax.numpy.linalg.solve and
+  jax.numpy.linalg.slogdet to compute the gradient of the determinant
+  in a way that is well defined even for low rank matrices.
+
+  This function handles two different cases:
+  * rank(a) == n or n-1
+  * rank(a) < n-1
+
+  For rank n-1 matrices, the gradient of the determinant is a rank 1 matrix.
+  Rather than computing det(a)*solve(a, b), which would return NaN, we work
+  directly with the LU decomposition. If a = p @ l @ u, then
+  det(a)*solve(a, b) =
+  prod(diag(u)) * u^-1 @ l^-1 @ p^-1 b =
+  prod(diag(u)) * triangular_solve(u, solve(p @ l, b))
+  If a is rank n-1, then the lower right corner of u will be zero and the
+  triangular_solve will fail.
+  Let x = solve(p @ l, b) and y = det(a)*solve(a, b).
+  Then y_{n} = 
+  x_{n} / u_{nn} * prod_{i=1...n}(u_{ii}) =
+  x_{n} * prod_{i=1...n-1}(u_{ii})
+  So by replacing the lower-right corner of u with prod_{i=1...n-1}(u_{ii})^-1
+  we can avoid the triangular_solve failing.
+  To correctly compute the rest of y_{i} for i != n, we simply multiply
+  x_{i} by det(a) for all i != n, which will be zero if rank(a) = n-1.
+  
+  For the second case, a check is done on the matrix to see if `solve`
+  returns NaN or Inf, and gives a matrix of zeros as a result, as the
+  gradient of the determinant of a matrix with rank less than n-1 is 0.
+  This will still return the correct value for rank n-1 matrices, as the check
+  is applied *after* the lower right corner of u has been updated.
+
+  Args:
+    a: A square matrix or batch of matrices, possibly singular.
+    b: A matrix, or batch of matrices of the same dimension as a.
+
+  Returns:
+    det(a) and cofactor(a)^T*b, aka adjugate(a)*b
+  """
+  a = _promote_arg_dtypes(np.asarray(a))
+  b = _promote_arg_dtypes(np.asarray(b))
+  a_shape = np.shape(a)
+  b_shape = np.shape(b)
+  a_ndims = len(a_shape)
+  b_ndims = len(b_shape)
+  if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2]
+    and b_shape[-2:] == a_shape[-2:]):
+    msg = ("The arguments to _cofactor_solve must have shapes "
+           "a=[..., m, m] and b=[..., m, m]; got a={} and b={}")
+    raise ValueError(msg.format(a_shape, b_shape))
+  if a_shape[-1] == 1:
+    return a[0, 0], b
+  # lu contains u in the upper triangular matrix and l in the strict lower
+  # triangular matrix.
+  # The diagonal of l is set to ones without loss of generality.
+  lu, pivots = lax_linalg.lu(a)
+  dtype = lax.dtype(a)
+  batch_dims = lax.broadcast_shapes(lu.shape[:-2], b.shape[:-2])
+  x = np.broadcast_to(b, batch_dims + b.shape[-2:])
+  lu = np.broadcast_to(lu, batch_dims + lu.shape[-2:])
+  # Compute (partial) determinant, ignoring last diagonal of LU
+  diag = np.diagonal(lu, axis1=-2, axis2=-1)
+  parity = np.count_nonzero(pivots != np.arange(a_shape[-1]), axis=-1)
+  sign = np.array(-2 * (parity % 2) + 1, dtype=dtype)
+  # partial_det[:, -1] contains the full determinant and
+  # partial_det[:, -2] contains det(u) / u_{nn}.
+  partial_det = np.cumprod(diag, axis=-1) * sign[..., None]
+  lu = ops.index_update(lu, ops.index[..., -1, -1], 1.0 / partial_det[..., -2])
+  permutation = lax_linalg.lu_pivots_to_permutation(pivots, a_shape[-1])
+  permutation = np.broadcast_to(permutation, batch_dims + (a_shape[-1],))
+  iotas = np.ix_(*(lax.iota(np.int32, b) for b in batch_dims + (1,)))
+  # filter out any matrices that are not full rank
+  d = np.ones(x.shape[:-1], x.dtype)
+  d = lax_linalg.triangular_solve(lu, d, left_side=True, lower=False)
+  d = np.any(np.logical_or(np.isnan(d), np.isinf(d)), axis=-1)
+  d = np.tile(d[..., None, None], d.ndim*(1,) + x.shape[-2:])
+  x = np.where(d, np.zeros_like(x), x)  # first filter
+  x = x[iotas[:-1] + (permutation, slice(None))]
+  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
+                                  unit_diagonal=True)
+  x = np.concatenate((x[..., :-1, :] * partial_det[..., -1, None, None],
+                      x[..., -1:, :]), axis=-2)
+  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
+  x = np.where(d, np.zeros_like(x), x)  # second filter
+
+  return partial_det[..., -1], x
+
+
+@custom_jvp
 @_wraps(onp.linalg.det)
 def det(a):
   sign, logdet = slogdet(a)
   return sign * np.exp(logdet)
+
+
+@det.defjvp
+def _det_jvp(primals, tangents):
+  x, = primals
+  g, = tangents
+  y, z = _cofactor_solve(x, g)
+  return y, np.trace(z, axis1=-1, axis2=-2)
 
 
 @_wraps(onp.linalg.eig)
@@ -188,30 +289,45 @@ def eigvalsh(a, UPLO='L'):
   return w
 
 
+@partial(custom_jvp, nondiff_argnums=(1,))
 @_wraps(onp.linalg.pinv, lax_description=textwrap.dedent("""\
     It differs only in default value of `rcond`. In `numpy.linalg.pinv`, the
     default `rcond` is `1e-15`. Here the default is
     `10. * max(num_rows, num_cols) * np.finfo(dtype).eps`.
     """))
 def pinv(a, rcond=None):
-  # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
+  # Uses same algorithm as
+  # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
   a = np.conj(a)
-  # copied from https://github.com/tensorflow/probability/blob/master/tensorflow_probability/python/math/linalg.py#L442
   if rcond is None:
-      max_rows_cols = max(a.shape[-2:])
-      rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
+    max_rows_cols = max(a.shape[-2:])
+    rcond = 10. * max_rows_cols * np.finfo(a.dtype).eps
   rcond = np.asarray(rcond)
   u, s, v = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   cutoff = rcond[..., np.newaxis] * np.amax(s, axis=-1, keepdims=True)
-  large = s > cutoff
-  s = np.divide(1, s)
-  s = np.where(large, s, 0)
-  vT = np.swapaxes(v, -1, -2)
-  uT = np.swapaxes(u, -1, -2)
-  res = np.matmul(vT, np.multiply(s[..., np.newaxis], uT))
+  s = np.where(s > cutoff, s, np.inf)
+  res = np.matmul(_T(v), np.divide(_T(u), s[..., np.newaxis]))
   return lax.convert_element_type(res, a.dtype)
+
+
+@pinv.defjvp
+def _pinv_jvp(rcond, primals, tangents):
+  # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
+  # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM
+  # Journal on Numerical Analysis, Vol. 10, No. 2 (Apr., 1973), pp. 413-432.
+  # (via https://en.wikipedia.org/wiki/Moore%E2%80%93Penrose_inverse#Derivative)
+  a, = primals
+  a_dot, = tangents
+  p = pinv(a, rcond=rcond)
+  m, n = a.shape[-2:]
+  # TODO(phawkins): on TPU, we would need to opt into high precision here.
+  # TODO(phawkins): consider if this can be simplified in the Hermitian case.
+  p_dot = -p @ a_dot @ p
+  p_dot = p_dot + p @ _H(p) @ _H(a_dot) @ (np.eye(m, dtype=a.dtype) - a @ p)
+  p_dot = p_dot + (np.eye(n, dtype=a.dtype) - p @ a) @ _H(a_dot) @ _H(p) @ p
+  return p, p_dot
 
 
 @_wraps(onp.linalg.inv)
@@ -350,7 +466,7 @@ def solve(a, b):
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
-  lu, pivots = lax.stop_gradient(lax_linalg.lu)(a)
+  lu, pivots = lax_linalg.lu(lax.stop_gradient(a))
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: _matvec_multiply(a, x),

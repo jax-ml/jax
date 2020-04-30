@@ -181,9 +181,9 @@ class Literal(object):
 literalable_types: Set[type] = set()
 
 class Primitive(object):
-  multiple_results = False  # override for multi-output primitives
-  call_primitive = False  # override for higher-order primitives that are
-                          # processed in final style.
+  multiple_results = False  # set for multi-output primitives
+  call_primitive = False    # set for call primitives processed in final style
+  map_primitive = False     # set for map primitives processed in final style
 
   def __init__(self, name):
     self.name = name
@@ -236,7 +236,7 @@ def extract_call_jaxpr(primitive, params):
   Returns the subjaxpr and the params without the "call_jaxpr" value. If this is
   not a call primitive then returns (None, params).
   """
-  if not primitive.call_primitive:
+  if not (primitive.call_primitive or primitive.map_primitive):
     return (None, params)
   else:
     assert "call_jaxpr" in params
@@ -419,12 +419,18 @@ class Tracer(object):
   def __getitem__(self, idx): return self.aval._getitem(self, idx)
   def __nonzero__(self): return self.aval._nonzero(self)
   def __bool__(self): return self.aval._bool(self)
-  def __float__(self): return self.aval._float(self)
   def __int__(self): return self.aval._int(self)
   def __long__(self): return self.aval._long(self)
-  def __complex__(self): return self.aval._complex(self)
   def __hex__(self): return self.aval._hex(self)
   def __oct__(self): return self.aval._oct(self)
+
+  def __float__(self):
+    raise TypeError("JAX Tracer object cannot be interpreted as a float. "
+                    "Try using `x.astype(float)` instead.")
+
+  def __complex__(self):
+    raise TypeError("JAX Tracer object cannot be interpreted as a complex. "
+                    "Try using `x.astype(complex)` instead.")
 
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
@@ -449,7 +455,18 @@ class Tracer(object):
         return attr
 
   def __repr__(self):
-    return 'Traced<{}>with<{}>'.format(self.aval, self._trace)
+    base = pp('Traced<{}>with<{}>'.format(self.aval, self._trace))
+    contents = self._contents()
+    if contents:
+      base += pp('  with ') >> vcat(pp('{} = '.format(name)) >> pp_payload
+                                    for name, pp_payload in contents)
+    return str(base)
+
+  def _contents(self):
+    try:
+      return [(name, pp(repr(getattr(self, name)))) for name in self.__slots__]
+    except AttributeError:
+      return ()
 
   def __copy__(self):
     return self
@@ -542,6 +559,16 @@ class TraceState(threading.local):
     return new
 trace_state = TraceState()
 
+def reset_trace_state() -> bool:
+  "Reset the global trace state and return True if it was already clean."
+  if (trace_state.substack != [Sublevel(0)] or
+      trace_state.trace_stack.downward or
+      trace_state.trace_stack.upward):
+    trace_state.__init__()  # type: ignore
+    return False
+  else:
+    return True
+
 def cur_sublevel() -> Sublevel:
   return trace_state.substack[-1]
 
@@ -596,8 +623,10 @@ def find_top_trace(xs):
 @contextmanager
 def initial_style_staging():
   prev, trace_state.initial_style = trace_state.initial_style, True
-  yield
-  trace_state.initial_style = prev
+  try:
+    yield
+  finally:
+    trace_state.initial_style = prev
 
 
 # -------------------- abstract values --------------------
@@ -641,6 +670,8 @@ def lattice_join(x, y):
   else:
     raise TypeError((x, y))
 
+# For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
+Value = Any
 
 def valid_jaxtype(x):
   try:
@@ -685,20 +716,38 @@ identity_p = Primitive('id')
 identity_p.def_impl(lambda x: x)
 identity_p.def_custom_bind(lambda x: x)
 
-def concretization_err_msg(fun, context=None):
-  fname = getattr(fun, "__name__", fun)
-  if context is None:
-    context = ("The function to be transformed can't be traced at the required level "
-               "of abstraction. If using `jit`, try using `static_argnums` or "
-               "applying `jit` to smaller subfunctions instead.")
-  msg = "Abstract value passed to `{}`, which requires a concrete value. {}"
-  return msg.format(fname, context)
+class ConcretizationTypeError(TypeError): pass
 
-def concretization_function_error(fun, context=None):
-  def error(self, *args):
-    raise TypeError(concretization_err_msg(fun, context))
+def raise_concretization_error(val, context=""):
+  msg = (f"Abstract tracer value encountered where concrete value is expected ({context}).\n"
+          "Use transformation parameters such as `static_argnums` for `jit` "
+          "to avoid tracing input values.\n"
+          "See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error`.\n"
+          f"Encountered value: {val}")
+  raise ConcretizationTypeError(msg)
+
+
+def concretization_function_error(fun, context=""):
+  fname = getattr(fun, "__name__", fun)
+  fname_context = f"in `{fname}`"
+  if context:
+    fname_context += f" {context}"
+  def error(self, arg):
+    raise_concretization_error(arg, fname_context)
   return error
 
+
+def concrete_or_error(typ: Type, val: Any, context=""):
+  """Like typ(val), but gives the context in the error message.
+  Use with typ either `int`, or `bool`.
+  """
+  if isinstance(val, Tracer):
+    if isinstance(val.aval, ConcreteArray):
+      return typ(val.aval.val)
+    else:
+      raise_concretization_error(val, context)
+  else:
+    return typ(val)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
@@ -727,11 +776,11 @@ class UnshapedArray(AbstractValue):
 
   _bool = _nonzero = concretization_function_error(bool)
   _float   = concretization_function_error(
-      float, "Try using `value.astype(float)` instead.")
+      float, "Try using `x.astype(float)` instead.")
   _int     = concretization_function_error(
-      int, "Try using `value.astype(int)` instead.")
+      int, "Try using `x.astype(int)` instead.")
   _complex = concretization_function_error(
-      complex, "Try using `value.astype(complex)` instead.")
+      complex, "Try using `x.astype(complex)` instead.")
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
 
@@ -863,9 +912,7 @@ class ConcreteArray(ShapedArray):
     return ConcreteArray(self.val) if self.weak_type else self
 
   _bool = _nonzero = partialmethod(_forward_to_value, bool)
-  _float   = partialmethod(_forward_to_value, float)
   _int     = partialmethod(_forward_to_value, int)
-  _complex = partialmethod(_forward_to_value, complex)
   _hex     = partialmethod(_forward_to_value, hex)
   _oct     = partialmethod(_forward_to_value, oct)
 
@@ -915,8 +962,8 @@ def canonicalize_shape(shape):
             "smaller subfunctions.")
   raise TypeError(msg.format(shape))
 
-# ------------------- Call -------------------
 
+# ------------------- Call and map -------------------
 
 def apply_todos(todos, outs):
   todos_list = list(todos)
@@ -925,7 +972,8 @@ def apply_todos(todos, outs):
   return outs
 
 @lu.transformation_with_aux
-def process_env_traces(primitive, level, params_tuple, *args):
+def process_env_traces(post_processor: str, primitive: Primitive,
+                           level: int, params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
@@ -937,28 +985,33 @@ def process_env_traces(primitive, level, params_tuple, *args):
       break
     trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
-    outs, cur_todo = trace.post_process_call(primitive, outs, params)
+    post_process = getattr(trace, post_processor)
+    outs, cur_todo = post_process(primitive, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def call_bind(primitive, f: lu.WrappedFun, *args, **params):
+def _call_bind(processor: str, post_processor: str, primitive: Primitive,
+               f: lu.WrappedFun, *args, **params):
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
-  f, env_trace_todo = process_env_traces(f, primitive, level, params_tuple)
+  f, env_trace_todo = process_env_traces(f, post_processor, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
       outs = primitive.impl(f, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    outs = map(full_lower, top_trace.process_call(primitive, f, tracers, params))
+    process = getattr(top_trace, processor)
+    outs = map(full_lower, process(primitive, f, tracers, params))
   return apply_todos(env_trace_todo(), outs)
+
+call_bind = partial(_call_bind, 'process_call', 'post_process_call')
+map_bind = partial(_call_bind, 'process_map', 'post_process_map')
 
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
-
 
 call_p = Primitive('call')
 call_p.multiple_results = True
@@ -995,7 +1048,7 @@ def check_jaxpr(jaxpr: Jaxpr):
   map(write, jaxpr.constvars)
   map(write, jaxpr.invars)
   for eqn in jaxpr.eqns:
-    if eqn.primitive.call_primitive:
+    if eqn.primitive.call_primitive or eqn.map_primitive:
       if "call_jaxpr" not in eqn.params:
         raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
                         .format(eqn.primitive))
