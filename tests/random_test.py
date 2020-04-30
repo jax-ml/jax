@@ -409,6 +409,10 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
+      # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
+      # based on the central limit theorem).
+      self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
+      self.assertAllClose(samples.var(), lam, rtol=0.02, check_dtypes=False)
 
   def testPoissonShape(self):
     key = random.PRNGKey(0)
