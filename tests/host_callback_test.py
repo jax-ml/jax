@@ -21,7 +21,6 @@ import logging
 import numpy as onp
 import os
 import re
-import threading
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -52,21 +51,12 @@ class _TestingOutputStream(object):
     self._output = []
 
   def write(self, what: str) -> None:
-    # Sometimes we get floating points in the output; we round them
-    def repl(match_group):
-      matched = match_group.group(0)
-      if matched == ".": return matched
-      # TODO: why can't we use here np.around?
-      x = onp.around(float(matched), decimals=2)
-      return f"{x:.2f}"
-
-    what = re.sub(r"\-?\d*\.[\-\def]*", repl, what)
-    print(f"output_stream: {what}")
+    print(f"output_stream: {what}", end="")
     self._output.append(what)
 
   @property
   def output(self):
-    return "\n".join(self._output)
+    return "".join(self._output)
 
   def __str__(self):
     return "TestingOutputStream"
@@ -108,9 +98,55 @@ class HostCallbackTest(jtu.JaxTestCase):
     # Clear any cached backends so new CPU backend will pick up the env var.
     xla_bridge.get_backend.cache_clear()
 
+  def assertMultiLineStrippedEqual(self, expected, what):
+    """A variant that preprocesses the string to eliminate non-determinism."""
+    # Sometimes we get floating points in the output; we round them
+    def repl_floats(match_group):
+      matched = match_group.group(0)
+      if matched == ".": return matched
+      # TODO: why can't we use here np.around?
+      x = onp.around(float(matched), decimals=2)
+      return f"{x:.2f}"
+    what = re.sub(r"\-?\d*\.[\-\def]*", repl_floats, what)
+    # We rewrite consumer_id because it changes
+    what = re.sub(r"consumer_id=(\d+)", "consumer_id=...", what)
+    what = re.sub(r"output_stream=[^\]\n]*", "output_stream=...", what)
+    def repl_func(match_group):
+      matched = match_group.group(0)
+      if "function _print_consumer" in matched:
+        return "func=_print"
+      else:
+        return "..."
+    what = re.sub(r"func=(.*)", repl_func, what)
+    super().assertMultiLineStrippedEqual(expected, what)
 
-  def test_with_tuple_result(self):
+  def test_eval(self):
+    self.assertMultiLineStrippedEqual(
+        """
+{ lambda  ; a.
+  let b = mul a 2.00
+      c = id_tap[ func=_print
+                  output_stream=...
+                  what=a * 2 ] b
+      d = mul c 3.00
+      e f = id_tap[ func=_print
+                    nr_results=1
+                    output_stream=...
+                    what=y * 3 ] d c
+      g = pow f 2.00
+  in (g,) }""", str(api.make_jaxpr(fun1)(5.)))
+    self.assertEqual("", testing_stream.output)
 
+    self.assertEqual((5. * 2.) ** 2, fun1(5.))
+    self.assertMultiLineStrippedEqual(
+        """
+what: a * 2
+10.00
+what: y * 3
+30.00""", testing_stream.output)
+    testing_stream.reset()
+
+  def test_with_tuple_results(self):
     def func2(x):
       x1, y1 = hcb.id_print(x * 2., x * 3., output_stream=testing_stream)
       return x1 + y1
@@ -118,124 +154,135 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual(
         """
 { lambda  ; a.
-  let b = mul a 2.0
-      c = mul a 3.0
-      d e = id_print[ output_stream=TestingOutputStream ] b c
+  let b = mul a 2.00
+      c = mul a 3.00
+      d e = id_tap[ func=_print
+                    output_stream=...] b c
       f = add d e
   in (f,) }""", str(api.make_jaxpr(func2)(3.)))
     self.assertEqual(3. * (2. + 3.), func2(3.))
     self.assertMultiLineStrippedEqual("""
-(6.00, 9.00)  {}""", testing_stream.output)
+6.00
+9.00""", testing_stream.output)
     testing_stream.reset()
 
-  def test_eval(self):
+  def test_with_result(self):
+    def func2(x):
+      x1 = hcb.id_print(x * 2., x * 3., result=x * 4.,
+                        output_stream=testing_stream)
+      return x1
+
     self.assertMultiLineStrippedEqual(
-        """
+      """
 { lambda  ; a.
-  let b = mul a 2.0
-      c = id_print[ output_stream=TestingOutputStream
-                    what=a * 2 ] b
-      d = mul c 3.0
-      e f = id_print[ nr_results=1
-                      output_stream=TestingOutputStream
-                      what=y * 3 ] d c
-      g = pow f 2.0
-  in (g,) }""", str(api.make_jaxpr(fun1)(5.)))
-    self.assertEqual("", testing_stream.output)
-
-    self.assertEqual((5. * 2.)**2, fun1(5.))
-    self.assertMultiLineStrippedEqual(
-        """
-(10.00,)  {'what': 'a * 2'}
-(30.00, 10.00)  {'what': 'y * 3', 'nr_results': 1}""", testing_stream.output)
+  let b = mul a 2.00
+      c = mul a 3.00
+      d = mul a 4.00
+      e f g = id_tap[ func=_print
+                      nr_results=1
+                      output_stream=...] b c d
+  in (g,) }""", str(api.make_jaxpr(func2)(3.)))
+    self.assertEqual(3. * 4., func2(3.))
+    self.assertMultiLineStrippedEqual("""
+6.00
+9.00""", testing_stream.output)
     testing_stream.reset()
+
 
   def test_jit_simple(self):
     jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
-        2. * x, what="here"))
+        2. * x, what="here", output_stream=testing_stream))
     self.assertMultiLineStrippedEqual(
         """
 { lambda  ; a.
   let b = xla_call[ backend=None
                     call_jaxpr={ lambda  ; a.
-                                 let b = mul a 2.0
-                                     c = id_print[ what=here ] b
-                                     d = mul c 3.0
+                                 let b = mul a 2.00
+                                     c = id_tap[ func=_print
+                                                 output_stream=...
+                                                 what=here ] b
+                                     d = mul c 3.00
                                  in (d,) }
                     device=None
                     name=<lambda> ] a
   in (b,) }""", str(api.make_jaxpr(jit_fun1)(5.)))
     logging.warning("%s: %s",
                  self._testMethodName, api.xla_computation(jit_fun1)(5.).GetHloText())
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(5.)
 
     self.assertAllClose(6. * 5., res, check_dtypes=True)
     self.assertMultiLineStrippedEqual(
       """
+what: here
 10.00""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_sequence1(self):
     def func(x):
-      x1 = hcb.id_print(x, where="1")
-      return hcb.id_print(x1 + 1, where="2")
+      x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
+      return hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
 
     logging.info("%s: %s", self._testMethodName,
           api.make_jaxpr(func)(1))
     logging.info("%s: %s", self._testMethodName,
           api.xla_computation(func)(1).GetHloText())
 
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(2, api.jit(func)(1))
     self.assertMultiLineStrippedEqual(
             """
+where: 1
 1
+where: 2
 2""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit2(self):
     """A sequence of JIT."""
     def func(x):
-      x1 = hcb.id_print(x, where="1")
-      x2 = hcb.id_print(x1 + 1, where="2")
+      x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
+      x2 = hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
       return x2
 
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(2, api.jit(func)(1))
       self.assertEqual(11, api.jit(func)(10))
 
     self.assertMultiLineStrippedEqual(
       """
+where: 1
 1
+where: 2
 2
+where: 1
 10
+where: 2
 11""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_nested(self):
     def func(x):
-      x1 = hcb.id_print(x, where="1")
+      x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
       def func_nested(x):
-        x2 = hcb.id_print(x + 1, where="nested")
+        x2 = hcb.id_print(x + 1, where="nested", output_stream=testing_stream)
         return x2
       x3 = api.jit(func_nested)(x1)
-      return hcb.id_print(x3 + 1, where="2")
+      return hcb.id_print(x3 + 1, where="2", output_stream=testing_stream)
 
     logging.warning("%s: %s", self._testMethodName,
                  api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
                  api.xla_computation(func)(1).GetHloText())
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(3, api.jit(func)(1))
     self.assertMultiLineStrippedEqual(
       """
+where: 1
 1
+where: nested
 2
+where: 2
 3""", testing_stream.output)
     testing_stream.reset()
 
@@ -243,12 +290,11 @@ class HostCallbackTest(jtu.JaxTestCase):
     """Running on multiple devices."""
     devices = api.local_devices()
     def func(x, device_id):
-      x1 = hcb.id_print(x, dev=str(device_id))
-      x2 = hcb.id_print(x1 + 1, dev=str(device_id))
+      x1 = hcb.id_print(x, dev=str(device_id), output_stream=testing_stream)
+      x2 = hcb.id_print(x1 + 1, dev=str(device_id), output_stream=testing_stream)
       return x2
 
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       for d in devices:
         self.assertEqual(2, api.jit(func, device=d, static_argnums=1)(1, d.id))
 
@@ -259,66 +305,83 @@ class HostCallbackTest(jtu.JaxTestCase):
   def test_jit_cond1(self):
     """A conditional"""
     def func(x):
-      x1 = hcb.id_print(x, where="1")
-      x2 = hcb.id_print(x1 + 1, where="2")
+      x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
+      x2 = hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
 
       x4 = lax.cond(x % 2 == 0,
-                    x2 + 1, lambda x: hcb.id_print(x, where="cond_t"),
-                    x2 + 1, lambda x: hcb.id_print(-1, where="cond_f", result=x))
-      x5 = hcb.id_print(x4 + 1, where="w.2")
+                    x2 + 1, lambda x: hcb.id_print(x, where="cond_t", output_stream=testing_stream),
+                    x2 + 1, lambda x: hcb.id_print(-1, where="cond_f", result=x, output_stream=testing_stream))
+      x5 = hcb.id_print(x4 + 1, where="w_2", output_stream=testing_stream)
       return x5
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
                     api.xla_computation(func)(1).GetHloText())
 
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(4, api.jit(func)(1))
     self.assertMultiLineStrippedEqual("""
+where: 1
 1
+where: 2
 2
+where: cond_f
 -1
+where: w_2
 4""", testing_stream.output)
     testing_stream.reset()
 
 
   def test_jit_while_cond(self):
     def func(x):
-      x1 = hcb.id_print(x, where="1")
-      x2 = hcb.id_print(x1 + 1, where="2")
+      x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
+      x2 = hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
       def body(x):
-        x3 = hcb.id_print(x, where="w.1")
+        x3 = hcb.id_print(x, where="w_1", output_stream=testing_stream)
         x4 = lax.cond(x % 2 == 0,
-                      x3 + 1, lambda x: hcb.id_print(x, where="w.t"),
-                      x3 + 1, lambda x: hcb.id_print(-1, where="w.f", result=x))
-        return hcb.id_print(x4 + 1, where="w.2")
+                      x3 + 1, lambda x: hcb.id_print(x, where="w_t", output_stream=testing_stream),
+                      x3 + 1, lambda x: hcb.id_print(-1, where="w_f", result=x, output_stream=testing_stream))
+        return hcb.id_print(x4 + 1, where="w_2", output_stream=testing_stream)
       x10 = lax.while_loop(lambda x: x < 10, body, x2)
-      res = hcb.id_print(x10, where="10")
+      res = hcb.id_print(x10, where="10", output_stream=testing_stream)
       return res
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
           api.xla_computation(func)(1).GetHloText())
 
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(10, api.jit(func)(1))
     self.assertMultiLineStrippedEqual(
         """
+where: 1
 1
+where: 2
 2
+where: w_1
 2
+where: w_t
 3
+where: w_2
 4
+where: w_1
 4
+where: w_t
 5
+where: w_2
 6
+where: w_1
 6
+where: w_t
 7
+where: w_2
 8
+where: w_1
 8
+where: w_t
 9
+where: w_2
 10
+where: 10
 10""", testing_stream.output)
     testing_stream.reset()
 
@@ -329,20 +392,19 @@ class HostCallbackTest(jtu.JaxTestCase):
       x1 = hcb.id_print(x, where="1")
 
       def body(x):
-        x3 = hcb.id_print(x, where="w.1")
-        return hcb.id_print(x3 + 1, where="w.2")
+        x3 = hcb.id_print(x, where="w_1", output_stream=testing_stream)
+        return hcb.id_print(x3 + 1, where="w_2", output_stream=testing_stream)
 
-      x10 = lax.while_loop(lambda x: hcb.id_print(x < 10, where="w.p"),
+      x10 = lax.while_loop(lambda x: hcb.id_print(x < 10, where="w_p", output_stream=testing_stream),
                            body, x1)
-      res = hcb.id_print(x10, where="10")
+      res = hcb.id_print(x10, where="10", output_stream=testing_stream)
       return res
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
                     api.xla_computation(func)(1).GetHloText())
 
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(10, api.jit(func)(1))
     self.assertMultiLineStrippedEqual(
       """
@@ -352,41 +414,52 @@ class HostCallbackTest(jtu.JaxTestCase):
 
   def test_jit_scan_cond(self):
     def func(x):
-      x1 = hcb.id_print(x, where="1")
-      x2 = hcb.id_print(x1 + 1, where="2")
+      x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
+      x2 = hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
 
       def body(c, x):
-        x3 = hcb.id_print(x, where="s.1")
+        x3 = hcb.id_print(x, where="s_1", output_stream=testing_stream)
         x4 = lax.cond(x % 2 == 0,
-                      x3 + 1, lambda x: hcb.id_print(x, where="s.t"),
-                      x3 + 1, lambda x: hcb.id_print(-1, where="s.f", result=x))
-        return (c, hcb.id_print(x4 + 1, where="w.2"))
+                      x3 + 1, lambda x: hcb.id_print(x, where="s_t", output_stream=testing_stream),
+                      x3 + 1, lambda x: hcb.id_print(-1, where="s_f", result=x, output_stream=testing_stream))
+        return (c, hcb.id_print(x4 + 1, where="w_2", output_stream=testing_stream))
 
       _, x10 = lax.scan(body, x2, np.arange(3))
-      res = hcb.id_print(x10, where="10")
+      res = hcb.id_print(x10, where="10", output_stream=testing_stream)
       return res
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
                     api.xla_computation(func)(1).GetHloText())
 
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = api.jit(func)(1)
       self.assertAllClose(np.array([2, 3, 4]), res, check_dtypes=True)
     self.assertMultiLineStrippedEqual(
       """
+where: 1
 1
+where: 2
 2
+where: s_1
 0
+where: s_t
 1
+where: w_2
 2
+where: s_1
 1
+where: s_f
 -1
+where: w_2
 3
+where: s_1
 2
+where: s_t
 3
+where: w_2
 4
+where: 10
 [2 3 4]""", testing_stream.output)
     testing_stream.reset()
 
@@ -413,14 +486,13 @@ class HostCallbackTest(jtu.JaxTestCase):
         *xs,
         a_new_test="************",
         testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
-    with hcb.print_receiver(receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(args)
     # self.assertAllClose(args, res, check_dtypes=True)
 
   def test_jit_large(self):
     arg = np.arange(10000, dtype=np.int32).reshape((10, 10, 5, -1))
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       api.jit(hcb.id_print)(arg)
 
   def test_jvp(self):
@@ -428,39 +500,37 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual(
         """
 { lambda  ; a b.
-  let c = mul a 2.0
-      d = id_print[ output_stream=TestingOutputStream
-                    what=a * 2 ] c
-      e = mul d 3.0
-      f g = id_print[ nr_results=1
-                      output_stream=TestingOutputStream
-                      what=y * 3 ] e d
-      h = pow g 2.0
-      i = mul b 2.0
-      j = id_print[ output_stream=TestingOutputStream
+  let c = mul a 2.00
+      d = mul b 2.00
+      e f = id_tap[ func=_print
+                    nr_results=0
+                    output_stream=...
                     transforms=('jvp',)
-                    what=a * 2 ] i
-      k = mul j 3.0
-      l m = id_print[ nr_results=1
-                      output_stream=TestingOutputStream
-                      transforms=('jvp',)
-                      what=y * 3 ] k j
-      n = pow g 1.0
-      o = mul 2.0 n
-      p = mul m o
-  in (h, p) }""",
+                    what=a * 2 ] c d
+      g = mul e 3.00
+      h = mul f 3.00
+      i j k l = id_tap[ func=_print
+                        nr_results=2
+                        output_stream=...
+                        transforms=('jvp',)
+                        what=y * 3 ] g h e f
+      m = pow j 2.00
+      n = pow j 1.00
+      o = mul 2.00 n
+      p = mul l o
+  in (m, p) }""",
         str(api.make_jaxpr(jvp_fun1)(np.float32(5.), np.float32(0.1))))
 
     res_primals, res_tangents = jvp_fun1(np.float32(5.), np.float32(0.1))
     self.assertMultiLineStrippedEqual(
         """
-(DeviceArray(10.00, dtype=float32),)  {'what': 'a * 2'}
-(DeviceArray(0.20, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp',)}
-(DeviceArray(30.00, dtype=float32), DeviceArray(10.00, dtype=float32))  {'what': 'y * 3', 'nr_results': 1}
-(DeviceArray(0.60, dtype=float32), DeviceArray(0.20, dtype=float32))  {'what': 'y * 3', 'nr_results': 1, 'transforms': ('jvp',)}
-  """, testing_stream.output)
+transforms: ('jvp',) what: a * 2
+10.00
+0.20
+transforms: ('jvp',) what: y * 3
+30.00
+0.60""", testing_stream.output)
     testing_stream.reset()
-
 
 
   def test_jit_nested_cond_no_print(self):
@@ -482,36 +552,46 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual(
         """
 { lambda  ; a.
-  let b = mul a 2.0
-      c = id_print[ output_stream=TestingOutputStream
-                    what=a * 2 ] b
-      d = mul c 3.0
-      e f = id_print[ nr_results=1
-                      output_stream=TestingOutputStream
-                      what=y * 3 ] d c
-      g = pow f 1.0
-      h = mul 2.0 g
-      i = mul 1.0 h
-      j k = id_print[ nr_results=1
-                      output_stream=TestingOutputStream
-                      transforms=('jvp', 'transpose')
-                      what=y * 3 ] 0.0 i
-      l = mul j 3.0
-      m = add_any k l
-      n = id_print[ output_stream=TestingOutputStream
+  let b = mul a 2.00
+      c = id_tap[ consumer_id=xxx
+                  output_stream=yyy
+                  what=a * 2 ] b
+      d = mul c 3.00
+      e f = id_tap[ consumer_id=xxx
+                    nr_results=1
+                    output_stream=yyy
+                    what=y * 3 ] d c
+      g = pow f 1.00
+      h = mul 2.00 g
+      i = mul 1.00 h
+      j k = id_tap[ consumer_id=xxx
+                    nr_results=1
+                    output_stream=yyy
                     transforms=('jvp', 'transpose')
-                    what=a * 2 ] m
-      o = mul n 2.0
+                    what=y * 3 ] 0.00 i
+      l = mul j 3.00
+      m = add_any k l
+      n = id_tap[ consumer_id=xxx
+                  output_stream=yyy
+                  transforms=('jvp', 'transpose')
+                  what=a * 2 ] m
+      o = mul n 2.00
   in (o,) }""", str(api.make_jaxpr(grad_fun1)(5.)))
 
 
     res_grad = grad_fun1(np.float32(5.))
     self.assertMultiLineStrippedEqual(
         """
-(DeviceArray(10.00, dtype=float32),)  {'what': 'a * 2'}
-(DeviceArray(30.00, dtype=float32), DeviceArray(10.00, dtype=float32))  {'what': 'y * 3', 'nr_results': 1}
-(array(0.00, dtype=float32), DeviceArray(20.00, dtype=float32))  {'what': 'y * 3', 'nr_results': 1, 'transforms': ('jvp', 'transpose')}
-(DeviceArray(20.00, dtype=float32),)  {'what': 'a * 2', 'transforms': ('jvp', 'transpose')}
+what: a * 2
+10.00
+what: y * 3
+30.00
+10.00
+transforms: ('jvp',) what: y * 3
+0.00
+20.00
+transforms: ('jvp',) what: a * 2
+20.00
    """, testing_stream.output)
     testing_stream.reset()
 
@@ -521,26 +601,29 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual(
         """
 { lambda  ; a.
-  let b = mul a 2.0
-      c = id_print[ batch_dims=(0,)
-                    output_stream=TestingOutputStream
+  let b = mul a 2.00
+      c = id_tap[ batch_dims=(0,)
+                  func=_print
+                  output_stream=...
+                  transforms=('batch',)
+                  what=a * 2 ] b
+      d = mul c 3.00
+      e f = id_tap[ batch_dims=(0, 0)
+                    func=_print
+                    nr_results=1
+                    output_stream=...
                     transforms=('batch',)
-                    what=a * 2 ] b
-      d = mul c 3.0
-      e f = id_print[ batch_dims=(0, 0)
-                      nr_results=1
-                      output_stream=TestingOutputStream
-                      transforms=('batch',)
-                      what=y * 3 ] d c
-      g = pow f 2.0
+                    what=y * 3 ] d c
+      g = pow f 2.00
   in (g,) }""", str(api.make_jaxpr(vmap_fun1)(vargs)))
 
     res_vmap = vmap_fun1(vargs)
     self.assertMultiLineStrippedEqual(
         """
-(DeviceArray([ 8.00, 10.00], dtype=float32),)  {'what': 'a * 2', 'transforms': ('batch',), 'batch_dims': (0,)}
-(DeviceArray([24.00, 30.00], dtype=float32), DeviceArray([ 8.00, 10.00], dtype=float32))  {'what': 'y * 3', 'nr_results': 1, 'transforms': ('batch',), 'batch_dims': (0, 0)}
-     """, testing_stream.output)
+batch_dims: (0,) transforms: ('batch',) what: a * 2
+[ 8.00 10.00]
+batch_dims: (0, 0) transforms: ('batch',) what: y * 3
+[24.00 30.00]""", testing_stream.output)
     testing_stream.reset()
 
   def test_vmap_not_batched(self):
@@ -555,16 +638,19 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual(
       """
 { lambda  ; a.
-  let b c = id_print[ batch_dims=(None, 0)
-                      output_stream=TestingOutputStream
-                      transforms=('batch',) ] 3.0 a
-      d = add c 3.0
+  let b c = id_tap[ batch_dims=(None, 0)
+                    func=_print
+                    output_stream=...
+                    transforms=('batch',) ] 3.00 a
+      d = add c 3.00
   in (d,) }""", str(api.make_jaxpr(vmap_func)(vargs)))
 
     res_vmap = vmap_func(vargs)
     self.assertMultiLineStrippedEqual(
       """
-(3.00, DeviceArray([4.00, 5.00], dtype=float32))  {'transforms': ('batch',), 'batch_dims': (None, 0)}
+batch_dims: (None, 0) transforms: ('batch',)
+3.00
+[4.00 5.00]
    """, testing_stream.output)
     testing_stream.reset()
 
@@ -573,8 +659,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     vargs = 2. + np.arange(api.local_device_count(), dtype=np.float32)
 
     pmap_fun1 = api.pmap(fun1, axis_name="i")
-    with hcb.print_receiver(output_stream=testing_stream,
-                            receiver_name=self._testMethodName):
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = pmap_fun1(vargs)
     expected_res = np.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
     self.assertAllClose(expected_res, res, check_dtypes=False)
@@ -584,15 +669,16 @@ class HostCallbackTest(jtu.JaxTestCase):
     @partial(api.mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):
       return np.sum(hcb.id_print(x, what="x", output_stream=testing_stream))
-    args = [np.arange(4)], dict(n=2)
+    args = [np.arange(4)], dict(n=onp.int64(2))
     self.assertMultiLineStrippedEqual(
       """
 { lambda c f ; a b.
   let d = lt c b
-      e = id_print[ logical_shapes=[(Traced<ShapedArray(int32[], weak_type=True):JaxprTrace(level=0/0)>,)]
-                    output_stream=TestingOutputStream
-                    transforms=('mask',)
-                    what=x ] a
+      e = id_tap[ func=_print
+                  logical_shapes=[(Traced<ShapedArray(int32[]):JaxprTrace(level=0/0)>,)]
+                  output_stream=...
+                  transforms=('mask',)
+                  what=x ] a
       g = select d e f
       h = reduce_sum[ axes=(0,) ] g
   in (h,) }""", str(api.make_jaxpr(padded_sum)(*args)))
@@ -600,7 +686,8 @@ class HostCallbackTest(jtu.JaxTestCase):
     res = padded_sum(*args)
     self.assertMultiLineStrippedEqual(
       """
-(DeviceArray([0, 1, 2, 3], dtype=int32),)  {'what': 'x', 'transforms': ('mask',), 'logical_shapes': [(2,)]}
+logical_shapes: [(2,)] transforms: ('mask',) what: x
+[0 1 2 3]
    """, testing_stream.output)
     testing_stream.reset()
 
