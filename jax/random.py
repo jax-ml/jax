@@ -277,7 +277,7 @@ def _random_bits(key, bit_width, shape):
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
-  counts = lax.tie_in(key, lax.iota(onp.uint32, max_count.astype(onp.uint32)))
+  counts = lax.tie_in(key, lax.iota(onp.uint32, max_count))
   bits = threefry_2x32(key, counts)
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]

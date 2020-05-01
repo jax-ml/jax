@@ -1234,7 +1234,7 @@ def iota(dtype: DType, size: int) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  shape = canonicalize_shape((size,))
+  shape = canonicalize_shape((int(size),))
   dtype = dtypes.canonicalize_dtype(dtype)
   lazy_expr = lazy.iota(dtype, shape[0])
   aval = ShapedArray(shape, dtype)
