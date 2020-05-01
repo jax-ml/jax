@@ -323,9 +323,6 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.device_buffer.device(), cpu_device)
 
-    y = api.device_put(x)
-    self.assertEqual(y.device_buffer.device(), default_device)
-
   def test_jit_on_all_devices(self):
     # Verifies we can run the same computation on every device present, even
     # if they are, for example, different models of GPU.
