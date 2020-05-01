@@ -708,6 +708,9 @@ class JaxTestCase(parameterized.TestCase):
   # def tearDown(self) -> None:
   #   assert core.reset_trace_state()
 
+  def setUp(self):
+    core.skip_checks = False
+
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)

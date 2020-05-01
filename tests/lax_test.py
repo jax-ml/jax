@@ -2643,7 +2643,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    with self.assertRaises(TypeError):
+    with self.assertRaises(TypeError if core.skip_checks else AssertionError):
       lax.stop_gradient(lambda x: x)
 
   # TODO(mattjj): make this a more systematic test
