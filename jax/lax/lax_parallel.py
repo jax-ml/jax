@@ -271,8 +271,8 @@ def _allreduce_translation_rule(prim, c, val, replica_groups, platform=None):
 
 # psum translation rule has special handling for complex dtypes
 def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
-  if platform == "cpu":
-    return _cpu_psum_translation_rule(c, *args, replica_groups=replica_groups)
+  if platform in ("cpu", "tpu"):
+    return _notuple_psum_translation_rule(c, *args, replica_groups=replica_groups)
 
   # XLA's tuple all-reduce doesn't support different dtypes in the same
   # allreduce. Instead, we perform once all-reduce for each argument input type.
@@ -307,7 +307,9 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
 # TODO(b/150476027): CPU doesn't support tuple all-reduce correctly. But
 # fortunately we don't really need it in that case because CPU doesn't support
 # cross-task communication either.
-def _cpu_psum_translation_rule(c, *args, replica_groups):
+# TODO(b/155446630): An XLA:TPU optimization pass also doesn't support
+# tuple all-reduce yet. Meanwhile, rely on deterministic compiler behavior.
+def _notuple_psum_translation_rule(c, *args, replica_groups):
   def _translate(val):
     psum = partial(_allreduce_translation_rule, lax.add_p, c,
                    replica_groups=replica_groups)
