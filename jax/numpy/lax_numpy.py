@@ -33,7 +33,7 @@ import os
 import re
 import string
 import types
-from typing import Tuple
+from typing import Tuple, Union
 import warnings
 
 import numpy as onp
@@ -42,9 +42,10 @@ import opt_einsum
 from jax import jit, device_put, custom_jvp
 from .. import core
 from .. import dtypes
-from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray
+from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags
 from ..interpreters.xla import DeviceArray
+from ..interpreters.masking import Poly
 from .. import lax
 from .. import ops
 from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
@@ -1295,7 +1296,7 @@ def broadcast_arrays(*args):
 def broadcast_to(arr, shape):
   """Like Numpy's broadcast_to but doesn't necessarily return views."""
   arr = arr if isinstance(arr, ndarray) else array(arr)
-  shape = tuple(map(int, shape))  # check that shape is concrete
+  shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
     return arr
@@ -2140,7 +2141,7 @@ def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    return lax.iota(dtype, start)  # avoids materializing
+    return lax.iota(dtype, start) # avoids materializing
   else:
     return array(onp.arange(start, stop=stop, step=step, dtype=dtype))
 
@@ -3035,6 +3036,9 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
+  if type(axis_size) is Poly:
+    return index + axis_size if index < 0 else index
+
   return lax.select(
     lax.lt(index, _constant_like(index, 0)),
     lax.add(index, _constant_like(index, axis_size)),
@@ -3318,7 +3322,8 @@ def _index_to_gather(x_shape, idx):
   collapsed_slice_dims = []
   start_index_map = []
 
-  index_dtype = int64 if _max(x_shape, default=0) >= (1 << 31) else int32
+  use_64bit_index = _any([type(d) is Poly or d >= (1 << 31) for d in x_shape])
+  index_dtype = int64 if use_64bit_index else int32
   gather_indices = onp.zeros((0,), dtype=index_dtype)  # use onp to save a compilation
 
   # We perform three transformations to y before the scatter op, in order:
@@ -3377,6 +3382,10 @@ def _index_to_gather(x_shape, idx):
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis])
+      if type(i) is Poly:
+        # dummy index if i is polynomial, doesn't matter for shape inference
+        # TODO(mattjj,j-towns,juliuskunze): revise this logic
+        i = 0
       i = lax.convert_element_type(i, index_dtype)
       i = broadcast_to(i, tuple(gather_indices.shape[:-1]) + (1,))
       gather_indices = concatenate((gather_indices, i), -1)
@@ -3399,7 +3408,8 @@ def _index_to_gather(x_shape, idx):
       x_axis += 1
     # Handle slice index (only static, otherwise an error is raised)
     elif isinstance(i, slice):
-      if not _all(elt is None or type(core.get_aval(elt)) is ConcreteArray
+      if not _all(elt is None or type(elt) is Poly
+                  or type(core.get_aval(elt)) is ConcreteArray
                   for elt in (i.start, i.stop, i.step)):
         msg = ("Array slice indices must have static start/stop/step to be used "
                "with Numpy indexing syntax. Try lax.dynamic_slice/"
@@ -3549,13 +3559,42 @@ def _canonicalize_tuple_index(arr_ndim, idx):
     idx = tuple(idx) + colons
   return idx
 
-
-def _static_idx(idx, size):
-  """Helper function to compute the static slice start/limit/stride values."""
+def _polymorphic_slice_indices(idx: slice, size: Union[int, Poly]):
+  # like idx.indices(size), but allows for polymorphic indices and size
+  # see https://github.com/python/cpython/blob/6d6508765514c7c10719478a0430f5e47c9a96ac/Objects/sliceobject.c#L372
   assert isinstance(idx, slice)
-  start, stop, step = idx.indices(size)
-  if (step < 0 and stop >= start) or (step > 0 and start >= stop):
-    return 0, 0, 1, False  # sliced to size zero
+
+  step = 1 if idx.step is None else idx.step
+  step_is_negative = step < 0
+  lower = -1 if step_is_negative else 0
+  upper = size + lower
+
+  def sanitize(index, default):
+    if index is None:
+      return default
+    elif type(index) is Poly:
+      return index
+    elif index < 0:
+      return _max(index + size, lower)
+    else:
+      return _min(index, upper)
+
+  start = sanitize(idx.start, default=upper if step_is_negative else lower)
+  stop = sanitize(idx.stop, default=lower if step_is_negative else upper)
+  return start, stop, step
+
+def _static_idx(idx: slice, size: Union[int, Poly]):
+  """Helper function to compute the static slice start/limit/stride values."""
+  if _any(type(s) is Poly for s in (idx.start, idx.stop, idx.step, size)):
+    start, stop, step = _polymorphic_slice_indices(idx, size)
+  elif isinstance(size, int):
+    start, stop, step = idx.indices(size)
+  else:
+    raise TypeError(size)
+
+  if type(start) is not Poly and type(stop) is not Poly:
+    if (step < 0 and stop >= start) or (step > 0 and start >= stop):
+      return 0, 0, 1, False  # sliced to size zero
 
   if step > 0:
     return start, stop, step, False

@@ -14,27 +14,29 @@
 
 
 from functools import partial
+import itertools as it
 from unittest import SkipTest
 
 import numpy as onp
-from absl.testing import absltest
-from absl.testing import parameterized
-
-from jax import test_util as jtu, core as jc, api
-from jax.interpreters.masking import ShapeError, shape_as_value, parse_spec, \
-  constant_poly, Mon, Poly, parse_id
-from jax import mask, vmap, jit, grad, shapecheck
-from jax import lax
-import jax.numpy as np
-
+from absl.testing import absltest, parameterized
+from jax.interpreters.masking import shape_as_value, ShapeError, \
+  parse_spec, Poly, Mon
+from jax import numpy as np, test_util as jtu, mask, vmap, jit, grad, lax, \
+  shapecheck, api
 from jax.config import config
+from jax.numpy.lax_numpy import _polymorphic_slice_indices
+from jax.scipy.special import expit
+
 config.parse_flags_with_absl()
 
 
-# These are 'manual' tests for masking and shape checking. The more exhaustive,
+# These are 'manual' tests for masking. The more exhaustive,
 # more systematic tests should live in lax_test.py.
 
-class MaskingTest(jtu.JaxTestCase):
+def constant_poly(c):
+  return Poly({Mon(): c})
+
+class ShapesTest(jtu.JaxTestCase):
 
   @parameterized.parameters([
       ['(m, n)', 'ShapeSpec(m, n)'],
@@ -53,10 +55,10 @@ class MaskingTest(jtu.JaxTestCase):
       ['', 'ShapeSpec()'],
       ['_', 'ShapeSpec(_)'],
   ])
-  def test_shape_parsing(self, spec, ans):
+  def test_parse_spec(self, spec, ans):
     self.assertEqual(str(parse_spec(spec)), ans)
 
-  def test_poly_equal(self):
+  def test_Poly_equal(self):
     assert constant_poly(3) == 3
     assert onp.array(3, onp.int64) == constant_poly(3)
     assert onp.array(3, onp.int64)[()] == constant_poly(3)
@@ -70,7 +72,11 @@ class MaskingTest(jtu.JaxTestCase):
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
     assert Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
 
-  def test_poly_compare(self):
+  def test_Poly_hash(self):
+    assert not len(set(hash(Poly({Mon(): i})) for i in range(10))) == 1
+    assert hash(Poly({Mon(): 3, Mon({'n': 1}): 4})) == hash(Poly({Mon({'n': 1}): 4, Mon(): 3}))
+
+  def test_Poly_compare(self):
     poly = Poly({Mon(): 3, Mon({'n': 1}): 4})
     # Assume poly > 0 to make various shape rules work with polymorphic shapes:
     assert poly >= 0
@@ -84,39 +90,43 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
 
-  def test_poly_divmod(self):
-    n = parse_id('n')
+  def test_Poly_divmod(self):
+    n = Poly({Mon({'n': 1}): 1})
     assert (n, 1) == divmod(2*n+1, 2)
     assert (2*n, 0) == divmod(10*n, 5)
     assert (2*n+4, 3) == divmod(10*n+23, 5)
 
-  def test_shapecheck_add_broadcast(self):
-     @shapecheck(['(m, n)', 'n'], '(m, n)')
-     @shapecheck(['n', ''], 'n')
-     def add(a, b):
-       return a + b
+  def test_Poly_rsub(self):
+    n = Poly({Mon({'n': 1}): 1})
+    assert -1 - n == -n - 1
 
-  def test_shapecheck_sum(self):
+  def test_add_broadcast(self):
+    @shapecheck(['(m, n)', 'n'], '(m, n)')
+    @shapecheck(['n', ''], 'n')
+    def add(a, b):
+      return a + b
+
+  def test_sum(self):
     @shapecheck(['(m, n)'], '')
     def sum(x):
       return np.sum(x)
 
-  def test_shapecheck_prod(self):
+  def test_prod(self):
     @shapecheck(['(m, n)'], '')
     def prod(x):
       return np.prod(x)
 
-  def test_shapecheck_max(self):
+  def test_max(self):
     @shapecheck(['(m, n)'], '')
     def prod(x):
       return np.max(x)
 
-  def test_shapecheck_min(self):
+  def test_min(self):
     @shapecheck(['(m, n)'], '')
     def prod(x):
       return np.min(x)
 
-  def test_shapecheck_dot(self):
+  def test_dot(self):
     @shapecheck(['(m, n)', 'n'], 'm')
     def matvec(A, b):
       return np.dot(A, b)
@@ -127,12 +137,12 @@ class MaskingTest(jtu.JaxTestCase):
         return lax.dot_general(A, b, [((0,), (0,)), ((), ())])
     self.assertRaisesRegex(TypeError, "", thunk)
 
-  def test_shapecheck_flatten(self):
+  def test_flatten(self):
     @shapecheck(['(m, n)'], 'm * n')
     def flatten(x):
       return lax.reshape(x, (x.shape[0] * x.shape[1],))
 
-  def test_shapecheck_concatenate(self):
+  def test_concatenate(self):
     @shapecheck(['m', 'n', 'm'], '3*m + n')
     def cat(x, y, z):
       return lax.concatenate([x, y, x, z], 0)
@@ -143,36 +153,42 @@ class MaskingTest(jtu.JaxTestCase):
         return lax.concatenate([x, y, x], 0)
     self.assertRaisesRegex(ShapeError, "", thunk)
 
-  def test_shapecheck_device_put(self):
+  def test_device_put(self):
     @shapecheck(['n'], 'n')
     def d_put(x):
       return api.device_put(x)
 
-  def test_shapecheck_broadcast_in_dim(self):
+  def test_broadcast_in_dim(self):
     x = np.zeros(7)
 
     @shapecheck(['(n,)'], '(3, n, 4)')
     def broadcast_in_dim(x):
       return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1,))
-
     x = np.zeros((7, 1))
 
     @shapecheck(['(n, 1)'], '(3, n, 4, 1)')
     def broadcast_in_dim(x):
       return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4, x.shape[1]), broadcast_dimensions=(1, 3))
 
-  def test_shapecheck_jit(self):
+  def test_jit(self):
     @shapecheck(['n'], '2*n')
     @jit
     def concat(x):
       return lax.concatenate([x, x], 0)
 
-  def test_shapecheck_pad(self):
+    # TODO:
+    # @shapecheck(['n'], 'n')
+    # @jit
+    # @grad
+    # def sum_square(x):
+    #   return np.sum(x ** 2)
+
+  def test_pad(self):
     @shapecheck(['n'], '2*n+1')
     def p(x):
-      return lax.pad(x, 0, [(1, 1, 1)])
+      return lax.pad(x, np.array(0., x.dtype), [(1, 1, 1)])
 
-  def test_shapecheck_numpy_pad(self):
+  def test_numpy_pad(self):
     @shapecheck(['n'], 'n+1')
     def p(x):
       return np.pad(x, (0, 1))
@@ -197,8 +213,8 @@ class MaskingTest(jtu.JaxTestCase):
     if (lhs_dilation is None or not isinstance(padding, str)) and
     # only test strides with same padding:
     (strides[0] == 1 or padding == 'SAME')))
-  def test_shapecheck_conv(self, strides, padding, lhs_dilation,
-                           dimension_numbers, lhs_perm, rhs_perm, out_perm):
+  def test_conv(self, strides, padding, lhs_dilation,
+                dimension_numbers, lhs_perm, rhs_perm, out_perm):
     valid = padding == 'VALID'
     is_strided = strides[0] != 1
     lhs_shape = '({}, {}, {}, {})'.format(*onp.take(['n', 'i', '2*h' if is_strided else 'h', 'w'], lhs_perm))
@@ -213,8 +229,22 @@ class MaskingTest(jtu.JaxTestCase):
         lhs, rhs, strides, padding,
         lhs_dilation=lhs_dilation, dimension_numbers=dimension_numbers)
 
-  # TODO:
-  def DISABLED_shapecheck_slicing(self):
+  def test_indexing(self):
+    @shapecheck(['n'], '')
+    def first(x):
+      return x[0]
+
+    @shapecheck(['n'], '')
+    def last(x):
+      return x[-1]
+
+    @shapecheck(['(n,m,a)'], 'n,m')
+    @vmap
+    @shapecheck(['(n,a)'], 'n')
+    def last_column(x):
+      return x[..., -1]
+
+  def test_slicing(self):
     @shapecheck(['n'], 'n+-1')
     def slice(x):
       return x[1:]
@@ -223,16 +253,51 @@ class MaskingTest(jtu.JaxTestCase):
     def slice(x):
       return x[:-1]
 
-  def test_shapecheck_unsupported_op(self):
-    p = jc.Primitive('unsupported_op')
-    p.def_impl(lambda x: x)
+    @shapecheck(['n'], 'n+-1')
+    def inverse(x):
+      return x[:0:-1]
 
-    def thunk():
-      @shapecheck(['n'], 'n')
-      def identity(x):
-        return p.bind(x)
+    @shapecheck(['n'], 'n+-1')
+    def inverse(x):
+      return x[-2::-1]
 
-    self.assertRaisesRegex(NotImplementedError, "Shape rule for unsupported_op not implemented yet.", thunk)
+  def test_poly_slicing(self):
+    @shapecheck(['n'], 'n+-1')
+    def slice_poly_stop(x):
+      return x[:x.shape[0] - 1]
+
+    # TODO: @shapecheck(['n'], '1')
+    def slice_poly_start(x):
+      return x[x.shape[0] - 1:]
+
+  def test_iota(self):
+    @shapecheck(['n'], 'n')
+    def range_like(x):
+      return lax.iota(np.int32, x.shape[0])
+
+  def test_arange(self):
+    @shapecheck(['n'], 'n')
+    def arange_like(x):
+      return np.arange(x.shape[0], dtype=np.int32)
+
+  def test_expit(self):
+    @shapecheck(['n'], 'n')
+    def expit_(x):
+      return expit(x)
+
+  def test_reshape(self):
+    @shapecheck(['n, a, b'], 'n, a*b')
+    def flatten(x):
+      return np.reshape(x, (x.shape[0], x.shape[1] * x.shape[2]))
+
+  def test_ravel(self):
+    a = np.array(1)
+
+    @shapecheck(['n'], '')
+    def thunk(n):
+      return -(a + n.ravel()[0] * 0)
+
+class MaskingTest(jtu.JaxTestCase):
 
   def test_sum(self):
     @partial(mask, in_shapes=['n'], out_shape='')
@@ -488,6 +553,28 @@ class MaskingTest(jtu.JaxTestCase):
     expected = onp.array([3, 2, 6])
     self.assertAllClose(ans[:3], expected, check_dtypes=False)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_start={}_stop={}_step={}_length={}"
+       .format(start, stop, step, length),
+       "start": start, "stop": stop, "step": step, "length": length}
+      for length in range(1, 5)
+      for start, stop, step
+      in it.product(it.chain([None], range(-10, 10)), repeat=3)
+      if step != 0))
+  def test_slice_indices(self, start, stop, step, length):
+    s = slice(start, stop, step)
+    assert _polymorphic_slice_indices(s, length) == s.indices(length)
+
+  def test_slice_index_poly_start(self):
+    n = Poly({Mon({'n': 1}): 1})
+    s = slice(n, None, None)
+    assert (n, 2 * n, 1) == _polymorphic_slice_indices(s, 2 * n)
+
+
+  def test_slice_oob_indexing(self):
+    # https://github.com/google/jax/issues/2245
+    self.assertAllClose(np.ones(5), np.ones(5)[:10], check_dtypes=True)
+    self.assertAllClose(np.ones(5), np.ones(5)[-10:], check_dtypes=True)
 
 if __name__ == '__main__':
   absltest.main()
