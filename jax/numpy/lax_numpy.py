@@ -1044,7 +1044,7 @@ def _gradient(a, varargs, axis):
       return []
     axis = [_canonicalize_axis(i, a.ndim) for i in axis]
 
-  if _min([s for i, s in enumerate(a.shape) if i in axis]) < 2:
+  if min([s for i, s in enumerate(a.shape) if i in axis]) < 2:
     raise ValueError("Shape of array too small to calculate "
                      "a numerical gradient, "
                      "at least 2 elements are required.")
