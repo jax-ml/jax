@@ -214,7 +214,24 @@ class PmapTest(jtu.JaxTestCase):
     shape = (xla_bridge.device_count(), 4)
     x = 3.
     y = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
-    expected = onp.broadcast_to(x - onp.sum(y, 0), shape)
+    expected = onp.broadcast_to(x - onp.sum(y, 0, keepdims=True), shape)
+
+    ans = f(x, y)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
+       "device_mesh_shape": device_mesh_shape}
+      for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
+  def testPartiallyMappedNested(self, device_mesh_shape):
+    mesh_shape = self._getMeshShape(device_mesh_shape)
+
+    f = pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
+    f = pmap(f, axis_name='j', in_axes=(None, 0))
+
+    x = 3.
+    y = onp.arange(prod(mesh_shape), dtype=onp.float32).reshape(mesh_shape)
+    expected = onp.broadcast_to(x - onp.sum(y, 1, keepdims=True), mesh_shape)
 
     ans = f(x, y)
     self.assertAllClose(ans, expected, check_dtypes=False)
