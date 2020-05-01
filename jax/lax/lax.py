@@ -1234,7 +1234,8 @@ def iota(dtype: DType, size: int) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  shape = canonicalize_shape((int(size),))
+  size = size if type(size) is masking.Poly else int(size)
+  shape = canonicalize_shape((size,))
   dtype = dtypes.canonicalize_dtype(dtype)
   lazy_expr = lazy.iota(dtype, shape[0])
   aval = ShapedArray(shape, dtype)
