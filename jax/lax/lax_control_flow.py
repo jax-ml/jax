@@ -45,7 +45,7 @@ from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_leaves,
-                           tree_multimap)
+                           tree_map, tree_multimap)
 from jax import ad_util
 
 xops = xla_client.ops
@@ -823,7 +823,7 @@ xla.initial_style_translations[cond_p] = _cond_translation_rule
 
 ### scan
 
-def scan(f, init, xs, length=None):
+def scan(f, init, xs, length=None, forward=True):
   """Scan a function over leading array axes while carrying along state.
 
   The type signature in brief is
@@ -883,6 +883,9 @@ def scan(f, init, xs, length=None):
     length: optional integer specifying the number of loop iterations, which
       must agree with the sizes of leading axes of the arrays in ``xs`` (but can
       be used to perform scans where no input ``xs`` are needed).
+    forward: optional boolean specifying whether to run the scan iteration
+      forward (the default) or in reverse, equivalent to reversing the leading
+      axes of the arrays in ``xs`` and in ``ys``.
 
   Returns:
     A pair of type ``(c, [b])`` where the first element represents the final
@@ -921,13 +924,18 @@ def scan(f, init, xs, length=None):
   if jax.api._jit_is_disabled():
     carry = init
     ys = []
+    if not forward:
+      xs_flat = [lax.rev(x, (0,)) for x in xs_flat]
     for i in range(length):
       xs_slice = [_index_array(i, core.get_aval(x), x) for x in xs_flat]
       carry, y = f(carry, tree_unflatten(xs_tree, xs_slice))
       ys.append(y)
     stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
                             else jax.numpy.stack((y, *ys)))
-    return carry, tree_multimap(stack, *ys)
+    ys = tree_multimap(stack, *ys)
+    if not forward:
+      ys = tree_map(partial(lax.rev, dimensions=(0,)), ys)
+    return carry, ys
 
   carry_avals = tuple(_map(_abstractify, init_flat))
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
@@ -944,7 +952,7 @@ def scan(f, init, xs, length=None):
                         init_tree, carry_avals)
 
   out = scan_p.bind(*itertools.chain(consts, in_flat),
-                    forward=True, length=length, jaxpr=jaxpr,
+                    forward=forward, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=len(init_flat),
                     linear=(False,) * (len(consts) + len(in_flat)))
   return tree_unflatten(out_tree, out)

@@ -1898,6 +1898,19 @@ class LaxControlFlowTest(jtu.JaxTestCase):
             .format(too_big, api.device_count(), jtu.device_under_test())),
         lambda: f_loop(np.ones(too_big)))
 
+  def test_scan_forward_false(self):
+    def cumsum(x, forward):
+      return lax.scan(lambda c, x: (c + x, c + x), 0, x, forward=forward)[1]
+
+    x = onp.array([3, 1, 4, 1, 5, 9])
+    self.assertAllClose(onp.cumsum(x), cumsum(x, True), check_dtypes=False)
+    self.assertAllClose(onp.cumsum(x[::-1])[::-1], cumsum(x, False), check_dtypes=False)
+
+    with api.disable_jit():
+      self.assertAllClose(onp.cumsum(x), cumsum(x, True), check_dtypes=False)
+    with api.disable_jit():
+      self.assertAllClose(onp.cumsum(x[::-1])[::-1], cumsum(x, False), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
