@@ -33,7 +33,16 @@ import jax.numpy as np
 from jax.config import config
 config.parse_flags_with_absl()
 
+
 class NNFunctionsTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    super().tearDown()
+    config.update("jax_numpy_rank_promotion", "warn")
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
@@ -160,6 +169,14 @@ INITIALIZER_RECS = [
 ]
 
 class NNInitializersTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    super().tearDown()
+    config.update("jax_numpy_rank_promotion", "warn")
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

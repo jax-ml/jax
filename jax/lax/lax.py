@@ -665,6 +665,10 @@ def broadcast_in_dim(operand: Array, shape: Shape,
       operand, shape=tuple(shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
 
+def broadcast_to_rank(x: Array, rank: int) -> Array:
+  """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
+  return broadcast(x, (1,) * (rank - x.ndim))
+
 def reshape(operand: Array, new_sizes: Shape,
             dimensions: Optional[Sequence[int]] = None) -> Array:
   """Wraps XLA's `Reshape
