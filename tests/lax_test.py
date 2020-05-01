@@ -115,7 +115,8 @@ LAX_OPS = [
     op_record("atan", 1, float_dtypes, jtu.rand_small),
     op_record("asinh", 1, float_dtypes, jtu.rand_default),
     op_record("acosh", 1, float_dtypes, jtu.rand_positive),
-    op_record("atanh", 1, float_dtypes, jtu.rand_small),
+    # TODO(b/155331781): atanh has only ~float precision
+    op_record("atanh", 1, float_dtypes, jtu.rand_small, {onp.float64: 1e-9}),
     op_record("sinh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("cosh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("lgamma", 1, float_dtypes, jtu.rand_positive,
@@ -1773,7 +1774,7 @@ LAX_GRAD_OPS = [
                    dtypes=grad_float_dtypes, tol=1e-3),
     grad_test_spec(lax.acos, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, -1.3, 1.3),
-                   dtypes=grad_float_dtypes, tol=1e-3),
+                   dtypes=grad_float_dtypes, tol=2e-2),
     # TODO(proteneer): atan2 input is already a representation of a
     # complex number. Need to think harder about what this even means
     # if each input itself is a complex number.
