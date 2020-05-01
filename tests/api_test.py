@@ -807,9 +807,9 @@ class APITest(jtu.JaxTestCase):
   def test_xla_computation(self):
     # these tests basically check the examples in the xla_computation docstring
 
-    def h(x):
+    def e(x):
       return jnp.sin(jnp.cos(x))
-    c = api.xla_computation(h)(2.)
+    c = api.xla_computation(e)(2.)
     self.assertIn('cosine', c.GetHloText())
     self.assertIn('sine', c.GetHloText())
 
@@ -831,6 +831,16 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.GetHloText())
     self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
     self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
+
+    def h(x):
+      rowsum = lax.psum(x, 'i', axis_index_groups=[[0, 1], [2, 3]])
+      colsum = lax.psum(x, 'j')
+      return rowsum, colsum
+    axis_env = [('i', 4), ('j', 2)]
+    c = api.xla_computation(h, axis_env=axis_env)(5.)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,2},{4,6},{1,3},{5,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
 
   def test_xla_computation_args(self):
     def foo(x, y, z):
@@ -1848,8 +1858,8 @@ class JaxprTest(jtu.JaxTestCase):
                     call_jaxpr={ lambda  ; d b a.
                                  let c = add a b
                                      e = add c d
-                                     f = psum[ axis_name=rows
-                                               replica_groups=None ] a
+                                     f = psum[ axis_index_groups=None
+                                               axis_name=rows ] a
                                      g = div e f
                                  in (g,) }
                     devices=None

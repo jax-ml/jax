@@ -375,9 +375,9 @@ def apply_parallel_primitive(prim, *args, **params):
   # look up information in the dynamic axis env.
   dynamic_axis_env = _thread_local_state.dynamic_axis_env
   axis_name = params.pop('axis_name')
-  replica_groups = params.pop('replica_groups')
-  if replica_groups is not None:
-    shape = (len(replica_groups[0]),)
+  axis_index_groups = params.pop('axis_index_groups')
+  if axis_index_groups is not None:
+    shape = (len(axis_index_groups[0]),)
   else:
     logical_size = lambda frame: frame.hard_size * (frame.soft_size or 1)
     if isinstance(axis_name, (list, tuple)):

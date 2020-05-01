@@ -429,16 +429,41 @@ class PmapTest(jtu.JaxTestCase):
     replicas = xla_bridge.device_count()
     if replicas % 2 != 0:
       raise SkipTest
-    replica_groups = onp.arange(replicas).reshape(2, replicas // 2).tolist()
-    f = pmap(lambda x: x - lax.psum(x, 'i', replica_groups), axis_name='i')
+    axis_index_groups = onp.arange(replicas).reshape(
+      2, replicas // 2).tolist()
+    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
 
     shape = (replicas, 4)
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
-    expected_psum_1 = onp.broadcast_to(
-        onp.sum(x[:replicas // 2], 0), (replicas // 2, x.shape[1]))
-    expected_psum_2 = onp.broadcast_to(
-        onp.sum(x[replicas // 2:], 0), (replicas // 2, x.shape[1]))
+    def sum_helper(a):
+      return onp.broadcast_to(a.sum(0, keepdims=True),
+                              (replicas // 2, x.shape[1]))
+    expected_psum_1 = sum_helper(x[:replicas // 2])
+    expected_psum_2 = sum_helper(x[replicas // 2:])
     expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected = x - expected_psum
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testNestedPmapReplicaGroups(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 4 != 0:
+      raise SkipTest
+    axis_index_groups = onp.arange(replicas // 2).reshape(
+      2, replicas // 4).tolist()
+    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(pmap(f, 'i'), 'j')
+
+    shape = (2, replicas // 2, 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    def sum_helper(a):
+      return onp.broadcast_to(a.sum(1, keepdims=True),
+                              (2, replicas // 4, x.shape[2]))
+    expected_psum_1 = sum_helper(x[:, :replicas // 4])
+    expected_psum_2 = sum_helper(x[:, replicas // 4:])
+    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 1)
     expected = x - expected_psum
 
     ans = f(x)

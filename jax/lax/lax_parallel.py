@@ -38,7 +38,7 @@ xops = xc.ops
 
 ### parallel traceables
 
-def psum(x, axis_name, replica_groups=None):
+def psum(x, axis_name, axis_index_groups=None):
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -48,7 +48,7 @@ def psum(x, axis_name, replica_groups=None):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    replica_groups: optional list of lists containing replica IDs (e.g. for
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform psums over the first
       two and last two replicas).
 
@@ -68,9 +68,9 @@ def psum(x, axis_name, replica_groups=None):
   """
   leaves, treedef = tree_util.tree_flatten(x)
   return treedef.unflatten(
-      psum_p.bind(*leaves, axis_name=axis_name, replica_groups=replica_groups))
+      psum_p.bind(*leaves, axis_name=axis_name, axis_index_groups=axis_index_groups))
 
-def pmean(x, axis_name, replica_groups=None):
+def pmean(x, axis_name, axis_index_groups=None):
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -80,7 +80,7 @@ def pmean(x, axis_name, replica_groups=None):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    replica_groups: optional list of lists containing replica IDs (e.g. for
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmeans over the first
       two and last two replicas).
 
@@ -98,10 +98,10 @@ def pmean(x, axis_name, replica_groups=None):
   >>> print(y)
   [ 0.          0.66666667  1.33333334  2.0       ]
   """
-  x, n = psum((x, 1), axis_name=axis_name, replica_groups=replica_groups)
+  x, n = psum((x, 1), axis_name=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(lambda v: v / n, x)
 
-def pmax(x, axis_name, replica_groups=None):
+def pmax(x, axis_name, axis_index_groups=None):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -111,7 +111,7 @@ def pmax(x, axis_name, replica_groups=None):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    replica_groups: optional list of lists containing replica IDs (e.g. for
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmaxes over the first
       two and last two replicas).
 
@@ -120,9 +120,9 @@ def pmax(x, axis_name, replica_groups=None):
     all-reduce max along the axis ``axis_name``.
   """
   return tree_util.tree_map(partial(
-      pmax_p.bind, axis_name=axis_name, replica_groups=replica_groups), x)
+      pmax_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
 
-def pmin(x, axis_name, replica_groups=None):
+def pmin(x, axis_name, axis_index_groups=None):
   """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -132,7 +132,7 @@ def pmin(x, axis_name, replica_groups=None):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
-    replica_groups: optional list of lists containing replica IDs (e.g. for
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmins over the first
       two and last two replicas).
 
@@ -141,7 +141,7 @@ def pmin(x, axis_name, replica_groups=None):
     all-reduce min along the axis ``axis_name``.
   """
   return tree_util.tree_map(partial(
-      pmin_p.bind, axis_name=axis_name, replica_groups=replica_groups), x)
+      pmin_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
 
 def ppermute(x, axis_name, perm):
   """Perform a collective permutation according to the permutation ``perm``.
@@ -273,9 +273,9 @@ def standard_pmap_primitive(name, multiple_results=False):
 
 
 def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
-                               replica_groups):
+                               axis_index_groups):
   assert tuple(which_mapped) == (True,)
-  assert replica_groups is None
+  assert axis_index_groups is None
   vals = (reducer(x, [0]) for x in vals)
   return prim.bind(*vals, axis_name=axis_name), False
 
@@ -343,8 +343,8 @@ pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
-ad.deflinear(psum_p, lambda *ts, axis_name, replica_groups: psum(
-    *ts, axis_name=axis_name, replica_groups=replica_groups))
+ad.deflinear(psum_p, lambda *ts, axis_name, axis_index_groups: psum(
+    *ts, axis_name=axis_name, axis_index_groups=axis_index_groups))
 pxla.multi_host_supported_collectives.add(psum_p)
 
 
