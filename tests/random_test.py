@@ -172,19 +172,23 @@ class LaxRandomTest(jtu.JaxTestCase):
     rand = lambda key: random.shuffle(key, x)
     crand = api.jit(rand)
 
-    perm1 = rand(key)
-    perm2 = crand(key)
+    with self.assertWarns(FutureWarning):
+      perm1 = rand(key)
+    with self.assertWarns(FutureWarning):
+      perm2 = crand(key)
 
     self.assertAllClose(perm1, perm2, check_dtypes=True)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]))
-  def testPermutationArray(self, dtype):
+      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "dtype": onp.dtype(dtype).name, "shape": shape}
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]
+      for shape in [100, (10, 10), (10, 5, 2)]))
+  def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
-    x = onp.arange(100).astype(dtype)
+    x = np.arange(np.prod(shape)).reshape(shape).astype(dtype)
     rand = lambda key: random.permutation(key, x)
     crand = api.jit(rand)
 
@@ -192,11 +196,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm2 = crand(key)
 
     self.assertAllClose(perm1, perm2, check_dtypes=True)
-    self.assertEqual(perm1.dtype, perm2.dtype)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
-    self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
-    self.assertArraysAllClose(x, onp.arange(100).astype(dtype),
-                              check_dtypes=True)
+    self.assertAllClose(onp.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
+    self.assertArraysAllClose(
+      x, np.arange(np.prod(shape)).reshape(shape).astype(dtype),
+      check_dtypes=True)
 
   def testPermutationInteger(self):
     key = random.PRNGKey(0)

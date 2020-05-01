@@ -23,6 +23,7 @@ https://github.com/google/jax/blob/master/design_notes/prng.md
 
 from functools import partial
 from typing import Optional, Sequence, Union
+import warnings
 
 import numpy as onp
 
@@ -431,12 +432,18 @@ def shuffle(key: np.ndarray, x: np.ndarray, axis: int = 0) -> np.ndarray:
   Returns:
     A shuffled version of x.
   """
+  msg = ("jax.random.shuffle is deprecated and will be removed in a future release. "
+         "Use jax.random.permutation")
+  warnings.warn(msg, FutureWarning)
   return _shuffle(key, x, axis)
 
 
 def permutation(key, x):
   """
   Permute elements of an array along its first axis or return a permuted range.
+
+  If `x` is a multi-dimensional array, it is only shuffled along its
+  first index.
 
   Args:n
     key: a PRNGKey used as the random key.
@@ -454,9 +461,8 @@ def permutation(key, x):
   elif onp.ndim(x) == 1:
     return _shuffle(key, x, 0)
   else:
-    msg = ("permutation for >1d inputs x not yet implemented, see "
-           "https://github.com/google/jax/issues/2066 for updates.")
-    raise NotImplementedError(msg)
+    ind = _shuffle(key, np.arange(x.shape[0]), 0)
+    return x[ind]
 
 
 @partial(jit, static_argnums=(2,))
