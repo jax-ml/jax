@@ -2328,7 +2328,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           (0, lax.add, inexact_dtypes, jtu.rand_default),
           (-onp.inf, lax.max, grad_inexact_dtypes, jtu.rand_unique_int),
           (onp.inf, lax.min, grad_inexact_dtypes, jtu.rand_unique_int),
-          (1, lax.mul, grad_inexact_dtypes, partial(jtu.rand_default, scale=1)),
+          (1, lax.mul, grad_float_dtypes, partial(jtu.rand_default, scale=1)),
       ]
       for dtype in dtypes
       for shape, dims in [
