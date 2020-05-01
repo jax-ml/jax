@@ -938,7 +938,7 @@ def _copy_device_array_to_device(x: DeviceArray, device: Optional[xc.Device]) ->
     # source and target platforms are the same
     if x.device_buffer.device() == device:
       # no copying to be done because source equals target
-      moved_buf = x.device_buffer  # Perhaps we need to change stickyness
+      return x
     else:
       # move the buffer with a device-to-device copy
       moved_buf = x.device_buffer.copy_to_device(device)
