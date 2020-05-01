@@ -271,11 +271,15 @@ class ShapesTest(jtu.JaxTestCase):
       return x[x.shape[0] - 1:]
 
   def test_iota(self):
+    raise SkipTest("not yet implemented")
+    # https://travis-ci.org/github/google/jax/jobs/682086351
     @shapecheck(['n'], 'n')
     def range_like(x):
       return lax.iota(np.int32, x.shape[0])
 
   def test_arange(self):
+    raise SkipTest("not yet implemented")
+    # https://travis-ci.org/github/google/jax/jobs/682086351
     @shapecheck(['n'], 'n')
     def arange_like(x):
       return np.arange(x.shape[0], dtype=np.int32)
