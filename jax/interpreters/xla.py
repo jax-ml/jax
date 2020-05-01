@@ -16,7 +16,7 @@
 from collections import defaultdict
 import itertools as it
 import operator as op
-from typing import Any, Callable, Dict, Sequence, Type, Optional
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Type
 
 from absl import logging
 import numpy as onp
@@ -42,6 +42,10 @@ from . import masking
 
 xe = xc._xla
 xops = xc._xla.ops
+
+# Types
+Backend = Any  # xc.LocalBackend (why does mypy not like this?)
+Device = Any  # xc.Device
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -82,13 +86,13 @@ xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {
     ConcreteArray: _make_array_shape,
 }
 
-def aval_to_result_handler(device, aval):
+def aval_to_result_handler(device: Optional[Device], aval: core.ShapedArray):
   try:
     return xla_result_handlers[type(aval)](device, aval)
   except KeyError as err:
     raise TypeError(f"No xla_result_handler for type: {type(aval)}") from err
 
-def array_result_handler(device, aval):
+def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
   return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
@@ -97,21 +101,21 @@ xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
     ConcreteArray: array_result_handler,
 }
 
-def device_put(x, device=None):
+def device_put(x, device: Optional[Device] = None):
   x = canonicalize_dtype(x)
   try:
     return device_put_handlers[type(x)](x, device)
   except KeyError as err:
     raise TypeError(f"No device_put handler for type: {type(x)}") from err
 
-def _device_put_array(x, device):
+def _device_put_array(x, device: Optional[Device]):
   backend = xb.get_device_backend(device)
   return backend.buffer_from_pyval(x, device)
 
 def _device_put_scalar(x, device):
   return _device_put_array(dtypes.coerce_to_array(x), device)
 
-device_put_handlers: Dict[Any, Callable] = {core.Unit: _device_put_unit}
+device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]], Any]] = {core.Unit: _device_put_unit}
 device_put_handlers.update((t, _device_put_array) for t in array_types)
 device_put_handlers.update((t, _device_put_scalar) for t in _scalar_types)
 
@@ -172,7 +176,8 @@ def apply_primitive(prim, *args, **params):
   return compiled_fun(*args)
 
 @cache()
-def xla_primitive_callable(prim, *arg_specs, **params):
+def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
+                                                   Optional[Device]], **params):
   avals, arg_devices = unzip2(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
@@ -205,7 +210,7 @@ def xla_primitive_callable(prim, *arg_specs, **params):
   else:
     return partial(_execute_replicated_primitive, prim, compiled, handle_result)
 
-def _device_from_arg_devices(devices):
+def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[Device]:
   """Given devices of inputs, determine where to perform a computation.
 
   Args:
@@ -749,7 +754,8 @@ class DeviceArray(DeviceValue):
   __slots__ = ["_npy_value", "_device", "_lazy_expr"]
   __array_priority__ = 100
 
-  def __init__(self, aval, device, lazy_expr, device_buffer):
+  def __init__(self, aval: core.ShapedArray, device: Optional[Device],
+               lazy_expr, device_buffer):
     self.aval = aval
     self.device_buffer = device_buffer
     self._device = device
@@ -760,6 +766,7 @@ class DeviceArray(DeviceValue):
       assert type(aval) is ShapedArray
       npy_value = self._value
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
+      assert (device is None) or device is device_buffer.device()
 
   @property
   def _value(self):
@@ -915,12 +922,12 @@ def _device_array_constant_handler(c, val, canonicalize_types=True):
     return lazy.stage_lexpr(c, val._lazy_expr, base_val)
 xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
-def _device_put_device_array(x, device):
+def _device_put_device_array(x: DeviceArray, device: Optional[Device]):
   x = _copy_device_array_to_device(x, device)
   return _force(x).device_buffer
 device_put_handlers[DeviceArray] = _device_put_device_array
 
-def _copy_device_array_to_device(x: DeviceArray, device: Optional[xc.Device]):
+def _copy_device_array_to_device(x: DeviceArray, device: Optional[xc.Device]) -> DeviceArray:
   if device is None:
     # no copying to be done because there's no target specified
     return x
@@ -956,7 +963,9 @@ def _force(x: DeviceArray) -> DeviceArray:
     return force_fun(x)
 
 @cache()
-def _lazy_force_computation(sticky, aval, device, lexpr) -> Callable[[DeviceArray], DeviceArray]:
+def _lazy_force_computation(sticky: bool, aval: core.ShapedArray,
+                            device: Device, lexpr: lazy.LazyExpr
+                            ) -> Callable[[DeviceArray], DeviceArray]:
   c = xb.make_computation_builder("lazy_force")
   if lazy.is_constant(lexpr):
     param = None
@@ -989,7 +998,7 @@ def _lazy_force_computation(sticky, aval, device, lexpr) -> Callable[[DeviceArra
   return force_fun
 
 
-def _device_put_impl(x, device=None):
+def _device_put_impl(x, device: Optional[Device] = None):
   if type(x) is DeviceArray:
     return _copy_device_array_to_device(x, device)
 
@@ -998,7 +1007,7 @@ def _device_put_impl(x, device=None):
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
-  handler = aval_to_result_handler(device, a)
+  handler = aval_to_result_handler(device, a)  # type: ignore[arg-type]
   return handler(device_put(x, device))
 
 device_put_p = core.Primitive('device_put')
