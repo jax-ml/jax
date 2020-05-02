@@ -34,6 +34,7 @@ from . import api
 from . import core
 from . import dtypes
 from . import lax
+from . import lib
 from .config import flags, bool_env
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
@@ -369,10 +370,12 @@ def skip_on_flag(flag_name, skip_value):
     return test_method_wrapper
   return skip
 
-# TODO(phawkins): bug https://github.com/google/jax/issues/432
+# TODO(phawkins): workaround for bug https://github.com/google/jax/issues/432
+# Delete this code after the minimum jaxlib version is 0.1.46 or greater.
 skip_on_mac_linalg_bug = partial(
   unittest.skipIf,
-  sys.platform == "darwin" and scipy.version.version > "1.1.0",
+  (sys.platform == "darwin" and scipy.version.version > "1.1.0" and
+   lib.version < (0, 1, 46)),
   "Test fails on Mac with new scipy (issue #432)")
 
 
