@@ -17,6 +17,8 @@ jax 0.1.66 (unreleased)
 jaxlib 0.1.46 (unreleased)
 ------------------------------
 
+* Fixes crash for linear algebra functions on Mac OS X (#432).
+
 jax 0.1.65 (April 30, 2020)
 ---------------------------
 
