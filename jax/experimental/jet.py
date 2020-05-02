@@ -22,7 +22,7 @@ from jax import core
 from jax.util import unzip2
 from jax import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
-                           treedef_is_leaf, tree_flatten, tree_unflatten)
+                           treedef_is_leaf, tree_flatten, tree_unflatten, tree_map)
 import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.lax import lax
@@ -59,6 +59,8 @@ def jet_fun(primals, series):
   with core.new_master(JetTrace) as master:
     out_primals, out_terms = yield (master, primals, series), {}
     del master
+  out_terms = [tree_map(lambda x: onp.zeros_like(x, dtype=onp.result_type(out_primals[0])), series[0])
+               if s is zero_series else s for s in out_terms]
   yield out_primals, out_terms
 
 @lu.transformation
