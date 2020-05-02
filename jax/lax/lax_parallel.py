@@ -147,6 +147,8 @@ def pmin(x, axis_name, *, axis_index_groups=None):
       pmin_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
 
 def _validate_axis_index_groups(axis_index_groups):
+  if axis_index_groups is None:
+    return
   len_0 = len(axis_index_groups[0])
   if any(len(g) != len_0 for g in axis_index_groups):
     raise ValueError("axis_index_groups must all be the same size")
