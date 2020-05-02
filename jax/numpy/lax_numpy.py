@@ -2326,8 +2326,8 @@ def repeat(a, repeats, axis=None):
 
   # repeats must match the dimension along the requested axis
   if repeats_raveled.size != a.shape[axis]:
-    msg = "repeats shape {} does not match the dimension on axis {}"
-    raise ValueError(msg.format(repeats_raveled.shape, a.shape[axis]))
+    raise ValueError(f"repeats shape {repeats_raveled.shape} does not match "
+                     f"the dimension on axis {a.shape[axis]}")
 
   # calculating the new shape
   total = repeats_raveled.sum()
