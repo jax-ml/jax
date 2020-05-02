@@ -17,21 +17,13 @@
 See documentation for `id_print` below.
 For usage example, see tests/host_callback_test.py.
 
-Implementation plan:
-  * Write the API for the `id_print` primitive, using data-dependence as
-    explained in `id_print` documentation (DONE).
-  * Implement the transformations. DONE (except pmap)
-  * Implement the JIT for CPU using CustomCall in C++. DONE (except unit tests
-    do not run in OSS; also missing float16 and bfloat16).
-  * Implement the JIT for GPU using also CustomCall in C++. DONE.
-  * Explore how to pipe the printed data back to the Colab cell,
-    when running in Colab. ?
-  * Explore implementation using outfeed, hoping that it works for all
-    platforms, and can pipe data more easily. STARTED.
-  * Explore feeding the data back to the Python program (the `id_tap`
-    primitive). ?
+Still to do:
+  * Performance tests
+  * Better support for pytrees to the top functions
+  * Better implementation of the partial-evaluation and transpose rule 
   * Explore a simpler API that uses Python program-order, instead of
     data dependency-order. Need to add support to JAX for stateful primitives.
+  * Explore implementation with outside compilation.
 """
 from collections import defaultdict, namedtuple
 from concurrent import futures
@@ -56,9 +48,11 @@ from jaxlib import xla_extension
 import logging
 import msgpack  # type: ignore
 import numpy as onp
-import os
-import threading
+import sys
+import traceback
 from typing import Any, Callable, Dict, List, Optional, NamedTuple, Sequence, Tuple
+
+xops = xla_client._xla.ops
 
 # TODO(necula): fix mypy errors if I define the type aliases below
 XlaOp = Any  # xla_extension.XlaOp
@@ -66,96 +60,26 @@ XlaShape = Any # xla_client.Shape
 XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
 XlaDevice = Any  # xla_client.Device
 
+"""The id_tap primitive acts like the identity function. It has a number of
+positional arguments and parameters:
+  * func: the actual (Python) function to invoke with the positional arguments
+  and the parameters.
+  * nr_untapped: how many positional arguments (from the tail) should not be
+  passed to the tap function.
+  * transforms: a tuple of the transformations that have been applied.
+  * batch_dims: a tuple of the dims that have been batched, for vmap
+  * logical_shapes: a tuple of evaluated logical shapes, for mask
+"""
+# TODO: handle multiple vmap and mask
 id_tap_p = core.Primitive("id_tap")
 id_tap_p.multiple_results = True
 xla.stateful_primitives.add(id_tap_p)
 
-xops = xla_client._xla.ops
-
-# TODO: write description for descriptor
-
-_OUTFEED_ALL_TOGETHER = True  # If true, then all the arrays are outfed together
-
-# The data on the outfeed follows a protocol that allows multiplexing the
-# outfeed among multiple consumers, and communicates in-stream shape and
-# type of the data.
-# Each batch of array data is preceeded by a header message, of type
-# uint32[_OUTFEED_HEADER_LENGTH]:
-#  [0]: special header value 2178
-#  [1, 2]: a consumer id (64-bits, big-endian encoding as uint32[2]). The
-#       consumer id encodes the tap function (by id), the
-#       descriptor of the arrays to be outfed, and the kwargs (a sorted tuple
-#       of keys and values).
-#  [3]: the metadata length in bytes. The metadata is a msgpack-encoded value of type:
-#     [ (type_code, (d0, d1, ...)), ...]  # for each array, element type code
-#                                         # and the dimensions.
-#       padded with 0s to _OUTFEED_HEADER_LENGTH
-#
-#
-_OUTFEED_HEADER_LENGTH = 32  # In uint32 words
-_OUTFEED_HEADER_START  = 2178   # [0]
-# consumer_id                     [1, 2]
-# metadata_length in bytes        [3]
-_OUTFEED_HEADER_METADATA_LENGTH = 4 * (_OUTFEED_HEADER_LENGTH - 4)
-
-_consumer_registry: Dict[Callable, int] = dict()
-_consumer_registry_by_id: Dict[int, Callable] = dict()
-
-class _ConsumerCallable(NamedTuple):
-  """Host-side information for a outfeed consumer."""
-  func: Callable
-  kwargs: Tuple[Tuple[str, Any], ...]
-
-
-def _register_consumer(cons: _ConsumerCallable) -> int:
-  """Registers a tap function, cache by function identity"""
-  cons_id = _consumer_registry.get(cons)
-  if cons_id is not None:
-    return cons_id
-  cons_id = id(cons)
-  _consumer_registry[cons] = cons_id
-  _consumer_registry_by_id[cons_id] = cons
-  return cons_id
-
-# Special consumer to mark the end of outfeed stream for a device
-_end_consumer = 0
-
-def _print_consumer(*arrays, output_stream=None,
-                    threshold=1024, **kwargs):
-  def emit(s: str):
-    if output_stream is not None:
-      output_stream.write(s + "\n")
-    else:
-      print(s)
-  kv_pairs = " ".join([f"{k}: {v}"
-                      for k, v in sorted(kwargs.items())
-                      if k not in ("consumer_id", "nr_results")])
-  if kv_pairs:
-    emit(kv_pairs)
-  for a in arrays:
-    if not isinstance(a, onp.ndarray):
-      a = onp.array(a)
-    emit(onp.array2string(a, threshold=threshold))
-
-
-_CODE_TO_DTYPE = {
-  0: onp.dtype(onp.int8),
-  1: onp.dtype(onp.int16),
-  2: onp.dtype(onp.int32),
-  3: onp.dtype(onp.int64),
-  4: onp.dtype(onp.uint8),
-  5: onp.dtype(onp.uint16),
-  6: onp.dtype(onp.uint32),
-  7: onp.dtype(onp.uint64),
-  8: onp.dtype(onp.float16),
-  9: onp.dtype(onp.float32),
-  10: onp.dtype(onp.float64),
-  11: onp.dtype(dtypes.bfloat16),
-}
-_DTYPE_STR_TO_CODE = dict([(str(d), c) for c, d in _CODE_TO_DTYPE.items()])
+# TODO: add a flag
+_LOGGING = True
 
 def id_tap(func: Callable, *args, result=None, **kwargs):
-  """Behaves like the identify function for positional arguments, but invokes
+  """Behaves like the identity function for positional arguments, but invokes
      the ``func`` with the arrays corresponding to ``args`` and the
      ``kwargs``.
 
@@ -194,13 +118,13 @@ def id_tap(func: Callable, *args, result=None, **kwargs):
   params["func"] = func  # pass the function, to have it for transforms
   if result is not None:
     flat_results, results_treedef = pytree.flatten(result)
-    params["nr_results"] = len(flat_results)
+    params["nr_untapped"] = len(flat_results)
     all_args = flat_args + flat_results
   else:
     all_args = flat_args
   flat_outs = id_tap_p.bind(*all_args, **params)  # Always a tuple of all args
   if result is not None:
-    return results_treedef.unflatten(flat_outs[-params["nr_results"]:])
+    return results_treedef.unflatten(flat_outs[-params["nr_untapped"]:])  # type: ignore[unsupported-operands]
   else:
     res = args_treedef.unflatten(flat_outs)
     return res if len(args) > 1 else res[0]
@@ -249,19 +173,64 @@ def id_print(*args, result=None, output_stream=None, threshold=1024,
   return id_tap(_print_consumer, *args,
                 result=result, output_stream=output_stream, **kwargs)
 
+
+# A registry of outfeed consumers
+class _ConsumerCallable(NamedTuple):
+  """Host-side information for a outfeed consumer."""
+  func: Callable
+  kwargs: Tuple[Tuple[str, Any], ...]
+
+_consumer_registry: Dict[_ConsumerCallable, int] = dict()
+_consumer_registry_by_id: Dict[int, _ConsumerCallable] = dict()
+
+
+def _register_consumer(cons: _ConsumerCallable) -> int:
+  """Registers a tap function, cache by function identity"""
+  cons_id = _consumer_registry.get(cons)
+  if cons_id is not None:
+    return cons_id
+  cons_id = id(cons)
+  _consumer_registry[cons] = cons_id
+  _consumer_registry_by_id[cons_id] = cons
+  return cons_id
+
+def _print_consumer(*arrays, output_stream=None,
+                    threshold=1024, **kwargs):
+  """The consumer for id_print"""
+  def emit(s: str):
+    if output_stream is not None:
+      output_stream.write(s + "\n")
+    else:
+      print(s)
+  kv_pairs = " ".join([f"{k}: {v}"
+                      for k, v in sorted(kwargs.items())
+                      if k not in ("consumer_id", "nr_untapped")])
+  if kv_pairs:
+    emit(kv_pairs)
+  for a in arrays:
+    if not isinstance(a, onp.ndarray):
+      a = onp.array(a)
+    emit(onp.array2string(a, threshold=threshold))
+
+
+
+
 def _add_transform_name(params: Dict, transform: str) -> Dict:
   """Adds the `transform` to the params["transforms"]."""
   return dict(params, transforms=params.get("transforms", ()) + (transform,))
 
 
-def _id_tap_impl(*arrays, func=None, nr_results=0, **params):
+def _id_tap_impl(*arrays, func=None, nr_untapped=0, **params):
   assert isinstance(func, Callable)
   func_params = dict(params)
   # TODO: handle errors in the tap consumer
-  func_arrays = arrays[:-nr_results] if nr_results > 0 else arrays
-  func(*func_arrays, **func_params)
+  func_arrays = arrays[:-nr_untapped] if nr_untapped > 0 else arrays
+  try:
+    func(*func_arrays, **func_params)
+  except Exception as e:
+    raise TapFunctionException from e
+    # We continue for now, we need to keep reading the outfeed
   return arrays  # return all
-
 
 id_tap_p.def_impl(_id_tap_impl)
 
@@ -271,6 +240,127 @@ def _id_tap_abstract_eval(*args_a: pe.AbstractValue, **params) \
 
 
 id_tap_p.def_abstract_eval(_id_tap_abstract_eval)
+
+def _id_tap_jvp_rule(primals, tangents, *, func, nr_untapped=0, **params):
+  # Put primals through id_tap separately, so that partial evaluation
+  # can do its job for grad
+  out_primals = id_tap_p.bind(*primals, func=func, nr_untapped=nr_untapped, **params)
+  # Add one primal output as untapped, to create dependency.
+  out_tangents_extra = id_tap_p.bind(*tangents, out_primals[0],
+                                     func=func, nr_untapped=nr_untapped + 1,
+                                     **_add_transform_name(params, "jvp"))
+  return tuple(out_primals), tuple(out_tangents_extra[:-1])
+
+
+ad.primitive_jvps[id_tap_p] = _id_tap_jvp_rule
+
+
+def _id_tap_transpose_rule(cts, *args, func=None, nr_untapped=0, **params):
+  assert len(cts) == len(args)
+  cts_zeros = [ad.instantiate_zeros_aval(a.aval, ct)
+               for a, ct in zip(args, cts)]
+  ct_args = id_tap_p.bind(*cts_zeros, func=func, nr_untapped=nr_untapped,
+                          **_add_transform_name(params, "transpose"))
+  return ct_args
+
+
+ad.primitive_transposes[id_tap_p] = _id_tap_transpose_rule
+
+
+def _id_tap_batching_rule(batched_args, batch_dims, **params):
+  new_params = _add_transform_name(params, "batch")
+  new_params["batch_dims"] = batch_dims
+  res = id_tap_p.bind(*batched_args, **new_params)
+  return res, batch_dims
+
+
+batching.primitive_batchers[id_tap_p] = _id_tap_batching_rule
+
+# def _id_tap_shape_rule(*operands, **params):
+#  return tuple([op.shape for op in operands])
+
+# TODO: these disappeared
+# masking.shape_rules[id_tap_p] = _id_tap_shape_rule  # type: ignore[module-attr]
+
+def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
+  new_params = _add_transform_name(params, "mask")
+  new_params["logical_shapes"] = operands_logical_shapes
+  return id_tap_p.bind(*operands, **new_params)
+
+
+masking.masking_rules[id_tap_p] = _id_tap_masking_rule
+
+#### XLA compilation ####
+# Special consumer to mark the end of outfeed stream for a device
+_end_consumer = 0
+_unknown_consumer = 1  # for testing error cases
+
+
+def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
+                                       *args_op: XlaOp, func=None,
+                                       nr_untapped=0, **params):
+  params = dict(params)
+  if func is _end_consumer:
+    params["consumer_id"] = _end_consumer
+  elif func is _unknown_consumer:
+    params["consumer_id"] = _unknown_consumer  # Will trigger an error, for testing
+  else:
+    params["consumer_id"] = _register_consumer(
+      _ConsumerCallable(func, tuple(params.items())))
+
+  prev_token = xla.state_carry.current_token(comp)
+  nr_args_to_emit = len(args_op) - nr_untapped
+  next_token = _emit_outfeed(comp, prev_token,
+                             args_op[0:nr_args_to_emit], params["consumer_id"])
+  xla.state_carry.set_current_token(comp, next_token)
+  if xla.USE_ADD_DEPENDENCY:
+    args_op = tuple([xops.AddDependency(a, next_token)
+                    for a in args_op])
+  return xops.Tuple(comp, args_op)
+
+xla.translations[id_tap_p] = _id_print_translation_rule_outfeed
+
+
+# If true, then all the arrays are outfed together
+_OUTFEED_ARRAYS_TOGETHER = True
+
+# The data on the outfeed follows a protocol that allows multiplexing the
+# outfeed among multiple consumers, and communicates in-stream shape and
+# type of the data.
+# Each batch of array data is preceeded by a header message, of type
+# uint32[_OUTFEED_HEADER_LENGTH]:
+#  [0]: special header value 2178
+#  [1, 2]: a consumer id (64-bits, big-endian encoding as uint32[2]). The
+#       consumer id encodes the tap function (by id), the
+#       descriptor of the arrays to be outfed, and the kwargs (a sorted tuple
+#       of keys and values).
+#  [3]: the metadata length in bytes. The metadata is a msgpack-encoded value of type:
+#     [ (type_code, (d0, d1, ...)), ...]  # for each array, element type code
+#                                         # and the dimensions.
+#       padded with 0s to _OUTFEED_HEADER_LENGTH
+#
+#
+_OUTFEED_HEADER_LENGTH = 32  # In uint32 words
+_OUTFEED_HEADER_START  = 2178   # [0]
+# consumer_id                     [1, 2]
+# metadata_length in bytes        [3]
+_OUTFEED_HEADER_METADATA_LENGTH = 4 * (_OUTFEED_HEADER_LENGTH - 4)
+
+_CODE_TO_DTYPE = {
+  0: onp.dtype(onp.int8),
+  1: onp.dtype(onp.int16),
+  2: onp.dtype(onp.int32),
+  3: onp.dtype(onp.int64),
+  4: onp.dtype(onp.uint8),
+  5: onp.dtype(onp.uint16),
+  6: onp.dtype(onp.uint32),
+  7: onp.dtype(onp.uint64),
+  8: onp.dtype(onp.float16),
+  9: onp.dtype(onp.float32),
+  10: onp.dtype(onp.float64),
+  11: onp.dtype(dtypes.bfloat16),
+}
+_DTYPE_STR_TO_CODE = dict([(str(d), c) for c, d in _CODE_TO_DTYPE.items()])
 
 
 def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
@@ -300,7 +390,7 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
   token = xops.OutfeedWithToken(data, token, comp.GetShape(data))
 
   # Now send the arrays
-  if _OUTFEED_ALL_TOGETHER:
+  if _OUTFEED_ARRAYS_TOGETHER:
     entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
     token = xops.OutfeedWithToken(xops.Tuple(comp, arrays), token, entire_shape)
   else:
@@ -309,7 +399,7 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
   return token
 
 def _receive_outfeed(device: XlaDevice, receiver_name: str
-                     ) -> Tuple[int, List, Dict]:
+                     ) -> Tuple[int, List]:
   """Receives a set of arrays on the outfeed for the specificied device.
   Args:
     receiver_name: a name used for debugging and logging
@@ -324,8 +414,11 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
     if platform in ("gpu", "cpu"):
       return xla_client.transfer_from_outfeed(data_shape, device)
     else:
-      return xla_client.transfer_from_outfeed(
-          xla_client.Shape.tuple_shape((data_shape,)), device)[0]
+      if _OUTFEED_ARRAYS_TOGETHER:
+        return xla_client.transfer_from_outfeed(data_shape, device)
+      else:
+        return xla_client.transfer_from_outfeed(
+            xla_client.Shape.tuple_shape((data_shape,)), device)[0]
 
   header = _get_data(header_shape, device)
   if header[0] != _OUTFEED_HEADER_START:
@@ -338,45 +431,28 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
                for i in range(4, 4 + (metadata_length + 3) // 4)]
   metadata = b"".join(metadatas)[:metadata_length]
   array_descriptors = msgpack.unpackb(metadata)
-  if _OUTFEED_ALL_TOGETHER:
-    arrays_shape = [xla_client.Shape.array_shape(_CODE_TO_DTYPE[a_descr[0]],
-                                                 a_descr[1])
-                    for a_descr in array_descriptors]
+  arrays_shape = [xla_client.Shape.array_shape(_CODE_TO_DTYPE[a_descr[0]],
+                                               a_descr[1])
+                  for a_descr in array_descriptors]
+  if _OUTFEED_ARRAYS_TOGETHER:
     entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
     arrays = _get_data(entire_shape, device)
+    logging.info(f"[{receiver_name}:{device}] Outfeed read data of shape "
+                 ",".join([f"{data.dtype}{data.shape}" for data in arrays]))
   else:
     arrays = []
-    for a_descr in array_descriptors:
-      a_shape = xla_client.Shape.array_shape(_CODE_TO_DTYPE[a_descr[0]],
-                                             a_descr[1])
+    for a_shape in arrays_shape:
       data = _get_data(a_shape, device)
-      logging.info(f"[{receiver_name}:{device}] Outfeed read data of shape "
-                   f"{data.dtype}{data.shape}")
+      if _LOGGING:
+        logging.info(f"[{receiver_name}:{device}] Outfeed read array of shape "
+                     f"{data.dtype}{data.shape}")
       arrays.append(data)
   return (consumer_id, arrays)
 
-def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
-                                       *args_op: XlaOp, func=None,
-                                       nr_results=0, **params):
-  params = dict(params)
-  if func is _end_consumer:
-    params["consumer_id"] = _end_consumer
-  else:
-    params["consumer_id"] = _register_consumer(
-      _ConsumerCallable(func, tuple(params.items())))
 
-  prev_token = xla.state_carry.current_token(comp)
-  nr_args_to_emit = len(args_op) - nr_results
-  next_token = _emit_outfeed(comp, prev_token,
-                             args_op[0:nr_args_to_emit], params["consumer_id"])
-  xla.state_carry.set_current_token(comp, next_token)
-  if xla.USE_ADD_DEPENDENCY:
-    args_op = tuple([xops.AddDependency(a, next_token)
-                    for a in args_op])
-  return xops.Tuple(comp, args_op)
-
-xla.translations[id_tap_p] = _id_print_translation_rule_outfeed
-
+class TapFunctionException(Exception):
+  """Signals that a tap function had exceptions"""
+  pass
 
 @contextmanager
 def outfeed_receiver(*,
@@ -410,89 +486,46 @@ def outfeed_receiver(*,
   executor = futures.ThreadPoolExecutor(
     thread_name_prefix=f"outfeed_receiver_{receiver_name}",
     max_workers=len(devices))
-  _END_OUTFEED = onp.int32(987654321)
+
+  count_tap_exceptions = False
   def device_receiver_loop(device: XlaDevice) -> XlaDevice:
     """Polls the outfeed for a device in a loop."""
+    nonlocal count_tap_exceptions
     while (True):
       consumer_id, arrays = _receive_outfeed(device, receiver_name)
-      logging.info(f"[{receiver_name}:{device}] Outfeed received for consumer {consumer_id}" +
-                   (" ".join([f"({a.dtype}{a.shape})" for a in arrays])))
+      if _LOGGING:
+        logging.info(f"[{receiver_name}:{device}] Outfeed received for consumer {consumer_id} " +
+                     (" ".join([f"({a.dtype}{a.shape})" for a in arrays])))
       if consumer_id == _end_consumer:
         assert not arrays
-        logging.info(f"[{receiver_name}:{device}] Outfeed received END_OUTFEED")
+        if _LOGGING:
+          logging.info(f"[{receiver_name}:{device}] Outfeed received END_OUTFEED")
         return device
       consumer = _consumer_registry_by_id.get(consumer_id)
-      if consumer is _end_consumer:
-        raise ValueError("Received outfeed for unknown tap consumer")
-      # TODO: handle errors in the tap consumer
-      consumer.func(*arrays, **dict(consumer.kwargs))
-
+      if consumer is None:
+        logging.error(f"Ignoring received outfeed for unknown tap consumer")
+        count_tap_exceptions += 1
+        continue  # We need to read the entire outfeed
+      try:
+        consumer.func(*arrays, **dict(consumer.kwargs))  # type: ignore[attribute-error]
+      except Exception as e:
+        logging.error(f"Postponing exception raised in tap function: {str(e)}\n{traceback.format_exc()}")
+        count_tap_exceptions += 1
+        # We continue for now, we need to keep reading the outfeed
 
   receiver_futures = [executor.submit(device_receiver_loop, d) for d in devices]
-  # Register a callback to raise errors if any
+  # Register a callback to raise errors if any. These exception come from
+  # bugs in our code, not from the tap functions.
   [rf.add_done_callback(lambda rf: rf.result()) for rf in receiver_futures]
   try:
     yield
   finally:
     for d in devices:  # Signal the end of printing
-      api.jit(lambda x: id_tap(_end_consumer, result=x), device=d)(0)
+      api.jit(lambda x: id_tap(_end_consumer, result=x), device=d)(0)  # type: ignore[wrong-arg-types]
     for f in futures.as_completed(receiver_futures, timeout=timeout_sec):
       finished_device = f.result()  # Throw exceptions here
-      logging.info(f"[{receiver_name}:{finished_device} Outfeed receiver finished")
+      if _LOGGING:
+        logging.info(f"[{receiver_name}:{finished_device} Outfeed receiver finished")
+    if count_tap_exceptions > 0:
+      raise TapFunctionException
 
-
-def _id_tap_jvp_rule(primals, tangents, *, func, nr_results=0, **params):
-  # We must put both the primals and tangents through the same id_tap, or
-  # else they do not have any data dependence
-  arg_primals, res_primals = util.split_list(primals, [len(primals) - nr_results])
-  arg_tangents, res_tangents = util.split_list(tangents, [len(primals) - nr_results])
-  # Re-arrange to put the results at the end, so they can be ignored
-  outs = id_tap_p.bind(*itertools.chain(arg_primals, arg_tangents,
-                                        res_primals, res_tangents),
-                       func=func, nr_results=2 * nr_results,
-                       **_add_transform_name(params, "jvp"))
-  # Rearrange the outputs
-  out_arg_primals, out_arg_tangents, out_res_primals, out_res_tangents = (
-    util.split_list(outs, [len(primals), len(primals), nr_results]))
-  return tuple(out_arg_primals + out_res_primals), tuple(out_arg_tangents + out_res_tangents)
-
-
-ad.primitive_jvps[id_tap_p] = _id_tap_jvp_rule
-
-
-def _id_tap_transpose_rule(cts, *args, **params):
-  # TODO: figure out the nr_results
-  assert all([ad.is_undefined_primal(x) for x in args])
-  assert len(cts) == len(args)
-  cts_zeros = [ad.instantiate_zeros_aval(a.aval, ct)
-               for a, ct in zip(args, cts)]
-  ct_args = id_tap_p.bind(*cts_zeros,
-                          **_add_transform_name(params, "transpose"))
-  return ct_args
-
-
-ad.primitive_transposes[id_tap_p] = _id_tap_transpose_rule
-
-
-def _id_tap_batching_rule(batched_args, batch_dims, **params):
-  new_params = _add_transform_name(params, "batch")
-  new_params["batch_dims"] = batch_dims
-  res = id_tap_p.bind(*batched_args, **new_params)
-  return res, batch_dims
-
-
-batching.primitive_batchers[id_tap_p] = _id_tap_batching_rule
-
-def _id_tap_shape_rule(*operands, **params):
-  return tuple([op.shape for op in operands])
-
-
-masking.shape_rules[id_tap_p] = _id_tap_shape_rule
-
-def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
-  new_params = _add_transform_name(params, "mask")
-  new_params["logical_shapes"] = operands_logical_shapes
-  return id_tap_p.bind(*operands, **new_params)
-
-
-masking.masking_rules[id_tap_p] = _id_tap_masking_rule
