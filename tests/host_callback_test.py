@@ -495,6 +495,11 @@ where: 10
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       api.jit(hcb.id_print)(arg)
 
+  def test_jit_several(self):
+    arg = np.arange(50, dtype=np.int32).reshape((10, 5))
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
+      api.jit(lambda x, y: hcb.id_print(x, y, x * 2.))(arg, np.ones(100, dtype=np.int32))
+
   def test_jvp(self):
     jvp_fun1 = lambda x, xt: api.jvp(fun1, (x,), (xt,))
     self.assertMultiLineStrippedEqual(

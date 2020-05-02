@@ -74,6 +74,8 @@ xops = xla_client._xla.ops
 
 # TODO: write description for descriptor
 
+_OUTFEED_ALL_TOGETHER = True  # If true, then all the arrays are outfed together
+
 # The data on the outfeed follows a protocol that allows multiplexing the
 # outfeed among multiple consumers, and communicates in-stream shape and
 # type of the data.
@@ -298,8 +300,12 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
   token = xops.OutfeedWithToken(data, token, comp.GetShape(data))
 
   # Now send the arrays
-  for a, a_shape in zip(arrays, arrays_shape):
-    token = xops.OutfeedWithToken(a, token, a_shape)
+  if _OUTFEED_ALL_TOGETHER:
+    entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
+    token = xops.OutfeedWithToken(xops.Tuple(comp, arrays), token, entire_shape)
+  else:
+    for a, a_shape in zip(arrays, arrays_shape):
+      token = xops.OutfeedWithToken(a, token, a_shape)
   return token
 
 def _receive_outfeed(device: XlaDevice, receiver_name: str
@@ -332,14 +338,21 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
                for i in range(4, 4 + (metadata_length + 3) // 4)]
   metadata = b"".join(metadatas)[:metadata_length]
   array_descriptors = msgpack.unpackb(metadata)
-  arrays = []
-  for a_descr in array_descriptors:
-    a_shape = xla_client.Shape.array_shape(_CODE_TO_DTYPE[a_descr[0]],
-                                           a_descr[1])
-    data = _get_data(a_shape, device)
-    logging.info(f"[{receiver_name}:{device}] Outfeed read data of shape "
-                 f"{data.dtype}{data.shape}")
-    arrays.append(data)
+  if _OUTFEED_ALL_TOGETHER:
+    arrays_shape = [xla_client.Shape.array_shape(_CODE_TO_DTYPE[a_descr[0]],
+                                                 a_descr[1])
+                    for a_descr in array_descriptors]
+    entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
+    arrays = _get_data(entire_shape, device)
+  else:
+    arrays = []
+    for a_descr in array_descriptors:
+      a_shape = xla_client.Shape.array_shape(_CODE_TO_DTYPE[a_descr[0]],
+                                             a_descr[1])
+      data = _get_data(a_shape, device)
+      logging.info(f"[{receiver_name}:{device}] Outfeed read data of shape "
+                   f"{data.dtype}{data.shape}")
+      arrays.append(data)
   return (consumer_id, arrays)
 
 def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
