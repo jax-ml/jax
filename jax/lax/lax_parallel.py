@@ -38,7 +38,7 @@ xops = xc.ops
 
 ### parallel traceables
 
-def psum(x, axis_name, axis_index_groups=None):
+def psum(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -50,7 +50,7 @@ def psum(x, axis_name, axis_index_groups=None):
       ``pmap`` docstring for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform psums over the first
-      two and last two replicas).
+      two and last two replicas). All groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -67,10 +67,11 @@ def psum(x, axis_name, axis_index_groups=None):
   [ 0.          0.16666667  0.33333334  0.5       ]
   """
   leaves, treedef = tree_util.tree_flatten(x)
+  _validate_axis_index_groups(axis_index_groups)
   return treedef.unflatten(
       psum_p.bind(*leaves, axis_name=axis_name, axis_index_groups=axis_index_groups))
 
-def pmean(x, axis_name, axis_index_groups=None):
+def pmean(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -82,7 +83,7 @@ def pmean(x, axis_name, axis_index_groups=None):
       ``pmap`` docstring for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmeans over the first
-      two and last two replicas).
+      two and last two replicas). All groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -101,7 +102,7 @@ def pmean(x, axis_name, axis_index_groups=None):
   x, n = psum((x, 1), axis_name=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(lambda v: v / n, x)
 
-def pmax(x, axis_name, axis_index_groups=None):
+def pmax(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -113,16 +114,17 @@ def pmax(x, axis_name, axis_index_groups=None):
       ``pmap`` docstring for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmaxes over the first
-      two and last two replicas).
+      two and last two replicas). All groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce max along the axis ``axis_name``.
   """
+  _validate_axis_index_groups(axis_index_groups)
   return tree_util.tree_map(partial(
       pmax_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
 
-def pmin(x, axis_name, axis_index_groups=None):
+def pmin(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -134,14 +136,20 @@ def pmin(x, axis_name, axis_index_groups=None):
       ``pmap`` docstring for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmins over the first
-      two and last two replicas).
+      two and last two replicas). All groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce min along the axis ``axis_name``.
   """
+  _validate_axis_index_groups(axis_index_groups)
   return tree_util.tree_map(partial(
       pmin_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
+
+def _validate_axis_index_groups(axis_index_groups):
+  len_0 = len(axis_index_groups[0])
+  if any(len(g) != len_0 for g in axis_index_groups):
+    raise ValueError("axis_index_groups must all be the same size")
 
 def ppermute(x, axis_name, perm):
   """Perform a collective permutation according to the permutation ``perm``.

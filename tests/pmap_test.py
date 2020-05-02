@@ -452,22 +452,39 @@ class PmapTest(jtu.JaxTestCase):
     if replicas % 4 != 0:
       raise SkipTest
     axis_index_groups = onp.arange(replicas // 2).reshape(
-      2, replicas // 4).tolist()
+        2, replicas // 4).tolist()
     f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
-    f = pmap(pmap(f, 'i'), 'j')
+    f1 = pmap(pmap(f, 'i'), 'j')
+    f2 = pmap(lambda x: pmap(f, 'i')(x) + 1., 'j')  # "imperfectly nested" case
+    f3 = pmap(pmap(f, 'j'), 'i')
 
     shape = (2, replicas // 2, 4)
     x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
-    def sum_helper(a):
+    def sum_helper_f1(a):
       return onp.broadcast_to(a.sum(1, keepdims=True),
-                              (2, replicas // 4, x.shape[2]))
-    expected_psum_1 = sum_helper(x[:, :replicas // 4])
-    expected_psum_2 = sum_helper(x[:, replicas // 4:])
+                              (shape[0], shape[1] // 2, shape[2]))
+    expected_psum_1 = sum_helper_f1(x[:, :replicas // 4])
+    expected_psum_2 = sum_helper_f1(x[:, replicas // 4:])
     expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 1)
     expected = x - expected_psum
+    ans = f1(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
-    ans = f(x)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    expected = x - expected_psum + 1.
+    ans = f2(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    shape = (replicas // 2, 2, 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    def sum_helper_f3(a):
+      return onp.broadcast_to(a.sum(0, keepdims=True),
+                              (shape[0] // 2, shape[1], shape[2]))
+    expected_psum_1 = sum_helper_f3(x[:replicas // 4])
+    expected_psum_2 = sum_helper_f3(x[replicas // 4:])
+    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected = x - expected_psum
+    ans = f3(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
 
   def testAxisGroups(self):
     axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
