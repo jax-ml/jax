@@ -9,13 +9,35 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.65 (unreleased)
+jax 0.1.66 (unreleased)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.64...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.65...master>`_.
 
 jaxlib 0.1.46 (unreleased)
 ------------------------------
+
+* Fixes crash for linear algebra functions on Mac OS X (#432).
+* Fixes an illegal instruction crash caused by using AVX512 instructions when
+  an operating system or hypervisor disabled them (#2906).
+
+jax 0.1.65 (April 30, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.64...jax-v0.1.65>`_.
+
+* New features:
+
+  * Differentiation of determinants of singular matrices
+    `#2809 <https://github.com/google/jax/pull/2809>`_.
+
+* Bug fixes:
+
+  * Fix :func:`odeint` differentiation with respect to time of ODEs with
+    time-dependent dynamics `#2817 <https://github.com/google/jax/pull/2817>`_,
+    also add ODE CI testing.
+  * Fix :func:`lax_linalg.qr` differentiation
+    `#2867 <https://github.com/google/jax/pull/2867>`_.
 
 jaxlib 0.1.45 (April 21, 2020)
 ------------------------------

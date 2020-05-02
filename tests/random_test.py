@@ -172,19 +172,23 @@ class LaxRandomTest(jtu.JaxTestCase):
     rand = lambda key: random.shuffle(key, x)
     crand = api.jit(rand)
 
-    perm1 = rand(key)
-    perm2 = crand(key)
+    with self.assertWarns(FutureWarning):
+      perm1 = rand(key)
+    with self.assertWarns(FutureWarning):
+      perm2 = crand(key)
 
     self.assertAllClose(perm1, perm2, check_dtypes=True)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
-      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]))
-  def testPermutationArray(self, dtype):
+      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "dtype": onp.dtype(dtype).name, "shape": shape}
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]
+      for shape in [100, (10, 10), (10, 5, 2)]))
+  def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
-    x = onp.arange(100).astype(dtype)
+    x = np.arange(np.prod(shape)).reshape(shape).astype(dtype)
     rand = lambda key: random.permutation(key, x)
     crand = api.jit(rand)
 
@@ -192,11 +196,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm2 = crand(key)
 
     self.assertAllClose(perm1, perm2, check_dtypes=True)
-    self.assertEqual(perm1.dtype, perm2.dtype)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
-    self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
-    self.assertArraysAllClose(x, onp.arange(100).astype(dtype),
-                              check_dtypes=True)
+    self.assertAllClose(onp.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
+    self.assertArraysAllClose(
+      x, np.arange(np.prod(shape)).reshape(shape).astype(dtype),
+      check_dtypes=True)
 
   def testPermutationInteger(self):
     key = random.PRNGKey(0)
@@ -393,6 +397,38 @@ class LaxRandomTest(jtu.JaxTestCase):
     f = lambda x, y: random.gamma(key=key, a=x, dtype=np.float32) / y
     # Should not crash with a type error.
     api.vjp(f, a, b)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_lam={}_{}".format(lam, dtype),
+       "lam": lam, "dtype": onp.dtype(dtype).name}
+      for lam in [0.5, 3, 9, 11, 50, 500]
+      for dtype in [onp.int32, onp.int64]))
+  def testPoisson(self, lam, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, lam)
+    compiled_samples = crand(key, lam)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
+      # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
+      # based on the central limit theorem).
+      self.assertAllClose(samples.mean(), lam, rtol=0.01, check_dtypes=False)
+      self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
+
+  def testPoissonBatched(self):
+    key = random.PRNGKey(0)
+    lam = np.concatenate([2 * np.ones(10000), 20 * np.ones(10000)])
+    samples = random.poisson(key, lam, shape=(20000,))
+    self._CheckChiSquared(samples[:10000], scipy.stats.poisson(2.0).pmf)
+    self._CheckChiSquared(samples[10000:], scipy.stats.poisson(20.0).pmf)
+
+  def testPoissonShape(self):
+    key = random.PRNGKey(0)
+    x = random.poisson(key, onp.array([2.0, 20.0]), shape=(3, 2))
+    assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}

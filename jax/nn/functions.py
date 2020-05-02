@@ -189,7 +189,7 @@ def glu(x, axis=-1):
   """Gated linear unit activation function."""
   size = x.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
-  return x[..., :size] * sigmoid(x[..., size:])
+  return x[..., :size // 2] * sigmoid(x[..., size // 2:])
 
 # other functions
 
@@ -264,5 +264,36 @@ def one_hot(x, num_classes, *, dtype=np.float64):
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   x = np.asarray(x)
-  return np.array(x[..., np.newaxis] == np.arange(num_classes, dtype=x.dtype),
-                  dtype=dtype)
+  lhs = x[..., np.newaxis]
+  rhs = lax.broadcast_to_rank(np.arange(num_classes, dtype=x.dtype), lhs.ndim)
+  return np.array(lhs == rhs, dtype=dtype)
+
+def relu6(x):
+  r"""Rectified Linear Unit 6 activation function.
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{relu6}(x) = \min(\max(x, 0), 6)
+  """
+  return np.minimum(np.maximum(x, 0), 6.)
+
+def hard_sigmoid(x):
+  r"""Hard Sigmoid activation function.
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{hard\_sigmoid}(x) = \frac{\mathrm{relu6}(x + 3)}{6}
+  """
+  return relu6(x + 3.) / 6.
+
+def hard_swish(x):
+  r"""Hard Swish activation function
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{hard\_swish}(x) = x \cdot \mathrm{hard\_sigmoid}(x)
+  """
+  return x * hard_sigmoid(x)

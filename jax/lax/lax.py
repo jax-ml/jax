@@ -36,7 +36,7 @@ from .. import dtypes
 from .. import lazy
 from .. import lib
 from ..config import flags
-from ..core import _canonicalize_dimension, Primitive
+from ..core import Primitive
 from ..abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray,
                                AbstractToken, array_types, make_shaped_array,
                                raise_to_shaped, abstract_token, canonicalize_shape)
@@ -79,7 +79,7 @@ def broadcast_shapes(*shapes):
   if not onp.all((shapes == result_shape) | (shapes == 1)):
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
-  return tuple(map(_canonicalize_dimension, result_shape))
+  return canonicalize_shape(result_shape)
 
 def _identity(x): return x
 
@@ -665,6 +665,10 @@ def broadcast_in_dim(operand: Array, shape: Shape,
       operand, shape=tuple(shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
 
+def broadcast_to_rank(x: Array, rank: int) -> Array:
+  """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
+  return broadcast(x, (1,) * (rank - x.ndim))
+
 def reshape(operand: Array, new_sizes: Shape,
             dimensions: Optional[Sequence[int]] = None) -> Array:
   """Wraps XLA's `Reshape
@@ -1234,10 +1238,11 @@ def iota(dtype: DType, size: int) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  size = int(size)
+  size = size if type(size) is masking.Poly else int(size)
+  shape = canonicalize_shape((size,))
   dtype = dtypes.canonicalize_dtype(dtype)
-  lazy_expr = lazy.iota(dtype, size)
-  aval = ShapedArray((size,), dtype)
+  lazy_expr = lazy.iota(dtype, shape[0])
+  aval = ShapedArray(shape, dtype)
   return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
@@ -1696,7 +1701,6 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
   prim.def_impl(partial(xla.apply_primitive, prim))
   prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
-  masking.shape_rules[prim] = shape_rule
   return prim
 
 
@@ -2635,7 +2639,7 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
     lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
-    return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+    return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
                                broadcast_dimensions=broadcast_dimensions)
@@ -2845,7 +2849,7 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
     if bcast_dims is not None:
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
-      return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+      return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
 
   if type(operand) is pxla.ShardedDeviceArray and dimensions is None:
     array = _reshape_sharded_device_array(operand, new_sizes, old_sizes)
@@ -2912,8 +2916,8 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
     if ragged: return None
     if new_sizes[0] != split_axis_size: return None
     aval = ShapedArray(new_sizes, array.dtype)
-    sharding_spec = pxla._pmap_sharding_spec(new_sizes[0], new_sizes[0],
-                                             new_sizes[1:])
+    sharding_spec = pxla._pmap_sharding_spec(
+        new_sizes[0], new_sizes[0], ShapedArray(new_sizes[1:], array.dtype), True)
     return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
 
   return None
@@ -2999,7 +3003,7 @@ def _transpose_impl(operand, *, permutation):
   if type(operand) is xla.DeviceArray:
     lazy_expr = lazy.transpose(operand._lazy_expr, permutation)
     aval = ShapedArray(lazy_expr.shape, operand.dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, operand.device_buffer)
+    return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(transpose_p, operand, permutation=permutation)
 
@@ -4689,7 +4693,6 @@ tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-masking.shape_rules[tie_in_p] = lambda x, y: y.shape
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
 
@@ -4964,8 +4967,6 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
 
 def _check_shapelike(fun_name, arg_name, obj):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
-  if (type(obj) is tuple and masking.is_polymorphic(obj)):
-    return obj
   if not isinstance(obj, (tuple, list, onp.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
     raise TypeError(msg.format(fun_name, arg_name, type(obj)))
@@ -4976,7 +4977,9 @@ def _check_shapelike(fun_name, arg_name, obj):
   if obj_arr.ndim != 1:
     msg = "{} {} must be rank 1, got {}."
     raise TypeError(msg.format(obj_arr.ndim))
-  if not dtypes.issubdtype(obj_arr.dtype, onp.integer):
+  try:
+    canonicalize_shape(obj_arr)
+  except TypeError:
     msg = "{} {} must have every element be an integer type, got {}."
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
   if not (obj_arr >= 0).all():
@@ -5173,8 +5176,13 @@ def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
 
+
 def _check_user_dtype_supported(dtype, fun_name=None):
-  if dtype is not None and onp.dtype(dtype) != dtypes.canonicalize_dtype(dtype):
+  onp_dtype = onp.dtype(dtype)
+  if onp_dtype.kind not in "biufc" and onp_dtype.type != dtypes.bfloat16:
+    msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
+    raise TypeError(msg)
+  if dtype is not None and onp_dtype != dtypes.canonicalize_dtype(dtype):
     msg = ("Explicitly requested dtype {} {} is not available, "
            "and will be truncated to dtype {}. To enable more dtypes, set the "
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "

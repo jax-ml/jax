@@ -22,7 +22,7 @@ from jax import core
 from jax.util import unzip2
 from jax import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
-                           treedef_is_leaf, tree_flatten, tree_unflatten)
+                           treedef_is_leaf, tree_flatten, tree_unflatten, tree_map)
 import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.lax import lax
@@ -59,6 +59,8 @@ def jet_fun(primals, series):
   with core.new_master(JetTrace) as master:
     out_primals, out_terms = yield (master, primals, series), {}
     del master
+  out_terms = [tree_map(lambda x: onp.zeros_like(x, dtype=onp.result_type(out_primals[0])), series[0])
+               if s is zero_series else s for s in out_terms]
   yield out_primals, out_terms
 
 @lu.transformation
@@ -353,6 +355,26 @@ def _div_taylor_rule(primals_in, series_in, **params):
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.div_p] = _div_taylor_rule
+
+def _sinusoidal_rule(sign, prims, primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  s, c = prims
+  s = [s(x)] + [None] * len(series)
+  c = [c(x)] + [None] * len(series)
+  for k in range(1, len(s)):
+    s[k] = fact(k-1) * sum(_scale(k, j) * u[j] * c[k-j] for j in range(1, k + 1))
+    c[k] = fact(k-1) * sum(_scale(k, j) * u[j] * s[k-j] for j in range(1, k + 1)) * sign
+  return (s[0], s[1:]), (c[0], c[1:])
+
+def _get_ind(f, ind):
+  return lambda *args: f(*args)[ind]
+
+jet_rules[lax.sin_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 0)
+jet_rules[lax.cos_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 1)
+jet_rules[lax.sinh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 0)
+jet_rules[lax.cosh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 1)
 
 def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in

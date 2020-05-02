@@ -16,7 +16,7 @@
 from collections import namedtuple
 import functools
 import operator as op
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Sequence, Tuple
 
 import numpy as onp
 
@@ -132,15 +132,15 @@ def broadcast(lexpr, shape, broadcast_dimensions):
     new_dims[d] = lexpr.dims[i]
   return LazyExpr(lexpr.input, shape, tuple(new_dims))
 
-def transpose(lexpr, perm):
+def transpose(lexpr: LazyExpr, perm: Sequence[int]):
   new_shape = tuple(lexpr.shape[i] for i in perm)
   new_dims = tuple(lexpr.dims[i] for i in perm)
   return LazyExpr(lexpr.input, new_shape, new_dims)
 
-def is_constant(lexpr):
+def is_constant(lexpr: Optional[LazyExpr]):
   return lexpr is not None and type(lexpr.input) is not ArrayVar
 
-def is_trivial(lexpr):
+def is_trivial(lexpr: LazyExpr) -> bool:
   return (type(lexpr.input) is ArrayVar and
           lexpr.dims == tuple(range(len(lexpr.shape))))
 
@@ -193,7 +193,7 @@ def eval_lexpr(lexpr, x):
   return x
 
 
-def stage_lexpr(c, lexpr, x):
+def stage_lexpr(c, lexpr: Optional[LazyExpr], x):
   """Stage a lazy expression into an XLA computation.
   Args:
     c: XLA ComputationBuilder into which to stage the expression.

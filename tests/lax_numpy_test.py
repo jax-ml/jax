@@ -698,6 +698,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": rec.test_name.capitalize(), "name": rec.name,
+       "onp_op": getattr(onp, rec.name), "jnp_op": getattr(jnp, rec.name)}
+      for rec in JAX_ARGMINMAX_RECORDS))
+  def testArgMinMaxEmpty(self, name, onp_op, jnp_op):
+    name = name[3:] if name.startswith("nan") else name
+    msg = "attempt to get {} of an empty sequence".format(name)
+    with self.assertRaises(ValueError, msg=msg):
+      jnp_op(onp.array([]))
+    with self.assertRaises(ValueError, msg=msg):
+      jnp_op(onp.zeros((2, 0)), axis=1)
+    onp_fun = partial(onp_op, axis=0)
+    jnp_fun = partial(jnp_op, axis=0)
+    args_maker = lambda: [onp.zeros((2, 0))]
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
           jtu.format_shape_dtype_string(rhs_shape, rhs_dtype),
@@ -1728,6 +1745,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_fun = jnp.array
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  def testArrayUnsupportedDtypeError(self):
+    with self.assertRaisesRegex(TypeError,
+                                "JAX only supports number and bool dtypes.*"):
+      jnp.array(3, [('a','<i4'),('b','<i4')])
 
   def testIssue121(self):
     assert not onp.isscalar(jnp.array(3))

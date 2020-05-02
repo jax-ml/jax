@@ -115,7 +115,8 @@ LAX_OPS = [
     op_record("atan", 1, float_dtypes, jtu.rand_small),
     op_record("asinh", 1, float_dtypes, jtu.rand_default),
     op_record("acosh", 1, float_dtypes, jtu.rand_positive),
-    op_record("atanh", 1, float_dtypes, jtu.rand_small),
+    # TODO(b/155331781): atanh has only ~float precision
+    op_record("atanh", 1, float_dtypes, jtu.rand_small, {onp.float64: 1e-9}),
     op_record("sinh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("cosh", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("lgamma", 1, float_dtypes, jtu.rand_positive,
@@ -1740,11 +1741,14 @@ grad_inexact_dtypes = grad_float_dtypes + grad_complex_dtypes
 LAX_GRAD_OPS = [
     grad_test_spec(lax.neg, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
-    grad_test_spec(lax.floor, nargs=1, order=2, rng_factory=jtu.rand_default,
+    grad_test_spec(lax.floor, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=0.1, high=0.4),
                    dtypes=grad_float_dtypes),
-    grad_test_spec(lax.ceil, nargs=1, order=2, rng_factory=jtu.rand_default,
+    grad_test_spec(lax.ceil, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=0.1, high=0.4),
                    dtypes=grad_float_dtypes),
-    grad_test_spec(lax.round, nargs=1, order=2, rng_factory=jtu.rand_default,
+    grad_test_spec(lax.round, nargs=1, order=2,
+                   rng_factory=partial(jtu.rand_uniform, low=0.1, high=0.4),
                    dtypes=grad_float_dtypes),
 
     grad_test_spec(lax.exp, nargs=1, order=2, rng_factory=jtu.rand_small,
@@ -1773,7 +1777,7 @@ LAX_GRAD_OPS = [
                    dtypes=grad_float_dtypes, tol=1e-3),
     grad_test_spec(lax.acos, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, -1.3, 1.3),
-                   dtypes=grad_float_dtypes, tol=1e-3),
+                   dtypes=grad_float_dtypes, tol=2e-2),
     # TODO(proteneer): atan2 input is already a representation of a
     # complex number. Need to think harder about what this even means
     # if each input itself is a complex number.
@@ -1907,29 +1911,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(convert_element_type, args, 2, ["fwd", "rev"], tol, tol, eps=1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_min_shape={}_operand_shape={}_max_shape={}".format(
-          jtu.format_shape_dtype_string(min_shape, dtype),
-          jtu.format_shape_dtype_string(operand_shape, dtype),
-          jtu.format_shape_dtype_string(max_shape, dtype)),
-       "min_shape": min_shape, "operand_shape": operand_shape,
-       "max_shape": max_shape, "dtype": dtype, "rng_factory": rng_factory}
-      for min_shape, operand_shape, max_shape in [
-          [(), (), ()],
-          [(), (2, 3), ()],
-          [(2, 3), (2, 3), (2, 3)],
-      ]
-      # TODO(phawkins): this test fails for bfloat16.
-      for dtype in [t for t in float_dtypes if t != dtypes.bfloat16]
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory}
+      for shape in [(), (2, 3)]
+      for dtype in grad_float_dtypes
       for rng_factory in [jtu.rand_default]))
-  def testClampGrad(self, min_shape, operand_shape, max_shape, dtype, rng_factory):
+  def testClampGrad(self, shape, dtype, rng_factory):
     rng = rng_factory()
-    tol = {dtypes.bfloat16: 1e-1, onp.float16: 1e-1, onp.float32: 1e-2}
-    shapes = [min_shape, operand_shape, max_shape]
-    min, operand, max = (rng(shape, dtype) for shape in shapes)
-    min, max = onp.minimum(min, max), onp.maximum(min, max)  # broadcast
-    eps = 1e-1 if dtypes.finfo(dtype).bits == 16 else 1e-2
-    check_grads(lax.clamp, (min, operand, max), 2, ["fwd", "rev"], tol, tol,
-                eps=eps)
+    operand = rng(shape, dtype)
+    low = operand - dtype(10)
+    high = operand + dtype(10)
+    # Avoids points near the boundary where the gradient may be inaccurate.
+    check_grads(lax.clamp, (operand, low, high), 2, ["fwd", "rev"], eps=1e-2)
+    check_grads(lax.clamp, (low, operand, high), 2, ["fwd", "rev"], eps=1e-2)
+    check_grads(lax.clamp, (low, high, operand), 2, ["fwd", "rev"], eps=1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dim={}_baseshape=[{}]_dtype={}_narrs={}".format(
@@ -2328,16 +2325,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims),
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "rng_factory": rng_factory}
-      for init_val, op, dtypes in [
-          (0, lax.add, inexact_dtypes),
-          # Precision problems for float16 tests.
-          (-onp.inf, lax.max,
-           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
-          (onp.inf, lax.min,
-           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
-          # The mul test overflows the range of a float16.
-          (1, lax.mul,
-           [t for t in inexact_dtypes if t not in [onp.float16, dtypes.bfloat16]]),
+      for init_val, op, dtypes, rng_factory in [
+          (0, lax.add, inexact_dtypes, jtu.rand_default),
+          (-onp.inf, lax.max, grad_inexact_dtypes, jtu.rand_unique_int),
+          (onp.inf, lax.min, grad_inexact_dtypes, jtu.rand_unique_int),
+          (1, lax.mul, grad_float_dtypes, partial(jtu.rand_default, scale=1)),
       ]
       for dtype in dtypes
       for shape, dims in [
@@ -2347,14 +2339,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           [(3, 4, 5), (0, 2)],
           [(3, 4, 5), (0, 1, 2)],
           [(3, 1), (1,)],
-      ]
-      for rng_factory in [jtu.rand_default]))
+      ]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng_factory):
     rng = rng_factory()
     if jtu.device_under_test() == "tpu" and op is lax.mul:
       raise SkipTest("unimplemented case")
-    tol = {dtypes.bfloat16: 2e-1, onp.float16: 1e-1, onp.float32: 4e-2,
-           onp.float64: 1e-3, onp.complex64: 1e-2}
+    tol = {dtypes.bfloat16: 2e-1, onp.float16: 1e-1, onp.float32: 1e-1,
+           onp.float64: 1e-3, onp.complex64: 1e-1}
     operand = rng(shape, dtype)
     init_val = onp.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
@@ -2368,18 +2359,18 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        .format(op.__name__, onp.dtype(dtype).name, padding),
        "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,
        "rng_factory": rng_factory}
-      for init_val, op, dtypes, rng in [
-          (0, lax.add, float_dtypes, jtu.rand_small),
-          (-onp.inf, lax.max, [onp.float32], jtu.rand_default),
-          (onp.inf, lax.min, [onp.float32], jtu.rand_default),
+      for init_val, op, dtypes, rng_factory in [
+          (0, lax.add, grad_float_dtypes, jtu.rand_small),
+          (-onp.inf, lax.max, grad_float_dtypes, jtu.rand_unique_int),
+          (onp.inf, lax.min, grad_float_dtypes, jtu.rand_unique_int),
       ]
       for dtype in dtypes
-      for padding in ["VALID", "SAME"]
-      for rng_factory in [jtu.rand_default]))
+      for padding in ["VALID", "SAME"]))
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  @jtu.ignore_warning(category=UserWarning,
+                      message="Using reduced precision for gradient.*")
   def testReduceWindowGrad(self, op, init_val, dtype, padding, rng_factory):
     rng = rng_factory()
-    tol = {onp.float16: 1e-1, onp.float32: 1e-3}
     init_val = onp.asarray(init_val, dtype=dtype)
 
     # We need this conditional and the corresponding loop logic to be in the
@@ -2412,11 +2403,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       operand = rng(shape, dtype)
       if op is lax.add:
         eps = 1.
+        tol = None
       else:
         # this test can fail if there are duplicates in operand
         self.assertEqual(onp.unique(operand).size, operand.size,
                          msg="test requires operand elements to be unique.")
         eps = 1e-2
+        tol = {onp.float16: 1e-1, onp.float32: 2e-2, onp.float64: 2e-2}
       check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], tol, tol,
                   eps)
 
@@ -2526,19 +2519,19 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
        "slice_sizes": slice_sizes, "rng_factory": rng_factory,
        "rng_idx_factory": rng_idx_factory}
-      for dtype in float_dtypes
-      for shape, idxs, dnums, slice_sizes in [
+      for dtype in grad_float_dtypes
+      for shape, idxs, dnums, slice_sizes, max_idx in [
           ((5,), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
             offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
-            (1,)),
+            (1,), 5),
           ((10,), onp.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
-            (2,)),
+            (2,), 9),
           ((10, 5,), onp.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
-            (1, 3)),
+            (1, 3), 3),
       ]
-      for rng_idx_factory in [partial(jtu.rand_int, max(shape))]
+      for rng_idx_factory in [partial(jtu.rand_int, max_idx)]
       for rng_factory in [jtu.rand_default]))
   def testGatherGrad(self, shape, dtype, idxs, dnums, slice_sizes, rng_factory,
                      rng_idx_factory):
@@ -2557,19 +2550,19 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
        "update_shape": update_shape, "dnums": dnums, "rng_factory": rng_factory,
        "rng_idx_factory": rng_idx_factory}
-      for dtype in float_dtypes
-      for arg_shape, idxs, update_shape, dnums in [
+      for dtype in grad_float_dtypes
+      for arg_shape, idxs, update_shape, dnums, max_idx in [
           ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,))),
+            scatter_dims_to_operand_dims=(0,)), 4),
           ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
-            scatter_dims_to_operand_dims=(0,))),
+            scatter_dims_to_operand_dims=(0,)), 9),
           ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,))),
+            scatter_dims_to_operand_dims=(0,)), 3),
       ]
-      for rng_idx_factory in [partial(jtu.rand_int, max(arg_shape))]
+      for rng_idx_factory in [partial(jtu.rand_int, max_idx)]
       for rng_factory in [jtu.rand_default]))
   def testScatterAddGrad(self, arg_shape, dtype, idxs, update_shape, dnums,
                          rng_factory, rng_idx_factory):
@@ -2589,19 +2582,19 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
        "update_shape": update_shape, "dnums": dnums, "rng_factory": rng_factory,
        "rng_idx_factory": rng_idx_factory}
-      for dtype in float_dtypes
-      for arg_shape, idxs, update_shape, dnums in [
+      for dtype in grad_float_dtypes
+      for arg_shape, idxs, update_shape, dnums, max_idx in [
           ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,))),
+            scatter_dims_to_operand_dims=(0,)), 4),
           ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
-            scatter_dims_to_operand_dims=(0,))),
+            scatter_dims_to_operand_dims=(0,)), 9),
           ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,))),
+            scatter_dims_to_operand_dims=(0,)), 3),
       ]
-      for rng_idx_factory in [partial(jtu.rand_int, max(arg_shape))]
+      for rng_idx_factory in [partial(jtu.rand_int, max_idx)]
       for rng_factory in [jtu.rand_default]))
   def testScatterGrad(self, arg_shape, dtype, idxs, update_shape, dnums,
                       rng_factory, rng_idx_factory):
@@ -2643,7 +2636,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    with self.assertRaises(TypeError):
+    with self.assertRaises(TypeError if core.skip_checks else AssertionError):
       lax.stop_gradient(lambda x: x)
 
   # TODO(mattjj): make this a more systematic test

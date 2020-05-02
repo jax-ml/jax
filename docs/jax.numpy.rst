@@ -180,6 +180,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     msort
     multiply
     nan_to_num
+    nanargmax
+    nanargmin
     nancumprod
     nancumsum
     nanmax

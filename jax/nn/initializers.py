@@ -89,7 +89,8 @@ def orthogonal(scale=1.0, column_axis=-1, dtype=np.float32):
     matrix_shape = (n_cols, n_rows) if n_rows < n_cols else (n_rows, n_cols)
     A = random.normal(key, matrix_shape, dtype)
     Q, R = np.linalg.qr(A)
-    Q *= np.sign(np.diag(R)) # needed for a uniform distribution
+    diag_sign = lax.broadcast_to_rank(np.sign(np.diag(R)), rank=Q.ndim)
+    Q *= diag_sign # needed for a uniform distribution
     if n_rows < n_cols: Q = Q.T
     Q = np.reshape(Q, tuple(onp.delete(shape, column_axis)) + (shape[column_axis],))
     Q = np.moveaxis(Q, -1, column_axis)

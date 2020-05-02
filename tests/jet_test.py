@@ -61,10 +61,6 @@ class JetTest(jtu.JaxTestCase):
     self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
 
-    # TODO(duvenaud): Lower zero_series to actual zeros automatically.
-    if terms == zero_series:
-      terms = tree_map(np.zeros_like, expected_terms)
-
     self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
 
@@ -85,10 +81,6 @@ class JetTest(jtu.JaxTestCase):
 
     self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
-
-    # TODO(duvenaud): Lower zero_series to actual zeros automatically.
-    if terms == zero_series:
-      terms = tree_map(np.zeros_like, expected_terms)
 
     self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
@@ -210,6 +202,14 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_expm1(self):      self.unary_check(np.expm1)
   @jtu.skip_on_devices("tpu")
+  def test_sin(self):        self.unary_check(np.sin)
+  @jtu.skip_on_devices("tpu")
+  def test_cos(self):        self.unary_check(np.cos)
+  @jtu.skip_on_devices("tpu")
+  def test_sinh(self):       self.unary_check(np.sinh)
+  @jtu.skip_on_devices("tpu")
+  def test_cosh(self):       self.unary_check(np.cosh)
+  @jtu.skip_on_devices("tpu")
   def test_tanh(self):       self.unary_check(np.tanh, lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
   def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-500, 500], order=5)
@@ -282,6 +282,21 @@ class JetTest(jtu.JaxTestCase):
     terms_y = [rng.randn(*y.shape) for _ in range(order)]
     series_in = (terms_b, terms_x, terms_y)
     self.check_jet(np.where, primals, series_in)
+
+  def test_inst_zero(self):
+    def f(x):
+      return 2.
+    def g(x):
+      return 2. + 0 * x
+    x = np.ones(1)
+    order = 3
+    f_out_primals, f_out_series = jet(f, (x, ), ([np.ones_like(x) for _ in range(order)], ))
+    assert f_out_series is not zero_series
+
+    g_out_primals, g_out_series = jet(g, (x, ), ([np.ones_like(x) for _ in range(order)], ))
+
+    assert g_out_primals == f_out_primals
+    assert g_out_series == f_out_series
 
 
 if __name__ == '__main__':

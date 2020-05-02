@@ -187,7 +187,7 @@ class PmapTest(jtu.JaxTestCase):
     f = pmap(lambda x, y: x + y)
     self.assertRaisesRegex(
         ValueError,
-        "Axis size .* does not match leading dimension of shape .*",
+        "pmap got inconsistent sizes for array axes to be mapped",
         lambda: f(onp.random.randn(n), onp.random.randn(n - 1)))
 
   @parameterized.named_parameters(
@@ -206,6 +206,47 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     expected = x
     self.assertEqual(ans.shape, expected.shape)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testPartiallyMapped(self):
+    f = pmap(lambda x, y: x, in_axes=(None, 0))
+    g = pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
+
+    mesh_shape = (xla_bridge.device_count(),)
+    shape = mesh_shape + (4,)
+    x = onp.array(3., dtype=onp.float32)
+    y = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+
+    f_expected = onp.broadcast_to(x, mesh_shape)
+    f_ans = f(x, y)
+    self.assertAllClose(f_ans, f_expected, check_dtypes=True)
+    self.assertIsInstance(f_ans, pxla.ShardedDeviceArray)
+    # the output is actually replicated (has the same values in each device buffer)
+    # but out_axes is implicitly 0, so we shouldn't have replication in the
+    # sharding spec.
+    self.assertEqual(f_ans.sharding_spec.replication_factor, 1)
+
+    g_expected = onp.broadcast_to(x - onp.sum(y, 0, keepdims=True), shape)
+    g_ans = g(x, y)
+    self.assertAllClose(g_ans, g_expected, check_dtypes=True)
+    self.assertIsInstance(g_ans, pxla.ShardedDeviceArray)
+    self.assertEqual(g_ans.sharding_spec.replication_factor, 1)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
+       "device_mesh_shape": device_mesh_shape}
+      for device_mesh_shape in [(1, 1), (2, -1), (-1, 2)])
+  def testPartiallyMappedNested(self, device_mesh_shape):
+    mesh_shape = self._getMeshShape(device_mesh_shape)
+
+    f = pmap(lambda x, y: x - lax.psum(y, 'i'), axis_name='i', in_axes=(None, 0))
+    f = pmap(f, axis_name='j', in_axes=(None, 0))
+
+    x = 3.
+    y = onp.arange(prod(mesh_shape), dtype=onp.float32).reshape(mesh_shape)
+    expected = onp.broadcast_to(x - onp.sum(y, 1, keepdims=True), mesh_shape)
+
+    ans = f(x, y)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testJvpAndPartialEval(self):
@@ -1236,8 +1277,10 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
         # Mix together different kinds of indices
         if i % 2 == 0:
           idx = slice(idx, idx + 1)
+        # Use the "kwarg trick" to work around late-binding closures. See
+        # https://docs.python-guide.org/writing/gotchas/#late-binding-closures.
         futures.append(executor.submit(
-            lambda: [sharded_x[idx] for _ in range(10)][0]))
+            lambda idx=idx: [sharded_x[idx] for _ in range(10)][0]))
         expected.append(x[idx])
       actual = [f.result() for f in futures]
     self.assertAllClose(actual, expected, check_dtypes=False)
