@@ -18,6 +18,8 @@ jaxlib 0.1.46 (unreleased)
 ------------------------------
 
 * Fixes crash for linear algebra functions on Mac OS X (#432).
+* Fixes an illegal instruction crash caused by using AVX512 instructions when
+  an operating system or hypervisor disabled them (#2906).
 
 jax 0.1.65 (April 30, 2020)
 ---------------------------
