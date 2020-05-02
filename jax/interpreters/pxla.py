@@ -47,7 +47,7 @@ from .. import linear_util as lu
 from .. import lazy
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
-from ..util import (partial, unzip2, prod, safe_map, safe_zip,
+from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
@@ -211,7 +211,38 @@ def _shard_array(x, devices, indices):
   return [xla.device_put(x[i], d) for (i, d) in zip(indices, devices)]
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
-shard_arg_handlers[xla.DeviceArray] = _shard_array
+
+def _shard_device_array(x, devices, indices):
+  start_indices, limit_indices, removed_dims = map(tuple, unzip3(
+      _as_slice_indices(x, idx) for idx in indices))
+  shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+  return [xla.device_put(s, d) for s, d in zip(shards, devices)]
+shard_arg_handlers[xla.DeviceArray] = _shard_device_array
+
+# NOTE(skye): we could refactor to generate _multi_slice parameters directly
+# from the input ShardingSpec, rather than the indices. However, this would
+# require duplicating the ordering logic of spec_to_indices, which is more
+# subtle and more likely to change than the index logic we have to support here.
+def _as_slice_indices(arr: xla.DeviceArray, idx: Index) -> Tuple[
+    Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
+  """Returns start_indices, limit_indices, removed_dims"""
+  start_indices = [0] * arr.ndim
+  limit_indices = list(arr.shape)
+  removed_dims = []
+
+  tuple_idx = idx if isinstance(idx, tuple) else (idx,)
+  for dim, sub_idx in enumerate(tuple_idx):
+    if isinstance(sub_idx, int):
+      start_indices[dim] = sub_idx
+      limit_indices[dim] = sub_idx + 1
+      removed_dims.append(dim)
+    else:
+      assert isinstance(sub_idx, slice)
+      start_indices[dim] = sub_idx.start
+      limit_indices[dim] = sub_idx.stop
+
+  return tuple(start_indices), tuple(limit_indices), tuple(removed_dims)
+
 
 def shard_aval(size, aval):
   try:
