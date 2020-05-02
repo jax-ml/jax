@@ -2742,6 +2742,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertRaisesRegex(ValueError,
             "cannot convert .* as required for input array operand", lambda: jnp.ediff1d(
         rng(shape,dtype), rng(shape, end_dtype), rng(shape, begin_dtype)))
+
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": "_shapes={}_dtype={}_indexing={}_sparse={}".format(
