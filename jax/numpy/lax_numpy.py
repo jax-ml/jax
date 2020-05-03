@@ -3306,9 +3306,9 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis=None):
 
-  if iscomplexobj(ar):
-    raise NotImplementedError(
-          "np.unique is not implemented for complex valued arrays")
+  #if iscomplexobj(ar):
+    #raise NotImplementedError(
+         # "np.unique is not implemented for complex valued arrays")
 
   if axis is None:
     ret = _unique1d(ar, return_index, return_inverse, return_counts)
@@ -3319,6 +3319,14 @@ def unique(ar, return_index=False, return_inverse=False,
 
   raise NotImplementedError(
         "np.unique is not implemented for the axis argument")
+
+@_wraps(onp.union1d)
+def union1d(ar1, ar2):
+  if ar1.ndim == 0:
+    ar1 = array([ar1])
+  if ar2.ndim == 0:
+    ar2 = array([ar2])
+  return unique(concatenate((ar1, ar2)))
 
 ### Indexing
 
