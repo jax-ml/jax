@@ -1016,9 +1016,9 @@ def ediff1d(ary, to_end=None, to_begin=None):
     result = concatenate((result, ravel(asarray(to_end, dtype=ary.dtype))))
   return result
 
-
 =======
->>>>>>> reverse leaked branch
+>>>>>>> implementation numpy.union1d
+
 @partial(jit, static_argnums=(1, 2))
 def _gradient(a, varargs, axis):
   def gradient_along_axis(a, h, axis):
@@ -3309,9 +3309,9 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis=None):
 
-  #if iscomplexobj(ar):
-    #raise NotImplementedError(
-         # "np.unique is not implemented for complex valued arrays")
+  if iscomplexobj(ar):
+    raise NotImplementedError(
+          "np.unique is not implemented for complex valued arrays")
 
   if axis is None:
     ret = _unique1d(ar, return_index, return_inverse, return_counts)
