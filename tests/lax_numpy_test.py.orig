@@ -258,7 +258,10 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero,
               ["rev"], inexact=True),
     op_record("diff", 1, number_dtypes, nonzerodim_shapes, jtu.rand_default, ["rev"]),
+<<<<<<< HEAD
     op_record("ediff1d", 3, [np.int32], all_shapes, jtu.rand_default, []),
+=======
+>>>>>>> reverse unwanted changes
 ]
 
 JAX_BITWISE_OP_RECORDS = [
