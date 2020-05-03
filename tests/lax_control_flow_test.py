@@ -1338,14 +1338,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     out = lax.while_loop(lambda _: False, lambda _: (), ())  # doesn't crash
     self.assertEqual(out, ())
 
-  @parameterized.named_parameters(
-      {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}".format(
-          jit_loop, jit_body, jit_cond),
-       "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond}
-      for jit_loop in [False, True]
-      for jit_body in [False, True]
-      for jit_cond in [False, True])
-  def testWhileJVP(self, jit_loop, jit_body, jit_cond):
+  # @parameterized.named_parameters(
+  #     {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}".format(
+  #         jit_loop, jit_body, jit_cond),
+  #      "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond}
+  #     for jit_loop in [False, True]
+  #     for jit_body in [False, True]
+  #     for jit_cond in [False, True])
+  def testWhileJVP(self, jit_loop=True, jit_body=False, jit_cond=True):
     cond = lambda x: x[0, 2] <= 8
     body = lambda x: x * x
 

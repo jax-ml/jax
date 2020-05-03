@@ -399,7 +399,8 @@ where: 2
                          api.jit(lambda x: hcb.id_tap(tap_func, func(x, what),
                                                       result=func(x * 2, what),
                                                       what=what))(5))
-      self.assertEqual(3, tap_count)
+    # Wait for receivers to be done
+    self.assertEqual(3, tap_count)
 
 
   def test_jit_cond1(self):
@@ -578,7 +579,7 @@ where: 10
     if jtu.device_under_test() == "tpu":
       if dtype in (np.int16,):
         raise SkipTest(f"transfering {dtype} not supported on TPU")
-    self.helper_set_hlo_dump()
+    # self.helper_set_hlo_dump()
     args = [np.arange(np.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args
@@ -688,10 +689,31 @@ what: x3
 
     assert False  # It seems that the previous jit blocks above
 
+  def test_jit_without_consumer_error(self):
+    # Check for errors if starting jit without a consumer active
+    with self.assertRaisesRegex(ValueError, "outfeed_consumer is not started"):
+      api.jit(lambda x: hcb.id_print(x))(0)
+
+  # On CPU and GPU the device code blocks
+  # On GPU it seems that there is a 5 min timeout?
+  # On TPU the client does not block, but messes up the rest somehow
+  @jtu.skip_on_devices("cpu", "gpu", "tpu")
+  def test_jit_receiver_ends_prematurely(self):
+    # Simulate an unknown tap function
+    def func(x):
+      x1 = hcb.id_print(x + 1, what="x1", output_stream=testing_stream)
+      x2 = hcb.id_tap(hcb._end_consumer, result=x1 + 1)  # Will end the consumer loop
+      x3 = hcb.id_print(x2 + 1, what="x3", output_stream=testing_stream)
+      return x3
+
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
+      res = api.jit(func)(0)
+
+    assert False  # It seems that the previous jit blocks above
 
   def test_jit_nested_cond_no_print(self):
     """A nested conditional, without any prints"""
-    # raise SkipTest("skip this")
+    raise SkipTest("skip this")
     @api.jit
     def cfun(x):
       return lax.cond(
@@ -762,7 +784,7 @@ transforms: ('jvp',) what: y * 3
     self.assertMultiLineStrippedEqual(
       """
 { lambda  ; a.
-  let 
+  let
   in (6.00,) }""", str(api.make_jaxpr(grad_func)(5.)))
     # Just making the Jaxpr invokes the id_print once
     self.assertMultiLineStrippedEqual(
@@ -772,7 +794,7 @@ transforms: ('jvp', 'transpose') what: x * 3
     testing_stream.reset()
 
     res_grad = grad_func(np.float32(5.))
-    self.assertAllClose(6., res_grad, check_dtypes=True)
+    self.assertAllClose(6., res_grad, check_dtypes=False)
     self.assertMultiLineStrippedEqual(
       """
 what: x * 3
@@ -822,7 +844,7 @@ transforms: ('jvp', 'transpose') what: x * 3
   in (n,) }""", str(api.make_jaxpr(grad_func)(5.)))
 
     res_grad = grad_func(np.float32(5.))
-    self.assertAllClose(2. * 5. * 6., res_grad, check_dtypes=True)
+    self.assertAllClose(2. * 5. * 6., res_grad, check_dtypes=False)
     self.assertMultiLineStrippedEqual(
       """
 what: x * 2
@@ -835,7 +857,35 @@ transforms: ('jvp', 'transpose') what: x * 2
 15.00""", testing_stream.output)
     testing_stream.reset()
 
+  def test_grad_double(self):
+    def func(x):
+      y = hcb.id_print(x * 2., what="x * 2", output_stream=testing_stream)
+      return x * (y * 3.)
 
+    grad_func = api.grad(api.grad(func))
+    self.assertMultiLineStrippedEqual(
+      """
+{ lambda  ; a.
+  let 
+  in (12.00,) }""", str(api.make_jaxpr(grad_func)(5.)))
+
+    res_grad = grad_func(np.float32(5.))
+    self.assertAllClose(12., res_grad, check_dtypes=False)
+    self.assertMultiLineStrippedEqual(
+      """
+transforms: ('jvp', 'transpose') what: x * 2
+3.00
+transforms: ('jvp', 'transpose', 'jvp', 'transpose') what: x * 2
+2.00
+what: x * 2
+10.00
+transforms: ('jvp', 'transpose') what: x * 2
+15.00
+transforms: ('jvp', 'transpose', 'jvp', 'transpose') what: x * 2
+2.00
+transforms: ('jvp', 'transpose') what: x * 2
+3.00""", testing_stream.output)
+    testing_stream.reset()
 
 
   def test_vmap(self):
@@ -909,6 +959,12 @@ batch_dims: (None, 0) transforms: ('batch',)
       res = pmap_fun1(vargs)
     expected_res = np.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
     self.assertAllClose(expected_res, res, check_dtypes=False)
+
+  def test_pmap_without_consumer_error(self):
+    # Check for errors if starting jit without a consumer active
+    vargs = 2. + np.arange(api.local_device_count(), dtype=np.float32)
+    with self.assertRaisesRegex(ValueError, "outfeed_consumer is not started"):
+      api.pmap(lambda x: hcb.id_print(x))(vargs)
 
   def test_mask(self):
     raise SkipTest("masking has regressed")

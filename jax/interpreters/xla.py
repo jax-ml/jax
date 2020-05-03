@@ -52,7 +52,7 @@ PyLocalBuffer = Any
 XlaOp = Any  # xla_extension.XlaOp
 XlaShape = Any # xla_client.Shape
 XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
-
+XlaExecutable = Any # xla_extension.LocalExecutable
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -174,16 +174,16 @@ USE_ADD_DEPENDENCY = False  # We can only use AddDependency once we land the HLO
 # This helps avoid threading the state through control-flow primitives that
 # do not need it. This is a worthwhile optimization because it seems that XLA
 # may not be good at dealing with tokens (b/154992062).
-stateful_primitives: Set[core.Primitive] = set()
-def jaxpr_uses_state(jaxpr):
+outfeed_primitives: Set[core.Primitive] = set()
+def jaxpr_uses_outfeed(jaxpr):
   """Whether there is a stateful primitive anywhere inside a Jaxpr."""
   if type(jaxpr) is core.TypedJaxpr:
     jaxpr = jaxpr.jaxpr
   for eqn in jaxpr.eqns:
-    if eqn.primitive in stateful_primitives:
+    if eqn.primitive in outfeed_primitives:
       return True
   for subjaxpr in core.subjaxprs(jaxpr):
-    if jaxpr_uses_state(subjaxpr):
+    if jaxpr_uses_outfeed(subjaxpr):
       return True
   return False
 
@@ -195,20 +195,113 @@ class _ComputationStateCarry(threading.local):
 
   This assumes that the primitives are processed in program-order!
   """
-  _current_computation: Optional[XlaComputationBuilder]
-  _current_token: Optional[XlaOp]
+  # A stack of nested computations and the current tokens for each. A None token
+  # means that we cannot use state in this computation and any nested
+  # computations. The last one is the most recent.
+  _computations: Tuple[XlaComputationBuilder, ...]
+  _tokens: List[XlaOp]
+  _log_idx: int  # For debugging
+
+  # TODO(necula): remove these experiment flags
+  # Flags to force compilation of while, cond, call with in/out state, to
+  # test the XLA compiler's handling of tokens.
+  FORCE_OUTFEED = False
+  _LOG_STATE = True
 
   def __init__(self) -> None:
-    self._current_computation = None
-    self._current_token = None
+    self._computations = ()
+    self._tokens = []
+    self._log_idx = 0
 
-  def end_computation(self):
-    self._current_computation = None
-    self._current_token = None
+  def check_and_reset_state(self) -> bool:
+    """Checks that the state is empty, and resets it if not."""
+    ok = not self._computations and not self._tokens
+    self._computations = ()
+    self._tokens = []
+    self._log_idx = 0
+    return ok
 
-  def decompose_tuple_op(self, comp: XlaComputationBuilder,
-                         tuple_op: XlaOp, nr_regular: int,
-                         uses_state: bool) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
+  def _log_state(self, msg: str):
+    if self._LOG_STATE:
+      top_comp = id(self._computations[-1]) if self._computations else 0
+      logging.warning(f"[{self._log_idx} @ 0x{top_comp:x}/{len(self._computations)}]: {msg}.")
+      self._log_idx += 1
+
+  def current_state(self, comp: XlaComputationBuilder, uses_state: bool) -> List[XlaOp]:
+    """Get the current state for the current computation."""
+    if uses_state:
+      assert self._computations and self._tokens
+      # Ensure we kept track of computations properly
+      assert (comp is self._computations[-1]), f"Reading state from unexpected computation (0x{id(comp):x})"
+      assert self._tokens[-1], "Reading non-initialized state"
+      return [self._tokens[-1]]
+    else:
+      return []
+
+
+  def start_nested_comp_without_input(self, comp: XlaComputationBuilder,
+                                      uses_state: bool):
+    """Starts a nested computation, with no state passed in.
+    `comp` is the new computation.
+    """
+    self._computations = self._computations + (comp,)
+    if uses_state:
+      self._log_state(f"start nested computation without input, initialize state")
+      assert all([t is None for t in self._tokens]), "Ignoring upstream state"
+      token = xops.CreateToken(comp)
+    else:
+      self._log_state(f"start nested computation without input state, no state")
+      token = None  # Cannot use state, here or in nested computations
+    self._tokens = self._tokens + [token]
+
+  def start_nested_comp_with_input(self, comp: XlaComputationBuilder,
+                                   tuple_op: XlaOp, nr_regular: int,
+                                   uses_state: bool) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
+    """Start a nested computation with inputs.
+    `comp` is the new computation. `tuple_op` is a tuple in the new computation
+    with `nr_regular` elements and perhaps some state elements (if `uses_state`).
+    Stores the new state for the new computation.
+
+    Returns the regular elements of the tuple, and the state.
+    """
+    self._computations = self._computations + (comp,)
+    self._log_state(f"start nested computation with input")
+    self._tokens = self._tokens + [None]  # Will set the token below
+    return self.set_state_from_tuple(comp, tuple_op, nr_regular, uses_state)
+
+  def end_nested_comp_without_output(self, comp: XlaComputationBuilder) -> None:
+    """Ends a nested computation, with no state returned.
+    `comp` is the ending computation.
+    """
+    self._log_state(f"end nested computation without output")
+    if self._tokens[-1]:
+      assert self._computations and self._computations[-1] is comp
+    self._computations = self._computations[:-1]
+    self._tokens = self._tokens[:-1]
+
+  def end_nested_comp_with_output(self, comp: XlaComputationBuilder,
+                                  tuple_op: XlaOp, nr_regular: int,
+                                  uses_state: bool) -> Sequence[XlaOp]:
+    """Ends a nested computation with results.
+    `comp` is the parent computation into which we return, `tuple_op` is
+    a tuple in the parent computation with `nr_regular` elements and
+    perhaps some state elements (if `uses_state`).
+    Stores the new state for the parent computation.
+
+    Returns the regular elements of the output.
+    """
+    self._log_state(f"end nested computation with output")
+    if uses_state:
+      assert len(self._computations) >= 2 and self._computations[-2] is comp
+    self._computations = self._computations[:-1]
+    self._tokens = self._tokens[:-1]
+    regulars, _ = self.set_state_from_tuple(comp, tuple_op, nr_regular, uses_state)
+    return regulars
+
+
+  def set_state_from_tuple(self, comp: XlaComputationBuilder,
+                           tuple_op: XlaOp, nr_regular: int,
+                           uses_state: bool) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
     """Decomposes a tuple, returns the regular elements and the state.
 
     We assume that the `tuple_op` represents a tuple with `nr_regular` regular
@@ -217,30 +310,22 @@ class _ComputationStateCarry(threading.local):
     """
     regular_ops = [xops.GetTupleElement(tuple_op, i) for i in range(nr_regular)]
     if uses_state:
-      self._current_computation = comp
-      self._current_token = xops.GetTupleElement(tuple_op, nr_regular)
+      assert self._computations and self._computations[-1] is comp
+      self._log_state(f"set state from tuple_op")
+      self._tokens[-1] = xops.GetTupleElement(tuple_op, nr_regular)
       return regular_ops, self.current_state(comp, uses_state)
     else:
       return regular_ops, []
 
-  def current_state(self, comp: XlaComputationBuilder, uses_state: bool) -> List[XlaOp]:
-    """Create new state if new computation, returns the state. """
-    if not uses_state:
-      return []
-    if self._current_computation is None:
-      self._current_computation = comp
-      self._current_token = xops.CreateToken(comp)
-    else:
-      assert comp is self._current_computation, "Overwriting previous computation"
-    return [self._current_token]
-
   def current_token(self, comp: XlaComputationBuilder) -> XlaOp:
+    self._log_state("reading token")
     state = self.current_state(comp, True)
     return state[0]
 
   def set_current_token(self, comp: XlaComputationBuilder, token: XlaOp):
-    assert comp == self._current_computation
-    self._current_token = token
+    assert comp == self._computations[-1]
+    assert self._tokens[-1]
+    self._tokens[-1] = token
 
 state_carry = _ComputationStateCarry()
 
@@ -313,6 +398,7 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 @cache()
 def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params):
   c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
+  state_carry.start_nested_comp_without_input(c, False)
   c.SetOpMetadata(xc.OpMetadata(
       op_type=prim.name,
       op_name=str(pp_eqn_compact(prim.name, params))))
@@ -333,6 +419,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     raise NotImplementedError(f"XLA translation rule for {prim} not found")
   assert isinstance(ans, xe.XlaOp)
   c.ClearOpMetadata()
+  state_carry.end_nested_comp_without_output(c)
   try:
     return c.Build()
   except RuntimeError as e:
@@ -595,12 +682,13 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
+  uses_outfeed = jaxpr_uses_outfeed(jaxpr)
+  state_carry.start_nested_comp_without_input(c, uses_outfeed)
   xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
-  state_carry.end_computation()
   built = c.Build(xops.Tuple(c, out_nodes))
 
   options = xb.get_compile_options(
@@ -609,12 +697,13 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
       device_assignment=(device.id,) if device else None)
   options.tuple_arguments = tuple_args
   backend = xb.get_backend(backend)
+  state_carry.end_nested_comp_without_output(c)
   compiled = backend.compile(built, compile_options=options)
 
   if nreps == 1:
-    return partial(_execute_compiled, compiled, result_handlers)
+    return partial(_execute_compiled, compiled, uses_outfeed, result_handlers)
   else:
-    return partial(_execute_replicated, compiled, result_handlers)
+    return partial(_execute_replicated, compiled, uses_outfeed, result_handlers)
 
 def _xla_callable_device(nreps, backend, device, arg_devices):
   if nreps > 1:
@@ -655,14 +744,28 @@ def _pval_to_result_handler(device, pval):
   else:
     return aval_to_result_handler(device, pv)
 
-def _execute_compiled(compiled, handlers, *args):
+_outfeed_allowed = False
+def set_outfeed_allowed(allowed: bool):
+  global _outfeed_allowed
+  _outfeed_allowed = allowed
+
+def check_outfeed_allowed(uses_outfeed: bool):
+  if uses_outfeed and not _outfeed_allowed:
+    raise ValueError("Attempting to execute compiled code using outfeed, "
+                     "but outfeed_consumer is not started.")
+
+def _execute_compiled(compiled: XlaExecutable, uses_outfeed: bool,
+                      handlers, *args):
+  check_outfeed_allowed(uses_outfeed)
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   out_bufs = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, handlers, *args):
+def _execute_replicated(compiled: XlaExecutable, uses_outfeed: bool,
+                        handlers, *args):
+  check_outfeed_allowed(uses_outfeed)
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
@@ -707,24 +810,21 @@ def _xla_call_translation_rule(c, axis_env,
   del device  # Ignored.
   subc = xb.make_computation_builder(f"jit_{name}")
 
-  uses_state = jaxpr_uses_state(call_jaxpr)
-  prev_state = state_carry.current_state(c, uses_state)
+  uses_outfeed = jaxpr_uses_outfeed(call_jaxpr)
+  prev_state = state_carry.current_state(c, uses_outfeed)
   input_op = xops.Tuple(c, list(in_nodes) + list(prev_state))
   arg = xb.parameter(subc, 0, c.GetShape(input_op))
   nr_regular_args = len(in_nodes)
-  args, input_state = state_carry.decompose_tuple_op(subc, arg, nr_regular_args, uses_state)
+  args, input_state = state_carry.start_nested_comp_with_input(subc, arg, nr_regular_args, uses_outfeed)
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'jit')),
                             *(args + input_state))
-  result_state = state_carry.current_state(subc, uses_state)
+  result_state = state_carry.current_state(subc, uses_outfeed)
   subc = subc.Build(xops.Tuple(subc, list(out_nodes) + result_state))
   call_op = xops.Call(c, subc, [input_op])
-  if not uses_state:
-    return call_op
   nr_outs = len(out_nodes)
-  regular_outs, _ = state_carry.decompose_tuple_op(c, call_op, nr_outs, uses_state)
+  regular_outs = state_carry.end_nested_comp_with_output(c, call_op, nr_outs, uses_outfeed)
   return xops.Tuple(c, regular_outs)
-
 
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
@@ -1129,16 +1229,21 @@ def _remat_translation_rule(c, axis_env, in_nodes,
                         xb.constant(c, onp.array(1, dtype=onp.float32)),
                         xc.Shape.array_shape(xc.PrimitiveType.F32, []))
   pred = xops.Lt(rng, xb.constant(c, onp.array(2, dtype=onp.float32)))
+  uses_outfeed = jaxpr_uses_outfeed(call_jaxpr)
+  prev_state = state_carry.current_state(c, uses_outfeed)
 
-  true_op = xops.Tuple(c, in_nodes)
+  true_op = xops.Tuple(c, list(in_nodes) + list(prev_state))
   remat_subc = xb.make_computation_builder("remat_call_subcomputation")
   input_op = xb.parameter(remat_subc, 0, c.GetShape(true_op), replicated=[])
-  args = [xops.GetTupleElement(input_op, i) for i in range(len(in_nodes))]
+  args, input_state = state_carry.start_nested_comp_with_input(remat_subc, input_op, len(in_nodes), uses_outfeed)
   out_nodes = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'remat')),
-                            *args)
-  out_node_shapes = [remat_subc.GetShape(o) for o in out_nodes]
-  remat_subc = remat_subc.Build(xops.Tuple(remat_subc, out_nodes))
+                            *(args + input_state))
+  result_state = state_carry.current_state(remat_subc, uses_outfeed)
+  result_tuple = xops.Tuple(remat_subc, out_nodes + result_state)
+  regular_outs = state_carry.end_nested_comp_with_output(c, result_tuple, len(out_nodes), uses_outfeed)
+  out_node_shapes = [remat_subc.GetShape(o) for o in regular_outs]
+  remat_subc = remat_subc.Build(xops.Tuple(remat_subc, regular_outs))
 
   false_op = true_op
   dummy_subc = xb.make_computation_builder("remat_call_dummy_subcomputation")

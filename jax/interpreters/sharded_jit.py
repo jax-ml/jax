@@ -156,7 +156,6 @@ def _sharded_callable(fun: lu.WrappedFun, partitions, name, *abstract_args):
   c._builder.SetSharding(_sharding_to_proto(partitions[1]))
   out_tuple = c.Tuple(*out_nodes)
   c._builder.ClearSharding()
-  xla.state_carry.end_computation()
   built = c.Build(out_tuple)
 
   num_partitions = _get_num_partitions(partitions[0])

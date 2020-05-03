@@ -11,16 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Implementation of an experimental primitive for printing, including
-   from transformed and compiled code.
+"""Implementation of an experimental primitive for calling back into Python
+code on the host, including from transformed and compiled code.
 
-See documentation for `id_print` below.
+See documentation for ``id_tap` and ``id_print``.
 For usage example, see tests/host_callback_test.py.
 
 Still to do:
-  * Performance tests
-  * Better support for pytrees to the top functions
-  * Better implementation of the partial-evaluation and transpose rule 
+  * Performance tests.
+  * Add flags for logging.
+  * Add unit tests with mocks.
+  * Improve the XLA compilation code.
+  * Improve the ergonomics of starting the consumer loop. Currently, when
+    invoking jit-ed code, one must start a consumer loop. This is not needed
+    when invoking code that does not involve jit. There is an error when
+    attempting to start a compiled computation without starting the outfeed
+    receiver. Perhaps we can put the receiver threads in the runtime.
   * Explore a simpler API that uses Python program-order, instead of
     data dependency-order. Need to add support to JAX for stateful primitives.
   * Explore implementation with outside compilation.
@@ -106,6 +112,9 @@ def id_tap(func: Callable, arg, *,
         - For ``grad`` there will be an ``id_tap`` for the primal values (if
         needed in the computation of `grad` and an ``id_print`` with the
         adjoints of the results, with transforms=('vjp').
+
+    When using ``id_tap`` in compiled code, one must ensure that the
+    ``outfeed_receiver`` is started.
   """
   if func not in (_end_consumer, _unknown_consumer):
     api._check_callable(func)
@@ -216,7 +225,7 @@ positional arguments and parameters:
 # TODO: handle multiple vmap and mask
 id_tap_p = core.Primitive("id_tap")
 id_tap_p.multiple_results = True
-xla.stateful_primitives.add(id_tap_p)
+xla.outfeed_primitives.add(id_tap_p)
 
 
 def _add_transform_name(params: Dict, transform: str) -> Dict:
@@ -248,12 +257,26 @@ def _id_tap_abstract_eval(*args_a: pe.AbstractValue, **params) \
 
 id_tap_p.def_abstract_eval(_id_tap_abstract_eval)
 
+def _instantiate_zeros(tan, arg):
+  """Turn special ad.zero tangents into arrays of 0s."""
+  if tan is not ad.zero:
+    return tan
+  elif isinstance(arg, core.Tracer):
+    # TODO: why do I have to do this to get a zero?
+    try:
+      aval = arg.aval
+      return ad.instantiate_zeros_aval(aval, tan)
+    except:
+      # It seems that we get here for ConcreteArray
+      return ad.instantiate_zeros(arg, tan)
+
 def _id_tap_jvp_rule(primals, tangents, *, func, nr_untapped=0, **params):
   # Put primals through id_tap separately, so that partial evaluation
   # can do its job for grad
   out_primals = id_tap_p.bind(*primals, func=func, nr_untapped=nr_untapped, **params)
   # Add one primal output as untapped, to create dependency.
-  out_tangents_extra = id_tap_p.bind(*tangents, out_primals[0],
+  tangent_zeros = tuple(map(_instantiate_zeros, tangents, primals))
+  out_tangents_extra = id_tap_p.bind(*tangent_zeros, out_primals[0],
                                      func=func, nr_untapped=nr_untapped + 1,
                                      **_add_transform_name(params, "jvp"))
   return tuple(out_primals), tuple(out_tangents_extra[:-1])
@@ -264,8 +287,7 @@ ad.primitive_jvps[id_tap_p] = _id_tap_jvp_rule
 
 def _id_tap_transpose_rule(cts, *args, func=None, nr_untapped=0, **params):
   assert len(cts) == len(args)
-  cts_zeros = [ad.instantiate_zeros_aval(a.aval, ct)
-               for a, ct in zip(args, cts)]
+  cts_zeros = tuple(map(_instantiate_zeros, cts, args))
   ct_args = id_tap_p.bind(*cts_zeros, func=func, nr_untapped=nr_untapped,
                           **_add_transform_name(params, "transpose"))
   return ct_args
@@ -445,21 +467,22 @@ def outfeed_receiver(*,
                      timeout_sec=10,
                      backends: Optional[Sequence[str]] = None,
                      devices: Optional[Sequence[XlaDevice]] = None):
-  # TODO: better timeout management
-  """Starts a receiver for the id_print outfeed.
+  # TODO: better timeout management.
+  # TODO: prevent multiple consumers.
+  """Starts a receiver for the id_tap outfeed.
 
   Args:
-    output_stream: (optional) a Python stream to write the output to
-    receiver_name: (optional) a name to use with debuging logging
+    receiver_name: (optional) a name to use with debug logging
     backends: (optional) sequence of backend names for which to listen.
       Will listen to all devices on those backends. By default, all devices on
       all known backends.
     devices: (optional) sequence of devices to listed to. At most one
       of `backends` or `devices` must be given.
   Usage:
-    with print_receiver():
-      jax.jit(func)(args)
 
+  >>>with outfeed_receiver():
+  >>>   jax.jit(func)(args)
+  >>>
   """
   if not devices:
     backends = backends or xla_client._get_local_backends().keys()
@@ -504,11 +527,13 @@ def outfeed_receiver(*,
   # bugs in our code, not from the tap functions.
   for rf in receiver_futures:
     rf.add_done_callback(lambda rf: rf.result())
+  xla.set_outfeed_allowed(True)
   try:
     yield
   finally:
     for d in devices:  # Signal the end of printing
       api.jit(lambda x: id_tap(_end_consumer, None, result=x), device=d)(0)  # type: ignore[arg-type]
+    xla.set_outfeed_allowed(False)
     for f in futures.as_completed(receiver_futures, timeout=timeout_sec):
       finished_device = f.result()  # Throw exceptions here
       if _LOGGING:
