@@ -41,6 +41,7 @@ from jax import lax
 from jax.lib import pytree, xla_bridge
 from jax.interpreters import ad, xla, batching, masking
 from jax.interpreters import partial_eval as pe
+from jax import pprint_util as ppu
 from jax import util
 from jaxlib import xla_client
 from jaxlib import xla_extension
@@ -60,42 +61,35 @@ XlaShape = Any # xla_client.Shape
 XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
 XlaDevice = Any  # xla_client.Device
 
-"""The id_tap primitive acts like the identity function. It has a number of
-positional arguments and parameters:
-  * func: the actual (Python) function to invoke with the positional arguments
-  and the parameters.
-  * nr_untapped: how many positional arguments (from the tail) should not be
-  passed to the tap function.
-  * transforms: a tuple of the transformations that have been applied.
-  * batch_dims: a tuple of the dims that have been batched, for vmap
-  * logical_shapes: a tuple of evaluated logical shapes, for mask
-"""
-# TODO: handle multiple vmap and mask
-id_tap_p = core.Primitive("id_tap")
-id_tap_p.multiple_results = True
-xla.stateful_primitives.add(id_tap_p)
-
 # TODO: add a flag
 _LOGGING = True
 
-def id_tap(func: Callable, *args, result=None, **kwargs):
-  """Behaves like the identity function for positional arguments, but invokes
-     the ``func`` with the arrays corresponding to ``args`` and the
-     ``kwargs``.
+def id_tap(func: Callable, arg, *,
+           result=None,
+           **kwargs):
+  """Behaves like the identity function, but invokes ``func`` on positional
+     argument ``arg`` and keyword arguments ``kwargs``.
+     The return value of ``func`` is ignored.
 
-     The return value is a tuple with the values of `args` or the value of the
-     keyword parameter `result` if present. If there is a single positional
-     argument, it returns just that argument without packing it in a tuple.
+     The argument can be a JAX type, or a pytree thereof (tuples/list/dict).
+     If the ``return`` keyword argument is given, then its value must be
+     a JAX type and it is the value being returned.
 
-     The positional arguments must be JAX values or pytrees.
-      * `result`: is the result of `id_tap`, must be a JAX value or a
-        pytree of values.
+     Note that only the JAX types from ``arg`` are passed through the compiled
+     code; all the values from ``kwargs`` are stored in Python and passed to
+     ``func``.
 
      Usage:
-     >>> y = id_tap(func, x * 2)  # calls func(2x) and returns 2x
-     >>> y, z = id_tap(func, x * 2, x * 3)  # calls func(2x, 3x) and returns (2x, 3x)
-     >>> y = id_print(func, x * 2, result=y)  # calls func(2x) and returns y
-     >>> y = id_print(func, x * 2, what='x')  # calls func(2x, what='x') and returns 2x
+     >>> # calls func(2x) and returns 2x
+     >>> y = id_tap(func, x * 2)
+     >>> # calls func((2x, 3x)) and returns (2x, 3x)
+     >>> y, z = id_tap(func, (x * 2, x * 3))
+     >>> # calls func(2x) and returns y
+     >>> y = id_tap(func, x * 2, result=y)
+     >>> # calls func(2x, what='x') and returns 2x
+     >>> y = id_tap(func, x * 2, what='x')
+     >>> # calls func(dict(x=x, y=y), what='foo') and returns dict(x=x, y=y)
+     >>> x, y = id_tap(func, dict(x=x, y=y), what='a dict')
 
      The order of execution is by data dependency: after all the arguments are
      computed and before the result is used. At least one of the returned values
@@ -113,64 +107,42 @@ def id_tap(func: Callable, *args, result=None, **kwargs):
         needed in the computation of `grad` and an ``id_print`` with the
         adjoints of the results, with transforms=('vjp').
   """
-  flat_args, args_treedef = pytree.flatten(args)
-  params = dict(kwargs)  #  copy; we pass all params to the primitive
-  params["func"] = func  # pass the function, to have it for transforms
+  if func not in (_end_consumer, _unknown_consumer):
+    api._check_callable(func)
+  flat_args, arg_treedef = pytree.flatten(arg)
+  api._check_args(flat_args)
+  params = dict(kwargs)  #  we pass a copy of params to the primitive
+  # See definition of id_tap_p for what parameters it takes
+  params["func"] = func
+  params["arg_treedef"] = arg_treedef
   if result is not None:
-    flat_results, results_treedef = pytree.flatten(result)
+    flat_results, result_treedef = pytree.flatten(result)
+    api._check_args(flat_results)
     params["nr_untapped"] = len(flat_results)
     all_args = flat_args + flat_results
   else:
     all_args = flat_args
   flat_outs = id_tap_p.bind(*all_args, **params)  # Always a tuple of all args
   if result is not None:
-    return results_treedef.unflatten(flat_outs[-params["nr_untapped"]:])  # type: ignore[unsupported-operands]
+    return result_treedef.unflatten(flat_outs[-params["nr_untapped"]:])  # type: ignore[unsupported-operands]
   else:
-    res = args_treedef.unflatten(flat_outs)
-    return res if len(args) > 1 else res[0]
+    return arg_treedef.unflatten(flat_outs)
 
 # TODO: clean up the docstring
-def id_print(*args, result=None, output_stream=None, threshold=1024,
+def id_print(arg, *, result=None, output_stream=None, threshold=1024,
              **kwargs):
-  """Behaves like the identify function for positional arguments, but prints all
-     arguments on the host, even from transformed or compiled code.
+  """Like ``id_tap`` with a printing tap function.
 
-     The return value is a tuple with the value of `args` or the value of the
-     keyword parameter `result` if present. If there is a single positional
-     argument, it returns just that argument without packing it in a tuple.
+     On each invocation of the printing tap, the ``kwargs`` if present
+     will be printed first (sorted by keys). Then arg will be printed,
+     with the arrays stringified with ``numpy.array2string``.
 
-     The positional arguments must be JAX values. The keyword arguments are
-     serialized to a string and printed along with the positional arguments.
-     There are a few special keyword arguments that are not printed:
-
-      * `result`: is the result of `id_print`, must be a JAX value or a
-        pytree of values.
-      * `output_stream`: is the output stream where the values should be
-        printed. (Note: does not yet work from under JIT).
-
-     Usage:
-     >>> y = id_print(x * 2)  # prints and returns 2x
-     >>> y, z = id_print(x * 2, x * 3)  # prints and returns 2x and 3x
-     >>> y = id_print(x * 2, result=y)  # prints 2x and returns y
-     >>> y = id_print(x * 2, what='x')  # prints "what=x" followed by 2x
-
-     The order of execution is by data dependency: after all the arguments are
-     computed and before the result is used. At least one of the returned values
-     must be used in the rest of the computation, or else this operation has
-     no effect.
-
-     Upon JAX transformations, the transformed values are wrapped with
-     `id_print`, and a special `transforms` tuple keyword argument is added with
-     the sequence of transformations applied:
-
-        - For `vmap` the arguments are batched, and transforms=('vmap')
-        - For `jvp` there will be an id_print for the primal values, and a
-        separate `id_print` for the tangents with `transforms=('jvp')`.
-        - For `grad` there will be an `id_print` for the primal values (if
-        needed in the computation of `grad` and an `id_print` with the
-        adjoints of the results, with transforms=('vjp').
+     Additional keyword arguments:
+     * ``output_stream`` if given then it will be used instead of the
+       built-in ``print``. The string will be passed as ``output_stream.write(s)``.
+     * ``threshold`` is passed to ``numpy.array2string``.
   """
-  return id_tap(_print_consumer, *args,
+  return id_tap(_print_consumer, arg,
                 result=result, output_stream=output_stream, **kwargs)
 
 
@@ -179,6 +151,7 @@ class _ConsumerCallable(NamedTuple):
   """Host-side information for a outfeed consumer."""
   func: Callable
   kwargs: Tuple[Tuple[str, Any], ...]
+  arg_treedef: Any
 
 _consumer_registry: Dict[_ConsumerCallable, int] = dict()
 _consumer_registry_by_id: Dict[int, _ConsumerCallable] = dict()
@@ -194,10 +167,10 @@ def _register_consumer(cons: _ConsumerCallable) -> int:
   _consumer_registry_by_id[cons_id] = cons
   return cons_id
 
-def _print_consumer(*arrays, output_stream=None,
+def _print_consumer(arg, *, output_stream=None,
                     threshold=1024, **kwargs):
   """The consumer for id_print"""
-  def emit(s: str):
+  def emit_str(s: str):
     if output_stream is not None:
       output_stream.write(s + "\n")
     else:
@@ -206,13 +179,44 @@ def _print_consumer(*arrays, output_stream=None,
                       for k, v in sorted(kwargs.items())
                       if k not in ("consumer_id", "nr_untapped")])
   if kv_pairs:
-    emit(kv_pairs)
-  for a in arrays:
-    if not isinstance(a, onp.ndarray):
-      a = onp.array(a)
-    emit(onp.array2string(a, threshold=threshold))
+    emit_str(kv_pairs)
+
+  def pp_val(arg) -> ppu.PrettyPrint:
+    if isinstance(arg, (tuple, list)):
+      return (ppu.pp('[ ') >>
+              ppu.vcat([pp_val(e) for e in arg]) >> ppu.pp(' ]'))
+    elif isinstance(arg, dict):
+      return (ppu.pp('{ ') >>
+              ppu.vcat(
+                [ppu.pp(f"{k}=") >> pp_val(v)
+                for k, v in sorted(arg.items())]) >>
+              ppu.pp(' }'))
+    elif isinstance(arg, onp.ndarray):
+      return ppu.pp(onp.array2string(arg, threshold=threshold))
+    else:
+      return ppu.pp(str(arg))
+
+  emit_str(str(pp_val(arg)))
 
 
+
+"""The id_tap primitive acts like the identity function. It has a number of
+positional arguments and parameters:
+  * func: the actual (Python) function to invoke with the positional arguments
+  and the parameters.
+  * nr_untapped: how many positional arguments (from the tail) should not be
+  passed to the tap function.
+  * arg_treedef: the treedef of the tapped positional arguments
+  * transforms: a tuple of the transformations that have been applied.
+  * batch_dims: a tuple of the dims that have been batched, for vmap
+  * logical_shapes: a tuple of evaluated logical shapes, for mask
+
+  * the remaining parameters are passed to the tap function.
+"""
+# TODO: handle multiple vmap and mask
+id_tap_p = core.Primitive("id_tap")
+id_tap_p.multiple_results = True
+xla.stateful_primitives.add(id_tap_p)
 
 
 def _add_transform_name(params: Dict, transform: str) -> Dict:
@@ -220,13 +224,16 @@ def _add_transform_name(params: Dict, transform: str) -> Dict:
   return dict(params, transforms=params.get("transforms", ()) + (transform,))
 
 
-def _id_tap_impl(*arrays, func=None, nr_untapped=0, **params):
+def _id_tap_impl(*arrays, func=None, nr_untapped=0, arg_treedef=None,
+                 **params):
   assert isinstance(func, Callable)
   func_params = dict(params)
-  # TODO: handle errors in the tap consumer
-  func_arrays = arrays[:-nr_untapped] if nr_untapped > 0 else arrays
+  # TODO: consolidate logic with the outfeed receiver
   try:
-    func(*func_arrays, **func_params)
+    assert nr_untapped <= len(arrays)
+    func_arrays = arrays[:-nr_untapped] if nr_untapped > 0 else arrays
+    arg = api.tree_unflatten(arg_treedef, func_arrays)
+    func(arg, **func_params)
   except Exception as e:
     raise TapFunctionException from e
     # We continue for now, we need to keep reading the outfeed
@@ -298,7 +305,8 @@ _unknown_consumer = 1  # for testing error cases
 
 def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
                                        *args_op: XlaOp, func=None,
-                                       nr_untapped=0, **params):
+                                       nr_untapped=0, arg_treedef=None,
+                                       **params):
   params = dict(params)
   if func is _end_consumer:
     params["consumer_id"] = _end_consumer
@@ -306,7 +314,7 @@ def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
     params["consumer_id"] = _unknown_consumer  # Will trigger an error, for testing
   else:
     params["consumer_id"] = _register_consumer(
-      _ConsumerCallable(func, tuple(params.items())))
+      _ConsumerCallable(func, tuple(params.items()), arg_treedef))
 
   prev_token = xla.state_carry.current_token(comp)
   nr_args_to_emit = len(args_op) - nr_untapped
@@ -320,9 +328,6 @@ def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
 
 xla.translations[id_tap_p] = _id_print_translation_rule_outfeed
 
-
-# If true, then all the arrays are outfed together
-_OUTFEED_ARRAYS_TOGETHER = True
 
 # The data on the outfeed follows a protocol that allows multiplexing the
 # outfeed among multiple consumers, and communicates in-stream shape and
@@ -390,12 +395,8 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
   token = xops.OutfeedWithToken(data, token, comp.GetShape(data))
 
   # Now send the arrays
-  if _OUTFEED_ARRAYS_TOGETHER:
-    entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
-    token = xops.OutfeedWithToken(xops.Tuple(comp, arrays), token, entire_shape)
-  else:
-    for a, a_shape in zip(arrays, arrays_shape):
-      token = xops.OutfeedWithToken(a, token, a_shape)
+  entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
+  token = xops.OutfeedWithToken(xops.Tuple(comp, arrays), token, entire_shape)
   return token
 
 def _receive_outfeed(device: XlaDevice, receiver_name: str
@@ -411,14 +412,7 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
                                               (_OUTFEED_HEADER_LENGTH,))
 
   def _get_data(data_shape: XlaShape, device: XlaDevice) -> XlaShape:
-    if platform in ("gpu", "cpu"):
-      return xla_client.transfer_from_outfeed(data_shape, device)
-    else:
-      if _OUTFEED_ARRAYS_TOGETHER:
-        return xla_client.transfer_from_outfeed(data_shape, device)
-      else:
-        return xla_client.transfer_from_outfeed(
-            xla_client.Shape.tuple_shape((data_shape,)), device)[0]
+    return xla_client.transfer_from_outfeed(data_shape, device)
 
   header = _get_data(header_shape, device)
   if header[0] != _OUTFEED_HEADER_START:
@@ -434,19 +428,10 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
   arrays_shape = [xla_client.Shape.array_shape(_CODE_TO_DTYPE[a_descr[0]],
                                                a_descr[1])
                   for a_descr in array_descriptors]
-  if _OUTFEED_ARRAYS_TOGETHER:
-    entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
-    arrays = _get_data(entire_shape, device)
-    logging.info(f"[{receiver_name}:{device}] Outfeed read data of shape "
-                 ",".join([f"{data.dtype}{data.shape}" for data in arrays]))
-  else:
-    arrays = []
-    for a_shape in arrays_shape:
-      data = _get_data(a_shape, device)
-      if _LOGGING:
-        logging.info(f"[{receiver_name}:{device}] Outfeed read array of shape "
-                     f"{data.dtype}{data.shape}")
-      arrays.append(data)
+  entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
+  arrays = _get_data(entire_shape, device)
+  logging.info(f"[{receiver_name}:{device}] Outfeed read data of shape "
+               ",".join([f"{data.dtype}{data.shape}" for data in arrays]))
   return (consumer_id, arrays)
 
 
@@ -487,7 +472,7 @@ def outfeed_receiver(*,
     thread_name_prefix=f"outfeed_receiver_{receiver_name}",
     max_workers=len(devices))
 
-  count_tap_exceptions = False
+  count_tap_exceptions = 0
   def device_receiver_loop(device: XlaDevice) -> XlaDevice:
     """Polls the outfeed for a device in a loop."""
     nonlocal count_tap_exceptions
@@ -507,7 +492,8 @@ def outfeed_receiver(*,
         count_tap_exceptions += 1
         continue  # We need to read the entire outfeed
       try:
-        consumer.func(*arrays, **dict(consumer.kwargs))  # type: ignore[attribute-error]
+        arg = api.tree_unflatten(consumer.arg_treedef, arrays)
+        consumer.func(arg, **dict(consumer.kwargs))  # type: ignore[attribute-error]
       except Exception as e:
         logging.error(f"Postponing exception raised in tap function: {str(e)}\n{traceback.format_exc()}")
         count_tap_exceptions += 1
@@ -516,12 +502,13 @@ def outfeed_receiver(*,
   receiver_futures = [executor.submit(device_receiver_loop, d) for d in devices]
   # Register a callback to raise errors if any. These exception come from
   # bugs in our code, not from the tap functions.
-  [rf.add_done_callback(lambda rf: rf.result()) for rf in receiver_futures]
+  for rf in receiver_futures:
+    rf.add_done_callback(lambda rf: rf.result())
   try:
     yield
   finally:
     for d in devices:  # Signal the end of printing
-      api.jit(lambda x: id_tap(_end_consumer, result=x), device=d)(0)  # type: ignore[wrong-arg-types]
+      api.jit(lambda x: id_tap(_end_consumer, None, result=x), device=d)(0)  # type: ignore[arg-type]
     for f in futures.as_completed(receiver_futures, timeout=timeout_sec):
       finished_device = f.result()  # Throw exceptions here
       if _LOGGING:

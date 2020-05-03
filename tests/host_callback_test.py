@@ -127,11 +127,13 @@ class HostCallbackTest(jtu.JaxTestCase):
         """
 { lambda  ; a.
   let b = mul a 2.00
-      c = id_tap[ func=_print
+      c = id_tap[ arg_treedef=*
+                  func=_print
                   output_stream=...
                   what=a * 2 ] b
       d = mul c 3.00
-      e f = id_tap[ func=_print
+      e f = id_tap[ arg_treedef=*
+                    func=_print
                     nr_untapped=1
                     output_stream=...
                     what=y * 3 ] d c
@@ -150,7 +152,7 @@ what: y * 3
 
   def test_with_tuple_results(self):
     def func2(x):
-      x1, y1 = hcb.id_print(x * 2., x * 3., output_stream=testing_stream)
+      x1, y1 = hcb.id_print((x * 2., x * 3.), output_stream=testing_stream)
       return x1 + y1
 
     self.assertMultiLineStrippedEqual(
@@ -158,19 +160,41 @@ what: y * 3
 { lambda  ; a.
   let b = mul a 2.00
       c = mul a 3.00
-      d e = id_tap[ func=_print
+      d e = id_tap[ arg_treedef=PyTreeDef(tuple, [*,*])
+                    func=_print
                     output_stream=...] b c
       f = add d e
   in (f,) }""", str(api.make_jaxpr(func2)(3.)))
     self.assertEqual(3. * (2. + 3.), func2(3.))
     self.assertMultiLineStrippedEqual("""
-6.00
-9.00""", testing_stream.output)
+[ 6.00
+  9.00 ]""", testing_stream.output)
+    testing_stream.reset()
+
+  def test_with_dict_results(self):
+    def func2(x):
+      res = hcb.id_print(dict(a=x * 2., b=x * 3.), output_stream=testing_stream)
+      return res["a"] + res["b"]
+
+    self.assertMultiLineStrippedEqual(
+      """
+{ lambda  ; a.
+  let b = mul a 2.00
+      c = mul a 3.00
+      d e = id_tap[ arg_treedef=PyTreeDef(dict[['a', 'b']], [*,*])
+                    func=_print
+                    output_stream=...] b c
+      f = add d e
+  in (f,) }""", str(api.make_jaxpr(func2)(3.)))
+    self.assertEqual(3. * (2. + 3.), func2(3.))
+    self.assertMultiLineStrippedEqual("""
+{ a=6.00
+  b=9.00 }""", testing_stream.output)
     testing_stream.reset()
 
   def test_with_result(self):
     def func2(x):
-      x1 = hcb.id_print(x * 2., x * 3., result=x * 4.,
+      x1 = hcb.id_print((x * 2., x * 3.), result=x * 4.,
                         output_stream=testing_stream)
       return x1
 
@@ -180,15 +204,41 @@ what: y * 3
   let b = mul a 2.00
       c = mul a 3.00
       d = mul a 4.00
-      e f g = id_tap[ func=_print
+      e f g = id_tap[ arg_treedef=PyTreeDef(tuple, [*,*])
+                      func=_print
                       nr_untapped=1
                       output_stream=...] b c d
   in (g,) }""", str(api.make_jaxpr(func2)(3.)))
     self.assertEqual(3. * 4., func2(3.))
     self.assertMultiLineStrippedEqual("""
-6.00
-9.00""", testing_stream.output)
+[ 6.00
+  9.00 ]""", testing_stream.output)
     testing_stream.reset()
+
+  def test_pytree(self):
+    def func(x, what=""):
+      """Returns some pytrees depending on x"""
+      if what == "pair_1_x":
+        return (1, x)
+      elif what == "pair_x_2x":
+        return (x, 2 * x)
+      elif what == "dict":
+        return dict(a=2 * x, b=3 * x)
+      else:
+        assert False
+    tap_count = 0
+    def tap_func(a, what=""):
+      nonlocal tap_count
+      tap_count += 1
+      self.assertEqual(func(5, what), a)
+
+    for what in ("pair_1_x", "pair_x_2x", "dict"):
+      self.assertEqual(func(10, what),
+                       (lambda x: hcb.id_tap(tap_func, func(x, what),
+                                              result=func(x * 2, what),
+                                              what=what))(5))
+    self.assertEqual(3, tap_count)
+
 
   def test_eval_tap_exception(self):
     # Simulate a tap error
@@ -220,7 +270,8 @@ what: x1
   let b = xla_call[ backend=None
                     call_jaxpr={ lambda  ; a.
                                  let b = mul a 2.00
-                                     c = id_tap[ func=_print
+                                     c = id_tap[ arg_treedef=*
+                                                 func=_print
                                                  output_stream=...
                                                  what=here ] b
                                      d = mul c 3.00
@@ -324,6 +375,32 @@ where: 2
     self.assertEqual(len(devices), len(re.findall(r"111", testing_stream.output)))
     self.assertEqual(len(devices), len(re.findall(r"112", testing_stream.output)))
     testing_stream.reset()
+
+  def test_jit_pytree(self):
+    def func(x, what=""):
+      """Returns some pytrees depending on x"""
+      if what == "pair_1_x":
+        return (1, x)
+      elif what == "pair_x_2x":
+        return (x, 2 * x)
+      elif what == "dict":
+        return dict(a=2 * x, b=3 * x)
+      else:
+        assert False
+    tap_count = 0
+    def tap_func(a, what=""):
+      nonlocal tap_count
+      tap_count += 1
+      self.assertEqual(func(5, what), a)
+
+    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
+      for what in ("pair_1_x", "pair_x_2x", "dict"):
+        self.assertEqual(func(10, what),
+                         api.jit(lambda x: hcb.id_tap(tap_func, func(x, what),
+                                                      result=func(x * 2, what),
+                                                      what=what))(5))
+      self.assertEqual(3, tap_count)
+
 
   def test_jit_cond1(self):
     """A conditional"""
@@ -506,7 +583,7 @@ where: 10
     if nr_args > 1:
       args = args * nr_args
     jit_fun1 = api.jit(lambda xs: hcb.id_print(
-        *xs,
+        xs,
         a_new_test="************",
         testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
@@ -521,20 +598,20 @@ where: 10
   def test_jit_several_together(self):
     arg = np.arange(50, dtype=np.int32).reshape((10, 5))
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
-      api.jit(lambda x, y: hcb.id_print(x, y, x * 2.))(arg, np.ones(100, dtype=np.int32))
+      api.jit(lambda x, y: hcb.id_print((x, y, x * 2.)))(arg, np.ones(100, dtype=np.int32))
 
   def test_jit_interleaving(self):
     # Several jit's without data dependencies; they may interfere
     count = 0  # Count tap invocations
     nr_arrays = 5
-    def tap_func(*args, **kwargs):
+    def tap_func(arg, **kwargs):
       nonlocal count
-      assert len(args) == nr_arrays
+      assert len(arg) == nr_arrays
       count += 1
     # This is the function that we'll run multiple times
     def func(x, count):
       for i in range(count):
-        x = hcb.id_tap(tap_func, *[x + i for i in range(nr_arrays)], i=i)[-1]
+        x = hcb.id_tap(tap_func, [x + i for i in range(nr_arrays)], i=i)[-1]
       return x
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       x = np.array(1, dtype=onp.int32)
@@ -632,24 +709,28 @@ what: x3
         """
 { lambda  ; a b.
   let c = mul a 2.00
-      d = id_tap[ func=_print
+      d = id_tap[ arg_treedef=*
+                  func=_print
                   nr_untapped=0
                   output_stream=...
                   what=a * 2 ] c
       e = mul d 3.00
-      f g = id_tap[ func=_print
+      f g = id_tap[ arg_treedef=*
+                    func=_print
                     nr_untapped=1
                     output_stream=...
                     what=y * 3 ] e d
       h = pow g 2.00
       i = mul b 2.00
-      j k = id_tap[ func=_print
+      j k = id_tap[ arg_treedef=*
+                    func=_print
                     nr_untapped=1
                     output_stream=...
                     transforms=('jvp',)
                     what=a * 2 ] i d
       l = mul j 3.00
-      m n o = id_tap[ func=_print
+      m n o = id_tap[ arg_treedef=*
+                      func=_print
                       nr_untapped=2
                       output_stream=...
                       transforms=('jvp',)
@@ -710,25 +791,29 @@ transforms: ('jvp', 'transpose') what: x * 3
       """
 { lambda  ; a.
   let b = mul 1.00 a
-      c d = id_tap[ func=_print
+      c d = id_tap[ arg_treedef=*
+                    func=_print
                     nr_untapped=1
                     output_stream=...
                     transforms=('jvp', 'transpose')
                     what=y * 3 ] b 0.00
       e = mul c 3.00
-      f g = id_tap[ func=_print
+      f g = id_tap[ arg_treedef=*
+                    func=_print
                     nr_untapped=1
                     output_stream=...
                     transforms=('jvp', 'transpose')
                     what=x * 2 ] e 0.00
       h = mul f 2.00
       i = mul a 2.00
-      j = id_tap[ func=_print
+      j = id_tap[ arg_treedef=*
+                  func=_print
                   nr_untapped=0
                   output_stream=...
                   what=x * 2 ] i
       k = mul j 3.00
-      l = id_tap[ func=_print
+      l = id_tap[ arg_treedef=*
+                  func=_print
                   nr_untapped=0
                   output_stream=...
                   what=y * 3 ] k
@@ -760,13 +845,15 @@ transforms: ('jvp', 'transpose') what: x * 2
         """
 { lambda  ; a.
   let b = mul a 2.00
-      c = id_tap[ batch_dims=(0,)
+      c = id_tap[ arg_treedef=*
+                  batch_dims=(0,)
                   func=_print
                   output_stream=...
                   transforms=('batch',)
                   what=a * 2 ] b
       d = mul c 3.00
-      e f = id_tap[ batch_dims=(0, 0)
+      e f = id_tap[ arg_treedef=*
+                    batch_dims=(0, 0)
                     func=_print
                     nr_untapped=1
                     output_stream=...
@@ -788,7 +875,7 @@ batch_dims: (0, 0) transforms: ('batch',) what: y * 3
     x = 3.
     def func(y):
       # x is not mapped, y is mapped
-      _, y = hcb.id_print(x, y, output_stream=testing_stream)
+      _, y = hcb.id_print((x, y), output_stream=testing_stream)
       return x + y
 
     vmap_func = api.vmap(func)
@@ -796,7 +883,8 @@ batch_dims: (0, 0) transforms: ('batch',) what: y * 3
     self.assertMultiLineStrippedEqual(
       """
 { lambda  ; a.
-  let b c = id_tap[ batch_dims=(None, 0)
+  let b c = id_tap[ arg_treedef=PyTreeDef(tuple, [*,*])
+                    batch_dims=(None, 0)
                     func=_print
                     output_stream=...
                     transforms=('batch',) ] 3.00 a
@@ -807,8 +895,8 @@ batch_dims: (0, 0) transforms: ('batch',) what: y * 3
     self.assertMultiLineStrippedEqual(
       """
 batch_dims: (None, 0) transforms: ('batch',)
-3.00
-[4.00 5.00]
+[ 3.00
+  [4.00 5.00] ]
    """, testing_stream.output)
     testing_stream.reset()
 
