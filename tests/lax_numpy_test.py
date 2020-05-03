@@ -1284,8 +1284,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        jtu.format_shape_dtype_string(shape2, dtype2)),
        "shape1": shape1, "dtype1": dtype1, "shape2": shape2, "dtype2": dtype2,
        "rng_factory": jtu.rand_default}
-      for dtype1 in float_dtypes or int_dtypes
-      for dtype2 in float_dtypes or int_dtypes
+      for dtype1 in [s for s in float_dtypes or int_dtypes if s != jnp.bfloat16]
+      for dtype2 in [s for s in float_dtypes or int_dtypes if s != jnp.bfloat16]
       for shape1 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]
       for shape2 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]))
   def testUnion1d(self, shape1, dtype1, shape2, dtype2, rng_factory):
