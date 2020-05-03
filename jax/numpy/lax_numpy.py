@@ -3253,6 +3253,7 @@ def take_along_axis(arr, indices, axis):
 
 ### SetOps
 
+
 @partial(jit, static_argnums=1)
 def _unique1d_sorted_mask(ar, optional_indices=False):
   """
@@ -3306,9 +3307,9 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis=None):
 
-  #if iscomplexobj(ar):
-    #raise NotImplementedError(
-         # "np.unique is not implemented for complex valued arrays")
+  if iscomplexobj(ar):
+    raise NotImplementedError(
+          "np.unique is not implemented for complex valued arrays")
 
   if axis is None:
     ret = _unique1d(ar, return_index, return_inverse, return_counts)
