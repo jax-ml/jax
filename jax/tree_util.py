@@ -231,8 +231,8 @@ def _replace_nones(sentinel, tree):
     else:
       return tree
 
-def tree_reduce(f, tree):
-  return functools.reduce(f, tree_leaves(tree))
+def tree_reduce(f, tree, initializer=None):
+  return functools.reduce(f, tree_leaves(tree), initializer)
 
 def tree_all(tree):
   return all(tree_leaves(tree))
