@@ -189,7 +189,8 @@ def glu(x, axis=-1):
   """Gated linear unit activation function."""
   size = x.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
-  return x[..., :size // 2] * sigmoid(x[..., size // 2:])
+  x1, x2 = np.split(x, 2, axis)
+  return x1 * sigmoid(x2)
 
 # other functions
 
