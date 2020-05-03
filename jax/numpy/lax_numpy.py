@@ -3376,7 +3376,6 @@ def _take_along_axis(arr, indices, axis):
 def take_along_axis(arr, indices, axis):
   return _take_along_axis(arr, indices, axis)
 
-
 ### SetOps
 
 @partial(jit, static_argnums=1)
@@ -3445,6 +3444,26 @@ def unique(ar, return_index=False, return_inverse=False,
 
   raise NotImplementedError(
         "np.unique is not implemented for the axis argument")
+
+  @_wraps(onp.setxor1d)
+def setxor1d(ar1, ar2, assume_unique=False):
+  if not assume_unique:
+    ar1 = unique(ar1)
+    ar2 = unique(ar2)
+  else:
+    if ar1.ndim == 0:
+      ar1 = array([ar1])
+    if ar2.ndim == 0:
+      ar2 = array([ar2])
+  
+  aux = concatenate((ar1, ar2))
+  if aux.size == 0:
+      return aux
+
+  aux.sort()
+  ar_true = array([True])
+  flag = concatenate((ar_true, aux[1:] != aux[:-1], ar_true))
+  return aux[flag[1:] & flag[:-1]]
 
 ### Indexing
 

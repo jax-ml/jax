@@ -1334,6 +1334,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}".format(
+       jtu.format_shape_dtype_string(shape1, dtype1),
+       jtu.format_shape_dtype_string(shape2, dtype2)),
+       "shape1": shape1, "dtype1": dtype1, "shape2": shape2,
+       "dtype2": dtype2, "rng_factory": jtu.rand_default}
+      for dtype1 in float_dtypes or int_dtypes
+      for dtype2 in float_dtypes or int_dtypes
+      for shape1 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]
+      for shape2 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]))
+  def testSetxor1d(self, shape1, dtype1, shape2, dtype2, rng_factory):
+    rng = rng_factory()
+    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+    onp_fun = lambda ar1, ar2: onp.setxor1d(ar1, ar2)
+    jnp_fun = lambda ar1, ar2: jnp.setxor1d(ar1, ar2)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+
   def testIssue1233(self):
     '''
     Following numpy test suite from `test_repeat` at
