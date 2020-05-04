@@ -727,7 +727,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     ans = api.grad(f)(x)
     expected = api.grad(f_ref)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
+    jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"],
+                    rtol={np.float32: 1e-2, np.float64: 2e-3})
 
   def testCondGrad3(self):
     def fun_ref(x):
@@ -1489,7 +1490,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(value, 5 ** 1.5, check_dtypes=False, rtol=1e-6)
     self.assertAllClose(grad, api.grad(pow)(5.0, 1.5), check_dtypes=False,
                         rtol=1e-7)
-    jtu.check_grads(sqrt_cubed, (5.0,), order=2, rtol=1e-3)
+    jtu.check_grads(sqrt_cubed, (5.0,), order=2,
+                    rtol={np.float32: 1e-2, np.float64: 1e-3})
 
     inputs = np.array([4.0, 5.0])
     results = api.vmap(sqrt_cubed)(inputs)
@@ -1549,7 +1551,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(expected, actual, check_dtypes=True)
 
     jtu.check_grads(lambda x, y: linear_solve(np.dot(x, x.T), y),
-                    (a, b), order=2)
+                    (a, b), order=2, rtol={np.float32: 1e-2})
 
   def test_custom_root_errors(self):
     with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
@@ -1646,14 +1648,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.linalg.solve(np.exp(a), np.cos(b))
     actual = build_and_solve(a, b)
     self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
-    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2, rtol=2e-3)
+    jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2,
+                    rtol={np.float32: 6e-2, np.float64: 2e-3})
 
     # vmap across an empty dimension
     jtu.check_grads(
         api.vmap(build_and_solve), (a[None, :, :], b[None, :]),
         atol=1e-5,
         order=2,
-        rtol=2e-3)
+        rtol={np.float32: 6e-2, np.float64: 2e-3})
 
   def test_custom_linear_solve_cholesky(self):
 
@@ -1795,7 +1798,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     b = list(rng.randn(7))
 
     # Non-batched
-    jtu.check_grads(custom_unrolled_lower_tri_solve, (mat, b), order=2)
+    jtu.check_grads(custom_unrolled_lower_tri_solve, (mat, b), order=2,
+                    rtol={np.float32: 2e-2})
 
     # Batch one element of b (which, because of unrolling, should only affect
     # the first block of outputs)
@@ -1806,7 +1810,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
             custom_unrolled_lower_tri_solve,
             in_axes=(None, [None, None, None, 0, None, None, None]),
             out_axes=[0, 0, 0, 0, 0, None, None]), (mat, b_bat),
-        order=2)
+        order=2,
+        rtol={np.float32: 1e-2})
 
     # Batch one element of mat (again only affecting first block)
     mat[2][1] = rng.randn(3)

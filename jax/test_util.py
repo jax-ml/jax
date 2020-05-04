@@ -637,10 +637,10 @@ def rand_int(low, high=None):
     return randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
-def rand_unique_int():
+def rand_unique_int(high=None):
   randchoice = npr.RandomState(0).choice
   def fn(shape, dtype):
-    return randchoice(onp.arange(onp.prod(shape), dtype=dtype),
+    return randchoice(onp.arange(high or onp.prod(shape), dtype=dtype),
                       size=shape, replace=False)
   return fn
 

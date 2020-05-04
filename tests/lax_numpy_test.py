@@ -182,7 +182,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("divmod", 2, int_dtypes + float_dtypes, all_shapes,
               jtu.rand_nonzero, []),
     op_record("exp2", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
-              tolerance={jnp.bfloat16: 2e-2, onp.float16: 1e-2}, inexact=True),
+              tolerance={jnp.bfloat16: 4e-2, onp.float16: 1e-2}, inexact=True),
     # TODO(b/142975473): on CPU, expm1 for float64 is only accurate to ~float32
     # precision.
     op_record("expm1", 1, number_dtypes, all_shapes, jtu.rand_positive, [],
@@ -225,7 +225,7 @@ JAX_COMPOUND_OP_RECORDS = [
               tolerance={onp.float64: 1e-12}, inexact=True),
     op_record("logaddexp2", 2, float_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, ["rev"],
-              tolerance={onp.float16: 1e-2}, inexact=True),
+              tolerance={onp.float16: 1e-2, onp.float64: 2e-14}, inexact=True),
     op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes,
               jtu.rand_default, [], check_dtypes=False,
               tolerance={onp.float16: 1e-2, onp.float64: 1e-12}),
@@ -1203,7 +1203,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     precision = lax.Precision.HIGHEST if jtu.device_under_test() == "tpu" else None
     onp_fun = partial(onp_op, mode=mode)
     jnp_fun = partial(jnp_op, mode=mode, precision=precision)
-    tol = 1e-2
+    tol = {onp.float16: 2e-1, onp.float32: 1e-2, onp.float64: 1e-14}
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
@@ -1228,7 +1228,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     args_maker = lambda: [rng(shape, dtype)]
 
-    tol = max(jtu.tolerance(dtype), jtu.tolerance(out_dtype))
+    tol_thresholds = {dtypes.bfloat16: 4e-2}
+    tol = max(jtu.tolerance(dtype, tol_thresholds),
+              jtu.tolerance(out_dtype, tol_thresholds))
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
@@ -1708,7 +1710,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_fun = lambda x, weights: jnp.average(x, axis, weights, returned)
       args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
     onp_fun = _promote_like_jnp(onp_fun, inexact=True)
-    tol = {onp.float16: 1e-2, onp.float32: 1e-6, onp.float64: 1e-12,}
+    tol = {dtypes.bfloat16: 2e-1, onp.float16: 1e-2, onp.float32: 1e-6,
+           onp.float64: 1e-12,}
     check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
     try:
         self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker,
