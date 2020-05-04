@@ -42,7 +42,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def tearDown(self):
     super().tearDown()
-    config.update("jax_numpy_rank_promotion", "warn")
+    config.update("jax_numpy_rank_promotion", "allow")
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
@@ -180,7 +180,7 @@ class NNInitializersTest(jtu.JaxTestCase):
 
   def tearDown(self):
     super().tearDown()
-    config.update("jax_numpy_rank_promotion", "warn")
+    config.update("jax_numpy_rank_promotion", "allow")
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
