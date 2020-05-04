@@ -497,6 +497,7 @@ for func in get_module_functions(np.linalg):
     """))
 def lstsq(a, b, rcond=None, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
+  # TODO: add custom jvp rule for more robust lstsq differentiation
   a, b = _promote_arg_dtypes(a, b)
   if a.shape[0] != b.shape[0]:
     raise ValueError("Leading dimensions of input arrays must match")
