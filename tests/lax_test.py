@@ -2033,7 +2033,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
-      for dtype in float_dtypes
+      for dtype in grad_float_dtypes
       for padding in ([((0, 0), (0, 0)), ((1, 0), (0, 1))] +
         ([((0, -1), (0, 0))] if lhs_shape[2] != 0 else []))
       for dim_nums, perms in [
@@ -2042,7 +2042,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))]
       for rng_factory in [jtu.rand_default]
   ))
-  @jtu.skip_on_devices("gpu")  # TODO(frostig): Test fails on GPU sometimes
   def testConvGeneralDilatedGrad(self, lhs_shape, rhs_shape, dtype, strides,
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, batch_group_count,
@@ -2594,7 +2593,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,)), 3),
       ]
-      for rng_idx_factory in [partial(jtu.rand_int, max_idx)]
+      # Scatters with conflicting indices are not deterministic on GPU, so we
+      # use indices that do not collide.
+      for rng_idx_factory in [partial(jtu.rand_unique_int, max_idx)]
       for rng_factory in [jtu.rand_default]))
   def testScatterGrad(self, arg_shape, dtype, idxs, update_shape, dnums,
                       rng_factory, rng_idx_factory):
@@ -3226,15 +3227,16 @@ class LaxVmapTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_k={}_bdims={}".format(
           jtu.format_shape_dtype_string(shape, dtype), k, bdims),
        "shape": shape, "dtype": dtype, "k": k, "bdims": bdims, "rng_factory": rng_factory}
-      for shape in [(4,), (3, 4, 5)]
+      for shape in [(4,), (3, 5, 3)]
       for k in [1, 3]
       for bdims in all_bdims(shape)
       # TODO(b/155170120): test with repeats once the XLA:CPU stable top_k bug is fixed:
       # The top_k indices for integer arrays with identical entries won't match between
       # vmap'd version and manual reference, so only test unique integer arrays for int_dtypes.
+      # Note also that we chose 3 * 5 * 3 * 5 such that it fits in the range of
+      # values a bfloat16 can represent exactly to avoid ties.
       for dtype, rng_factory in itertools.chain(
-        zip(float_dtypes, itertools.repeat(jtu.rand_default)),
-        zip(int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
+        zip(float_dtypes + int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
   def testTopK(self, shape, dtype, k, bdims, rng_factory):
     rng = rng_factory()
     # _CheckBatching doesn't work with tuple outputs, so test outputs separately.

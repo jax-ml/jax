@@ -183,7 +183,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(onp.linalg.tensorsolve, 
                             np.linalg.tensorsolve, args_maker,
-                            check_dtypes=True, tol=1e-3)
+                            check_dtypes=True,
+                            tol={onp.float32: 1e-2, onp.float64: 1e-3})
     self._CompileAndCheck(np.linalg.tensorsolve, 
                           args_maker, check_dtypes=True,
                           rtol={onp.float64: 1e-13})
@@ -528,7 +529,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
               norm(a - onp.matmul(out[1][..., None, :] * out[0][..., :, :k], out[2])) < 350))
       else:
         self.assertTrue(onp.all(
-          norm(a - onp.matmul(out[1][..., None, :] * out[0], out[2])) < 300))
+          norm(a - onp.matmul(out[1][..., None, :] * out[0], out[2])) < 350))
 
       # Check the unitary properties of the singular vector matrices.
       self.assertTrue(onp.all(norm(onp.eye(out[0].shape[-1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 10))
@@ -754,7 +755,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=True, tol=1e-2)
     self._CompileAndCheck(np.linalg.pinv, args_maker, check_dtypes=True)
     # TODO(phawkins): 1e-1 seems like a very loose tolerance.
-    jtu.check_grads(np.linalg.pinv, args_maker(), 2, rtol=1e-1)
+    jtu.check_grads(np.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
 
   @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   def testPinvGradIssue2792(self):

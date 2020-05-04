@@ -64,7 +64,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True,
+                          rtol={onp.float64: 1e-14})
 
   @genNamedParametersNArgs(3, jtu.rand_default)
   def testPoissonPmf(self, rng_factory, shapes, dtypes):
