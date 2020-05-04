@@ -79,8 +79,8 @@ class NdimageTest(jtu.JaxTestCase):
       for mode in ['wrap', 'constant', 'nearest']
       for cval in ([0, -1] if mode == 'constant' else [0])
       for impl, rng_factory in [
-          ("original", partial(jtu.rand_uniform, 0, 1)),
-          ("fixed", partial(jtu.rand_uniform, -0.75, 1.75)),
+          ("original", partial(jtu.rand_uniform, low=0, high=1)),
+          ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75)),
       ]
       for round_ in [True, False]))
   def testMapCoordinates(self, shape, dtype, coords_shape, coords_dtype, order,
@@ -93,7 +93,7 @@ class NdimageTest(jtu.JaxTestCase):
         coords = [c.round().astype(int) for c in coords]
       return x, coords
 
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     lsp_op = lambda x, c: lsp_ndimage.map_coordinates(
         x, c, order=order, mode=mode, cval=cval)
     impl_fun = (osp_ndimage.map_coordinates if impl == "original"

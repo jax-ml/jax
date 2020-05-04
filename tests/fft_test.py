@@ -101,7 +101,7 @@ class FftTest(jtu.JaxTestCase):
       for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)))
   def testFftn(self, inverse, real, shape, dtype, axes, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     np_op = _get_fftn_func(np.fft, inverse, real)
     onp_op = _get_fftn_func(onp.fft, inverse, real)
@@ -123,7 +123,7 @@ class FftTest(jtu.JaxTestCase):
       for inverse in [False, True]
       for real in [False, True]))
   def testFftnErrors(self, inverse, real):
-    rng = jtu.rand_default()
+    rng = jtu.rand_default(self.rng())
     name = 'fftn'
     if real:
       name = 'r' + name
@@ -156,7 +156,7 @@ class FftTest(jtu.JaxTestCase):
       for shape in [(10,)]
       for axis in [-1, 0]))
   def testFft(self, inverse, real, shape, dtype, axis, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     name = 'fft'
     if real:
@@ -178,7 +178,7 @@ class FftTest(jtu.JaxTestCase):
       for inverse in [False, True]
       for real in [False, True]))
   def testFftErrors(self, inverse, real):
-    rng = jtu.rand_default()
+    rng = jtu.rand_default(self.rng())
     name = 'fft'
     if real:
       name = 'r' + name
@@ -217,7 +217,7 @@ class FftTest(jtu.JaxTestCase):
       for shape in [(16, 8, 4, 8), (16, 8, 4, 8, 4)]
       for axes in [(-2, -1), (0, 1), (1, 3), (-1, 2)]))
   def testFft2(self, inverse, real, shape, dtype, axes, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     name = 'fft2'
     if real:
@@ -237,7 +237,7 @@ class FftTest(jtu.JaxTestCase):
       for inverse in [False, True]
       for real in [False, True]))
   def testFft2Errors(self, inverse, real):
-    rng = jtu.rand_default()
+    rng = jtu.rand_default(self.rng())
     name = 'fft2'
     if real:
       name = 'r' + name
@@ -271,7 +271,7 @@ class FftTest(jtu.JaxTestCase):
     for size in [9, 10, 101, 102]
     for d in [0.1, 2.]))
   def testFftfreq(self, size, d, dtype, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: (rng([size], dtype),)
     np_op = np.fft.fftfreq
     onp_op = onp.fft.fftfreq
@@ -315,7 +315,7 @@ class FftTest(jtu.JaxTestCase):
     for size in [9, 10, 101, 102]
     for d in [0.1, 2.]))
   def testRfftfreq(self, size, d, dtype, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: (rng([size], dtype),)
     np_op = np.fft.rfftfreq
     onp_op = onp.fft.rfftfreq
@@ -359,7 +359,7 @@ class FftTest(jtu.JaxTestCase):
     for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
     for axes in _get_fftn_test_axes(shape)))
   def testFftshift(self, shape, dtype, rng_factory, axes):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     np_fn = lambda arg: np.fft.fftshift(arg, axes=axes)
     onp_fn = lambda arg: onp.fft.fftshift(arg, axes=axes)
@@ -374,7 +374,7 @@ class FftTest(jtu.JaxTestCase):
     for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
     for axes in _get_fftn_test_axes(shape)))
   def testIfftshift(self, shape, dtype, rng_factory, axes):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     np_fn = lambda arg: np.fft.ifftshift(arg, axes=axes)
     onp_fn = lambda arg: onp.fft.ifftshift(arg, axes=axes)

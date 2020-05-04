@@ -22,6 +22,7 @@ from typing import Dict, Sequence, Union
 import sys
 import unittest
 import warnings
+import zlib
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -470,48 +471,39 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
 
 
-def rand_default(scale=3):
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=scale)
+def rand_default(rng, scale=3):
+  return partial(_rand_dtype, rng.randn, scale=scale)
 
 
-def rand_nonzero():
+def rand_nonzero(rng):
   post = lambda x: onp.where(x == 0, onp.array(1, dtype=x.dtype), x)
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3, post=post)
+  return partial(_rand_dtype, rng.randn, scale=3, post=post)
 
 
-def rand_positive():
+def rand_positive(rng):
   post = lambda x: x + 1
-  rand = npr.RandomState(0).rand
-  return partial(_rand_dtype, rand, scale=2, post=post)
+  return partial(_rand_dtype, rng.rand, scale=2, post=post)
 
 
-def rand_small():
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=1e-3)
+def rand_small(rng):
+  return partial(_rand_dtype, rng.randn, scale=1e-3)
 
 
-def rand_not_small(offset=10.):
+def rand_not_small(rng, offset=10.):
   post = lambda x: x + onp.where(x > 0, offset, -offset)
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3., post=post)
+  return partial(_rand_dtype, rng.randn, scale=3., post=post)
 
 
-def rand_small_positive():
-  rand = npr.RandomState(0).rand
-  return partial(_rand_dtype, rand, scale=2e-5)
+def rand_small_positive(rng):
+  return partial(_rand_dtype, rng.rand, scale=2e-5)
 
-def rand_uniform(low=0.0, high=1.0):
+def rand_uniform(rng, low=0.0, high=1.0):
   assert low < high
-  rand = npr.RandomState(0).rand
   post = lambda x: x * (high - low) + low
-  return partial(_rand_dtype, rand, post=post)
+  return partial(_rand_dtype, rng.rand, post=post)
 
 
-def rand_some_equal():
-  randn = npr.RandomState(0).randn
-  rng = npr.RandomState(0)
+def rand_some_equal(rng):
 
   def post(x):
     x_ravel = x.ravel()
@@ -520,13 +512,12 @@ def rand_some_equal():
     flips = rng.rand(*onp.shape(x)) < 0.5
     return onp.where(flips, x_ravel[0], x)
 
-  return partial(_rand_dtype, randn, scale=100., post=post)
+  return partial(_rand_dtype, rng.randn, scale=100., post=post)
 
 
-def rand_some_inf():
+def rand_some_inf(rng):
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   """
   TODO: Complex numbers are not correctly tested
@@ -556,10 +547,9 @@ def rand_some_inf():
 
   return rand
 
-def rand_some_nan():
+def rand_some_nan(rng):
   """Return a random sampler that produces nans in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   def rand(shape, dtype):
     """The random sampler function."""
@@ -583,10 +573,9 @@ def rand_some_nan():
 
   return rand
 
-def rand_some_inf_and_nan():
+def rand_some_inf_and_nan(rng):
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   """
   TODO: Complex numbers are not correctly tested
@@ -619,10 +608,9 @@ def rand_some_inf_and_nan():
   return rand
 
 # TODO(mattjj): doesn't handle complex types
-def rand_some_zero():
+def rand_some_zero(rng):
   """Return a random sampler that produces some zeros."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   def rand(shape, dtype):
     """The random sampler function."""
@@ -637,21 +625,18 @@ def rand_some_zero():
   return rand
 
 
-def rand_int(low, high=None):
-  randint = npr.RandomState(0).randint
+def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
-    return randint(low, high=high, size=shape, dtype=dtype)
+    return rng.randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
-def rand_unique_int(high=None):
-  randchoice = npr.RandomState(0).choice
+def rand_unique_int(rng, high=None):
   def fn(shape, dtype):
-    return randchoice(onp.arange(high or onp.prod(shape), dtype=dtype),
+    return rng.choice(onp.arange(high or onp.prod(shape), dtype=dtype),
                       size=shape, replace=False)
   return fn
 
-def rand_bool():
-  rng = npr.RandomState(0)
+def rand_bool(rng):
   def generator(shape, dtype):
     return _cast_to_shape(rng.rand(*_dims_of_shape(shape)) < 0.5, shape, dtype)
   return generator
@@ -718,7 +703,15 @@ class JaxTestCase(parameterized.TestCase):
   #   assert core.reset_trace_state()
 
   def setUp(self):
+    super(JaxTestCase, self).setUp()
     core.skip_checks = False
+    # We use the adler32 hash for two reasons.
+    # a) it is deterministic run to run, unlike hash() which is randomized.
+    # b) it returns values in int32 range, which RandomState requires.
+    self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
+
+  def rng(self):
+    return self._rng
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""

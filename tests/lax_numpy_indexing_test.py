@@ -401,7 +401,7 @@ class IndexingTest(jtu.JaxTestCase):
     for dtype in all_dtypes
     for rng_factory in [jtu.rand_default]))
   def testStaticIndexing(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: x[indexer]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
@@ -417,7 +417,7 @@ class IndexingTest(jtu.JaxTestCase):
     for dtype in float_dtypes
     for rng_factory in [jtu.rand_default])
   def testStaticIndexingGrads(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: x[indexer]**2
@@ -464,7 +464,7 @@ class IndexingTest(jtu.JaxTestCase):
       for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithSlicesErrors(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
     @api.jit
@@ -497,7 +497,7 @@ class IndexingTest(jtu.JaxTestCase):
       for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithIntegers(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
     def fun(x, unpacked_indexer):
@@ -531,7 +531,7 @@ class IndexingTest(jtu.JaxTestCase):
       for dtype in float_dtypes
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     unpacked_indexer, pack_indexer = self._ReplaceSlicesWithTuples(indexer)
 
@@ -552,7 +552,7 @@ class IndexingTest(jtu.JaxTestCase):
       for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testAdvancedIntegerIndexing(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype), indexer]
     fun = lambda x, idx: jnp.asarray(x)[idx]
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
@@ -611,7 +611,7 @@ class IndexingTest(jtu.JaxTestCase):
       for dtype in float_dtypes
       for rng_factory in [jtu.rand_default])
   def testAdvancedIntegerIndexingGrads(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: jnp.asarray(x)[indexer]**2
@@ -626,7 +626,7 @@ class IndexingTest(jtu.JaxTestCase):
       for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testMixedAdvancedIntegerIndexing(self, shape, dtype, rng_factory, indexer):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     indexer_with_dummies = [e if isinstance(e, onp.ndarray) else ()
                             for e in indexer]
     substitutes = [(i, e) for i, e in enumerate(indexer)
@@ -872,7 +872,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for rng_factory in [jtu.rand_default]))
   def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
                          rng_factory, indexer, sugared, op):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
     if sugared:
@@ -899,7 +899,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for rng_factory in [jtu.rand_default]))
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                            rng_factory, indexer, sugared, op):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
     if sugared:
@@ -926,7 +926,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for rng_factory in [jtu.rand_default]))
   def testMixedAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                                 rng_factory, indexer, sugared, op):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
     if sugared:
@@ -953,7 +953,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TODO(mattjj,phawkins): tpu issues
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               rng_factory, indexer, op):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
