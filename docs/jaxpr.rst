@@ -1,7 +1,7 @@
 Understanding Jaxprs
 ====================
 
-Updated: February 14, 2020 (for commit 9e6fe64).
+Updated: May 3, 2020 (for commit f1a46fe).
 
 (Note: the code examples in this file can be seed also in
 ``jax/tests/api_test::JaxprTest.testExamplesJaxprDoc``.)
@@ -173,26 +173,21 @@ ConstVars arise when the computation ontains array constants, either
 from the Python program, or from constant-folding. For example, the function
 ``func6`` below
 
-.. testcode::
-
-    def func5(first, second):
-      temp = first + jnp.sin(second) * 3. - jnp.ones(8)
-      return temp
-
-    def func6(first):
-      return func5(first, jnp.ones(8))
-
-    print(make_jaxpr(func6)(jnp.ones(8)))
-
+>>> def func5(first, second):
+...   temp = first + jnp.sin(second) * 3. - jnp.ones(8)
+...   return temp
+...
+>>> def func6(first):
+...   return func5(first, jnp.ones(8))
+...
 
 JAX produces the following jaxpr
 
-.. testoutput::
-
-    { lambda b d ; a.
-      let c = add a b
-          e = sub c d
-      in (e,) }
+>>> print(make_jaxpr(func6)(jnp.ones(8)))
+{ lambda b d ; a.
+  let c = add a b
+      e = sub c d
+  in (e,) }
 
 When tracing ``func6``, the function ``func5`` is invoked with a constant value
 (``onp.ones(8)``) for the second argument. As a result, the sub-expression
