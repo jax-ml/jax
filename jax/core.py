@@ -204,8 +204,9 @@ class Primitive(object):
     return '{}'.format(self.name)
 
   def bind(self, *args, **kwargs):
-    assert skip_checks or all(isinstance(arg, Tracer)
-                              or valid_jaxtype(arg) for arg in args), args
+    for arg in args:
+      if not (isinstance(arg, Tracer) or valid_jaxtype(arg)):
+        raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid JAX type")
     top_trace = find_top_trace(args)
     if top_trace is None:
       return self.impl(*args, **kwargs)
