@@ -232,7 +232,9 @@ def _replace_nones(sentinel, tree):
       return tree
 
 def tree_reduce(f, tree, initializer=None):
-  return functools.reduce(f, tree_leaves(tree), initializer)
+  if initializer is not None:
+    return functools.reduce(f, tree_leaves(tree), initializer)
+  return functools.reduce(f, tree_leaves(tree))
 
 def tree_all(tree):
   return all(tree_leaves(tree))
