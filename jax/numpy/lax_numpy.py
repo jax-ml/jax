@@ -1021,6 +1021,49 @@ def diff(a, n=1, axis=-1,):
 
   return a
 
+@_wraps(onp.ediff1d)
+def ediff1d(ary, to_end=None, to_begin=None):
+  # convert into 1d array
+  ary = ravel(asarray(ary))
+
+  # default case
+  if to_begin is None and to_end is None:
+    return lax.sub(ary[1:], ary[:-1])
+
+  # enforce propagation of the dtype of input ary to returned array
+  dtype_req = ary.dtype
+
+  if to_begin is None:
+    l_begin = 0
+  else:
+    # check if to_begin can be cast to ary dtype
+    if not can_cast(asarray(to_begin), dtype_req):
+      raise ValueError("cannot convert 'to_begin' to array with dtype "
+              "'%r' as required for input array operand" % dtype_req)
+    # convert to_begin to flat array
+    to_begin = ravel(asarray(to_begin, dtype=dtype_req))
+    l_begin = len(to_begin)
+  
+  if to_end is None:
+    l_end = 0
+  else:
+    # check if to_end can be cast to ary dtype
+    if not can_cast(asarray(to_end), dtype_req):
+      raise ValueError("cannot convert 'to_end' to array with dtype "
+              "'%r' as required for input array operand" % dtype_req)
+    # convert to_end to flat array
+    to_end = ravel(asarray(to_end, dtype=dtype_req))
+    l_end = len(to_end)
+  
+  # calculate difference and copy to_begin and to_end
+  l_diff = _max(len(ary) - 1, 0)
+  result = lax.sub(ary[1:], ary[:-1])
+  if l_begin > 0:
+    result = concatenate((to_begin, result))
+  if l_end > 0:
+    result = concatenate((result, to_end))
+  return result
+
 
 @partial(jit, static_argnums=(1, 2))
 def _gradient(a, varargs, axis):

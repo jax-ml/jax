@@ -256,6 +256,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero,
               ["rev"], inexact=True),
     op_record("diff", 1, number_dtypes, nonzerodim_shapes, jtu.rand_default, ["rev"]),
+    op_record("ediff1d", 3, [onp.int32], all_shapes, jtu.rand_default, []),
 ]
 
 JAX_BITWISE_OP_RECORDS = [
@@ -2719,6 +2720,53 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             onp_fun, jnp_fun, args_maker, check_dtypes=False,
             tol=1e-2 if jtu.device_under_test() == "tpu" else None)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_{}".format(jtu.format_shape_dtype_string(shape, dtype),
+       "None" if end_dtype is None else jtu.format_shape_dtype_string(end_shape, end_dtype),
+       "None" if begin_dtype is None else jtu.format_shape_dtype_string(begin_shape, begin_dtype)),
+       "shape": shape, "dtype": dtype, "end_shape": end_shape,
+       "end_dtype": end_dtype, "begin_shape": begin_shape,
+       "begin_dtype": begin_dtype, "rng_factory": jtu.rand_default}
+      for dtype in number_dtypes
+      for end_dtype in [None] + [dtype]
+      for begin_dtype in [None] + [dtype]
+      for shape in [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE]
+      for begin_shape in [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE]
+      for end_shape in [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE]))
+  def testEDiff1d(self, shape, dtype, end_shape, end_dtype, begin_shape,
+          begin_dtype, rng_factory):
+    rng = rng_factory()
+    args_maker = lambda: [rng(shape, dtype),
+            (None if end_dtype is None else rng(end_shape, end_dtype)),
+            (None if begin_dtype is None else rng(begin_shape, begin_dtype))]
+    onp_fun = lambda x, to_end, to_begin: onp.ediff1d(x, to_end, to_begin)
+    jnp_fun = lambda x, to_end, to_begin: jnp.ediff1d(x, to_end, to_begin)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  def testEDiff1dWithDtypeCast(self):
+    rng = jtu.rand_default()
+    shape = jtu.NUMPY_SCALAR_SHAPE
+    dtype = jnp.float32
+    end_dtype = jnp.int16
+    x = rng(shape, dtype)
+    args_maker = lambda: [rng(shape, dtype), rng(shape, end_dtype), rng(shape, dtype)]
+    onp_fun = lambda x, to_end, to_begin: onp.ediff1d(x, to_end, to_begin)
+    jnp_fun = lambda x, to_end, to_begin: jnp.ediff1d(x, to_end, to_begin)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  def testEDiff1dWithInvalidDtypes(self):
+    rng = jtu.rand_default()
+    shape = jtu.NUMPY_SCALAR_SHAPE
+    dtype = jnp.float32
+    end_dtype = jnp.int64
+    rng(shape, dtype)
+    begin_dtype = jnp.complex64
+    self.assertRaisesRegex(ValueError,
+            "cannot convert .* as required for input array operand", lambda: jnp.ediff1d(
+        rng(shape,dtype), rng(shape, end_dtype), rng(shape, begin_dtype)))
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
