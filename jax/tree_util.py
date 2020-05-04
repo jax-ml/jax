@@ -234,9 +234,9 @@ def _replace_nones(sentinel, tree):
 def tree_reduce(function, tree, *initializer):
   if initializer:  # We need to differentiate between initializer explicitly passed or not.
     initializer, = initializer
-    return functools.reduce(function, jax.tree_leaves(tree), initializer)
+    return functools.reduce(function, tree_leaves(tree), initializer)
   else:
-    return functools.reduce(function, jax.tree_leaves(tree))
+    return functools.reduce(function, tree_leaves(tree))
 
 def tree_all(tree):
   return all(tree_leaves(tree))
