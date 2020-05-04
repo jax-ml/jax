@@ -191,16 +191,16 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   be concerned about how to handle higher dimensional inputs.
 
   ``jax.numpy.vectorize`` has the same interface as ``numpy.vectorize``, but it
-  is synctactic sguar for an auto-batching transformation (``vmap``) rather
+  is syntactic sugar for an auto-batching transformation (``vmap``) rather
   than a Python loop. This should be considerably more efficient, but the
   implementation must be written in terms of functions that act on JAX arrays.
 
   Args:
     pyfunc: vectorized function.
-    excluded: set of integers representing positional arguments for which the
-      function will not be vectorized. These will be passed directly to pyfunc
-      unmodified.
-    signature: generalized universal function signature, e.g.,
+    excluded: optional set of integers representing positional arguments for
+      which the function will not be vectorized. These will be passed directly
+      to ``pyfunc`` unmodified.
+    signature: optional generalized universal function signature, e.g.,
       ``(m,n),(n)->(m)`` for vectorized matrix-vector multiplication. If
       provided, ``pyfunc`` will be called with (and expected to return) arrays
       with shapes given by the size of corresponding core dimensions. By
@@ -222,7 +222,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
                         a[2] * b[0] - a[0] * b[2],
                         a[0] * b[1] - a[1] * b[0]])
 
-    @partial(jnp.vectorize, signature='(n,k),(k)->(k)')
+    @partial(jnp.vectorize, signature='(n,m),(m)->(n)')
     def matrix_vector_product(matrix, vector):
       assert matrix.ndim == 2 and matrix.shape[1:] == vector.shape
       return matrix @ vector
@@ -243,7 +243,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   and signature='(n,k),(k)->(k)'
   >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones(3)).shape
   (2,)
-  >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones(4, 3)).shape
+  >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones((4, 3))).shape
   (4, 2)  # not the same as np.matmul
   """
   if any(not isinstance(exclude, int) for exclude in excluded):
