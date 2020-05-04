@@ -97,7 +97,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         partial(lax_cg, M=M, maxiter=1),
         args_maker,
         check_dtypes=True,
-        tol=2e-4)
+        tol=1e-3)
 
     # TODO(shoyer,mattjj): I had to loosen the tolerance for complex64[7,7]
     # with preconditioner=random

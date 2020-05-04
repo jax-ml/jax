@@ -2239,7 +2239,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                                       [dtype]),
          "rng_factory": jtu.rand_some_inf_and_nan, "shape": shape,
          "dtype": dtype}
-        for shape in all_shapes
+        for shape in array_shapes
         for dtype in inexact_dtypes))
   def testNanToNum(self, rng_factory, shape, dtype):
     rng = rng_factory(self.rng())
