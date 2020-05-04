@@ -108,7 +108,24 @@ class MultiDeviceTest(jtu.JaxTestCase):
                                 "primitive arguments must be colocated on the same device"):
       jit_add(jax.device_put(x, devices[2]), jax.device_put(x, devices[3]))
 
-    # A jitted computation with a device specification behaves as if the
+    # Even jit of trivial computations leaves the result uncommitted
+    x_uncommitted = np.array([1, 2, 3])
+    y = jax.jit(lambda x: x)(x_uncommitted)
+    self.assert_uncommitted_to_device(y, devices[0])
+
+    z1, z2 = jax.jit(lambda x: (x, x))(x_uncommitted)
+    self.assert_uncommitted_to_device(z1, devices[0])
+    self.assert_uncommitted_to_device(z2, devices[0])
+    self.assertIs(z1, z2)
+
+    x2_uncommitted = np.array([2, 3])
+    z1, z2, z3 = jax.jit(lambda x, y: (y, 1, x))(x_uncommitted, x2_uncommitted)
+    self.assert_uncommitted_to_device(z1, devices[0])
+    self.assertIs(z2, 1)
+    self.assert_uncommitted_to_device(z3, devices[0])
+
+
+    # A jitted computation with an device specification behaves as if the
     # arguments are first device_put to the specified device. The result
     # will be committed on the specified.
     # The `device` parameter is experimental, and subject to change.
@@ -116,8 +133,8 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_committed_to_device(jit_add_on4(1, 2), devices[4])
     self.assert_committed_to_device(jit_add_on4(1, jax.device_put(2, devices[2])),
                                     devices[4])
-    self.assert_committed_to_device(jit_add_on4(jax.device_put(x, devices[2]),
-                                                jax.device_put(x, devices[3])),
+    self.assert_committed_to_device(jit_add_on4(jax.device_put(x_uncommitted, devices[2]),
+                                                jax.device_put(x_uncommitted, devices[3])),
                                     devices[4])
 
   def test_primitive_compilation_cache(self):
@@ -146,8 +163,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
     # test device_put on lazy values
     x = jax.device_put(np.zeros(2), device=devices[0])
-    # TODO(necula): re-enable this check
-    # self.assert_committed_to_device(x, devices[0])
+    self.assert_committed_to_device(x, devices[0])
 
     y = jax.device_put(x, device=devices[1])
     self.assert_committed_to_device(y, devices[1])

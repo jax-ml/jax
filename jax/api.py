@@ -1539,16 +1539,22 @@ def make_jaxpr(fun: Callable,
   return jaxpr_maker
 
 
-def device_put(x, device=None):
+def device_put(x, device: Optional[xc.Device] = None):
   """Transfers ``x`` to ``device``.
 
   Args:
     ``x``: An array, scalar, or (nested) standard Python container thereof.
-    ``device``: The ``Device`` to transfer ``x`` to.
+    ``device``: The (optional) ``Device`` to transfer ``x`` to.
+      If given, then the result is committed to the device.
+
+  If the ``device`` parameter is ``None``, then this operation behaves like the
+  identity function if the operand is on any device already, otherwise it
+  transfers the data to the default device, uncommitted.
+
+  For more details on data placement see the https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices.
 
   Returns:
-    A copy of ``x`` that resides on ``device``. If ``x`` is already on
-    ``device``, returns ``x``.
+    A copy of ``x`` that resides on ``device``.
   """
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
