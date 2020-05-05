@@ -390,7 +390,7 @@ def fmax(x1, x2):
   return where((x1 > x2) | isnan(x2), x1, x2)
 
 @_wraps(onp.finfo)
-def finfo(dtype): 
+def finfo(dtype):
   return dtypes.finfo(dtype)
 
 @_wraps(onp.issubdtype)
@@ -724,7 +724,7 @@ def _conv(x, y, mode, op, precision):
   if ndim(x) != 1 or ndim(y) != 1:
     raise ValueError(f"{op}() only support 1-dimensional inputs.")
   x, y = _promote_dtypes_inexact(x, y)
-  
+
   out_order = slice(None)
   if len(x) < len(y):
     x, y = y, x
@@ -1151,6 +1151,17 @@ def ravel(a, order="C"):
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
   return reshape(a, (size(a),), order)
+
+
+@_wraps(onp.unravel_index)
+def unravel_index(flat_index, shape):
+    sizes = pad(shape, (0, 1), constant_values=1)
+    cumulative_sizes = cumprod(sizes[::-1])[::-1]
+    total_size = cumulative_sizes[0]
+    # Clip so raveling and unraveling an oob index will not change the behavior
+    clipped_index = clip(flat_index, -total_size, total_size - 1)
+    idx = clipped_index % cumulative_sizes[:-1] // cumulative_sizes[1:]
+    return tuple(idx)
 
 
 @_wraps(onp.squeeze)
