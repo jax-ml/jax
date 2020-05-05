@@ -26,7 +26,7 @@ from .. import ops as jaxops
 
 def _fft_core(func_name, fft_type, a, s, axes, norm):
   # TODO(skye): implement padding/cropping based on 's'.
-  full_name = "jax.np.fft." + func_name
+  full_name = "jax.numpy.fft." + func_name
   if s is not None:
     raise NotImplementedError("%s only supports s=None, got %s" % (full_name, s))
   if norm is not None:
@@ -93,7 +93,7 @@ def irfftn(a, s=None, axes=None, norm=None):
 
 
 def _fft_core_1d(func_name, fft_type, a, s, axis, norm):
-  full_name = "jax.np.fft." + func_name
+  full_name = "jax.numpy.fft." + func_name
   if isinstance(axis, (list, tuple)):
     raise ValueError(
         "%s does not support multiple axes. Please use %sn. "
@@ -125,7 +125,7 @@ def irfft(a, n=None, axis=-1, norm=None):
 
 
 def _fft_core_2d(func_name, fft_type, a, s, axes, norm):
-  full_name = "jax.np.fft." + func_name
+  full_name = "jax.numpy.fft." + func_name
   if len(axes) != 2:
     raise ValueError(
         "%s only supports 2 axes. Got axes = %r."
@@ -159,12 +159,12 @@ def irfft2(a, s=None, axes=(-2,-1), norm=None):
 def fftfreq(n, d=1.0):
   if isinstance(n, list) or isinstance(n, tuple):
     raise ValueError(
-          "The n argument of jax.np.fft.fftfreq only takes an int. "
+          "The n argument of jax.numpy.fft.fftfreq only takes an int. "
           "Got n = %s." % list(n))
 
   elif isinstance(d, list) or isinstance(d, tuple):
     raise ValueError(
-          "The d argument of jax.np.fft.fftfreq only takes a single value. "
+          "The d argument of jax.numpy.fft.fftfreq only takes a single value. "
           "Got d = %s." % list(d))
 
   k = np.zeros(n)
@@ -191,12 +191,12 @@ def fftfreq(n, d=1.0):
 def rfftfreq(n, d=1.0):
   if isinstance(n, list) or isinstance(n, tuple):
     raise ValueError(
-          "The n argument of jax.np.fft.rfftfreq only takes an int. "
+          "The n argument of jax.numpy.fft.rfftfreq only takes an int. "
           "Got n = %s." % list(n))
 
   elif isinstance(d, list) or isinstance(d, tuple):
     raise ValueError(
-          "The d argument of jax.np.fft.rfftfreq only takes a single value. "
+          "The d argument of jax.numpy.fft.rfftfreq only takes a single value. "
           "Got d = %s." % list(d))
 
   if n % 2 == 0:

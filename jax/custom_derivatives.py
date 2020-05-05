@@ -107,18 +107,18 @@ class custom_jvp:
 
   For example::
 
-    import jax.numpy as np
+    import jax.numpy as jnp
 
     @jax.custom_jvp
     def f(x, y):
-      return np.sin(x) * y
+      return jnp.sin(x) * y
 
     @f.defjvp
     def f_jvp(primals, tangents):
       x, y = primals
       x_dot, y_dot = tangents
       primal_out = f(x, y)
-      tangent_out = np.cos(x) * x_dot * y - np.sin(x) * y_dot
+      tangent_out = jnp.cos(x) * x_dot * y - jnp.sin(x) * y_dot
       return primal_out, tangent_out
 
   For a more detailed introduction, see the tutorial_.
@@ -150,18 +150,18 @@ class custom_jvp:
 
     Example::
 
-      import jax.numpy as np
+      import jax.numpy as jnp
 
       @jax.custom_jvp
       def f(x, y):
-        return np.sin(x) * y
+        return jnp.sin(x) * y
 
       @f.defjvp
       def f_jvp(primals, tangents):
         x, y = primals
         x_dot, y_dot = tangents
         primal_out = f(x, y)
-        tangent_out = np.cos(x) * x_dot * y - np.sin(x) * y_dot
+        tangent_out = jnp.cos(x) * x_dot * y - jnp.sin(x) * y_dot
         return primal_out, tangent_out
     """
     self.jvp = jvp
@@ -184,10 +184,10 @@ class custom_jvp:
 
       @jax.custom_jvp
       def f(x, y):
-        return np.sin(x) * y
+        return jnp.sin(x) * y
 
-      f.defjvps(lambda x_dot, primal_out, x, y: np.cos(x) * x_dot * y,
-                lambda y_dot, primal_out, x, y: -np.sin(x) * y_dot)
+      f.defjvps(lambda x_dot, primal_out, x, y: jnp.cos(x) * x_dot * y,
+                lambda y_dot, primal_out, x, y: -jnp.sin(x) * y_dot)
     """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
@@ -370,14 +370,14 @@ class custom_vjp:
 
   For example::
 
-    import jax.numpy as np
+    import jax.numpy as jnp
 
     @jax.custom_vjp
     def f(x, y):
-      return np.sin(x) * y
+      return jnp.sin(x) * y
 
     def f_fwd(x, y):
-      return f(x, y), (np.cos(x), np.sin(x), y)
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
     def f_bwd(res, g):
       cos_x, sin_x, y = res
@@ -424,14 +424,14 @@ class custom_vjp:
 
     Example::
 
-      import jax.numpy as np
+      import jax.numpy as jnp
 
       @jax.custom_vjp
       def f(x, y):
-        return np.sin(x) * y
+        return jnp.sin(x) * y
 
       def f_fwd(x, y):
-        return f(x, y), (np.cos(x), np.sin(x), y)
+        return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
       def f_bwd(res, g):
         cos_x, sin_x, y = res

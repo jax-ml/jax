@@ -375,7 +375,7 @@ class Tracer(object):
                     "You might have\n"
                     "  import numpy as np\n"
                     "instead of\n"
-                    "  import jax.numpy as np")
+                    "  import jax.numpy as jnp")
 
   def __init__(self, trace):
     self._trace = trace
