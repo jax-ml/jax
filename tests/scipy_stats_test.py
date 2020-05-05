@@ -206,7 +206,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return [x, loc, scale]
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
+                            tol={onp.float32: 1e-5, onp.float64: 1e-6})
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
   @genNamedParametersNArgs(1, jtu.rand_default)
