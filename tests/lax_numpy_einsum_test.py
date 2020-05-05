@@ -16,12 +16,12 @@
 from collections import defaultdict
 import itertools
 
-import numpy as onp
+import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import lax
-import jax.numpy as np
+import jax.numpy as jnp
 import jax.test_util as jtu
 
 from jax.config import config
@@ -31,8 +31,8 @@ config.parse_flags_with_absl()
 class EinsumTest(jtu.JaxTestCase):
 
   def _check(self, s, *ops):
-    a = onp.einsum(s, *ops)
-    b = np.einsum(s, *ops, precision=lax.Precision.HIGHEST)
+    a = np.einsum(s, *ops)
+    b = jnp.einsum(s, *ops, precision=lax.Precision.HIGHEST)
     self.assertAllClose(a, b, atol=1e-4, rtol=1e-4, check_dtypes=True)
 
   def test_three_operands_1(self):
@@ -250,7 +250,7 @@ class EinsumTest(jtu.JaxTestCase):
           'fdf,cdd,ccd,afe->ae',
           'fff,fae,bef,def->abd',
       ]
-      for dtype in [np.float32, np.int32, np.complex64, np.bool_])
+      for dtype in [jnp.float32, jnp.int32, jnp.complex64, jnp.bool_])
   def test_from_dask(self, einstr, dtype):
     r = jtu.rand_default(self.rng())
     if '->' in einstr:
@@ -268,18 +268,18 @@ class EinsumTest(jtu.JaxTestCase):
     self._check(einstr, *operands)
 
   def test_ordered_front_batch_dim_case(self):
-    x = onp.ones((1,8,20,4))
-    y = onp.ones((1,8,20,4))
+    x = np.ones((1,8,20,4))
+    y = np.ones((1,8,20,4))
     s = 'ijkl,ijml->ijkm'
     self._check(s, x, y)
 
   def test_einsum_path(self):
-    # just check examples from onp.einsum_path docstring
+    # just check examples from np.einsum_path docstring
     a = self.rng().rand(2, 2)
     b = self.rng().rand(2, 5)
     c = self.rng().rand(5, 2)
 
-    path_info = onp.einsum_path('ij,jk,kl->il', a, b, c, optimize='greedy')
+    path_info = np.einsum_path('ij,jk,kl->il', a, b, c, optimize='greedy')
     self.assertEqual(str(path_info[0]), "['einsum_path', (1, 2), (0, 1)]")
     self.assertEqual(path_info[1].split('\n')[0],
                      '  Complete contraction:  ij,jk,kl->il')
@@ -287,7 +287,7 @@ class EinsumTest(jtu.JaxTestCase):
     # check this doesn't crash
     I = self.rng().rand(10, 10, 10, 10)
     C = self.rng().rand(10, 10)
-    onp.einsum_path('ea,fb,abcd,gc,hd->efgh', C, C, I, C, C, optimize='greedy')
+    np.einsum_path('ea,fb,abcd,gc,hd->efgh', C, C, I, C, C, optimize='greedy')
 
   def test_einsum_kpmurphy_example(self):
     # code from an email with @murphyk
@@ -296,7 +296,7 @@ class EinsumTest(jtu.JaxTestCase):
     S = r.randn(N, T, K)
     W = r.randn(K, D)
     V = r.randn(D, C)
-    L = onp.zeros((N, C))
+    L = np.zeros((N, C))
     for n in range(N):
       for c in range(C):
         s = 0
@@ -306,9 +306,9 @@ class EinsumTest(jtu.JaxTestCase):
                 s += S[n,t,k] * W[k,d] * V[d,c]
         L[n,c] = s
 
-    path = np.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
+    path = jnp.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
     rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
-    self.assertAllClose(L, np.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
+    self.assertAllClose(L, jnp.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
                         check_dtypes=False, rtol=rtol)
 
   def test_contraction_broadcasting(self):
