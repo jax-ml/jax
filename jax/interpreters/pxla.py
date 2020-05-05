@@ -241,7 +241,7 @@ def _as_slice_indices(arr: xla.DeviceArray, idx: Index) -> Tuple[
       start_indices[dim] = sub_idx.start
       limit_indices[dim] = sub_idx.stop
 
-  return tuple(start_indices), tuple(limit_indices), tuple(removed_dims)
+  return tuple(start_indices), tuple(limit_indices), tuple(removed_dims) # type: ignore
 
 
 def shard_aval(size, aval):
