@@ -80,7 +80,7 @@ from jax import vmap
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.lax import stop_gradient
-import jax.numpy as np
+import jax.numpy as jnp
 from examples import datasets
 import numpy.random as npr
 
@@ -124,14 +124,14 @@ def loss(params, batch):
   inputs, targets = batch
   logits = predict(params, inputs)
   logits = stax.logsoftmax(logits)  # log normalize
-  return -np.mean(np.sum(logits * targets, axis=1))  # cross entropy loss
+  return -jnp.mean(jnp.sum(logits * targets, axis=1))  # cross entropy loss
 
 
 def accuracy(params, batch):
   inputs, targets = batch
-  target_class = np.argmax(targets, axis=1)
-  predicted_class = np.argmax(predict(params, inputs), axis=1)
-  return np.mean(predicted_class == target_class)
+  target_class = jnp.argmax(targets, axis=1)
+  predicted_class = jnp.argmax(predict(params, inputs), axis=1)
+  return jnp.mean(predicted_class == target_class)
 
 
 def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
@@ -143,9 +143,9 @@ def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
     grads = grad(loss)(params, single_example_batch)
 
     nonempty_grads, tree_def = tree_util.tree_flatten(grads)
-    total_grad_norm = np.linalg.norm(
-        [np.linalg.norm(neg.ravel()) for neg in nonempty_grads])
-    divisor = stop_gradient(np.amax((total_grad_norm / l2_norm_clip, 1.)))
+    total_grad_norm = jnp.linalg.norm(
+        [jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads])
+    divisor = stop_gradient(jnp.amax((total_grad_norm / l2_norm_clip, 1.)))
     normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
     return tree_util.tree_unflatten(tree_def, normalized_nonempty_grads)
 
@@ -154,7 +154,7 @@ def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
   noise_ = lambda n: n + std_dev * random.normal(rng, n.shape)
   normalize_ = lambda n: n / float(batch_size)
   tree_map = tree_util.tree_map
-  sum_ = lambda n: np.sum(n, 0)  # aggregate
+  sum_ = lambda n: jnp.sum(n, 0)  # aggregate
   aggregated_clipped_grads = tree_map(sum_, px_clipped_grad_fn(batch))
   noised_aggregated_clipped_grads = tree_map(noise_, aggregated_clipped_grads)
   normalized_noised_aggregated_clipped_grads = (
@@ -165,14 +165,14 @@ def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
 
 def shape_as_image(images, labels, dummy_dim=False):
   target_shape = (-1, 1, 28, 28, 1) if dummy_dim else (-1, 28, 28, 1)
-  return np.reshape(images, target_shape), labels
+  return jnp.reshape(images, target_shape), labels
 
 
 def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   if num_examples * target_delta > 1.:
     warnings.warn('Your delta might be too high.')
   q = FLAGS.batch_size / float(num_examples)
-  orders = list(np.linspace(1.1, 10.9, 99)) + range(11, 64)
+  orders = list(jnp.linspace(1.1, 10.9, 99)) + range(11, 64)
   rdp_const = compute_rdp(q, FLAGS.noise_multiplier, steps, orders)
   eps, _, _ = get_privacy_spent(orders, rdp_const, target_delta=target_delta)
   return eps
