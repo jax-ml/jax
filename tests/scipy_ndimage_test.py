@@ -101,7 +101,7 @@ class NdimageTest(jtu.JaxTestCase):
     osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
     epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
                    for d in [dtype, coords_dtype]])
-    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=10*epsilon,
+    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon,
                             check_dtypes=True)
 
   def testMapCoordinatesErrors(self):

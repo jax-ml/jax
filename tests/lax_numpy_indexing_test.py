@@ -614,8 +614,8 @@ class IndexingTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
-    fun = lambda x: jnp.asarray(x)[indexer]**2
-    check_grads(fun, (arg,), 2, tol, tol, tol)
+    fun = lambda x: jnp.asarray(x)[indexer]
+    check_grads(fun, (arg,), 2, tol, tol, eps=1.)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"

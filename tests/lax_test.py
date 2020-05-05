@@ -1764,7 +1764,7 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.tanh, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes, tol=1e-5),
     grad_test_spec(lax.sin, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=grad_inexact_dtypes),
+                   dtypes=grad_inexact_dtypes, tol={onp.float32: 5e-1}),
     grad_test_spec(lax.cos, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.tan, nargs=1, order=2,
@@ -1806,7 +1806,7 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.abs, nargs=1, order=2, rng_factory=jtu.rand_positive,
                    dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.pow, nargs=2, order=2, rng_factory=jtu.rand_positive,
-                   dtypes=grad_inexact_dtypes),
+                   dtypes=grad_inexact_dtypes, tol={onp.float32: 3e-1}),
 
     grad_test_spec(lax.add, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
@@ -1878,7 +1878,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     if jtu.device_under_test() == "tpu" and op is lax.pow:
       raise SkipTest("pow grad imprecise on tpu")
-    tol = 1e-1 if num_float_bits(dtype) == 32 else tol
+    tol = jtu.join_tolerance(1e-1, tol) if num_float_bits(dtype) == 32 else tol
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 

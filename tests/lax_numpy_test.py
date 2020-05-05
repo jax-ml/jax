@@ -229,7 +229,8 @@ JAX_COMPOUND_OP_RECORDS = [
               tolerance={onp.float16: 1e-2, onp.float64: 2e-14}, inexact=True),
     op_record("polyval", 2, number_dtypes, nonempty_nonscalar_array_shapes,
               jtu.rand_default, [], check_dtypes=False,
-              tolerance={onp.float16: 1e-2, onp.float64: 1e-12}),
+              tolerance={dtypes.bfloat16: 4e-2, onp.float16: 1e-2,
+                         onp.float64: 1e-12}),
     op_record("positive", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("power", 2, number_dtypes, all_shapes, jtu.rand_positive, ["rev"],
               tolerance={onp.complex128: 1e-14}),
@@ -241,8 +242,8 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
     op_record("rint", 1, number_dtypes + uint_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, []),
-    op_record("sign", 1, number_dtypes + uint_dtypes, all_shapes,
-              jtu.rand_some_inf_and_nan, []),
+    op_record("sign", 1, supported_dtypes(number_dtypes + uint_dtypes),
+              all_shapes, jtu.rand_some_inf_and_nan, []),
     op_record('copysign', 2, default_dtypes, all_shapes, jtu.rand_some_inf_and_nan, [],
               check_dtypes=False),
     op_record("sinc", 1, [t for t in number_dtypes if t != jnp.bfloat16],
@@ -595,6 +596,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     @jtu.ignore_warning(category=onp.ComplexWarning)
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="mean of empty slice.*")
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="overflow encountered.*")
     def onp_fun(x):
       x_cast = x if dtype != jnp.bfloat16 else x.astype(onp.float32)
       t = out_dtype if out_dtype != jnp.bfloat16 else onp.float32
@@ -905,7 +908,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype = jnp.promote_types(lhs_dtype, rhs_dtype)
       return onp.inner(lhs, rhs).astype(dtype)
     jnp_fun = lambda lhs, rhs: jnp.inner(lhs, rhs)
-    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-5, onp.float64: 1e-13}
+    tol_spec = {onp.float16: 1e-2, onp.float32: 1e-5, onp.float64: 1e-13,
+                onp.complex64: 1e-5}
     if jtu.device_under_test() == "tpu":
       tol_spec[onp.float32] = tol_spec[onp.complex64] = 2e-1
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
@@ -1714,7 +1718,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
     onp_fun = _promote_like_jnp(onp_fun, inexact=True)
     tol = {dtypes.bfloat16: 2e-1, onp.float16: 1e-2, onp.float32: 1e-6,
-           onp.float64: 1e-12,}
+           onp.float64: 1e-12, onp.complex64: 1e-5}
     check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
     try:
         self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker,
@@ -2734,8 +2738,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for end_dtype in [None] + [dtype]
       for begin_dtype in [None] + [dtype]
       for shape in [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE]
-      for begin_shape in [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE]
-      for end_shape in [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE]))
+      for begin_shape in (
+        [None] if begin_dtype is None
+        else [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE])
+      for end_shape in (
+        [None] if end_dtype is None
+        else [s for s in all_shapes if s != jtu.PYTHON_SCALAR_SHAPE])))
   def testEDiff1d(self, shape, dtype, end_shape, end_dtype, begin_shape,
                   begin_dtype):
     rng = jtu.rand_default(self.rng())
@@ -2751,24 +2759,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     shape = jtu.NUMPY_SCALAR_SHAPE
     dtype = jnp.float32
-    end_dtype = jnp.int16
+    end_dtype = jnp.int32
     x = rng(shape, dtype)
     args_maker = lambda: [rng(shape, dtype), rng(shape, end_dtype), rng(shape, dtype)]
     onp_fun = lambda x, to_end, to_begin: onp.ediff1d(x, to_end, to_begin)
     jnp_fun = lambda x, to_end, to_begin: jnp.ediff1d(x, to_end, to_begin)
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
-
-  def testEDiff1dWithInvalidDtypes(self):
-    rng = jtu.rand_default(self.rng())
-    shape = jtu.NUMPY_SCALAR_SHAPE
-    dtype = jnp.float32
-    end_dtype = jnp.int64
-    rng(shape, dtype)
-    begin_dtype = jnp.complex64
-    self.assertRaisesRegex(ValueError,
-            "cannot convert .* as required for input array operand", lambda: jnp.ediff1d(
-        rng(shape,dtype), rng(shape, end_dtype), rng(shape, begin_dtype)))
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
@@ -2898,7 +2895,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                     endpoint, dtype, rng_factory):
     rng = rng_factory(self.rng())
     # relax default tolerances slightly
-    tol = {onp.float16: 4e-3, onp.float32: 2e-3, onp.complex128: 1e-14}
+    tol = {onp.float16: 4e-3, onp.float32: 2e-3, onp.float64: 1e-14,
+           onp.complex128: 1e-14}
     def args_maker():
       """Test the set of inputs onp.geomspace is well-defined on."""
       start, stop = self._GetArgsMaker(rng,
@@ -3129,13 +3127,16 @@ def grad_test_spec(op, nargs, order, rng_factory, dtypes, name=None, tol=None):
 GRAD_TEST_RECORDS = [
     grad_test_spec(jnp.arcsinh, nargs=1, order=2,
                    rng_factory=jtu.rand_positive,
-                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+                   dtypes=[onp.float64, onp.complex64],
+                   tol={onp.complex64: 2e-2}),
     grad_test_spec(jnp.arccosh, nargs=1, order=2,
                    rng_factory=jtu.rand_positive,
-                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+                   dtypes=[onp.float64, onp.complex64],
+                   tol={onp.complex64: 2e-2}),
     grad_test_spec(jnp.arctanh, nargs=1, order=2,
                    rng_factory=partial(jtu.rand_uniform, low=-0.9, high=0.9),
-                   dtypes=[onp.float64, onp.complex64], tol=1e-4),
+                   dtypes=[onp.float64, onp.complex64],
+                   tol={onp.complex64: 2e-2}),
     grad_test_spec(jnp.logaddexp, nargs=2, order=1,
                    rng_factory=partial(jtu.rand_uniform, low=-0.9, high=0.9),
                    dtypes=[onp.float64], tol=1e-4),
@@ -3169,8 +3170,8 @@ class NumpyGradTests(jtu.JaxTestCase):
       for rec in GRAD_TEST_RECORDS))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
-    tol = {onp.float32: 1e-1, onp.float64: 1e-3,
-           onp.complex64: 1e-1, onp.complex64: 1e-3}
+    tol = jtu.join_tolerance(tol, {onp.float32: 1e-1, onp.float64: 1e-3,
+                                   onp.complex64: 1e-1, onp.complex64: 1e-3})
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 

@@ -113,7 +113,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         partial(lax_cg, M=M, atol=1e-6),
         args_maker,
         check_dtypes=True,
-        tol=1e-3)
+        tol=2e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

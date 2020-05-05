@@ -138,7 +138,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     if test_autodiff:
       jtu.check_grads(lax_op, args, order=1,
                       atol=jtu.if_device_under_test("tpu", 2e-3, 1e-3),
-                      rtol=5e-3, eps=1e-3)
+                      rtol=2e-2, eps=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_d={}".format(

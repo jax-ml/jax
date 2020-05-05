@@ -532,7 +532,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           norm(a - onp.matmul(out[1][..., None, :] * out[0], out[2])) < 350))
 
       # Check the unitary properties of the singular vector matrices.
-      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[-1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 10))
+      self.assertTrue(onp.all(norm(onp.eye(out[0].shape[-1]) - onp.matmul(onp.conj(T(out[0])), out[0])) < 15))
       if m >= n:
         self.assertTrue(onp.all(norm(onp.eye(out[2].shape[-1]) - onp.matmul(onp.conj(T(out[2])), out[2])) < 10))
       else:
@@ -547,7 +547,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       svd = partial(np.linalg.svd, full_matrices=full_matrices,
                     compute_uv=compute_uv)
       # TODO(phawkins): these tolerances seem very loose.
-      jtu.check_jvp(svd, partial(jvp, svd), (a,), rtol=1e-2, atol=2e-1)
+      jtu.check_jvp(svd, partial(jvp, svd), (a,), rtol=5e-2, atol=2e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_fullmatrices={}".format(
@@ -636,7 +636,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     _skip_if_unsupported_type(dtype)
 
     def gen_mat():
-      arr_gen = jtu.rand_some_nan(self.rng())
+      # arr_gen = jtu.rand_some_nan(self.rng())
+      arr_gen = jtu.rand_default(self.rng())
       res = arr_gen(shape, dtype)
       return res
 
@@ -914,8 +915,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     x, = args_maker()
     p, l, u = jsp.linalg.lu(x)
     self.assertAllClose(x, onp.matmul(p, onp.matmul(l, u)), check_dtypes=True,
-                        rtol={onp.float32: 1e-4, onp.float64:1e-12,
-                              onp.complex64: 1e-4, onp.complex128:1e-12})
+                        rtol={onp.float32: 1e-3, onp.float64: 1e-12,
+                              onp.complex64: 1e-3, onp.complex128: 1e-12})
     self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
 
   def testLuOfSingularMatrix(self):
@@ -937,7 +938,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     _skip_if_unsupported_type(dtype)
     a = rng(shape, dtype)
     lu = vmap(jsp.linalg.lu) if len(shape) > 2 else jsp.linalg.lu
-    jtu.check_grads(lu, (a,), 2, atol=5e-2, rtol=1e-1)
+    jtu.check_grads(lu, (a,), 2, atol=5e-2, rtol=3e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
