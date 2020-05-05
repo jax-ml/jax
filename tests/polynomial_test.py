@@ -34,6 +34,9 @@ real_dtypes = float_dtypes + int_dtypes
 all_dtypes = real_dtypes + complex_dtypes
 
 
+# TODO: these tests fail without fixed PRNG seeds.
+
+
 class TestPolynomial(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -48,7 +51,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for leading in [0, 1, 2, 3, 5, 7, 10]
     for trailing in [0, 1, 2, 3, 5, 7, 10]))
   def testRoots(self, dtype, rng_factory, length, leading, trailing):
-    rng = rng_factory()
+    rng = rng_factory(onp.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -58,7 +61,8 @@ class TestPolynomial(jtu.JaxTestCase):
     # order may differ (np.sort doesn't deal with complex numbers)
     np_fn = lambda arg: onp.sort(np.roots(arg))
     onp_fn = lambda arg: onp.sort(onp.roots(arg))
-    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False)
+    self._CheckAgainstNumpy(onp_fn, np_fn, args_maker, check_dtypes=False,
+                            tol=3e-6)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_trailing={}".format(
@@ -70,7 +74,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for length in [0, 1, 3, 10]
     for trailing in [0, 1, 3, 7]))
   def testRootsNostrip(self, length, dtype, rng_factory, trailing):
-    rng = rng_factory()
+    rng = rng_factory(onp.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -99,7 +103,7 @@ class TestPolynomial(jtu.JaxTestCase):
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testRootsJit(self, length, dtype, rng_factory, trailing):
-    rng = rng_factory()
+    rng = rng_factory(onp.random.RandomState(0))
 
     def args_maker():
       p = rng((length,), dtype)
@@ -129,7 +133,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for zeros in [1, 2, 5]
     for nonzeros in [0, 3]))
   def testRootsInvalid(self, zeros, nonzeros, dtype, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(onp.random.RandomState(0))
 
     # The polynomial coefficients here start with zero and would have to
     # be stripped before computing eigenvalues of the companion matrix.

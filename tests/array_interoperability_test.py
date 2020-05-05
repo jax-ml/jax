@@ -54,6 +54,7 @@ all_shapes = nonempty_array_shapes + empty_array_shapes
 
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
+    super(DLPackTest, self).setUp()
     if jtu.device_under_test() == "tpu":
       self.skipTest("DLPack not supported on TPU")
 
@@ -64,7 +65,7 @@ class DLPackTest(jtu.JaxTestCase):
      for shape in all_shapes
      for dtype in dlpack_dtypes))
   def testJaxRoundTrip(self, shape, dtype):
-    rng = jtu.rand_default()
+    rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
@@ -83,7 +84,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testTorchToJax(self, shape, dtype):
-    rng = jtu.rand_default()
+    rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = torch.from_numpy(np)
     x = x.cuda() if jtu.device_under_test() == "gpu" else x
@@ -99,7 +100,7 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testJaxToTorch(self, shape, dtype):
-    rng = jtu.rand_default()
+    rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
@@ -110,6 +111,7 @@ class DLPackTest(jtu.JaxTestCase):
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super(CudaArrayInterfaceTest, self).setUp()
     if jtu.device_under_test() != "gpu":
       self.skipTest("__cuda_array_interface__ is only supported on GPU")
 
@@ -121,7 +123,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
      for dtype in dlpack_dtypes))
   @unittest.skipIf(not cupy, "Test requires CuPy")
   def testJaxToCuPy(self, shape, dtype):
-    rng = jtu.rand_default()
+    rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     y = jnp.array(x)
     z = cupy.asarray(y)
