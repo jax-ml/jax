@@ -1798,8 +1798,7 @@ class JaxprTest(jtu.JaxTestCase):
     # TODO(#2640): update docs/jaxpr.rst to reflect new jaxpr
     self.assertMultiLineStrippedEqual("""
 { lambda c ; a b.
-  let d e = scan[ forward=True
-                  jaxpr={ lambda  ; f a b c.
+  let d e = scan[ jaxpr={ lambda  ; f a b c.
                           let d = mul b c
                               e = add a d
                               g = add e f
@@ -1807,7 +1806,8 @@ class JaxprTest(jtu.JaxTestCase):
                   length=16
                   linear=(False, False, False, False)
                   num_carry=1
-                  num_consts=1 ] b 0.0 a c
+                  num_consts=1
+                  reverse=False ] b 0.0 a c
   in (d, e) }
                         """, str(jaxpr))
 

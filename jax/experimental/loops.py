@@ -488,7 +488,7 @@ class _BoundedLoopBuilder(_LoopBuilder):
     arange_val = jnp.arange(self.start, stop=self.stop, step=self.step)
     return lax_control_flow.scan_p.bind(*itertools.chain(body_const_vals,
                                                          init_vals, [arange_val]),
-                                        forward=True, length=arange_val.shape[0],
+                                        reverse=False, length=arange_val.shape[0],
                                         jaxpr=body_typed_jaxpr,
                                         num_consts=len(body_const_vals),
                                         num_carry=len(init_vals),

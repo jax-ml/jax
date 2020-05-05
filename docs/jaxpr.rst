@@ -375,8 +375,7 @@ For the example consider the function ``func11`` below
 ...
 >>> print(make_jaxpr(func11)(onp.ones(16), 5.))
 { lambda c ; a b.
-  let d e = scan[ forward=True
-                  jaxpr={ lambda  ; f a b c.
+  let d e = scan[ jaxpr={ lambda  ; f a b c.
                           let d = mul b c
                               e = add a d
                               g = add e f
@@ -384,7 +383,8 @@ For the example consider the function ``func11`` below
                   length=16
                   linear=(False, False, False, False)
                   num_carry=1
-                  num_consts=1 ] b 0.0 a c
+                  num_consts=1
+                  reverse=False ] b 0.0 a c
   in (d, e) }
 
 The top-level jaxpr has one constvar ``c`` corresponding to the ``ones`` constant,
