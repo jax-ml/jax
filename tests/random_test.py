@@ -555,7 +555,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     out_jnp = random.multivariate_normal(key, mean=mean, cov=cov, shape=(N,))
 
     var_np = out_np.var(axis=0)
-    var_jnp = out_jjnp.var(axis=0)
+    var_jnp = out_jnp.var(axis=0)
     self.assertAllClose(var_np, var_jnp, rtol=1e-2, atol=1e-2,
                         check_dtypes=False)
 
