@@ -48,7 +48,8 @@ from ..interpreters.xla import DeviceArray
 from ..interpreters.masking import Poly
 from .. import lax
 from .. import ops
-from ..util import partial, get_module_functions, unzip2, prod as _prod, subvals
+from ..util import (partial, get_module_functions, unzip2, prod as _prod,
+                    subvals, safe_zip)
 from ..lib import pytree
 from ..lib import xla_client
 
@@ -390,7 +391,7 @@ def fmax(x1, x2):
   return where((x1 > x2) | isnan(x2), x1, x2)
 
 @_wraps(onp.finfo)
-def finfo(dtype): 
+def finfo(dtype):
   return dtypes.finfo(dtype)
 
 @_wraps(onp.issubdtype)
@@ -724,7 +725,7 @@ def _conv(x, y, mode, op, precision):
   if ndim(x) != 1 or ndim(y) != 1:
     raise ValueError(f"{op}() only support 1-dimensional inputs.")
   x, y = _promote_dtypes_inexact(x, y)
-  
+
   out_order = slice(None)
   if len(x) < len(y):
     x, y = y, x
@@ -3967,12 +3968,24 @@ setattr(DeviceArray, "broadcast", lax.broadcast)
 setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
 setattr(DeviceArray, "split", split)
 
-@jit
-def _unstack(x):
-  if x.ndim == 0:
-    raise ValueError("Argument to _unstack must be non-scalar")
-  return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
-setattr(DeviceArray, "_unstack", _unstack)
+@partial(jit, static_argnums=(1,2,3))
+def _multi_slice(arr: DeviceArray,
+                 start_indices: Tuple[Tuple[int, ...]],
+                 limit_indices: Tuple[Tuple[int, ...]],
+                 removed_dims: Tuple[Tuple[int, ...]]):
+  """Extracts multiple slices from `arr`.
+
+  This is used to shard DeviceArray arguments to pmap. It's implemented as a
+  DeviceArray method here to avoid circular imports.
+  """
+  results = []
+  for starts, limits, removed in safe_zip(start_indices, limit_indices, removed_dims):
+    sliced = lax.slice(arr, starts, limits)
+    if removed_dims:
+      sliced = sliced.reshape(onp.delete(arr.shape, removed_dims))
+    results.append(sliced)
+  return results
+setattr(DeviceArray, "_multi_slice", _multi_slice)
 
 
 # Syntactic sugar for scatter operations.
