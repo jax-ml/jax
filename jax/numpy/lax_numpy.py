@@ -1160,13 +1160,13 @@ and out-of-bounds indices are clipped.
 
 @_wraps(onp.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(flat_index, shape):
-    sizes = pad(shape, (0, 1), constant_values=1)
-    cumulative_sizes = cumprod(sizes[::-1])[::-1]
-    total_size = cumulative_sizes[0]
-    # Clip so raveling and unraveling an oob index will not change the behavior
-    clipped_index = clip(flat_index, -total_size, total_size - 1)
-    idx = clipped_index % cumulative_sizes[:-1] // cumulative_sizes[1:]
-    return tuple(idx)
+  sizes = pad(shape, (0, 1), constant_values=1)
+  cumulative_sizes = cumprod(sizes[::-1])[::-1]
+  total_size = cumulative_sizes[0]
+  # Clip so raveling and unraveling an oob index will not change the behavior
+  clipped_index = clip(flat_index, -total_size, total_size - 1)
+  idx = clipped_index % cumulative_sizes[:-1] // cumulative_sizes[1:]
+  return tuple(idx)
 
 
 @_wraps(onp.squeeze)
