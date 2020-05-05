@@ -17,7 +17,7 @@ from .tree_util import tree_flatten, tree_unflatten
 from . import linear_util as lu
 from .util import safe_zip
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.api import vjp
 
 zip = safe_zip
@@ -30,7 +30,7 @@ def ravel_pytree(pytree):
   return flat, unravel_pytree
 
 def ravel_list(*lst):
-  return np.concatenate([np.ravel(elt) for elt in lst]) if lst else np.array([])
+  return jnp.concatenate([jnp.ravel(elt) for elt in lst]) if lst else jnp.array([])
 
 
 @lu.transformation_with_aux

@@ -27,7 +27,7 @@ from functools import partial
 import operator as op
 
 import jax
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import core
 from jax import lax
 from jax import ops
@@ -52,12 +52,12 @@ def ravel_first_arg_(unravel, y_flat, *args):
 
 def interp_fit_dopri(y0, y1, k, dt):
   # Fit a polynomial to the results of a Runge-Kutta step.
-  dps_c_mid = np.array([
+  dps_c_mid = jnp.array([
       6025192743 / 30085553152 / 2, 0, 51252292925 / 65400821598 / 2,
       -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
       -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
-  y_mid = y0 + dt * np.dot(dps_c_mid, k)
-  return np.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
+  y_mid = y0 + dt * jnp.dot(dps_c_mid, k)
+  return jnp.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
 
 def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
   a = -2.*dt*dy0 + 2.*dt*dy1 -  8.*y0 -  8.*y1 + 16.*y_mid
@@ -71,26 +71,26 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
   # Algorithm from:
   # E. Hairer, S. P. Norsett G. Wanner,
   # Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
-  scale = atol + np.abs(y0) * rtol
-  d0 = np.linalg.norm(y0 / scale)
-  d1 = np.linalg.norm(f0 / scale)
+  scale = atol + jnp.abs(y0) * rtol
+  d0 = jnp.linalg.norm(y0 / scale)
+  d1 = jnp.linalg.norm(f0 / scale)
 
-  h0 = np.where((d0 < 1e-5) | (d1 < 1e-5), 1e-6, 0.01 * d0 / d1)
+  h0 = jnp.where((d0 < 1e-5) | (d1 < 1e-5), 1e-6, 0.01 * d0 / d1)
 
   y1 = y0 + h0 * f0
   f1 = fun(y1, t0 + h0)
-  d2 = np.linalg.norm((f1 - f0) / scale) / h0
+  d2 = jnp.linalg.norm((f1 - f0) / scale) / h0
 
-  h1 = np.where((d1 <= 1e-15) & (d2 <= 1e-15),
-                np.maximum(1e-6, h0 * 1e-3),
-                (0.01 / np.max(d1 + d2)) ** (1. / (order + 1.)))
+  h1 = jnp.where((d1 <= 1e-15) & (d2 <= 1e-15),
+                jnp.maximum(1e-6, h0 * 1e-3),
+                (0.01 / jnp.max(d1 + d2)) ** (1. / (order + 1.)))
 
-  return np.minimum(100. * h0, h1)
+  return jnp.minimum(100. * h0, h1)
 
 def runge_kutta_step(func, y0, f0, t0, dt):
   # Dopri5 Butcher tableaux
-  alpha = np.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0])
-  beta = np.array([
+  alpha = jnp.array([1 / 5, 3 / 10, 4 / 5, 8 / 9, 1., 1., 0])
+  beta = jnp.array([
       [1 / 5, 0, 0, 0, 0, 0, 0],
       [3 / 40, 9 / 40, 0, 0, 0, 0, 0],
       [44 / 45, -56 / 15, 32 / 9, 0, 0, 0, 0],
@@ -98,49 +98,49 @@ def runge_kutta_step(func, y0, f0, t0, dt):
       [9017 / 3168, -355 / 33, 46732 / 5247, 49 / 176, -5103 / 18656, 0, 0],
       [35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0]
   ])
-  c_sol = np.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0])
-  c_error = np.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
+  c_sol = jnp.array([35 / 384, 0, 500 / 1113, 125 / 192, -2187 / 6784, 11 / 84, 0])
+  c_error = jnp.array([35 / 384 - 1951 / 21600, 0, 500 / 1113 - 22642 / 50085,
                       125 / 192 - 451 / 720, -2187 / 6784 - -12231 / 42400,
                       11 / 84 - 649 / 6300, -1. / 60.])
 
   def body_fun(i, k):
     ti = t0 + dt * alpha[i-1]
-    yi = y0 + dt * np.dot(beta[i-1, :], k)
+    yi = y0 + dt * jnp.dot(beta[i-1, :], k)
     ft = func(yi, ti)
     return ops.index_update(k, jax.ops.index[i, :], ft)
 
-  k = ops.index_update(np.zeros((7, f0.shape[0])), ops.index[0, :], f0)
+  k = ops.index_update(jnp.zeros((7, f0.shape[0])), ops.index[0, :], f0)
   k = lax.fori_loop(1, 7, body_fun, k)
 
-  y1 = dt * np.dot(c_sol, k) + y0
-  y1_error = dt * np.dot(c_error, k)
+  y1 = dt * jnp.dot(c_sol, k) + y0
+  y1_error = dt * jnp.dot(c_error, k)
   f1 = k[-1]
   return y1, f1, y1_error, k
 
 def error_ratio(error_estimate, rtol, atol, y0, y1):
-  err_tol = atol + rtol * np.maximum(np.abs(y0), np.abs(y1))
+  err_tol = atol + rtol * jnp.maximum(jnp.abs(y0), jnp.abs(y1))
   err_ratio = error_estimate / err_tol
-  return np.mean(err_ratio ** 2)
+  return jnp.mean(err_ratio ** 2)
 
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       dfactor=0.2, order=5.0):
   """Compute optimal Runge-Kutta stepsize."""
-  mean_error_ratio = np.max(mean_error_ratio)
-  dfactor = np.where(mean_error_ratio < 1, 1.0, dfactor)
+  mean_error_ratio = jnp.max(mean_error_ratio)
+  dfactor = jnp.where(mean_error_ratio < 1, 1.0, dfactor)
 
-  err_ratio = np.sqrt(mean_error_ratio)
-  factor = np.maximum(1.0 / ifactor,
-                      np.minimum(err_ratio**(1.0 / order) / safety, 1.0 / dfactor))
-  return np.where(mean_error_ratio == 0, last_step * ifactor, last_step / factor)
+  err_ratio = jnp.sqrt(mean_error_ratio)
+  factor = jnp.maximum(1.0 / ifactor,
+                      jnp.minimum(err_ratio**(1.0 / order) / safety, 1.0 / dfactor))
+  return jnp.where(mean_error_ratio == 0, last_step * ifactor, last_step / factor)
 
-def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=np.inf):
+def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
   """Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
 
   Args:
     func: function to evaluate the time derivative of the solution `y` at time
       `t` as `func(y, t, *args)`, producing the same shape/structure as `y0`.
     y0: array or pytree of arrays representing the initial value for the state.
-    t: array of float times for evaluation, like `np.linspace(0., 10., 101)`,
+    t: array of float times for evaluation, like `jnp.linspace(0., 10., 101)`,
       in which the values must be strictly increasing.
     *args: tuple of additional arguments for `func`, which must be arrays
       scalars, or (nested) standard Python containers (tuples, lists, dicts,
@@ -189,20 +189,20 @@ def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
 
       new = [i + 1, next_y, next_f, next_t, dt,      t, new_interp_coeff]
       old = [i + 1,      y,      f,      t, dt, last_t,     interp_coeff]
-      return map(partial(np.where, np.all(error_ratios <= 1.)), new, old)
+      return map(partial(jnp.where, jnp.all(error_ratios <= 1.)), new, old)
 
     _, *carry = lax.while_loop(cond_fun, body_fun, [0] + carry)
     _, _, t, _, last_t, interp_coeff = carry
     relative_output_time = (target_t - last_t) / (t - last_t)
-    y_target = np.polyval(interp_coeff, relative_output_time)
+    y_target = jnp.polyval(interp_coeff, relative_output_time)
     return carry, y_target
 
   f0 = func_(y0, ts[0])
   dt = initial_step_size(func_, ts[0], y0, 4, rtol, atol, f0)
-  interp_coeff = np.array([y0] * 5)
+  interp_coeff = jnp.array([y0] * 5)
   init_carry = [y0, f0, ts[0], dt, ts[0], interp_coeff]
   _, ys = lax.scan(scan_fun, init_carry, ts[1:])
-  return np.concatenate((y0[None], ys))
+  return jnp.concatenate((y0[None], ys))
 
 def _odeint_fwd(func, rtol, atol, mxstep, y0, ts, *args):
   ys = _odeint(func, rtol, atol, mxstep, y0, ts, *args)
@@ -226,22 +226,22 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
   def scan_fun(carry, i):
     y_bar, t0_bar, args_bar = carry
     # Compute effect of moving measurement time
-    t_bar = np.dot(func(ys[i], ts[i], *args), g[i])
+    t_bar = jnp.dot(func(ys[i], ts[i], *args), g[i])
     t0_bar = t0_bar - t_bar
     # Run augmented system backwards to previous observation
     _, y_bar, t0_bar, args_bar = odeint(
         aug_dynamics, (ys[i], y_bar, t0_bar, args_bar),
-        np.array([-ts[i], -ts[i - 1]]),
+        jnp.array([-ts[i], -ts[i - 1]]),
         *args, rtol=rtol, atol=atol, mxstep=mxstep)
     y_bar, t0_bar, args_bar = tree_map(op.itemgetter(1), (y_bar, t0_bar, args_bar))
     # Add gradient from current output
     y_bar = y_bar + g[i - 1]
     return (y_bar, t0_bar, args_bar), t_bar
 
-  init_carry = (g[-1], 0., tree_map(np.zeros_like, args))
+  init_carry = (g[-1], 0., tree_map(jnp.zeros_like, args))
   (y_bar, t0_bar, args_bar), rev_ts_bar = lax.scan(
-      scan_fun, init_carry, np.arange(len(ts) - 1, 0, -1))
-  ts_bar = np.concatenate([np.array([t0_bar]), rev_ts_bar[::-1]])
+      scan_fun, init_carry, jnp.arange(len(ts) - 1, 0, -1))
+  ts_bar = jnp.concatenate([jnp.array([t0_bar]), rev_ts_bar[::-1]])
   return (y_bar, ts_bar, *args_bar)
 
 _odeint.defvjp(_odeint_fwd, _odeint_rev)

@@ -21,13 +21,13 @@ To make it run faster, set env var TARGET_TOTAL_SECS to a low number (e.g. 2).
 from absl import app
 
 import jax
-from jax import numpy as np
+from jax import numpy as jnp
 from jax import pmap
 from jax.config import config
 
 from benchmarks import benchmark
 
-import numpy as onp
+import numpy as np
 
 
 def pmap_shard_sharded_device_array_benchmark():
@@ -38,9 +38,9 @@ def pmap_shard_sharded_device_array_benchmark():
   """
 
   def get_benchmark_fn(nargs, nshards):
-    pmap_fn = pmap(lambda *args: np.sum(args))
+    pmap_fn = pmap(lambda *args: jnp.sum(args))
     shape = (nshards, 4)
-    args = [onp.random.random(shape) for _ in range(nargs)]
+    args = [np.random.random(shape) for _ in range(nargs)]
     sharded_args = pmap(lambda x: x)(args)
     assert all(isinstance(arg, jax.pxla.ShardedDeviceArray)
                for arg in sharded_args)
@@ -68,9 +68,9 @@ def pmap_shard_device_array_benchmark():
   """
 
   def get_benchmark_fn(nargs, nshards):
-    pmap_fn = pmap(lambda *args: np.sum(args))
+    pmap_fn = pmap(lambda *args: jnp.sum(args))
     shape = (nshards, 4)
-    args = [np.array(onp.random.random(shape)) for _ in range(nargs)]
+    args = [jnp.array(np.random.random(shape)) for _ in range(nargs)]
     assert all(isinstance(arg, jax.xla.DeviceArray) for arg in args)
     def benchmark_fn():
       for _ in range(10):
@@ -96,7 +96,7 @@ def pmap_shard_outputs_benchmark():
   def get_benchmark_fn(nouts, nshards):
     pmap_fn = pmap(lambda x: [x + i for i in range(nouts)])
     shape = (nshards, 4)
-    arg = onp.random.random(shape)
+    arg = np.random.random(shape)
     def benchmark_fn():
       for _ in range(100):
         pmap_fn(arg)
@@ -118,7 +118,7 @@ def sharded_device_array_indexing_benchmark():
     nshards = min(8, jax.local_device_count())
     shape = (nshards, 8, 8)
     def benchmark_fn():
-      arr = pmap(lambda x: x)(np.arange(np.prod(shape)).reshape(shape))
+      arr = pmap(lambda x: x)(jnp.arange(jnp.prod(shape)).reshape(shape))
       indices = indices_fn()
       for idx in indices:
         arr[idx]
