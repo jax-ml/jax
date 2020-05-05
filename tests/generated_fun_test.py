@@ -21,7 +21,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import itertools as it
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import jit, jvp, vjp
 import jax.test_util as jtu
 
@@ -104,7 +104,7 @@ def fresh_var(ty):
 
 def gen_array_type(size):
   # TODO(dougalm): randomize this
-  return ArrayType((2,2), np.float32)
+  return ArrayType((2,2), jnp.float32)
 
 def gen_array_val(array_type):
   # TODO(dougalm): different sizes and dtypes
@@ -114,7 +114,7 @@ def gen_neg(size, t):
   return (lambda x: -x), t
 
 def gen_trig(size, t):
-  op = choice([np.sin, np.cos])
+  op = choice([jnp.sin, jnp.cos])
   return op, t
 
 def gen_binop(size, t1, t2):
@@ -183,7 +183,7 @@ def gen_vals(vs):
 def inner_prod(xs, ys):
   xys = zip(xs, ys)
   assert all(x.shape == y.shape for x, y in xys)
-  return sum(np.sum(x * y) for x, y in xys)
+  return sum(jnp.sum(x * y) for x, y in xys)
 
 def jvp_fd(fun, args, tangents):
   EPS = 1e-4
@@ -202,10 +202,10 @@ def check_all_close(xs, ys, tol=1e-3):
     check_close(x, y, tol)
 
 def check_close(x, y, tol=1e-3):
-  assert np.shape(x) == np.shape(y)
+  assert jnp.shape(x) == jnp.shape(y)
   # TODO(dougalm): re-enable once we've tackled the less pendantic bugs
   # assert x.dtype == y.dtype
-  assert np.allclose(x, y, rtol=tol, atol=tol), \
+  assert jnp.allclose(x, y, rtol=tol, atol=tol), \
      "Value mismatch:\n{}\n  vs\n{}\n".format(x, y)
 
 def partial_argnums(f, args, dyn_argnums):
