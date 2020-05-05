@@ -25,7 +25,7 @@ import numpy.random as npr
 from jax.api import jit, grad
 from jax.config import config
 from jax.scipy.special import logsumexp
-import jax.numpy as np
+import jax.numpy as jnp
 from examples import datasets
 
 
@@ -36,23 +36,23 @@ def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
 def predict(params, inputs):
   activations = inputs
   for w, b in params[:-1]:
-    outputs = np.dot(activations, w) + b
-    activations = np.tanh(outputs)
+    outputs = jnp.dot(activations, w) + b
+    activations = jnp.tanh(outputs)
 
   final_w, final_b = params[-1]
-  logits = np.dot(activations, final_w) + final_b
+  logits = jnp.dot(activations, final_w) + final_b
   return logits - logsumexp(logits, axis=1, keepdims=True)
 
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(np.sum(preds * targets, axis=1))
+  return -jnp.mean(jnp.sum(preds * targets, axis=1))
 
 def accuracy(params, batch):
   inputs, targets = batch
-  target_class = np.argmax(targets, axis=1)
-  predicted_class = np.argmax(predict(params, inputs), axis=1)
-  return np.mean(predicted_class == target_class)
+  target_class = jnp.argmax(targets, axis=1)
+  predicted_class = jnp.argmax(predict(params, inputs), axis=1)
+  return jnp.mean(predicted_class == target_class)
 
 
 if __name__ == "__main__":
