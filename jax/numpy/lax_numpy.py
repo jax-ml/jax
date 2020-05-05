@@ -1153,7 +1153,12 @@ def ravel(a, order="C"):
   return reshape(a, (size(a),), order)
 
 
-@_wraps(onp.unravel_index)
+_UNRAVEL_INDEX_DOC = """\
+Unlike numpy's implementation of unravel_index, negative indices are accepted
+and out-of-bounds indices are clipped.
+"""
+
+@_wraps(onp.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(flat_index, shape):
     sizes = pad(shape, (0, 1), constant_values=1)
     cumulative_sizes = cumprod(sizes[::-1])[::-1]
