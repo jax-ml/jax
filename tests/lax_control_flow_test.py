@@ -841,6 +841,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = api.vmap(api.grad(g))(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testCondVmapWhile(self):
+    # from issue #2947
+    def positive_fn(x):
+      return lax.while_loop(lambda y: (y <= 0) | (y > 1e-6), lambda x: x * 0.1, x)
+    def negative_fn(x):
+      return lax.while_loop(lambda y: y < -1e-6, lambda x: x * 0.1, x)
+    def branched_fn(x):
+      return lax.cond(x >= 0, x, positive_fn, x, negative_fn)
+    x = np.linspace(-1, 1, 2)
+    # check that this terminates
+    api.vmap(branched_fn))(x)
+
   def testIssue1263(self):
     def f(rng, x):
       cond = random.bernoulli(rng)
