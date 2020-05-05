@@ -14,7 +14,7 @@ jax 0.1.66 (unreleased)
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.65...master>`_.
 
-jaxlib 0.1.46 (unreleased)
+jaxlib 0.1.46 (May 5, 2020)
 ------------------------------
 
 * Fixes crash for linear algebra functions on Mac OS X (#432).
