@@ -134,12 +134,10 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     # TODO(phawkins): np.expand_dims should accept an axis tuple.
     # (https://github.com/numpy/numpy/issues/12290)
     ed = tuple(None if i in axis else slice(None) for i in range(np.ndim(x)))
-    beta = beta[ed]
-    gamma = gamma[ed]
     z = normalize(x, axis, epsilon=epsilon)
-    if center and scale: return gamma * z + beta
-    if center: return z + beta
-    if scale: return gamma * z
+    if center and scale: return gamma[ed] * z + beta[ed]
+    if center: return z + beta[ed]
+    if scale: return gamma[ed] * z
     return z
   return init_fun, apply_fun
 
@@ -266,7 +264,7 @@ def Dropout(rate, mode='train'):
     if rng is None:
       msg = ("Dropout layer requires apply_fun to be called with a PRNG key "
              "argument. That is, instead of `apply_fun(params, inputs)`, call "
-             "it like `apply_fun(params, inputs, key)` where `key` is a "
+             "it like `apply_fun(params, inputs, rng)` where `rng` is a "
              "jax.random.PRNGKey value.")
       raise ValueError(msg)
     if mode == 'train':

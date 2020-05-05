@@ -9,12 +9,111 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.63 (unreleased)
+jax 0.1.67 (unreleased)
 ---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.66...master>`_.
+
+jax 0.1.66 (May 5, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.65...jax-v0.1.66>`_.
+
+jaxlib 0.1.46 (May 5, 2020)
+------------------------------
+
+* Fixes crash for linear algebra functions on Mac OS X (#432).
+* Fixes an illegal instruction crash caused by using AVX512 instructions when
+  an operating system or hypervisor disabled them (#2906).
+
+jax 0.1.65 (April 30, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.64...jax-v0.1.65>`_.
+
+* New features:
+
+  * Differentiation of determinants of singular matrices
+    `#2809 <https://github.com/google/jax/pull/2809>`_.
+
+* Bug fixes:
+
+  * Fix :func:`odeint` differentiation with respect to time of ODEs with
+    time-dependent dynamics `#2817 <https://github.com/google/jax/pull/2817>`_,
+    also add ODE CI testing.
+  * Fix :func:`lax_linalg.qr` differentiation
+    `#2867 <https://github.com/google/jax/pull/2867>`_.
+
+jaxlib 0.1.45 (April 21, 2020)
+------------------------------
+
+* Fixes segfault: https://github.com/google/jax/issues/2755
+* Plumb is_stable option on Sort HLO through to Python.
+
+jax 0.1.64 (April 21, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.63...jax-v0.1.64>`_.
+* New features:
+
+  * Add syntactic sugar for functional indexed updates
+    `#2684 <https://github.com/google/jax/issues/2684>`_.
+  * Add :func:`jax.numpy.linalg.multi_dot` `#2726 <https://github.com/google/jax/issues/2726>`_.
+  * Add :func:`jax.numpy.unique` `#2760 <https://github.com/google/jax/issues/2760>`_.
+  * Add :func:`jax.numpy.rint` `#2724 <https://github.com/google/jax/issues/2724>`_.
+  * Add :func:`jax.numpy.rint` `#2724 <https://github.com/google/jax/issues/2724>`_.
+  * Add more primitive rules for :func:`jax.experimental.jet`.
+
+* Bug fixes:
+
+  * Fix :func:`logaddexp` and :func:`logaddexp2` differentiation at zero `#2107
+    <https://github.com/google/jax/issues/2107>`_.
+  * Improve memory usage in reverse-mode autodiff without :func:`jit`
+    `#2719 <https://github.com/google/jax/issues/2719>`_.
+
+* Better errors:
+
+  * Improves error message for reverse-mode differentiation of :func:`lax.while_loop`
+    `#2129 <https://github.com/google/jax/issues/2129>`_.
+
+
+jaxlib 0.1.44 (April 16, 2020)
+------------------------------
+
+* Fixes a bug where if multiple GPUs of different models were present, JAX
+  would only compile programs suitable for the first GPU.
+* Bugfix for ``batch_group_count`` convolutions.
+* Added precompiled SASS for more GPU versions to avoid startup PTX compilation
+  hang.
+
+
+jax 0.1.63 (April 12, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.62...jax-v0.1.63>`_.
+* Added ``jax.custom_jvp`` and ``jax.custom_vjp`` from `#2026 <https://github.com/google/jax/pull/2026>`_, see the `tutorial notebook <https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html>`_. Deprecated ``jax.custom_transforms`` and removed it from the docs (though it still works).
+* Add ``scipy.sparse.linalg.cg`` `#2566 <https://github.com/google/jax/pull/2566>`_.
+* Changed how Tracers are printed to show more useful information for debugging `#2591 <https://github.com/google/jax/pull/2591>`_.
+* Made ``jax.numpy.isclose`` handle ``nan`` and ``inf`` correctly `#2501 <https://github.com/google/jax/pull/2501>`_.
+* Added several new rules for ``jax.experimental.jet`` `#2537 <https://github.com/google/jax/pull/2537>`_.
+* Fixed ``jax.experimental.stax.BatchNorm`` when ``scale``/``center`` isn't provided.
+* Fix some missing cases of broadcasting in ``jax.numpy.einsum`` `#2512 <https://github.com/google/jax/pull/2512>`_.
+* Implement ``jax.numpy.cumsum`` and ``jax.numpy.cumprod`` in terms of a parallel prefix scan `#2596 <https://github.com/google/jax/pull/2596>`_ and make ``reduce_prod`` differentiable to arbitray order `#2597 <https://github.com/google/jax/pull/2597>`_.
+* Add ``batch_group_count`` to ``conv_general_dilated`` `#2635 <https://github.com/google/jax/pull/2635>`_.
+* Add docstring for ``test_util.check_grads`` `#2656 <https://github.com/google/jax/pull/2656>`_.
+* Add ``callback_transform`` `#2665 <https://github.com/google/jax/pull/2665>`_.
+* Implement ``rollaxis``, ``convolve``/``correlate`` 1d & 2d, ``copysign``,
+  ``trunc``, ``roots``, and ``quantile``/``percentile`` interpolation options.
+
+jaxlib 0.1.43 (March 31, 2020)
+------------------------------
+
+* Fixed a performance regression for Resnet-50 on GPU.
 
 jax 0.1.62 (March 21, 2020)
 ---------------------------
 
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.61...jax-v0.1.62>`_.
 * JAX has dropped support for Python 3.5. Please upgrade to Python 3.6 or newer.
 * Removed the internal function ``lax._safe_mul``, which implemented the
   convention ``0. * nan == 0.``. This change means some programs when
@@ -33,14 +132,14 @@ jaxlib 0.1.42 (March 19, 2020)
 
 jax 0.1.61 (March 17, 2020)
 ---------------------------
-
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.60...jax-v0.1.61>`_.
 * Fixes Python 3.5 support. This will be the last JAX or jaxlib release that
   supports Python 3.5.
 
 jax 0.1.60 (March 17, 2020)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.59...jax-v0.1.60>`_.
 * New features:
 
   * :py:func:`jax.pmap` has ``static_broadcast_argnums`` argument which allows

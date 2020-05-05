@@ -21,7 +21,8 @@ from .lib import xla_bridge
 def to_dlpack(x: xla.DeviceArray):
   """Returns a DLPack tensor that encapsulates a DeviceArray `x`.
 
-  The DLPack shares memory with `x`.
+  Takes ownership of the contents of `x`; leaves `x` in an invalid/deleted
+  state.
 
   Args:
     x: a `DeviceArray`, on either CPU or GPU.
@@ -44,7 +45,8 @@ def from_dlpack(dlpack, backend=None):
   # TODO(phawkins): ideally the user wouldn't need to provide a backend and we
   # would be able to figure it out from the DLPack.
   backend = backend or xla_bridge.get_backend()
-  buf = xla_client._xla.DLPackManagedTensorToBuffer(dlpack, backend.client)
+  client = getattr(backend, "client", backend)
+  buf = xla_client._xla.DLPackManagedTensorToBuffer(dlpack, client)
   xla_shape = buf.shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())

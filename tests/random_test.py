@@ -25,6 +25,7 @@ import scipy.special
 import scipy.stats
 
 from jax import api
+from jax import core
 from jax import grad
 from jax import lax
 from jax import numpy as np
@@ -36,7 +37,6 @@ from jax.interpreters import xla
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
-
 
 class LaxRandomTest(jtu.JaxTestCase):
 
@@ -56,9 +56,19 @@ class LaxRandomTest(jtu.JaxTestCase):
   def _CheckChiSquared(self, samples, pmf):
     alpha = 0.01  # significance level, threshold for p-value
     values, actual_freq = onp.unique(samples, return_counts=True)
-    expected_freq = pmf(values) * len(values)
-    _, p_value = scipy.stats.chisquare(actual_freq, expected_freq)
-    self.assertLess(p_value, alpha)
+    expected_freq = pmf(values) * samples.size
+    # per scipy: "A typical rule is that all of the observed and expected
+    # frequencies should be at least 5."
+    valid = (actual_freq > 5) & (expected_freq > 5)
+    self.assertGreater(valid.sum(), 1,
+                       msg='not enough valid frequencies for chi-squared test')
+    _, p_value = scipy.stats.chisquare(
+        actual_freq[valid], expected_freq[valid])
+    self.assertGreater(
+        p_value, alpha,
+        msg=f'Failed chi-squared test with p={p_value}.\n'
+            'Expected vs. actual frequencies:\n'
+            f'{expected_freq[valid]}\n{actual_freq[valid]}')
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
@@ -162,13 +172,56 @@ class LaxRandomTest(jtu.JaxTestCase):
     rand = lambda key: random.shuffle(key, x)
     crand = api.jit(rand)
 
+    with self.assertWarns(FutureWarning):
+      perm1 = rand(key)
+    with self.assertWarns(FutureWarning):
+      perm2 = crand(key)
+
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
+    self.assertAllClose(onp.sort(perm1), x, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "dtype": onp.dtype(dtype).name, "shape": shape}
+      for dtype in [onp.float32, onp.float64, onp.int32, onp.int64]
+      for shape in [100, (10, 10), (10, 5, 2)]))
+  def testPermutationArray(self, dtype, shape):
+    key = random.PRNGKey(0)
+    x = np.arange(np.prod(shape)).reshape(shape).astype(dtype)
+    rand = lambda key: random.permutation(key, x)
+    crand = api.jit(rand)
+
     perm1 = rand(key)
     perm2 = crand(key)
 
-    self.assertTrue(onp.all(perm1 == perm2))
-    self.assertTrue(onp.all(perm1.dtype == perm2.dtype))
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
     self.assertFalse(onp.all(perm1 == x))  # seems unlikely!
-    self.assertTrue(onp.all(onp.sort(perm1) == x))
+    self.assertAllClose(onp.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
+    self.assertArraysAllClose(
+      x, np.arange(np.prod(shape)).reshape(shape).astype(dtype),
+      check_dtypes=True)
+
+  def testPermutationInteger(self):
+    key = random.PRNGKey(0)
+    x = 100
+    rand = lambda key: random.permutation(key, x)
+    crand = api.jit(rand)
+
+    perm1 = rand(key)
+    perm2 = crand(key)
+
+    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertEqual(perm1.dtype, perm2.dtype)
+    self.assertFalse(onp.all(perm1 == onp.arange(100)))  # seems unlikely!
+    self.assertAllClose(onp.sort(perm1), onp.arange(100), check_dtypes=False)
+
+  def testPermutationErrors(self):
+    key = random.PRNGKey(0)
+    with self.assertRaises(TypeError):
+      random.permutation(key, 10.)
+    with self.assertRaises(core.ConcretizationTypeError):
+      api.jit(random.permutation)(key, 10)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_p={}_{}".format(p, dtype),
@@ -190,29 +243,36 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_p={}_{}_{}".format(p, dtype, sample_shape),
      "p": p, "axis": axis, "dtype": onp.dtype(dtype).name, 'sample_shape': sample_shape}
-    for (p, axis) in [([.25] * 4, -1), ([[.25, .25], [.1, .9]], 1), ([[.25, .1], [.25, .9]], 0)]
+    for (p, axis) in [
+        ([.25] * 4, -1),
+        ([.1, .2, .3, .4], -1),
+        ([[.5, .5], [.1, .9]], 1),
+        ([[.5, .1], [.5, .9]], 0),
+    ]
     for sample_shape in [(10000,), (5000, 2)]
     for dtype in [onp.float32, onp.float64]))
   def testCategorical(self, p, axis, dtype, sample_shape):
     key = random.PRNGKey(0)
     p = onp.array(p, dtype=dtype)
     logits = onp.log(p) - 42 # test unnormalized
-    shape = sample_shape + tuple(onp.delete(logits.shape, axis))
+    out_shape = tuple(onp.delete(logits.shape, axis))
+    shape = sample_shape + out_shape
     rand = lambda key, p: random.categorical(key, logits, shape=shape, axis=axis)
     crand = api.jit(rand)
 
     uncompiled_samples = rand(key, p)
     compiled_samples = crand(key, p)
 
+    if axis < 0:
+      axis += len(logits.shape)
+
     for samples in [uncompiled_samples, compiled_samples]:
-      if axis < 0:
-       axis += len(logits.shape)
-
       assert samples.shape == shape
-
+      samples = np.reshape(samples, (10000,) + out_shape)
       if len(p.shape[:-1]) > 0:
-        for cat_index, p_ in enumerate(p):
-          self._CheckChiSquared(samples[:, cat_index], pmf=lambda x: p_[x])
+        ps = onp.transpose(p, (1, 0)) if axis == 0 else p
+        for cat_samples, cat_p in zip(samples.transpose(), ps):
+          self._CheckChiSquared(cat_samples, pmf=lambda x: cat_p[x])
       else:
         self._CheckChiSquared(samples, pmf=lambda x: p[x])
 
@@ -226,11 +286,10 @@ class LaxRandomTest(jtu.JaxTestCase):
        "a": a, "b": b, "dtype": onp.dtype(dtype).name}
       for a in [0.2, 5.]
       for b in [0.2, 5.]
-      for dtype in [onp.float32, onp.float64]))
-  # TODO(phawkins): slow compilation times on cpu and tpu.
-  # TODO(mattjj): test fails after https://github.com/google/jax/pull/1123
-  @jtu.skip_on_devices("cpu", "gpu", "tpu")
+      for dtype in [onp.float64]))  # NOTE: KS test fails with float32
   def testBeta(self, a, b, dtype):
+    if not FLAGS.jax_enable_x64:
+      raise SkipTest("skip test except on X64")
     key = random.PRNGKey(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
     crand = api.jit(rand)
@@ -339,6 +398,38 @@ class LaxRandomTest(jtu.JaxTestCase):
     api.vjp(f, a, b)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_lam={}_{}".format(lam, dtype),
+       "lam": lam, "dtype": onp.dtype(dtype).name}
+      for lam in [0.5, 3, 9, 11, 50, 500]
+      for dtype in [onp.int32, onp.int64]))
+  def testPoisson(self, lam, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key, lam)
+    compiled_samples = crand(key, lam)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
+      # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
+      # based on the central limit theorem).
+      self.assertAllClose(samples.mean(), lam, rtol=0.01, check_dtypes=False)
+      self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
+
+  def testPoissonBatched(self):
+    key = random.PRNGKey(0)
+    lam = np.concatenate([2 * np.ones(10000), 20 * np.ones(10000)])
+    samples = random.poisson(key, lam, shape=(20000,))
+    self._CheckChiSquared(samples[:10000], scipy.stats.poisson(2.0).pmf)
+    self._CheckChiSquared(samples[10000:], scipy.stats.poisson(20.0).pmf)
+
+  def testPoissonShape(self):
+    key = random.PRNGKey(0)
+    x = random.poisson(key, onp.array([2.0, 20.0]), shape=(3, 2))
+    assert x.shape == (3, 2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": onp.dtype(dtype).name}
       for dtype in [onp.float32, onp.float64]))
   def testGumbel(self, dtype):
@@ -423,6 +514,7 @@ class LaxRandomTest(jtu.JaxTestCase):
        "dim": dim, "dtype": dtype}
       for dim in [1, 3, 5]
       for dtype in [onp.float32, onp.float64]))
+  @jtu.skip_on_mac_linalg_bug()
   def testMultivariateNormal(self, dim, dtype):
     r = onp.random.RandomState(dim)
     mean = r.randn(dim)
@@ -447,6 +539,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       # eigenvectors follow a standard normal distribution.
       self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
 
+  @jtu.skip_on_mac_linalg_bug()
   def testMultivariateNormalCovariance(self):
     # test code based on https://github.com/google/jax/issues/1869
     N = 100000
