@@ -457,9 +457,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                  JAX_COMPOUND_OP_RECORDS)))
   def testOp(self, onp_op, jnp_op, rng_factory, shapes, dtypes, check_dtypes,
              tolerance, inexact):
-    if onp_op is onp.float_power:
-      onp_op = jtu.ignore_warning(category=RuntimeWarning,
-                                  message="invalid value.*")(onp_op)
+    onp_op = jtu.ignore_warning(category=RuntimeWarning,
+                                message="invalid value.*")(onp_op)
 
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, onp_arrays=False)
