@@ -425,17 +425,23 @@ def dtype_str(dtype):
 
 
 def format_shape_dtype_string(shape, dtype):
+  if isinstance(shape, onp.ndarray):
+    return f'{dtype_str(dtype)}[{shape}]'
+  elif isinstance(shape, list):
+    shape = tuple(shape)
+  return _format_shape_dtype_string(shape, dtype)
+
+@functools.lru_cache(maxsize=64)
+def _format_shape_dtype_string(shape, dtype):
   if shape is NUMPY_SCALAR_SHAPE:
     return dtype_str(dtype)
   elif shape is PYTHON_SCALAR_SHAPE:
     return 'py' + dtype_str(dtype)
-  elif type(shape) in (list, tuple):
+  elif type(shape) is tuple:
     shapestr = ','.join(str(dim) for dim in shape)
     return '{}[{}]'.format(dtype_str(dtype), shapestr)
   elif type(shape) is int:
     return '{}[{},]'.format(dtype_str(dtype), shape)
-  elif isinstance(shape, onp.ndarray):
-    return '{}[{}]'.format(dtype_str(dtype), shape)
   else:
     raise TypeError(type(shape))
 
