@@ -1995,7 +1995,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.parameters(
     (0, (2, 1, 3)),
     (5, (2, 1, 3)),
-    (0, ()))
+    (0, ()),
+    ([0, 1, 2], (2, 2)),
+    ([[[0, 1], [2, 3]]], (2, 2)))
   def testUnravelIndex(self, flat_index, shape):
     self._CheckAgainstNumpy(
       onp.unravel_index,
