@@ -11,10 +11,77 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Implementation of an experimental primitive for calling back into Python
-code on the host, including from transformed and compiled code.
+"""Primitives for calling user-defined Python functions
+on the host, even from compiled and transformed code.
 
-See documentation for ``id_tap` and ``id_print``.
+**Experimental: please give feedback, and expect changes.**
+
+Tapping works even for code executed on accelerators and
+even for code under JAX transformations. A few examples::
+
+  # calls func(2x) and returns 2x
+  y = id_tap(func, x * 2)
+  # calls func((2x, 3x)) and returns (2x, 3x)
+  y, z = id_tap(func, (x * 2, x * 3))  # The argument can be a pytree
+  # calls func(2x) and returns y
+  y = id_tap(func, x * 2, result=y)
+  # calls func(2x, what='x') and returns 2x
+  y = id_tap(func, x * 2, what='x')
+  # calls func(dict(x=x, y=y), what='foo') and returns dict(x=x, y=y)
+  x, y = id_tap(func, dict(x=x, y=y), what='a dict')
+
+The order of execution is by data dependency: after all the arguments are
+computed and before the result is used. At least one of the returned values
+must be used in the rest of the computation, or else this operation has no effect.
+
+*At the moment*, in order to use the callback primitives in compiled code,
+one must wrap any invocation with an :func:`outfeed_receiver` (an exception is
+raised otherwise)::
+
+  with outfeed_receiver():
+     ...calls to compiled code that may invoke callback primitives...
+
+
+The printing and the tap functions execute in separate threads that are started
+by :func:`outfeed_receiver`. Exceptions from the primitives are printed along with
+the traceback, but the execution does not stop until the body of the
+:func:`outfeed_receiver` terminates and all the outfeeds are received.
+At that point, a ``TapFunctionException`` is raised.
+
+We describe the behaviour under transformations in the context of the
+following function definition::
+
+  def power3(x):
+     y = x * x
+     _, y = id_print(x, y, what="x,x^2")
+     return y * x
+
+
+For :func:`jax.vmap` the arguments are batched, ``vmap`` is appended
+to ``transforms``, and `batch_dims` is added to specify the tuple of
+batched dimensions::
+
+  jax.vmap(power3)(np.arange(3.))
+  # what=x,x^2 transforms=vmap batch_dims=(0, 0): ([0, 1, 2], [0, 1, 4])
+
+
+For :func:`jax.jvp` there will be two callbacks, one with the values of the primals and
+one with the tangents::
+
+  jax.jvp(power3, (3.,), (0.1,))
+  # what=x,x^2: (3., 9.)
+  # what=x,x^2 transforms=jvp: (0.1, 0.6)
+
+For :func:`jax.vjp` or :func:`jax.grad` there will be one callback with the values of
+the adjoints for the arguments. You may also see a callback with the values of
+the primals from the forward pass, if those values are needed for the
+backward pass::
+
+  jax.grad(power3)(3.)
+  # what=x,x^2: (3., 9.)  # from forward pass, since y is needed in backward pass
+  # what=x,x^2 transforms=(jvp, transpose): (0., 3.)  # from backward pass, adjoints of _, y
+
+See documentation for :func:`id_tap` and :func:`id_print`.
 For usage example, see tests/host_callback_test.py.
 
 Still to do:
@@ -30,6 +97,8 @@ Still to do:
   * Explore a simpler API that uses Python program-order, instead of
     data dependency-order. Need to add support to JAX for stateful primitives.
   * Explore implementation with outside compilation.
+
+
 """
 from collections import defaultdict, namedtuple
 from concurrent import futures
@@ -73,48 +142,29 @@ _LOGGING = True
 def id_tap(func: Callable, arg, *,
            result=None,
            **kwargs):
-  """Behaves like the identity function, but invokes ``func`` on positional
-     argument ``arg`` and keyword arguments ``kwargs``.
-     The return value of ``func`` is ignored.
+  """Host-callback tap primitive, like identity function with a call to ``func``.
 
-     The argument can be a JAX type, or a pytree thereof (tuples/list/dict).
-     If the ``return`` keyword argument is given, then its value must be
-     a JAX type and it is the value being returned.
+**Experimental: please give feedback, and expect changes!**
 
-     Note that only the JAX types from ``arg`` are passed through the compiled
-     code; all the values from ``kwargs`` are stored in Python and passed to
-     ``func``.
+``id_tap`` behaves semantically like the identity function but has the side-effect
+that a user-defined Python function is called with the runtime values of the
+argument.
 
-     Usage:
-     >>> # calls func(2x) and returns 2x
-     >>> y = id_tap(func, x * 2)
-     >>> # calls func((2x, 3x)) and returns (2x, 3x)
-     >>> y, z = id_tap(func, (x * 2, x * 3))
-     >>> # calls func(2x) and returns y
-     >>> y = id_tap(func, x * 2, result=y)
-     >>> # calls func(2x, what='x') and returns 2x
-     >>> y = id_tap(func, x * 2, what='x')
-     >>> # calls func(dict(x=x, y=y), what='foo') and returns dict(x=x, y=y)
-     >>> x, y = id_tap(func, dict(x=x, y=y), what='a dict')
+Args:
+  * arg: the argument passed to the tap function, can be a pytree of JAX
+    types.
+  * result: if given, then specifies the return value of ``id_tap``. By default,
+    the return type is ``arg``.
+  * kwargs: will be passed directly to the tap function. Can be anything,
+    these are kept in the host Python process.
 
-     The order of execution is by data dependency: after all the arguments are
-     computed and before the result is used. At least one of the returned values
-     must be used in the rest of the computation, or else this operation has
-     no effect.
+Returns:
+  * the value of ``result`` or otherwise ``arg``
 
-     Upon JAX transformations, the transformed values are wrapped with
-     ``id_tap``, and a special ``transforms`` tuple keyword argument is added with
-     the sequence of transformations applied:
+Tapping works even for code executed on accelerators and
+even for code under JAX transformations.
 
-        - For ``vmap`` the arguments are batched, and transforms=('vmap')
-        - For ``jvp`` there will be an id_tap for the primal values, and a
-        separate ``id_tap`` for the tangents with ``transforms=('jvp')``.
-        - For ``grad`` there will be an ``id_tap`` for the primal values (if
-        needed in the computation of `grad` and an ``id_print`` with the
-        adjoints of the results, with transforms=('vjp').
-
-    When using ``id_tap`` in compiled code, one must ensure that the
-    ``outfeed_receiver`` is started.
+For more details see the `module documentation <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_.
   """
   if func not in (_end_consumer, _unknown_consumer):
     api._check_callable(func)
@@ -137,22 +187,28 @@ def id_tap(func: Callable, arg, *,
   else:
     return arg_treedef.unflatten(flat_outs)
 
-# TODO: clean up the docstring
-def id_print(arg, *, result=None, output_stream=None, threshold=1024,
+
+def id_print(arg, *, result=None, output_stream=None, threshold=None,
              **kwargs):
-  """Like ``id_tap`` with a printing tap function.
+  """Like :func:`id_tap` with a printing tap function.
+
+     **Experimental: please give feedback, and expect changes!**
 
      On each invocation of the printing tap, the ``kwargs`` if present
      will be printed first (sorted by keys). Then arg will be printed,
      with the arrays stringified with ``numpy.array2string``.
 
+     See the :func:`id_tap` documentation.
+
      Additional keyword arguments:
+
      * ``output_stream`` if given then it will be used instead of the
        built-in ``print``. The string will be passed as ``output_stream.write(s)``.
      * ``threshold`` is passed to ``numpy.array2string``.
   """
   return id_tap(_print_consumer, arg,
-                result=result, output_stream=output_stream, **kwargs)
+                result=result, output_stream=output_stream,
+                threshold=threshold, **kwargs)
 
 
 # A registry of outfeed consumers
@@ -343,9 +399,6 @@ def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
   next_token = _emit_outfeed(comp, prev_token,
                              args_op[0:nr_args_to_emit], params["consumer_id"])
   xla.state_carry.set_current_token(comp, next_token)
-  if xla.USE_ADD_DEPENDENCY:
-    args_op = tuple([xops.AddDependency(a, next_token)
-                    for a in args_op])
   return xops.Tuple(comp, args_op)
 
 xla.translations[id_tap_p] = _id_print_translation_rule_outfeed
@@ -458,31 +511,44 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
 
 
 class TapFunctionException(Exception):
-  """Signals that a tap function had exceptions"""
+  """Signals that some tap function had exceptions.
+
+  Raised by :func:`outfeed_receiver`.
+  """
   pass
 
 @contextmanager
 def outfeed_receiver(*,
-                     receiver_name="",
                      timeout_sec=10,
                      backends: Optional[Sequence[str]] = None,
-                     devices: Optional[Sequence[XlaDevice]] = None):
+                     devices: Optional[Sequence[XlaDevice]] = None,
+                     receiver_name=""):
   # TODO: better timeout management.
   # TODO: prevent multiple consumers.
-  """Starts a receiver for the id_tap outfeed.
+  """Starts receivers for the :func:`id_tap` outfeed from several devices.
+
+  The receivers will run in a threadpool. The tapped functions will be invoked
+  in those threads. If a tap function raises an exception, an error is
+  printed, but the receving continues until the body of the context manager
+  terminates and all outfeeds from all devices have been received. Only then
+  will a :exc:`TapFunctionException` be raised.
 
   Args:
-    receiver_name: (optional) a name to use with debug logging
     backends: (optional) sequence of backend names for which to listen.
-      Will listen to all devices on those backends. By default, all devices on
-      all known backends.
+      Will listen to all devices on those backends. By default, listed to
+      all devices on all known backends.
     devices: (optional) sequence of devices to listed to. At most one
       of `backends` or `devices` must be given.
-  Usage:
+    receiver_name: (optional) a name to use with debug logging
+  Usage::
 
-  >>>with outfeed_receiver():
-  >>>   jax.jit(func)(args)
-  >>>
+    with outfeed_receiver():
+      jax.jit(func)(args)
+      ...
+      jax.pmap(another_func)(args)
+
+  The ``outfeed_receiver`` must be started outside any jitted computation.
+
   """
   if not devices:
     backends = backends or xla_client._get_local_backends().keys()

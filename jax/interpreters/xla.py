@@ -168,15 +168,13 @@ pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
 pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 
-USE_ADD_DEPENDENCY = False  # We can only use AddDependency once we land the HLO change
-
 # Keep track of which primitives are stateful (they read or read/write state).
 # This helps avoid threading the state through control-flow primitives that
 # do not need it. This is a worthwhile optimization because it seems that XLA
 # may not be good at dealing with tokens (b/154992062).
 outfeed_primitives: Set[core.Primitive] = set()
 def jaxpr_uses_outfeed(jaxpr):
-  """Whether there is a stateful primitive anywhere inside a Jaxpr."""
+  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
   if type(jaxpr) is core.TypedJaxpr:
     jaxpr = jaxpr.jaxpr
   for eqn in jaxpr.eqns:
@@ -190,12 +188,11 @@ def jaxpr_uses_outfeed(jaxpr):
 class _ComputationStateCarry(threading.local):
   """Carries some state globally as we build the HLO.
 
-  For now the state is only a token, obtained from the last OutFeed.
-  The translation rules for primitives can read-write from this class.
-
-  This assumes that the primitives are processed in program-order!
+  For now the state is only a token, obtained from the last OutFeed. The
+  state is carried through nested loops and conditionals, if they use
+  state.
   """
-  # A stack of nested computations and the current tokens for each. A None token
+  # A stack of nested computations and the current token for each. A None token
   # means that we cannot use state in this computation and any nested
   # computations. The last one is the most recent.
   _computations: Tuple[XlaComputationBuilder, ...]
@@ -206,7 +203,7 @@ class _ComputationStateCarry(threading.local):
   # Flags to force compilation of while, cond, call with in/out state, to
   # test the XLA compiler's handling of tokens.
   FORCE_OUTFEED = False
-  _LOG_STATE = True
+  _LOG_STATE = False
 
   def __init__(self) -> None:
     self._computations = ()
@@ -224,7 +221,8 @@ class _ComputationStateCarry(threading.local):
   def _log_state(self, msg: str):
     if self._LOG_STATE:
       top_comp = id(self._computations[-1]) if self._computations else 0
-      logging.warning(f"[{self._log_idx} @ 0x{top_comp:x}/{len(self._computations)}]: {msg}.")
+      logging.warning(
+        f"[{self._log_idx} @ 0x{top_comp:x}/{len(self._computations)}]: {msg}.")
       self._log_idx += 1
 
   def current_state(self, comp: XlaComputationBuilder, uses_state: bool) -> List[XlaOp]:
@@ -256,7 +254,8 @@ class _ComputationStateCarry(threading.local):
 
   def start_nested_comp_with_input(self, comp: XlaComputationBuilder,
                                    tuple_op: XlaOp, nr_regular: int,
-                                   uses_state: bool) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
+                                   uses_state: bool
+                                   ) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
     """Start a nested computation with inputs.
     `comp` is the new computation. `tuple_op` is a tuple in the new computation
     with `nr_regular` elements and perhaps some state elements (if `uses_state`).
@@ -295,13 +294,15 @@ class _ComputationStateCarry(threading.local):
       assert len(self._computations) >= 2 and self._computations[-2] is comp
     self._computations = self._computations[:-1]
     self._tokens = self._tokens[:-1]
-    regulars, _ = self.set_state_from_tuple(comp, tuple_op, nr_regular, uses_state)
+    regulars, _ = self.set_state_from_tuple(comp, tuple_op,
+                                            nr_regular, uses_state)
     return regulars
 
 
   def set_state_from_tuple(self, comp: XlaComputationBuilder,
                            tuple_op: XlaOp, nr_regular: int,
-                           uses_state: bool) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
+                           uses_state: bool
+                           ) -> Tuple[Sequence[XlaOp], Sequence[XlaOp]]:
     """Decomposes a tuple, returns the regular elements and the state.
 
     We assume that the `tuple_op` represents a tuple with `nr_regular` regular
@@ -1240,7 +1241,7 @@ def _remat_translation_rule(c, axis_env, in_nodes,
                             extend_name_stack(name_stack, wrap_name(name, 'remat')),
                             *(args + input_state))
   result_state = state_carry.current_state(remat_subc, uses_outfeed)
-  result_tuple = xops.Tuple(remat_subc, out_nodes + result_state)
+  result_tuple = xops.Tuple(remat_subc, out_nodes + tuple(result_state))
   regular_outs = state_carry.end_nested_comp_with_output(c, result_tuple, len(out_nodes), uses_outfeed)
   out_node_shapes = [remat_subc.GetShape(o) for o in regular_outs]
   remat_subc = remat_subc.Build(xops.Tuple(remat_subc, regular_outs))
