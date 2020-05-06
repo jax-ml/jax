@@ -2525,6 +2525,38 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {
+      "testcase_name": "_shape={}_dtype={}_weights={}_minlength={}_length={}".format(
+        shape, dtype, weights, minlength, length
+      ),
+      "shape": shape,
+      "dtype": dtype,
+      "weights": weights,
+      "minlength": minlength,
+      "length": length,
+      "rng_factory": rng_factory}
+    for shape in [(5,), (10,)]
+    for dtype in int_dtypes
+    for weights in [True, False]
+    for minlength in [0, 10]
+    for length in [None, 5]
+    for rng_factory in [jtu.rand_positive]
+  ))
+  def testBincount(self, shape, dtype, weights, minlength, length, rng_factory):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: (rng(shape, dtype), (rng(shape, 'float32') if weights else None))
+
+    onp_fun = partial(onp.bincount, minlength=minlength)
+    jnp_fun = partial(jnp.bincount, minlength=minlength, length=length)
+
+    if length is not None:
+      # Since the implementation uses lax control flow, we must skip the compilation cache check.
+      self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, skip_cache_check=True)
+    if length is None:
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+
+
   @parameterized.named_parameters(*jtu.cases_from_list(
       {"testcase_name": "_case={}".format(i),
        "input": input}

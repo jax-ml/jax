@@ -1242,6 +1242,32 @@ def select(condlist, choicelist, default=0):
   return output
 
 
+@_wraps(onp.bincount, lax_description="""\
+Jax adds the optional `length` parameter which specifies the output length, and
+defaults to ``x.max() + 1``. It must be specified for bincount to be compilable.
+""")
+def bincount(x, weights=None, minlength=0, *, length=None):
+  if length is None:
+    length = x.max() + 1
+  length = _max(length, minlength)
+  x = array(x)
+  if ndim(x) != 1:
+    raise ValueError("only 1-dimensional input supported.")
+  if weights is None:
+    dtype='int32'
+    def update(i, result):
+      return ops.index_add(result, x[i], 1)
+  else:
+    if shape(x) != shape(weights):
+      raise ValueError("shape of weights must match shape of x.")
+    weights = array(weights)
+    dtype=weights.dtype
+    def update(i, result):
+      return ops.index_add(result, x[i], weights[i])
+  result = zeros(length, dtype=dtype)
+  return lax.fori_loop(0, x.shape[0], update, result)
+
+
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [shape(arg) for arg in args]
