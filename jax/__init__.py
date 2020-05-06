@@ -12,11 +12,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
-
 from jax.version import __version__
-from jax.api import *
+from jax.api import (
+  checkpoint,
+  custom_gradient,
+  custom_jvp,
+  custom_vjp,
+  custom_transforms,
+  defjvp,
+  defjvp_all,
+  defvjp,
+  defvjp_all,
+  device_count,
+  device_get,
+  device_put,
+  devices,
+  disable_jit,
+  eval_shape,
+  grad,
+  hessian,
+  host_count,
+  host_id,
+  host_ids,
+  jacobian,
+  jacfwd,
+  jacrev,
+  jit,
+  jvp,
+  local_device_count,
+  local_devices,
+  linearize,
+  make_jaxpr,
+  mask,
+  pmap,
+  remat,
+  shapecheck,
+  ShapedArray,
+  ShapeDtypeStruct,
+  soft_pmap,
+  value_and_grad,
+  vjp,
+  vmap,
+  xla_computation,
+)
 from jax import nn
 from jax import random
-import jax.numpy as np  # side-effecting import sets up operator overloads
+
+
+def _init():
+  import os
+  os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
+  del os
+
+  import jax.numpy  # side-effecting import sets up operator overloads
+
+_init()
+del _init
