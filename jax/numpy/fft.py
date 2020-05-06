@@ -19,7 +19,7 @@ from .. import lax
 from ..lib import xla_client
 from ..util import get_module_functions
 from .lax_numpy import _not_implemented
-from .lax_numpy import _wraps
+from ._util import _wraps
 from . import lax_numpy as jnp
 from .. import ops as jaxops
 

@@ -18,7 +18,7 @@ from .. import lax
 from . import lax_numpy as jnp
 
 from jax import jit
-from .lax_numpy import _wraps
+from ._util import _wraps
 from .linalg import eigvals as _eigvals
 from .. import ops as jaxops
 

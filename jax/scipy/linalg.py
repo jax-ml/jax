@@ -21,7 +21,7 @@ import textwrap
 from jax import jit, vmap
 from .. import lax
 from .. import lax_linalg
-from ..numpy.lax_numpy import _wraps
+from ..numpy._util import _wraps
 from ..numpy import lax_numpy as jnp
 from ..numpy import linalg as np_linalg
 
