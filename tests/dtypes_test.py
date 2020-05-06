@@ -168,9 +168,7 @@ class DtypesTest(jtu.JaxTestCase):
       A = 42
       B = 101
     np.testing.assert_equal(np.array(42), np.array(AnEnum.A))
-    with core.skipping_checks():
-      # Passing AnEnum.A to jnp.array fails the type check in bind
-      np.testing.assert_equal(jnp.array(42), jnp.array(AnEnum.A))
+    np.testing.assert_equal(jnp.array(42), jnp.array(AnEnum.A))
     np.testing.assert_equal(np.int32(101), np.int32(AnEnum.B))
     np.testing.assert_equal(jnp.int32(101), jnp.int32(AnEnum.B))
 
