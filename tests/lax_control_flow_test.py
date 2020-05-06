@@ -831,7 +831,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(x):
       return lax.cond(x < 2, x,
                       lambda x: np.array([1., 2.]) * x,
-                      lambda x: np.array([3., 4.]) * np.sin(x))
+                      lambda x: np.array([3., 4.]) * jnp.sin(x))
 
     def f_ref(x):
       if x < 2:
@@ -850,7 +850,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(x):
       return lax.cond(x < 2, x,
                       lambda x: np.array([1., 2.]) * x,
-                      lambda x: np.array([3., 4.]) * np.sin(x))
+                      lambda x: np.array([3., 4.]) * jnp.sin(x))
 
     y = api.jit(f)(1.)
     expected = f(1.)
