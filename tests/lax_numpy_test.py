@@ -2554,7 +2554,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # Since the implementation uses lax control flow, we must skip the compilation cache check.
       self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, skip_cache_check=True)
     if length is None:
-      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False)
 
 
   @parameterized.named_parameters(*jtu.cases_from_list(
