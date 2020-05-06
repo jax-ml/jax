@@ -17,7 +17,8 @@ import warnings
 
 from .. import lax
 from ..numpy import lax_numpy as jnp
-from ..numpy.lax_numpy import (_wraps, _promote_dtypes_inexact)
+from ..numpy.lax_numpy import _promote_dtypes_inexact
+from ..numpy._util import _wraps
 
 
 # Note: we do not re-use the code from jax.numpy.convolve here, because the handling

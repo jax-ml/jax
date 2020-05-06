@@ -20,7 +20,7 @@ from .. import api
 from .. import lax
 from . import lax_numpy as jnp
 from ..util import safe_map as map, safe_zip as zip
-from .lax_numpy import _wraps
+from ._util import _wraps
 
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html

@@ -17,3 +17,4 @@ from .polynomial import *
 from . import fft
 from . import linalg
 from .vectorize import vectorize
+from ._util import _wraps

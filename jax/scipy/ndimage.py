@@ -22,7 +22,7 @@ import scipy.ndimage
 
 from .. import api
 from ..numpy import lax_numpy as jnp
-from ..numpy.lax_numpy import _wraps
+from ..numpy._util import _wraps
 from ..util import safe_zip as zip
 
 

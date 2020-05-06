@@ -26,7 +26,7 @@ from .. import ops
 from .. import lax_linalg
 from .. import dtypes
 from .lax_numpy import _not_implemented
-from .lax_numpy import _wraps
+from ._util import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as jnp
 from ..util import get_module_functions
