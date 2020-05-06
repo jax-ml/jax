@@ -14,6 +14,12 @@ jax 0.1.67 (unreleased)
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.66...master>`_.
 
+* Notable changes:
+
+  * The visibility of names exported from :py:module:`jax.numpy` has been
+    tightened. This may break code that was making use of names that were
+    previously exported accidentally.
+
 jax 0.1.66 (May 5, 2020)
 ---------------------------
 

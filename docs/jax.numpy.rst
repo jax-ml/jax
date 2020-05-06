@@ -100,6 +100,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     dot
     dsplit
     dstack
+    ediff1d
     einsum
     equal
     empty
@@ -256,6 +257,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     triu_indices
     true_divide
     trunc
+    unique
     unpackbits
     unravel_index
     vander

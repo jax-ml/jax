@@ -753,6 +753,7 @@ class DeviceArray(DeviceValue):
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
   __slots__ = ["_npy_value", "_device", "_lazy_expr"]
   __array_priority__ = 100
+  _HAS_DYNAMIC_ATTRIBUTES = True
 
   def __init__(self, aval: core.ShapedArray, device: Optional[Device],
                lazy_expr: lazy.LazyExpr, device_buffer: PyLocalBuffer):
