@@ -485,7 +485,7 @@ for func in get_module_functions(np.linalg):
     globals()[func.__name__] = _not_implemented(func)
 
 
-@_wraps(onp.linalg.lstsq, lax_description=textwrap.dedent("""\
+@_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\
     It has two important differences:
 
     1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and warns that in the future
@@ -513,22 +513,22 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   m, n = a.shape
   dtype = a.dtype
   if rcond is None:
-    rcond = np.finfo(dtype).eps * max(n, m)
+    rcond = jnp.finfo(dtype).eps * max(n, m)
   elif rcond < 0:
-    rcond = np.finfo(dtype).eps
+    rcond = jnp.finfo(dtype).eps
   u, s, vt = svd(a, full_matrices=False)
   mask = s >= rcond * s[0]
   rank = mask.sum()
-  safe_s = np.where(mask, s, 1)
-  s_inv = np.where(mask, 1 / safe_s, 0)[:, np.newaxis]
-  uTb = np.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
-  x = np.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
+  safe_s = jnp.where(mask, s, 1)
+  s_inv = jnp.where(mask, 1 / safe_s, 0)[:, jnp.newaxis]
+  uTb = jnp.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
+  x = jnp.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
   # Numpy returns empty residuals in some cases. To allow compilation, we
   # default to returning full residuals in all cases.
   if numpy_resid and (rank < n or m <= n):
-    resid = np.asarray([])
+    resid = jnp.asarray([])
   else:
-    b_estimate = np.matmul(a, x, precision=lax.Precision.HIGHEST)
+    b_estimate = jnp.matmul(a, x, precision=lax.Precision.HIGHEST)
     resid = norm(b - b_estimate, axis=0) ** 2
   if b_orig_ndim == 1:
     x = x.ravel()

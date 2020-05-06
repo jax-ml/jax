@@ -862,20 +862,20 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")  # SVD not implemented on TPU.
   def testLstsq(self, lhs_shape, rhs_shape, dtype, lowrank, rcond, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
-    onp_fun = partial(onp.linalg.lstsq, rcond=rcond)
-    jnp_fun = partial(np.linalg.lstsq, rcond=rcond)
-    jnp_fun_numpy = partial(np.linalg.lstsq, rcond=rcond, numpy_resid=True)
-    tol = {onp.float32: 1e-6, onp.float64: 1e-12,
-           onp.complex64: 1e-6, onp.complex128: 1e-12}
+    onp_fun = partial(np.linalg.lstsq, rcond=rcond)
+    jnp_fun = partial(jnp.linalg.lstsq, rcond=rcond)
+    jnp_fun_numpy_resid = partial(jnp.linalg.lstsq, rcond=rcond, numpy_resid=True)
+    tol = {np.float32: 1e-6, np.float64: 1e-12,
+           np.complex64: 1e-6, np.complex128: 1e-12}
     def args_maker():
       lhs = rng(lhs_shape, dtype)
       if lowrank and lhs_shape[1] > 1:
         lhs[:, -1] = lhs[:, :-1].mean(1)
       return [lhs, rng(rhs_shape, dtype)]
 
-    self._CheckAgainstNumpy(onp_fun, jnp_fun_numpy, args_maker, check_dtypes=False, tol=tol)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun_numpy_resid, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, atol=tol, rtol=tol)
 
     # Disabled because grad is flaky for low-rank inputs.
