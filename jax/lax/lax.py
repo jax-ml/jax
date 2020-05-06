@@ -196,6 +196,10 @@ def igammac(a: Array, x: Array) -> Array:
   r"""Elementwise complementary regularized incomplete gamma function."""
   return igammac_p.bind(_brcast(a, x), _brcast(x, a))
 
+def igamma_grad_a(a: Array, x: Array) -> Array:
+  r"""Elementwise derivative of the regularized incomplete gamma function."""
+  return igamma_grad_a_p.bind(_brcast(a, x), _brcast(x, a))
+
 def bessel_i0e(x: Array) -> Array:
   r"""Exponentially scaled modified Bessel function of order 0:
   :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
@@ -1919,25 +1923,25 @@ ad.defjvp(lgamma_p, lambda g, x: mul(g, digamma(x)))
 digamma_p = standard_unop(_float, 'digamma')
 
 igamma_p = standard_naryop([_float, _float], 'igamma')
+igamma_grad_a_p = standard_naryop([_float, _float], 'igamma_grad_a')
 
 def igamma_gradx(g, a, x):
-  return g * exp(-x + (a - 1.) * log(x) - lgamma(a))
+  return g * exp(-x + (a - _ones(a)) * log(x) - lgamma(a))
 
-# TODO(srvasude): Igamma and Igammac gradient aren't supported with respect to
-# a. We can reuse some of the reparameterization code in the JAX gamma sampler,
-# but better to add an XLA op for this (which will also allow TF Igamma gradient
-# code to be XLA compiled).
-def gamma_grad_not_implemented(a, b, x):
-  raise ValueError("Igamma(c) gradient with respect to `a` not supported.")
+def igamma_grada(g, a, x):
+  return g * igamma_grad_a(a, x)
 
-ad.defjvp(igamma_p, gamma_grad_not_implemented, igamma_gradx)
+ad.defjvp(igamma_p, igamma_grada, igamma_gradx)
 
 igammac_p = standard_naryop([_float, _float], 'igammac')
 
 def igammac_gradx(g, a, x):
   return -igamma_gradx(g, a, x)
 
-ad.defjvp(igammac_p, gamma_grad_not_implemented, igammac_gradx)
+def igammac_grada(g, a, x):
+  return -igamma_grada(g, a, x)
+
+ad.defjvp(igammac_p, igammac_grada, igammac_gradx)
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
