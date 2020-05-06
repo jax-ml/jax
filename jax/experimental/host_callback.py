@@ -16,7 +16,7 @@ on the host, even from compiled and transformed code.
 
 **Experimental: please give feedback, and expect changes.**
 
-Tapping works even for code executed on accelerators and
+Host callbacks work even for code executed on accelerators and
 even for code under JAX transformations. A few examples::
 
   # calls func(2x) and returns 2x
@@ -34,19 +34,34 @@ The order of execution is by data dependency: after all the arguments are
 computed and before the result is used. At least one of the returned values
 must be used in the rest of the computation, or else this operation has no effect.
 
-*At the moment*, in order to use the callback primitives in compiled code,
-one must wrap any invocation with an :func:`outfeed_receiver` (an exception is
+**At the moment**, in order to use the callback primitives one must wrap any
+code that uses them with an :func:`outfeed_receiver` (an error is
 raised otherwise)::
 
   with outfeed_receiver():
-     ...calls to compiled code that may invoke callback primitives...
-
+     id_print(x)
+     jax.jit(func_with_taps)(x)
 
 The printing and the tap functions execute in separate threads that are started
-by :func:`outfeed_receiver`. Exceptions from the primitives are printed along with
-the traceback, but the execution does not stop until the body of the
+by :func:`outfeed_receiver`. There is one thread per device. This ensures
+that the outfeed from a certain device will come in order. Exceptions from
+the user-define tap functions are printed along with the traceback, but the
+outfeed listening does not stop until the body of the
 :func:`outfeed_receiver` terminates and all the outfeeds are received.
-At that point, a ``TapFunctionException`` is raised.
+At that point, a ``TapFunctionException`` is raised if there was an exception
+in one of the tap functions.
+
+**We intend to implement an alternative outfeed reception mechanism that will
+not require the user to start the `outfeed_receiver`.**
+
+The current implementation uses the outfeed mechanism provided by XLA. The
+mechanism itself is quite primitive in the sense that a receiver must know
+exactly the shape of each incoming packet, and how many packets are expected.
+This makes it hard to use for multiple kinds of data in the same computation,
+and it is practically impossible to use it under conditionals.
+
+The tapping API introduced here makes it easy to share the outfeed mechanism
+for multiple purposes. Instead of using it directly, just use :func:`id_tap`.
 
 We describe the behaviour under transformations in the context of the
 following function definition::
@@ -88,16 +103,14 @@ Still to do:
   * Performance tests.
   * Add flags for logging.
   * Add unit tests with mocks.
-  * Improve the XLA compilation code.
   * Improve the ergonomics of starting the consumer loop. Currently, when
     invoking jit-ed code, one must start a consumer loop. This is not needed
     when invoking code that does not involve jit. There is an error when
     attempting to start a compiled computation without starting the outfeed
     receiver. Perhaps we can put the receiver threads in the runtime.
   * Explore a simpler API that uses Python program-order, instead of
-    data dependency-order. Need to add support to JAX for stateful primitives.
+    data dependency-order.
   * Explore implementation with outside compilation.
-
 
 """
 from collections import defaultdict, namedtuple
@@ -153,20 +166,23 @@ argument.
 Args:
   * arg: the argument passed to the tap function, can be a pytree of JAX
     types.
-  * result: if given, then specifies the return value of ``id_tap``. By default,
+  * result: if given, specifies the return value of ``id_tap``. By default,
     the return type is ``arg``.
-  * kwargs: will be passed directly to the tap function. Can be anything,
-    these are kept in the host Python process.
+  * kwargs: will be passed directly to the tap function. Can be anything that
+    is hashable, these are kept in the host Python process until outfeeds are
+    received.
 
 Returns:
-  * the value of ``result`` or otherwise ``arg``
+  * ``arg``, or ``result`` if given.
 
-Tapping works even for code executed on accelerators and
-even for code under JAX transformations.
+Tapping works even for code executed on accelerators and even for code under
+JAX transformations. Code that uses taps must be run embedded in
+:func:`outfeed_receiver`.
 
-For more details see the `module documentation <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_.
+For more details see the
+`module documentation <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_.
   """
-  if func not in (_end_consumer, _unknown_consumer):
+  if func not in (_end_consumer, _unknown_testing_consumer):
     api._check_callable(func)
   flat_args, arg_treedef = pytree.flatten(arg)
   api._check_args(flat_args)
@@ -177,11 +193,11 @@ For more details see the `module documentation <https://jax.readthedocs.io/en/la
   if result is not None:
     flat_results, result_treedef = pytree.flatten(result)
     api._check_args(flat_results)
-    params["nr_untapped"] = len(flat_results)
     all_args = flat_args + flat_results
+    params["nr_untapped"] = len(flat_results)
   else:
     all_args = flat_args
-  flat_outs = id_tap_p.bind(*all_args, **params)  # Always a tuple of all args
+  flat_outs = id_tap_p.bind(*all_args, **params)  # Returns all_args
   if result is not None:
     return result_treedef.unflatten(flat_outs[-params["nr_untapped"]:])  # type: ignore[unsupported-operands]
   else:
@@ -211,9 +227,9 @@ def id_print(arg, *, result=None, output_stream=None, threshold=None,
                 threshold=threshold, **kwargs)
 
 
-# A registry of outfeed consumers
+# A registry of outfeed consumers, used upon receiving outfeeds
 class _ConsumerCallable(NamedTuple):
-  """Host-side information for a outfeed consumer."""
+  """Host-side information for an outfeed consumer."""
   func: Callable
   kwargs: Tuple[Tuple[str, Any], ...]
   arg_treedef: Any
@@ -223,18 +239,30 @@ _consumer_registry_by_id: Dict[int, _ConsumerCallable] = dict()
 
 
 def _register_consumer(cons: _ConsumerCallable) -> int:
-  """Registers a tap function, cache by function identity"""
+  """Registers a tap function, cache by hash of cons."""
   cons_id = _consumer_registry.get(cons)
   if cons_id is not None:
     return cons_id
-  cons_id = id(cons)
+  cons_id = hash(cons)
   _consumer_registry[cons] = cons_id
   _consumer_registry_by_id[cons_id] = cons
   return cons_id
 
 def _print_consumer(arg, *, output_stream=None,
                     threshold=1024, **kwargs):
-  """The consumer for id_print"""
+  """The consumer for id_print.
+
+  We provide this as a simple tapping function for printing.
+  This is **experimental**
+  and may not want to add many features to it; it should be easy for the user
+  to roll their own printing function.
+
+  Args:
+    output_stream: a function whose `write` method is called with the strings
+      to be output.
+    threshold: the value of numpy.array2string threshold parameter.
+    **kwargs: all other keyword args are printed before printing `arg`.
+  """
   def emit_str(s: str):
     if output_stream is not None:
       output_stream.write(s + "\n")
@@ -264,44 +292,38 @@ def _print_consumer(arg, *, output_stream=None,
   emit_str(str(pp_val(arg)))
 
 
-
 """The id_tap primitive acts like the identity function. It has a number of
 positional arguments and parameters:
   * func: the actual (Python) function to invoke with the positional arguments
   and the parameters.
   * nr_untapped: how many positional arguments (from the tail) should not be
   passed to the tap function.
-  * arg_treedef: the treedef of the tapped positional arguments
+  * arg_treedef: the treedef of the tapped positional arguments.
   * transforms: a tuple of the transformations that have been applied.
-  * batch_dims: a tuple of the dims that have been batched, for vmap
-  * logical_shapes: a tuple of evaluated logical shapes, for mask
+  * batch_dims: a tuple of the dims that have been batched, for vmap.
+  * logical_shapes: a tuple of evaluated logical shapes, for mask.
 
   * the remaining parameters are passed to the tap function.
 """
-# TODO: handle multiple vmap and mask
+# TODO(necula): handle nested vmap and mask
 id_tap_p = core.Primitive("id_tap")
 id_tap_p.multiple_results = True
-
+xla.outfeed_primitives.add(id_tap_p)
 
 def _add_transform_name(params: Dict, transform: str) -> Dict:
   """Adds the `transform` to the params["transforms"]."""
   return dict(params, transforms=params.get("transforms", ()) + (transform,))
 
 
-def _id_tap_impl(*arrays, func=None, nr_untapped=0, arg_treedef=None,
-                 **params):
-  assert isinstance(func, Callable)
-  func_params = dict(params)
-  # TODO: consolidate logic with the outfeed receiver
-  try:
-    assert nr_untapped <= len(arrays)
-    func_arrays = arrays[:-nr_untapped] if nr_untapped > 0 else arrays
-    arg = api.tree_unflatten(arg_treedef, func_arrays)
-    func(arg, **func_params)
-  except Exception as e:
-    raise TapFunctionException from e
-    # We continue for now, we need to keep reading the outfeed
-  return arrays  # return all
+def _id_tap_impl(*arrays, **params):
+  # We use the jitted-version of the primitive even for eager execution, both
+  # so that we do not duplicate logic, but also so that all outfeed is received
+  # by the outfeed_listeners, in the same thread from a given device. If we were
+  # to process the tap here, it would be coming from the main thread. Also,
+  # even in eager execution some primitives, such as while, are compiled.
+  # It would be confusing to process a sequence "id_tap; while" in two
+  # different threads.
+  return xla.apply_primitive(id_tap_p, *arrays, **params)
 
 id_tap_p.def_impl(_id_tap_impl)
 
@@ -312,32 +334,31 @@ def _id_tap_abstract_eval(*args_a: pe.AbstractValue, **params) \
 
 id_tap_p.def_abstract_eval(_id_tap_abstract_eval)
 
-# TODO: there must be a better way to do this.
+# TODO(necula): there must be a better way to do this.
 # The AttributeError is for regular values, the KeyError is for ConcreteArray
 def _instantiate_zeros(arg, tan):
   """Turn special ad.zero tangents into arrays of 0s."""
   if tan is not ad.zero:
     return tan
-  else:
-    try:
-      aval = arg.aval
-      return ad.instantiate_zeros_aval(aval, tan)
-    except (AttributeError, KeyError):
-      # We get here for regular Python values
-      return ad.zeros_like_jaxval(arg)
+
+  try:
+    aval = arg.aval
+    return ad.instantiate_zeros_aval(aval, tan)
+  except (AttributeError, KeyError):
+    # We get here for regular Python values
+    return ad.zeros_like_jaxval(arg)
 
 
 def _id_tap_jvp_rule(primals, tangents, *, func, nr_untapped=0, **params):
   # Put primals through id_tap separately, so that partial evaluation
-  # can do its job for grad
+  # can do its job when they are known (for grad)
   out_primals = id_tap_p.bind(*primals, func=func, nr_untapped=nr_untapped, **params)
-  # Add one primal output as untapped, to create dependency.
+  # Add one primal output as untapped, to create data dependency.
   tangent_zeros = tuple(map(_instantiate_zeros, primals, tangents))
   out_tangents_extra = id_tap_p.bind(*tangent_zeros, out_primals[0],
                                      func=func, nr_untapped=nr_untapped + 1,
                                      **_add_transform_name(params, "jvp"))
   return tuple(out_primals), tuple(out_tangents_extra[:-1])
-
 
 ad.primitive_jvps[id_tap_p] = _id_tap_jvp_rule
 
@@ -349,7 +370,6 @@ def _id_tap_transpose_rule(cts, *args, func=None, nr_untapped=0, **params):
                           **_add_transform_name(params, "transpose"))
   return ct_args
 
-
 ad.primitive_transposes[id_tap_p] = _id_tap_transpose_rule
 
 
@@ -359,13 +379,12 @@ def _id_tap_batching_rule(batched_args, batch_dims, **params):
   res = id_tap_p.bind(*batched_args, **new_params)
   return res, batch_dims
 
-
 batching.primitive_batchers[id_tap_p] = _id_tap_batching_rule
 
 # def _id_tap_shape_rule(*operands, **params):
 #  return tuple([op.shape for op in operands])
 
-# TODO: these disappeared
+# TODO(necula): these disappeared
 # masking.shape_rules[id_tap_p] = _id_tap_shape_rule  # type: ignore[module-attr]
 
 def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
@@ -373,59 +392,190 @@ def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
   new_params["logical_shapes"] = operands_logical_shapes
   return id_tap_p.bind(*operands, **new_params)
 
-
 masking.masking_rules[id_tap_p] = _id_tap_masking_rule
 
+####
 #### XLA compilation ####
 ####
 # Special consumer to mark the end of outfeed stream for a device
 _end_consumer = 0
-_unknown_consumer = 1  # for testing error cases
+_unknown_testing_consumer = 1  # for testing error cases
 
 
-def _id_print_translation_rule_outfeed(comp: XlaComputationBuilder,
-                                       *args_op: XlaOp, func=None,
-                                       nr_untapped=0, arg_treedef=None,
-                                       **params):
+def _id_tap_translation_rule_outfeed(comp: XlaComputationBuilder,
+                                     *args_op: XlaOp, func=None,
+                                     nr_untapped=0, arg_treedef=None,
+                                     **params):
   params = dict(params)
-  if func is _end_consumer:
-    params["consumer_id"] = _end_consumer
-  elif func is _unknown_consumer:
-    params["consumer_id"] = _unknown_consumer  # Will trigger an error, for testing
+  if func in (_end_consumer, _unknown_testing_consumer):
+    params["consumer_id"] = func
   else:
     params["consumer_id"] = _register_consumer(
-      _ConsumerCallable(func, tuple(params.items()), arg_treedef))
+      _ConsumerCallable(func, tuple(sorted(params.items())), arg_treedef))
 
-
-  # We expect the current token at the end
+  # We expect the current token at the end, inserted by _rewrite_jaxpr.
   current_token = args_op[-1]
-  current_token_shape = comp.GetShape(current_token)
-  if current_token_shape.is_array():
-    # TODO: we get here because wehn we partially eval some primitives
-    # we impl themn with JIT, but we did not rewrite them
-    has_token = False
-    current_token = xops.CreateToken(comp)
-  else:
-    has_token = True
+  assert not comp.GetShape(current_token).is_array(), "The last argument must be a token"
 
-  nr_args_to_emit = len(args_op) - nr_untapped - (1 if has_token else 0)
+  nr_args_to_emit = len(args_op) - nr_untapped - 1
   next_token = _emit_outfeed(comp, current_token,
                              args_op[0:nr_args_to_emit], params["consumer_id"])
-  results = (args_op[:-1] + (next_token,)) if has_token else args_op
+  results = (args_op[:-1] + (next_token,))
   return xops.Tuple(comp, results)
 
+xla.translations[id_tap_p] = _id_tap_translation_rule_outfeed
 
-xla.translations[id_tap_p] = _id_print_translation_rule_outfeed
+####
+#### Jaxpr rewriting logic to thread the tokens through stateful primitives.
+####
+def _jaxpr_var_defs(jaxpr: core.Jaxpr) -> Iterable[int]:
+  """Iterates over all the vars defined at the top-level of a Jaxpr"""
+  for iv in jaxpr.invars:
+    yield iv.count
+  for cv in jaxpr.constvars:
+    yield cv.count
+  for eqn in jaxpr.eqns:
+    for ov in eqn.outvars:
+      yield ov.count
 
+def _rewrite_typed_jaxpr(tjaxpr: core.TypedJaxpr,
+                         has_input_token: bool,
+                         has_output_token: bool) -> Tuple[core.TypedJaxpr, bool]:
+  """Rewrites a TypedJaxpr to thread the token, if needed.
+
+  Returns the rewritten Jaxpr, and whether it uses outfeed."""
+  new_jaxpr, uses_outfeed = _rewrite_jaxpr(tjaxpr.jaxpr, has_input_token,
+                                           has_output_token)
+  return (core.TypedJaxpr(new_jaxpr, tjaxpr.literals,
+                         tuple(map(lambda v: v.aval, new_jaxpr.invars)),
+                         tuple(map(lambda v: v.aval, new_jaxpr.outvars))),
+          uses_outfeed)
+
+
+def _rewrite_jaxpr(jaxpr: core.Jaxpr,
+                   has_input_token: bool,
+                   has_output_token: bool) -> Tuple[core.Jaxpr, bool]:
+  """Rewrite a Jaxpr to thread the token, if needed."""
+  assert has_input_token or not has_output_token
+
+  if not has_input_token and not xla.jaxpr_uses_outfeed(jaxpr):
+    return (jaxpr, False)
+  max_var_count = max(_jaxpr_var_defs(jaxpr))
+  mk_new_id = itertools.count(start=max_var_count + 1)
+
+  def mk_new_var(aval: core.AbstractValue) -> core.Var:
+    return core.Var(next(mk_new_id), '', aval)
+
+  eqns: List[core.JaxprEqn] = []
+  last_token_var = mk_new_var(core.abstract_token)  # store the incoming token
+  if has_input_token:
+    invars = jaxpr.invars + [last_token_var]
+  else:
+    invars = jaxpr.invars
+    eqns.append(core.new_jaxpr_eqn([jaxpr.invars[0]], [last_token_var],
+                                   lax.create_token_p, {}))
+
+  for eqn in jaxpr.eqns:
+    if not xla.primitive_uses_outfeed(eqn.primitive, eqn.params):
+      eqns.append(eqn)
+    else:
+      output_token_var = mk_new_var(core.abstract_token)
+      _rewrite_eqn(eqn, eqns, last_token_var, output_token_var)
+      last_token_var = output_token_var
+
+  outvars = jaxpr.outvars + ([last_token_var] if has_output_token else [])
+  return (core.Jaxpr(jaxpr.constvars, invars, outvars, eqns), True)
+
+def _rewrite_eqn(eqn: core.JaxprEqn,
+                 eqns: List[core.JaxprEqn],
+                 input_token_var: core.Var,
+                 output_token_var: core.Var):
+  """Rewrite an `eqn` and append equations to `eqns`. Assume that the
+  current token is in `input_token_var` and the resulting token must end in
+  `output_token_var`."""
+  if eqn.primitive is id_tap_p:
+    eqns.append(core.new_jaxpr_eqn(eqn.invars + [input_token_var],
+                                   eqn.outvars + [output_token_var],
+                                   eqn.primitive, eqn.params))
+  elif eqn.primitive is lax.while_p:
+    cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
+      eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
+    if xla.jaxpr_uses_outfeed(cond_jaxpr.jaxpr):
+      # TODO(necula): implement tapping from the conditional of a while
+      raise NotImplementedError("outfeed not supported in the conditional of a while")
+
+    eqns.append(core.new_jaxpr_eqn(
+      eqn.invars + [input_token_var],
+      eqn.outvars + [output_token_var],
+      eqn.primitive,
+      dict(eqn.params,
+           body_jaxpr=_rewrite_typed_jaxpr(body_jaxpr, True, True)[0],
+           cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True, False)[0])))
+  elif eqn.primitive is lax.cond_p:
+    true_jaxpr, false_jaxpr, linear = util.split_dict(
+      eqn.params, ["true_jaxpr", "false_jaxpr", "linear"])
+    nr_true_invars = len(true_jaxpr.jaxpr.invars)
+    pred, true_invars, false_invars = util.split_list(eqn.invars,
+                                                      [1, nr_true_invars])
+    new_invars = pred + true_invars + [input_token_var] + false_invars + [input_token_var]
+    eqns.append(core.new_jaxpr_eqn(
+      new_invars, eqn.outvars + [output_token_var],
+      eqn.primitive,
+      dict(eqn.params,
+           true_jaxpr=_rewrite_typed_jaxpr(true_jaxpr, True, True)[0],
+           false_jaxpr=_rewrite_typed_jaxpr(false_jaxpr, True, True)[0],
+           linear=linear + (False, False))))
+  elif eqn.primitive is lax.scan_p:
+    num_consts, num_carry, carry_jaxpr, linear, _, _ = util.split_dict(
+      eqn.params, ["num_consts", "num_carry", "jaxpr", "linear",
+                   "reverse", "length"])
+    # We add the token right at the end of carry
+    nr_const_and_carry = num_consts + num_carry
+    new_invars = eqn.invars[0:nr_const_and_carry] + [input_token_var] + eqn.invars[nr_const_and_carry:]
+    new_jaxpr = _rewrite_typed_jaxpr(carry_jaxpr, True, True)[0]
+    # The rewrite has put the token at end, it has to be at end of carry
+    new_jaxpr_invars = new_jaxpr.jaxpr.invars
+    new_jaxpr_invars = (new_jaxpr_invars[0:nr_const_and_carry] +
+                        [new_jaxpr_invars[-1]] +
+                        new_jaxpr_invars[nr_const_and_carry:-1])
+    new_jaxpr.jaxpr.invars = new_jaxpr_invars
+    new_jaxpr.in_avals = [v.aval for v in new_jaxpr_invars]
+
+    new_jaxpr_outvars = new_jaxpr.jaxpr.outvars
+    new_jaxpr_outvars = (new_jaxpr_outvars[0:num_carry] +
+                         [new_jaxpr_outvars[-1]] +
+                         new_jaxpr_outvars[num_carry:-1])
+    new_jaxpr.jaxpr.outvars = new_jaxpr_outvars
+    new_jaxpr.out_avals = [v.aval for v in new_jaxpr_outvars]
+    eqns.append(core.new_jaxpr_eqn(
+      new_invars,
+      # Output token is at the end of carry result
+      eqn.outvars[0:num_carry] + [output_token_var] + eqn.outvars[num_carry:],
+      eqn.primitive,
+      dict(eqn.params,
+           jaxpr=new_jaxpr,
+           num_carry=num_carry + 1,
+           linear=linear + (False,))))
+  elif eqn.primitive is xla.xla_call_p:
+    call_jaxpr = eqn.params["call_jaxpr"]
+    eqns.append(core.new_jaxpr_eqn(
+      eqn.invars + [input_token_var],
+      eqn.outvars + [output_token_var],
+      eqn.primitive,
+      dict(eqn.params, call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True)[0])))
+  else:
+    raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
+
+xla.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
 
 # The data on the outfeed follows a protocol that allows multiplexing the
 # outfeed among multiple consumers, and communicates in-stream shape and
 # type of the data.
 # Each batch of array data is preceeded by a header message, of type
 # uint32[_OUTFEED_HEADER_LENGTH]:
-#  [0]: special header value 2178
+#  [0]: special header value (271828)
 #  [1, 2]: a consumer id (64-bits, big-endian encoding as uint32[2]). The
-#       consumer id encodes the tap function (by id), the
+#       consumer id encodes the tap function (by hash), the
 #       descriptor of the arrays to be outfed, and the kwargs (a sorted tuple
 #       of keys and values).
 #  [3]: the metadata length in bytes. The metadata is a msgpack-encoded value of type:
@@ -435,9 +585,9 @@ xla.translations[id_tap_p] = _id_print_translation_rule_outfeed
 #
 #
 _OUTFEED_HEADER_LENGTH = 32  # In uint32 words
-_OUTFEED_HEADER_START  = 2178   # [0]
-# consumer_id                     [1, 2]
-# metadata_length in bytes        [3]
+_OUTFEED_HEADER_START  = 271828   # [0]
+# consumer_id                       [1, 2]
+# metadata_length in bytes          [3]
 _OUTFEED_HEADER_METADATA_LENGTH = 4 * (_OUTFEED_HEADER_LENGTH - 4)
 
 _CODE_TO_DTYPE = {
@@ -459,10 +609,7 @@ _DTYPE_STR_TO_CODE = dict([(str(d), c) for c, d in _CODE_TO_DTYPE.items()])
 
 def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
                   arrays: Sequence[XlaOp], consumer_id: int) -> XlaOp:
-  """Emits the arrays to the outfeed for the current device.
-
-  The kwargs must have at least "consumer_id" key.
-  """
+  """Emits the arrays to the outfeed for the current device."""
   arrays_shape = [comp.GetShape(a) for a in arrays]
   def _array_shape_to_tuple(a_shape: XlaShape):
     # (element_type_code, (d0, d1, ..., dn))
@@ -471,7 +618,7 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
   metadata = msgpack.dumps(tuple(map(_array_shape_to_tuple, arrays_shape)))
   metadata_len = len(metadata)
   if metadata_len > _OUTFEED_HEADER_METADATA_LENGTH:
-    # TODO: configurable
+    # TODO(necula): configurable metadata length
     raise ValueError("Outfeed metadata too long")
   metadata += b" " * (((metadata_len + 3) // 4) * 4 - metadata_len)  # pad
   header = ((_OUTFEED_HEADER_START,
@@ -483,7 +630,7 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
   data = xops.ConstantLiteral(comp, onp.array(header, dtype=onp.uint32))
   token = xops.OutfeedWithToken(data, token, comp.GetShape(data))
 
-  # Now send the arrays
+  # Now send the arrays, all at once
   entire_shape = xla_client.Shape.tuple_shape(arrays_shape)
   token = xops.OutfeedWithToken(xops.Tuple(comp, arrays), token, entire_shape)
   return token
@@ -496,7 +643,6 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
   Returns: a tuple with the consumer_id, the arrays received, and
     a kwargs dictionary that was passed to _emit_outfeed.
   """
-  platform = xla_client.get_local_backend(None).platform
   header_shape = xla_client.Shape.array_shape(onp.dtype(onp.uint32),
                                               (_OUTFEED_HEADER_LENGTH,))
 
@@ -539,12 +685,11 @@ def outfeed_receiver(*,
                      devices: Optional[Sequence[XlaDevice]] = None,
                      receiver_name=""):
   # TODO: better timeout management.
-  # TODO: prevent multiple consumers.
   """Starts receivers for the :func:`id_tap` outfeed from several devices.
 
   The receivers will run in a threadpool. The tapped functions will be invoked
   in those threads. If a tap function raises an exception, an error is
-  printed, but the receving continues until the body of the context manager
+  printed, but the receiving continues until the body of the context manager
   terminates and all outfeeds from all devices have been received. Only then
   will a :exc:`TapFunctionException` be raised.
 
@@ -565,10 +710,6 @@ def outfeed_receiver(*,
   The ``outfeed_receiver`` must be started outside any jitted computation.
 
   """
-  global _outfeed_receiver_started
-  if _outfeed_receiver_started:
-    raise ValueError("At most one outfeed_receiver can be running at once.")
-
   if not devices:
     backends = backends or xla_client._get_local_backends().keys()
     devices = tuple(itertools.chain(*[api.devices(backend)
@@ -612,6 +753,10 @@ def outfeed_receiver(*,
   # bugs in our code, not from the tap functions.
   for rf in receiver_futures:
     rf.add_done_callback(lambda rf: rf.result())
+  global _outfeed_receiver_started
+  if _outfeed_receiver_started:
+    raise ValueError("At most one outfeed_receiver can be running at once.")
+  _outfeed_receiver_started = True
   xla.can_execute_outfeed_computations = True
   try:
     yield
@@ -619,179 +764,10 @@ def outfeed_receiver(*,
     for d in devices:  # Signal the end of printing
       api.jit(lambda x: id_tap(_end_consumer, None, result=x), device=d)(0)  # type: ignore[arg-type]
     xla.can_execute_outfeed_computations = False
+    _outfeed_receiver_started = False
     for f in futures.as_completed(receiver_futures, timeout=timeout_sec):
       finished_device = f.result()  # Throw exceptions here
       if _LOGGING:
         logging.info(f"[{receiver_name}:{finished_device} Outfeed receiver finished")
     if count_tap_exceptions > 0:
       raise TapFunctionException
-
-#### Jaxpr rewriting logic
-####
-def _jaxpr_var_defs(jaxpr: core.Jaxpr) -> Iterable[int]:
-  """Iterates over all the unique vars the top-level of a Jaxpr"""
-  for iv in jaxpr.invars:
-    yield iv.count
-  for cv in jaxpr.constvars:
-    yield cv.count
-  for eqn in jaxpr.eqns:
-    for ov in eqn.outvars:
-      yield ov.count
-
-
-def _jaxpr_uses_outfeed(jaxpr: core.Jaxpr) -> bool:
-  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
-  for eqn in jaxpr.eqns:
-    if eqn.primitive is id_tap_p:
-      return True
-  for subjaxpr in core.subjaxprs(jaxpr):
-    if _jaxpr_uses_outfeed(subjaxpr):
-      return True
-  return False
-
-
-def _rewrite_typed_jaxpr(tjaxpr: core.TypedJaxpr,
-                         has_input_token: bool,
-                         has_output_token: bool) -> Tuple[core.TypedJaxpr, bool]:
-  """Rewrites a TypedJaxpr to thread the token, if needed.
-
-  Returns the rewritten Jaxpr, and whether it uses outfeed."""
-  new_jaxpr, uses_outfeed = _rewrite_jaxpr(tjaxpr.jaxpr, has_input_token, has_output_token)
-  return (core.TypedJaxpr(new_jaxpr, tjaxpr.literals,
-                         tuple(map(lambda v: v.aval, new_jaxpr.invars)),
-                         tuple(map(lambda v: v.aval, new_jaxpr.outvars))),
-          uses_outfeed)
-
-
-def _rewrite_jaxpr(jaxpr: core.Jaxpr,
-                   has_input_token: bool,
-                   has_output_token: bool) -> Tuple[core.Jaxpr, bool]:
-  """Rewrite a Jaxpr to thread the token, if needed."""
-  assert has_input_token or not has_output_token
-
-  uses_outfeed = _jaxpr_uses_outfeed(jaxpr)
-  if not has_input_token and not uses_outfeed:
-    return (jaxpr, False)
-  max_var_count = max(_jaxpr_var_defs(jaxpr))
-  mk_new_id = itertools.count(start=max_var_count + 1)
-
-  def mk_new_var(aval: core.AbstractValue) -> core.Var:
-    return core.Var(next(mk_new_id), '', aval)
-
-  eqns: List[core.JaxprEqn] = []
-  last_token_var = mk_new_var(core.abstract_token)
-  if has_input_token:
-    invars = jaxpr.invars + [last_token_var]
-  else:
-    invars = jaxpr.invars
-    eqns.append(core.new_jaxpr_eqn([jaxpr.invars[0]], [last_token_var],
-                                   lax.create_token_p, {}))
-
-  for eqn in jaxpr.eqns:
-    if eqn.primitive is id_tap_p:
-      new_token_var = mk_new_var(core.abstract_token)
-      eqns.append(core.new_jaxpr_eqn(eqn.invars + [last_token_var],
-                                     eqn.outvars + [new_token_var],
-                                     eqn.primitive, eqn.params))
-      last_token_var = new_token_var
-    elif eqn.primitive is lax.while_p:
-      cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
-        eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
-      if _jaxpr_uses_outfeed(cond_jaxpr.jaxpr):
-        raise NotImplementedError("outfeed not supported in the conditional of a while")
-      uses_outfeed = _jaxpr_uses_outfeed(body_jaxpr.jaxpr)
-      if not uses_outfeed:
-        eqns.append(eqn)
-        continue
-      new_token_var = mk_new_var(core.abstract_token)
-      eqns.append(core.new_jaxpr_eqn(
-        eqn.invars + [last_token_var],
-        eqn.outvars + [new_token_var],
-        eqn.primitive,
-        dict(eqn.params,
-             body_jaxpr=_rewrite_typed_jaxpr(body_jaxpr, True, True)[0],
-             cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True, False)[0])))
-      last_token_var = new_token_var
-    elif eqn.primitive is lax.cond_p:
-      true_jaxpr, false_jaxpr, linear = util.split_dict(
-        eqn.params, ["true_jaxpr", "false_jaxpr", "linear"])
-      uses_outfeed = _jaxpr_uses_outfeed(true_jaxpr.jaxpr) or _jaxpr_uses_outfeed(false_jaxpr.jaxpr)
-      if not uses_outfeed:
-        eqns.append(eqn)
-        continue
-      nr_true_invars = len(true_jaxpr.jaxpr.invars)
-      pred, true_invars, false_invars = util.split_list(eqn.invars,
-                                                        [1, nr_true_invars])
-      new_token_var = mk_new_var(core.abstract_token)
-      new_invars = pred + true_invars + [last_token_var] + false_invars + [last_token_var]
-      eqns.append(core.new_jaxpr_eqn(
-        new_invars, eqn.outvars + [new_token_var],
-        eqn.primitive,
-        dict(eqn.params,
-             true_jaxpr=_rewrite_typed_jaxpr(true_jaxpr, True, True)[0],
-             false_jaxpr=_rewrite_typed_jaxpr(false_jaxpr, True, True)[0],
-             linear=linear + (False, False))))
-      last_token_var = new_token_var
-    elif eqn.primitive is lax.scan_p:
-      num_consts, num_carry, carry_jaxpr, linear, _, _ = util.split_dict(
-        eqn.params, ["num_consts", "num_carry", "jaxpr", "linear",
-                     "reverse", "length"])
-      uses_outfeed = _jaxpr_uses_outfeed(carry_jaxpr.jaxpr)
-      if not uses_outfeed:
-        eqns.append(eqn)
-        continue
-      nr_const_and_carry = num_consts + num_carry
-      new_invars = eqn.invars[0:nr_const_and_carry] + [last_token_var] + eqn.invars[nr_const_and_carry:]
-      new_token_var = mk_new_var(core.abstract_token)
-      new_jaxpr = _rewrite_typed_jaxpr(carry_jaxpr, True, True)[0]
-      # The rewrite put the token carry at end, it has to be at end of carry
-      new_jaxpr_invars = new_jaxpr.jaxpr.invars
-      new_jaxpr_invars = (new_jaxpr_invars[0:nr_const_and_carry] +
-                          [new_jaxpr_invars[-1]] +
-                          new_jaxpr_invars[nr_const_and_carry:-1])
-      new_jaxpr.jaxpr.invars = new_jaxpr_invars
-      new_jaxpr.in_avals = [v.aval for v in new_jaxpr_invars]
-
-      new_jaxpr_outvars = new_jaxpr.jaxpr.outvars
-      new_jaxpr_outvars = (new_jaxpr_outvars[0:num_carry] +
-                           [new_jaxpr_outvars[-1]] +
-                           new_jaxpr_outvars[num_carry:-1])
-      new_jaxpr.jaxpr.outvars = new_jaxpr_outvars
-      new_jaxpr.out_avals = [v.aval for v in new_jaxpr_outvars]
-      eqns.append(core.new_jaxpr_eqn(
-        new_invars,
-        # Output token is at the end of carry result
-        eqn.outvars[0:num_carry] + [new_token_var] + eqn.outvars[num_carry:],
-        eqn.primitive,
-        dict(eqn.params,
-             jaxpr=new_jaxpr,
-             num_carry=num_carry + 1,
-             linear=linear + (False,))))
-      last_token_var = new_token_var
-    elif eqn.primitive is xla.xla_call_p:
-      call_jaxpr = eqn.params["call_jaxpr"]
-      uses_outfeed = _jaxpr_uses_outfeed(call_jaxpr)
-      if not uses_outfeed:
-        eqns.append(eqn)
-        continue
-      new_token_var = mk_new_var(core.abstract_token)
-      eqns.append(core.new_jaxpr_eqn(
-        eqn.invars + [last_token_var],
-        eqn.outvars + [new_token_var],
-        eqn.primitive,
-        dict(eqn.params, call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True)[0])))
-      last_token_var = new_token_var
-    elif eqn.primitive is pxla.xla_pmap_p:
-      raise NotImplementedError("rewrite of pmap")
-    else:
-      # Check no more subjaxprs
-      for param in eqn.params.values():
-        if type(param) is core.Jaxpr or type(param) is core.TypedJaxpr:
-          assert False
-      eqns.append(eqn)
-
-  outvars = jaxpr.outvars + ([last_token_var] if has_output_token else [])
-  return (core.Jaxpr(jaxpr.constvars, invars, outvars, eqns), True)
-
-
-xla.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)

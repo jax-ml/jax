@@ -178,8 +178,26 @@ def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, bool]:
   else:
     return jaxpr, False
 
+outfeed_primitives: Set[core.Primitive] = set()
+def jaxpr_uses_outfeed(jaxpr: core.Jaxpr) -> bool:
+  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
+  return any(primitive_uses_outfeed(eqn.primitive, eqn.params)
+             for eqn in jaxpr.eqns)
+
+def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
+  if prim in outfeed_primitives:
+    return True
+  for param in params.values():
+    if type(param) is core.Jaxpr:
+      if jaxpr_uses_outfeed(param):
+        return True
+    elif type(param) is core.TypedJaxpr:
+      if jaxpr_uses_outfeed(param.jaxpr):
+        return True
+  return False
+
 # TODO(necula): remove this when we start the outfeed receiver automatically.
-can_execute_outfeed_computations: bool = False
+can_execute_outfeed_computations: bool = False  # Set by outfeed_receiver
 def check_before_outfeed_execution(uses_outfeed: bool):
   if uses_outfeed and not can_execute_outfeed_computations:
     raise ValueError("Attempting to execute compiled code using outfeed, "
@@ -205,6 +223,11 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
   avals, arg_devices = unzip2(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
+  if primitive_uses_outfeed(prim, params):
+    # We use the _xla_callable path, where we pre-process the primitives
+    def prim_fun(*args):
+      return prim.bind(*args, **params)
+    return _xla_callable(lu.wrap_init(prim_fun), device, None, "prim", *arg_specs)
   aval_out = prim.abstract_eval(*avals, **params)
   if not prim.multiple_results:
     handle_result = aval_to_result_handler(device, aval_out)
@@ -283,6 +306,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     raise RuntimeError(msg) from e
 
 def primitive_subcomputation(prim, *avals, **params):
+  return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
   return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
 
 def _execute_compiled_primitive(prim, compiled, result_handler, *args):
