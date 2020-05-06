@@ -236,8 +236,12 @@ def _as_slice_indices(arr: xla.DeviceArray, idx: Index) -> Tuple[
       start_indices[dim] = sub_idx
       limit_indices[dim] = sub_idx + 1
       removed_dims.append(dim)
+    elif sub_idx == slice(None):
+      continue
     else:
       assert isinstance(sub_idx, slice)
+      assert isinstance(sub_idx.start, int)
+      assert isinstance(sub_idx.stop, int)
       start_indices[dim] = sub_idx.start
       limit_indices[dim] = sub_idx.stop
 

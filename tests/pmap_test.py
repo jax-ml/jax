@@ -1308,7 +1308,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
                      (slice(0,2), (slice(2,4))))
 
   def testNoSharding(self):
-    shape = (4,8)
+    shape = (4, 8)
     spec = pxla.ShardingSpec(shards_per_axis=(1, 1),
                              is_axis_materialized=(True, True),
                              replication_factor=1)
@@ -1339,6 +1339,72 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      (0, 0, 0, 1, 1, 1))
 
+
+def _spec_str(spec):
+  return (f"({spec.shards_per_axis},"
+          f"{spec.is_axis_materialized},"
+          f"{spec.replication_factor})")
+
+
+class ShardArgsTest(jtu.JaxTestCase):
+
+  def numpy_array(x):
+    return x
+
+  def device_array(x):
+    return jax.device_put(x)
+
+  # TODO(skye): add coverage for ShardedDeviceArrays
+
+  @parameterized.named_parameters(
+      {"testcase_name":
+       f"_shape={shape}_spec={_spec_str(spec)}_arg={make_arg.__name__}"
+       .replace(" ", ""),
+       "shape": shape, "spec": spec, "make_arg": make_arg}
+      for make_arg in [numpy_array, device_array]
+      for shape, spec in [
+          # pmap(in_axes=0)
+          [(4, 8), pxla.ShardingSpec(shards_per_axis=(4, 1),
+                                    is_axis_materialized=(False, True),
+                                    replication_factor=1)],
+          # pmap(in_axes=1)
+          [(2, 2), pxla.ShardingSpec(shards_per_axis=(1, 2),
+                                    is_axis_materialized=(True, False),
+                                    replication_factor=1)],
+          # unsharded
+          [(4, 8), pxla.ShardingSpec(shards_per_axis=(1, 1),
+                                    is_axis_materialized=(True, True),
+                                    replication_factor=1)],
+          # partitioned, 1 axis
+          [(4, 8), pxla.ShardingSpec(shards_per_axis=(2, 1),
+                                    is_axis_materialized=(True, True),
+                                    replication_factor=1)],
+          # partitioned, 2 axes
+          [(4, 8), pxla.ShardingSpec(shards_per_axis=(2, 2),
+                                    is_axis_materialized=(True, True),
+                                    replication_factor=1)],
+          # replication + sharding
+          [(2, 8), pxla.ShardingSpec(shards_per_axis=(2, 1),
+                                    is_axis_materialized=(False, True),
+                                    replication_factor=3)],
+          # replication, no sharding
+          [(2, 8), pxla.ShardingSpec(shards_per_axis=(1, 1),
+                                    is_axis_materialized=(True, True),
+                                    replication_factor=3)],
+      ])
+  def testShardArgs(self, shape, spec, make_arg):
+    indices = pxla.spec_to_indices(shape, spec)
+    nshards = len(indices)
+    if jax.device_count() < nshards:
+      raise SkipTest
+    x = np.arange(np.prod(shape)).reshape(shape)
+    arg = make_arg(x)
+    bufs = pxla.shard_args(jax.devices()[:nshards],
+                           [indices], [arg])
+    self.assertEqual(len(bufs), nshards)
+    for buf, idx in zip(bufs, indices):
+      self.assertEqual(len(buf), 1)
+      self.assertAllClose(buf[0].to_py(), x[idx], check_dtypes=False)
 
 if __name__ == '__main__':
   absltest.main()

@@ -3981,7 +3981,7 @@ def _multi_slice(arr: DeviceArray,
   results = []
   for starts, limits, removed in safe_zip(start_indices, limit_indices, removed_dims):
     sliced = lax.slice(arr, starts, limits)
-    if removed_dims:
+    if removed:
       sliced = sliced.reshape(onp.delete(arr.shape, removed_dims))
     results.append(sliced)
   return results
