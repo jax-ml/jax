@@ -479,8 +479,9 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   return out_tracers
 
 def _while_transpose_error(*_, **kwargs):
-  raise ValueError("Reverse-mode differentiation does not work for lax.while_loop. "
-                   "Try using lax.scan, or lax.fori_loop with constant bounds.")
+  raise ValueError("Reverse-mode differentiation does not work for "
+                   "lax.while_loop or lax.fori_loop. "
+                   "Try using lax.scan instead.")
 
 while_p = lax.Primitive('while')
 while_p.multiple_results = True
