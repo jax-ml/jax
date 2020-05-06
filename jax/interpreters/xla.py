@@ -753,6 +753,9 @@ class DeviceArray(DeviceValue):
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
   __slots__ = ["_npy_value", "_device", "_lazy_expr"]
   __array_priority__ = 100
+
+  # DeviceArray has methods that are dynamically populated in lax_numpy.py,
+  # and this annotation is needed to make pytype happy.
   _HAS_DYNAMIC_ATTRIBUTES = True
 
   def __init__(self, aval: core.ShapedArray, device: Optional[Device],
