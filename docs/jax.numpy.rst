@@ -223,6 +223,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     rot90
     round
     row_stack
+    searchsorted
     select
     sign
     signbit
