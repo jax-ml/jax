@@ -16,11 +16,9 @@ import re
 import textwrap
 from typing import Any, Callable, Dict, List, Set, Tuple
 
-import numpy as onp
-
 from .. import api
 from .. import lax
-from . import lax_numpy as np
+from . import lax_numpy as jnp
 from ..util import safe_map as map, safe_zip as zip
 from .lax_numpy import _wraps
 
@@ -44,7 +42,7 @@ def _parse_gufunc_signature(
 
   Args:
     signature: generalized universal function signature, e.g.,
-      ``(m,n),(n,p)->(m,p)`` for ``np.matmul``.
+      ``(m,n),(n,p)->(m,p)`` for ``jnp.matmul``.
 
   Returns:
     Input and output core dimensions parsed from the signature.
@@ -136,7 +134,7 @@ def _check_output_dims(
   """Check that output core dimensions match the signature."""
   def wrapped(*args):
     out = func(*args)
-    out_shapes = map(np.shape, out if isinstance(out, tuple) else [out])
+    out_shapes = map(jnp.shape, out if isinstance(out, tuple) else [out])
 
     if expected_output_core_dims is None:
       output_core_dims = [()] * len(out_shapes)
@@ -244,7 +242,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones(3)).shape
   (2,)
   >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones((4, 3))).shape
-  (4, 2)  # not the same as np.matmul
+  (4, 2)  # not the same as jnp.matmul
   """
   if any(not isinstance(exclude, int) for exclude in excluded):
     raise TypeError("jax.numpy.vectorize can only exclude integer arguments, "
@@ -257,7 +255,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     error_context = ("on vectorized function with excluded={!r} and "
                      "signature={!r}".format(excluded, signature))
     excluded_func, args = _apply_excluded(pyfunc, excluded, args)
-    args = tuple(map(np.asarray, args))
+    args = tuple(map(jnp.asarray, args))
 
     if signature is not None:
       input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
@@ -291,7 +289,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
       full_shape = broadcast_shape + core_shape
       vec_shape = full_shape[-arg.ndim:] if arg.ndim else ()
 
-      vec_arg = np.broadcast_to(arg, vec_shape)
+      vec_arg = jnp.broadcast_to(arg, vec_shape)
       vec_args.append(vec_arg)
 
       vmap_count = len(vec_shape) - len(core_shape)
