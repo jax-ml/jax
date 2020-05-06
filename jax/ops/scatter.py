@@ -16,7 +16,7 @@
 
 
 from .. import lax
-from ..numpy import lax_numpy as np
+from ..numpy import lax_numpy as jnp
 
 
 def _scatter_update(x, idx, y, scatter_op):
@@ -39,11 +39,11 @@ def _scatter_update(x, idx, y, scatter_op):
     An ndarray representing an updated `x` after performing the scatter-update.
   """
 
-  x = np.asarray(x)
-  y = np.asarray(y)
+  x = jnp.asarray(x)
+  y = jnp.asarray(y)
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
-  treedef, static_idx, dynamic_idx = np._split_index_for_jit(idx)
+  treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx)
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx)
 
 
@@ -52,15 +52,15 @@ def _scatter_update(x, idx, y, scatter_op):
 # @partial(jit, static_argnums=(2, 3, 4))
 def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
   dtype = lax.dtype(x)
-  x, y = np._promote_dtypes(x, y)
+  x, y = jnp._promote_dtypes(x, y)
 
-  idx = np._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = np._index_to_gather(np.shape(x), idx)
+  idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
+  indexer = jnp._index_to_gather(jnp.shape(x), idx)
 
   # Broadcast `y` to the slice output shape.
-  y = np.broadcast_to(y, tuple(indexer.slice_shape))
-  # Collapse any `None`/`np.newaxis` dimensions.
-  y = np.squeeze(y, axis=indexer.newaxis_dims)
+  y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
+  # Collapse any `None`/`jnp.newaxis` dimensions.
+  y = jnp.squeeze(y, axis=indexer.newaxis_dims)
   if indexer.reversed_y_dims:
     y = lax.rev(y, indexer.reversed_y_dims)
 
@@ -291,7 +291,7 @@ def segment_sum(data, segment_ids, num_segments=None):
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be summed. Values can be repeated and
       need not be sorted. Values outside of the range [0, num_segments) are
-      wrapped into that range by applying np.mod.
+      wrapped into that range by applying jnp.mod.
     num_segments: optional, an int with positive value indicating the number of
       segments. The default is ``max(segment_ids % data.shape[0]) + 1`` but
       since `num_segments` determines the size of the output, a static value
@@ -302,9 +302,9 @@ def segment_sum(data, segment_ids, num_segments=None):
     segment sums.
   """
   if num_segments is None:
-    num_segments = np.max(np.mod(segment_ids, data.shape[0])) + 1
+    num_segments = jnp.max(jnp.mod(segment_ids, data.shape[0])) + 1
   num_segments = int(num_segments)
 
-  out = np.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
-  segment_ids = np.mod(segment_ids, num_segments)
+  out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
+  segment_ids = jnp.mod(segment_ids, num_segments)
   return index_add(out, segment_ids, data)

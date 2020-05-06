@@ -1,26 +1,25 @@
+import numpy as np
 
-import numpy as onp
-
-from jax.numpy import lax_numpy as np
+from jax.numpy import lax_numpy as jnp
 from jax.numpy import linalg as la
 from jax.numpy.lax_numpy import _wraps
 
 
 def _isEmpty2d(arr):
   # check size first for efficiency
-  return arr.size == 0 and np.product(arr.shape[-2:]) == 0
+  return arr.size == 0 and jnp.product(arr.shape[-2:]) == 0
 
 
 def _assertNoEmpty2d(*arrays):
   for a in arrays:
     if _isEmpty2d(a):
-      raise onp.linalg.LinAlgError("Arrays cannot be empty")
+      raise np.linalg.LinAlgError("Arrays cannot be empty")
 
 
 def _assertRankAtLeast2(*arrays):
   for a in arrays:
     if a.ndim < 2:
-      raise onp.linalg.LinAlgError(
+      raise np.linalg.LinAlgError(
           '%d-dimensional array given. Array must be '
           'at least two-dimensional' % a.ndim)
 
@@ -29,7 +28,7 @@ def _assertNdSquareness(*arrays):
   for a in arrays:
     m, n = a.shape[-2:]
     if m != n:
-      raise onp.linalg.LinAlgError(
+      raise np.linalg.LinAlgError(
           'Last 2 dimensions of the array must be square')
 
 
@@ -40,7 +39,7 @@ def _assert2d(*arrays):
                              'Array must be two-dimensional')
 
 
-@_wraps(onp.linalg.cond)
+@_wraps(np.linalg.cond)
 def cond(x, p=None):
   _assertNoEmpty2d(x)
   if p in (None, 2):
@@ -56,15 +55,15 @@ def cond(x, p=None):
     r = la.norm(x, ord=p, axis=(-2, -1)) * la.norm(invx, ord=p, axis=(-2, -1))
 
   # Convert nans to infs unless the original array had nan entries
-  orig_nan_check = np.full_like(r, ~np.isnan(r).any())
-  nan_mask = np.logical_and(np.isnan(r), ~np.isnan(x).any(axis=(-2, -1)))
-  r = np.where(orig_nan_check, np.where(nan_mask, np.inf, r), r)
+  orig_nan_check = jnp.full_like(r, ~jnp.isnan(r).any())
+  nan_mask = jnp.logical_and(jnp.isnan(r), ~jnp.isnan(x).any(axis=(-2, -1)))
+  r = jnp.where(orig_nan_check, jnp.where(nan_mask, jnp.inf, r), r)
   return r
 
 
-@_wraps(onp.linalg.tensorinv)
+@_wraps(np.linalg.tensorinv)
 def tensorinv(a, ind=2):
-  a = np.asarray(a)
+  a = jnp.asarray(a)
   oldshape = a.shape
   prod = 1
   if ind > 0:
@@ -78,10 +77,10 @@ def tensorinv(a, ind=2):
   return ia.reshape(*invshape)
 
 
-@_wraps(onp.linalg.tensorsolve)
+@_wraps(np.linalg.tensorsolve)
 def tensorsolve(a, b, axes=None):
-  a = np.asarray(a)
-  b = np.asarray(b)
+  a = jnp.asarray(a)
+  b = jnp.asarray(b)
   an = a.ndim
   if axes is not None:
     allaxes = list(range(0, an))
@@ -100,31 +99,31 @@ def tensorsolve(a, b, axes=None):
   a = a.reshape(-1, prod)
   b = b.ravel()
   
-  res = np.asarray(la.solve(a, b))
+  res = jnp.asarray(la.solve(a, b))
   res = res.reshape(Q)
   
   return res
 
 
-@_wraps(onp.linalg.multi_dot)
+@_wraps(np.linalg.multi_dot)
 def multi_dot(arrays, *, precision=None):
     n = len(arrays)
     # optimization only makes sense for len(arrays) > 2
     if n < 2:
         raise ValueError("Expecting at least two arrays.")
     elif n == 2:
-        return np.dot(arrays[0], arrays[1], precision=precision)
+        return jnp.dot(arrays[0], arrays[1], precision=precision)
 
-    arrays = [np.asarray(a) for a in arrays]
+    arrays = [jnp.asarray(a) for a in arrays]
 
     # save original ndim to reshape the result array into the proper form later
     ndim_first, ndim_last = arrays[0].ndim, arrays[-1].ndim
     # Explicitly convert vectors to 2D arrays to keep the logic of the internal
     # _multi_dot_* functions as simple as possible.
     if arrays[0].ndim == 1:
-        arrays[0] = np.atleast_2d(arrays[0])
+        arrays[0] = jnp.atleast_2d(arrays[0])
     if arrays[-1].ndim == 1:
-        arrays[-1] = np.atleast_2d(arrays[-1]).T
+        arrays[-1] = jnp.atleast_2d(arrays[-1]).T
     _assert2d(*arrays)
 
     # _multi_dot_three is much faster than _multi_dot_matrix_chain_order
@@ -157,14 +156,14 @@ def _multi_dot_three(A, B, C, precision):
     cost2 = a1b0 * c1 * (a0 + b1c0)
 
     if cost1 < cost2:
-        return np.dot(np.dot(A, B, precision=precision), C, precision=precision)
+        return jnp.dot(jnp.dot(A, B, precision=precision), C, precision=precision)
     else:
-        return np.dot(A, np.dot(B, C, precision=precision), precision=precision)
+        return jnp.dot(A, jnp.dot(B, C, precision=precision), precision=precision)
 
 
 def _multi_dot_matrix_chain_order(arrays, return_costs=False):
     """
-    Return a np.array that encodes the optimal order of mutiplications.
+    Return a jnp.array that encodes the optimal order of mutiplications.
     The optimal order array is then used by `_multi_dot()` to do the
     multiplication.
     Also return the cost matrix if `return_costs` is `True`
@@ -180,15 +179,15 @@ def _multi_dot_matrix_chain_order(arrays, return_costs=False):
     p = [a.shape[0] for a in arrays] + [arrays[-1].shape[1]]
     # m is a matrix of costs of the subproblems
     # m[i,j]: min number of scalar multiplications needed to compute A_{i..j}
-    m = onp.zeros((n, n), dtype=onp.double)
+    m = np.zeros((n, n), dtype=np.double)
     # s is the actual ordering
     # s[i, j] is the value of k at which we split the product A_i..A_j
-    s = onp.empty((n, n), dtype=onp.intp)
+    s = np.empty((n, n), dtype=np.intp)
 
     for l in range(1, n):
         for i in range(n - l):
             j = i + l
-            m[i, j] = np.inf
+            m[i, j] = jnp.inf
             for k in range(i, j):
                 q = m[i, k] + m[k+1, j] + p[i]*p[k+1]*p[j+1]
                 if q < m[i, j]:
@@ -203,6 +202,6 @@ def _multi_dot(arrays, order, i, j, precision):
     if i == j:
         return arrays[i]
     else:
-        return np.dot(_multi_dot(arrays, order, i, order[i, j], precision),
+        return jnp.dot(_multi_dot(arrays, order, i, order[i, j], precision),
                       _multi_dot(arrays, order, order[i, j] + 1, j, precision),
                       precision=precision)
