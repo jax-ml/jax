@@ -53,8 +53,9 @@ from .lax_numpy import (
     sinh, size, sometrue, sort, split, sqrt, square, squeeze, stack, std,
     subtract, sum, swapaxes, take, take_along_axis, tan, tanh, tensordot, tile,
     trace, transpose, tri, tril, tril_indices, triu, triu_indices, true_divide,
-    trunc, uint16, uint32, uint64, uint8, unique, unpackbits, unsignedinteger,
-    vander, var, vdot, vsplit, vstack, where, zeros, zeros_like)
+    trunc, uint16, uint32, uint64, uint8, unique, unpackbits, unravel_index,
+    unsignedinteger, vander, var, vdot, vsplit, vstack, where, zeros,
+    zeros_like)
 
 from .polynomial import roots
 from .vectorize import vectorize
