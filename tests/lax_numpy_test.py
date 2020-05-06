@@ -1991,6 +1991,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     self._CompileAndCheck(lambda x: x.ravel(), args_maker, check_dtypes=True)
 
+  @parameterized.parameters(
+    (0, (2, 1, 3)),
+    (5, (2, 1, 3)),
+    (0, ()),
+    ([0, 1, 2], (2, 2)),
+    ([[[0, 1], [2, 3]]], (2, 2)))
+  def testUnravelIndex(self, flat_index, shape):
+    self._CheckAgainstNumpy(
+      onp.unravel_index,
+      jnp.unravel_index,
+      lambda: (flat_index, shape),
+      check_dtypes=True
+    )
+
+  def testUnravelIndexOOB(self):
+    self.assertEqual(jnp.unravel_index(2, (2,)), (1,))
+    self.assertEqual(jnp.unravel_index(-2, (2, 1, 3,)), (1, 0, 1))
+    self.assertEqual(jnp.unravel_index(-3, (2,)), (0,))
+
   def testAstype(self):
     rng = onp.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
