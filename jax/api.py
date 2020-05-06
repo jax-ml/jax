@@ -325,16 +325,14 @@ def xla_computation(fun: Callable,
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
                                          instantiate=instantiate_const_outputs,
                                          stage_out=True)
+    jaxpr, _ = xla.apply_outfeed_rewriter(jaxpr)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
-    uses_outfeed = xla.jaxpr_uses_outfeed(jaxpr)
-    xla.state_carry.start_nested_comp_without_input(c, uses_outfeed)
     xla_consts = map(partial(xb.constant, c), consts)
     xla_args = xla._xla_callable_args(c, avals, tuple_args)
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
-    xla.state_carry.end_nested_comp_without_output(c)
     return c.Build(xc.ops.Tuple(c, outs))
   return computation_maker
 
