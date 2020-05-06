@@ -256,6 +256,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     true_divide
     trunc
     unpackbits
+    unravel_index
     vander
     var
     vdot
