@@ -1424,7 +1424,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for rng_factory in [jtu.rand_default]
   ))
   def testSearchsorted(self, ashape, vshape, side, dtype, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = lambda: [jnp.sort(rng(ashape, dtype)), rng(vshape, dtype)]
     onp_fun = lambda a, v: onp.searchsorted(a, v, side=side)
     jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side)

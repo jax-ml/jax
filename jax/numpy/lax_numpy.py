@@ -40,7 +40,8 @@ import warnings
 import numpy as onp
 import opt_einsum
 
-from jax import jit, device_put, custom_jvp, vmap
+from jax import jit, device_put, custom_jvp
+from .vectorize import vectorize
 from ._util import _wraps
 from .. import core
 from .. import dtypes
@@ -3755,7 +3756,7 @@ def _quantile(a, q, axis, interpolation, keepdims):
 
 
 @partial(jit, static_argnums=2)
-@partial(vmap, in_axes=(None, 0, None))
+@partial(vectorize, excluded={0, 2})
 def _searchsorted(a, v, side):
   op = operator.le if side == 'left' else operator.lt
 
@@ -3766,9 +3767,10 @@ def _searchsorted(a, v, side):
   def body_fun(state):
     start, stop = state
     mid = (start + stop) // 2
-    return where(op(v, a[mid]), (start, mid), (mid, stop))
+    go_left = op(v, a[mid])
+    return where(go_left, start, mid), where(go_left, mid, stop)
 
-  result = lax.while_loop(cond_fun, body_fun, array([0, a.shape[0]]))
+  result = lax.while_loop(cond_fun, body_fun, (0, a.shape[0]))
   return where(op(v, a[0]), 0, result[1])
 
 
@@ -3783,8 +3785,7 @@ def searchsorted(a, v, side='left', sorter=None):
     raise ValueError("a should be 1-dimensional")
   if size(a) == 0:
     return zeros_like(v, dtype=int)
-  indices = _searchsorted(a, ravel(v), side)
-  return indices.reshape(v.shape)
+  return _searchsorted(a, v, side)
 
 
 @_wraps(onp.percentile)
