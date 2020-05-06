@@ -1412,6 +1412,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_a={}_v={}_side={}".format(
+      jtu.format_shape_dtype_string(ashape, dtype),
+      jtu.format_shape_dtype_string(vshape, dtype),
+      side), "ashape": ashape, "vshape": vshape, "side": side,
+     "dtype": dtype, "rng_factory": rng_factory}
+    for ashape in [(20,)]
+    for vshape in [(), (5,), (5, 5)]
+    for side in ['left', 'right']
+    for dtype in default_dtypes
+    for rng_factory in [jtu.rand_default]
+  ))
+  def testSearchsorted(self, ashape, vshape, side, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [jnp.sort(rng(ashape, dtype)), rng(vshape, dtype)]
+    onp_fun = lambda a, v: onp.searchsorted(a, v, side=side)
+    jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), axis),
        "shape": shape, "axis": axis, "dtypes": dtypes, "rng_factory": rng_factory}

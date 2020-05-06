@@ -29,6 +29,7 @@ import builtins
 import collections
 from collections.abc import Sequence
 import itertools
+import operator
 import os
 import re
 import string
@@ -40,6 +41,7 @@ import numpy as onp
 import opt_einsum
 
 from jax import jit, device_put, custom_jvp
+from .vectorize import vectorize
 from ._util import _wraps
 from .. import core
 from .. import dtypes
@@ -3751,6 +3753,39 @@ def _quantile(a, q, axis, interpolation, keepdims):
     raise ValueError(f"interpolation={interpolation!r} not recognized")
 
   return lax.convert_element_type(result, a.dtype)
+
+
+@partial(jit, static_argnums=2)
+@partial(vectorize, excluded={0, 2})
+def _searchsorted(a, v, side):
+  op = operator.le if side == 'left' else operator.lt
+
+  def cond_fun(state):
+    start, stop = state
+    return stop - start > 1
+
+  def body_fun(state):
+    start, stop = state
+    mid = (start + stop) // 2
+    go_left = op(v, a[mid])
+    return where(go_left, start, mid), where(go_left, mid, stop)
+
+  result = lax.while_loop(cond_fun, body_fun, (0, a.shape[0]))
+  return where(op(v, a[0]), 0, result[1])
+
+
+@_wraps(onp.searchsorted)
+def searchsorted(a, v, side='left', sorter=None):
+  assert side in ['left', 'right']
+  if sorter is not None:
+    raise NotImplementedError("sorter is not implemented")
+  a = asarray(a)
+  v = asarray(v)
+  if ndim(a) != 1:
+    raise ValueError("a should be 1-dimensional")
+  if size(a) == 0:
+    return zeros_like(v, dtype=int)
+  return _searchsorted(a, v, side)
 
 
 @_wraps(onp.percentile)
