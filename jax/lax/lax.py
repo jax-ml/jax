@@ -1949,10 +1949,10 @@ igamma_grad_a_p = standard_naryop([_float, _float], 'igamma_grad_a',
                                                'igamma_grad_a')))
 
 def igamma_gradx(g, a, x):
-  return g * exp(-x + (a - _ones(a)) * log(x) - lgamma(a))
+  return _brcast(g, a, x) * exp(-x + (a - _ones(a)) * log(x) - lgamma(a))
 
 def igamma_grada(g, a, x):
-  return g * igamma_grad_a(a, x)
+  return _brcast(g, a, x) * igamma_grad_a(a, x)
 
 ad.defjvp(igamma_p, igamma_grada, igamma_gradx)
 
