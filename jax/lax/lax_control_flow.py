@@ -56,7 +56,7 @@ _map = safe_map
 zip = safe_zip
 _reduce = functools.reduce
 
-
+@cache()
 def _initial_style_untyped_jaxpr(fun: Callable, in_tree, in_avals):
   in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
@@ -75,7 +75,6 @@ def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
                                 (), const_avals + in_avals, out_avals)
   return typed_jaxpr, consts, out_tree()
 
-# TODO(frostig): Cache, as in _initial_style_jaxpr, or their common subroutine
 def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                                              in_tree, in_avals):
   jaxprs, all_out_pvals, all_consts, all_out_trees = unzip4([
