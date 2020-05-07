@@ -1199,7 +1199,7 @@ def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   return top_k_p.bind(operand, k=k)
 
 def tie_in(x: Array, y: Array) -> Array:
-  """Returns the value of ``y`` but with a fake data dependence on ``x``.
+  """Gives ``y`` a fake data dependence on ``x``.
 
   When staging to XLA (e.g. running under jit or pmap), values that don't depend
   on computation inputs are computed op-by-op, and folded into the XLA
@@ -1209,10 +1209,6 @@ def tie_in(x: Array, y: Array) -> Array:
   When staging to XLA and ``x`` is already staged, then the result of ``tie_in``
   is ``y``, but staged to XLA. Downstream use of the result will also be staged
   to XLA.
-
-  For example, ``lax.sin(const)`` would be constant-folded if ``const`` is
-  a constant array, but ``lax.sin(lax.tie_in(x, const))``, will be staged to
-  XLA as long as ``x`` is staged to XLA.
   """
   return tie_in_p.bind(x, y)
 

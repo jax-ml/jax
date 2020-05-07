@@ -2633,7 +2633,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    with self.assertRaises(TypeError):
+    with self.assertRaises(TypeError if core.skip_checks else AssertionError):
       lax.stop_gradient(lambda x: x)
 
   # TODO(mattjj): make this a more systematic test
@@ -3250,10 +3250,6 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO Collapse
   # TODO Scatter
 
-  def test_tie_in_error(self):
-    with self.assertRaisesRegex(TypeError,
-                                ".*tuple.* is not a valid JAX type"):
-      api.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
 
 if __name__ == '__main__':
   absltest.main()
