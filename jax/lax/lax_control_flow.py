@@ -874,35 +874,22 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
   return _make_typed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
 def _cond_transpose(cts, *args, true_jaxpr, false_jaxpr, linear):
-  (pred,), tops, fops = split_list(args, [1, len(true_jaxpr.in_avals)])
-  tops_lin, fops_lin = split_list(linear, [len(true_jaxpr.in_avals)])
-  in_avals = _map(raise_to_shaped, true_jaxpr.in_avals + false_jaxpr.in_avals)
+  pred, *ops = args
+  in_avals = _map(raise_to_shaped, true_jaxpr.in_avals)
+  num_res = len(ops) - sum(linear)
 
-  num_t_res = len(tops) - sum(tops_lin)
-  num_f_res = len(fops) - sum(fops_lin)
-
-  t_jaxpr_trans = _transpose_cond_jaxpr(true_jaxpr, num_t_res)
-  f_jaxpr_trans = _transpose_cond_jaxpr(false_jaxpr, num_f_res)
+  t_jaxpr_trans = _transpose_cond_jaxpr(true_jaxpr, num_res)
+  f_jaxpr_trans = _transpose_cond_jaxpr(false_jaxpr, num_res)
   lin_in_avals = _map(raise_to_shaped, [a for a, l in zip(in_avals, linear) if l])
-  assert t_jaxpr_trans.out_avals + f_jaxpr_trans.out_avals == lin_in_avals
+  assert t_jaxpr_trans.out_avals == f_jaxpr_trans.out_avals == lin_in_avals
 
-  t_jaxpr_trans_ = _join_cond_outputs(
-      t_jaxpr_trans, 0, f_jaxpr_trans.out_avals, zeros_on_left=False)
-  f_jaxpr_trans_ = _join_cond_outputs(
-      f_jaxpr_trans, 0, t_jaxpr_trans.out_avals, zeros_on_left=True)
-  assert t_jaxpr_trans_.out_avals == f_jaxpr_trans_.out_avals == lin_in_avals
-
-  t_res, _ = split_list(tops, [num_t_res])
-  f_res, _ = split_list(fops, [num_f_res])
-
-  linear_trans = ((False,) * num_t_res + (True,) * len(cts) +
-                  (False,) * num_f_res + (True,) * len(cts))
-
+  res = ops[:num_res]
   cts = _map(ad.instantiate_zeros_aval, true_jaxpr.out_avals, cts)
+  linear_trans = (False,) * num_res + (True,) * len(cts)
 
   out = cond_p.bind(
-      pred, *itertools.chain(t_res, cts, f_res, cts),
-      true_jaxpr=t_jaxpr_trans_, false_jaxpr=f_jaxpr_trans_,
+      pred, *res, *cts,
+      true_jaxpr=t_jaxpr_trans, false_jaxpr=f_jaxpr_trans,
       linear=linear_trans)
   assert all(_map(typecheck, lin_in_avals, out))
 
