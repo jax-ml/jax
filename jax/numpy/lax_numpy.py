@@ -1264,7 +1264,7 @@ def bincount(x, weights=None, minlength=0, *, length=None):
   else:
     if shape(x) != shape(weights):
       raise ValueError("shape of weights must match shape of x.")
-  return ops.index_add(zeros((length,), dtype(weights)), ops.index[clip(x, 0)], weights)
+  return ops.index_add(zeros((length,), _dtype(weights)), ops.index[clip(x, 0)], weights)
 
 
 def broadcast_arrays(*args):
