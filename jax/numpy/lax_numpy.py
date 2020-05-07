@@ -2250,6 +2250,20 @@ def ix_(*args):
   return tuple(output)
 
 
+@_wraps(onp.indices)
+def indices(dimensions, dtype=int32, sparse=False):
+  dimensions = tuple(dimensions)
+  N = len(dimensions)
+  output = []
+  s = dimensions
+  for i, dim in enumerate(dimensions):
+    idx = lax.iota(dtype, dim)
+    if sparse:
+      s = [1]*N
+      s[i] = dim
+    output.append(lax.broadcast_in_dim(idx, s, (i,)))
+  return tuple(output) if sparse else stack(output, 0)
+
 
 def _repeat_scalar(a, repeats, axis=None):
   if not isscalar(repeats):
