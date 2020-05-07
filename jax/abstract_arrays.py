@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import numpy as onp
 
 from . import ad_util
@@ -57,16 +59,16 @@ ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 core.literalable_types.update(array_types)
 
-def _zeros_like_python_scalar(x):
-  return onp.array(0, dtypes.python_scalar_dtypes[type(x)])
+def _zeros_like_python_scalar(t, x):
+  return onp.array(0, dtypes.python_scalar_dtypes[t])
 
-def _make_concrete_python_scalar(x):
+def _make_concrete_python_scalar(t, x):
   return ConcreteArray(
-    onp.array(x, dtype=dtypes.python_scalar_dtypes[type(x)]),
+    onp.array(x, dtype=dtypes.python_scalar_dtypes[t]),
     weak_type=True)
 
 for t in dtypes.python_scalar_dtypes.keys():
-  core.pytype_aval_mappings[t] = _make_concrete_python_scalar
-  ad_util.jaxval_zeros_likers[t] = _zeros_like_python_scalar
+  core.pytype_aval_mappings[t] = partial(_make_concrete_python_scalar, t)
+  ad_util.jaxval_zeros_likers[t] = partial(_zeros_like_python_scalar, t)
 
 core.literalable_types.update(dtypes.python_scalar_dtypes.keys())

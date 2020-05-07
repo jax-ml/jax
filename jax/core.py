@@ -698,10 +698,10 @@ def valid_jaxtype(x):
 
 
 def concrete_aval(x):
-  try:
-    return pytype_aval_mappings[type(x)](x)
-  except KeyError as err:
-    raise TypeError("{} is not a valid Jax type".format(type(x))) from err
+  for typ in type(x).mro():
+    handler = pytype_aval_mappings.get(typ)
+    if handler: return handler(x)
+  raise TypeError(f"{type(x)} is not a valid Jax type")
 
 
 def get_aval(x):
