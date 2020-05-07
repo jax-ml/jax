@@ -13,7 +13,10 @@
 # limitations under the License.
 
 from jax.version import __version__
-from jax.api import (
+from .config import config
+from .api import (
+  ad,  # TODO(phawkins): update users to avoid this.
+  argnums_partial,  # TODO(phawkins): update Haiku to not use this.
   checkpoint,
   custom_gradient,
   custom_jvp,
@@ -44,7 +47,9 @@ from jax.api import (
   linearize,
   make_jaxpr,
   mask,
+  partial,  # TODO(phawkins): update callers to use functools.partial.
   pmap,
+  pxla,  # TODO(phawkins): update users to avoid this.
   remat,
   shapecheck,
   ShapedArray,
@@ -63,6 +68,7 @@ from jax.api import (
   value_and_grad,
   vjp,
   vmap,
+  xla,  # TODO(phawkins): update users to avoid this.
   xla_computation,
 )
 from jax import nn
