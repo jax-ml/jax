@@ -632,7 +632,7 @@ def find_top_trace(args) -> Optional[Tracer]:
       raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid JAX type")
     return top_so_far
 
-  top_trace = reduce(check_arg, args, None)
+  top_trace = reduce(check_arg, args, None)  # type: ignore[wrong-arg-types]
   if top_trace is not None:
     return type(top_trace)(top_trace.master, cur_sublevel())  # type: ignore[call-arg]
   else:
