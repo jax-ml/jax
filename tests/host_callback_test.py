@@ -148,7 +148,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertEqual("", testing_stream.output)
 
     with hcb.outfeed_receiver():
-      self.assertEqual((5. * 2.) ** 2, fun1(5.))
+      self.assertAllClose((5. * 2.) ** 2, fun1(5.), check_dtypes=True)
     assertMultiLineStrippedEqual(self, """
 what: a * 2
 10.00

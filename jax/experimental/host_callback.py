@@ -647,7 +647,7 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
                                               (_OUTFEED_HEADER_LENGTH,))
 
   def _get_data(data_shape: XlaShape, device: XlaDevice) -> XlaShape:
-    return xla_client.transfer_from_outfeed(data_shape, device)
+    return device.transfer_from_outfeed(data_shape)
 
   header = _get_data(header_shape, device)
   if header[0] != _OUTFEED_HEADER_START:
