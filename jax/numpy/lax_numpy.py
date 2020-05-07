@@ -3823,6 +3823,16 @@ def searchsorted(a, v, side='left', sorter=None):
   return _searchsorted(a, v, side)
 
 
+@_wraps(onp.digitize)
+def digitize(x, bins, right=False):
+  side = 'right' if not right else 'left'
+  return lax.cond(
+    len(bins) < 2 or bins[1] > bins[0],
+    bins, lambda bins: searchsorted(bins, x, side=side),
+    bins[::-1], lambda rbins: len(rbins) - searchsorted(rbins, x, side=side)
+  )
+
+
 @_wraps(onp.percentile)
 def percentile(a, q, axis=None, out=None, overwrite_input=False,
                interpolation="linear", keepdims=False):
