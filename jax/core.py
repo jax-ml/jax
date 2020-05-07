@@ -932,12 +932,7 @@ class ConcreteArray(ShapedArray):
   _oct     = partialmethod(_forward_to_value, oct)
 
 
-class AbstractToken(AbstractValue):
-  def join(self, other):
-    if isinstance(other, AbstractToken):
-      return self
-    else:
-      assert False, f"Cannot join {self} with {other}"
+class AbstractToken(AbstractValue): pass
 
 abstract_token = AbstractToken()
 

@@ -100,10 +100,3 @@ pytype_library(
     srcs_version = "PY3",
     deps = [":jax"],
 )
-
-pytype_library(
-    name = "experimental_host_callback",
-    srcs = ["experimental/host_callback.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
