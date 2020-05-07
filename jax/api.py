@@ -1590,7 +1590,6 @@ def _check_args(args):
       raise TypeError("Argument '{}' of type {} is not a valid JAX type"
                       .format(arg, type(arg)))
 
-# TODO(necula): this duplicates code in core.valid_jaxtype
 def _valid_jaxtype(arg):
   try:
     xla.abstractify(arg)  # faster than core.get_aval
