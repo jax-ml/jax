@@ -63,6 +63,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     atleast_2d
     atleast_3d
     bartlett
+    bincount
     bitwise_and
     bitwise_not
     bitwise_or
