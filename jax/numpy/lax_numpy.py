@@ -1245,6 +1245,7 @@ def select(condlist, choicelist, default=0):
 @_wraps(onp.bincount, lax_description="""\
 Jax adds the optional `length` parameter which specifies the output length, and
 defaults to ``x.max() + 1``. It must be specified for bincount to be compilable.
+Values larger than the specified length will be discarded.
 
 Additionally, while ``np.bincount`` raises an error if the input array contains
 negative values, ``jax.numpy.bincount`` treats negative values as zero.
@@ -1259,11 +1260,10 @@ def bincount(x, weights=None, minlength=0, *, length=None):
   if ndim(x) != 1:
     raise ValueError("only 1-dimensional input supported.")
   if weights is None:
-    weights = array(1, dtype='int32')
+    weights = array(1, dtype=int32)
   else:
     if shape(x) != shape(weights):
       raise ValueError("shape of weights must match shape of x.")
-    weights = array(weights)
   return ops.index_add(zeros((length,), dtype(weights)), ops.index[clip(x, 0)], weights)
 
 
