@@ -3898,9 +3898,11 @@ _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
+# These methods are mentioned explicitly by nondiff_methods, so we create
+# _not_implemented implementations of them here rather than in __init__.py.
+# TODO(phawkins): implement these.
 argpartition = _not_implemented(onp.argpartition)
 compress = _not_implemented(onp.compress)
-searchsorted = _not_implemented(onp.searchsorted)
 
 # Set up operator, method, and property forwarding on Tracer instances containing
 # ShapedArray avals by following the forwarding conventions for Tracer.

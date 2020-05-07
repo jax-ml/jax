@@ -59,7 +59,6 @@ from .lax_numpy import (
 
 from .polynomial import roots
 from .vectorize import vectorize
-from ._util import _wraps
 
 
 # Module initialization is encapsulated in a function to avoid accidental
