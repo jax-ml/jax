@@ -3815,11 +3815,6 @@ def _not_implemented(fun):
     raise NotImplementedError(msg.format(fun))
   return wrapped
 
-# Build a set of all unimplemented NumPy functions.
-for func in get_module_functions(onp):
-  if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
-
 
 ### add method and operator overloads to arraylike classes
 
@@ -3903,6 +3898,11 @@ _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
+# These methods are mentioned explicitly by nondiff_methods, so we create
+# _not_implemented implementations of them here rather than in __init__.py.
+# TODO(phawkins): implement these.
+argpartition = _not_implemented(onp.argpartition)
+compress = _not_implemented(onp.compress)
 
 # Set up operator, method, and property forwarding on Tracer instances containing
 # ShapedArray avals by following the forwarding conventions for Tracer.
