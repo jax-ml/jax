@@ -18,6 +18,7 @@ from .api import (
   ad,  # TODO(phawkins): update users to avoid this.
   argnums_partial,  # TODO(phawkins): update Haiku to not use this.
   checkpoint,
+  curry,  # TODO(phawkins): update users to avoid this.
   custom_gradient,
   custom_jvp,
   custom_vjp,
@@ -32,6 +33,7 @@ from .api import (
   devices,
   disable_jit,
   eval_shape,
+  flatten_fun_nokwargs,  # TODO(phawkins): update users to avoid this.
   grad,
   hessian,
   host_count,
@@ -74,12 +76,13 @@ from .api import (
 from jax import nn
 from jax import random
 
+# TODO(phawkins): remove the `np` name.
+import jax.numpy as np # side-effecting import sets up operator overloads
+
 
 def _init():
   import os
   os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
-
-  import jax.numpy  # side-effecting import sets up operator overloads
 
 _init()
 del _init
