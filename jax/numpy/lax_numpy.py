@@ -1254,18 +1254,12 @@ def bincount(x, weights=None, minlength=0, *, length=None):
   if ndim(x) != 1:
     raise ValueError("only 1-dimensional input supported.")
   if weights is None:
-    dtype='int32'
-    def update(i, result):
-      return ops.index_add(result, x[i], 1)
+    weights = array(1, dtype='int32')
   else:
     if shape(x) != shape(weights):
       raise ValueError("shape of weights must match shape of x.")
     weights = array(weights)
-    dtype=weights.dtype
-    def update(i, result):
-      return ops.index_add(result, x[i], weights[i])
-  result = zeros(length, dtype=dtype)
-  return lax.fori_loop(0, x.shape[0], update, result)
+  return ops.index_add(zeros((length,), dtype(weights)), ops.index[x], weights)
 
 
 def broadcast_arrays(*args):

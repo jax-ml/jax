@@ -2539,8 +2539,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for shape in [(5,), (10,)]
     for dtype in int_dtypes
     for weights in [True, False]
-    for minlength in [0, 10]
-    for length in [None, 5]
+    for minlength in [0, 20]
+    for length in [None, 10]
     for rng_factory in [jtu.rand_positive]
   ))
   def testBincount(self, shape, dtype, weights, minlength, length, rng_factory):
@@ -2551,8 +2551,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp.bincount, minlength=minlength, length=length)
 
     if length is not None:
-      # Since the implementation uses lax control flow, we must skip the compilation cache check.
-      self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, skip_cache_check=True)
+      self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
     if length is None:
       self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False)
 
