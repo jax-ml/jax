@@ -88,7 +88,7 @@ By default, JAX arrays are placed uncommitted on the default device
 (``jax.devices()[0]``).
 
 >>> from jax import numpy as jnp
->>> print(jnp.ones(3).device_buffer.device())
+>>> print(jnp.ones(3).device_buffer.device())  # doctest: +SKIP
 gpu:0
 
 Computations involving uncommitted data are performed on the default
@@ -97,8 +97,9 @@ device and the results are uncommitted on the default device.
 Data can also be placed explicitly on a device using :func:`jax.device_put`
 with a ``device`` parameter, in which case if becomes **committed** to the device:
 
+>>> import jax
 >>> from jax import device_put
->>> print(device_put(1, jax.devices()[2]).device_buffer.device())
+>>> print(device_put(1, jax.devices()[2]).device_buffer.device())  # doctest: +SKIP
 gpu:2
 
 Computations involving some committed inputs, will happen on the

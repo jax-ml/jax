@@ -119,15 +119,17 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
   In the following example, ``selu`` can be compiled into a single fused kernel
   by XLA:
 
+  >>> import jax
+  >>>
   >>> @jax.jit
-  >>> def selu(x, alpha=1.67, lmbda=1.05):
-  >>>   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
+  ... def selu(x, alpha=1.67, lmbda=1.05):
+  ...   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
   >>>
   >>> key = jax.random.PRNGKey(0)
   >>> x = jax.random.normal(key, (10,))
-  >>> print(selu(x))
-  [-0.54485154  0.27744263 -0.29255125 -0.91421586 -0.62452525 -0.2474813
-   -0.8574326  -0.7823267   0.7682731   0.59566754]
+  >>> print(selu(x))  # doctest: +SKIP
+  [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
+   -0.85743 -0.78232  0.76827  0.59566 ]
   """
   _check_callable(fun)
   if isinstance(static_argnums, int):
@@ -172,8 +174,10 @@ def disable_jit():
   notice those if you use a benign side-effecting operation in a jitted
   function, like a print:
 
+  >>> import jax
+  >>>
   >>> @jax.jit
-  >>> def f(x):
+  ... def f(x):
   ...   y = x * 2
   ...   print("Value of y is", y)
   ...   return y + 3
@@ -187,9 +191,11 @@ def disable_jit():
   also traced. If we want to see a concrete value while debugging, and avoid the
   tracer too, we can use the ``disable_jit`` context manager:
 
-  >>> with jax.disable_jit():
-  >>>   print(f(np.array([1, 2, 3])))
+  >>> import jax.numpy as np
   >>>
+  >>> with jax.disable_jit():
+  ...   print(f(np.array([1, 2, 3])))
+  ...
   Value of y is [2 4 6]
   [5 7 9]
   """
@@ -243,22 +249,29 @@ def xla_computation(fun: Callable,
 
   For example:
 
+  >>> import jax
+  >>>
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
   >>> c = jax.xla_computation(f)(3.)
-  >>> print(c.as_hlo_text())
-  HloModule jaxpr_computation__4.5
-  ENTRY jaxpr_computation__4.5 {
-    tuple.1 = () tuple()
-    parameter.2 = f32[] parameter(0)
-    cosine.3 = f32[] cosine(parameter.2)
-    ROOT sine.4 = f32[] sine(cosine.3)
+  >>> print(c.as_hlo_text())  # doctest: +SKIP
+  HloModule xla_computation_f.6
+  <BLANKLINE>
+  ENTRY xla_computation_f.6 {
+    constant.2 = pred[] constant(false)
+    parameter.1 = f32[] parameter(0)
+    cosine.3 = f32[] cosine(parameter.1)
+    sine.4 = f32[] sine(cosine.3)
+    ROOT tuple.5 = (f32[]) tuple(sine.4)
   }
+  <BLANKLINE>
+  <BLANKLINE>
+
 
   Here's an example that involves a parallel collective and axis name:
 
   >>> def f(x): return x - jax.lax.psum(x, 'i')
   >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)
-  >>> print(c.as_hlo_text())
+  >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule jaxpr_computation.9
   primitive_computation.3 {
     parameter.4 = s32[] parameter(0)
@@ -271,10 +284,13 @@ def xla_computation(fun: Callable,
     all-reduce.7 = s32[] all-reduce(parameter.2), replica_groups={{0,1,2,3}}, to_apply=primitive_computation.3
     ROOT subtract.8 = s32[] subtract(parameter.2, all-reduce.7)
   }
+  <BLANKLINE>
+  <BLANKLINE>
 
   Notice the ``replica_groups`` that were generated. Here's an example that
   generates more interesting ``replica_groups``:
 
+  >>> from jax import lax
   >>> def g(x):
   ...   rowsum = lax.psum(x, 'i')
   ...   colsum = lax.psum(x, 'j')
@@ -283,7 +299,7 @@ def xla_computation(fun: Callable,
   ...
   >>> axis_env = [('i', 4), ('j', 2)]
   >>> c = xla_computation(g, axis_env=axis_env)(5.)
-  >>> print(c.as_hlo_text())
+  >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule jaxpr_computation__1.19
   [removed uninteresting text here]
   ENTRY jaxpr_computation__1.19 {
@@ -366,6 +382,8 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   For example:
 
+  >>> import jax
+  >>>
   >>> grad_tanh = jax.grad(jax.numpy.tanh)
   >>> print(grad_tanh(0.2))
   0.961043
@@ -485,15 +503,18 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     A function with the same arguments as ``fun``, that evaluates the Jacobian of
     ``fun`` using forward-mode automatic differentiation.
 
+  >>> import jax
+  >>> import jax.numpy as np
+  >>>
   >>> def f(x):
   ...   return jax.numpy.asarray(
   ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
   ...
   >>> print(jax.jacfwd(f)(np.array([1., 2., 3.])))
-  [[ 1.        ,  0.        ,  0.        ],
-   [ 0.        ,  0.        ,  5.        ],
-   [ 0.        , 16.        , -2.        ],
-   [ 1.6209068 ,  0.        ,  0.84147096]]
+  [[ 1.       0.       0.     ]
+   [ 0.       0.       5.     ]
+   [ 0.      16.      -2.     ]
+   [ 1.6209   0.       0.84147]]
   """
   _check_callable(fun)
 
@@ -532,15 +553,18 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     A function with the same arguments as ``fun``, that evaluates the Jacobian of
     ``fun`` using reverse-mode automatic differentiation.
 
+  >>> import jax
+  >>> import jax.numpy as np
+  >>>
   >>> def f(x):
   ...   return jax.numpy.asarray(
   ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
   ...
   >>> print(jax.jacrev(f)(np.array([1., 2., 3.])))
-  [[ 1.        ,  0.        ,  0.        ],
-   [ 0.        ,  0.        ,  5.        ],
-   [ 0.        , 16.        , -2.        ],
-   [ 1.6209068 ,  0.        ,  0.84147096]]
+  [[ 1.       0.       0.     ]
+   [ 0.       0.       5.     ]
+   [ 0.      16.      -2.     ]
+   [ 1.6209   0.       0.84147]]
   """
   _check_callable(fun)
 
@@ -585,10 +609,12 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     A function with the same arguments as ``fun``, that evaluates the Hessian of
     ``fun``.
 
-  >>> g = lambda(x): x[0]**3 - 2*x[0]*x[1] - x[1]**6
+  >>> import jax
+  >>>
+  >>> g = lambda x: x[0]**3 - 2*x[0]*x[1] - x[1]**6
   >>> print(jax.hessian(g)(jax.numpy.array([1., 2.])))
-  [[   6.,   -2.],
-   [  -2., -480.]]
+  [[   6.   -2.]
+   [  -2. -480.]]
 
   :py:func:`hessian` is a generalization of the usual definition of the Hessian
   that supports nested Python containers (i.e. pytrees) as inputs and outputs.
@@ -597,6 +623,7 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   the structure of ``x``. A tree product of two tree structures is formed by
   replacing each leaf of the first tree with a copy of the second. For example:
 
+  >>> import jax.numpy as jnp
   >>> f = lambda dct: {"c": jnp.power(dct["a"], dct["b"])}
   >>> print(jax.hessian(f)({"a": jnp.arange(2.) + 1., "b": jnp.arange(2.) + 2.}))
   {'c': {'a': {'a': DeviceArray([[[ 2.,  0.], [ 0.,  0.]],
@@ -689,6 +716,8 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   For example, we can implement a matrix-matrix product using a vector dot
   product:
 
+  >>> import jax.numpy as np
+  >>>
   >>> vv = lambda x, y: np.vdot(x, y)  #  ([a], [a]) -> []
   >>> mv = vmap(vv, (0, None), 0)      #  ([b,a], [a]) -> [b]      (b is the mapped axis)
   >>> mm = vmap(mv, (None, 1), 1)      #  ([b,a], [a,c]) -> [b,c]  (c is the mapped axis)
@@ -721,7 +750,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   >>> z = np.ones((C, D, K))
   >>> tree = (x, (y, z))
   >>> vfoo = vmap(foo, in_axes=((0, (1, 2)),))
-  >>> print(vfoo(tree)).shape
+  >>> print(vfoo(tree).shape)
   (6, 2, 5)
 
   The results of a vectorized function can be mapped or unmapped.
@@ -730,13 +759,13 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   we can specify `out_axes` to be None (to keep it unmapped).
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=(0, None))(np.arange(2.), 4.))
-  ([4., 5.], 8.)
+  (DeviceArray([4., 5.], dtype=float32), 8.0)
 
   If the `out_axes` is specified for an unmapped result, the result is broadcast
   across the mapped axis:
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(np.arange(2.), 4.))
-  ([4., 5.], [8., 8.])
+  (DeviceArray([4., 5.], dtype=float32), array([8., 8.]))
 
   If the `out_axes` is specified for a mapped result, the result is
   transposed accordingly.
@@ -889,8 +918,10 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   For example, assuming 8 XLA devices are available, ``pmap`` can be used as a
   map along a leading array axis:
 
-  >>> out = pmap(lambda x: x ** 2)(np.arange(8))
-  >>> print(out)
+  >>> import jax.numpy as np
+  >>>
+  >>> out = pmap(lambda x: x ** 2)(np.arange(8))  # doctest: +SKIP
+  >>> print(out)  # doctest: +SKIP
   [0, 1, 4, 9, 16, 25, 36, 49]
 
   When the leading dimension is smaller than the number of available devices JAX
@@ -898,8 +929,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
 
   >>> x = np.arange(3 * 2 * 2.).reshape((3, 2, 2))
   >>> y = np.arange(3 * 2 * 2.).reshape((3, 2, 2)) ** 2
-  >>> out = pmap(np.dot)(x, y)
-  >>> print(out)
+  >>> out = pmap(np.dot)(x, y)  # doctest: +SKIP
+  >>> print(out)  # doctest: +SKIP
   [[[    4.     9.]
     [   12.    29.]]
    [[  244.   345.]
@@ -910,7 +941,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   If your leading dimension is larger than the number of available devices you
   will get an error:
 
-  >>> pmap(lambda x: x ** 2)(np.arange(9))
+  >>> pmap(lambda x: x ** 2)(np.arange(9))  # doctest: +SKIP
   ValueError: ... requires 9 replicas, but only 8 XLA devices are available
 
   As with ``vmap``, using ``None`` in ``in_axes`` indicates that an argument
@@ -918,8 +949,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   across the replicas:
 
   >>> x, y = np.arange(2.), 4.
-  >>> out = pmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None))(x, y)
-  >>> print(out)
+  >>> out = pmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None))(x, y)  # doctest: +SKIP
+  >>> print(out)  # doctest: +SKIP
   ([4., 5.], [8., 8.])
 
   Note that ``pmap`` always returns values mapped over their leading axis,
@@ -930,10 +961,10 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   collective operations. For example:
 
   >>> f = lambda x: x / jax.lax.psum(x, axis_name='i')
-  >>> out = pmap(f, axis_name='i')(np.arange(4.))
-  >>> print(out)
+  >>> out = pmap(f, axis_name='i')(np.arange(4.))  # doctest: +SKIP
+  >>> print(out)  # doctest: +SKIP
   [ 0.          0.16666667  0.33333334  0.5       ]
-  >>> print(out.sum())
+  >>> print(out.sum())  # doctest: +SKIP
   1.0
 
   In this example, ``axis_name`` is a string, but it can be any Python object
@@ -945,21 +976,23 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   collectives can operate over distinct axes:
 
   >>> from functools import partial
+  >>> import jax
+  >>>
   >>> @partial(pmap, axis_name='rows')
-  >>> @partial(pmap, axis_name='cols')
-  >>> def normalize(x):
-  >>>   row_normed = x / jax.lax.psum(x, 'rows')
-  >>>   col_normed = x / jax.lax.psum(x, 'cols')
-  >>>   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
-  >>>   return row_normed, col_normed, doubly_normed
+  ... @partial(pmap, axis_name='cols')
+  ... def normalize(x):
+  ...   row_normed = x / jax.lax.psum(x, 'rows')
+  ...   col_normed = x / jax.lax.psum(x, 'cols')
+  ...   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
+  ...   return row_normed, col_normed, doubly_normed
   >>>
   >>> x = np.arange(8.).reshape((4, 2))
-  >>> row_normed, col_normed, doubly_normed = normalize(x)
-  >>> print(row_normed.sum(0))
+  >>> row_normed, col_normed, doubly_normed = normalize(x)  # doctest: +SKIP
+  >>> print(row_normed.sum(0))  # doctest: +SKIP
   [ 1.  1.]
-  >>> print(col_normed.sum(1))
+  >>> print(col_normed.sum(1))  # doctest: +SKIP
   [ 1.  1.  1.  1.]
-  >>> print(doubly_normed.sum((0, 1)))
+  >>> print(doubly_normed.sum((0, 1)))  # doctest: +SKIP
   1.0
 
   On multi-host platforms, collective operations operate over all devices,
@@ -968,8 +1001,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
 
   >>> f = lambda x: x + jax.lax.psum(x, axis_name='i')
   >>> data = np.arange(4) if jax.host_id() == 0 else np.arange(4,8)
-  >>> out = pmap(f, axis_name='i')(data)
-  >>> print(out)
+  >>> out = pmap(f, axis_name='i')(data)  # doctest: +SKIP
+  >>> print(out)  # doctest: +SKIP
   [28 29 30 31] # on host 0
   [32 33 34 35] # on host 1
 
@@ -987,16 +1020,16 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
 
   >>> from functools import partial
   >>> @partial(pmap, axis_name='i', devices=jax.devices()[:6])
-  >>> def f1(x):
-  >>>   return x / jax.lax.psum(x, axis_name='i')
+  ... def f1(x):
+  ...   return x / jax.lax.psum(x, axis_name='i')
   >>>
   >>> @partial(pmap, axis_name='i', devices=jax.devices()[-2:])
-  >>> def f2(x):
-  >>>   return jax.lax.psum(x ** 2, axis_name='i')
+  ... def f2(x):
+  ...   return jax.lax.psum(x ** 2, axis_name='i')
   >>>
-  >>> print(f1(np.arange(6.)))
+  >>> print(f1(np.arange(6.)))  # doctest: +SKIP
   [0.         0.06666667 0.13333333 0.2        0.26666667 0.33333333]
-  >>> print(f2(np.array([2., 3.])))
+  >>> print(f2(np.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
   _check_callable(fun)
@@ -1259,6 +1292,8 @@ def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
 
   For example:
 
+  >>> import jax
+  >>>
   >>> y, v = jax.jvp(jax.numpy.sin, (0.1,), (0.2,))
   >>> print(y)
   0.09983342
@@ -1338,10 +1373,13 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
 
   Here's a more complete example of using ``linearize``:
 
+  >>> import jax
+  >>> import jax.numpy as np
+  >>>
   >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
   ...
   >>> jax.jvp(f, (2.,), (3.,))
-  (array(3.2681944, dtype=float32), array(-5.007528, dtype=float32))
+  (DeviceArray(3.26819, dtype=float32), DeviceArray(-5.00753, dtype=float32))
   >>> y, f_jvp = jax.linearize(f, 2.)
   >>> print(y)
   3.2681944
@@ -1431,6 +1469,8 @@ def vjp(fun: Callable, *primals, **kwargs
     ``(primals_out, vjpfun, aux)`` tuple where ``aux`` is the auxiliary data
     returned by ``fun``.
 
+  >>> import jax
+  >>>
   >>> def f(x, y):
   ...   return jax.numpy.sin(x), jax.numpy.cos(y)
   ...
@@ -1493,23 +1533,25 @@ def make_jaxpr(fun: Callable,
   We do not describe the semantics of the ``jaxpr`` language in detail here, but
   instead give a few examples.
 
+  >>> import jax
+  >>>
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
   >>> print(f(3.0))
-  -0.83602184
+  -0.83602
   >>> jax.make_jaxpr(f)(3.0)
-  { lambda  ;  ; a.
+  { lambda  ; a.
     let b = cos a
         c = sin b
-    in [c] }
+    in (c,) }
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
-  { lambda  ;  ; a.
+  { lambda  ; a.
     let b = cos a
         c = cos b
         d = mul 1.0 c
         e = neg d
         f = sin a
         g = mul e f
-    in [g] }
+    in (g,) }
   """
   _check_callable(fun)
   if isinstance(static_argnums, int):
@@ -1663,6 +1705,9 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
   For example:
 
+  >>> import jax
+  >>> import jax.numpy as np
+  >>>
   >>> f = lambda A, x: np.tanh(np.dot(A, x))
   >>> class MyArgArray(object):
   ...   def __init__(self, shape, dtype):
@@ -1675,7 +1720,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.shape)
   (2000, 1000)
   >>> print(out.dtype)
-  dtype('float32')
+  float32
   """
   def abstractify(x):
     return ShapedArray(onp.shape(x), dtypes.result_type(x))
