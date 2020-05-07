@@ -133,6 +133,7 @@ from jax import pprint_util as ppu
 from jax import util
 from jaxlib import xla_client
 from jaxlib import xla_extension
+from jaxlib import version as jaxlib_version
 
 import logging
 import msgpack  # type: ignore
@@ -151,6 +152,10 @@ XlaDevice = Any  # xla_client.Device
 
 # TODO: add a flag
 _LOGGING = True
+
+# Starting with 0.1.46 the outfeed is now on the Device
+_USE_DEVICE_OUTFEED = (
+    tuple(int(x)for x in jaxlib_version.__version__.split('.')) >= (0, 1, 46))
 
 def id_tap(func: Callable, arg, *,
            result=None,
@@ -647,7 +652,10 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
                                               (_OUTFEED_HEADER_LENGTH,))
 
   def _get_data(data_shape: XlaShape, device: XlaDevice) -> XlaShape:
-    return device.transfer_from_outfeed(data_shape)
+    if _USE_DEVICE_OUTFEED:
+      return device.transfer_from_outfeed(data_shape)
+    else:
+      return xla_client.transfer_from_outfeed(data_shape, device)
 
   header = _get_data(header_shape, device)
   if header[0] != _OUTFEED_HEADER_START:
