@@ -57,7 +57,7 @@ from jax.api import (
   tree_leaves,
   tree_map,
   tree_multimap,
-  tree_structure
+  tree_structure,
   tree_transpose,
   tree_unflatten,
   value_and_grad,
