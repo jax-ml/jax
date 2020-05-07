@@ -136,6 +136,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     hypot
     identity
     imag
+    indices
     inner
     isclose
     iscomplex
