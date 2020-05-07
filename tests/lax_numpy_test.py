@@ -2555,6 +2555,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if length is None:
       self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False)
 
+  def testBincountNegative(self):
+    # Test that jnp.bincount ignores negative values.
+    x_rng = jtu.rand_int(self.rng(), -100, 100)
+    w_rng = jtu.rand_uniform(self.rng())
+    shape = (1000,)
+    x = x_rng(shape, 'int32')
+    w = w_rng(shape, 'float32')
+
+    xn = onp.array(x)
+    xn[xn < 0] = 0
+    wn = onp.array(w)
+    onp_result = onp.bincount(xn[xn >= 0], wn[xn >= 0])
+    jnp_result = jnp.bincount(x, w)
+    self.assertAllClose(onp_result, jnp_result, check_dtypes=False)
+
 
   @parameterized.named_parameters(*jtu.cases_from_list(
       {"testcase_name": "_case={}".format(i),
