@@ -50,6 +50,16 @@ from jax.api import (
   ShapedArray,
   ShapeDtypeStruct,
   soft_pmap,
+  # TODO(phawkins): hide tree* functions from jax, update callers to use
+  # jax.tree_util.
+  treedef_is_leaf,
+  tree_flatten,
+  tree_leaves,
+  tree_map,
+  tree_multimap,
+  tree_structure
+  tree_transpose,
+  tree_unflatten,
   value_and_grad,
   vjp,
   vmap,
@@ -62,7 +72,6 @@ from jax import random
 def _init():
   import os
   os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
-  del os
 
   import jax.numpy  # side-effecting import sets up operator overloads
 
