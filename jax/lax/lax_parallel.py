@@ -293,7 +293,8 @@ def standard_pmap_primitive(name, multiple_results=False):
 def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
                                axis_index_groups):
   assert tuple(which_mapped) == (True,)
-  assert axis_index_groups is None
+  if axis_index_groups is not None:
+    raise NotImplementedError("soft_pmap does not yet support axis_index_groups")
   vals = (reducer(x, [0]) for x in vals)
   return prim.bind(*vals, axis_name=axis_name), False
 
