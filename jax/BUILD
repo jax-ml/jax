@@ -27,6 +27,7 @@ pytype_library(
     srcs = glob(
         [
             "*.py",
+            "_src/**/*.py",
             "lib/**/*.py",
             "interpreters/**/*.py",
             "lax/**/*.py",
