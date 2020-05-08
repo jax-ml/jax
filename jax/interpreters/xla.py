@@ -394,7 +394,13 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
                  map(aval, eqn.invars), backend, *in_nodes, **new_params)
     elif eqn.primitive in parallel_translations:
       replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      new_params = {k: v for k, v in eqn.params.items() if k != 'axis_name'}
+      axis_index_groups = eqn.params.get('axis_index_groups', None)
+      if axis_index_groups is not None:
+        replica_groups = [[axis_group[i] for i in axis_index_group]
+                          for axis_group in replica_groups
+                          for axis_index_group in axis_index_groups]
+      new_params = {k: v for k, v in eqn.params.items()
+                    if k not in ('axis_name', 'axis_index_groups')}
       rule = parallel_translations[eqn.primitive]
       ans = rule(c, *in_nodes, replica_groups=replica_groups, platform=platform,
                  **new_params)

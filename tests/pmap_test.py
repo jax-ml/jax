@@ -425,6 +425,67 @@ class PmapTest(jtu.JaxTestCase):
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPsumReplicaGroups(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest
+    axis_index_groups = onp.arange(replicas).reshape(
+      2, replicas // 2).tolist()
+    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    def sum_helper(a):
+      return onp.broadcast_to(a.sum(0, keepdims=True),
+                              (replicas // 2, x.shape[1]))
+    expected_psum_1 = sum_helper(x[:replicas // 2])
+    expected_psum_2 = sum_helper(x[replicas // 2:])
+    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected = x - expected_psum
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testNestedPmapReplicaGroups(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 4 != 0:
+      raise SkipTest
+    axis_index_groups = onp.arange(replicas // 2).reshape(
+        2, replicas // 4).tolist()
+    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    f1 = pmap(pmap(f, 'i'), 'j')
+    f2 = pmap(lambda x: pmap(f, 'i')(x) + 1., 'j')  # "imperfectly nested" case
+    f3 = pmap(pmap(f, 'j'), 'i')
+
+    shape = (2, replicas // 2, 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    def sum_helper_f1(a):
+      return onp.broadcast_to(a.sum(1, keepdims=True),
+                              (shape[0], shape[1] // 2, shape[2]))
+    expected_psum_1 = sum_helper_f1(x[:, :replicas // 4])
+    expected_psum_2 = sum_helper_f1(x[:, replicas // 4:])
+    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 1)
+    expected = x - expected_psum
+    ans = f1(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    expected = x - expected_psum + 1.
+    ans = f2(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
+    shape = (replicas // 2, 2, 4)
+    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    def sum_helper_f3(a):
+      return onp.broadcast_to(a.sum(0, keepdims=True),
+                              (shape[0] // 2, shape[1], shape[2]))
+    expected_psum_1 = sum_helper_f3(x[:replicas // 4])
+    expected_psum_2 = sum_helper_f3(x[replicas // 4:])
+    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected = x - expected_psum
+    ans = f3(x)
+    self.assertAllClose(ans, expected, check_dtypes=True)
+
   def testAxisGroups(self):
     axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
     groups = xla.axis_groups(axis_env, 'i')

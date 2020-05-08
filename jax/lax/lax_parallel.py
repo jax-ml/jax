@@ -38,7 +38,7 @@ xops = xc.ops
 
 ### parallel traceables
 
-def psum(x, axis_name):
+def psum(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -48,6 +48,11 @@ def psum(x, axis_name):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform psums over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
+
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -64,9 +69,11 @@ def psum(x, axis_name):
   [ 0.          0.16666667  0.33333334  0.5       ]
   """
   leaves, treedef = tree_util.tree_flatten(x)
-  return treedef.unflatten(psum_p.bind(*leaves, axis_name=axis_name))
+  _validate_axis_index_groups(axis_index_groups)
+  return treedef.unflatten(
+      psum_p.bind(*leaves, axis_name=axis_name, axis_index_groups=axis_index_groups))
 
-def pmean(x, axis_name):
+def pmean(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -76,6 +83,10 @@ def pmean(x, axis_name):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform pmeans over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -91,10 +102,10 @@ def pmean(x, axis_name):
   >>> print(y)
   [ 0.          0.66666667  1.33333334  2.0       ]
   """
-  x, n = psum((x, 1), axis_name=axis_name)
+  x, n = psum((x, 1), axis_name=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(lambda v: v / n, x)
 
-def pmax(x, axis_name):
+def pmax(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -104,14 +115,20 @@ def pmax(x, axis_name):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform pmaxes over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce max along the axis ``axis_name``.
   """
-  return tree_util.tree_map(partial(pmax_p.bind, axis_name=axis_name), x)
+  _validate_axis_index_groups(axis_index_groups)
+  return tree_util.tree_map(partial(
+      pmax_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
 
-def pmin(x, axis_name):
+def pmin(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -121,12 +138,28 @@ def pmin(x, axis_name):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       ``pmap`` docstring for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform pmins over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce min along the axis ``axis_name``.
   """
-  return tree_util.tree_map(partial(pmin_p.bind, axis_name=axis_name), x)
+  _validate_axis_index_groups(axis_index_groups)
+  return tree_util.tree_map(partial(
+      pmin_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
+
+def _validate_axis_index_groups(axis_index_groups):
+  if axis_index_groups is None:
+    return
+  len_0 = len(axis_index_groups[0])
+  if any(len(g) != len_0 for g in axis_index_groups):
+    raise ValueError("axis_index_groups must all be the same size")
+  axis_space = range(len_0 * len(axis_index_groups))
+  if set(i for g in axis_index_groups for i in g) != set(axis_space):
+    raise ValueError("axis_index_groups must cover all indices exactly once")
 
 def ppermute(x, axis_name, perm):
   """Perform a collective permutation according to the permutation ``perm``.
@@ -257,8 +290,11 @@ def standard_pmap_primitive(name, multiple_results=False):
   return prim
 
 
-def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
+def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
+                               axis_index_groups):
   assert tuple(which_mapped) == (True,)
+  if axis_index_groups is not None:
+    raise NotImplementedError("soft_pmap does not yet support axis_index_groups")
   vals = (reducer(x, [0]) for x in vals)
   return prim.bind(*vals, axis_name=axis_name), False
 
@@ -326,7 +362,8 @@ pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
-ad.deflinear(psum_p, lambda ts, axis_name: psum(ts, axis_name=axis_name))
+ad.deflinear(psum_p, lambda ts, axis_name, axis_index_groups: psum_p.bind(
+    *ts, axis_name=axis_name, axis_index_groups=axis_index_groups))
 pxla.multi_host_supported_collectives.add(psum_p)
 
 
