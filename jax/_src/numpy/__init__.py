@@ -11,33 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from jax._src.numpy.fft import (
-  fft,
-  fft2,
-  fftfreq,
-  fftn,
-  fftshift,
-  ifft,
-  ifft2,
-  ifftn,
-  ifftshift,
-  irfft,
-  irfft2,
-  irfftn,
-  rfft,
-  rfft2,
-  rfftfreq,
-  rfftn,
-)
-
-def _init():
-  import numpy as np
-  from jax.util import get_module_functions
-  from jax._src.numpy.lax_numpy import _not_implemented
-  for func in get_module_functions(np.fft):
-    if func.__name__ not in globals():
-      globals()[func.__name__] = _not_implemented(func)
-
-_init()
-del _init

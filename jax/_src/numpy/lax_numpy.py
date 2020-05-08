@@ -43,18 +43,18 @@ import opt_einsum
 from jax import jit, device_put, custom_jvp
 from .vectorize import vectorize
 from ._util import _wraps
-from .. import core
-from .. import dtypes
-from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
-from ..config import flags
-from ..interpreters.xla import DeviceArray
-from ..interpreters.masking import Poly
-from .. import lax
-from .. import ops
-from ..util import (partial, get_module_functions, unzip2, prod as _prod,
-                    subvals, safe_zip)
-from ..lib import pytree
-from ..lib import xla_client
+from jax import core
+from jax import dtypes
+from jax.abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
+from jax.config import flags
+from jax.interpreters.xla import DeviceArray
+from jax.interpreters.masking import Poly
+from jax import lax
+from jax import ops
+from jax.util import (partial, get_module_functions, unzip2, prod as _prod,
+                      subvals, safe_zip)
+from jax.lib import pytree
+from jax.lib import xla_client
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(

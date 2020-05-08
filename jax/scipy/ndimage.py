@@ -21,8 +21,8 @@ import textwrap
 import scipy.ndimage
 
 from .. import api
-from ..numpy import lax_numpy as jnp
-from ..numpy._util import _wraps
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy._util import _wraps
 from ..util import safe_zip as zip
 
 

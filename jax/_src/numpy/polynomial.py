@@ -14,13 +14,13 @@
 
 
 import numpy as np
-from .. import lax
+from jax import lax
 from . import lax_numpy as jnp
 
 from jax import jit
 from ._util import _wraps
 from .linalg import eigvals as _eigvals
-from .. import ops as jaxops
+from jax import ops as jaxops
 
 
 def _to_inexact_type(type):

@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from . import fft
 from . import linalg
 
-from ..interpreters.xla import DeviceArray
+from jax.interpreters.xla import DeviceArray
 
-from .lax_numpy import (
+from jax._src.numpy.lax_numpy import (
     ComplexWarning, NINF, NZERO, PZERO, abs, absolute, add, all, allclose,
     alltrue, amax, amin, angle, any, append, arange, arccos, arccosh, arcsin,
     arcsinh, arctan, arctan2, arctanh, argmax, argmin, argsort, around, array,
@@ -57,16 +58,16 @@ from .lax_numpy import (
     unsignedinteger, vander, var, vdot, vsplit, vstack, where, zeros,
     zeros_like)
 
-from .polynomial import roots
-from .vectorize import vectorize
+from jax._src.numpy.polynomial import roots
+from jax._src.numpy.vectorize import vectorize
 
 
 # Module initialization is encapsulated in a function to avoid accidental
 # namespace pollution.
 def _init():
   import numpy as np
-  from . import lax_numpy
-  from .. import util
+  from jax._src.numpy import lax_numpy
+  from jax import util
   # Builds a set of all unimplemented NumPy functions.
   for func in util.get_module_functions(np):
     if func.__name__ not in globals():

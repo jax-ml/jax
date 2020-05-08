@@ -24,7 +24,7 @@ from jax.interpreters.masking import shape_as_value, ShapeError, \
 from jax import numpy as jnp, test_util as jtu, mask, vmap, jit, grad, lax, \
   shapecheck, api
 from jax.config import config
-from jax.numpy.lax_numpy import _polymorphic_slice_indices
+from jax._src.numpy.lax_numpy import _polymorphic_slice_indices
 from jax.scipy.special import expit
 
 config.parse_flags_with_absl()

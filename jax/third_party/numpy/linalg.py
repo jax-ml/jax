@@ -1,8 +1,8 @@
 import numpy as np
 
-from jax.numpy import lax_numpy as jnp
-from jax.numpy import linalg as la
-from jax.numpy._util import _wraps
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import linalg as la
+from jax._src.numpy._util import _wraps
 
 
 def _isEmpty2d(arr):

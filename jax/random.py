@@ -31,13 +31,12 @@ from . import lax
 from . import numpy as np
 from . import dtypes
 from .api import jit, vmap
-from .numpy.lax_numpy import _constant_like, asarray
+from ._src.numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
 from jax import core
 from jax import abstract_arrays
-from jax.numpy.linalg import cholesky
 from jax.scipy.special import logit
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -567,7 +566,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype):
   else:
     _check_shape("normal", shape, mean.shape[:-1], mean.shape[:-2])
 
-  chol_factor = cholesky(cov)
+  chol_factor = np.linalg.cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
   return mean + np.tensordot(normal_samples, chol_factor, [-1, 1])
 

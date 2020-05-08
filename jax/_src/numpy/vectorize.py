@@ -16,10 +16,10 @@ import re
 import textwrap
 from typing import Any, Callable, Dict, List, Set, Tuple
 
-from .. import api
-from .. import lax
+from jax import api
+from jax import lax
 from . import lax_numpy as jnp
-from ..util import safe_map as map, safe_zip as zip
+from jax.util import safe_map as map, safe_zip as zip
 from ._util import _wraps
 
 

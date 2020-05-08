@@ -16,9 +16,9 @@ import scipy.signal as osp_signal
 import warnings
 
 from .. import lax
-from ..numpy import lax_numpy as jnp
-from ..numpy.lax_numpy import _promote_dtypes_inexact
-from ..numpy._util import _wraps
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
+from jax._src.numpy._util import _wraps
 
 
 # Note: we do not re-use the code from jax.numpy.convolve here, because the handling

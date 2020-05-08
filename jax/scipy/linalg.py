@@ -21,9 +21,9 @@ import textwrap
 from jax import jit, vmap
 from .. import lax
 from .. import lax_linalg
-from ..numpy._util import _wraps
-from ..numpy import lax_numpy as jnp
-from ..numpy import linalg as np_linalg
+from jax._src.numpy._util import _wraps
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import linalg as np_linalg
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 

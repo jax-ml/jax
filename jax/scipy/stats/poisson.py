@@ -16,8 +16,8 @@
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy._util import _wraps
-from ...numpy import lax_numpy as jnp
+from jax._src.numpy._util import _wraps
+from jax._src.numpy import lax_numpy as jnp
 from ..special import xlogy, gammaln
 
 
