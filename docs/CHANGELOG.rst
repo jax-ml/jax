@@ -20,6 +20,12 @@ jax 0.1.67 (unreleased)
     tightened. This may break code that was making use of names that were
     previously exported accidentally.
 
+jaxlib 0.1.47 (May 8, 2020)
+------------------------------
+
+* Fixes crash for outfeed.
+
+
 jax 0.1.66 (May 5, 2020)
 ---------------------------
 
