@@ -26,6 +26,7 @@ before_install:
   - conda update -q conda
 install:
   - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy=0.770
+  - pip install msgpack
   - if [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       pip install pytype ;
     fi

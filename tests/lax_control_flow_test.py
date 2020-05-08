@@ -514,7 +514,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
           x, lambda x: lax.cond(lax.lt(x, 5),
                                 x, lambda x: lax.mul(3, x),
                                 4, lambda y: lax.mul(y, x)))
-
     self.assertEqual(cfun(1), 2)
     self.assertEqual(cfun(3), 9)
     self.assertEqual(cfun(6), 24)
@@ -1346,7 +1345,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for jit_loop in [False, True]
       for jit_body in [False, True]
       for jit_cond in [False, True])
-  def testWhileJVP(self, jit_loop, jit_body, jit_cond):
+  def testWhileJVP(self, jit_loop=True, jit_body=False, jit_cond=True):
     cond = lambda x: x[0, 2] <= 8
     body = lambda x: x * x
 

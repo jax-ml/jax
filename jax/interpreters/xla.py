@@ -14,9 +14,10 @@
 
 
 from collections import defaultdict
+from functools import reduce
 import itertools as it
 import operator as op
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tuple
 
 from absl import logging
 import numpy as onp
@@ -47,6 +48,11 @@ xops = xc._xla.ops
 Backend = Any  # xc.LocalBackend (why does mypy not like this?)
 Device = Any  # xc.Device
 PyLocalBuffer = Any
+
+XlaOp = Any  # xla_extension.XlaOp
+XlaShape = Any # xla_client.Shape
+XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
+XlaExecutable = Any # xla_extension.LocalExecutable
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -162,6 +168,41 @@ pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
 pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 
+# We can optionally set a Jaxpr rewriter that can be applied just before
+# compilation. This mechanism is used for compiling id_tap, we can
+# remove it once we bring the id_tap implementation into the core.
+outfeed_rewriter: Optional[Callable[[core.Jaxpr], Tuple[core.Jaxpr, bool]]] = None
+def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, bool]:
+  if outfeed_rewriter is not None:
+    return outfeed_rewriter(jaxpr)
+  else:
+    return jaxpr, False
+
+outfeed_primitives: Set[core.Primitive] = set()
+def jaxpr_uses_outfeed(jaxpr: core.Jaxpr) -> bool:
+  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
+  return any(primitive_uses_outfeed(eqn.primitive, eqn.params)
+             for eqn in jaxpr.eqns)
+
+def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
+  if prim in outfeed_primitives:
+    return True
+  for param in params.values():
+    if type(param) is core.Jaxpr:
+      if jaxpr_uses_outfeed(param):
+        return True
+    elif type(param) is core.TypedJaxpr:
+      if jaxpr_uses_outfeed(param.jaxpr):
+        return True
+  return False
+
+# TODO(necula): remove this when we start the outfeed receiver automatically.
+can_execute_outfeed_computations: bool = False  # Set by outfeed_receiver
+def check_before_outfeed_execution(uses_outfeed: bool):
+  if uses_outfeed and not can_execute_outfeed_computations:
+    raise ValueError("Attempting to execute compiled code using outfeed, "
+                     "but outfeed_receiver is not started.")
+
 ### op-by-op execution
 
 def arg_spec(x):
@@ -182,6 +223,11 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
   avals, arg_devices = unzip2(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
+  if primitive_uses_outfeed(prim, params):
+    # We use the _xla_callable path, where we pre-process the primitives
+    def prim_fun(*args):
+      return prim.bind(*args, **params)
+    return _xla_callable(lu.wrap_init(prim_fun), device, None, "prim", *arg_specs)
   aval_out = prim.abstract_eval(*avals, **params)
   if not prim.multiple_results:
     handle_result = aval_to_result_handler(device, aval_out)
@@ -260,6 +306,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     raise RuntimeError(msg) from e
 
 def primitive_subcomputation(prim, *avals, **params):
+  return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
   return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
 
 def _execute_compiled_primitive(prim, compiled, result_handler, *args):
@@ -483,7 +530,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   pvals: Sequence[pe.PartialVal] = [pe.PartialVal.unknown(aval) for aval in abstract_args]
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
       fun, pvals, instantiate=False, stage_out=True, bottom=True)
-
+  jaxpr, uses_outfeed = apply_outfeed_rewriter(jaxpr)
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
 
   nreps = jaxpr_replicas(jaxpr)
@@ -527,11 +574,10 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   options.tuple_arguments = tuple_args
   backend = xb.get_backend(backend)
   compiled = backend.compile(built, compile_options=options)
-
   if nreps == 1:
-    return partial(_execute_compiled, compiled, result_handlers)
+    return partial(_execute_compiled, compiled, uses_outfeed, result_handlers)
   else:
-    return partial(_execute_replicated, compiled, result_handlers)
+    return partial(_execute_replicated, compiled, uses_outfeed, result_handlers)
 
 def _xla_callable_device(nreps, backend, device, arg_devices):
   if nreps > 1:
@@ -572,14 +618,18 @@ def _pval_to_result_handler(device, pval):
   else:
     return aval_to_result_handler(device, pv)
 
-def _execute_compiled(compiled, handlers, *args):
+def _execute_compiled(compiled: XlaExecutable, uses_outfeed: bool,
+                      handlers, *args):
+  check_before_outfeed_execution(uses_outfeed)
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   out_bufs = compiled.Execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, handlers, *args):
+def _execute_replicated(compiled: XlaExecutable, uses_outfeed: bool,
+                        handlers, *args):
+  check_before_outfeed_execution(uses_outfeed)
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
