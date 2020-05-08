@@ -2919,7 +2919,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "rng_factory": rng_factory}
         for dtype in number_dtypes
         for rng_factory in [jtu.rand_default]))
-  def testIssue3014(self, dtype, rng_factory):
+  def testLinspaceEndpoints(self, dtype, rng_factory):
+    """Regression test for Issue #3014."""
     rng = rng_factory(self.rng())
     endpoints = rng((2,), dtype)
     out = jnp.linspace(*endpoints, 10, dtype=dtype)
