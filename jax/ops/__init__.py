@@ -13,6 +13,6 @@
 # limitations under the License.
 
 
-from .scatter import (
+from ._scatter import (
   index, index_add, index_mul, index_update, index_min, index_max, segment_sum
 )
