@@ -2914,6 +2914,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
+        {"testcase_name": "_dtype={}".format(dtype),
+         "dtype": dtype,
+         "rng_factory": rng_factory}
+        for dtype in number_dtypes
+        for rng_factory in [jtu.rand_default]))
+  def testIssue3014(self, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    endpoints = rng((2,), dtype)
+    out = jnp.linspace(*endpoints, 10, dtype=dtype)
+    self.assertAllClose(out[[0, -1]], endpoints, check_dtypes=True, rtol=0, atol=0)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
                            "_base={}_dtype={}").format(
             start_shape, stop_shape, num, endpoint, base,

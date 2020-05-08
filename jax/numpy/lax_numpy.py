@@ -2160,6 +2160,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   dtype = dtype or dt
   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
+  broadcast_stop = broadcast_to(stop, bounds_shape)
   axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
   bounds_shape.insert(axis, 1)
   iota_shape = [1,] * len(bounds_shape)
@@ -2167,9 +2168,18 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   div = (num - 1) if endpoint else num
   if num > 1:
     delta = lax.convert_element_type(stop - start, dt) / div
-    out = (reshape(broadcast_start, bounds_shape) +
-           reshape(lax.iota(dt, num), iota_shape) *
-           reshape(delta, bounds_shape))
+    if issubdtype(dtype, integer):
+      # This is similar to how numpy computes linspace, but it
+      # can fail to recover the endpoints in float32 arithmetic.
+      out = (reshape(broadcast_start, bounds_shape) +
+        reshape(lax.iota(dt, num), iota_shape) *
+        reshape(delta, bounds_shape))
+    else:
+      # This approach recovers the endpoints with float32 arithmetic,
+      # but can lead to rounding errors for integer outputs.
+      step = reshape(lax.iota(dt, num), iota_shape) / div
+      out = (reshape(broadcast_start, bounds_shape) * (1 - step) +
+        reshape(broadcast_stop, bounds_shape) * step)
   elif num == 1:
     delta = nan if endpoint else lax.convert_element_type(stop - start, dt)
     out = reshape(broadcast_start, bounds_shape)
