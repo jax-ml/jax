@@ -76,13 +76,13 @@ from .api import (
 from jax import nn
 from jax import random
 
-# TODO(phawkins): remove the `np` name.
-import jax.numpy as np # side-effecting import sets up operator overloads
 
 
 def _init():
   import os
   os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
+
+  import jax.numpy # side-effecting import sets up operator overloads
 
 _init()
 del _init
