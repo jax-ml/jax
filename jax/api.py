@@ -138,9 +138,9 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
     if _jit_is_disabled():
       return fun(*args, **kwargs)
     if static_argnums and max(static_argnums) >= len(args):
-      msg = ("Jitted function has static_argnums={} but was called with only {}"
+      msg = ("jitted function has static_argnums={} but was called with only {}"
              " positional arguments.")
-      raise TypeError(msg.format(static_argnums, len(args)))
+      raise ValueError(msg.format(static_argnums, len(args)))
     f = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -771,21 +771,23 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
 
   return batched_fun
 
-def _get_axis_size(i:int, shape: Tuple[int, ...], axis: int):
+def _get_axis_size(name: str, i:int, shape: Tuple[int, ...], axis: int):
   try:
     return shape[axis]
   except (IndexError, TypeError) as e:
-    raise ValueError(f"vmap got arg {i} of rank {len(shape)} but axis to be mapped {axis}") from e
+    raise ValueError(f"{name} got arg {i} of rank {len(shape)} "
+                     f"but axis to be mapped {axis}") from e
 
 def _mapped_axis_size(tree, vals, dims, name):
-  mapped_axis_sizes = {_get_axis_size(i, onp.shape(x), d) for i, (x, d) in enumerate(zip(vals, dims))
-                        if d is not None}
+  mapped_axis_sizes = {_get_axis_size(name, i, onp.shape(x), d)
+                       for i, (x, d) in enumerate(zip(vals, dims))
+                       if d is not None}
   try:
     size, = mapped_axis_sizes
     return size
   except ValueError as e:
     if not mapped_axis_sizes:
-      raise ValueError("{} must have at least one non-None in_axes".format(name)) from e
+      raise ValueError(f"{name} must have at least one non-None value in in_axes") from e
     msg = "{} got inconsistent sizes for array axes to be mapped:\n".format(name) + "{}"
     # we switch the error message based on whether args is a tuple of arrays,
     # in which case we can produce an error message based on argument indices,
@@ -1033,7 +1035,14 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     if static_broadcasted_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_broadcasted_argnums]
+      if max(static_broadcasted_argnums) >= len(args):
+        msg = ("pmapped function has static_broadcasted_argnums={} but was "
+               "called with only {} positional argument{}. All static "
+               "broadcasted arguments must be passed positionally.")
+        raise ValueError(msg.format(static_broadcasted_argnums, len(args),
+                                    "s" if len(args) > 1 else ""))
+      dyn_argnums = [i for i in range(len(args))
+                     if i not in static_broadcasted_argnums]
       f, dyn_args = argnums_partial(f, dyn_argnums, args)
       if isinstance(in_axes, tuple):
         dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
