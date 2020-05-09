@@ -19,6 +19,7 @@ from __future__ import print_function
 from functools import partial
 import logging
 import numpy as onp
+import operator
 import os
 import re
 import threading
@@ -45,6 +46,9 @@ FLAGS = config.FLAGS
 def skip_if_jit_not_enabled():
   if os.getenv("JAX_ENABLE_JIT_PRINT", "false") == "false":
     raise SkipTest("print jit not enabled yet; use JAX_ENABLE_JIT_PRINT env.")
+
+def supported_dtypes():
+  return sorted(jtu.supported_dtypes(), key=lambda x: onp.dtype(x).name)
 
 class _TestingOutputStream(object):
   """Use as `output_stream` for tests."""
@@ -532,7 +536,7 @@ where: 10
               dtype=dtype,
               nr_args=nr_args) for nr_args in [1, 2]
           for shape in [(), (2,), (2, 3), (2, 3, 4)]
-          for dtype in jtu.supported_dtypes()))
+          for dtype in supported_dtypes()))
   def test_jit_types(self, nr_args=2, dtype=np.int16, shape=(2,)):
     if dtype in (np.complex64, np.complex128, np.bool_):
       raise SkipTest(f"id_print jit not implemented for {dtype}.")
