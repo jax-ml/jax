@@ -19,7 +19,6 @@ from __future__ import print_function
 from functools import partial
 import logging
 import numpy as onp
-import operator
 import os
 import re
 import threading
