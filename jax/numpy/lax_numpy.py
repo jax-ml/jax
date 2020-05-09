@@ -2259,8 +2259,7 @@ def indices(dimensions, dtype=int32, sparse=False):
   for i, dim in enumerate(dimensions):
     idx = lax.iota(dtype, dim)
     if sparse:
-      s = [1]*N
-      s[i] = dim
+      s = (1,)*i + (dim,) + (1,)*(N - i - 1)
     output.append(lax.broadcast_in_dim(idx, s, (i,)))
   return tuple(output) if sparse else stack(output, 0)
 
