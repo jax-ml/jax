@@ -633,7 +633,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testReducerNoDtype(self, onp_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
     rng = rng_factory(self.rng())
-    is_bf16_nan_test = dtype == lnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom <= 0 for slice.*")
     def onp_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(onp.float32)
       res = onp_op(x_cast, axis, keepdims=keepdims)
@@ -2804,7 +2806,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for keepdims in [False, True]
         for rng_factory in [jtu.rand_some_nan]))
   def testNanVar(self, shape, dtype, out_dtype, axis, ddof, keepdims, rng_factory):
-    rng = rng_factory()
+    rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     def onp_fun(x):
       out = onp.nanvar(x.astype(jnp.promote_types(onp.float32, dtype)),

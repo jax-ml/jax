@@ -170,8 +170,6 @@ float64 = double = _make_scalar_type(onp.float64)
 complex64 = csingle = _make_scalar_type(onp.complex64)
 complex128 = cdouble = _make_scalar_type(onp.complex128)
 
-complex_dtypes = [complex64, complex128]
-
 int_ = int32 if dtypes.int_ == onp.int32 else int64
 float_ = float32 if dtypes.float_ == onp.float32 else float64
 complex_ = complex64 if dtypes.complex_ == onp.complex64 else complex128
@@ -1587,23 +1585,7 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if out is not None:
     raise ValueError("var does not support the `out` argument.")
 
-  a_dtype = _dtype(a)
-  if dtype:
-    if (not issubdtype(dtype, complexfloating) and
-        issubdtype(a_dtype, complexfloating)):
-      msg = ("jax.numpy.var does not yet support real dtype parameters when "
-             "computing the variance of an array of complex values. The "
-             "semantics of numpy.var seem unclear in this case. Please comment "
-             "on https://github.com/google/jax/issues/2283 if this behavior is "
-             "important to you.")
-      raise ValueError(msg)
-    a_dtype = promote_types(a_dtype, dtype)
-  else:
-    if not issubdtype(a_dtype, inexact):
-      dtype = a_dtype = float_
-    else:
-      dtype = _complex_elem_type(a_dtype)
-      a_dtype = promote_types(a_dtype, float32)
+  a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = mean(a, axis, dtype=a_dtype, keepdims=True)
   centered = a - a_mean
   if issubdtype(centered.dtype, complexfloating):
@@ -1624,9 +1606,14 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 
 def _var_promote_types(a_dtype, dtype):
   if dtype:
-    if dtype not in complex_dtypes and a_dtype in complex_dtypes:
-      raise ValueError("dtype must be complex when calling var on a "
-                       "complex-valued array, got {} instead".format(dtype))
+    if (not issubdtype(dtype, complexfloating) and
+        issubdtype(a_dtype, complexfloating)):
+      msg = ("jax.numpy.var does not yet support real dtype parameters when "
+             "computing the variance of an array of complex values. The "
+             "semantics of numpy.var seem unclear in this case. Please comment "
+             "on https://github.com/google/jax/issues/2283 if this behavior is "
+             "important to you.")
+      raise ValueError(msg)
     a_dtype = promote_types(a_dtype, dtype)
   else:
     if not issubdtype(a_dtype, inexact):
