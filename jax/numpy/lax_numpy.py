@@ -2261,7 +2261,9 @@ def indices(dimensions, dtype=int32, sparse=False):
     if sparse:
       s = (1,)*i + (dim,) + (1,)*(N - i - 1)
     output.append(lax.broadcast_in_dim(idx, s, (i,)))
-  return tuple(output) if sparse else stack(output, 0)
+  if sparse:
+      return tuple(output)
+  return stack(output, 0) if output else asarray(output)
 
 
 def _repeat_scalar(a, repeats, axis=None):
