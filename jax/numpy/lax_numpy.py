@@ -2263,7 +2263,7 @@ def indices(dimensions, dtype=int32, sparse=False):
     output.append(lax.broadcast_in_dim(idx, s, (i,)))
   if sparse:
       return tuple(output)
-  return stack(output, 0) if output else asarray(output)
+  return stack(output, 0) if output else array([], dtype=dtype)
 
 
 def _repeat_scalar(a, repeats, axis=None):
