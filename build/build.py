@@ -64,26 +64,26 @@ def get_python_version(python_bin_path):
   return major, minor
 
 def check_python_version(python_version):
-  if python_version < (3, 5):
-    print("JAX requires Python 3.5 or newer.")
+  if python_version < (3, 6):
+    print("JAX requires Python 3.6 or newer.")
     sys.exit(-1)
 
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/1.2.1/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/2.0.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-1.2.1-linux-x86_64",
+            file="bazel-2.0.0-linux-x86_64",
             sha256=
-            "f5e21d7448419d1596ad0c5bb71fb336a0af08c832587aec394970ea56701d88"),
+            "4df79462c6c3ecdeeee7af99fc269b52ab1aa4828ef3bc359c1837d3fafeeee7"),
     "Darwin":
         BazelPackage(
-            file="bazel-1.2.1-darwin-x86_64",
+            file="bazel-2.0.0-darwin-x86_64",
             sha256=
-            "6729be5a56e6eadf7a9112afd2d87ce348da8fca22077b882d9bb7a6f5d41d1c"),
+            "3eca4c96cfda97a9d5f8d3d0dec4155a5cc5ff339b10d3f35213c398bf13881e"),
 }
 
 
@@ -107,7 +107,8 @@ def download_and_verify_bazel():
           package.file, "#" * progress_chars,
           "." * (num_chars - progress_chars), int(progress * 100.0)))
 
-    tmp_path, _ = urlretrieve(uri, None, progress)
+    tmp_path, _ = urlretrieve(uri, None,
+                              progress if sys.stdout.isatty() else None)
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.
@@ -175,9 +176,13 @@ def check_bazel_version(bazel_path, min_version, max_version):
 
 
 BAZELRC_TEMPLATE = """
+# Flag to enable remote config
+common --experimental_repo_remote_exec
+
 build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
 build --python_path="{python_bin_path}"
 build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
+build --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"
 build --distinct_host_configuration=false
 build --copt=-Wno-sign-compare
 build -c opt
@@ -208,6 +213,9 @@ build --strategy=Genrule=standalone
 
 build --cxxopt=-std=c++14
 build --host_cxxopt=-std=c++14
+
+# Suppress all warning messages.
+build:short_logs --output_filter=DONT_MATCH_ANYTHING
 """
 
 
@@ -304,6 +312,10 @@ def main():
       default=None,
       help="Path to CUDNN libraries.")
   parser.add_argument(
+      "--cuda_compute_capabilities",
+      default="3.5,5.2,6.0,6.1,7.0",
+      help="A comma-separated list of CUDA compute capabilities to support.")
+  parser.add_argument(
       "--bazel_startup_options",
       action="append", default=[],
       help="Additional startup options to pass to bazel.")
@@ -318,7 +330,7 @@ def main():
 
   # Find a working Bazel.
   bazel_path = get_bazel_path(args.bazel_path)
-  check_bazel_version(bazel_path, min_version="1.2.1", max_version=None)
+  check_bazel_version(bazel_path, min_version="2.0.0", max_version=None)
   print("Bazel binary path: {}".format(bazel_path))
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
@@ -338,14 +350,17 @@ def main():
       print("CUDA toolkit path: {}".format(cuda_toolkit_path))
     if cudnn_install_path:
       print("CUDNN library path: {}".format(cudnn_install_path))
+    print("CUDA compute capabilities: {}".format(args.cuda_compute_capabilities))
   write_bazelrc(
       python_bin_path=python_bin_path,
       tf_need_cuda=1 if args.enable_cuda else 0,
       cuda_toolkit_path=cuda_toolkit_path,
-      cudnn_install_path=cudnn_install_path)
+      cudnn_install_path=cudnn_install_path,
+      cuda_compute_capabilities=args.cuda_compute_capabilities)
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
   config_args = args.bazel_options
+  config_args += ["--config=short_logs"]
   if args.enable_march_native:
     config_args += ["--config=opt"]
   if args.enable_mkl_dnn:

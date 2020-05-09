@@ -18,18 +18,24 @@ import functools
 import re
 import itertools as it
 import os
-from unittest import SkipTest
+from typing import Dict, Sequence, Union
+import sys
+import unittest
+import warnings
+import zlib
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as onp
 import numpy.random as npr
+import scipy
 
 from . import api
 from . import core
 from . import dtypes
 from . import lax
+from . import lib
 from .config import flags, bool_env
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
@@ -116,7 +122,7 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None):
   onp.testing.assert_allclose(a, b, **kw)
 
 def tolerance(dtype, tol=None):
-  tol = tol or {}
+  tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
   tol = {onp.dtype(key): value for key, value in tol.items()}
@@ -228,6 +234,24 @@ def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
 
 def check_grads(f, args, order,
                 modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
+  """Check gradients from automatic differentiation against finite differences.
+
+  Gradients are only checked in a single randomly chosen direction, which
+  ensures that the finite difference calculation does not become prohibitively
+  expensive even for large input/output spaces.
+
+  Args:
+    f: function to check at ``f(*args)``.
+    args: tuple of argument values.
+    order: forward and backwards gradients up to this order are checked.
+    modes: lists of gradient modes to check ('fwd' and/or 'rev').
+    atol: absolute tolerance for gradient equality.
+    rtol: relative tolerance for gradient equality.
+    eps: step size used for finite differences.
+
+  Raises:
+    AssertionError: if gradients do not match.
+  """
   args = tuple(args)
   eps = eps or EPS
 
@@ -294,6 +318,15 @@ def count_jit_and_pmap_compiles():
 def device_under_test():
   return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
 
+def if_device_under_test(device_type: Union[str, Sequence[str]],
+                         if_true, if_false):
+  """Chooses `if_true` of `if_false` based on device_under_test."""
+  if device_under_test() in ([device_type] if isinstance(device_type, str)
+                             else device_type):
+    return if_true
+  else:
+    return if_false
+
 def supported_dtypes():
   if device_under_test() == "tpu":
     return {onp.bool_, onp.int32, onp.uint32, dtypes.bfloat16, onp.float32,
@@ -304,6 +337,11 @@ def supported_dtypes():
             dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
             onp.complex64, onp.complex128}
 
+def skip_if_unsupported_type(dtype):
+  if dtype not in supported_dtypes():
+    raise unittest.SkipTest(
+      f"Type {dtype} not supported on {device_under_test()}")
+
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
   def skip(test_method):
@@ -312,8 +350,8 @@ def skip_on_devices(*disabled_devices):
       device = device_under_test()
       if device in disabled_devices:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        raise SkipTest('{} not supported on {}.'
-                       .format(test_name, device.upper()))
+        raise unittest.SkipTest(
+          f"{test_name} not supported on {device.upper()}.")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
@@ -327,11 +365,19 @@ def skip_on_flag(flag_name, skip_value):
       flag_value = getattr(FLAGS, flag_name)
       if flag_value == skip_value:
         test_name = getattr(test_method, '__name__', '[unknown test]')
-        raise SkipTest('{} not supported when FLAGS.{} is {}'
-                       .format(test_name, flag_name, flag_value))
+        raise unittest.SkipTest(
+          f"{test_name} not supported when FLAGS.{flag_name} is {flag_value}")
       return test_method(self, *args, **kwargs)
     return test_method_wrapper
   return skip
+
+# TODO(phawkins): workaround for bug https://github.com/google/jax/issues/432
+# Delete this code after the minimum jaxlib version is 0.1.46 or greater.
+skip_on_mac_linalg_bug = partial(
+  unittest.skipIf,
+  (sys.platform == "darwin" and scipy.version.version > "1.1.0" and
+   lib.version < (0, 1, 46)),
+  "Test fails on Mac with new scipy (issue #432)")
 
 
 def format_test_name_suffix(opname, shapes, dtypes):
@@ -380,17 +426,23 @@ def dtype_str(dtype):
 
 
 def format_shape_dtype_string(shape, dtype):
+  if isinstance(shape, onp.ndarray):
+    return f'{dtype_str(dtype)}[{shape}]'
+  elif isinstance(shape, list):
+    shape = tuple(shape)
+  return _format_shape_dtype_string(shape, dtype)
+
+@functools.lru_cache(maxsize=64)
+def _format_shape_dtype_string(shape, dtype):
   if shape is NUMPY_SCALAR_SHAPE:
     return dtype_str(dtype)
   elif shape is PYTHON_SCALAR_SHAPE:
     return 'py' + dtype_str(dtype)
-  elif type(shape) in (list, tuple):
+  elif type(shape) is tuple:
     shapestr = ','.join(str(dim) for dim in shape)
     return '{}[{}]'.format(dtype_str(dtype), shapestr)
   elif type(shape) is int:
     return '{}[{},]'.format(dtype_str(dtype), shape)
-  elif isinstance(shape, onp.ndarray):
-    return '{}[{}]'.format(dtype_str(dtype), shape)
   else:
     raise TypeError(type(shape))
 
@@ -419,48 +471,39 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
 
 
-def rand_default(scale=3):
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=scale)
+def rand_default(rng, scale=3):
+  return partial(_rand_dtype, rng.randn, scale=scale)
 
 
-def rand_nonzero():
+def rand_nonzero(rng):
   post = lambda x: onp.where(x == 0, onp.array(1, dtype=x.dtype), x)
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3, post=post)
+  return partial(_rand_dtype, rng.randn, scale=3, post=post)
 
 
-def rand_positive():
+def rand_positive(rng):
   post = lambda x: x + 1
-  rand = npr.RandomState(0).rand
-  return partial(_rand_dtype, rand, scale=2, post=post)
+  return partial(_rand_dtype, rng.rand, scale=2, post=post)
 
 
-def rand_small():
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=1e-3)
+def rand_small(rng):
+  return partial(_rand_dtype, rng.randn, scale=1e-3)
 
 
-def rand_not_small():
-  post = lambda x: x + onp.where(x > 0, 10., -10.)
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3., post=post)
+def rand_not_small(rng, offset=10.):
+  post = lambda x: x + onp.where(x > 0, offset, -offset)
+  return partial(_rand_dtype, rng.randn, scale=3., post=post)
 
 
-def rand_small_positive():
-  rand = npr.RandomState(0).rand
-  return partial(_rand_dtype, rand, scale=2e-5)
+def rand_small_positive(rng):
+  return partial(_rand_dtype, rng.rand, scale=2e-5)
 
-def rand_uniform(low=0.0, high=1.0):
+def rand_uniform(rng, low=0.0, high=1.0):
   assert low < high
-  rand = npr.RandomState(0).rand
   post = lambda x: x * (high - low) + low
-  return partial(_rand_dtype, rand, post=post)
+  return partial(_rand_dtype, rng.rand, post=post)
 
 
-def rand_some_equal():
-  randn = npr.RandomState(0).randn
-  rng = npr.RandomState(0)
+def rand_some_equal(rng):
 
   def post(x):
     x_ravel = x.ravel()
@@ -469,13 +512,12 @@ def rand_some_equal():
     flips = rng.rand(*onp.shape(x)) < 0.5
     return onp.where(flips, x_ravel[0], x)
 
-  return partial(_rand_dtype, randn, scale=100., post=post)
+  return partial(_rand_dtype, rng.randn, scale=100., post=post)
 
 
-def rand_some_inf():
+def rand_some_inf(rng):
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   """
   TODO: Complex numbers are not correctly tested
@@ -505,10 +547,9 @@ def rand_some_inf():
 
   return rand
 
-def rand_some_nan():
+def rand_some_nan(rng):
   """Return a random sampler that produces nans in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   def rand(shape, dtype):
     """The random sampler function."""
@@ -532,10 +573,9 @@ def rand_some_nan():
 
   return rand
 
-def rand_some_inf_and_nan():
+def rand_some_inf_and_nan(rng):
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   """
   TODO: Complex numbers are not correctly tested
@@ -568,10 +608,9 @@ def rand_some_inf_and_nan():
   return rand
 
 # TODO(mattjj): doesn't handle complex types
-def rand_some_zero():
+def rand_some_zero(rng):
   """Return a random sampler that produces some zeros."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   def rand(shape, dtype):
     """The random sampler function."""
@@ -586,14 +625,18 @@ def rand_some_zero():
   return rand
 
 
-def rand_int(low, high=None):
-  randint = npr.RandomState(0).randint
+def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
-    return randint(low, high=high, size=shape, dtype=dtype)
+    return rng.randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
-def rand_bool():
-  rng = npr.RandomState(0)
+def rand_unique_int(rng, high=None):
+  def fn(shape, dtype):
+    return rng.choice(onp.arange(high or onp.prod(shape), dtype=dtype),
+                      size=shape, replace=False)
+  return fn
+
+def rand_bool(rng):
   def generator(shape, dtype):
     return _cast_to_shape(rng.rand(*_dims_of_shape(shape)) < 0.5, shape, dtype)
   return generator
@@ -629,7 +672,7 @@ def assert_dot_precision(expected_precision, fun, *args):
     assert precision == expected_precision, msg
 
 
-_CACHED_INDICES = {}
+_CACHED_INDICES: Dict[int, Sequence[int]] = {}
 
 def cases_from_list(xs):
   xs = list(xs)
@@ -653,6 +696,22 @@ def cases_from_gens(*gens):
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
+
+  # TODO(mattjj): this obscures the error messages from failures, figure out how
+  # to re-enable it
+  # def tearDown(self) -> None:
+  #   assert core.reset_trace_state()
+
+  def setUp(self):
+    super(JaxTestCase, self).setUp()
+    core.skip_checks = False
+    # We use the adler32 hash for two reasons.
+    # a) it is deterministic run to run, unlike hash() which is randomized.
+    # b) it returns values in int32 range, which RandomState requires.
+    self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
+
+  def rng(self):
+    return self._rng
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
@@ -747,7 +806,14 @@ class JaxTestCase(parameterized.TestCase):
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
                          check_dtypes=False, tol=None):
     args = args_maker()
-    numpy_ans = numpy_reference_op(*args)
     lax_ans = lax_op(*args)
+    numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
                         atol=tol, rtol=tol)
+
+
+@contextmanager
+def ignore_warning(**kw):
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", **kw)
+    yield

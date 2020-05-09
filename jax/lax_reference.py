@@ -32,7 +32,7 @@ neg = onp.negative
 sign = onp.sign
 floor = onp.floor
 ceil = onp.ceil
-round = onp.round
+round = lambda x: onp.trunc(x + onp.copysign(.5, x))
 nextafter = onp.nextafter
 
 is_finite = onp.isfinite
@@ -56,6 +56,9 @@ acos = onp.arccos
 atan = onp.arctan
 sinh = onp.sinh
 cosh = onp.cosh
+asinh = onp.arcsinh
+acosh = onp.arccosh
+atanh = onp.arctanh
 
 betainc = scipy.special.betainc
 lgamma = scipy.special.gammaln
@@ -107,6 +110,31 @@ min = onp.minimum
 shift_left = onp.left_shift
 shift_right_arithmetic = onp.right_shift
 # TODO shift_right_logical
+
+def population_count(x):
+  assert x.dtype in (onp.uint32, onp.uint64)
+  m = [
+      0x5555555555555555,  # binary: 0101...
+      0x3333333333333333,  # binary: 00110011..
+      0x0f0f0f0f0f0f0f0f,  # binary:  4 zeros,  4 ones ...
+      0x00ff00ff00ff00ff,  # binary:  8 zeros,  8 ones ...
+      0x0000ffff0000ffff,  # binary: 16 zeros, 16 ones ...
+      0x00000000ffffffff,  # binary: 32 zeros, 32 ones
+  ]
+
+  if x.dtype == onp.uint32:
+    m = list(map(onp.uint32, m[:-1]))
+  else:
+    m = list(map(onp.uint64, m))
+
+  x = (x & m[0]) + ((x >>  1) & m[0])  # put count of each  2 bits into those  2 bits
+  x = (x & m[1]) + ((x >>  2) & m[1])  # put count of each  4 bits into those  4 bits
+  x = (x & m[2]) + ((x >>  4) & m[2])  # put count of each  8 bits into those  8 bits
+  x = (x & m[3]) + ((x >>  8) & m[3])  # put count of each 16 bits into those 16 bits
+  x = (x & m[4]) + ((x >> 16) & m[4])  # put count of each 32 bits into those 32 bits
+  if x.dtype == onp.uint64:
+    x = (x & m[5]) + ((x >> 32) & m[5])  # put count of each 64 bits into those 64 bits
+  return x
 
 eq = onp.equal
 ne = onp.not_equal
@@ -188,9 +216,10 @@ def broadcast(operand, sizes):
   return onp.broadcast_to(operand, sizes + onp.shape(operand))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
-  inshape = tuple(1 if i not in broadcast_dimensions else d
-                  for i, d in enumerate(shape))
-  return onp.broadcast_to(onp.reshape(operand, inshape), shape)
+  in_reshape = onp.ones(len(shape), dtype=onp.int32)
+  for i, bd in enumerate(broadcast_dimensions):
+    in_reshape[bd] = operand.shape[i]
+  return onp.broadcast_to(onp.reshape(operand, in_reshape), shape)
 
 sum = onp.sum
 
@@ -262,7 +291,7 @@ sort = onp.sort
 def sort_key_val(keys, values, dimension=-1):
   idxs = list(onp.ix_(*[onp.arange(d) for d in keys.shape]))
   idxs[dimension] = onp.argsort(keys, axis=dimension)
-  return keys[idxs], values[idxs]
+  return keys[tuple(idxs)], values[tuple(idxs)]
 
 # TODO untake
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -xev
 
-PYTHON_VERSIONS="3.5.6 3.6.8 3.7.2 3.8.0"
+PYTHON_VERSIONS="3.6.8 3.7.2 3.8.0"
 CUDA_VERSIONS="9.2 10.0 10.1 10.2"
 CUDA_VARIANTS="cuda" # "cuda-included"
 

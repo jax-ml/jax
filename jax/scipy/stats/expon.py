@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import _promote_args_inexact, _wraps, where, inf
+from ...numpy._util import _wraps
+from ...numpy.lax_numpy import _promote_args_inexact, where, inf
 
 
 @_wraps(osp_stats.expon.logpdf, update_doc=False)

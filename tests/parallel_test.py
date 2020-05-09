@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import functools
 import itertools
 import unittest
-from unittest import SkipTest
+from unittest import SkipTest, skip
 
-import numpy as onp
+import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import lax
 from jax.api import _papply, _parallelize, soft_pmap, jit, make_jaxpr
@@ -32,54 +32,60 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
+ignore_soft_pmap_warning = functools.partial(
+  jtu.ignore_warning, message="soft_pmap is an experimental.*")
+
 class PapplyTest(jtu.JaxTestCase):
 
   def testIdentity(self):
     pfun, axis_name = _papply(lambda x: x)
-    ans = pfun(onp.arange(3))
-    expected = onp.arange(3)
+    ans = pfun(np.arange(3))
+    expected = np.arange(3)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testMap(self):
-    pfun, axis_name = _papply(np.sin)
-    ans = pfun(onp.arange(3.))
-    expected = onp.sin(onp.arange(3.))
+    pfun, axis_name = _papply(jnp.sin)
+    ans = pfun(np.arange(3.))
+    expected = np.sin(np.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSum(self):
-    pfun, axis_name = _papply(lambda x: np.sum(x, axis=0))
+    pfun, axis_name = _papply(lambda x: jnp.sum(x, axis=0))
 
-    jaxpr = make_jaxpr(pfun)(onp.ones(3))
+    jaxpr = make_jaxpr(pfun)(np.ones(3))
     expected_jaxpr = make_jaxpr(
-        lambda x: lax.psum(x, axis_name))(onp.zeros((5, 3)))
+        lambda x: lax.psum(x, axis_name))(np.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
-    arg = onp.arange(15.).reshape((5, 3))
+    arg = np.arange(15.).reshape((5, 3))
     ans = soft_pmap(pfun, axis_name)(arg)[0]
-    expected = onp.sum(arg, axis=0)
+    expected = np.sum(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testMax(self):
-    pfun, axis_name = _papply(lambda x: np.max(x, axis=0))
+    pfun, axis_name = _papply(lambda x: jnp.max(x, axis=0))
 
-    jaxpr = make_jaxpr(pfun)(onp.ones(3))
+    jaxpr = make_jaxpr(pfun)(np.ones(3))
     expected_jaxpr = make_jaxpr(
-        lambda x: lax.pmax(x, axis_name))(onp.zeros((5, 3)))
+        lambda x: lax.pmax(x, axis_name))(np.zeros((5, 3)))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
-    arg = onp.arange(15.).reshape((5, 3))
+    arg = np.arange(15.).reshape((5, 3))
     ans = soft_pmap(pfun, axis_name)(arg)[0]
-    expected = onp.max(arg, axis=0)
+    expected = np.max(arg, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testSelect(self):
-    p = onp.arange(15).reshape((5, 3)) % 4 == 1
-    f = onp.zeros((5, 3))
+    p = np.arange(15).reshape((5, 3)) % 4 == 1
+    f = np.zeros((5, 3))
 
     def fun(t):
       return lax.select(p, t, f)
 
-    t = onp.ones((5, 3))
+    t = np.ones((5, 3))
     ans = soft_pmap(*_papply(fun))(t)
     expected = fun(t)
     self.assertAllClose(ans, expected, check_dtypes=True)
@@ -88,24 +94,25 @@ class PapplyTest(jtu.JaxTestCase):
     raise SkipTest("test doesn't pass yet")  # TODO(frostig)
 
     def fun(x):
-      return x - np.log(np.sum(np.exp(x)))
+      return x - jnp.log(jnp.sum(jnp.exp(x)))
 
     pfun, axis_name = _papply(fun)
 
-    jaxpr = make_jaxpr(pfun)(onp.zeros(5))
+    jaxpr = make_jaxpr(pfun)(np.zeros(5))
     expected_jaxpr = make_jaxpr(
-        lambda x: x - np.log(lax.psum(np.exp(x), axis_name)))(onp.zeros(5))
+        lambda x: x - jnp.log(lax.psum(jnp.exp(x), axis_name)))(np.zeros(5))
     assert repr(jaxpr) == repr(expected_jaxpr)
 
-    ans = soft_pmap(pfun, axis_name)(onp.arange(1., 5.))
-    expected = fun(onp.arange(1., 5.))
+    ans = soft_pmap(pfun, axis_name)(np.arange(1., 5.))
+    expected = fun(np.arange(1., 5.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_soft_pmap_warning()
   def testAdd(self):
-    x = onp.array([[1, 2, 3], [4, 5, 6]])
+    x = np.array([[1, 2, 3], [4, 5, 6]])
     expected = x + x
 
-    pfun, axis_name = _papply(np.add)
+    pfun, axis_name = _papply(jnp.add)
     ans = soft_pmap(pfun, axis_name)(x, x)
     self.assertAllClose(ans, expected, check_dtypes=True)
 
@@ -115,7 +122,7 @@ class PapplyTest(jtu.JaxTestCase):
     def fun(x):
       return x + 3
 
-    x = onp.array([[1, 2], [3, 4]])
+    x = np.array([[1, 2], [3, 4]])
     expected = x + 3
 
     pfun, axis_name = _papply(fun)
@@ -125,11 +132,12 @@ class PapplyTest(jtu.JaxTestCase):
   def testMakeJaxprPapplyComposition(self):
     raise SkipTest(             # TODO(mattjj)
         "fails because select's papply rule calls an SPMD primitive")
-    x = b = onp.ones(3)
-    pfun, axis_name = _papply(lambda a: np.where(x, a, b))
-    make_jaxpr(pfun)(onp.ones(3))  # doesn't crash
+    x = b = np.ones(3)
+    pfun, axis_name = _papply(lambda a: jnp.where(x, a, b))
+    make_jaxpr(pfun)(np.ones(3))  # doesn't crash
 
 
+@skip("causing trace state errors that affect other tests")
 class ParallelizeTest(jtu.JaxTestCase):
 
   def dedup(self, arr, expected_rank):
@@ -146,7 +154,7 @@ class ParallelizeTest(jtu.JaxTestCase):
     def f(x):
       return x / x.sum(0)
 
-    x = onp.arange(4.)
+    x = np.arange(4.)
     expected = f(x)
     ans = _parallelize(f)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -155,24 +163,24 @@ class ParallelizeTest(jtu.JaxTestCase):
     self.assertIn('psum', repr(jaxpr))
 
   def testAdd(self):
-    x = onp.arange(10)
-    y = 2 * onp.arange(10)
+    x = np.arange(10)
+    y = 2 * np.arange(10)
     def f(x): return x + y
     expected = f(x)
     ans = _parallelize(f)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testAdd2(self):
-    x = onp.arange(10)
-    y = 2 * onp.arange(10)
+    x = np.arange(10)
+    y = 2 * np.arange(10)
     def f(y): return x + y
     expected = f(y)
     ans = _parallelize(f)(y)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testAdd3(self):
-    x = onp.arange(10)
-    y = 2 * onp.arange(10)
+    x = np.arange(10)
+    y = 2 * np.arange(10)
     def f(x, y):
       return x + y
     expected = f(x, y)
@@ -181,16 +189,16 @@ class ParallelizeTest(jtu.JaxTestCase):
 
   @unittest.skip("Missing cases in gather papply rule")
   def testOuter(self):
-    x = onp.arange(10)
-    y = 2 * onp.arange(10)
+    x = np.arange(10)
+    y = 2 * np.arange(10)
     def f(x): return x[:, None] * y
     expected = f(x)
     ans = _parallelize(f)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testOuter2(self):
-    x = onp.arange(10)
-    y = 2 * onp.arange(10)
+    x = np.arange(10)
+    y = 2 * np.arange(10)
     def f(y): return x[:, None] * y
     expected = f(y)
     ans = _parallelize(f)(y)
@@ -198,8 +206,8 @@ class ParallelizeTest(jtu.JaxTestCase):
 
   @unittest.skip("Missing cases in gather papply rule")
   def testOuter3(self):
-    x = onp.arange(10)
-    y = 2 * onp.arange(10)
+    x = np.arange(10)
+    y = 2 * np.arange(10)
     def f(x, y): return x[:, None] * y
     expected = f(x, y)
     ans = _parallelize(f)(x, y)
@@ -223,7 +231,7 @@ class ParallelizeTest(jtu.JaxTestCase):
     def fun(x):
       return lax.transpose(x, perm)
 
-    x = onp.arange(prod(shape)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     expected = fun(x)
     ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -233,7 +241,7 @@ class ParallelizeTest(jtu.JaxTestCase):
     def fun(x):
       return x + x.T
 
-    x = onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2))
+    x = np.reshape(np.arange(4., dtype=np.float32), (2, 2))
     expected = fun(x)
     ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -243,14 +251,14 @@ class ParallelizeTest(jtu.JaxTestCase):
     def fun(x):
       return x + x.T
 
-    x = onp.reshape(onp.arange(8., dtype=onp.float32), (2, 2, 2))
+    x = np.reshape(np.arange(8., dtype=np.float32), (2, 2, 2))
     expected = fun(x)
     ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testDot(self):
     raise SkipTest("known failure")  # TODO(frostig)
-    x = onp.reshape(onp.arange(4., dtype=onp.float32), (2, 2))
+    x = np.reshape(np.arange(4., dtype=np.float32), (2, 2))
 
     def fun(x, y):
       return lax.dot(x, y)
@@ -276,8 +284,8 @@ class ParallelizeTest(jtu.JaxTestCase):
     BATCH, CONTRACT, _ = range(3)
     SPLIT_LHS, SPLIT_RHS, SPLIT_BOTH = range(3)
 
-    x = onp.reshape(onp.arange(8.), (2, 2, 2))
-    y = onp.reshape(onp.arange(8.), (2, 2, 2)) + 4.
+    x = np.reshape(np.arange(8.), (2, 2, 2))
+    y = np.reshape(np.arange(8.), (2, 2, 2)) + 4.
 
     cdims = [(i, matching[i]) for i in range(3) if coloring[i] == CONTRACT]
     bdims = [(i, matching[i]) for i in range(3) if coloring[i] == BATCH]
@@ -306,7 +314,7 @@ class ParallelizeTest(jtu.JaxTestCase):
         pfun, axis_name = _papply(fun)
         ans = soft_pmap(pfun, axis_name)(x, y)
     except (NotImplementedError, TypeError) as e:
-      raise SkipTest(str(e))
+      raise SkipTest(str(e)) from e
 
     ans = self.dedup(ans, expected.ndim)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -316,7 +324,7 @@ class ParallelizeTest(jtu.JaxTestCase):
     def fun(x):
       return x
 
-    x = onp.reshape(onp.arange(8., dtype=onp.float32), (2, 2, 2))
+    x = np.reshape(np.arange(8., dtype=np.float32), (2, 2, 2))
     expected = fun(x)
     ans = _parallelize(fun)(x)
     self.assertAllClose(ans, expected, check_dtypes=False)

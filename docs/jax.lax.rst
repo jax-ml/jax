@@ -38,6 +38,7 @@ Operators
     bitwise_and
     bitwise_or
     bitwise_xor
+    population_count
     broadcast
     broadcasted_iota
     broadcast_in_dim
@@ -123,6 +124,7 @@ Operators
     sub
     tan
     tie_in
+    top_k
     transpose
 
 
@@ -156,9 +158,12 @@ Parallelism support is experimental.
 .. autosummary::
   :toctree: _autosummary
 
+    all_gather
     all_to_all
     psum
     pmax
     pmin
+    pmean
     ppermute
     pswapaxes
+    axis_index

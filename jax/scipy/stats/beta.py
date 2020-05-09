@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import numpy as onp
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import (_promote_args_inexact, _constant_like, _wraps,
+from ...numpy._util import _wraps
+from ...numpy.lax_numpy import (_promote_args_inexact, _constant_like,
                                 where, inf, logical_or)
 from ..special import betaln
 

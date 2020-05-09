@@ -17,7 +17,7 @@ from functools import partial
 
 import numpy.random as npr
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.config import config
 from jax.experimental import optimizers
 from jax import grad, jit, make_jaxpr, vmap
@@ -56,15 +56,15 @@ def train(kernel, xs, ys, regularization=0.01):
   n = xs.shape[0]
 
   def objective(v):
-    risk = .5 * np.sum((np.dot(gram_mat, v) - ys) ** 2.0)
-    reg = regularization * np.sum(v ** 2.0)
+    risk = .5 * jnp.sum((jnp.dot(gram_mat, v) - ys) ** 2.0)
+    reg = regularization * jnp.sum(v ** 2.0)
     return risk + reg
 
-  v = minimize(objective, np.zeros(n))
+  v = minimize(objective, jnp.zeros(n))
 
   def predict(x):
     prods = vmap(lambda x_: kernel(x, x_))(xs)
-    return np.sum(v * prods)
+    return jnp.sum(v * prods)
 
   return jit(vmap(predict))
 
@@ -75,19 +75,19 @@ if __name__ == "__main__":
 
   # linear kernel
 
-  linear_kernel = lambda x, y: np.dot(x, y)
+  linear_kernel = lambda x, y: jnp.dot(x, y)
   truth = npr.randn(d)
   xs = npr.randn(n, d)
-  ys = np.dot(xs, truth)
+  ys = jnp.dot(xs, truth)
 
   predict = train(linear_kernel, xs, ys)
 
-  print('MSE:', np.sum((predict(xs) - ys) ** 2.))
+  print('MSE:', jnp.sum((predict(xs) - ys) ** 2.))
 
   def gram_jaxpr(kernel):
     return make_jaxpr(partial(gram, kernel))(xs)
 
-  rbf_kernel = lambda x, y: np.exp(-np.sum((x - y) ** 2))
+  rbf_kernel = lambda x, y: jnp.exp(-jnp.sum((x - y) ** 2))
 
   print()
   print('jaxpr of gram(linear_kernel):')
