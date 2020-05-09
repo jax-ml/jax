@@ -3823,6 +3823,18 @@ def searchsorted(a, v, side='left', sorter=None):
   return _searchsorted(a, v, side)
 
 
+@_wraps(onp.digitize)
+def digitize(x, bins, right=False):
+  if len(bins) == 0:
+    return zeros(x, dtype=int32)
+  side = 'right' if not right else 'left'
+  return where(
+    bins[-1] >= bins[0],
+    searchsorted(bins, x, side=side),
+    len(bins) - searchsorted(bins[::-1], x, side=side)
+  )
+
+
 @_wraps(onp.percentile)
 def percentile(a, q, axis=None, out=None, overwrite_input=False,
                interpolation="linear", keepdims=False):

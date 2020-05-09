@@ -1432,6 +1432,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_x={}_bins={}_right={}_reverse={}".format(
+      jtu.format_shape_dtype_string(xshape, dtype),
+      jtu.format_shape_dtype_string(binshape, dtype),
+      right, reverse), "xshape": xshape, "binshape": binshape,
+      "right": right, "reverse": reverse, "dtype": dtype, "rng_factory": rng_factory}
+    for xshape in [(20,), (5, 4)]
+    for binshape in [(1,), (5,)]
+    for right in [True, False]
+    for reverse in [True, False]
+    for dtype in default_dtypes
+    for rng_factory in [jtu.rand_default]
+  ))
+  def testDigitize(self, xshape, binshape, right, reverse, dtype, rng_factory):
+    order = jax.ops.index[::-1] if reverse else jax.ops.index[:]
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), jnp.sort(rng(binshape, dtype))[order]]
+    onp_fun = lambda x, bins: onp.digitize(x, bins, right=right)
+    jnp_fun = lambda x, bins: jnp.digitize(x, bins, right=right)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes), axis),
        "shape": shape, "axis": axis, "dtypes": dtypes, "rng_factory": rng_factory}

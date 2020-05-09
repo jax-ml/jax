@@ -96,6 +96,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     diag
     diag_indices
     diagonal
+    digitize
     divide
     divmod
     dot
