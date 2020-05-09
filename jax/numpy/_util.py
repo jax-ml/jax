@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+from .docstrings import dc_dict
 
 
 def update_numpydoc(docstr, fun, op):
@@ -93,4 +94,20 @@ def _wraps(fun, update_doc=True, lax_description=""):
       op.__doc__ = docstr
     finally:
       return op
+  return wrap
+
+def _hard_wrap(fun):
+  """Like a functool.wraps, but hardcodes the function docstring.
+     It is important that when wrapping numpy functions the parameters names
+     in the original function and in the JAX version are the same
+    Parameters:
+      fun: The function being wrapped
+      docstr: The function's docstring
+  """
+  def wrap(op):
+    if not hasattr(fun, '__doc__') or fun.__doc__ is None:
+      return op
+    op.__name__ = fun.__name__
+    op.__doc__ = dc_dict[op.__name__]
+    return op
   return wrap

@@ -42,7 +42,7 @@ import opt_einsum
 
 from jax import jit, device_put, custom_jvp
 from .vectorize import vectorize
-from ._util import _wraps
+from ._util import _wraps, _hard_wrap
 from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
@@ -331,14 +331,17 @@ iterable = onp.iterable
 def result_type(*args):
   return dtypes.result_type(*args)
 
-def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False):
+def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, hardcode_doc=False):
   if promote_to_inexact:
     def fn(x):
       x = lax.convert_element_type(x, _to_inexact_dtype(_dtype(x)))
       return lax_fn(x)
   else:
     fn = lambda x: lax_fn(x)
-  return _wraps(numpy_fn)(fn)
+  if not hardcode_doc:
+    return _wraps(numpy_fn)(fn)
+  else:
+    return _hard_wrap(numpy_fn)(fn)
 
 def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False):
   if promote_to_inexact:
@@ -378,7 +381,7 @@ tanh = _one_to_one_unop(onp.tanh, lax.tanh, True)
 arcsinh = _one_to_one_unop(onp.arcsinh, lax.asinh, True)
 arccosh = _one_to_one_unop(onp.arccosh, lax.acosh, True)
 arctanh = _one_to_one_unop(onp.arctanh, lax.atanh, True)
-sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True)
+sqrt = _one_to_one_unop(onp.sqrt, lax.sqrt, True, True)
 
 
 add = _maybe_bool_binop(onp.add, lax.add, lax.bitwise_or)
