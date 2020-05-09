@@ -3825,11 +3825,13 @@ def searchsorted(a, v, side='left', sorter=None):
 
 @_wraps(onp.digitize)
 def digitize(x, bins, right=False):
+  if len(bins) == 0:
+    return zeros(x, dtype=int32)
   side = 'right' if not right else 'left'
-  return lax.cond(
-    len(bins) < 2 or bins[1] > bins[0],
-    bins, lambda bins: searchsorted(bins, x, side=side),
-    bins[::-1], lambda rbins: len(rbins) - searchsorted(rbins, x, side=side)
+  return where(
+    bins[-1] >= bins[0],
+    searchsorted(bins, x, side=side),
+    len(bins) - searchsorted(bins[::-1], x, side=side)
   )
 
 

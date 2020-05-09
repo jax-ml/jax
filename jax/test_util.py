@@ -761,7 +761,7 @@ class JaxTestCase(parameterized.TestCase):
                               msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
-                       rtol=None, atol=None, allow_compiled_sources=False):
+                       rtol=None, atol=None):
     """Helper method for running JAX compilation and allclose assertions."""
     args = args_maker()
 
@@ -778,11 +778,10 @@ class JaxTestCase(parameterized.TestCase):
 
     cache_misses = xla.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
-    if not allow_compiled_sources:
-      self.assertEqual(
-          cache_misses, xla.xla_primitive_callable.cache_info().misses,
-          "Compilation detected during second call of {} in op-by-op "
-          "mode.".format(fun))
+    self.assertEqual(
+        cache_misses, xla.xla_primitive_callable.cache_info().misses,
+        "Compilation detected during second call of {} in op-by-op "
+        "mode.".format(fun))
 
     cfun = api.jit(wrapped_fun)
     python_should_be_executing = True

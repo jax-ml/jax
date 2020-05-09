@@ -1451,8 +1451,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     onp_fun = lambda x, bins: onp.digitize(x, bins, right=right)
     jnp_fun = lambda x, bins: jnp.digitize(x, bins, right=right)
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
-    # allow_compiled_sources=True because digitize uses structured control flow.
-    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, allow_compiled_sources=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}".format(
