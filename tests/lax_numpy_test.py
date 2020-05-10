@@ -292,6 +292,10 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
               inexact=True),
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True),
+    op_record("nanvar", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan,
+              [], inexact=True),
+    op_record("nanstd", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan,
+              [], inexact=True),
 ]
 
 JAX_ARGMINMAX_RECORDS = [
@@ -629,7 +633,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testReducerNoDtype(self, onp_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
     rng = rng_factory(self.rng())
-    onp_fun = lambda x: onp_op(x, axis, keepdims=keepdims)
+    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom <= 0 for slice.*")
+    def onp_fun(x):
+      x_cast = x if not is_bf16_nan_test else x.astype(onp.float32)
+      res = onp_op(x_cast, axis, keepdims=keepdims)
+      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      return res
     onp_fun = _promote_like_jnp(onp_fun, inexact)
     onp_fun = jtu.ignore_warning(category=onp.ComplexWarning)(onp_fun)
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
@@ -2769,6 +2780,39 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                     axis=axis, ddof=ddof, keepdims=keepdims)
       return out.astype(out_dtype)
     jnp_fun = partial(jnp.var, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
+    tol = jtu.tolerance(out_dtype, {onp.float16: 1e-1, onp.float32: 1e-3,
+                                    onp.float64: 1e-3, onp.complex128: 1e-6})
+    if (jnp.issubdtype(dtype, jnp.complexfloating) and
+        not jnp.issubdtype(out_dtype, jnp.complexfloating)):
+      self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))
+    else:
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True,
+                              tol=tol)
+      self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, rtol=tol,
+                            atol=tol)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name":
+         "_shape={}_dtype={}_out_dtype={}_axis={}_ddof={}_keepdims={}"
+         .format(shape, dtype, out_dtype, axis, ddof, keepdims),
+         "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
+         "ddof": ddof, "keepdims": keepdims, "rng_factory": rng_factory}
+        for shape in [(5,), (10, 5)]
+        for dtype in all_dtypes
+        for out_dtype in inexact_dtypes
+        for axis in [None, 0, -1]
+        for ddof in [0, 1, 2]
+        for keepdims in [False, True]
+        for rng_factory in [jtu.rand_some_nan]))
+  def testNanVar(self, shape, dtype, out_dtype, axis, ddof, keepdims, rng_factory):
+    rng = rng_factory(self.rng())
+    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    def onp_fun(x):
+      out = onp.nanvar(x.astype(jnp.promote_types(onp.float32, dtype)),
+                    axis=axis, ddof=ddof, keepdims=keepdims)
+      return out.astype(out_dtype)
+    jnp_fun = partial(jnp.nanvar, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {onp.float16: 1e-1, onp.float32: 1e-3,
                                     onp.float64: 1e-3, onp.complex128: 1e-6})
     if (jnp.issubdtype(dtype, jnp.complexfloating) and
