@@ -429,19 +429,19 @@ class PmapTest(jtu.JaxTestCase):
     replicas = xla_bridge.device_count()
     if replicas % 2 != 0:
       raise SkipTest
-    axis_index_groups = onp.arange(replicas).reshape(
+    axis_index_groups = np.arange(replicas).reshape(
       2, replicas // 2).tolist()
     f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
     f = pmap(f, 'i')
 
     shape = (replicas, 4)
-    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     def sum_helper(a):
-      return onp.broadcast_to(a.sum(0, keepdims=True),
+      return np.broadcast_to(a.sum(0, keepdims=True),
                               (replicas // 2, x.shape[1]))
     expected_psum_1 = sum_helper(x[:replicas // 2])
     expected_psum_2 = sum_helper(x[replicas // 2:])
-    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
     expected = x - expected_psum
 
     ans = f(x)
@@ -451,7 +451,7 @@ class PmapTest(jtu.JaxTestCase):
     replicas = xla_bridge.device_count()
     if replicas % 4 != 0:
       raise SkipTest
-    axis_index_groups = onp.arange(replicas // 2).reshape(
+    axis_index_groups = np.arange(replicas // 2).reshape(
         2, replicas // 4).tolist()
     f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
     f1 = pmap(pmap(f, 'i'), 'j')
@@ -459,13 +459,13 @@ class PmapTest(jtu.JaxTestCase):
     f3 = pmap(pmap(f, 'j'), 'i')
 
     shape = (2, replicas // 2, 4)
-    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     def sum_helper_f1(a):
-      return onp.broadcast_to(a.sum(1, keepdims=True),
+      return np.broadcast_to(a.sum(1, keepdims=True),
                               (shape[0], shape[1] // 2, shape[2]))
     expected_psum_1 = sum_helper_f1(x[:, :replicas // 4])
     expected_psum_2 = sum_helper_f1(x[:, replicas // 4:])
-    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 1)
+    expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 1)
     expected = x - expected_psum
     ans = f1(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
@@ -475,13 +475,13 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True)
 
     shape = (replicas // 2, 2, 4)
-    x = onp.arange(prod(shape), dtype=onp.float32).reshape(shape)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     def sum_helper_f3(a):
-      return onp.broadcast_to(a.sum(0, keepdims=True),
+      return np.broadcast_to(a.sum(0, keepdims=True),
                               (shape[0] // 2, shape[1], shape[2]))
     expected_psum_1 = sum_helper_f3(x[:replicas // 4])
     expected_psum_2 = sum_helper_f3(x[replicas // 4:])
-    expected_psum = onp.concatenate([expected_psum_1, expected_psum_2], 0)
+    expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
     expected = x - expected_psum
     ans = f3(x)
     self.assertAllClose(ans, expected, check_dtypes=True)
