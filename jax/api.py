@@ -1022,7 +1022,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
   if isinstance(static_broadcasted_argnums, int):
-    static_broadcasted_tuple = (static_broadcasted_argnums,)
+    static_broadcasted_tuple: Tuple[int, ...] = (static_broadcasted_argnums,)
   else:
     static_broadcasted_tuple = tuple(static_broadcasted_argnums)
 
