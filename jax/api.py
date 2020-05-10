@@ -1022,7 +1022,9 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
   if isinstance(static_broadcasted_argnums, int):
-    static_broadcasted_argnums = (static_broadcasted_argnums,)
+    static_broadcasted_tuple: Tuple[int, ...] = (static_broadcasted_argnums,)
+  else:
+    static_broadcasted_tuple = tuple(static_broadcasted_argnums)
 
   # axis_size is an optional integer representing the global axis size.
   # The aggregate size (across all hosts) size of the mapped axis must match
@@ -1034,15 +1036,15 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
-    if static_broadcasted_argnums:
-      if max(static_broadcasted_argnums) >= len(args):
+    if static_broadcasted_tuple:
+      if max(static_broadcasted_tuple) >= len(args):
         msg = ("pmapped function has static_broadcasted_argnums={} but was "
                "called with only {} positional argument{}. All static "
                "broadcasted arguments must be passed positionally.")
-        raise ValueError(msg.format(static_broadcasted_argnums, len(args),
+        raise ValueError(msg.format(static_broadcasted_tuple, len(args),
                                     "s" if len(args) > 1 else ""))
       dyn_argnums = [i for i in range(len(args))
-                     if i not in static_broadcasted_argnums]
+                     if i not in static_broadcasted_tuple]
       f, dyn_args = argnums_partial(f, dyn_argnums, args)
       if isinstance(in_axes, tuple):
         dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
