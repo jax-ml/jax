@@ -46,6 +46,9 @@ def skip_if_jit_not_enabled():
   if os.getenv("JAX_ENABLE_JIT_PRINT", "false") == "false":
     raise SkipTest("print jit not enabled yet; use JAX_ENABLE_JIT_PRINT env.")
 
+def supported_dtypes():
+  return sorted(jtu.supported_dtypes(), key=lambda x: onp.dtype(x).name)
+
 class _TestingOutputStream(object):
   """Use as `output_stream` for tests."""
 
@@ -148,7 +151,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertEqual("", testing_stream.output)
 
     with hcb.outfeed_receiver():
-      self.assertEqual((5. * 2.) ** 2, fun1(5.))
+      self.assertAllClose((5. * 2.) ** 2, fun1(5.), check_dtypes=True)
     assertMultiLineStrippedEqual(self, """
 what: a * 2
 10.00
@@ -182,15 +185,6 @@ what: y * 3
       res = hcb.id_print(dict(a=x * 2., b=x * 3.), output_stream=testing_stream)
       return res["a"] + res["b"]
 
-    assertMultiLineStrippedEqual(self, """
-{ lambda  ; a.
-  let b = mul a 2.00
-      c = mul a 3.00
-      d e = id_tap[ arg_treedef=PyTreeDef(dict[['a', 'b']], [*,*])
-                    func=_print
-                     ] b c
-      f = add d e
-  in (f,) }""", str(api.make_jaxpr(func2)(3.)))
     with hcb.outfeed_receiver():
       self.assertEqual(3. * (2. + 3.), func2(3.))
     assertMultiLineStrippedEqual(self, """
@@ -204,16 +198,6 @@ what: y * 3
                         output_stream=testing_stream)
       return x1
 
-    assertMultiLineStrippedEqual(self, """
-{ lambda  ; a.
-  let b = mul a 2.00
-      c = mul a 3.00
-      d = mul a 4.00
-      e f g = id_tap[ arg_treedef=PyTreeDef(tuple, [*,*])
-                      func=_print
-                      nr_untapped=1
-                       ] b c d
-  in (g,) }""", str(api.make_jaxpr(func2)(3.)))
     with hcb.outfeed_receiver():
       self.assertEqual(3. * 4., func2(3.))
     assertMultiLineStrippedEqual(self, """
@@ -238,8 +222,7 @@ what: y * 3
         res = func(0)
 
     # We should have received everything before the error
-    assertMultiLineStrippedEqual(self,
-      """
+    assertMultiLineStrippedEqual(self, """
 what: x1
 1
 what: x3
@@ -249,27 +232,14 @@ what: x3
   def test_jit_simple(self):
     jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
         2. * x, what="here", output_stream=testing_stream))
-    assertMultiLineStrippedEqual(self, """
-{ lambda  ; a.
-  let b = xla_call[ backend=None
-                    call_jaxpr={ lambda  ; a.
-                                 let b = mul a 2.00
-                                     c = id_tap[ arg_treedef=*
-                                                 func=_print
-                                                 what=here ] b
-                                     d = mul c 3.00
-                                 in (d,) }
-                    device=None
-                    name=<lambda> ] a
-  in (b,) }""", str(api.make_jaxpr(jit_fun1)(5.)))
+
     logging.warning("%s: %s",
                  self._testMethodName, api.xla_computation(jit_fun1)(5.).GetHloText())
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(5.)
 
     self.assertAllClose(6. * 5., res, check_dtypes=True)
-    assertMultiLineStrippedEqual(self,
-      """
+    assertMultiLineStrippedEqual(self, """
 what: here
 10.00""", testing_stream.output)
     testing_stream.reset()
@@ -565,7 +535,7 @@ where: 10
               dtype=dtype,
               nr_args=nr_args) for nr_args in [1, 2]
           for shape in [(), (2,), (2, 3), (2, 3, 4)]
-          for dtype in jtu.supported_dtypes()))
+          for dtype in supported_dtypes()))
   def test_jit_types(self, nr_args=2, dtype=np.int16, shape=(2,)):
     if dtype in (np.complex64, np.complex128, np.bool_):
       raise SkipTest(f"id_print jit not implemented for {dtype}.")
@@ -780,6 +750,8 @@ what: x3
         str(api.make_jaxpr(jvp_fun1)(np.float32(5.), np.float32(0.1))))
     with hcb.outfeed_receiver():
       res_primals, res_tangents = jvp_fun1(np.float32(5.), np.float32(0.1))
+    self.assertAllClose(100., res_primals, check_dtypes=False)
+    self.assertAllClose(4., res_tangents, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
 what: a * 2
 10.00
@@ -972,6 +944,7 @@ batch_dims: (None, 0) transforms: ('batch',)
       api.pmap(lambda x: hcb.id_print(x))(vargs)
 
   def test_mask(self):
+    # TODO(necula)
     raise SkipTest("masking has regressed")
     @partial(api.mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):

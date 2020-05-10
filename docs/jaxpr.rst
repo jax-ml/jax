@@ -471,7 +471,8 @@ example
                     call_jaxpr={ lambda  ; d b a.
                                  let c = add a b
                                      e = add c d
-                                     f = psum[ axis_name=rows ] a
+                                     f = psum[ axis_index_groups=None
+                                               axis_name=rows ] a
                                      g = div e f
                                  in (g,) }
                     devices=None

@@ -14,16 +14,31 @@ jax 0.1.67 (unreleased)
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.66...master>`_.
 
+* New features:
+
+  * Support for reduction over subsets of a pmapped axis using ``axis_index_groups``
+    `#2382 <https://github.com/google/jax/pull/2382>`_.
+
 * Notable changes:
 
   * The visibility of names exported from :py:module:`jax.numpy` has been
     tightened. This may break code that was making use of names that were
     previously exported accidentally.
 
+jaxlib 0.1.47 (May 8, 2020)
+------------------------------
+
+* Fixes crash for outfeed.
+
 jax 0.1.66 (May 5, 2020)
 ---------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.65...jax-v0.1.66>`_.
+
+* New features:
+
+  * Support for ``in_axes=None`` on :func:`pmap`
+    `#2896 <https://github.com/google/jax/pull/2896>`_.
 
 jaxlib 0.1.46 (May 5, 2020)
 ------------------------------

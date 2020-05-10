@@ -133,6 +133,7 @@ from jax import pprint_util as ppu
 from jax import util
 from jaxlib import xla_client
 from jaxlib import xla_extension
+from jaxlib import version as jaxlib_version
 
 import logging
 import msgpack  # type: ignore
@@ -151,6 +152,17 @@ XlaDevice = Any  # xla_client.Device
 
 # TODO: add a flag
 _LOGGING = True
+
+# Starting with 0.1.46 the outfeed is now on the Device
+# TODO(necula): remove once we fix XLA
+_jaxlib_version = tuple(int(x)for x in jaxlib_version.__version__.split('.'))
+if _jaxlib_version == (0, 1, 45):
+  _OUTFEED_MECHANISM = "xla_client"
+elif _jaxlib_version >= (0, 1, 47):
+  _OUTFEED_MECHANISM = "device"
+else:
+  _OUTFEED_MECHANISM = "none"
+
 
 def id_tap(func: Callable, arg, *,
            result=None,
@@ -182,6 +194,8 @@ JAX transformations. Code that uses taps must be run embedded in
 For more details see the
 `module documentation <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_.
   """
+  if _OUTFEED_MECHANISM == "none":
+    raise NotImplementedError("id_tap works only with jaxlib 0.1.47 and higher")
   if func not in (_end_consumer, _unknown_testing_consumer):
     api._check_callable(func)
   flat_args, arg_treedef = pytree.flatten(arg)
@@ -647,7 +661,10 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
                                               (_OUTFEED_HEADER_LENGTH,))
 
   def _get_data(data_shape: XlaShape, device: XlaDevice) -> XlaShape:
-    return xla_client.transfer_from_outfeed(data_shape, device)
+    if _OUTFEED_MECHANISM == "device":
+      return device.transfer_from_outfeed(data_shape)
+    else:
+      return xla_client.transfer_from_outfeed(data_shape, device)
 
   header = _get_data(header_shape, device)
   if header[0] != _OUTFEED_HEADER_START:

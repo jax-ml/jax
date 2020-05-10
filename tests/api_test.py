@@ -807,9 +807,9 @@ class APITest(jtu.JaxTestCase):
   def test_xla_computation(self):
     # these tests basically check the examples in the xla_computation docstring
 
-    def h(x):
+    def e(x):
       return jnp.sin(jnp.cos(x))
-    c = api.xla_computation(h)(2.)
+    c = api.xla_computation(e)(2.)
     self.assertIn('cosine', c.GetHloText())
     self.assertIn('sine', c.GetHloText())
 
@@ -831,6 +831,16 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.GetHloText())
     self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
     self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
+
+    def h(x):
+      rowsum = lax.psum(x, 'i', axis_index_groups=[[0, 1], [2, 3]])
+      colsum = lax.psum(x, 'j')
+      return rowsum, colsum
+    axis_env = [('i', 4), ('j', 2)]
+    c = api.xla_computation(h, axis_env=axis_env)(5.)
+    self.assertIn('all-reduce', c.GetHloText())
+    self.assertIn('replica_groups={{0,2},{4,6},{1,3},{5,7}}', c.GetHloText())
+    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
 
   def test_xla_computation_args(self):
     def foo(x, y, z):
@@ -1070,7 +1080,7 @@ class APITest(jtu.JaxTestCase):
       api.vmap(lambda x: x, in_axes=(jnp.array([1., 2.]),))(jnp.array([1., 2.]))
 
     with self.assertRaisesRegex(
-        ValueError, "vmap must have at least one non-None in_axes"):
+        ValueError, "vmap must have at least one non-None value in in_axes"):
       # If the output is mapped, there must be a non-None in_axes
       api.vmap(lambda x: x, in_axes=None)(jnp.array([1., 2.]))
 
@@ -1087,7 +1097,6 @@ class APITest(jtu.JaxTestCase):
         ValueError, "vmap has mapped output but out_axes is None"):
       # If the output is mapped, then there must be some out_axes specified
       api.vmap(lambda x: x, out_axes=None)(jnp.array([1., 2.]))
-
 
   def test_vmap_structured_in_axes(self):
 
@@ -1645,6 +1654,18 @@ class APITest(jtu.JaxTestCase):
           re.DOTALL)):
       api.jit(func1)(2.)
 
+  def test_pmap_static_kwarg_error_message(self):
+    # https://github.com/google/jax/issues/3007
+    def f(a, b):
+      return a + b
+
+    g = jax.pmap(f, static_broadcasted_argnums=(1,))
+
+    msg = (r"pmapped function has static_broadcasted_argnums=\(1,\) but was "
+           r"called with only 1 positional argument. All static broadcasted "
+           r"arguments must be passed positionally.")
+    with self.assertRaisesRegex(ValueError, msg):
+      g(jnp.ones((1, 1)), b=1)
 
 class JaxprTest(jtu.JaxTestCase):
 
@@ -1848,7 +1869,8 @@ class JaxprTest(jtu.JaxTestCase):
                     call_jaxpr={ lambda  ; d b a.
                                  let c = add a b
                                      e = add c d
-                                     f = psum[ axis_name=rows ] a
+                                     f = psum[ axis_index_groups=None
+                                               axis_name=rows ] a
                                      g = div e f
                                  in (g,) }
                     devices=None

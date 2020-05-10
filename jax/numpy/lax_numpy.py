@@ -1242,6 +1242,31 @@ def select(condlist, choicelist, default=0):
   return output
 
 
+@_wraps(onp.bincount, lax_description="""\
+Jax adds the optional `length` parameter which specifies the output length, and
+defaults to ``x.max() + 1``. It must be specified for bincount to be compilable.
+Values larger than the specified length will be discarded.
+
+Additionally, while ``np.bincount`` raises an error if the input array contains
+negative values, ``jax.numpy.bincount`` treats negative values as zero.
+""")
+def bincount(x, weights=None, minlength=0, *, length=None):
+  if not issubdtype(_dtype(x), integer):
+    msg = f"x argument to bincount must have an integer type; got {x.dtype}"
+    raise TypeError(msg)
+  if length is None:
+    length = max(x) + 1
+  length = _max(length, minlength)
+  if ndim(x) != 1:
+    raise ValueError("only 1-dimensional input supported.")
+  if weights is None:
+    weights = array(1, dtype=int32)
+  else:
+    if shape(x) != shape(weights):
+      raise ValueError("shape of weights must match shape of x.")
+  return ops.index_add(zeros((length,), _dtype(weights)), ops.index[clip(x, 0)], weights)
+
+
 def broadcast_arrays(*args):
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [shape(arg) for arg in args]
@@ -1560,23 +1585,7 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   if out is not None:
     raise ValueError("var does not support the `out` argument.")
 
-  a_dtype = _dtype(a)
-  if dtype:
-    if (not issubdtype(dtype, complexfloating) and
-        issubdtype(a_dtype, complexfloating)):
-      msg = ("jax.numpy.var does not yet support real dtype parameters when "
-             "computing the variance of an array of complex values. The "
-             "semantics of numpy.var seem unclear in this case. Please comment "
-             "on https://github.com/google/jax/issues/2283 if this behavior is "
-             "important to you.")
-      raise ValueError(msg)
-    a_dtype = promote_types(a_dtype, dtype)
-  else:
-    if not issubdtype(a_dtype, inexact):
-      dtype = a_dtype = float_
-    else:
-      dtype = _complex_elem_type(a_dtype)
-      a_dtype = promote_types(a_dtype, float32)
+  a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = mean(a, axis, dtype=a_dtype, keepdims=True)
   centered = a - a_mean
   if issubdtype(centered.dtype, complexfloating):
@@ -1594,6 +1603,25 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   out = lax.div(result, lax.convert_element_type(normalizer, result.dtype))
   return lax.convert_element_type(out, dtype)
 
+
+def _var_promote_types(a_dtype, dtype):
+  if dtype:
+    if (not issubdtype(dtype, complexfloating) and
+        issubdtype(a_dtype, complexfloating)):
+      msg = ("jax.numpy.var does not yet support real dtype parameters when "
+             "computing the variance of an array of complex values. The "
+             "semantics of numpy.var seem unclear in this case. Please comment "
+             "on https://github.com/google/jax/issues/2283 if this behavior is "
+             "important to you.")
+      raise ValueError(msg)
+    a_dtype = promote_types(a_dtype, dtype)
+  else:
+    if not issubdtype(a_dtype, inexact):
+      dtype = a_dtype = float_
+    else:
+      dtype = _complex_elem_type(a_dtype)
+      a_dtype = promote_types(a_dtype, float32)
+  return a_dtype, dtype
 
 
 @_wraps(onp.std)
@@ -1672,6 +1700,37 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   normalizer = lax.convert_element_type(normalizer, dtype)
   td = lax.div(nansum(a, axis, dtype=dtype, keepdims=keepdims), normalizer)
   return td
+
+
+@_wraps(onp.nanvar)
+def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+  if out is not None:
+    raise ValueError("nanvar does not support the `out` argument.")
+
+  a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
+  a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True)
+  centered = a - a_mean
+  if issubdtype(centered.dtype, complexfloating):
+    centered = lax.real(lax.mul(centered, lax.conj(centered)))
+  else:
+    centered = lax.square(centered)
+
+  normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims)
+  normalizer = normalizer - ddof
+  normalizer_mask = lax.le(normalizer, 0)
+
+  result = nansum(centered, axis, keepdims=keepdims)
+  result = where(normalizer_mask, nan, result)
+  divisor = where(normalizer_mask, 1, normalizer)
+  out = lax.div(result, lax.convert_element_type(divisor, result.dtype))
+  return lax.convert_element_type(out, dtype)
+
+
+@_wraps(onp.nanstd)
+def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+  if out is not None:
+    raise ValueError("nanstd does not support the `out` argument.")
+  return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
 def _make_cumulative_reduction(onp_reduction, reduction, squash_nan=False):
@@ -2135,6 +2194,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   dtype = dtype or dt
   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
+  broadcast_stop = broadcast_to(stop, bounds_shape)
   axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
   bounds_shape.insert(axis, 1)
   iota_shape = [1,] * len(bounds_shape)
@@ -2142,9 +2202,18 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   div = (num - 1) if endpoint else num
   if num > 1:
     delta = lax.convert_element_type(stop - start, dt) / div
-    out = (reshape(broadcast_start, bounds_shape) +
-           reshape(lax.iota(dt, num), iota_shape) *
-           reshape(delta, bounds_shape))
+    if issubdtype(dtype, integer):
+      # This is similar to how numpy computes linspace, but it
+      # can fail to recover the endpoints in float32 arithmetic.
+      out = (reshape(broadcast_start, bounds_shape) +
+        reshape(lax.iota(dt, num), iota_shape) *
+        reshape(delta, bounds_shape))
+    else:
+      # This approach recovers the endpoints with float32 arithmetic,
+      # but can lead to rounding errors for integer outputs.
+      step = reshape(lax.iota(dt, num), iota_shape) / div
+      out = (reshape(broadcast_start, bounds_shape) * (1 - step) +
+        reshape(broadcast_stop, bounds_shape) * step)
   elif num == 1:
     delta = nan if endpoint else lax.convert_element_type(stop - start, dt)
     out = reshape(broadcast_start, bounds_shape)
@@ -3801,6 +3870,18 @@ def searchsorted(a, v, side='left', sorter=None):
   if size(a) == 0:
     return zeros_like(v, dtype=int)
   return _searchsorted(a, v, side)
+
+
+@_wraps(onp.digitize)
+def digitize(x, bins, right=False):
+  if len(bins) == 0:
+    return zeros(x, dtype=int32)
+  side = 'right' if not right else 'left'
+  return where(
+    bins[-1] >= bins[0],
+    searchsorted(bins, x, side=side),
+    len(bins) - searchsorted(bins[::-1], x, side=side)
+  )
 
 
 @_wraps(onp.percentile)
