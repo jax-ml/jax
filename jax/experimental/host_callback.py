@@ -113,21 +113,16 @@ Still to do:
   * Explore implementation with outside compilation.
 
 """
-from collections import defaultdict, namedtuple
 from concurrent import futures
 from contextlib import contextmanager
-from functools import partial
-import io
 import itertools
 
-from jax import abstract_arrays
-from jax import ad_util
 from jax import api
 from jax import core
 from jax import dtypes
 from jax import lax
-from jax.lib import pytree, xla_bridge
-from jax.interpreters import ad, xla, batching, masking, pxla
+from jax.lib import pytree
+from jax.interpreters import ad, xla, batching, masking
 from jax.interpreters import partial_eval as pe
 from jax import pprint_util as ppu
 from jax import util
@@ -137,8 +132,7 @@ from jaxlib import version as jaxlib_version
 
 import logging
 import msgpack  # type: ignore
-import numpy as onp
-import sys
+import numpy as np
 import traceback
 from typing import Any, Callable, Dict, Iterable, List, Optional, NamedTuple, Sequence, Tuple
 
@@ -298,8 +292,8 @@ def _print_consumer(arg, *, output_stream=None,
                 [ppu.pp(f"{k}=") >> pp_val(v)
                 for k, v in sorted(arg.items())]) >>
               ppu.pp(' }'))
-    elif isinstance(arg, onp.ndarray):
-      return ppu.pp(onp.array2string(arg, threshold=threshold))
+    elif isinstance(arg, np.ndarray):
+      return ppu.pp(np.array2string(arg, threshold=threshold))
     else:
       return ppu.pp(str(arg))
 
@@ -605,18 +599,18 @@ _OUTFEED_HEADER_START  = 271828   # [0]
 _OUTFEED_HEADER_METADATA_LENGTH = 4 * (_OUTFEED_HEADER_LENGTH - 4)
 
 _CODE_TO_DTYPE = {
-  0: onp.dtype(onp.int8),
-  1: onp.dtype(onp.int16),
-  2: onp.dtype(onp.int32),
-  3: onp.dtype(onp.int64),
-  4: onp.dtype(onp.uint8),
-  5: onp.dtype(onp.uint16),
-  6: onp.dtype(onp.uint32),
-  7: onp.dtype(onp.uint64),
-  8: onp.dtype(onp.float16),
-  9: onp.dtype(onp.float32),
-  10: onp.dtype(onp.float64),
-  11: onp.dtype(dtypes.bfloat16),
+  0: np.dtype(np.int8),
+  1: np.dtype(np.int16),
+  2: np.dtype(np.int32),
+  3: np.dtype(np.int64),
+  4: np.dtype(np.uint8),
+  5: np.dtype(np.uint16),
+  6: np.dtype(np.uint32),
+  7: np.dtype(np.uint64),
+  8: np.dtype(np.float16),
+  9: np.dtype(np.float32),
+  10: np.dtype(np.float64),
+  11: np.dtype(dtypes.bfloat16),
 }
 _DTYPE_STR_TO_CODE = dict([(str(d), c) for c, d in _CODE_TO_DTYPE.items()])
 
@@ -627,7 +621,7 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
   arrays_shape = [comp.GetShape(a) for a in arrays]
   def _array_shape_to_tuple(a_shape: XlaShape):
     # (element_type_code, (d0, d1, ..., dn))
-    return (_DTYPE_STR_TO_CODE[str(onp.dtype(a_shape.element_type()))],
+    return (_DTYPE_STR_TO_CODE[str(np.dtype(a_shape.element_type()))],
             a_shape.dimensions())
   metadata = msgpack.dumps(tuple(map(_array_shape_to_tuple, arrays_shape)))
   metadata_len = len(metadata)
@@ -641,7 +635,7 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
              tuple([int.from_bytes(metadata[i:i+4], byteorder="big")
                     for i in range(0, _OUTFEED_HEADER_METADATA_LENGTH, 4)]))
   header += (0,) * (_OUTFEED_HEADER_LENGTH - len(header))
-  data = xops.ConstantLiteral(comp, onp.array(header, dtype=onp.uint32))
+  data = xops.ConstantLiteral(comp, np.array(header, dtype=np.uint32))
   token = xops.OutfeedWithToken(data, token, comp.GetShape(data))
 
   # Now send the arrays, all at once
@@ -657,7 +651,7 @@ def _receive_outfeed(device: XlaDevice, receiver_name: str
   Returns: a tuple with the consumer_id, the arrays received, and
     a kwargs dictionary that was passed to _emit_outfeed.
   """
-  header_shape = xla_client.Shape.array_shape(onp.dtype(onp.uint32),
+  header_shape = xla_client.Shape.array_shape(np.dtype(np.uint32),
                                               (_OUTFEED_HEADER_LENGTH,))
 
   def _get_data(data_shape: XlaShape, device: XlaDevice) -> XlaShape:
