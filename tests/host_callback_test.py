@@ -18,10 +18,9 @@ from __future__ import print_function
 
 from functools import partial
 import logging
-import numpy as onp
+import numpy as np
 import os
 import re
-import threading
 from typing import Any, Callable, List, Sequence, Tuple
 from unittest import SkipTest
 
@@ -30,12 +29,10 @@ from absl.testing import parameterized
 
 from jax import api
 from jax import lax
-from jax import numpy as np
+from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
 from jax.experimental import host_callback as hcb
-from jax.interpreters import xla
-from jax.interpreters import partial_eval as pe
 from jax.lib import xla_bridge
 
 
@@ -47,7 +44,7 @@ def skip_if_jit_not_enabled():
     raise SkipTest("print jit not enabled yet; use JAX_ENABLE_JIT_PRINT env.")
 
 def supported_dtypes():
-  return sorted(jtu.supported_dtypes(), key=lambda x: onp.dtype(x).name)
+  return sorted(jtu.supported_dtypes(), key=lambda x: np.dtype(x).name)
 
 class _TestingOutputStream(object):
   """Use as `output_stream` for tests."""
@@ -91,7 +88,7 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase, expected: str, what: str)
     matched = match_group.group(0)
     if matched == ".": return matched
     # TODO: why can't we use here np.around?
-    x = onp.around(float(matched), decimals=2)
+    x = np.around(float(matched), decimals=2)
     return f"{x:.2f}"
   what = re.sub(r"\-?\d*\.[\-\def]*", repl_floats, what)
   what = re.sub(r"output_stream=[^\]\n]*", "", what)
@@ -487,7 +484,7 @@ where: end
                       x3 + 1, lambda x: hcb.id_print(-1, where="s_f", result=x, output_stream=testing_stream))
         return (c, hcb.id_print(x4, where="s_2", output_stream=testing_stream))
 
-      _, x10 = lax.scan(body, x2, np.arange(3))
+      _, x10 = lax.scan(body, x2, jnp.arange(3))
       res = hcb.id_print(x10, where="10", output_stream=testing_stream)
       return res
 
@@ -499,7 +496,7 @@ where: end
       if with_jit:
         func = api.jit(func)
       res = func(1)
-      self.assertAllClose(np.array([1, 2, 3]), res, check_dtypes=True)
+      self.assertAllClose(jnp.array([1, 2, 3]), res, check_dtypes=True)
     assertMultiLineStrippedEqual(self, """
 where: 1
 1
@@ -536,13 +533,13 @@ where: 10
               nr_args=nr_args) for nr_args in [1, 2]
           for shape in [(), (2,), (2, 3), (2, 3, 4)]
           for dtype in supported_dtypes()))
-  def test_jit_types(self, nr_args=2, dtype=np.int16, shape=(2,)):
-    if dtype in (np.complex64, np.complex128, np.bool_):
+  def test_jit_types(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
+    if dtype in (jnp.complex64, jnp.complex128, jnp.bool_):
       raise SkipTest(f"id_print jit not implemented for {dtype}.")
     if jtu.device_under_test() == "tpu":
-      if dtype in (np.int16,):
+      if dtype in (jnp.int16,):
         raise SkipTest(f"transfering {dtype} not supported on TPU")
-    args = [np.arange(np.prod(shape), dtype=dtype).reshape(shape)]
+    args = [jnp.arange(jnp.prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args
     jit_fun1 = api.jit(lambda xs: hcb.id_print(
@@ -554,14 +551,14 @@ where: 10
     # self.assertAllClose(args, res, check_dtypes=True)
 
   def test_jit_large(self):
-    arg = np.arange(10000, dtype=np.int32).reshape((10, 10, 5, -1))
+    arg = jnp.arange(10000, dtype=jnp.int32).reshape((10, 10, 5, -1))
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       api.jit(hcb.id_print)(arg)
 
   def test_jit_several_together(self):
-    arg = np.arange(50, dtype=np.int32).reshape((10, 5))
+    arg = jnp.arange(50, dtype=jnp.int32).reshape((10, 5))
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
-      api.jit(lambda x, y: hcb.id_print((x, y, x * 2.)))(arg, np.ones(100, dtype=np.int32))
+      api.jit(lambda x, y: hcb.id_print((x, y, x * 2.)))(arg, jnp.ones(100, dtype=jnp.int32))
 
   def test_jit_interleaving(self):
     # Several jit's without data dependencies; they may interfere
@@ -577,7 +574,7 @@ where: 10
         x = hcb.id_tap(tap_func, [x + i for i in range(nr_arrays)], i=i)[-1]
       return x
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
-      x = np.array(1, dtype=onp.int32)
+      x = jnp.array(1, dtype=np.int32)
       res = 0
       for i in range(10):
         # No dependencies between the jit invocations
@@ -687,7 +684,7 @@ what: x3
 
   def test_while(self):
     """Executing while, even without JIT uses compiled code"""
-    y = np.ones(5)  # captured const
+    y = jnp.ones(5)  # captured const
 
     def func(x):
       return lax.while_loop(
@@ -705,7 +702,7 @@ what: x3
 
   def test_while_error_no_receiver(self):
     """Executing while needs the receiver"""
-    y = np.ones(5)  # captured const
+    y = jnp.ones(5)  # captured const
     def func(x):
       return lax.while_loop(
         lambda c: c[1] < 5,
@@ -747,9 +744,9 @@ what: x3
       q = mul 2.00 p
       r = mul n q
   in (h, r) }""",
-        str(api.make_jaxpr(jvp_fun1)(np.float32(5.), np.float32(0.1))))
+                                 str(api.make_jaxpr(jvp_fun1)(jnp.float32(5.), jnp.float32(0.1))))
     with hcb.outfeed_receiver():
-      res_primals, res_tangents = jvp_fun1(np.float32(5.), np.float32(0.1))
+      res_primals, res_tangents = jvp_fun1(jnp.float32(5.), jnp.float32(0.1))
     self.assertAllClose(100., res_primals, check_dtypes=False)
     self.assertAllClose(4., res_tangents, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
@@ -782,7 +779,7 @@ transforms: ('jvp', 'transpose') what: x * 3
     testing_stream.reset()
     
     with hcb.outfeed_receiver():
-      res_grad = grad_func(np.float32(5.))
+      res_grad = grad_func(jnp.float32(5.))
 
     self.assertAllClose(6., res_grad, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
@@ -827,7 +824,7 @@ transforms: ('jvp', 'transpose') what: x * 3
   in (n,) }""", str(api.make_jaxpr(grad_func)(5.)))
 
     with hcb.outfeed_receiver():
-      res_grad = grad_func(np.float32(5.))
+      res_grad = grad_func(jnp.float32(5.))
     self.assertAllClose(2. * 5. * 6., res_grad, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
 what: x * 2
@@ -858,7 +855,7 @@ transforms: ('jvp', 'transpose') what: x * 2
 transforms: ('jvp', 'transpose', 'jvp', 'transpose') what: x * 2
 2.00""", testing_stream.output)
       testing_stream.reset()
-      res_grad = grad_func(np.float32(5.))
+      res_grad = grad_func(jnp.float32(5.))
 
     self.assertAllClose(12., res_grad, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
@@ -875,7 +872,7 @@ transforms: ('jvp', 'transpose') what: x * 2
 
   def test_vmap(self):
     vmap_fun1 = api.vmap(fun1)
-    vargs = np.array([np.float32(4.), np.float32(5.)])
+    vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
     assertMultiLineStrippedEqual(self, """
 { lambda  ; a.
   let b = mul a 2.00
@@ -910,7 +907,7 @@ batch_dims: (0, 0) transforms: ('batch',) what: y * 3
       return x + y
 
     vmap_func = api.vmap(func)
-    vargs = np.array([np.float32(4.), np.float32(5.)])
+    vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
     assertMultiLineStrippedEqual(self, """
 { lambda  ; a.
   let b c = id_tap[ arg_treedef=PyTreeDef(tuple, [*,*])
@@ -929,17 +926,17 @@ batch_dims: (None, 0) transforms: ('batch',)
     testing_stream.reset()
 
   def test_pmap(self):
-    vargs = 2. + np.arange(api.local_device_count(), dtype=np.float32)
+    vargs = 2. + jnp.arange(api.local_device_count(), dtype=jnp.float32)
 
     pmap_fun1 = api.pmap(fun1, axis_name="i")
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = pmap_fun1(vargs)
-    expected_res = np.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
+    expected_res = jnp.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
     self.assertAllClose(expected_res, res, check_dtypes=False)
 
   def test_pmap_error_no_receiver(self):
     # Check for errors if starting jit without a consumer active
-    vargs = 2. + np.arange(api.local_device_count(), dtype=np.float32)
+    vargs = 2. + jnp.arange(api.local_device_count(), dtype=jnp.float32)
     with self.assertRaisesRegex(ValueError, "outfeed_receiver is not started"):
       api.pmap(lambda x: hcb.id_print(x))(vargs)
 
@@ -948,8 +945,8 @@ batch_dims: (None, 0) transforms: ('batch',)
     raise SkipTest("masking has regressed")
     @partial(api.mask, in_shapes=['n'], out_shape='')
     def padded_sum(x):
-      return np.sum(hcb.id_print(x, what="x", output_stream=testing_stream))
-    args = [np.arange(4)], dict(n=onp.int64(2))
+      return jnp.sum(hcb.id_print(x, what="x", output_stream=testing_stream))
+    args = [jnp.arange(4)], dict(n=np.int64(2))
     assertMultiLineStrippedEqual(self, """
 { lambda c f ; a b.
   let d = lt c b
@@ -1003,9 +1000,9 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
   in (c, e) }""", lambda x: hcb.id_print(x + x), [0])
 
   def test_cond(self):
-    y = np.ones(5)  # captured const
+    y = jnp.ones(5)  # captured const
     def func(x, z):
-      return lax.cond(z > 0, (1, 2), lambda a: (a[0], np.zeros(5)),
+      return lax.cond(z > 0, (1, 2), lambda a: (a[0], jnp.zeros(5)),
                       z, lambda a: (hcb.id_print(a), y))
     self.assertRewrite("""
 { lambda d e ; a b h.
@@ -1022,7 +1019,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
   in (f, g, i) }""", func, [y, 5])
 
   def test_while(self):
-    y = np.ones(5)  # captured const
+    y = jnp.ones(5)  # captured const
 
     def func(x):
       return lax.while_loop(lambda c: c[1] < 5,
@@ -1047,7 +1044,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
   in (c, 5, f) }""", func, [y])
 
   def test_scan(self):
-    y = np.ones(5)  # captured const
+    y = jnp.ones(5)  # captured const
     def func(x):
       return lax.scan(lambda c, a: (hcb.id_print(c), y), (1, 2), x)
     self.assertRewrite("""

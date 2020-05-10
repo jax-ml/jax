@@ -18,6 +18,9 @@ jax 0.1.67 (unreleased)
 
   * Support for reduction over subsets of a pmapped axis using ``axis_index_groups``
     `#2382 <https://github.com/google/jax/pull/2382>`_.
+  * Experimental support for printing and calling host-side Python function from
+    compiled code. See `id_print and id_tap <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_
+    (`#3006 <https://github.com/google/jax/pull/3006>`_).
 
 * Notable changes:
 
@@ -213,7 +216,7 @@ jax 0.1.59 (February 11, 2020)
   * Added JAX_SKIP_SLOW_TESTS environment variable to skip tests known as slow.
 
 jaxlib 0.1.39 (February 11, 2020)
---------------------------------
+---------------------------------
 
 * Updates XLA.
 
