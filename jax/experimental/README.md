@@ -7,6 +7,10 @@ hundred lines of code, so take a look inside and adapt them as you need!
 
 ### Neural-net building with Stax
 
+#### 👉 **Note**: This mini-library is meant to be an _inspiration_, but not a prescription. 
+
+To serve that purpose, it is best to keep their code samples minimal; so we generally *will not merge PRs* adding new features. Instead, please send your lovely pull requests and design ideas to more fully-featured libraries like [Haiku](https://github.com/deepmind/dm-haiku), [Flax](https://github.com/google/flax), or [Trax](https://github.com/google/trax).
+
 **Stax** is a functional neural network building library. The basic idea is that
 a single layer or an entire network can be modeled as an `(init_fun, apply_fun)`
 pair. The `init_fun` is used to initialize network parameters and the

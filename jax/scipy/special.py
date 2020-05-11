@@ -21,8 +21,9 @@ from .. import util
 from .. import lax
 from .. import api
 from ..numpy import lax_numpy as jnp
-from ..numpy.lax_numpy import (_wraps, asarray, _reduction_dims, _constant_like,
+from ..numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
+from ..numpy._util import _wraps                        
 
 
 @_wraps(osp_special.gammaln)
@@ -84,7 +85,8 @@ def erfinv(x):
 def logit(x):
   x = asarray(x)
   return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
-logit.defjvp(lambda g, ans, x: g / (x * (1 - x)))
+logit.defjvps(
+    lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(lax._const(x, 1), x))))
 
 
 @api.custom_jvp

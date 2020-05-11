@@ -24,7 +24,7 @@ from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
 from .util import safe_zip, safe_map, unzip2, split_list, curry
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
-from .ad_util import zero
+from .ad_util import zero, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
@@ -68,7 +68,7 @@ def _memoize(thunk):
   return memoized
 
 def _initial_style_jaxpr(fun, in_avals):
-  in_pvals = [pe.PartialVal((aval, core.unit)) for aval in in_avals]
+  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
                                                bottom=True, stage_out=False)
   assert not any(isinstance(c, core.Tracer) for c in consts)
@@ -81,6 +81,15 @@ def sum_tangents(x, *xs):
 
 def zeros_like_pytree(x):
   return tree_map(lambda _: zero, x)
+
+def stop_gradient(x):
+  return tree_map(_stop_gradient, x)
+
+def _stop_gradient(x):
+  if isinstance(x, core.Tracer) or core.valid_jaxtype(x):
+    return stop_gradient_p.bind(x)
+  else:
+    return x
 
 
 ### JVPs
@@ -98,18 +107,18 @@ class custom_jvp:
 
   For example::
 
-    import jax.numpy as np
+    import jax.numpy as jnp
 
     @jax.custom_jvp
     def f(x, y):
-      return np.sin(x) * y
+      return jnp.sin(x) * y
 
     @f.defjvp
     def f_jvp(primals, tangents):
       x, y = primals
       x_dot, y_dot = tangents
       primal_out = f(x, y)
-      tangent_out = np.cos(x) * x_dot * y - np.sin(x) * y_dot
+      tangent_out = jnp.cos(x) * x_dot * y - jnp.sin(x) * y_dot
       return primal_out, tangent_out
 
   For a more detailed introduction, see the tutorial_.
@@ -141,18 +150,18 @@ class custom_jvp:
 
     Example::
 
-      import jax.numpy as np
+      import jax.numpy as jnp
 
       @jax.custom_jvp
       def f(x, y):
-        return np.sin(x) * y
+        return jnp.sin(x) * y
 
       @f.defjvp
       def f_jvp(primals, tangents):
         x, y = primals
         x_dot, y_dot = tangents
         primal_out = f(x, y)
-        tangent_out = np.cos(x) * x_dot * y - np.sin(x) * y_dot
+        tangent_out = jnp.cos(x) * x_dot * y - jnp.sin(x) * y_dot
         return primal_out, tangent_out
     """
     self.jvp = jvp
@@ -175,10 +184,10 @@ class custom_jvp:
 
       @jax.custom_jvp
       def f(x, y):
-        return np.sin(x) * y
+        return jnp.sin(x) * y
 
-      f.defjvps(lambda x_dot, primal_out, x, y: np.cos(x) * x_dot * y,
-                lambda y_dot, primal_out, x, y: -np.sin(x) * y_dot)
+      f.defjvps(lambda x_dot, primal_out, x, y: jnp.cos(x) * x_dot * y,
+                lambda y_dot, primal_out, x, y: -jnp.sin(x) * y_dot)
     """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
@@ -199,7 +208,10 @@ class custom_jvp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args, left=True)
@@ -252,6 +264,7 @@ def _flatten_jvp(in_tree, *args):
   yield primals_out + tangents_out, out_tree
 
 def _custom_jvp_call_bind(prim, fun, jvp, *args):
+  args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
   level = (core.trace_state.trace_stack.next_level(True)
            if top_trace is None else top_trace.level)
@@ -293,7 +306,8 @@ custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 
 def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk):
   jvp_jaxpr = jvp_jaxpr_thunk()
-  outs = core.jaxpr_as_fun(jvp_jaxpr)(*(primals + tangents))
+  tangents = map(ad.instantiate_zeros, primals, tangents)
+  outs = core.jaxpr_as_fun(jvp_jaxpr)(*primals, *tangents)
   return split_list(outs, [len(outs) // 2])
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
@@ -356,14 +370,14 @@ class custom_vjp:
 
   For example::
 
-    import jax.numpy as np
+    import jax.numpy as jnp
 
     @jax.custom_vjp
     def f(x, y):
-      return np.sin(x) * y
+      return jnp.sin(x) * y
 
     def f_fwd(x, y):
-      return f(x, y), (np.cos(x), np.sin(x), y)
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
     def f_bwd(res, g):
       cos_x, sin_x, y = res
@@ -410,14 +424,14 @@ class custom_vjp:
 
     Example::
 
-      import jax.numpy as np
+      import jax.numpy as jnp
 
       @jax.custom_vjp
       def f(x, y):
-        return np.sin(x) * y
+        return jnp.sin(x) * y
 
       def f_fwd(x, y):
-        return f(x, y), (np.cos(x), np.sin(x), y)
+        return f(x, y), (jnp.cos(x), jnp.sin(x), y)
 
       def f_bwd(res, g):
         cos_x, sin_x, y = res
@@ -434,7 +448,10 @@ class custom_vjp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      is_nondiff = [False] * len(args)
+      for i in self.nondiff_argnums: is_nondiff[i] = True
+      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)
@@ -490,6 +507,7 @@ def _flatten_bwd(in_tree, out_trees, *args):
   yield cts_in
 
 def _custom_vjp_call_bind(prim, fun, fwd, bwd, *args, out_trees):
+  args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
   level = (core.trace_state.trace_stack.next_level(True)
            if top_trace is None else top_trace.level)

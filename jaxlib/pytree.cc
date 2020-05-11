@@ -111,6 +111,9 @@ class PyTreeDef {
   // Flattens a Pytree into a list of leaves and a PyTreeDef.
   static std::pair<py::list, std::unique_ptr<PyTreeDef>> Flatten(py::handle x);
 
+  // Tests whether the given list is a flat list of leaves.
+  static bool AllLeaves(const py::iterable& x);
+
   // Flattens a Pytree up to this PyTreeDef. 'this' must be a tree prefix of
   // the tree-structure of 'x'. For example, if we flatten a value
   // [(1, (2, 3)), {"foo": 4}] with a treedef [(*, *), *], the result is the
@@ -204,6 +207,10 @@ class PyTreeDef {
       py::handle xs,
       std::vector<PyTreeDef::Node>::const_reverse_iterator* it) const;
 
+  // Computes the node kind of a given Python object.
+  static Kind GetKind(const py::handle& obj,
+                      CustomNodeRegistry::Registration const** custom);
+
   // Nodes, in a post-order traversal. We use an ordered traversal to minimize
   // allocations, and post-order corresponds to the order we need to rebuild the
   // tree structure.
@@ -243,28 +250,47 @@ bool PyTreeDef::operator==(const PyTreeDef& other) const {
   return true;
 }
 
+/*static*/ PyTreeDef::Kind PyTreeDef::GetKind(
+    const py::handle& obj,
+    CustomNodeRegistry::Registration const** custom) {
+  const PyObject* ptr = obj.ptr();
+  if (PyTuple_CheckExact(ptr)) return Kind::kTuple;
+  if (PyList_CheckExact(ptr)) return Kind::kList;
+  if (PyDict_CheckExact(ptr)) return Kind::kDict;
+  if ((*custom = CustomNodeRegistry::Lookup(obj.get_type()))) {
+    return Kind::kCustom;
+  } else if (py::isinstance<py::none>(obj)) {
+    return Kind::kNone;
+  } else if (py::isinstance<py::tuple>(obj) && py::hasattr(obj, "_fields")) {
+    // We can only identify namedtuples heuristically, here by the presence of
+    // a _fields attribute.
+    return Kind::kNamedTuple;
+  } else {
+    return Kind::kLeaf;
+  }
+}
+
 void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
                               PyTreeDef* tree) {
   Node node;
   int start_num_nodes = tree->traversal_.size();
   int start_num_leaves = leaves->size();
-  if (py::isinstance<py::none>(handle)) {
-    node.kind = Kind::kNone;
-  } else if (PyTuple_CheckExact(handle.ptr())) {
+  node.kind = GetKind(handle, &node.custom);
+  if (node.kind == Kind::kNone) {
+    // Nothing to do.
+  } else if (node.kind == Kind::kTuple) {
     py::tuple tuple = py::reinterpret_borrow<py::tuple>(handle);
-    node.kind = Kind::kTuple;
     node.arity = tuple.size();
     for (py::handle entry : tuple) {
       FlattenHelper(entry, leaves, tree);
     }
-  } else if (PyList_CheckExact(handle.ptr())) {
+  } else if (node.kind == Kind::kList) {
     py::list list = py::reinterpret_borrow<py::list>(handle);
-    node.kind = Kind::kList;
     node.arity = list.size();
     for (py::handle entry : list) {
       FlattenHelper(entry, leaves, tree);
     }
-  } else if (PyDict_CheckExact(handle.ptr())) {
+  } else if (node.kind == Kind::kDict) {
     py::dict dict = py::reinterpret_borrow<py::dict>(handle);
     py::list keys = py::reinterpret_steal<py::list>(PyDict_Keys(dict.ptr()));
     if (PyList_Sort(keys.ptr())) {
@@ -273,11 +299,9 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
     for (py::handle key : keys) {
       FlattenHelper(dict[key], leaves, tree);
     }
-    node.kind = Kind::kDict;
     node.arity = dict.size();
     node.node_data = std::move(keys);
-  } else if ((node.custom = CustomNodeRegistry::Lookup(handle.get_type()))) {
-    node.kind = Kind::kCustom;
+  } else if (node.kind == Kind::kCustom) {
     py::tuple out = py::cast<py::tuple>(node.custom->to_iterable(handle));
     if (out.size() != 2) {
       throw std::runtime_error(
@@ -289,19 +313,15 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
       ++node.arity;
       FlattenHelper(entry, leaves, tree);
     }
-  } else if (py::isinstance<py::tuple>(handle) &&
-             py::hasattr(handle, "_fields")) {
-    // We can only identify namedtuples heuristically, here by the presence of
-    // a _fields attribute.
+  } else if (node.kind == Kind::kNamedTuple) {
     py::tuple tuple = py::reinterpret_borrow<py::tuple>(handle);
-    node.kind = Kind::kNamedTuple;
     node.arity = tuple.size();
     node.node_data = py::reinterpret_borrow<py::object>(tuple.get_type());
     for (py::handle entry : tuple) {
       FlattenHelper(entry, leaves, tree);
     }
   } else {
-    node.kind = Kind::kLeaf;
+    assert(node.kind == Kind::kLeaf);
     leaves->append(py::reinterpret_borrow<py::object>(handle));
   }
   node.num_nodes = tree->traversal_.size() - start_num_nodes + 1;
@@ -315,6 +335,14 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
   auto tree = absl::make_unique<PyTreeDef>();
   FlattenHelper(x, &leaves, tree.get());
   return std::make_pair(std::move(leaves), std::move(tree));
+}
+
+/*static*/ bool PyTreeDef::AllLeaves(const py::iterable& x) {
+  const CustomNodeRegistry::Registration* custom;
+  for (const py::handle& h : x) {
+    if (GetKind(h, &custom) != Kind::kLeaf) return false;
+  }
+  return true;
 }
 
 py::object PyTreeDef::Unflatten(py::iterable leaves) const {
@@ -749,6 +777,7 @@ std::string PyTreeDef::ToString() const {
 PYBIND11_MODULE(pytree, m) {
   m.def("flatten", &PyTreeDef::Flatten);
   m.def("tuple", &PyTreeDef::Tuple);
+  m.def("all_leaves", &PyTreeDef::AllLeaves);
 
   py::class_<PyTreeDef>(m, "PyTreeDef")
       .def("unflatten", &PyTreeDef::Unflatten)

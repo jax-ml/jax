@@ -15,14 +15,10 @@
 Model-predictive non-linear control example.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import collections
 
 from jax import lax, grad, jacfwd, jacobian, vmap
-import jax.numpy as np
+import jax.numpy as jnp
 import jax.ops as jo
 
 
@@ -56,8 +52,8 @@ ControlSpec = collections.namedtuple(
 LqrSpec = collections.namedtuple('LqrSpec', 'Q q R r M A B')
 
 
-dot = np.dot
-mm = np.matmul
+dot = jnp.dot
+mm = jnp.matmul
 
 
 def mv(mat, vec):
@@ -79,7 +75,7 @@ def fori_loop(lo, hi, loop, init):
 def scan_fori_loop(lo, hi, loop, init):
   def scan_f(x, t):
     return loop(t, x), ()
-  x, _ = lax.scan(scan_f, init, np.arange(lo, hi))
+  x, _ = lax.scan(scan_f, init, jnp.arange(lo, hi))
   return x
 
 
@@ -88,7 +84,7 @@ def trajectory(dynamics, U, x0):
   T, _ = U.shape
   d, = x0.shape
 
-  X = np.zeros((T + 1, d))
+  X = jnp.zeros((T + 1, d))
   X = jo.index_update(X, jo.index[0], x0)
 
   def loop(t, X):
@@ -114,8 +110,8 @@ def make_lqr_approx(p):
 
   def approx(X, U):
     assert X.shape[0] == T + 1 and U.shape[0] == T
-    U_pad = np.vstack((U, np.zeros((1,) + U.shape[1:])))
-    Q, q, R, r, M, A, B = _approx(np.arange(T + 1), X, U_pad)
+    U_pad = jnp.vstack((U, jnp.zeros((1,) + U.shape[1:])))
+    Q, q, R, r, M, A, B = _approx(jnp.arange(T + 1), X, U_pad)
     return LqrSpec(Q, q, R[:T], r[:T], M[:T], A[:T], B[:T])
 
   return approx
@@ -126,8 +122,8 @@ def lqr_solve(spec):
   T, control_dim, _ = spec.R.shape
   _, state_dim, _ = spec.Q.shape
 
-  K = np.zeros((T, control_dim, state_dim))
-  k = np.zeros((T, control_dim))
+  K = jnp.zeros((T, control_dim, state_dim))
+  k = jnp.zeros((T, control_dim))
 
   def rev_loop(t_, state):
     t = T - t_ - 1
@@ -143,8 +139,8 @@ def lqr_solve(spec):
     G = R + mm(BtP, B)
     H = mm(BtP, A) + M.T
     h = r + mv(B.T, p)
-    K_ = -np.linalg.solve(G + EPS * np.eye(G.shape[0]), H)
-    k_ = -np.linalg.solve(G + EPS * np.eye(G.shape[0]), h)
+    K_ = -jnp.linalg.solve(G + EPS * jnp.eye(G.shape[0]), H)
+    k_ = -jnp.linalg.solve(G + EPS * jnp.eye(G.shape[0]), h)
     P_ = Q + mm(AtP, A) + mm(K_.T, H)
     p_ = q + mv(A.T, p) + mv(K_.T, h)
 
@@ -174,8 +170,8 @@ def lqr_predict(spec, x0):
     U = jo.index_update(U, jo.index[t], u)
     return spec, X, U
 
-  U = np.zeros((T, control_dim))
-  X = np.zeros((T + 1, state_dim))
+  U = jnp.zeros((T, control_dim))
+  X = jnp.zeros((T + 1, state_dim))
   X = jo.index_update(X, jo.index[0], x0)
   _, X, U = fori_loop(0, T, fwd_loop, (spec, X, U))
   return X, U
@@ -190,7 +186,7 @@ def ilqr(iterations, p, x0, U):
   def loop(_, state):
     X, U = state
     p_lqr = lqr_approx(X, U)
-    dX, dU = lqr_predict(p_lqr, np.zeros_like(x0))
+    dX, dU = lqr_predict(p_lqr, jnp.zeros_like(x0))
     U = U + dU
     X = trajectory(p.dynamics, U, X[0] + dX[0])
     return X, U
@@ -204,7 +200,7 @@ def mpc_predict(solver, p, x0, U):
   T = p.horizon
 
   def zero_padded_controls_window(U, t):
-    U_pad = np.vstack((U, np.zeros(U.shape)))
+    U_pad = jnp.vstack((U, jnp.zeros(U.shape)))
     return lax.dynamic_slice_in_dim(U_pad, t, T, axis=0)
 
   def loop(t, state):
@@ -222,6 +218,6 @@ def mpc_predict(solver, p, x0, U):
     U = jo.index_update(U, jo.index[t], ut)
     return X, U
 
-  X = np.zeros((T + 1, p.state_dim))
+  X = jnp.zeros((T + 1, p.state_dim))
   X = jo.index_update(X, jo.index[0], x0)
   return fori_loop(0, T, loop, (X, U))

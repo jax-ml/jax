@@ -18,15 +18,15 @@ import gc
 import itertools as it
 import operator
 
-import numpy as onp
+import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import core
-from jax import numpy as np
+from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.api import jvp, linearize, vjp, jit
-from jax.lax import UnshapedArray, ShapedArray, ConcreteArray
+from jax.core import UnshapedArray, ShapedArray, ConcreteArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
@@ -35,24 +35,24 @@ from jax.interpreters import partial_eval as pe
 from jax.config import config
 config.parse_flags_with_absl()
 
-_ = pe.PartialVal((UnshapedArray(onp.float32), core.unit))
-__ = pe.PartialVal((ShapedArray((), onp.float32), core.unit))
+_ = pe.PartialVal.unknown(UnshapedArray(np.float32))
+__ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 
 def call(f, *args):
   return jit(f)(*args)
 
 def simple_fun(x, y):
-  return np.sin(x * y)
+  return jnp.sin(x * y)
 
 def simple_fun_fanout(x, y):
-  return np.sin(x * y) * x
+  return jnp.sin(x * y) * x
 
 def fun_with_call(x):
-  return call(np.sin, x)
+  return call(jnp.sin, x)
 
 def fun_with_nested_calls(x):
   def f(y):
-    y2 = np.sin(y) + 1.0 + (2.0 * x)
+    y2 = jnp.sin(y) + 1.0 + (2.0 * x)
 
     @jit
     def g(z):
@@ -73,7 +73,7 @@ def fun_with_nested_calls_2(x):
       q = call(lambda x: y, x)
       q = q + call(lambda: y)
       q = q + call(lambda y: w + y, y)
-      q = call(lambda w: call(np.sin, x) * y, 1.0) + q
+      q = call(lambda w: call(jnp.sin, x) * y, 1.0) + q
       return q
     p, t = jvp(baz, (x + 1.0,), (y,))
     return t + (x * p)
@@ -87,22 +87,22 @@ def fun_call_jitted(x):
   return call(g, x)
 
 def fun_with_two_calls(x):
-  return call(np.sin, x) + call(np.cos, x)
+  return call(jnp.sin, x) + call(jnp.cos, x)
 
 def fun_with_call_closure(x):
   def foo(y, z):
-    return (x * x) * np.sin(y) * z
+    return (x * x) * jnp.sin(y) * z
 
-  return call(foo, x, np.cos(x)) + x
+  return call(foo, x, jnp.cos(x)) + x
 
 def product_io_fun(x, y):
   xa = x['a']
   xb = x['b']
   y1, (y2, y3) = y
-  return np.sin(xa + y2), [xb, (y1, y3)]
+  return jnp.sin(xa + y2), [xb, (y1, y3)]
 
 
-R = onp.random.randn
+R = np.random.randn
 CallSpec = namedtuple('CallSpec', ['fun', 'args'])
 test_specs_base = [
     CallSpec(simple_fun, (R(3, 2), R(3, 2))),
@@ -173,12 +173,12 @@ class CoreTest(jtu.JaxTestCase):
 
   @parameterized.parameters(test_specs)
   def test_jvp(self, f, args):
-    jtu.check_jvp(f, partial(jvp, f), args, rtol={onp.float32: 3e-2})
+    jtu.check_jvp(f, partial(jvp, f), args, rtol={np.float32: 3e-2})
 
   def test_jvp_zeros(self):
     def foo(x):
       def bar(y):
-        return np.sin(x * y)
+        return jnp.sin(x * y)
       return jvp(bar, (3 * x,), (2 * x,))
 
     jtu.check_eq(jit(foo)(0.5), foo(0.5))
@@ -186,18 +186,18 @@ class CoreTest(jtu.JaxTestCase):
   @parameterized.parameters(test_specs)
   def test_jvp_linearized(self, f, args):
     jtu.check_jvp(f, partial(jvp_unlinearized, f), args,
-                  rtol={onp.float32: 3e-2})
+                  rtol={np.float32: 3e-2})
 
   @parameterized.parameters(test_specs)
   def test_vjp(self, f, args):
     jtu.check_vjp(f, partial(vjp, f), args,
-                  rtol={onp.float32: 3e-1, onp.float64: 1e-5},
-                  atol={onp.float32: 1e-2, onp.float64: 1e-5})
+                  rtol={np.float32: 3e-1, np.float64: 1e-5},
+                  atol={np.float32: 1e-2, np.float64: 1e-5})
 
   def test_jvp_closure(self):
     def foo(x):
       def bar(y):
-        return np.multiply(x, y)
+        return jnp.multiply(x, y)
       return jvp(bar, (3.0,), (1.0,))[1]
     ans = jvp(foo, (1.0,), (2.0,))
     assert ans == (1.0, 2.0), ans
@@ -220,15 +220,15 @@ class CoreTest(jtu.JaxTestCase):
     foo2 = jit(foo)
     foo3 = jit(foo2)
 
-    x1, y1 = onp.array(1.0), onp.array(2.0)
+    x1, y1 = np.array(1.0), np.array(2.0)
     assert foo(x1) == y1
     assert foo2(x1) == y1
     assert foo3(x1) == y1
 
-    x2, y2 = onp.array([1.0, 2.0]), onp.array([3.0, 4.0])
-    assert onp.all(foo(x2) == y2)
-    assert onp.all(foo2(x2) == y2)
-    assert onp.all(foo3(x2) == y2)
+    x2, y2 = np.array([1.0, 2.0]), np.array([3.0, 4.0])
+    assert np.all(foo(x2) == y2)
+    assert np.all(foo2(x2) == y2)
+    assert np.all(foo3(x2) == y2)
 
   def test_product_jit(self):
     def foo(x, tup):
@@ -247,7 +247,7 @@ class CoreTest(jtu.JaxTestCase):
     assert foo3(*args) == foo(*args)
 
   def test_jvp_2(self):
-    d_sin = fwd_deriv(np.sin)
+    d_sin = fwd_deriv(jnp.sin)
     d2_sin = fwd_deriv(d_sin)
     d3_sin = fwd_deriv(d2_sin)
 
@@ -262,7 +262,7 @@ class CoreTest(jtu.JaxTestCase):
       return x.sum()
 
     fn = partial(linearize, f)
-    params = np.zeros([])
+    params = jnp.zeros([])
 
     debug = gc.get_debug()
     try:

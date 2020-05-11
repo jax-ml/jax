@@ -16,13 +16,11 @@ import re
 import textwrap
 from typing import Any, Callable, Dict, List, Set, Tuple
 
-import numpy as onp
-
 from .. import api
 from .. import lax
-from . import lax_numpy as np
+from . import lax_numpy as jnp
 from ..util import safe_map as map, safe_zip as zip
-from .lax_numpy import _wraps
+from ._util import _wraps
 
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html
@@ -44,7 +42,7 @@ def _parse_gufunc_signature(
 
   Args:
     signature: generalized universal function signature, e.g.,
-      ``(m,n),(n,p)->(m,p)`` for ``np.matmul``.
+      ``(m,n),(n,p)->(m,p)`` for ``jnp.matmul``.
 
   Returns:
     Input and output core dimensions parsed from the signature.
@@ -136,7 +134,7 @@ def _check_output_dims(
   """Check that output core dimensions match the signature."""
   def wrapped(*args):
     out = func(*args)
-    out_shapes = map(np.shape, out if isinstance(out, tuple) else [out])
+    out_shapes = map(jnp.shape, out if isinstance(out, tuple) else [out])
 
     if expected_output_core_dims is None:
       output_core_dims = [()] * len(out_shapes)
@@ -181,16 +179,71 @@ def _apply_excluded(func, excluded, args):
   return new_func, dynamic_args
 
 
-@_wraps(onp.vectorize, lax_description=textwrap.dedent("""
-    JAX's implementation of vectorize should be considerably more efficient
-    than NumPy's, because it uses a batching transformation rather than an
-    explicit "for" loop.
-
-    Note that JAX only supports the optional ``excluded`` (integer only) and
-    ``signature`` arguments, both of which must be specified with keywords.
-    """))
 def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
+  """Define a vectorized function with broadcasting.
 
+  ``vectorize`` is a convenience wrapper for defining vectorized functions with
+  broadcasting, in the style of NumPy's `generalized universal functions <https://numpy.org/doc/stable/reference/c-api/generalized-ufuncs.html>`_.
+  It allows for defining functions that are automatically repeated across
+  any leading dimensions, without the implementation of the function needing to
+  be concerned about how to handle higher dimensional inputs.
+
+  ``jax.numpy.vectorize`` has the same interface as ``numpy.vectorize``, but it
+  is syntactic sugar for an auto-batching transformation (``vmap``) rather
+  than a Python loop. This should be considerably more efficient, but the
+  implementation must be written in terms of functions that act on JAX arrays.
+
+  Args:
+    pyfunc: vectorized function.
+    excluded: optional set of integers representing positional arguments for
+      which the function will not be vectorized. These will be passed directly
+      to ``pyfunc`` unmodified.
+    signature: optional generalized universal function signature, e.g.,
+      ``(m,n),(n)->(m)`` for vectorized matrix-vector multiplication. If
+      provided, ``pyfunc`` will be called with (and expected to return) arrays
+      with shapes given by the size of corresponding core dimensions. By
+      default, pyfunc is assumed to take scalars arrays as input and output.
+
+  Returns:
+    Vectorized version of the given function.
+
+  Here a few examples of how one could write vectorized linear algebra routines
+  using ``vectorize``::
+
+    import jax.numpy as jnp
+    from functools import partial
+
+    @partial(jnp.vectorize, signature='(k),(k)->(k)')
+    def cross_product(a, b):
+      assert a.shape == b.shape and a.ndim == b.ndim == 1
+      return jnp.array([a[1] * b[2] - a[2] * b[1],
+                        a[2] * b[0] - a[0] * b[2],
+                        a[0] * b[1] - a[1] * b[0]])
+
+    @partial(jnp.vectorize, signature='(n,m),(m)->(n)')
+    def matrix_vector_product(matrix, vector):
+      assert matrix.ndim == 2 and matrix.shape[1:] == vector.shape
+      return matrix @ vector
+
+  These functions are only written to handle 1D or 2D arrays (the ``assert``
+  statements will never be violated), but with vectorize they support
+  arbitrary dimensional inputs with NumPy style broadcasting, e.g.,
+
+  >>> cross_product(jnp.ones(3), jnp.ones(3)).shape
+  (3,)
+  >>> cross_product(jnp.ones((2, 3)), jnp.ones(3)).shape
+  (2, 3)
+  >>> cross_product(jnp.ones((1, 2, 3)), jnp.ones((2, 1, 3))).shape
+  (2, 2, 3)
+  >>> matrix_vector_product(jnp.ones(3), jnp.ones(3))
+  ValueError: input with shape (3,) does not have enough dimensions for all
+  core dimensions ('n', 'k') on vectorized function with excluded=frozenset()
+  and signature='(n,k),(k)->(k)'
+  >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones(3)).shape
+  (2,)
+  >>> matrix_vector_product(jnp.ones((2, 3)), jnp.ones((4, 3))).shape
+  (4, 2)  # not the same as jnp.matmul
+  """
   if any(not isinstance(exclude, int) for exclude in excluded):
     raise TypeError("jax.numpy.vectorize can only exclude integer arguments, "
                     "but excluded={!r}".format(excluded))
@@ -202,7 +255,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     error_context = ("on vectorized function with excluded={!r} and "
                      "signature={!r}".format(excluded, signature))
     excluded_func, args = _apply_excluded(pyfunc, excluded, args)
-    args = tuple(map(np.asarray, args))
+    args = tuple(map(jnp.asarray, args))
 
     if signature is not None:
       input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
@@ -236,7 +289,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
       full_shape = broadcast_shape + core_shape
       vec_shape = full_shape[-arg.ndim:] if arg.ndim else ()
 
-      vec_arg = np.broadcast_to(arg, vec_shape)
+      vec_arg = jnp.broadcast_to(arg, vec_shape)
       vec_args.append(vec_arg)
 
       vmap_count = len(vec_shape) - len(core_shape)

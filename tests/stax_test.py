@@ -212,6 +212,19 @@ class StaxTest(jtu.JaxTestCase):
     assert out_shape == out.shape
     assert onp.allclose(onp.sum(onp.asarray(out), -1), 1.)
 
+  def testBatchNormNoScaleOrCenter(self):
+    key = random.PRNGKey(0)
+    axes = (0, 1, 2)
+    init_fun, apply_fun = stax.BatchNorm(axis=axes, center=False, scale=False)
+    input_shape = (4, 5, 6, 7)
+    inputs = random_inputs(onp.random.RandomState(0), input_shape)
+
+    out_shape, params = init_fun(key, input_shape)
+    out = apply_fun(params, inputs)
+    means = onp.mean(out, axis=(0, 1, 2))
+    std_devs = onp.std(out, axis=(0, 1, 2))
+    assert onp.allclose(means, onp.zeros_like(means), atol=1e-4)
+    assert onp.allclose(std_devs, onp.ones_like(std_devs), atol=1e-4)
 
   def testBatchNormShapeNHWC(self):
     key = random.PRNGKey(0)

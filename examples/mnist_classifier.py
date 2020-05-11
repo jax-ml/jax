@@ -25,7 +25,7 @@ import itertools
 
 import numpy.random as npr
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.config import config
 from jax import jit, grad, random
 from jax.experimental import optimizers
@@ -37,13 +37,13 @@ from examples import datasets
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(np.sum(preds * targets, axis=1))
+  return -jnp.mean(jnp.sum(preds * targets, axis=1))
 
 def accuracy(params, batch):
   inputs, targets = batch
-  target_class = np.argmax(targets, axis=1)
-  predicted_class = np.argmax(predict(params, inputs), axis=1)
-  return np.mean(predicted_class == target_class)
+  target_class = jnp.argmax(targets, axis=1)
+  predicted_class = jnp.argmax(predict(params, inputs), axis=1)
+  return jnp.mean(predicted_class == target_class)
 
 init_random_params, predict = stax.serial(
     Dense(1024), Relu,
