@@ -1252,6 +1252,40 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_yshape={}_xshape={}_dx={}_axis={}".format(
+        jtu.format_shape_dtype_string(yshape, dtype),
+        jtu.format_shape_dtype_string(xshape, dtype) if xshape is not None else None,
+        dx,
+        axis),
+        "yshape": yshape,
+        "xshape": xshape,
+        "dtype": dtype,
+        "dx": dx,
+        "axis": axis,
+        "rng_factory": jtu.rand_default}
+        for dtype in default_dtypes
+        for yshape, xshape, dx, axis in [
+          ((10,), None, 1.0, -1),
+          ((3, 10), None, 2.0, -1),
+          ((3, 10), None, 3.0, -0),
+          ((10, 3), (10,), 1.0, -2),
+          ((3, 10), (10,), 1.0, -1),
+          ((3, 10), (3, 10), 1.0, -1),
+          ((2, 3, 10), (3, 10), 1.0, -2),
+        ]))
+  def testTrapz(self, yshape, xshape, dtype, dx, axis, rng_factory):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
+    onp_fun = partial(onp.trapz, dx=dx, axis=axis)
+    jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
+    tol = jtu.tolerance(dtype, {onp.float64: 1e-12})
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, tol=tol,
+                            check_dtypes=(dtype != jnp.bfloat16))
+    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
+                          check_dtypes=(dtype != jnp.bfloat16))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
           onp.dtype(dtype).name, m, n, k),
