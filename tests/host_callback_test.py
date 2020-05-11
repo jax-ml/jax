@@ -231,7 +231,7 @@ what: x3
         2. * x, what="here", output_stream=testing_stream))
 
     logging.warning("%s: %s",
-                 self._testMethodName, api.xla_computation(jit_fun1)(5.).GetHloText())
+                 self._testMethodName, api.xla_computation(jit_fun1)(5.).as_hlo_text())
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(5.)
 
@@ -249,7 +249,7 @@ what: here
     logging.info("%s: %s", self._testMethodName,
           api.make_jaxpr(func)(1))
     logging.info("%s: %s", self._testMethodName,
-          api.xla_computation(func)(1).GetHloText())
+          api.xla_computation(func)(1).as_hlo_text())
 
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(2, api.jit(func)(1))
@@ -294,7 +294,7 @@ where: 2
     logging.warning("%s: %s", self._testMethodName,
                  api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                 api.xla_computation(func)(1).GetHloText())
+                 api.xla_computation(func)(1).as_hlo_text())
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(3, api.jit(func)(1))
     assertMultiLineStrippedEqual(self, """
@@ -376,7 +376,7 @@ where: 3
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(func)(1).GetHloText())
+                    api.xla_computation(func)(1).as_hlo_text())
     transform = api.jit if with_jit else lambda f: f
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(4, transform(func)(1))
@@ -414,7 +414,7 @@ where: end
       return res
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-          api.xla_computation(func)(1).GetHloText())
+          api.xla_computation(func)(1).as_hlo_text())
     transform = api.jit if with_jit else lambda f: f
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(4, transform(func)(1))
@@ -457,7 +457,7 @@ where: end
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(func)(1).GetHloText())
+                    api.xla_computation(func)(1).as_hlo_text())
 
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(10, api.jit(func)(1))
@@ -490,7 +490,7 @@ where: end
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(func)(1).GetHloText())
+                    api.xla_computation(func)(1).as_hlo_text())
 
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       if with_jit:
@@ -580,7 +580,7 @@ where: 10
         # No dependencies between the jit invocations
         res += api.jit(lambda x: func(x, 10))(x)
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(lambda x: func(x, 5))(1).GetHloText())
+                    api.xla_computation(lambda x: func(x, 5))(1).as_hlo_text())
     self.assertEqual(100, count)
 
   def test_jit_tap_exception(self):
@@ -679,7 +679,7 @@ what: x3
           x, lambda x: lax.cond(x < 5,
                                 3, lambda x: x,
                                 4, lambda y: y))
-    print(self._testMethodName, api.xla_computation(cfun)(1).GetHloText())
+    print(self._testMethodName, api.xla_computation(cfun)(1).as_hlo_text())
     cfun(1)
 
   def test_while(self):

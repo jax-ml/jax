@@ -263,7 +263,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   init_carry = xops.Tuple(c, cond_consts + body_consts + init_vals)
 
   cond_c = xb.make_computation_builder("cond_computation")
-  cond_carry = xb.parameter(cond_c, 0, c.GetShape(init_carry))
+  cond_carry = xb.parameter(cond_c, 0, c.get_shape(init_carry))
   cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
@@ -277,7 +277,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
                          list(range(cond_jaxpr.out_avals[0].ndim)))
 
   body_c = xb.make_computation_builder("body_computation")
-  body_carry = xb.parameter(body_c, 0, c.GetShape(init_carry))
+  body_carry = xb.parameter(body_c, 0, c.get_shape(init_carry))
   body_carry_elts = [xops.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
@@ -288,18 +288,18 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
                                    _map(partial(xb.constant, body_c), cond_jaxpr.literals),
                                    extend_name_stack(name_stack, 'body_pred'), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
-    assert _map(body_c.GetShape, new_z) == _map(body_c.GetShape, z) # no broadcast
+    assert _map(body_c.get_shape, new_z) == _map(body_c.get_shape, z) # no broadcast
   new_carry = xops.Tuple(body_c, list(itertools.chain(x, y, new_z)))
 
-  ans = xops.While(cond_c.Build(pred), body_c.Build(new_carry), init_carry)
+  ans = xops.While(cond_c.build(pred), body_c.build(new_carry), init_carry)
   ans_elts = [xops.GetTupleElement(ans, i) for i in range(len(args))]
   _,  _, z = split_list(ans_elts, [cond_nconsts, body_nconsts])
   return xops.Tuple(c, z)
 
 def _pred_bcast_select(c, pred, x, y):
-  pred_shape = c.GetShape(pred).dimensions()
-  x_shape = c.GetShape(x).dimensions()
-  y_shape = c.GetShape(y).dimensions()
+  pred_shape = c.get_shape(pred).dimensions()
+  x_shape = c.get_shape(x).dimensions()
+  y_shape = c.get_shape(y).dimensions()
   assert x_shape == y_shape
   assert pred_shape == x_shape[:len(pred_shape)] == y_shape[:len(pred_shape)]
   bcast_pred = xops.BroadcastInDim(pred, x_shape, list(range(len(pred_shape))))
@@ -564,13 +564,13 @@ def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
     outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
                              _map(partial(xb.constant, c), jaxpr.literals),
                              extend_name_stack(name_stack, name + '_fun'), *ops)
-    return c.Build(xops.Tuple(c, outs))
+    return c.build(xops.Tuple(c, outs))
 
   true_op = xops.Tuple(c, true_ops)
-  true_c = make_computation('true', true_jaxpr, c.GetShape(true_op))
+  true_c = make_computation('true', true_jaxpr, c.get_shape(true_op))
 
   false_op = xops.Tuple(c, false_ops)
-  false_c = make_computation('false', false_jaxpr, c.GetShape(false_op))
+  false_c = make_computation('false', false_jaxpr, c.get_shape(false_op))
 
   return xops.Conditional(pred, true_op, true_c, false_op, false_c)
 

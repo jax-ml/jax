@@ -245,7 +245,7 @@ def stage_lexpr(c, lexpr: Optional[LazyExpr], x):
   bcast_dims, perm = unzip2((i, d) for i, d in enumerate(dims) if d is not None)
   if tuple(perm) != tuple(range(len(perm))):
     x = xops.Transpose(x, perm)
-  if shape != c.GetShape(x).dimensions():
+  if shape != c.get_shape(x).dimensions():
     x = xops.BroadcastInDim(x, shape, bcast_dims)
 
   return x

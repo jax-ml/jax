@@ -810,15 +810,15 @@ class APITest(jtu.JaxTestCase):
     def e(x):
       return jnp.sin(jnp.cos(x))
     c = api.xla_computation(e)(2.)
-    self.assertIn('cosine', c.GetHloText())
-    self.assertIn('sine', c.GetHloText())
+    self.assertIn('cosine', c.as_hlo_text())
+    self.assertIn('sine', c.as_hlo_text())
 
     def f(x):
       return x - lax.psum(x, 'i')
     axis_env = [('i', 4)]
     c = api.xla_computation(f, axis_env=axis_env)(2)
-    self.assertIn('all-reduce', c.GetHloText())
-    self.assertIn('replica_groups={{0,1,2,3}}', c.GetHloText())
+    self.assertIn('all-reduce', c.as_hlo_text())
+    self.assertIn('replica_groups={{0,1,2,3}}', c.as_hlo_text())
 
     def g(x):
       rowsum = lax.psum(x, 'i')
@@ -827,10 +827,10 @@ class APITest(jtu.JaxTestCase):
       return rowsum, colsum, allsum
     axis_env = [('i', 4), ('j', 2)]
     c = api.xla_computation(g, axis_env=axis_env)(5.)
-    self.assertIn('all-reduce', c.GetHloText())
-    self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.GetHloText())
-    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
-    self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.GetHloText())
+    self.assertIn('all-reduce', c.as_hlo_text())
+    self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.as_hlo_text())
+    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.as_hlo_text())
+    self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.as_hlo_text())
 
     def h(x):
       rowsum = lax.psum(x, 'i', axis_index_groups=[[0, 1], [2, 3]])
@@ -838,19 +838,19 @@ class APITest(jtu.JaxTestCase):
       return rowsum, colsum
     axis_env = [('i', 4), ('j', 2)]
     c = api.xla_computation(h, axis_env=axis_env)(5.)
-    self.assertIn('all-reduce', c.GetHloText())
-    self.assertIn('replica_groups={{0,2},{4,6},{1,3},{5,7}}', c.GetHloText())
-    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.GetHloText())
+    self.assertIn('all-reduce', c.as_hlo_text())
+    self.assertIn('replica_groups={{0,2},{4,6},{1,3},{5,7}}', c.as_hlo_text())
+    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.as_hlo_text())
 
   def test_xla_computation_args(self):
     def foo(x, y, z):
       return x + y + z
 
     c = api.xla_computation(foo)(1., 2., 3.)
-    self.assertEqual(len(c.GetProgramShape().parameter_shapes()), 3)
+    self.assertEqual(len(c.program_shape().parameter_shapes()), 3)
 
     c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
-    param_shapes = c.GetProgramShape().parameter_shapes()
+    param_shapes = c.program_shape().parameter_shapes()
     self.assertEqual(len(param_shapes), 1)
     self.assertEqual(param_shapes[0].xla_element_type(),
                      xb.xla_client.PrimitiveType.TUPLE)
@@ -864,10 +864,10 @@ class APITest(jtu.JaxTestCase):
     z = jax.ShapeDtypeStruct((), np.float32)
 
     c = api.xla_computation(foo)(x, y, z)
-    self.assertEqual(len(c.GetProgramShape().parameter_shapes()), 3)
+    self.assertEqual(len(c.program_shape().parameter_shapes()), 3)
 
     c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
-    param_shapes = c.GetProgramShape().parameter_shapes()
+    param_shapes = c.program_shape().parameter_shapes()
     self.assertEqual(len(param_shapes), 1)
     self.assertEqual(param_shapes[0].xla_element_type(),
                      xb.xla_client.PrimitiveType.TUPLE)
@@ -876,14 +876,14 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return api.pmap(jnp.mean)(x)
     xla_comp = api.xla_computation(f)
-    xla_comp(jnp.arange(8)).GetHloText()  # doesn't crash
+    xla_comp(jnp.arange(8)).as_hlo_text()  # doesn't crash
 
   def test_xla_computation_instantiate_constant_outputs(self):
     def f():
       return jnp.zeros((3, 4))
 
     xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
-    out_shape, = xla_comp.GetProgramShape().result_shape().tuple_shapes()
+    out_shape, = xla_comp.program_shape().result_shape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
 
   def test_xla_computation_static_argnums(self):
@@ -891,7 +891,7 @@ class APITest(jtu.JaxTestCase):
       return x + y
 
     xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
-    self.assertIn('constant(3)', xla_comp.GetHloText())
+    self.assertIn('constant(3)', xla_comp.as_hlo_text())
 
   def test_jit_device(self):
     device = xb.devices()[-1]
