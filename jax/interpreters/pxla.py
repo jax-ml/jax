@@ -702,7 +702,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
-  built = c.Build(xops.Tuple(c, out_nodes))
+  built = c.build(xops.Tuple(c, out_nodes))
 
   if devices is None:
     if num_global_replicas > xb.device_count(backend):
@@ -742,7 +742,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
           num_replicas=num_global_replicas,
           num_partitions=1,
           device_assignment=device_assignment)
-  compile_options.tuple_arguments = tuple_args
+  compile_options.parameter_is_tupled_arguments = tuple_args
   backend = xb.get_backend(backend)
   compiled = backend.compile(built, compile_options=compile_options)
 
@@ -863,10 +863,11 @@ def _pmap_sharding_spec(nrep, axis_size, sharded_aval, mapped):
         replication_factor=replication_factor * axis_size)
 
 
-def execute_replicated(compiled, uses_outfeed, backend, in_handler, out_handler, *args):
+def execute_replicated(compiled,
+                       uses_outfeed, backend, in_handler, out_handler, *args):
   xla.check_before_outfeed_execution(uses_outfeed)
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
+  out_bufs = compiled.execute_on_local_devices(list(input_bufs))
   return out_handler(out_bufs)
 
 
@@ -909,12 +910,12 @@ def _xla_shard(c, aval, axis_env, x):
   if aval is core.abstract_unit:
     return x
   elif isinstance(aval, ShapedArray):
-    dims = list(c.GetShape(x).dimensions())
+    dims = list(c.get_shape(x).dimensions())
     zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
     return xops.Reshape(xops.DynamicSlice(x, idxs, [1] + dims[1:]), dims[1:])
   else:
-    raise TypeError((aval, c.GetShape(x)))
+    raise TypeError((aval, c.get_shape(x)))
 
 # TODO(b/110096942): more efficient gather
 def _xla_unshard(c, aval, axis_env, x, backend):
@@ -927,7 +928,7 @@ def _xla_unshard(c, aval, axis_env, x, backend):
     if convert_bool:
       x = xops.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
 
-    xla_shape = c.GetShape(x)
+    xla_shape = c.get_shape(x)
     dims = list(xla_shape.dimensions())
     padded = xops.Broadcast(xb.constant(c, onp.array(0, xla_shape.numpy_dtype())),
                          [axis_env.sizes[-1]] + dims)
@@ -944,7 +945,7 @@ def _xla_unshard(c, aval, axis_env, x, backend):
       out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
     return out
   else:
-    raise TypeError((aval, c.GetShape(x)))
+    raise TypeError((aval, c.get_shape(x)))
 
 def _unravel_index(c, axis_env):
   div = xb.constant(c, onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))

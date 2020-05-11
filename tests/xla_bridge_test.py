@@ -46,7 +46,7 @@ class XlaBridgeTest(absltest.TestCase):
     c = xb.make_computation_builder("test")
     param = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "", False)
     built_c = c.Build()
-    assert "parameter_replication={false}" in built_c.GetHloText()
+    assert "parameter_replication={false}" in built_c.as_hlo_text()
 
 
 if __name__ == "__main__":

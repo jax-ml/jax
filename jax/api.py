@@ -238,13 +238,14 @@ def xla_computation(fun: Callable,
     A wrapped version of ``fun`` that when applied to example arguments returns a
     built XLA Computation (see xla_client.py), from which representations of the
     unoptimized XLA HLO computation can be extracted using methods like
-    ``GetHloText``, ``GetSerializedProto``, and ``GetHloDotGraph``.
+    ``as_hlo_text``, ``as_serialized_hlo_module_proto``, and
+    ``as_hlo_dot_graph``.
 
   For example:
 
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
   >>> c = jax.xla_computation(f)(3.)
-  >>> print(c.GetHloText())
+  >>> print(c.as_hlo_text())
   HloModule jaxpr_computation__4.5
   ENTRY jaxpr_computation__4.5 {
     tuple.1 = () tuple()
@@ -257,7 +258,7 @@ def xla_computation(fun: Callable,
 
   >>> def f(x): return x - jax.lax.psum(x, 'i')
   >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)
-  >>> print(c.GetHloText())
+  >>> print(c.as_hlo_text())
   HloModule jaxpr_computation.9
   primitive_computation.3 {
     parameter.4 = s32[] parameter(0)
@@ -282,7 +283,7 @@ def xla_computation(fun: Callable,
   ...
   >>> axis_env = [('i', 4), ('j', 2)]
   >>> c = xla_computation(g, axis_env=axis_env)(5.)
-  >>> print(c.GetHloText())
+  >>> print(c.as_hlo_text())
   HloModule jaxpr_computation__1.19
   [removed uninteresting text here]
   ENTRY jaxpr_computation__1.19 {
@@ -333,7 +334,7 @@ def xla_computation(fun: Callable,
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
-    return c.Build(xc.ops.Tuple(c, outs))
+    return c.build(xc.ops.Tuple(c, outs))
   return computation_maker
 
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,

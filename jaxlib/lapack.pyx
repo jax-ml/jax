@@ -220,8 +220,8 @@ register_cpu_custom_call_target(b"blas_ztrsm", <void*>(blas_ztrsm))
 def trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
          conj_a=False, diag=False):
   c = _unpack_builder(c)
-  a_shape = c.GetShape(a)
-  b_shape = c.GetShape(b)
+  a_shape = c.get_shape(a)
+  b_shape = c.get_shape(b)
   dtype = b_shape.element_type()
 
   dims = b_shape.dimensions()
@@ -377,7 +377,7 @@ def getrf(c, a):
   c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -563,7 +563,7 @@ def geqrf(c, a):
   c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -761,7 +761,7 @@ def orgqr(c, a, tau):
   c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -772,7 +772,7 @@ def orgqr(c, a, tau):
   for d in batch_dims:
     b *= d
 
-  tau_dims = c.GetShape(tau).dimensions()
+  tau_dims = c.get_shape(tau).dimensions()
   assert tau_dims[:-1] == dims[:-2]
   k = tau_dims[-1]
 
@@ -921,7 +921,7 @@ def potrf(c, a, lower=False):
   c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   m, n = dims[-2:]
@@ -1197,7 +1197,7 @@ def gesdd(c, a, full_matrices=True, compute_uv=True):
   c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -1428,7 +1428,7 @@ def syevd(c, a, lower=False):
   c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -1710,7 +1710,7 @@ def geev(c, a):
   c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2

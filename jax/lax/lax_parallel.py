@@ -299,7 +299,7 @@ def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
   return prim.bind(*vals, axis_name=axis_name), False
 
 def _allreduce_translation_rule(prim, c, val, replica_groups, platform=None):
-  dtype = c.GetShape(val).numpy_dtype()
+  dtype = c.get_shape(val).numpy_dtype()
   scalar = ShapedArray((), dtype)
   computation = xla.primitive_subcomputation(prim, scalar, scalar)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
@@ -314,7 +314,7 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
   # allreduce. Instead, we perform once all-reduce for each argument input type.
   args_by_type = collections.defaultdict(lambda: ([], []))
   for i, arg in enumerate(args):
-    indices, dtype_args = args_by_type[c.GetShape(arg).numpy_dtype()]
+    indices, dtype_args = args_by_type[c.get_shape(arg).numpy_dtype()]
     indices.append(i)
     dtype_args.append(arg)
 
@@ -327,7 +327,7 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
     if is_complex:
       dtype_args = ([xops.Real(x) for x in dtype_args] +
                     [xops.Imag(x) for x in dtype_args])
-    scalar = ShapedArray((), c.GetShape(dtype_args[0]).numpy_dtype())
+    scalar = ShapedArray((), c.get_shape(dtype_args[0]).numpy_dtype())
     computation = xla.primitive_subcomputation(lax.add_p, scalar, scalar)
     all_reduce = xops.AllReduce(xops.Tuple(c, dtype_args), computation,
                                 replica_groups_protos, None, None)
@@ -349,7 +349,7 @@ def _notuple_psum_translation_rule(c, *args, replica_groups):
   def _translate(val):
     psum = partial(_allreduce_translation_rule, lax.add_p, c,
                    replica_groups=replica_groups)
-    dtype = c.GetShape(val).numpy_dtype()
+    dtype = c.get_shape(val).numpy_dtype()
     if dtypes.issubdtype(dtype, onp.complexfloating):
       return xops.Complex(psum(xops.Real(val)), psum(xops.Imag(val)))
     else:

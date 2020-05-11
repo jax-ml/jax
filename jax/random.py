@@ -177,16 +177,15 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
 
 def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
   shape = lax.broadcast_shapes(
-      c.GetShape(k1).dimensions(), c.GetShape(k2).dimensions(),
-      c.GetShape(x1).dimensions(), c.GetShape(x2).dimensions())
+      c.get_shape(k1).dimensions(), c.get_shape(k2).dimensions(),
+      c.get_shape(x1).dimensions(), c.get_shape(x2).dimensions())
   rank = len(shape)
   def _broadcast(x):
-    ndims = c.GetShape(x).rank()
+    ndims = c.get_shape(x).rank()
     return xla_client.ops.BroadcastInDim(x, shape,
                                          tuple(range(rank - ndims, rank)))
   return cuda_prng.threefry2x32(
-      xla_bridge.computation_builder_shim(c),
-      (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True

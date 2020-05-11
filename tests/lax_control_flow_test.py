@@ -1856,7 +1856,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     A = jnp.zeros((3, 3))
     # The second DUS was unnecessarily replicating A across time.
     # We check XLA because _scan_impl is "underneath" the jaxpr language.
-    s = str(api.xla_computation(api.grad(loss))(A).GetHloText())
+    s = str(api.xla_computation(api.grad(loss))(A).as_hlo_text())
     assert s.count("dynamic-update-slice(") < 2
 
   def testScanLengthArg(self):

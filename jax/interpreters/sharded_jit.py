@@ -153,9 +153,9 @@ def _sharded_callable(fun: lu.WrappedFun, partitions, name, *abstract_args):
       c, jaxpr, None, axis_env, xla_consts, (),
       extend_name_stack(wrap_name(name, "sharded_jit")),
       *xla_args)
-  c._builder.SetSharding(_sharding_to_proto(partitions[1]))
+  c._builder.set_sharding(_sharding_to_proto(partitions[1]))
   out_tuple = c.Tuple(*out_nodes)
-  c._builder.ClearSharding()
+  c._builder.clear_sharding()
   built = c.Build(out_tuple)
 
   num_partitions = _get_num_partitions(partitions[0])
@@ -169,7 +169,7 @@ def _sharded_callable(fun: lu.WrappedFun, partitions, name, *abstract_args):
       compile_options=xb.get_compile_options(nrep, num_partitions, device_assignment),
       backend=xb.get_backend(None))
 
-  # logging.error("===== hlo:\n%s" % built.GetHloText())
+  # logging.error("===== hlo:\n%s" % built.as_hlo_text())
 
   handle_args = partial(_spatial_partitioned_args, compiled.local_devices(),
                         device_assignment, partitions[0])
@@ -183,38 +183,38 @@ def _sharded_jit_translation_rule(c, axis_env, freevar_nodes,
                                   in_nodes, name_stack, partitions, backend,
                                   name, call_jaxpr):
   subc = xb.make_computation_builder("jaxpr_subcomputation")  # TODO(mattjj): name
-  freevars = [subc.ParameterWithShape(c.GetShape(n)) for n in freevar_nodes]
+  freevars = [subc.ParameterWithShape(c.get_shape(n)) for n in freevar_nodes]
 
   args = []
   for p, a in zip(partitions[0], in_nodes):
-    subc._builder.SetSharding(_sharding_to_proto(p))
-    args.append(subc.ParameterWithShape(c.GetShape(a)))
-    subc._builder.ClearSharding()
-  # args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
+    subc._builder.set_sharding(_sharding_to_proto(p))
+    args.append(subc.ParameterWithShape(c.get_shape(a)))
+    subc._builder.clear_sharding()
+  # args = [subc.ParameterWithShape(c.get_shape(n)) for n in in_nodes]
 
   out_nodes = xla.jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (), freevars, name_stack, *args)
 
-  subc._builder.SetSharding(_sharding_to_proto(partitions[1]))
+  subc._builder.set_sharding(_sharding_to_proto(partitions[1]))
   out_tuple = subc.Tuple(*out_nodes)
-  subc._builder.ClearSharding()
+  subc._builder.clear_sharding()
 
   subc = subc.Build(out_tuple)
   return c.Call(subc, list(freevar_nodes) + list(in_nodes))
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
+  out_bufs = compiled.execute_on_local_devices(list(input_bufs))
   return out_handler(out_bufs)
 
 
 def _xla_sharded_args(c, avals, partitions):
   xla_args = []
   for p, a in zip(partitions, avals):
-    c._builder.SetSharding(_sharding_to_proto(p))
+    c._builder.set_sharding(_sharding_to_proto(p))
     # logging.error("===== aval shape: %s" % str(a.shape))
     shape = xc.Shape.array_shape(a.dtype, (4,8))
     xla_args.append(c.ParameterWithShape(xla.aval_to_xla_shape(a)))
-    c._builder.ClearSharding()
+    c._builder.clear_sharding()
   return xla_args
 
 
