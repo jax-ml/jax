@@ -41,10 +41,10 @@ from . import ad_util
 from . import dtypes
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, argnums_partial)
+                       flatten_fun_nokwargs2, argnums_partial, flatten_axes)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
-                        treedef_is_leaf, _replace_nones)
+                        treedef_is_leaf)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                    split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
@@ -763,10 +763,10 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     args_flat, in_tree  = tree_flatten(args)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    in_axes_flat = _flatten_axes(in_tree, in_axes)
+    in_axes_flat = flatten_axes(in_tree, in_axes)
     _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap")
     out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
-                              lambda: _flatten_axes(out_tree(), out_axes))
+                              lambda: flatten_axes(out_tree(), out_axes))
     return tree_unflatten(out_tree(), out_flat)
 
   return batched_fun
@@ -812,27 +812,6 @@ def _mapped_axis_size(tree, vals, dims, name):
       sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
       sizes = tree_unflatten(tree, sizes)
       raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from e
-
-def _flatten_axes(treedef, axis_tree):
-  # given an axis spec tree axis_tree (a pytree with integers and Nones at the
-  # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
-  # the given treedef, build a complete axis spec tree with the same structure
-  # and return the flattened result
-  # TODO(mattjj,phawkins): improve this implementation
-  proxy = object()
-  dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
-  axes = []
-  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
-  try:
-    tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
-  except ValueError as e:
-    msg = ("axes specification must be a tree prefix of the corresponding "
-           "value, got specification {} for value {}.")
-    raise ValueError(msg.format(axis_tree, treedef)) from e
-  axes = [None if a is proxy else a for a in axes]
-  assert len(axes) == treedef.num_leaves
-  return axes
-
 
 def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
@@ -1053,7 +1032,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
     else:
       dyn_args, dyn_in_axes = args, in_axes
     args, in_tree = tree_flatten((dyn_args, kwargs))
-    in_axes_flat = _flatten_axes(in_tree, (dyn_in_axes, 0))
+    in_axes_flat = flatten_axes(in_tree, (dyn_in_axes, 0))
     assert all(axis in (0, None) for axis in in_axes_flat), \
         "pmap currently only supports mapping over the leading axis"
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
@@ -1096,7 +1075,7 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    in_axes_flat = _flatten_axes(in_tree, (in_axes, 0))
+    in_axes_flat = flatten_axes(in_tree, (in_axes, 0))
     assert all(axis in (0, None) for axis in in_axes_flat), \
         "soft_pmap currently only supports mapping over the leading axis"
     mapped_invars = tuple(axis is not None for axis in in_axes_flat)
