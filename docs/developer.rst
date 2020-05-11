@@ -188,10 +188,11 @@ I saw in the Readthedocs logs::
     cd jax
     git checkout --force origin/test-docs
     git clean -d -f -f
-    
+    workon jax-docs
+
     python -m pip install --upgrade --no-cache-dir pip
     python -m pip install --upgrade --no-cache-dir -I Pygments==2.3.1 setuptools==41.0.1 docutils==0.14 mock==1.0.1 pillow==5.4.1 alabaster>=0.7,<0.8,!=0.7.5 commonmark==0.8.1 recommonmark==0.5.0 'sphinx<2' 'sphinx-rtd-theme<0.5' 'readthedocs-sphinx-ext<1.1'
     python -m pip install --exists-action=w --no-cache-dir -r docs/requirements.txt
-    
+    cd docs
     python `which sphinx-build` -T -E -b html -d _build/doctrees-readthedocs -D language=en . _build/html
 
