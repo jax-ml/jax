@@ -601,15 +601,18 @@ def _xla_callable_device(nreps, backend, device, arg_devices):
     else:
       assert False  # Unreachable given the error check in _xla_callable
 
-def _xla_callable_args(c, avals, tuple_args):
+def _xla_callable_args(c, avals, tuple_args, replicated=None):
   if not tuple_args:
-    xla_args = [xb.parameter(c, i, aval_to_xla_shape(a))
+    if replicated is None:
+      replicated = [None] * len(avals)
+    xla_args = [xb.parameter(c, i, aval_to_xla_shape(a), replicated=r)
                 if a is not abstract_token else xops.CreateToken(c)
-                for i, a in enumerate(avals)]
+                for i, (a, r) in enumerate(zip(avals, replicated))]
     return xla_args
   else:
-    tuple_param = xb.parameter(c, 0, xc.Shape.tuple_shape(
-        [aval_to_xla_shape(a) for a in avals if a is not abstract_token]))
+    tuple_shape = xc.Shape.tuple_shape(
+        [aval_to_xla_shape(a) for a in avals if a is not abstract_token])
+    tuple_param = xb.parameter(c, 0, tuple_shape, replicated=replicated)
     xla_inputs = iter(xla_destructure(c, tuple_param))
     xla_args = [next(xla_inputs) if a is not abstract_token else
                 xops.CreateToken(c) for a in avals]
