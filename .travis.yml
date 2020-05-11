@@ -33,7 +33,7 @@ install:
   # The jaxlib version should match the minimum jaxlib version in
   # jax/lib/__init__.py. This tests JAX PRs against the oldest permitted
   # jaxlib.
-  - pip install jaxlib==0.1.46
+  - pip install jaxlib==0.1.47
   - pip install -v .
   # The following are needed to test the Colab notebooks and the documentation building
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
