@@ -537,12 +537,12 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 ### cond
 
-def cond(pred, operand, true_fun: Callable, false_fun: Callable, *unused_args):
+def cond(pred, true_fun: Callable, false_fun: Callable, operand, *unused_args):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Has equivalent semantics to this Python implementation::
 
-    def cond(pred, operand, true_fun, false_fun):
+    def cond(pred, true_fun, false_fun, operand):
       if pred:
         return true_fun(operand)
       else:
@@ -553,7 +553,8 @@ def cond(pred, operand, true_fun: Callable, false_fun: Callable, *unused_args):
 
   # detect an attempt to call the former, deprecated cond
   if len(unused_args) == 1:
-    true_op, false_op, false_fun = operand, false_fun, unused_args[0]
+    true_op, true_fun, false_op, false_fun = (
+        true_fun, false_fun, operand, unused_args[0])
     return cond_deprecated(pred, true_op, true_fun, false_op, false_fun)
   elif len(unused_args) > 0:
     raise TypeError(
@@ -632,7 +633,7 @@ def cond_deprecated(pred,
     _, x = operand
     return false_fun(x)
 
-  return cond(pred, operand, true_fun_aug, false_fun_aug)
+  return cond(pred, true_fun_aug, false_fun_aug, operand)
 
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
