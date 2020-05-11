@@ -1,0 +1,11 @@
+# These are requirements specifically for building and testing JAX.
+# The requirements for running it are in build/setup.py.
+opt-einsum
+wheel
+future
+six
+cython
+mypy==0.770
+pytest-xdist
+pytest-benchmark
+

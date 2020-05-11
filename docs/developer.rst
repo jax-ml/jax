@@ -34,7 +34,7 @@ To build ``jaxlib`` from source, you must also install some prerequisites:
 * Numpy
 * Scipy
 * Cython
-* six (required for during the jaxlib build only, not required at install time)
+* and a few other Python packages mentioned below.
 
 On Ubuntu 18.04 or Debian you can install the necessary prerequisites with::
 
@@ -44,9 +44,9 @@ On Ubuntu 18.04 or Debian you can install the necessary prerequisites with::
 If you are building on a Mac, make sure XCode and the XCode command line tools
 are installed.
 
-You can also install the necessary Python dependencies using ``pip``::
+Then you can install the necessary Python dependencies using ``pip``::
 
-    pip install numpy scipy cython six
+    pip install -r requirements_testing.txt
 
 
 To build ``jaxlib`` with CUDA support, you can run::
@@ -82,7 +82,7 @@ Running the tests
 
 To run all the JAX tests, we recommend using ``pytest-xdist``, which can run tests in
 parallel. First, install ``pytest-xdist`` and ``pytest-benchmark`` by running
-``pip install pytest-xdist pytest-benchmark``.
+``pip install -r requirements_testing.txt``.
 Then, from the repository root directory run::
 
  pytest -n auto tests
@@ -116,7 +116,7 @@ Type checking
 We use ``mypy`` to check the type hints. To check types locally the same way
 as Travis checks them::
 
-  pip install mypy
+  pip install -r requirements_testing.txt
   mypy --config=mypy.ini --show-error-codes jax
 
 
@@ -125,7 +125,7 @@ Update documentation
 
 To rebuild the documentation, install several packages::
 
-  pip install -r docs/requirements.txt
+  pip install -r requirements_testing.txt -r docs/requirements.txt
 
 You must also install ``pandoc`` in order to regenerate the notebooks.
 See `Install Pandoc <https://pandoc.org/installing.html>`_,
@@ -192,7 +192,7 @@ I saw in the Readthedocs logs::
 
     python -m pip install --upgrade --no-cache-dir pip
     python -m pip install --upgrade --no-cache-dir -I Pygments==2.3.1 setuptools==41.0.1 docutils==0.14 mock==1.0.1 pillow==5.4.1 alabaster>=0.7,<0.8,!=0.7.5 commonmark==0.8.1 recommonmark==0.5.0 'sphinx<2' 'sphinx-rtd-theme<0.5' 'readthedocs-sphinx-ext<1.1'
-    python -m pip install --exists-action=w --no-cache-dir -r docs/requirements.txt
+    python -m pip install --exists-action=w --no-cache-dir -r requirements_testing.txt -r docs/requirements.txt
     cd docs
     python `which sphinx-build` -T -E -b html -d _build/doctrees-readthedocs -D language=en . _build/html
 

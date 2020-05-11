@@ -25,7 +25,9 @@ before_install:
   - conda config --add channels conda-forge
   - conda update -q conda
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy=0.770
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip
+  - conda install --yes --file=requirements_testing.txt
+  # TODO(necula): remove when we drop msgpack from host_callback.py
   - pip install msgpack
   - if [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       pip install pytype ;
