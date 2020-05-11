@@ -1815,6 +1815,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue121(self):
     assert not onp.isscalar(jnp.array(3))
 
+  def testEmptyArrayIsDeviceArray(self):
+    assert type(jnp.array([])) == jax.interpreters.xla.DeviceArray
+
   def testArrayMethod(self):
     class arraylike(object):
       dtype = onp.float32
