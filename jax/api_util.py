@@ -14,7 +14,7 @@
 
 
 from .tree_util import (build_tree, tree_flatten, tree_unflatten,
-                        treedef_is_leaf)
+                        treedef_is_leaf, tree_multimap, _replace_nones)
 from . import linear_util as lu
 from .util import safe_map, unzip2, partial, curry, WrapHashably, Hashable
 from .core import unit
@@ -97,3 +97,23 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
     args[i] = arg
   ans = yield args, kwargs
   yield ans
+
+def flatten_axes(treedef, axis_tree):
+  # given an axis spec tree axis_tree (a pytree with integers and Nones at the
+  # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
+  # the given treedef, build a complete axis spec tree with the same structure
+  # and return the flattened result
+  # TODO(mattjj,phawkins): improve this implementation
+  proxy = object()
+  dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
+  axes = []
+  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+  try:
+    tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+  except ValueError as e:
+    msg = ("axes specification must be a tree prefix of the corresponding "
+           "value, got specification {} for value {}.")
+    raise ValueError(msg.format(axis_tree, treedef)) from e
+  axes = [None if a is proxy else a for a in axes]
+  assert len(axes) == treedef.num_leaves
+  return axes
