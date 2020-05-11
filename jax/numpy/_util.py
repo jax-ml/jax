@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import re
-from .docstrings import dc_dict
+from ..third_party.numpy.docstrings import dc_dict
 
 
 def update_numpydoc(docstr, fun, op):
@@ -57,6 +57,8 @@ def _wraps(fun, update_doc=True, lax_description=""):
       parameters that are supported by the numpy version but not the JAX version.
       If False, include the numpy docstring verbatim.
   """
+  if fun.__name__ in dc_dict.keys():
+    return _hard_wrap(fun)
   def wrap(op):
     if not hasattr(fun, '__doc__') or fun.__doc__ is None:
       return op
