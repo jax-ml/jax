@@ -855,10 +855,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testIssue1151(self):
-    A = jnp.array(np.random.randn(100, 3, 3), dtype=jnp.float32)
-    b = jnp.array(np.random.randn(100, 3), dtype=jnp.float32)
+    rng = self.rng()
+    A = jnp.array(rng.randn(100, 3, 3), dtype=jnp.float32)
+    b = jnp.array(rng.randn(100, 3), dtype=jnp.float32)
     x = jnp.linalg.solve(A, b)
-    self.assertAllClose(vmap(jnp.dot)(A, x), b, atol=1e-3, rtol=1e-2,
+    self.assertAllClose(vmap(jnp.dot)(A, x), b, atol=2e-3, rtol=1e-2,
                         check_dtypes=True)
     jac0 = jax.jacobian(jnp.linalg.solve, argnums=0)(A, b)
     jac1 = jax.jacobian(jnp.linalg.solve, argnums=1)(A, b)

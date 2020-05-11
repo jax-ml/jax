@@ -102,7 +102,8 @@ def product_io_fun(x, y):
   return jnp.sin(xa + y2), [xb, (y1, y3)]
 
 
-R = np.random.randn
+_rng = np.random.RandomState(42)
+R = _rng.randn
 CallSpec = namedtuple('CallSpec', ['fun', 'args'])
 test_specs_base = [
     CallSpec(simple_fun, (R(3, 2), R(3, 2))),

@@ -2857,24 +2857,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jtu.cases_from_list(
         {"testcase_name": "_shape={}_dtype={}_rowvar={}".format(
             shape, dtype.__name__, rowvar),
-         "shape": shape, "dtype": dtype, "rowvar": rowvar,
-         "rng_factory": rng_factory}
+         "shape": shape, "dtype": dtype, "rowvar": rowvar}
         for shape in [(5,), (10, 5), (3, 10)]
         for dtype in number_dtypes
-        for rowvar in [True, False]
-        for rng_factory in [jtu.rand_default]))
-  def testCorrCoef(self, shape, dtype, rowvar, rng_factory):
-    rng = rng_factory(self.rng())
-    args_maker = self._GetArgsMaker(rng, [shape], [dtype])
-    mat = onp.asarray([rng(shape, dtype)])
+        for rowvar in [True, False]))
+  def testCorrCoef(self, shape, dtype, rowvar):
+    rng = jtu.rand_default(self.rng())
+    def args_maker():
+      ok = False
+      while not ok:
+        x = rng(shape, dtype)
+        ok = not onp.any(onp.isclose(onp.std(x), 0.0))
+      return (x,)
     onp_fun = partial(onp.corrcoef, rowvar=rowvar)
     onp_fun = jtu.ignore_warning(
       category=RuntimeWarning, message="invalid value encountered.*")(onp_fun)
     jnp_fun = partial(jnp.corrcoef, rowvar=rowvar)
-    if not onp.any(onp.isclose(onp.std(mat), 0.0)):
-        self._CheckAgainstNumpy(
-            onp_fun, jnp_fun, args_maker, check_dtypes=False,
-            tol=1e-2 if jtu.device_under_test() == "tpu" else None)
+    self._CheckAgainstNumpy(
+        onp_fun, jnp_fun, args_maker, check_dtypes=False,
+        tol=1e-2 if jtu.device_under_test() == "tpu" else None)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(

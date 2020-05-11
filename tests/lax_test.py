@@ -2048,7 +2048,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       raise SkipTest("float16 numerical issues")  # TODO(mattjj): resolve
 
     rng = rng_factory(self.rng())
-    tol = {dtypes.bfloat16: 1e-0, onp.float16: 5e-1, onp.float32: 1e-4}
+    tol = {dtypes.bfloat16: 1e-0, onp.float16: 5e-1, onp.float32: 2e-4}
 
     # permute shapes to match dim_spec, scale by feature_group_count
     lhs_perm, rhs_perm = perms
