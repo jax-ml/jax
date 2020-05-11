@@ -2352,6 +2352,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=True)
     self._CompileAndCheck(jnp.ix_, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": "_dimensions={}_dtype={}_sparse={}".format(
+            dimensions, dtype, sparse),
+         "dimensions": dimensions, "dtype": dtype, "sparse": sparse}
+        for dimensions in [(), (2,), (3, 0), (4, 5, 6)]
+        for dtype in number_dtypes
+        for sparse in [True, False]))
+  def testIndices(self, dimensions, dtype, sparse):
+    def args_maker(): return []
+    onp_fun = partial(onp.indices, dimensions=dimensions,
+                      dtype=dtype, sparse=sparse)
+    jnp_fun = partial(jnp.indices, dimensions=dimensions,
+                      dtype=dtype, sparse=sparse)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
         {"testcase_name":
            "_op={}_a_shape={}_q_shape={}_axis={}_keepdims={}_interpolation={}".format(
