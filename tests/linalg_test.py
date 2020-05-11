@@ -260,6 +260,28 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           check_dtypes=True, rtol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      for shape in [(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  @jtu.skip_on_mac_linalg_bug()
+  def testEigGrad(self, shape, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    a = rng(shape, dtype)
+
+    da = rng(shape, dtype)
+    (w, v), (dw, dv) = jvp(jnp.linalg.eig, (a,), (da,))
+    zero = jnp.zeros(v.shape[:-2] + v.shape[-1:], dtype)
+    self.assertAllClose((jnp.conj(v) * dv).sum(-2), zero, check_dtypes=False)
+
+    jtu.check_grads(jnp.linalg.eig, (a,), 2, rtol=1e-1)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}

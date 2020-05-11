@@ -255,11 +255,32 @@ def _det_jvp(primals, tangents):
   return y, jnp.trace(z, axis1=-1, axis2=-2)
 
 
+@custom_jvp
 @_wraps(np.linalg.eig)
 def eig(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
   w, vl, vr = lax_linalg.eig(a)
   return w, vr
+
+@eig.defjvp
+def eig_jvp_rule(primals, tangents):
+  a, = primals
+  da, = tangents
+
+  w, v = eig(a)
+
+  eye = jnp.eye(a.shape[-1], dtype=a.dtype)
+  # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
+  Fmat = (jnp.reciprocal(eye + w[..., jnp.newaxis, :] - w[..., jnp.newaxis])
+          - eye)
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
+  vinv_da_v = dot(solve(v, da), v)
+  du = dot(v, jnp.multiply(Fmat, vinv_da_v))
+  corrections = (jnp.conj(v) * du).sum(-2, keepdims=True)
+  dv = du - v * corrections
+  dw = jnp.diagonal(vinv_da_v, axis1=-2, axis2=-1)
+  return (w, v), (dw, dv)
 
 
 @_wraps(np.linalg.eigvals)
