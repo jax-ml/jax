@@ -272,7 +272,7 @@ def adagrad(step_size, momentum=0.9):
 
   def update(i, g, state):
     x, g_sq, m = state
-    g_sq += g**2
+    g_sq += g * g
     g_sq_inv_sqrt = jnp.where(g_sq > 0, 1. / jnp.sqrt(g_sq), 0.0)
     m = (1. - momentum) * (g * g_sq_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
@@ -304,7 +304,7 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
     return x0, avg_sq_grad
   def update(i, g, state):
     x, avg_sq_grad = state
-    avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
+    avg_sq_grad = avg_sq_grad * gamma + g * g * (1. - gamma)
     x = x - step_size(i) * g / jnp.sqrt(avg_sq_grad + eps)
     return x, avg_sq_grad
   def get_params(state):
@@ -337,7 +337,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
     return x0, avg_sq_grad, mom
   def update(i, g, state):
     x, avg_sq_grad, mom = state
-    avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
+    avg_sq_grad = avg_sq_grad * gamma + g * g * (1. - gamma)
     mom = momentum * mom + step_size(i) * g / jnp.sqrt(avg_sq_grad + eps)
     x = x - mom
     return x, avg_sq_grad, mom
@@ -372,7 +372,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
   def update(i, g, state):
     x, m, v = state
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
-    v = (1 - b2) * (g ** 2) + b2 * v  # Second moment estimate.
+    v = (1 - b2) * (g * g) + b2 * v  # Second moment estimate.
     mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
     vhat = v / (1 - b2 ** (i + 1))
     x = x - step_size(i) * mhat / (jnp.sqrt(vhat) + eps)
@@ -450,7 +450,7 @@ def sm3(step_size, momentum=0.9):
   def update(i, g, state):
     x, m, vs = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
-    accum = functools.reduce(jnp.minimum, vs) + g ** 2
+    accum = functools.reduce(jnp.minimum, vs) + g * g
     accum_inv_sqrt = jnp.where(accum > 0, 1. / jnp.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m

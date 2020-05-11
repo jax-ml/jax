@@ -182,7 +182,7 @@ def gelu(x):
   <https://arxiv.org/abs/1606.08415>`_, section 2.
   """
   sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
-  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * x**3)))
+  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * x * x * x)))
   return x * cdf
 
 def glu(x, axis=-1):
@@ -237,7 +237,7 @@ def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):
     # mean((x - mean(x))**2) but may be faster and even, given typical
     # activation distributions and low-precision arithmetic, more accurate
     # when used in neural network normalization layers
-    variance = jnp.mean(x**2, axis, keepdims=True) - mean**2
+    variance = jnp.mean(x * x, axis, keepdims=True) - mean * mean
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
 def one_hot(x, num_classes, *, dtype=jnp.float64):

@@ -120,7 +120,7 @@ def runge_kutta_step(func, y0, f0, t0, dt):
 def error_ratio(error_estimate, rtol, atol, y0, y1):
   err_tol = atol + rtol * jnp.maximum(jnp.abs(y0), jnp.abs(y1))
   err_ratio = error_estimate / err_tol
-  return jnp.mean(err_ratio ** 2)
+  return jnp.mean(err_ratio * err_ratio)
 
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       dfactor=0.2, order=5.0):
