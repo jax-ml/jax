@@ -1740,10 +1740,9 @@ class JaxprTest(jtu.JaxTestCase):
 
     def func7(arg):
       return lax.cond(arg >= 0.,
-                      arg,
                       lambda xtrue: xtrue + 3.,
-                      arg,
-                      lambda xfalse: xfalse - 3.)
+                      lambda xfalse: xfalse - 3.,
+                      arg)
 
     jaxpr = api.make_jaxpr(func7)(5.)
     self.assertMultiLineStrippedEqual("""
@@ -1752,19 +1751,18 @@ class JaxprTest(jtu.JaxTestCase):
       c = cond[ false_jaxpr={ lambda  ; a.
                               let b = sub a 3.0
                               in (b,) }
-                linear=(False, False)
+                linear=(False,)
                 true_jaxpr={ lambda  ; a.
                              let b = add a 3.0
-                             in (b,) } ] b a a
+                             in (b,) } ] b a
   in (c,) }
                 """, str(jaxpr))
 
     def func8(arg1, arg2):  # arg2 is a pair
       return lax.cond(arg1 >= 0.,
-                      arg2,
                       lambda xtrue: xtrue[0],
-                      arg2,
-                      lambda xfalse: jnp.ones(1) + xfalse[1])
+                      lambda xfalse: jnp.ones(1) + xfalse[1],
+                      arg2)
 
     jaxpr = api.make_jaxpr(func8)(5., (jnp.zeros(1), 2.))
     self.assertMultiLineStrippedEqual("""
@@ -1773,10 +1771,10 @@ class JaxprTest(jtu.JaxTestCase):
       f = cond[ false_jaxpr={ lambda  ; c a b.
                               let d = add c b
                               in (d,) }
-                linear=(False, False, False, False, False)
-                true_jaxpr={ lambda  ; a b.
+                linear=(False, False, False)
+                true_jaxpr={ lambda  ; a_ a b.
                              let 
-                             in (a,) } ] d b c e b c
+                             in (a,) } ] d e b c
   in (f,) }
                     """, str(jaxpr))
 
