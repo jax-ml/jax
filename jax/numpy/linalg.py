@@ -494,6 +494,9 @@ for func in get_module_functions(np.linalg):
        solutions. Here, the residuals are returned in all cases, to make the function
        compatible with jit. The non-jit compatible numpy behavior can be recovered by
        passing numpy_resid=True.
+
+    The lstsq function does not currently have a custom JVP rule, so the gradient is
+    poorly behaved for some inputs, particularly for low-rank `a`.
     """))
 def lstsq(a, b, rcond=None, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
