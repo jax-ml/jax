@@ -319,6 +319,3 @@ from .lax_parallel import (
   pswapaxes,
   standard_pmap_primitive,
 )
-
-# TODO(phawkins): remove this import after fixing users.
-from ..lib import xla_bridge
