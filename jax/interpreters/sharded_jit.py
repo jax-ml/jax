@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Tuple
 
 import numpy as np
 
 from .. import core
+from . import ad
 from . import partial_eval as pe
 # TODO(skye): separate pmap into it's own module?
 from . import pxla
@@ -71,8 +72,11 @@ def _pval_to_result_handler(npart, parts, pval):
 
 
 @lu.cache
-def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
-                      *abstract_args):
+def _sharded_callable(
+    fun: lu.WrappedFun, num_partitions: Optional[int],
+    in_parts: Tuple[Optional[Tuple[int, ...]], ...],
+    out_parts_thunk: Callable[[], Tuple[Optional[Tuple[int, ...]], ...]],
+    name: str, *abstract_args):
   nrep = 1
   in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
@@ -87,6 +91,14 @@ def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
   if xb.get_backend().platform != "tpu":
     # TODO(skye): fall back to regular jit?
     raise ValueError("sharded_jit only works on TPU!")
+
+  num_inner_parts = _inner_partitions(jaxpr, num_partitions)
+  if num_partitions is None:
+    num_partitions = num_inner_parts
+  assert num_partitions == num_inner_parts
+  if num_partitions is None:
+    # No partitions specified anywhere, everything is replicated.
+    num_partitions = 1
 
   out_parts = out_parts_thunk()
 
@@ -192,7 +204,7 @@ def get_num_partitions(*partitions):
   partition_specs = tree_flatten(partitions)[0]
   if len(partition_specs) == 0:
     # Everything is specified as replicated (all Nones).
-    return 1
+    return None
   num_partitions_set = set(np.prod(spec) for spec in partition_specs)
   if len(num_partitions_set) > 1:
     raise ValueError(
@@ -203,6 +215,30 @@ def get_num_partitions(*partitions):
   assert len(num_partitions_set) == 1
   return num_partitions_set.pop()
 
+
+def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
+  """Returns the total number of partitions from PartitonSpecs inside `jaxpr`.
+
+  Also validates that this number matches `expected_num_parts` if provided.
+  """
+  for eqn in jaxpr.eqns:
+    if eqn.primitive == set_sharding_p:
+      parts = eqn.params["partitions"]
+      nparts = get_num_partitions(parts)
+      if expected_num_parts is None:
+        expected_num_parts = nparts
+      elif nparts != expected_num_parts:
+        # TODO(skye): raise this error as we trace the jaxpr
+        raise ValueError(
+            f"set_sharding with partitions={parts} (total partitions: {nparts})"
+            f" doesn't match expected number of partitions: "
+            f"{expected_num_parts}. If these partitions look right, check "
+            f"outer sharded_jit and/or other set_sharding calls.")
+      elif eqn.primitive.call_primitive:
+        expected_num_parts = _inner_partitions(eqn.params["call_jaxpr"],
+                                               expected_num_parts)
+      # TODO(skye): control flow
+  return expected_num_parts
 
 def _sharded_call_impl(fun, *args, num_partitions, in_parts, out_parts_thunk,
                        name):
@@ -300,3 +336,52 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
     return tree_unflatten(out_tree(), out)
 
   return wrapped
+
+
+def _set_sharding_impl(x, partitions):
+  # TODO(skye): can we also prevent this from being called in other
+  # non-sharded_jit contexts? (e.g. pmap, control flow)
+  raise NotImplementedError(
+      "set_sharding() should only be called inside sharded_jit()")
+
+def _set_sharding_translation_rule(c, x_node, partitions):
+  return xb.set_sharding(c, x_node, partitions)
+
+set_sharding_p = core.Primitive("set_sharding")
+set_sharding_p.def_impl(_set_sharding_impl)
+set_sharding_p.def_abstract_eval(lambda x, partitions: x)
+ad.deflinear(set_sharding_p, lambda ct, partitions: (set_sharding(ct, partitions),))
+xla.translations[set_sharding_p] = _set_sharding_translation_rule
+
+def set_sharding(x, partitions: Optional[PartitionSpec]):
+  """Identity-like function that specifies how ``x`` should be sharded.
+
+  WARNING: this feature is still under active development! It may not work well,
+  and may change without warning!
+
+  This should only be called inside a function transformed by ``sharded_jit``.
+  It refines how ``f`` is sharded. ``partitions`` must correspond to the same
+  number of total partitions dictated by the outer ``sharded_jit`` and any other
+  ``set_sharding`` calls. In the case where only replication has been specified,
+  any ``partitions`` are valid.
+
+  Example usage:
+    @partial(sharded_jit, in_parts=None, out_parts=None, num_shards=2
+    def f(x):
+      y = x + 1
+      y = set_sharding(y, PartitionSpec(2,1))
+      return y * 2
+
+  In this example, the inputs and outputs of ``f`` will be replicated, but the
+  inner value of ``y`` will be partitioned in half. ``f`` will run on two
+  devices due to the set_sharding call.
+
+  Args:
+    x: Array value
+    partitions: PartitionSpec indicating how ``x`` should be partitioned, or
+      None for replication.
+
+  Returns:
+    A new version of ``x`` with the specified sharding applied.
+  """
+  return set_sharding_p.bind(x, partitions=partitions)

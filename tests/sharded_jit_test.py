@@ -23,10 +23,12 @@ import numpy as np
 from absl.testing import absltest
 
 import jax
+from jax import vjp
 from jax import test_util as jtu
 from jax.interpreters import pxla
-from jax.interpreters.sharded_jit import sharded_jit
+from jax.interpreters.sharded_jit import sharded_jit, set_sharding
 from jax.interpreters.sharded_jit import PartitionSpec as P
+import jax.numpy as jnp
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -118,6 +120,61 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertIsInstance(result, pxla.ShardedDeviceArray)
     self.assertLen(result.device_buffers, 1)
 
+  def testSetSharding(self):
+    def f(x):
+      y = x + 1
+      y = set_sharding(y, P(1,2))
+      return y * 2
+
+    shape = (8, 8)
+    x = np.arange(np.prod(shape)).reshape(shape)
+    expected = (x + 1) * 2
+
+    # Matching sharded_jit partitions
+    actual = sharded_jit(f, in_parts=P(2,1), out_parts=P(2,1))(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertEqual(actual.device_buffers[0].shape().dimensions(), (4,8))
+    self.assertEqual(actual.device_buffers[1].shape().dimensions(), (4,8))
+
+    # Mismatched sharded_jit partitions
+    with self.assertRaisesRegex(
+        ValueError,
+        "set_sharding with partitions=PartitionSpec\(1, 2\) "
+        "\(total partitions: 2\) doesn't match expected number of partitions: 4. "
+        "If these partitions look right, check outer sharded_jit and/or other "
+        "set_sharding calls."):
+      sharded_jit(f, in_parts=P(2,2), out_parts=P(2,2))(x)
+
+    # Replicated sharded_jit
+    actual = sharded_jit(f, in_parts=None, out_parts=None)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(actual.device_buffers[0].to_py(),
+                        actual.device_buffers[1].to_py(),
+                        check_dtypes=False)
+
+  def testGradOfSetSharding(self):
+    if jax.local_device_count() < 4:
+      raise SkipTest("requires 4 devices")
+
+    @partial(sharded_jit, in_parts=P(4,1), out_parts=None)
+    def f(x):
+      y = x + 1
+      p, vjp_f = vjp(lambda z: jnp.sin(set_sharding(z, P(2,2))), y)
+      return vjp_f(p)
+
+    def expected_f(x):
+      y = x + 1
+      p, vjp_f = vjp(lambda z: jnp.sin(z), y)
+      return vjp_f(p)
+
+    shape = (4, 4)
+    x = jnp.arange(jnp.prod(shape), dtype=jnp.float32).reshape(shape)
+    actual = f(x)
+    expected = expected_f(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+
 # TODO(skye): add error tests
 
 # Tests that don't need a TPU to run.
@@ -133,6 +190,20 @@ class ShardedJitTestNoTpu(jtu.JaxTestCase):
     shape = (8, 8)
     hlo = jax.xla_computation(f)(np.ones(shape), np.ones(shape))
     self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
+
+  def testSetShardingAnnotation(self):
+    @partial(sharded_jit, in_parts=None, out_parts=None)
+    def f(x):
+      y = x + 1
+      y = set_sharding(y, P(2,1))
+      return y * 2
+
+    shape = (8, 8)
+    hlo = jax.xla_computation(f)(np.ones(shape))
+    # Annotation from set_sharding
+    self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    # Annotation from sharded_jit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
 
