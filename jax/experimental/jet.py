@@ -211,7 +211,36 @@ deflinear(lax.tie_in_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
+def def_deriv(prim, deriv):
+  """
+  Define the jet rule for a primitive in terms of its first derivative.
+  """
+  jet_rules[prim] = partial(deriv_prop, prim, deriv)
 
+def deriv_prop(prim, deriv, primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  primal_out = prim.bind(x)
+  c0, cs = jet(deriv, primals_in, series_in)
+  c = [c0] + cs
+  u = [x] + series
+  v = [primal_out] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+  primal_out, *series_out = v
+  return primal_out, series_out
+
+
+def_deriv(lax.erf_p, lambda x: lax.mul(lax._const(x, 2. / onp.sqrt(onp.pi)), lax.exp(lax.neg(lax.square(x)))))
+
+def def_comp(prim, comp):
+  """
+  Define the jet rule for a primitive in terms of a composition of simpler primitives.
+  """
+  jet_rules[prim] = partial(jet, comp)
+
+
+def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
 
 ### More complicated rules
 
