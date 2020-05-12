@@ -815,6 +815,14 @@ def _join_cond_outputs(jaxpr, num_prefix, zeros_avals, zeros_on_left):
   return _make_typed_jaxpr(f_aug, jaxpr.in_avals)
 
 def _join_cond_pe_staged_jaxpr_inputs(jaxprs, res_avals_per_jaxpr):
+  # When partially evaluating conditionals, each branch produces residuals
+  # depending on the computation carried out by the branch, and a corresponding
+  # staged jaxpr that accepts those residuals as its first few inputs. To use
+  # these staged jaxprs as the branches of another conditional, we need for
+  # their (input) signatures to match. This function "joins" the staged jaxprs:
+  # for each one, it makes another that accepts *all* residuals, but still only
+  # uses those that it needs (dropping the rest).
+
   newvar = core.gensym('~')     # TODO(frostig): safer gensym
   unused_res_vars = tuple(
       tuple(newvar(aval) for aval in res_avals)
