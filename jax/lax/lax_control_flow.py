@@ -536,7 +536,8 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 ### cond
 
-def cond(pred, true_fun: Callable, false_fun: Callable, operand, *unused_args):
+def cond(pred, true_fun: Callable, false_fun: Callable, operand,
+         *deprecated_args):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Has equivalent semantics to this Python implementation::
@@ -551,18 +552,18 @@ def cond(pred, true_fun: Callable, false_fun: Callable, operand, *unused_args):
   """
 
   # detect an attempt to call the former, deprecated cond
-  if len(unused_args) == 1:
+  if len(deprecated_args) == 1:
     true_op, true_fun, false_op, false_fun = (
-        true_fun, false_fun, operand, unused_args[0])
+        true_fun, false_fun, operand, deprecated_args[0])
     return _cond_with_per_branch_args(pred, true_op, true_fun, false_op, false_fun)
-  elif len(unused_args) > 0:
+  elif len(deprecated_args) > 0:
+    num_args = 4 + len(deprecated_args)
     raise TypeError(
-        "cond() takes 4 positional arguments but {} were given".format(
-            4 + len(unused_args)))
+        f"cond() takes 4 positional arguments but {num_args} were given")
 
   if len(onp.shape(pred)) != 0:
-    raise TypeError("Pred must be a scalar, got {} of shape {}.".format(
-        pred, onp.shape(pred)))
+    raise TypeError(
+        f"Pred must be a scalar, got {pred} of shape {onp.shape(pred)}.")
 
   try:
     pred_dtype = dtypes.result_type(pred)
@@ -616,17 +617,10 @@ def _cond_with_per_branch_args(pred,
 
   Pred has to be a scalar type, collection types (list, tuple) are not supported
   """
-  operand = (true_operand, false_operand)
-
-  def true_fun_aug(operand):
-    x, _ = operand
-    return true_fun(x)
-
-  def false_fun_aug(operand):
-    _, x = operand
-    return false_fun(x)
-
-  return cond(pred, true_fun_aug, false_fun_aug, operand)
+  return cond(pred,
+              lambda op: true_fun(op[0]),
+              lambda op: false_fun(op[1]),
+              (true_operand, false_operand))
 
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
