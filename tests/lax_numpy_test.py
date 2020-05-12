@@ -2362,8 +2362,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for sparse in [True, False]))
   def testIndices(self, dimensions, dtype, sparse):
     def args_maker(): return []
-    onp_fun = partial(onp.indices, dimensions=dimensions,
-                      dtype=dtype, sparse=sparse)
+    if onp.__version__ < "1.17":
+      if sparse:
+        raise SkipTest("indices does not have sparse on numpy < 1.17")
+      onp_fun = partial(onp.indices, dimensions=dimensions,
+                        dtype=dtype)
+    else:
+      onp_fun = partial(onp.indices, dimensions=dimensions,
+                        dtype=dtype, sparse=sparse)
     jnp_fun = partial(jnp.indices, dimensions=dimensions,
                       dtype=dtype, sparse=sparse)
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
