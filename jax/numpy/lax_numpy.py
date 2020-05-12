@@ -528,7 +528,7 @@ def power(x1, x2):
   # Using lax.pow may be imprecise for floating-point values; the goal of this
   # code path is to make sure we end up with a precise output for the common
   # pattern ``x ** 2`` or similar.
-  if isinstance(x2, int) and x2 >= 0 and x2 <= 64:
+  if isinstance(x2, int) and 0 <= x2 <= 64:
     x1 = asarray(x1)
     acc = None
     while x2 > 0:
