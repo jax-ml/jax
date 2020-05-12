@@ -4736,7 +4736,7 @@ after_all_p.def_abstract_eval(_after_all_abstract_eval)
 xla.translations[after_all_p] = _after_all_translation_rule
 
 
-def infeed(token, shape=None):
+def infeed(token, shape=None, sharding=None):
   """Consumes an infeed value of `shape` from the host. Experimental.
 
   `token` is used to sequence infeed and outfeed effects.
@@ -4746,20 +4746,26 @@ def infeed(token, shape=None):
     if not isinstance(shape, ShapedArray):
       raise TypeError("shape argument to infeed must be a pytree of "
                       "ShapedArray values, got {}".format(shape))
-  xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes))
+  xs_and_token = infeed_p.bind(
+      token, shapes=tuple(flat_shapes), sharding=sharding)
   return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
 
-def _infeed_abstract_eval(token, *, shapes):
+def _infeed_abstract_eval(token, *, shapes, sharding):
   if token is not abstract_token:
     raise TypeError("First argument to infeed must be a token")
   return shapes + (abstract_token,)
 
 
-def _infeed_translation_rule(c, token, *, shapes):
+def _infeed_translation_rule(c, token, *, shapes, sharding):
   shape = tuple(xla.aval_to_xla_shape(x).with_major_to_minor_layout_if_absent()
                 for x in shapes)
-  xs_and_token = xops.InfeedWithToken(token,
-                                      xla_client.Shape.tuple_shape(shape))
+  if sharding:
+    c.SetSharding(xb._sharding_to_proto(sharding))
+  try:
+    xs_and_token = xops.InfeedWithToken(token,
+                                        xla_client.Shape.tuple_shape(shape))
+  finally:
+    c.ClearSharding()
   xs = xops.GetTupleElement(xs_and_token, 0)
   token = xops.GetTupleElement(xs_and_token, 1)
   outs = [xops.GetTupleElement(xs, i) for i in range(len(shapes))] + [token]

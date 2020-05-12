@@ -601,13 +601,19 @@ def _xla_callable_device(nreps, backend, device, arg_devices):
     else:
       assert False  # Unreachable given the error check in _xla_callable
 
-def _xla_callable_args(c, avals, tuple_args, replicated=None):
+def _xla_callable_args(c, avals, tuple_args, replicated=None,
+                       arg_partitions=None):
   if not tuple_args:
     if replicated is None:
       replicated = [None] * len(avals)
-    xla_args = [xb.parameter(c, i, aval_to_xla_shape(a), replicated=r)
+    set_sharding = arg_partitions is not None
+    if arg_partitions is None:
+      arg_partitions = [None] * len(avals)
+    assert len(avals) == len(arg_partitions), (len(avals), len(arg_partitions))
+    xla_args = [xb.parameter(c, i, aval_to_xla_shape(a), replicated=r,
+                             sharding=sharding, set_sharding=set_sharding)
                 if a is not abstract_token else xops.CreateToken(c)
-                for i, (a, r) in enumerate(zip(avals, replicated))]
+                for i, (a, r, sharding) in enumerate(zip(avals, replicated, arg_partitions))]
     return xla_args
   else:
     if replicated is not None:
@@ -615,7 +621,8 @@ def _xla_callable_args(c, avals, tuple_args, replicated=None):
                     if a is not abstract_token]
     tuple_shape = xc.Shape.tuple_shape(
         [aval_to_xla_shape(a) for a in avals if a is not abstract_token])
-    tuple_param = xb.parameter(c, 0, tuple_shape, replicated=replicated)
+    tuple_param = xb.parameter(c, 0, tuple_shape, replicated=replicated,
+                               sharding=arg_partitions)
     xla_inputs = iter(xla_destructure(c, tuple_param))
     xla_args = [next(xla_inputs) if a is not abstract_token else
                 xops.CreateToken(c) for a in avals]
