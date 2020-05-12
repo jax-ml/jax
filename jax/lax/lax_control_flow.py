@@ -23,7 +23,6 @@ import itertools
 import operator
 import threading
 from typing import Callable, Sequence
-import warnings
 
 import numpy as onp
 
@@ -555,7 +554,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, operand, *unused_args):
   if len(unused_args) == 1:
     true_op, true_fun, false_op, false_fun = (
         true_fun, false_fun, operand, unused_args[0])
-    return cond_deprecated(pred, true_op, true_fun, false_op, false_fun)
+    return _cond_with_per_branch_args(pred, true_op, true_fun, false_op, false_fun)
   elif len(unused_args) > 0:
     raise TypeError(
         "cond() takes 4 positional arguments but {} were given".format(
@@ -602,9 +601,9 @@ def cond(pred, true_fun: Callable, false_fun: Callable, operand, *unused_args):
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
   return tree_unflatten(out_tree, out)
 
-def cond_deprecated(pred,
-                    true_operand, true_fun: Callable,
-                    false_operand, false_fun: Callable):
+def _cond_with_per_branch_args(pred,
+                               true_operand, true_fun: Callable,
+                               false_operand, false_fun: Callable):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Has equivalent semantics to this Python implementation::
@@ -616,13 +615,7 @@ def cond_deprecated(pred,
         return false_fun(false_operand)
 
   Pred has to be a scalar type, collection types (list, tuple) are not supported
-
   """
-  msg = ("Detected deprecated five-argument call to cond() with separate "
-         "true_operands and false_operands arguments. Use "
-         "cond(pred, operand, true_fun, false_fun) instead.")
-  warnings.warn(msg)
-
   operand = (true_operand, false_operand)
 
   def true_fun_aug(operand):
