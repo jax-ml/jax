@@ -1257,14 +1257,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_yshape={}_xshape={}_dx={}_axis={}".format(
         jtu.format_shape_dtype_string(yshape, dtype),
         jtu.format_shape_dtype_string(xshape, dtype) if xshape is not None else None,
-        dx,
-        axis),
-        "yshape": yshape,
-        "xshape": xshape,
-        "dtype": dtype,
-        "dx": dx,
-        "axis": axis,
-        "rng_factory": jtu.rand_default}
+        dx, axis),
+        "yshape": yshape, "xshape": xshape, "dtype": dtype, "dx": dx, "axis": axis}
         for dtype in default_dtypes
         for yshape, xshape, dx, axis in [
           ((10,), None, 1.0, -1),
@@ -1275,8 +1269,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((3, 10), (3, 10), 1.0, -1),
           ((2, 3, 10), (3, 10), 1.0, -2),
         ]))
-  def testTrapz(self, yshape, xshape, dtype, dx, axis, rng_factory):
-    rng = rng_factory(self.rng())
+  def testTrapz(self, yshape, xshape, dtype, dx, axis):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
     onp_fun = partial(onp.trapz, dx=dx, axis=axis)
     jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
