@@ -95,7 +95,8 @@ def clip(max_delta) -> InitUpdate:
 
 
 def global_norm(updates: Updates) -> Updates:
-  return jnp.sqrt(jnp.sum([jnp.sum(x * x) for x in tree_leaves(updates)]))
+  return jnp.sqrt(
+      jnp.sum([jnp.sum(jnp.square(x)) for x in tree_leaves(updates)]))
 
 
 class ClipByGlobalNormState(OptState):
@@ -222,7 +223,7 @@ def scale_by_stddev(decay: float = 0.9, eps: float = 1e-8) -> InitUpdate:
     mu = _update_moment(updates, state.mu, decay, 1)
     nu = _update_moment(updates, state.nu, decay, 2)
     updates = tree_multimap(
-        lambda g, m, n: g / jnp.sqrt(n - m * m + eps), updates, mu, nu)
+        lambda g, m, n: g / jnp.sqrt(n - jnp.square(m) + eps), updates, mu, nu)
     return updates, ScaleByRStdDevState(mu=mu, nu=nu)
 
   return InitUpdate(init_fn, update_fn)
