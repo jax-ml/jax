@@ -76,6 +76,13 @@ def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
 
 def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                                              in_tree, in_avals):
+  # When staging the branches of a conditional into jaxprs, constants are
+  # extracted from each branch and converted to jaxpr arguments. To use the
+  # staged jaxprs as the branches to a conditional *primitive*, we need for
+  # their (input) signatures to match. This function "joins" the staged jaxprs:
+  # for each one, it makes another that accepts *all* constants, but only uses
+  # those that it needs (dropping the rest).
+
   jaxprs, all_out_pvals, all_consts, all_out_trees = unzip4([
       _initial_style_untyped_jaxpr(fun, in_tree, in_avals) for fun in funs])
 
