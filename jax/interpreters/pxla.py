@@ -266,14 +266,13 @@ def _shard_abstract_array(size, x):
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 # TODO(skye): expose PyLocalBuffers in xla_client
-def aval_to_result_handler(size: int, sharding_spec: Optional[ShardingSpec],
+def aval_to_result_handler(sharding_spec: Optional[ShardingSpec],
                            indices: Optional[Tuple[Index]],
                            aval: core.AbstractValue) -> Callable[
                                [List[xb.xla_client._xla.PyLocalBuffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
   Args:
-    size: the pmap axis size
     sharding_spec: indicates how the output is sharded across devices, or None
       for non-array avals.
     indices: the pre-computed result of spec_to_indices, or None for non-array
@@ -283,10 +282,10 @@ def aval_to_result_handler(size: int, sharding_spec: Optional[ShardingSpec],
   Returns:
     A function for handling the PyLocalBuffers that will eventually be produced
     for this output. The function will return an object suitable for returning
-    from pmap, e.g. a ShardedDeviceArray.
+    to the user, e.g. a ShardedDeviceArray.
   """
   try:
-    return pxla_result_handlers[type(aval)](size, sharding_spec, indices, aval)
+    return pxla_result_handlers[type(aval)](sharding_spec, indices, aval)
   except KeyError as err:
     raise TypeError("No pxla_result_handler for type: {}".format(type(aval))
                     ) from err
@@ -294,10 +293,8 @@ PxlaResultHandler = Callable[..., Callable[
     [List[xb.xla_client._xla.PyLocalBuffer]], Any]]
 pxla_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 pxla_result_handlers[core.AbstractUnit] = lambda *_: lambda _: core.unit
-def array_result_handler(size, sharding_spec, indices, aval: ShapedArray):
-  full_aval = ShapedArray((size,) + aval.shape, aval.dtype)
-  return lambda bufs: ShardedDeviceArray(full_aval, sharding_spec, bufs,
-                                         indices)
+def array_result_handler(sharding_spec, indices, aval: ShapedArray):
+  return lambda bufs: ShardedDeviceArray(aval, sharding_spec, bufs, indices)
 pxla_result_handlers[ShapedArray] = array_result_handler
 pxla_result_handlers[ConcreteArray] = array_result_handler
 
@@ -699,10 +696,11 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)
-  xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args)
+  replicated = [not m for m in mapped_invars]
+  xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args, replicated)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                 extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
-  built = c.Build(xops.Tuple(c, out_nodes))
+  built = c.build(xops.Tuple(c, out_nodes))
 
   if devices is None:
     if num_global_replicas > xb.device_count(backend):
@@ -742,7 +740,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
           num_replicas=num_global_replicas,
           num_partitions=1,
           device_assignment=device_assignment)
-  compile_options.tuple_arguments = tuple_args
+  compile_options.parameter_is_tupled_arguments = tuple_args
   backend = xb.get_backend(backend)
   compiled = backend.compile(built, compile_options=compile_options)
 
@@ -840,11 +838,13 @@ def _pval_to_result_handler(axis_size, nrep, pval, devices, backend):
     return lambda _: bcast_const
   else:
     if pv is not core.abstract_unit:
+      unsharded_aval = ShapedArray((axis_size,) + pv.shape, pv.dtype)
       sharding_spec = _pmap_sharding_spec(nrep, axis_size, pv, True)
-      indices = spec_to_indices((axis_size,) + pv.shape, sharding_spec)
+      indices = spec_to_indices(unsharded_aval.shape, sharding_spec)
     else:
       sharding_spec = indices = None
-    return aval_to_result_handler(axis_size, sharding_spec, indices, pv)
+      unsharded_aval = pv
+    return aval_to_result_handler(sharding_spec, indices, unsharded_aval)
 
 def _pmap_sharding_spec(nrep, axis_size, sharded_aval, mapped):
   if sharded_aval is core.abstract_unit:
@@ -863,10 +863,11 @@ def _pmap_sharding_spec(nrep, axis_size, sharded_aval, mapped):
         replication_factor=replication_factor * axis_size)
 
 
-def execute_replicated(compiled, uses_outfeed, backend, in_handler, out_handler, *args):
+def execute_replicated(compiled,
+                       uses_outfeed, backend, in_handler, out_handler, *args):
   xla.check_before_outfeed_execution(uses_outfeed)
   input_bufs = in_handler(args)
-  out_bufs = compiled.ExecuteOnLocalDevices(list(input_bufs))
+  out_bufs = compiled.execute_on_local_devices(list(input_bufs))
   return out_handler(out_bufs)
 
 
@@ -909,12 +910,12 @@ def _xla_shard(c, aval, axis_env, x):
   if aval is core.abstract_unit:
     return x
   elif isinstance(aval, ShapedArray):
-    dims = list(c.GetShape(x).dimensions())
+    dims = list(c.get_shape(x).dimensions())
     zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
     return xops.Reshape(xops.DynamicSlice(x, idxs, [1] + dims[1:]), dims[1:])
   else:
-    raise TypeError((aval, c.GetShape(x)))
+    raise TypeError((aval, c.get_shape(x)))
 
 # TODO(b/110096942): more efficient gather
 def _xla_unshard(c, aval, axis_env, x, backend):
@@ -927,7 +928,7 @@ def _xla_unshard(c, aval, axis_env, x, backend):
     if convert_bool:
       x = xops.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
 
-    xla_shape = c.GetShape(x)
+    xla_shape = c.get_shape(x)
     dims = list(xla_shape.dimensions())
     padded = xops.Broadcast(xb.constant(c, onp.array(0, xla_shape.numpy_dtype())),
                          [axis_env.sizes[-1]] + dims)
@@ -944,7 +945,7 @@ def _xla_unshard(c, aval, axis_env, x, backend):
       out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
     return out
   else:
-    raise TypeError((aval, c.GetShape(x)))
+    raise TypeError((aval, c.get_shape(x)))
 
 def _unravel_index(c, axis_env):
   div = xb.constant(c, onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))

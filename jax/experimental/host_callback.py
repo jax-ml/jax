@@ -423,7 +423,7 @@ def _id_tap_translation_rule_outfeed(comp: XlaComputationBuilder,
 
   # We expect the current token at the end, inserted by _rewrite_jaxpr.
   current_token = args_op[-1]
-  assert not comp.GetShape(current_token).is_array(), "The last argument must be a token"
+  assert not comp.get_shape(current_token).is_array(), "The last argument must be a token"
 
   nr_args_to_emit = len(args_op) - nr_untapped - 1
   next_token = _emit_outfeed(comp, current_token,
@@ -618,7 +618,7 @@ _DTYPE_STR_TO_CODE = dict([(str(d), c) for c, d in _CODE_TO_DTYPE.items()])
 def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
                   arrays: Sequence[XlaOp], consumer_id: int) -> XlaOp:
   """Emits the arrays to the outfeed for the current device."""
-  arrays_shape = [comp.GetShape(a) for a in arrays]
+  arrays_shape = [comp.get_shape(a) for a in arrays]
   def _array_shape_to_tuple(a_shape: XlaShape):
     # (element_type_code, (d0, d1, ..., dn))
     return (_DTYPE_STR_TO_CODE[str(np.dtype(a_shape.element_type()))],
@@ -636,7 +636,7 @@ def _emit_outfeed(comp: XlaComputationBuilder, token: XlaOp,
                     for i in range(0, _OUTFEED_HEADER_METADATA_LENGTH, 4)]))
   header += (0,) * (_OUTFEED_HEADER_LENGTH - len(header))
   data = xops.ConstantLiteral(comp, np.array(header, dtype=np.uint32))
-  token = xops.OutfeedWithToken(data, token, comp.GetShape(data))
+  token = xops.OutfeedWithToken(data, token, comp.get_shape(data))
 
   # Now send the arrays, all at once
   entire_shape = xla_client.Shape.tuple_shape(arrays_shape)

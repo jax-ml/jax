@@ -131,7 +131,7 @@ def jax_to_hlo(fn, input_shapes, constants=None):
     return fn_curried(**dict(zip(arg_names, args)))
 
   comp = jax.api.xla_computation(ordered_wrapper)(*args)
-  return (comp.GetSerializedProto(), comp.GetHloText())
+  return (comp.as_serialized_hlo_module_proto(), comp.as_hlo_text())
 
 
 def main(argv):

@@ -52,8 +52,8 @@ from .lax_numpy import (
     save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
     signedinteger, sin, sinc, single, sinh, size, sometrue, sort, split, sqrt,
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
-    tan, tanh, tensordot, tile, trace, transpose, tri, tril, tril_indices, triu,
-    triu_indices, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
+    tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices,
+    triu, triu_indices, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
     unpackbits, unravel_index, unsignedinteger, vander, var, vdot, vsplit,
     vstack, where, zeros, zeros_like)
 

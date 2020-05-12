@@ -133,7 +133,7 @@ ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
 batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
 
 def _nan_like(c, operand):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   dtype = shape.element_type()
   if jnp.issubdtype(dtype, np.complexfloating):
     nan = xb.constant(c, np.array(np.nan * (1. + 1j), dtype=dtype))
@@ -142,10 +142,10 @@ def _nan_like(c, operand):
   return xops.Broadcast(nan, shape.dimensions())
 
 def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
   dtype = shape.element_type().type
-  result, info = potrf_impl(xb.computation_builder_shim(c), operand, lower=True)
+  result, info = potrf_impl(c, operand, lower=True)
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   return _broadcasting_select(c,
                               xops.Reshape(ok, batch_dims + (1, 1)), result,
@@ -185,9 +185,9 @@ def eig_abstract_eval(operand):
 _cpu_geev = lapack.geev
 
 def eig_cpu_translation_rule(c, operand):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
-  w, vl, vr, info = _cpu_geev(xb.computation_builder_shim(c), operand)
+  w, vl, vr, info = _cpu_geev(c, operand)
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
@@ -219,7 +219,7 @@ def eigh_impl(operand, lower):
   return v, w
 
 def eigh_translation_rule(c, operand, lower):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   dims = shape.dimensions()
   if dims[-1] == 0:
     return xops.Tuple(c, [operand, xops.Reshape(operand, dims[:-1])])
@@ -244,9 +244,9 @@ def eigh_abstract_eval(operand, lower):
   return v, w
 
 def _eigh_cpu_gpu_translation_rule(syevd_impl, c, operand, lower):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
-  v, w, info = syevd_impl(xb.computation_builder_shim(c), operand, lower=lower)
+  v, w, info = syevd_impl(c, operand, lower=lower)
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   v = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), v,
                            _nan_like(c, v))
@@ -428,7 +428,7 @@ batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
 
 def _triangular_solve_cpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
-  shape = c.GetShape(a)
+  shape = c.get_shape(a)
   dtype = shape.element_type().type
 
   if conjugate_a and not transpose_a:
@@ -436,7 +436,7 @@ def _triangular_solve_cpu_translation_rule(
     conjugate_a = False
   if len(shape.dimensions()) == 2 and np.dtype(dtype) in _cpu_lapack_types:
     return lapack.jax_trsm(
-      xb.computation_builder_shim(c), xb.constant(c, np.array(1, dtype=dtype)),
+      c, xb.constant(c, np.array(1, dtype=dtype)),
       a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
@@ -453,7 +453,7 @@ xla.backend_specific_translations['cpu'][triangular_solve_p] = \
 
 def _triangular_solve_gpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
-  shape = c.GetShape(a)
+  shape = c.get_shape(a)
   dtype = shape.element_type().type
   dims = shape.dimensions()
   m, n = dims[-2:]
@@ -463,7 +463,7 @@ def _triangular_solve_gpu_translation_rule(
     conjugate_a = False
   if batch > 1 and m <= 32 and n <= 32:
     return cusolver.trsm(
-      xb.computation_builder_shim(c), a, b, left_side, lower, transpose_a,
+      c, a, b, left_side, lower, transpose_a,
       conjugate_a, unit_diagonal)
   else:
     # Use the XLA implementation for unbatched triangular_solve.
@@ -632,9 +632,9 @@ def _lu_batching_rule(batched_args, batch_dims):
   return lu_p.bind(x), (0, 0)
 
 def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
-  lu, pivot, info = getrf_impl(xb.computation_builder_shim(c), operand)
+  lu, pivot, info = getrf_impl(c, operand)
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = xops.Sub(pivot, xops.ConstantLiteral(c, np.array(1, np.int32)))
   ok = xops.Ge(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
@@ -801,18 +801,17 @@ def qr_batching_rule(batched_args, batch_dims, full_matrices):
 
 def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
                                  full_matrices):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   dims = shape.dimensions()
   m, n = dims[-2:]
   batch_dims = dims[:-2]
-  cs = xb.computation_builder_shim(c)
-  r, tau, info_geqrf = geqrf_impl(cs, operand)
+  r, tau, info_geqrf = geqrf_impl(c, operand)
   if m < n:
     q = xops.Slice(r, [0] * len(dims), list(batch_dims) + [m, m],
                    [1] * len(dims))
-    q, info_orgqr = orgqr_impl(cs, q, tau)
+    q, info_orgqr = orgqr_impl(c, q, tau)
   elif not full_matrices:
-    q, info_orgqr = orgqr_impl(cs, r, tau)
+    q, info_orgqr = orgqr_impl(c, r, tau)
     r = xops.Slice(r, [0] * len(dims), list(batch_dims) + [n, n],
                    [1] * len(dims))
   else:
@@ -820,7 +819,7 @@ def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, c, operand,
     padding_config[-1] = (0, m - n, 0)
     q = xops.Pad(r, xops.Constant(c, np.array(0, dtype=shape.element_type())),
                  xla_client.make_padding_config(padding_config))
-    q, info_orgqr = orgqr_impl(cs, q, tau)
+    q, info_orgqr = orgqr_impl(c, q, tau)
 
   ok = xops.And(
     xops.Eq(info_geqrf, xops.ConstantLiteral(c, np.array(0, np.int32))),
@@ -904,9 +903,9 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
 
 def _svd_cpu_gpu_translation_rule(gesvd_impl, c, operand, full_matrices, compute_uv):
 
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
-  s, u, vt, info = gesvd_impl(xb.computation_builder_shim(c), operand,
+  s, u, vt, info = gesvd_impl(c, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))

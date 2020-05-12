@@ -108,6 +108,25 @@ def _threefry2x32_abstract_eval(*args):
     aval = abstract_arrays.UnshapedArray(np.dtype(np.uint32))
   return (aval,) * 2
 
+rotate_left = _make_rotate_left(onp.uint32)
+
+def apply_round(v, rot):
+  v = v[:]
+  v[0] = v[0] + v[1]
+  v[1] = rotate_left(v[1], rot)
+  v[1] = v[0] ^ v[1]
+  return v
+
+def rotate_list(xs):
+  return xs[1:] + xs[:1]
+
+def rolled_loop_step(i, state):
+  x, ks, rotations = state
+  for r in rotations[0]:
+    x = apply_round(x, r)
+  new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=onp.uint32)]
+  return new_x, rotate_list(ks), rotate_list(rotations)
+
 def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   """Apply the Threefry 2x32 hash.
 
@@ -119,15 +138,6 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
     An array of dtype uint32 with the same shape as `count`.
   """
   x = [x1, x2]
-  rotate_left = _make_rotate_left(onp.uint32)
-
-  def apply_round(v, rot):
-    v = v[:]
-    v[0] = v[0] + v[1]
-    v[1] = rotate_left(v[1], rot)
-    v[1] = v[0] ^ v[1]
-    return v
-
 
   rotations = [onp.array([13, 15, 26, 6], dtype=onp.uint32),
                onp.array([17, 29, 16, 24], dtype=onp.uint32)]
@@ -137,14 +147,7 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   x[1] = x[1] + ks[1]
 
   if use_rolled_loops:
-    def rotate_list(xs): return xs[1:] + xs[:1]
-    def step(i, state):
-      x, ks, rotations = state
-      for r in rotations[0]:
-        x = apply_round(x, r)
-      new_x = [x[0] + ks[0], x[1] + ks[1] + asarray(i + 1, dtype=onp.uint32)]
-      return new_x, rotate_list(ks), rotate_list(rotations)
-    x, _, _ = lax.fori_loop(0, 5, step, (x, rotate_list(ks), rotations))
+    x, _, _ = lax.fori_loop(0, 5, rolled_loop_step, (x, rotate_list(ks), rotations))
 
   else:
     for r in rotations[0]:
@@ -177,16 +180,15 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
 
 def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
   shape = lax.broadcast_shapes(
-      c.GetShape(k1).dimensions(), c.GetShape(k2).dimensions(),
-      c.GetShape(x1).dimensions(), c.GetShape(x2).dimensions())
+      c.get_shape(k1).dimensions(), c.get_shape(k2).dimensions(),
+      c.get_shape(x1).dimensions(), c.get_shape(x2).dimensions())
   rank = len(shape)
   def _broadcast(x):
-    ndims = c.GetShape(x).rank()
+    ndims = c.get_shape(x).rank()
     return xla_client.ops.BroadcastInDim(x, shape,
                                          tuple(range(rank - ndims, rank)))
   return cuda_prng.threefry2x32(
-      xla_bridge.computation_builder_shim(c),
-      (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
+      c, (_broadcast(k1), _broadcast(k2)), (_broadcast(x1), _broadcast(x2)))
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True

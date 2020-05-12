@@ -539,7 +539,7 @@ def power(x1, x2):
         x1 = lax.mul(x1, x1)
     return ones_like(x1) if acc is None else acc
 
-  x1, x2 = _promote_args(onp.power, x1, x2)
+  x1, x2 = _promote_args(np.power, x1, x2)
   dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
     return lax.pow(x1, x2)
@@ -651,7 +651,9 @@ def signbit(x):
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), np.bool)
 
-@_wraps(onp.trapz)
+
+
+@_wraps(np.trapz)
 def trapz(y, x=None, dx=1.0, axis=-1):
   y = moveaxis(y, axis, -1)
   if x is not None:

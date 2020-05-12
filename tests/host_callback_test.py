@@ -143,7 +143,7 @@ class HostCallbackTest(jtu.JaxTestCase):
                     func=_print
                     nr_untapped=1
                     what=y * 3 ] d c
-      g = pow f 2.00
+      g = mul f f
   in (g,) }""", str(api.make_jaxpr(fun1)(5.)))
     self.assertEqual("", testing_stream.output)
 
@@ -231,7 +231,7 @@ what: x3
         2. * x, what="here", output_stream=testing_stream))
 
     logging.warning("%s: %s",
-                 self._testMethodName, api.xla_computation(jit_fun1)(5.).GetHloText())
+                 self._testMethodName, api.xla_computation(jit_fun1)(5.).as_hlo_text())
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(5.)
 
@@ -249,7 +249,7 @@ what: here
     logging.info("%s: %s", self._testMethodName,
           api.make_jaxpr(func)(1))
     logging.info("%s: %s", self._testMethodName,
-          api.xla_computation(func)(1).GetHloText())
+          api.xla_computation(func)(1).as_hlo_text())
 
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(2, api.jit(func)(1))
@@ -294,7 +294,7 @@ where: 2
     logging.warning("%s: %s", self._testMethodName,
                  api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                 api.xla_computation(func)(1).GetHloText())
+                 api.xla_computation(func)(1).as_hlo_text())
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(3, api.jit(func)(1))
     assertMultiLineStrippedEqual(self, """
@@ -376,7 +376,7 @@ where: 3
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(func)(1).GetHloText())
+                    api.xla_computation(func)(1).as_hlo_text())
     transform = api.jit if with_jit else lambda f: f
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(4, transform(func)(1))
@@ -414,7 +414,7 @@ where: end
       return res
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-          api.xla_computation(func)(1).GetHloText())
+          api.xla_computation(func)(1).as_hlo_text())
     transform = api.jit if with_jit else lambda f: f
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(4, transform(func)(1))
@@ -457,7 +457,7 @@ where: end
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(func)(1).GetHloText())
+                    api.xla_computation(func)(1).as_hlo_text())
 
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       self.assertEqual(10, api.jit(func)(1))
@@ -490,7 +490,7 @@ where: end
 
     logging.warning("%s: %s", self._testMethodName, api.make_jaxpr(func)(1))
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(func)(1).GetHloText())
+                    api.xla_computation(func)(1).as_hlo_text())
 
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       if with_jit:
@@ -580,7 +580,7 @@ where: 10
         # No dependencies between the jit invocations
         res += api.jit(lambda x: func(x, 10))(x)
     logging.warning("%s: %s", self._testMethodName,
-                    api.xla_computation(lambda x: func(x, 5))(1).GetHloText())
+                    api.xla_computation(lambda x: func(x, 5))(1).as_hlo_text())
     self.assertEqual(100, count)
 
   def test_jit_tap_exception(self):
@@ -679,7 +679,7 @@ what: x3
           x, lambda x: lax.cond(x < 5,
                                 3, lambda x: x,
                                 4, lambda y: y))
-    print(self._testMethodName, api.xla_computation(cfun)(1).GetHloText())
+    print(self._testMethodName, api.xla_computation(cfun)(1).as_hlo_text())
     cfun(1)
 
   def test_while(self):
@@ -727,7 +727,7 @@ what: x3
                     func=_print
                     nr_untapped=1
                     what=y * 3 ] e d
-      h = pow g 2.00
+      h = mul g g
       i = mul b 2.00
       j k = id_tap[ arg_treedef=*
                     func=_print
@@ -740,9 +740,9 @@ what: x3
                       nr_untapped=2
                       transforms=('jvp',)
                       what=y * 3 ] l j f
-      p = pow g 1.00
-      q = mul 2.00 p
-      r = mul n q
+      p = mul n g
+      q = mul g n
+      r = add_any p q
   in (h, r) }""",
                                  str(api.make_jaxpr(jvp_fun1)(jnp.float32(5.), jnp.float32(0.1))))
     with hcb.outfeed_receiver():
@@ -888,7 +888,7 @@ transforms: ('jvp', 'transpose') what: x * 2
                     nr_untapped=1
                     transforms=('batch',)
                     what=y * 3 ] d c
-      g = pow f 2.00
+      g = mul f f
   in (g,) }""", str(api.make_jaxpr(vmap_fun1)(vargs)))
     with hcb.outfeed_receiver():
       res_vmap = vmap_fun1(vargs)

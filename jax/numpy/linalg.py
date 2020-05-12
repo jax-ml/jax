@@ -483,3 +483,56 @@ def solve(a, b):
 for func in get_module_functions(np.linalg):
   if func.__name__ not in globals():
     globals()[func.__name__] = _not_implemented(func)
+
+
+@_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\
+    It has two important differences:
+
+    1. In `numpy.linalg.lstsq`, the default `rcond` is `-1`, and warns that in the future
+       the default will be `None`. Here, the default rcond is `None`.
+    2. In `np.linalg.lstsq` the returned residuals are empty for low-rank or over-determined
+       solutions. Here, the residuals are returned in all cases, to make the function
+       compatible with jit. The non-jit compatible numpy behavior can be recovered by
+       passing numpy_resid=True.
+
+    The lstsq function does not currently have a custom JVP rule, so the gradient is
+    poorly behaved for some inputs, particularly for low-rank `a`.
+    """))
+def lstsq(a, b, rcond=None, *, numpy_resid=False):
+  # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
+  # TODO: add custom jvp rule for more robust lstsq differentiation
+  a, b = _promote_arg_dtypes(a, b)
+  if a.shape[0] != b.shape[0]:
+    raise ValueError("Leading dimensions of input arrays must match")
+  b_orig_ndim = b.ndim
+  if b_orig_ndim == 1:
+    b = b[:, None]
+  if a.ndim != 2:
+    raise TypeError(
+      f"{a.ndim}-dimensional array given. Array must be two-dimensional")
+  if b.ndim != 2:
+    raise TypeError(
+      f"{b.ndim}-dimensional array given. Array must be one or two-dimensional")
+  m, n = a.shape
+  dtype = a.dtype
+  if rcond is None:
+    rcond = jnp.finfo(dtype).eps * max(n, m)
+  elif rcond < 0:
+    rcond = jnp.finfo(dtype).eps
+  u, s, vt = svd(a, full_matrices=False)
+  mask = s >= rcond * s[0]
+  rank = mask.sum()
+  safe_s = jnp.where(mask, s, 1)
+  s_inv = jnp.where(mask, 1 / safe_s, 0)[:, jnp.newaxis]
+  uTb = jnp.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
+  x = jnp.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
+  # Numpy returns empty residuals in some cases. To allow compilation, we
+  # default to returning full residuals in all cases.
+  if numpy_resid and (rank < n or m <= n):
+    resid = jnp.asarray([])
+  else:
+    b_estimate = jnp.matmul(a, x, precision=lax.Precision.HIGHEST)
+    resid = norm(b - b_estimate, axis=0) ** 2
+  if b_orig_ndim == 1:
+    x = x.ravel()
+  return x, resid, rank, s

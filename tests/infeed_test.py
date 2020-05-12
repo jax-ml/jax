@@ -42,8 +42,8 @@ class InfeedTest(jax.test_util.JaxTestCase):
     y = onp.reshape(onp.arange(12, dtype=onp.float32), (3, 4)) # onp.random.randn(3, 4).astype(onp.float32)
     z = onp.random.randn(3, 1, 1).astype(onp.float32)
     device = jax.local_devices()[0]
-    device.TransferToInfeed((y,))
-    device.TransferToInfeed((z,))
+    device.transfer_to_infeed((y,))
+    device.transfer_to_infeed((z,))
     self.assertAllClose(f(x), x + y + z, check_dtypes=True)
 
   def testInfeedThenOutfeed(self):
@@ -60,8 +60,8 @@ class InfeedTest(jax.test_util.JaxTestCase):
     execution = threading.Thread(target=lambda: f(x))
     execution.start()
     device = jax.local_devices()[0]
-    device.TransferToInfeed((y,))
-    out, = device.TransferFromOutfeed(
+    device.transfer_to_infeed((y,))
+    out, = device.transfer_from_outfeed(
       xla_client.shape_from_pyval((y,)).with_major_to_minor_layout_if_absent())
     execution.join()
     self.assertAllClose(out, y + onp.float32(1), check_dtypes=True)
@@ -84,9 +84,9 @@ class InfeedTest(jax.test_util.JaxTestCase):
     execution.start()
     for _ in range(n):
       x = onp.random.randn(3, 4).astype(onp.float32)
-      device.TransferToInfeed((x,))
-      y, = device.TransferFromOutfeed(xla_client.shape_from_pyval((x,))
-                                      .with_major_to_minor_layout_if_absent())
+      device.transfer_to_infeed((x,))
+      y, = device.transfer_from_outfeed(xla_client.shape_from_pyval((x,))
+                                        .with_major_to_minor_layout_if_absent())
       self.assertAllClose(y, x * onp.float32(2), check_dtypes=True)
     execution.join()
 

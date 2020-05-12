@@ -842,6 +842,47 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True,
                           atol=tol, rtol=tol)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_lhs={}_rhs={}_lowrank={}_rcond={}".format(
+           jtu.format_shape_dtype_string(lhs_shape, dtype),
+           jtu.format_shape_dtype_string(rhs_shape, dtype),
+           lowrank, rcond),
+       "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+       "lowrank": lowrank, "rcond": rcond, "rng_factory": rng_factory}
+      for lhs_shape, rhs_shape in [
+          ((1, 1), (1, 1)),
+          ((4, 6), (4,)),
+          ((6, 6), (6, 1)),
+          ((8, 6), (8, 4)),
+      ]
+      for lowrank in [True, False]
+      for rcond in [-1, None, 0.5]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  @jtu.skip_on_devices("tpu")  # SVD not implemented on TPU.
+  @jtu.skip_on_devices("cpu", "gpu")  # TODO(jakevdp) Test fails numerically
+  def testLstsq(self, lhs_shape, rhs_shape, dtype, lowrank, rcond, rng_factory):
+    rng = rng_factory(self.rng())
+    _skip_if_unsupported_type(dtype)
+    onp_fun = partial(np.linalg.lstsq, rcond=rcond)
+    jnp_fun = partial(jnp.linalg.lstsq, rcond=rcond)
+    jnp_fun_numpy_resid = partial(jnp.linalg.lstsq, rcond=rcond, numpy_resid=True)
+    tol = {np.float32: 1e-6, np.float64: 1e-12,
+           np.complex64: 1e-6, np.complex128: 1e-12}
+    def args_maker():
+      lhs = rng(lhs_shape, dtype)
+      if lowrank and lhs_shape[1] > 1:
+        lhs[:, -1] = lhs[:, :-1].mean(1)
+      return [lhs, rng(rhs_shape, dtype)]
+
+    self._CheckAgainstNumpy(onp_fun, jnp_fun_numpy_resid, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, atol=tol, rtol=tol)
+
+    # Disabled because grad is flaky for low-rank inputs.
+    # TODO:
+    # jtu.check_grads(lambda *args: jnp_fun(*args)[0], args_maker(), order=2, atol=1e-2, rtol=1e-2)
+
   # Regression test for incorrect type for eigenvalues of a complex matrix.
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): No complex eigh implementation on TPU.
   def testIssue669(self):

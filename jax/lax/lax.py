@@ -1794,7 +1794,7 @@ def _broadcast_translate(translate: Callable):
     return result
 
   def _broadcasted_translation_rule(c, *args, **kwargs):
-    shapes = [c.GetShape(arg).dimensions() for arg in args]
+    shapes = [c.get_shape(arg).dimensions() for arg in args]
     result_shape = broadcast_shapes(*shapes)
     args = [_broadcast_array(arg, arg_shape, result_shape)
             for arg, arg_shape in zip(args, shapes)]
@@ -1845,11 +1845,11 @@ neg_p = standard_unop(_num, 'neg')
 ad.deflinear(neg_p, lambda t: [neg(t)])
 
 def _sign_translation_rule(c, x):
-  shape = c.GetShape(x)
+  shape = c.get_shape(x)
   dtype = shape.numpy_dtype()
   if dtypes.issubdtype(dtype, onp.unsignedinteger):
     zero = xb.constant(c, onp.array(0, dtype=dtype))
-    dims = c.GetShape(x).dimensions()
+    dims = c.get_shape(x).dimensions()
     return xops.Select(xops.Eq(x, zero), xops.Broadcast(zero, dims),
                        xops.Broadcast(xb.constant(c, onp.array(1, dtype=dtype)),
                                       dims))
@@ -2108,7 +2108,7 @@ ad.defjvp(rem_p,
 def _broadcasting_select(c, which, x, y):
   """Wrapper around XLA `Select` that broadcasts its arguments."""
   which_shape, x_shape, y_shape = (
-    c.GetShape(t).dimensions() for t in (which, x, y))
+    c.get_shape(t).dimensions() for t in (which, x, y))
   out_shape = broadcast_shapes(which_shape, x_shape, y_shape)
   bcast_dims = lambda shape: tuple(range(len(out_shape) - len(shape),
                                          len(out_shape)))
@@ -2119,7 +2119,7 @@ def _broadcasting_select(c, which, x, y):
 
 
 def _minmax_translation_rule(c, x, y, *, minmax=None, cmp=None):
-  dtype = c.GetShape(x).numpy_dtype()
+  dtype = c.get_shape(x).numpy_dtype()
   if dtypes.issubdtype(dtype, onp.complexfloating):
     rx = xops.Real(x)
     ry = xops.Real(y)
@@ -3409,7 +3409,7 @@ def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
 
 def _gather_translation_rule(c, operand, start_indices, *, dimension_numbers,
                              slice_sizes):
-  indices_shape = c.GetShape(start_indices)
+  indices_shape = c.get_shape(start_indices)
   return xops.Gather(
     operand, start_indices,
     _gather_dimensions_proto(indices_shape, dimension_numbers), slice_sizes,
@@ -3517,11 +3517,11 @@ def _scatter_shape_rule(operand, scatter_indices, updates, **kwargs):
 
 def _scatter_translation_rule(c, operand, scatter_indices, updates,
                               update_jaxpr, update_consts, dimension_numbers):
-  dtype = c.GetShape(operand).numpy_dtype()
+  dtype = c.get_shape(operand).numpy_dtype()
   init_value = xb.constant(c, onp.array(0, dtype))
   update_computation = _reduction_computation(
       c, update_jaxpr, update_consts, init_value)
-  indices_shape = c.GetShape(scatter_indices)
+  indices_shape = c.get_shape(scatter_indices)
   return xops.Scatter(operand, scatter_indices, updates, update_computation,
                       _scatter_dimensions_proto(indices_shape, dimension_numbers),
                       False, False)
@@ -3817,13 +3817,13 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
     raise NotImplementedError  # loop and stack
 
 def _reduction_computation(c, jaxpr, consts, init_value):
-  shape = c.GetShape(init_value)
+  shape = c.get_shape(init_value)
   axis_env = xla.AxisEnv(1)  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [xb.parameter(subc, 0, shape), xb.parameter(subc, 1, shape)]
   out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
-  return subc.Build(out)
+  return subc.build(out)
 
 def _masking_defreducer(prim, identity):
   masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity)
@@ -3853,7 +3853,7 @@ def _reduce_sum_shape_rule(operand, *, axes):
   return _reduce_op_shape_rule(operand, axes=axes)
 
 def _reduce_sum_translation_rule(c, operand, *, axes):
-  dtype = c.GetShape(operand).numpy_dtype()
+  dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.Reduce(c, [operand], [xb.constant(c, onp.array(0, dtype))],
                      xla.primitive_subcomputation(add_p, scalar, scalar),
@@ -3880,7 +3880,7 @@ def _reduce_op_shape_rule(operand, *, axes):
   return tuple(onp.delete(operand.shape, axes))
 
 def _reduce_prod_translation_rule(c, operand, *, axes):
-  dtype = c.GetShape(operand).numpy_dtype()
+  dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.Reduce(c, [operand], [xb.constant(c, onp.array(1, dtype))],
                      xla.primitive_subcomputation(mul_p, scalar, scalar), axes)
@@ -3930,7 +3930,7 @@ def _reduce_chooser_shape_rule(operand, *, axes):
   return tuple(onp.delete(operand.shape, axes))
 
 def _reduce_chooser_translation_rule(prim, identity, c, operand, *, axes):
-  dtype = c.GetShape(operand).numpy_dtype()
+  dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.Reduce(c, [operand], [xb.constant(c, identity(dtype))],
                      xla.primitive_subcomputation(prim, scalar, scalar), axes)
@@ -3998,7 +3998,7 @@ def _reduce_window_translation_rule(c, operand, init_value, *, jaxpr, consts,
                                     window_dimensions, window_strides, padding):
   xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
   pads = xc.window_padding_type_to_pad_values(
-    padding, c.GetShape(operand).dimensions(), window_dimensions,
+    padding, c.get_shape(operand).dimensions(), window_dimensions,
     window_strides)
   return xops.ReduceWindowWithGeneralPadding(
     operand, init_value, xla_computation, window_dimensions,
@@ -4037,10 +4037,10 @@ def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
 
 def _reduce_window_sum_translation_rule(c, operand, *, window_dimensions,
                                         window_strides, padding):
-  dtype = c.GetShape(operand).numpy_dtype()
+  dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   pads = xc.window_padding_type_to_pad_values(
-    padding, c.GetShape(operand).dimensions(), window_dimensions,
+    padding, c.get_shape(operand).dimensions(), window_dimensions,
     window_strides)
   return xops.ReduceWindowWithGeneralPadding(
     operand, xb.constant(c, onp.array(0, dtype)),
@@ -4089,10 +4089,10 @@ batching.primitive_batchers[reduce_window_sum_p] = partial(
 
 def _reduce_window_chooser_translation_rule(
     prim, identity, c, operand, *, window_dimensions, window_strides, padding):
-  dtype = c.GetShape(operand).numpy_dtype()
+  dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   pads = xc.window_padding_type_to_pad_values(
-    padding, c.GetShape(operand).dimensions(), window_dimensions,
+    padding, c.get_shape(operand).dimensions(), window_dimensions,
     window_strides)
   return xops.ReduceWindowWithGeneralPadding(
     operand, xb.constant(c, identity(dtype)),
@@ -4170,7 +4170,7 @@ def _select_and_scatter_translation(
   select = _reduction_computation(c, select_jaxpr, select_consts, init_value)
   scatter = _reduction_computation(c, scatter_jaxpr, scatter_consts, init_value)
   pads = xc.window_padding_type_to_pad_values(
-    padding, c.GetShape(operand).dimensions(), window_dimensions,
+    padding, c.get_shape(operand).dimensions(), window_dimensions,
     window_strides)
   return xops.SelectAndScatterWithGeneralPadding(
     operand, select, window_dimensions, window_strides, pads, source,
@@ -4189,13 +4189,13 @@ def _select_and_scatter_add_shape_rule(
 def _select_and_scatter_add_translation(
     c, source, operand, *, select_prim, window_dimensions, window_strides,
     padding):
-  dtype = c.GetShape(operand).numpy_dtype()
+  dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   select = xla.primitive_subcomputation(select_prim, scalar, scalar)
   scatter = xla.primitive_subcomputation(add_p, scalar, scalar)
   zero = xb.constant(c, onp.array(0, dtype))
   pads = xc.window_padding_type_to_pad_values(
-    padding, c.GetShape(operand).dimensions(), window_dimensions,
+    padding, c.get_shape(operand).dimensions(), window_dimensions,
     window_strides)
   return xops.SelectAndScatterWithGeneralPadding(
     operand, select, window_dimensions, window_strides, pads, source, zero,
@@ -4286,7 +4286,7 @@ _UINT_DTYPES = {
 def _select_and_gather_add_translation(
     c, tangents, operand, *, select_prim, window_dimensions, window_strides,
     padding, max_bits=64):
-  shape = c.GetShape(operand)
+  shape = c.get_shape(operand)
   dtype = shape.numpy_dtype()
   etype = shape.xla_element_type()
   nbits = dtypes.finfo(dtype).bits
@@ -4369,13 +4369,13 @@ def _select_and_gather_add_translation(
     assert select_prim is ge_p or select_prim is le_p
     which = xops.Ge if select_prim is ge_p else xops.Le
     xops.Select(which(fst(c, x), fst(c, y)), x, y)
-    return c.Build()
+    return c.build()
 
 
   assert select_prim is ge_p or select_prim is le_p, select_prim
   init = -onp.inf if select_prim is ge_p else onp.inf
   pads = xc.window_padding_type_to_pad_values(
-    padding, c.GetShape(operand).dimensions(), window_dimensions,
+    padding, c.get_shape(operand).dimensions(), window_dimensions,
     window_strides)
   out = xops.ReduceWindowWithGeneralPadding(
     pack(operand, tangents), pack(const(c, dtype, init), const(c, dtype, 0)),
@@ -4826,7 +4826,7 @@ def _outfeed_abstract_eval(token, *xs):
 
 def _outfeed_translation_rule(c, token, *xs):
   t = xops.Tuple(c, xs)
-  return xops.OutfeedWithToken(t, token, c.GetShape(t))
+  return xops.OutfeedWithToken(t, token, c.get_shape(t))
 
 outfeed_p = Primitive("outfeed")
 outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
@@ -4857,7 +4857,7 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
   return ShapedArray(shape, a.dtype)
 
 def _rng_uniform_translation_rule(c, a, b, *, shape):
-  xla_shape = xc.Shape.array_shape(c.GetShape(a).xla_element_type(), shape)
+  xla_shape = xc.Shape.array_shape(c.get_shape(a).xla_element_type(), shape)
   return xops.RngUniform(a, b, xla_shape)
 
 rng_uniform_p = Primitive("rng_uniform")
