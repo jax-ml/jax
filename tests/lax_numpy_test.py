@@ -1276,9 +1276,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
     tol = jtu.tolerance(dtype, {onp.float64: 1e-12})
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, tol=tol,
-                            check_dtypes=(dtype != jnp.bfloat16))
+                            check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
-                          check_dtypes=(dtype != jnp.bfloat16))
+                          check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
