@@ -3116,7 +3116,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testSquareIsImplementedByMultiply(self):
     # See https://github.com/google/jax/pull/3036
     hlo_text = jax.xla_computation(lambda x: jnp.square(x))(42.0).GetHloText()
-    self.assertIn('f32[] multiply(parameter.1, parameter.1)', hlo_text)
+    self.assertIn('multiply(parameter.1, parameter.1)', hlo_text)
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
