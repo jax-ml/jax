@@ -828,6 +828,22 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = f(4.)
     self.assertAllClose(y, expected, check_dtypes=False)
 
+  def testCondJitDisabled(self):
+    def f_ref(x):
+      return 3. * x if x < 2 else jnp.sin(x)
+    def f(x):
+      return lax.cond(x < 2, lambda x: 3. * x, lambda x: jnp.sin(x), x)
+
+    with api.disable_jit():
+      y = f(1.)
+      expected = f_ref(1.)
+      self.assertAllClose(y, expected, check_dtypes=False)
+
+    with api.disable_jit():
+      y = api.jit(f)(1.)
+      expected = f(1.)
+      self.assertAllClose(y, expected, check_dtypes=False)
+
   def testCondWithConsts(self):
     def f(x):
       return lax.cond(x < 2,

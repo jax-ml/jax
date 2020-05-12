@@ -580,9 +580,9 @@ def cond(pred, true_fun: Callable, false_fun: Callable, operand, *unused_args):
 
   if jax.api._jit_is_disabled():
     if pred:
-      return true_fun(true_operand)
+      return true_fun(operand)
     else:
-      return false_fun(false_operand)
+      return false_fun(operand)
 
   ops, ops_tree = tree_flatten((operand,))
   ops_avals = tuple(_map(_abstractify, ops))
