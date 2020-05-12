@@ -610,6 +610,9 @@ def _xla_callable_args(c, avals, tuple_args, replicated=None):
                 for i, (a, r) in enumerate(zip(avals, replicated))]
     return xla_args
   else:
+    if replicated is not None:
+      replicated = [r for a, r in zip(avals, replicated)
+                    if a is not abstract_token]
     tuple_shape = xc.Shape.tuple_shape(
         [aval_to_xla_shape(a) for a in avals if a is not abstract_token])
     tuple_param = xb.parameter(c, 0, tuple_shape, replicated=replicated)
