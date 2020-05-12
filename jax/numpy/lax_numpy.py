@@ -524,7 +524,22 @@ def _float_divmod(x1, x2):
 
 @_wraps(np.power)
 def power(x1, x2):
-  x1, x2 = _promote_args(np.power, x1, x2)
+  # Special case for small positive integer scalars: use binary exponentiation.
+  # Using lax.pow may be imprecise for floating-point values; the goal of this
+  # code path is to make sure we end up with a precise output for the common
+  # pattern ``x ** 2`` or similar.
+  if isinstance(x2, int) and 0 <= x2 <= 64:
+    x1 = asarray(x1)
+    acc = None
+    while x2 > 0:
+      if x2 & 1:
+        acc = x1 if acc is None else lax.mul(acc, x1)
+      x2 >>= 1
+      if x2 > 0:
+        x1 = lax.mul(x1, x1)
+    return ones_like(x1) if acc is None else acc
+
+  x1, x2 = _promote_args(onp.power, x1, x2)
   dtype = _dtype(x1)
   if not issubdtype(dtype, integer):
     return lax.pow(x1, x2)
@@ -635,6 +650,16 @@ def signbit(x):
 
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), np.bool)
+
+@_wraps(onp.trapz)
+def trapz(y, x=None, dx=1.0, axis=-1):
+  y = moveaxis(y, axis, -1)
+  if x is not None:
+    if ndim(x) == 1:
+      dx = diff(x)
+    else:
+      dx = moveaxis(diff(x, axis=axis), axis, -1)
+  return 0.5 * (dx * (y[..., 1:] + y[..., :-1])).sum(-1)
 
 
 @_wraps(np.trunc)
