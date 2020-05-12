@@ -3302,6 +3302,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(x.trace(), api.jit(lambda y: y.trace())(x),
                         check_dtypes=True)
 
+  def testSquareOfIntegers(self):
+    # See https://github.com/google/jax/pull/3036
+    # Checks if the squares of float32 integers have no numerical errors.
+    # It should be satisfied with all integers less than sqrt(2**24).
+    x = jnp.arange(2**12, dtype=jnp.int32)
+    onp.testing.assert_array_equal(jnp.square(x.astype(jnp.float32)), x * x)
+
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
 

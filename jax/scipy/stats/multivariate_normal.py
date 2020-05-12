@@ -27,7 +27,8 @@ from ...numpy.lax_numpy import _promote_dtypes_inexact, _constant_like
 def logpdf(x, mean, cov):
   x, mean, cov = _promote_dtypes_inexact(x, mean, cov)
   if not mean.shape:
-    return -1/2 * (x - mean) ** 2 / cov - 1/2 * (np.log(2*np.pi) + jnp.log(cov))
+    return (-1/2 * jnp.square(x - mean) / cov
+            - 1/2 * (np.log(2*np.pi) + jnp.log(cov)))
   else:
     n = mean.shape[-1]
     if not np.shape(cov):
