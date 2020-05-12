@@ -1669,10 +1669,10 @@ def nonzero(a):
   return tuple(indexes[..., i] for i in range(ndims))
 
 
-def _make_nan_reduction(np_reduction, np_reduction, init_val, nan_if_all_nan):
+def _make_nan_reduction(np_reduction, jnp_reduction, init_val, nan_if_all_nan):
   @_wraps(np_reduction)
   def nan_reduction(a, axis=None, out=None, keepdims=False, **kwargs):
-    out = np_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
+    out = jnp_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
                        axis=axis, out=out, keepdims=keepdims, **kwargs)
     if nan_if_all_nan:
       return where(all(isnan(a), axis=axis, keepdims=keepdims),
