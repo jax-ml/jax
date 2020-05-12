@@ -512,7 +512,7 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
       f"{a.ndim}-dimensional array given. Array must be two-dimensional")
   if b.ndim != 2:
     raise TypeError(
-      f"{b_original_ndim}-dimensional array given. Array must be one or two-dimensional")
+      f"{b.ndim}-dimensional array given. Array must be one or two-dimensional")
   m, n = a.shape
   dtype = a.dtype
   if rcond is None:
