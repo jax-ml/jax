@@ -637,6 +637,17 @@ def signbit(x):
   return lax.convert_element_type(x >> (info.nexp + info.nmant), onp.bool)
 
 
+@_wraps(onp.trapz)
+def trapz(y, x=None, dx=1.0, axis=-1):
+  y = moveaxis(y, axis, -1)
+  if x is not None:
+    if ndim(x) == 1:
+      dx = diff(x)
+    else:
+      dx = moveaxis(diff(x, axis=axis), axis, -1)
+  return 0.5 * (dx * (y[..., 1:] + y[..., :-1])).sum(-1)
+
+
 @_wraps(onp.trunc)
 def trunc(x):
   return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
