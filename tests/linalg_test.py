@@ -280,7 +280,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose((jnp.conj(v) * dv).sum(-2), zero, check_dtypes=False,
                         rtol=1e-5, atol=1e-5)
 
-    jtu.check_grads(jnp.linalg.eig, (a,), order=2, modes=['fwd'])
+    jtu.check_grads(lambda x: jnp.linalg.eig(x), (a,), order=2,
+                    modes=['fwd'], rtol=1e-2, atol=1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(

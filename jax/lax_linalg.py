@@ -235,21 +235,23 @@ def eig_jvp_rule(primals, tangents):
   a, = primals
   da, = tangents
 
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
+
   w, vl, v = eig(a)
 
   da = da.astype(v.dtype)
 
-  eye = jnp.eye(a.shape[-1], dtype=a.dtype)
+  vinv_da_v = dot(solve(v, da), v)
+  dw = jnp.diagonal(vinv_da_v, axis1=-2, axis2=-1)
+
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
+  eye = jnp.eye(a.shape[-1], dtype=a.dtype)
   Fmat = (jnp.reciprocal(eye + w[..., jnp.newaxis, :] - w[..., jnp.newaxis])
           - eye)
-  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
-                precision=lax.Precision.HIGHEST)
-  vinv_da_v = dot(solve(v, da), v)
   du = dot(v, jnp.multiply(Fmat, vinv_da_v))
   corrections = jnp.sum(jnp.conj(v) * du, -2, keepdims=True)
   dv = du - v * jnp.broadcast_to(corrections, v.shape)
-  dw = jnp.diagonal(vinv_da_v, axis1=-2, axis2=-1)
   return (w, vl, v), (dw, vl, dv)
 
 eig_p = Primitive('eig')
