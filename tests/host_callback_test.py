@@ -143,7 +143,7 @@ class HostCallbackTest(jtu.JaxTestCase):
                     func=_print
                     nr_untapped=1
                     what=y * 3 ] d c
-      g = pow f 2.00
+      g = mul f f
   in (g,) }""", str(api.make_jaxpr(fun1)(5.)))
     self.assertEqual("", testing_stream.output)
 
@@ -727,7 +727,7 @@ what: x3
                     func=_print
                     nr_untapped=1
                     what=y * 3 ] e d
-      h = pow g 2.00
+      h = mul g g
       i = mul b 2.00
       j k = id_tap[ arg_treedef=*
                     func=_print
@@ -740,9 +740,9 @@ what: x3
                       nr_untapped=2
                       transforms=('jvp',)
                       what=y * 3 ] l j f
-      p = pow g 1.00
-      q = mul 2.00 p
-      r = mul n q
+      p = mul n g
+      q = mul g n
+      r = add_any p q
   in (h, r) }""",
                                  str(api.make_jaxpr(jvp_fun1)(jnp.float32(5.), jnp.float32(0.1))))
     with hcb.outfeed_receiver():
@@ -888,7 +888,7 @@ transforms: ('jvp', 'transpose') what: x * 2
                     nr_untapped=1
                     transforms=('batch',)
                     what=y * 3 ] d c
-      g = pow f 2.00
+      g = mul f f
   in (g,) }""", str(api.make_jaxpr(vmap_fun1)(vargs)))
     with hcb.outfeed_receiver():
       res_vmap = vmap_fun1(vargs)
