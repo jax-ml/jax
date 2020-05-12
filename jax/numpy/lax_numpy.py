@@ -1522,6 +1522,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   else:
     normalizer = onp.prod(onp.take(shape(a), axis))
   if dtype is None:
+    a = a if isinstance(a, ndarray) else asarray(a)
     if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
       dtype = float_
     else:
