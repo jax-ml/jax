@@ -172,7 +172,7 @@ def _solve(a, b, sym_pos, lower):
   factors = cho_factor(lax.stop_gradient(a), lower=lower)
   custom_solve = partial(
       lax.custom_linear_solve,
-      lambda x: np_linalg._matvec_multiply(a, x),
+      lambda x: lax_linalg._matvec_multiply(a, x),
       solve=lambda _, x: cho_solve(factors, x),
       symmetric=True)
   if a.ndim == b.ndim + 1:

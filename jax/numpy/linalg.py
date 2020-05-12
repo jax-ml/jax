@@ -255,32 +255,11 @@ def _det_jvp(primals, tangents):
   return y, jnp.trace(z, axis1=-1, axis2=-2)
 
 
-@custom_jvp
 @_wraps(np.linalg.eig)
 def eig(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
   w, vl, vr = lax_linalg.eig(a)
   return w, vr
-
-@eig.defjvp
-def eig_jvp_rule(primals, tangents):
-  a, = primals
-  da, = tangents
-
-  w, v = eig(a)
-
-  eye = jnp.eye(a.shape[-1], dtype=a.dtype)
-  # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
-  Fmat = (jnp.reciprocal(eye + w[..., jnp.newaxis, :] - w[..., jnp.newaxis])
-          - eye)
-  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
-                precision=lax.Precision.HIGHEST)
-  vinv_da_v = dot(solve(v, da), v)
-  du = dot(v, jnp.multiply(Fmat, vinv_da_v))
-  corrections = (jnp.conj(v) * du).sum(-2, keepdims=True)
-  dv = du - v * corrections
-  dw = jnp.diagonal(vinv_da_v, axis1=-2, axis2=-1)
-  return (w, v), (dw, dv)
 
 
 @_wraps(np.linalg.eigvals)
@@ -474,31 +453,11 @@ def _check_solve_shapes(a, b):
     raise ValueError(msg.format(a.shape, b.shape))
 
 
-@partial(vectorize, signature='(n,m),(m)->(n)')
-def _matvec_multiply(a, b):
-  return jnp.dot(a, b, precision=lax.Precision.HIGHEST)
-
-
 @_wraps(np.linalg.solve)
 @jit
 def solve(a, b):
   a, b = _promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
-  _check_solve_shapes(a, b)
-
-  # With custom_linear_solve, we can reuse the same factorization when
-  # computing sensitivities. This is considerably faster.
-  lu, pivots = lax_linalg.lu(lax.stop_gradient(a))
-  custom_solve = partial(
-      lax.custom_linear_solve,
-      lambda x: _matvec_multiply(a, x),
-      solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=0),
-      transpose_solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=1))
-  if a.ndim == b.ndim + 1:
-    # b.shape == [..., m]
-    return custom_solve(b)
-  else:
-    # b.shape == [..., m, k]
-    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
+  return lax_linalg.solve(a, b)
 
 
 for func in get_module_functions(np.linalg):

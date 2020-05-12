@@ -85,8 +85,36 @@ def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
     out = out[..., 0] if left_side else out[..., 0, :]
   return out
 
+@api.jit
+def solve(a, b):
+  _check_solve_shapes(a, b)
+
+  # With custom_linear_solve, we can reuse the same factorization when
+  # computing sensitivities. This is considerably faster.
+  lu_, pivots = lu(lax.stop_gradient(a))
+  custom_solve = partial(
+      lax.custom_linear_solve,
+      lambda x: _matvec_multiply(a, x),
+      solve=lambda _, x: lu_solve(lu_, pivots, x, trans=0),
+      transpose_solve=lambda _, x: lu_solve(lu_, pivots, x, trans=1))
+  if a.ndim == b.ndim + 1:
+    # b.shape == [..., m]
+    return custom_solve(b)
+  else:
+    # b.shape == [..., m, k]
+    return api.vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
+
+def _check_solve_shapes(a, b):
+  if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
+    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
+           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
+    raise ValueError(msg.format(a.shape, b.shape))
+
 
 # utilities
+@partial(vectorize, signature='(n,m),(m)->(n)')
+def _matvec_multiply(x, y):
+  return lax.dot(x, y, precision=lax.Precision.HIGHEST)
 
 def _T(x): return jnp.swapaxes(x, -1, -2)
 def _H(x): return jnp.conj(_T(x))
@@ -203,12 +231,34 @@ def eig_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return eig_p.bind(x), (0, 0, 0)
 
+def eig_jvp_rule(primals, tangents):
+  a, = primals
+  da, = tangents
+
+  w, vl, v = eig(a)
+
+  da = da.astype(v.dtype)
+
+  eye = jnp.eye(a.shape[-1], dtype=a.dtype)
+  # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
+  Fmat = (jnp.reciprocal(eye + w[..., jnp.newaxis, :] - w[..., jnp.newaxis])
+          - eye)
+  dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
+  vinv_da_v = dot(solve(v, da), v)
+  du = dot(v, jnp.multiply(Fmat, vinv_da_v))
+  corrections = jnp.sum(jnp.conj(v) * du, -2, keepdims=True)
+  dv = du - v * jnp.broadcast_to(corrections, v.shape)
+  dw = jnp.diagonal(vinv_da_v, axis1=-2, axis2=-1)
+  return (w, vl, v), (dw, vl, dv)
+
 eig_p = Primitive('eig')
 eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
 eig_p.def_abstract_eval(eig_abstract_eval)
 xla.translations[eig_p] = eig_translation_rule
 xla.backend_specific_translations['cpu'][eig_p] = eig_cpu_translation_rule
+ad.primitive_jvps[eig_p] = eig_jvp_rule
 batching.primitive_batchers[eig_p] = eig_batching_rule
 
 
