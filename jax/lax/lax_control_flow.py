@@ -218,7 +218,7 @@ def while_loop(cond_fun, body_fun, init_val):
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
   """
-  if jax.api._jit_is_disabled():
+  if jax.api._jit_is_disabled() and not isinstance(init_val, core.Tracer):
     val = init_val
     while cond_fun(val):
       val = body_fun(val)
@@ -527,7 +527,7 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if jax.api._jit_is_disabled():
+  if jax.api._jit_is_disabled() and not isinstance(pred, core.Tracer):
     if pred:
       return true_fun(true_operand)
     else:
@@ -599,14 +599,28 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   false_jaxpr_batched, _ = batching.batch_jaxpr(false_jaxpr, size, f_bat, out_bat)
 
   if pred_bat:
-    true_out = core.jaxpr_as_fun(true_jaxpr_batched)(*true_ops)
-    false_out = core.jaxpr_as_fun(false_jaxpr_batched)(*false_ops)
-    true_out = [batching.broadcast(x, size, 0) if not b else x
-                for x, b in zip(true_out, out_bat)]
-    false_out = [batching.broadcast(x, size, 0) if not b else x
-                 for x, b in zip(false_out, out_bat)]
-    return [_cond_pred_bcast_select(pred, t, f)
-            for t, f in zip(true_out, false_out)], [0] * len(true_out)
+    def true_fn(true_ops):
+      true_out = core.jaxpr_as_fun(true_jaxpr_batched)(*true_ops)
+      return tuple(batching.broadcast(x, size, 0) if not b else x
+                   for x, b in zip(true_out, out_bat))
+    def false_fn(false_ops):
+      false_out = core.jaxpr_as_fun(false_jaxpr_batched)(*false_ops)
+      return tuple(batching.broadcast(x, size, 0) if not b else x
+                   for x, b in zip(false_out, out_bat))
+    def mixed_fn(all_ops):
+      pred, true_ops, false_ops = all_ops
+      return tuple(_cond_pred_bcast_select(
+          pred, t, f) for t, f in zip(true_fn(true_ops), false_fn(false_ops)))
+    def second_cond(all_ops):
+      true_ops, false_ops = all_ops
+      return cond(
+          lax._reduce_and(pred, (0,)),
+          true_ops, true_fn,
+          (pred, true_ops, false_ops), mixed_fn)
+    return cond(
+        lax.bitwise_not(lax._reduce_or(pred, (0,))),
+        false_ops, false_fn,
+        (true_ops, false_ops), second_cond), [0] * len(out_bat)
   else:
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
     out = cond_p.bind(
