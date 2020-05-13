@@ -3790,7 +3790,8 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
 
 @partial(jit, static_argnums=(2, 3, 4))
 def _quantile(a, q, axis, interpolation, keepdims):
-  a = asarray(a)
+  a = asarray(a, dtype=promote_types(_dtype(a), float_))
+  q = asarray(q, dtype=promote_types(_dtype(q), float_))
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -3802,15 +3803,6 @@ def _quantile(a, q, axis, interpolation, keepdims):
   q_ndim = ndim(q)
   if q_ndim > 1:
     raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
-
-  q = asarray(q)
-
-  if not issubdtype(a.dtype, floating) or not issubdtype(q.dtype, floating):
-    msg = "q and a arguments to quantile must be of float type, got {} and {}"
-    raise TypeError(msg.format(a.dtype, q.dtype))
-
-  # Promote q to at least float32 for precise interpolation.
-  q = lax.convert_element_type(q, promote_types(q.dtype, float32))
 
   a_shape = shape(a)
   a = lax.sort(a, dimension=axis)

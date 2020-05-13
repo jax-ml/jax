@@ -2451,7 +2451,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("percentile", partial(jtu.rand_uniform, low=0., high=100.)),
           ("quantile", partial(jtu.rand_uniform, low=0., high=1.)),
         )
-        for a_dtype in float_dtypes
+        for a_dtype in default_dtypes
         for a_shape, axis in (
           ((7,), None),
           ((47, 7), 0),
@@ -2494,7 +2494,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "a_shape": a_shape, "a_dtype": a_dtype,
          "axis": axis,
          "keepdims": keepdims}
-        for a_dtype in float_dtypes
+        for a_dtype in default_dtypes
         for a_shape, axis in (
           ((7,), None),
           ((47, 7), 0),
