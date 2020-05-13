@@ -1176,7 +1176,8 @@ def cumprod(operand: Array, axis: int) -> Array:
   """Computes a cumulative product along `axis`."""
   return cumprod_p.bind(operand, axis=int(axis))
 
-def sort(operand: Union[Array, Tuple[Array, ...]], dimension: int = -1) -> Array:
+def sort(operand: Union[Array, Tuple[Array, ...]], dimension: int = -1
+         ) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_
   operator.
@@ -1194,7 +1195,8 @@ def sort_key_val(keys: Array, values: Array,
                  dimension: int = -1) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
   dimension = _canonicalize_axis(dimension, len(keys.shape))
-  return tuple(sort_p.bind(keys, values, dimension=dimension))
+  k, v = sort_p.bind(keys, values, dimension=dimension)
+  return k, v
 
 def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the last axis of ``operand``."""
