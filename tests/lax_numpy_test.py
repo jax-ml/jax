@@ -2103,8 +2103,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, a_dtype), dtype),
       "shape": shape, "a_dtype": a_dtype, "dtype": dtype}
       for shape in [(8,), (3, 8)]  # last dim = 8 to ensure shape compatibility
-      for a_dtype in [onp.uint8, onp.float16, onp.int32, onp.float64]
-      for dtype in [onp.int8, onp.int16, onp.float32, onp.float64]))
+      for a_dtype in [onp.bool_, onp.uint8, onp.float16, onp.int32, onp.float64]
+      for dtype in [onp.bool_, onp.int8, onp.int16, onp.float32, onp.float64]))
   def testView(self, shape, a_dtype, dtype):
     if not FLAGS.jax_enable_x64 and a_dtype == onp.float64 or dtype == onp.float64:
       self.skipTest("x64 types are disabled by jax_enable_x64")

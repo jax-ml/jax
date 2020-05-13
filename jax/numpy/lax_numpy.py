@@ -3934,16 +3934,23 @@ def _view(arr, dtype=None, type=None):
     raise NotImplementedError("`type` argument of array.view()")
   if dtype is None:
     return arr
-  nbits_in = _dtype_info(_dtype(arr)).bits
-  nbits_out = _dtype_info(dtype).bits
+  arr_dtype = _dtype(arr)
+  # bool is implemented as lax:PRED, which is not compatible with lax.bitcast_convert_type.
+  # We work around this by casting bool to uint8.
+  if arr_dtype == bool_:
+    arr = arr.astype(uint8)
+  nbits_in = 8 * arr_dtype.itemsize
+  nbits_out = 8 * _dtype(dtype).itemsize
   if nbits_in == nbits_out:
+    if dtype == bool_:
+      return lax.bitcast_convert_type(arr, uint8).astype(dtype)
     return lax.bitcast_convert_type(arr, dtype)
   if nbits_out > nbits_in and (shape(arr)[-1] * nbits_in) % nbits_out != 0:
     raise ValueError("When changing to a larger dtype, its size must be a divisor "
                      "of the total size in bytes of the last axis of the array.")
   byte_dtypes = {8: uint8, 16: uint16, 32: uint32, 64: uint64}
   if nbits_in not in byte_dtypes:
-    raise NotImplementedError(f"arr.view() for arr.dtype={dtype}")
+    raise NotImplementedError(f"arr.view() for arr.dtype={arr_dtype}")
   if nbits_out not in byte_dtypes:
     raise NotImplementedError(f"arr.view(dtype) for dtype={dtype}")
   shifts_in = arange(0, nbits_in, 8, dtype=np.uint8)
@@ -3957,6 +3964,8 @@ def _view(arr, dtype=None, type=None):
   # Convert to output bytes
   arr_bytes = (arr_bytes << shifts_out).sum(-1).astype(byte_dtypes[nbits_out])
   # Cast to output dtype
+  if dtype == bool_:
+    return lax.bitcast_convert_type(arr_bytes, uint8).astype(dtype)
   return lax.bitcast_convert_type(arr_bytes, dtype)
 
 ### track unimplemented functions
