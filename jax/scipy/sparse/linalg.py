@@ -56,7 +56,7 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
   bs = _vdot_tree(b, b)
-  atol2 = jnp.maximum(tol ** 2 * bs, atol ** 2)
+  atol2 = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
 
   # https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_preconditioned_conjugate_gradient_method
 

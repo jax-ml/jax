@@ -1252,6 +1252,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_yshape={}_xshape={}_dx={}_axis={}".format(
+        jtu.format_shape_dtype_string(yshape, dtype),
+        jtu.format_shape_dtype_string(xshape, dtype) if xshape is not None else None,
+        dx, axis),
+        "yshape": yshape, "xshape": xshape, "dtype": dtype, "dx": dx, "axis": axis}
+        for dtype in default_dtypes
+        for yshape, xshape, dx, axis in [
+          ((10,), None, 1.0, -1),
+          ((3, 10), None, 2.0, -1),
+          ((3, 10), None, 3.0, -0),
+          ((10, 3), (10,), 1.0, -2),
+          ((3, 10), (10,), 1.0, -1),
+          ((3, 10), (3, 10), 1.0, -1),
+          ((2, 3, 10), (3, 10), 1.0, -2),
+        ]))
+  def testTrapz(self, yshape, xshape, dtype, dx, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
+    onp_fun = partial(onp.trapz, dx=dx, axis=axis)
+    jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
+    tol = jtu.tolerance(dtype, {onp.float64: 1e-12})
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, tol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
+                          check_dtypes=False)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
           onp.dtype(dtype).name, m, n, k),
@@ -2376,8 +2404,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for sparse in [True, False]))
   def testIndices(self, dimensions, dtype, sparse):
     def args_maker(): return []
-    onp_fun = partial(onp.indices, dimensions=dimensions,
-                      dtype=dtype, sparse=sparse)
+    if onp.__version__ < "1.17":
+      if sparse:
+        raise SkipTest("indices does not have sparse on numpy < 1.17")
+      onp_fun = partial(onp.indices, dimensions=dimensions,
+                        dtype=dtype)
+    else:
+      onp_fun = partial(onp.indices, dimensions=dimensions,
+                        dtype=dtype, sparse=sparse)
     jnp_fun = partial(jnp.indices, dimensions=dimensions,
                       dtype=dtype, sparse=sparse)
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
@@ -3309,6 +3343,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(x.trace(), jnp.array(x).trace(), check_dtypes=True)
     self.assertAllClose(x.trace(), api.jit(lambda y: y.trace())(x),
                         check_dtypes=True)
+
+  def testIntegerPowersArePrecise(self):
+    # See https://github.com/google/jax/pull/3036
+    # Checks if the squares of float32 integers have no numerical errors.
+    # It should be satisfied with all integers less than sqrt(2**24).
+    x = jnp.arange(-2**12, 2**12, dtype=jnp.int32)
+    onp.testing.assert_array_equal(jnp.square(x.astype(jnp.float32)), x * x)
+    onp.testing.assert_array_equal(x.astype(jnp.float32) ** 2, x * x)
+
+    # Similarly for cubes.
+    x = jnp.arange(-2**8, 2**8, dtype=jnp.int32)
+    onp.testing.assert_array_equal(x.astype(jnp.float32) ** 3, x * x * x)
+
+    x = onp.arange(10, dtype=onp.float32)
+    for i in range(10):
+      self.assertAllClose(x.astype(jnp.float32) ** i, x ** i,
+                          check_dtypes=False)
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

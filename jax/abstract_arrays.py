@@ -14,7 +14,7 @@
 
 from functools import partial
 
-import numpy as onp
+import numpy as np
 
 from . import ad_util
 from . import core
@@ -33,18 +33,18 @@ raise_to_shaped = core.raise_to_shaped
 
 def make_shaped_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return ShapedArray(onp.shape(x), dtype)
+  return ShapedArray(np.shape(x), dtype)
 
 def zeros_like_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
+  return np.broadcast_to(np.array(0, dtype), np.shape(x))
 
-array_types = {onp.ndarray, onp.bool_,
-               onp.int8, onp.int16, onp.int32, onp.int64,
-               onp.uint8, onp.uint16, onp.uint32, onp.uint64,
-               dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
-               onp.complex64, onp.complex128,
-               onp.longlong}
+array_types = {np.ndarray, np.bool_,
+               np.int8, np.int16, np.int32, np.int64,
+               np.uint8, np.uint16, np.uint32, np.uint64,
+               dtypes.bfloat16, np.float16, np.float32, np.float64,
+               np.complex64, np.complex128,
+               np.longlong}
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
@@ -53,18 +53,18 @@ for t in array_types:
 
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
-  return onp.zeros(aval.shape, dtype=aval.dtype)
+  return np.zeros(aval.shape, dtype=aval.dtype)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 core.literalable_types.update(array_types)
 
 def _zeros_like_python_scalar(t, x):
-  return onp.array(0, dtypes.python_scalar_dtypes[t])
+  return np.array(0, dtypes.python_scalar_dtypes[t])
 
 def _make_concrete_python_scalar(t, x):
   return ConcreteArray(
-    onp.array(x, dtype=dtypes.python_scalar_dtypes[t]),
+    np.array(x, dtype=dtypes.python_scalar_dtypes[t]),
     weak_type=True)
 
 for t in dtypes.python_scalar_dtypes.keys():
