@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Dict, Optional, Sequence, Type
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 
@@ -71,7 +71,7 @@ def _pval_to_result_handler(npart, parts, pval):
 
 
 @lu.cache
-def _sharded_callable(fun, num_partitions, partitions, out_parts_thunk, name,
+def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
                       *abstract_args):
   if xb.get_backend().platform != "tpu":
     # TODO(skye): fall back to regular jit?
@@ -92,7 +92,7 @@ def _sharded_callable(fun, num_partitions, partitions, out_parts_thunk, name,
 
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)
-  xla_args = _xla_sharded_args(c, abstract_args, partitions[0])
+  xla_args = _xla_sharded_args(c, abstract_args, in_parts)
   axis_env = xla.AxisEnv(nrep, (), ())
   out_nodes = xla.jaxpr_subcomp(
       c, jaxpr, None, axis_env, xla_consts,
@@ -112,7 +112,7 @@ def _sharded_callable(fun, num_partitions, partitions, out_parts_thunk, name,
 
   input_specs = [
       _partitioned_sharding_spec(num_partitions, parts, aval)
-      for parts, aval in zip(partitions[0], abstract_args)]
+      for parts, aval in zip(in_parts, abstract_args)]
   input_indices = [pxla.spec_to_indices(aval.shape, spec)
                    if spec is not None else None
                    for aval, spec in zip(abstract_args, input_specs)]
@@ -150,10 +150,11 @@ def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   return out_handler(out_bufs)
 
 
-def _xla_sharded_args(c, avals, partitions):
+def _xla_sharded_args(c, avals, in_parts):
   xla_args = []
-  for i, (p, a) in enumerate(safe_zip(partitions, avals)):
-    param = xb.with_sharding(c, p, xb.parameter, c, i, xla.aval_to_xla_shape(a))
+  for i, (sharding, aval) in enumerate(safe_zip(in_parts, avals)):
+    param = xb.with_sharding(c, sharding, xb.parameter, c, i,
+                             xla.aval_to_xla_shape(aval))
     xla_args.append(param)
   return xla_args
 
@@ -174,9 +175,9 @@ def get_num_partitions(*partitions):
   return num_partitions_set.pop()
 
 
-def _sharded_call_impl(fun, *args, num_partitions, partitions, name,
-                       out_parts_thunk):
-  compiled_fun = _sharded_callable(fun, num_partitions, partitions,
+def _sharded_call_impl(fun, *args, num_partitions, in_parts, out_parts_thunk,
+                       name):
+  compiled_fun = _sharded_callable(fun, num_partitions, in_parts,
                                    out_parts_thunk, name,
                                    *map(xla.abstractify, args))
   return compiled_fun(*args)
@@ -263,9 +264,9 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
         flat_fun,
         *args_flat,
         num_partitions=num_parts,
-        partitions=(in_parts_flat, object()),
-        name=flat_fun.__name__,
-        out_parts_thunk=out_parts_thunk)
+        in_parts=in_parts_flat,
+        out_parts_thunk=out_parts_thunk,
+        name=flat_fun.__name__)
     return tree_unflatten(out_tree(), out)
 
   return wrapped
