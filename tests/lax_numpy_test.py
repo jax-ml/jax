@@ -1269,6 +1269,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ((3, 10), (3, 10), 1.0, -1),
           ((2, 3, 10), (3, 10), 1.0, -2),
         ]))
+  @jtu.skip_on_devices("tpu")  # TODO(jakevdp): fix and reenable this test.
   def testTrapz(self, yshape, xshape, dtype, dx, axis):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
