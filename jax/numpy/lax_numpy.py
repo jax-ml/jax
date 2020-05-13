@@ -3929,6 +3929,45 @@ def _astype(arr, dtype):
   lax._check_user_dtype_supported(dtype, "astype")
   return lax.convert_element_type(arr, dtype)
 
+def _view(arr, dtype=None, type=None):
+  if type is not None:
+    raise NotImplementedError("`type` argument of array.view()")
+  if dtype is None:
+    return arr
+  arr_dtype = _dtype(arr)
+  # bool is implemented as lax:PRED, which is not compatible with lax.bitcast_convert_type.
+  # We work around this by casting bool to uint8.
+  if arr_dtype == bool_:
+    arr = arr.astype(uint8)
+  nbits_in = 8 * arr_dtype.itemsize
+  nbits_out = 8 * _dtype(dtype).itemsize
+  if nbits_in == nbits_out:
+    if dtype == bool_:
+      return lax.bitcast_convert_type(arr, uint8).astype(dtype)
+    return lax.bitcast_convert_type(arr, dtype)
+  if nbits_out > nbits_in and (shape(arr)[-1] * nbits_in) % nbits_out != 0:
+    raise ValueError("When changing to a larger dtype, its size must be a divisor "
+                     "of the total size in bytes of the last axis of the array.")
+  byte_dtypes = {8: uint8, 16: uint16, 32: uint32, 64: uint64}
+  if nbits_in not in byte_dtypes:
+    raise NotImplementedError(f"arr.view() for arr.dtype={arr_dtype}")
+  if nbits_out not in byte_dtypes:
+    raise NotImplementedError(f"arr.view(dtype) for dtype={dtype}")
+  shifts_in = arange(0, nbits_in, 8, dtype=np.uint8)
+  shifts_out = arange(0, nbits_out, 8, dtype=byte_dtypes[nbits_out])
+  # Cast input to like-size bytes:
+  arr_bytes = lax.bitcast_convert_type(arr, byte_dtypes[nbits_in])
+  # Extract uint8
+  arr_bytes = ((arr_bytes[..., newaxis] >> shifts_in) & 255).astype(np.uint8)
+  # Reshape for output bytes
+  arr_bytes = arr_bytes.reshape(arr.shape[:-1] + (-1, nbits_out // 8)).astype(byte_dtypes[nbits_out])
+  # Convert to output bytes
+  arr_bytes = (arr_bytes << shifts_out).sum(-1).astype(byte_dtypes[nbits_out])
+  # Cast to output dtype
+  if dtype == bool_:
+    return lax.bitcast_convert_type(arr_bytes, uint8).astype(dtype)
+  return lax.bitcast_convert_type(arr_bytes, dtype)
+
 ### track unimplemented functions
 
 def _not_implemented(fun):
@@ -4041,6 +4080,7 @@ setattr(ShapedArray, "T", core.aval_property(transpose))
 setattr(ShapedArray, "real", core.aval_property(real))
 setattr(ShapedArray, "imag", core.aval_property(imag))
 setattr(ShapedArray, "astype", core.aval_method(_astype))
+setattr(ShapedArray, "view", core.aval_method(_view))
 
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
@@ -4056,6 +4096,7 @@ setattr(DeviceArray, "real", property(real))
 setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", _astype)
 setattr(DeviceArray, "tolist", lambda x: np.array(x).tolist())
+setattr(DeviceArray, "view", _view)
 
 
 # Extra methods that are handy

@@ -2113,6 +2113,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(op, op, args_maker, check_dtypes=True)
     self._CompileAndCheck(op, args_maker, check_dtypes=True)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_dtype={}".format(
+          jtu.format_shape_dtype_string(shape, a_dtype), dtype),
+      "shape": shape, "a_dtype": a_dtype, "dtype": dtype}
+      for shape in [(8,), (3, 8)]  # last dim = 8 to ensure shape compatibility
+      for a_dtype in [onp.bool_, onp.uint8, onp.float16, onp.int32, onp.float64]
+      for dtype in [onp.bool_, onp.int8, onp.int16, onp.float32, onp.float64]))
+  def testView(self, shape, a_dtype, dtype):
+    if not FLAGS.jax_enable_x64 and a_dtype == onp.float64 or dtype == onp.float64:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, a_dtype)]
+    onp_op = lambda x: onp.asarray(x).view(dtype)
+    jnp_op = lambda x: jnp.asarray(x).view(dtype)
+    self._CheckAgainstNumpy(jnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+
   # TODO(mattjj): test other ndarray-like method overrides
 
   def testOnpMean(self):
