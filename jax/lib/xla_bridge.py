@@ -292,15 +292,27 @@ def constant(builder, py_val, canonicalize_types=True):
   else:
     raise TypeError("No constant handler for type: {}".format(py_type))
 
-# XLA supports arbitrary tuple nesting, but JAX only uses one level of tupling
-# (and our type checkers don't support recursive types).
-SpatialSharding = Union[Sequence[int], None, Tuple[Sequence[int], None]]
+# HLO instructions optionally can be annotated to say how the output should be
+# spatially partitioned (represented in XLA as OpSharding protos, see
+# _sharding_to_proto). For array outputs, the annotation is either an int per
+# dimension specifying the number of ways that dimension divided (meaning the
+# total number of shards in the product), or None to indicate the array should
+# be replicated. Tuple outputs are represented as tuples thereof. XLA supports
+# arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
+# checkers don't support recursive types).
+SpatialSharding = Union[Tuple[int], None, Tuple[Tuple[int], None]]
 
 def _sharding_to_proto(sharding: SpatialSharding):
-  """Converts a SpatialSharding to an OpSharding."""
+  """Converts a SpatialSharding to an OpSharding.
+
+  See
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
+  for details on the OpSharding proto.
+  """
   proto = xla_client.OpSharding()
   if isinstance(sharding, tuple):
     if sharding[0] is None or isinstance(sharding[0], tuple):
+      assert all(s is None or isinstance(s, tuple) for s in sharding[1:])
       sub_protos = [_sharding_to_proto(s) for s in sharding]
       proto.type = xla_client.OpSharding.Type.TUPLE
       proto.tuple_shardings = sub_protos
@@ -316,6 +328,8 @@ def _sharding_to_proto(sharding: SpatialSharding):
 
 def set_sharding(builder, op, sharding: SpatialSharding):
   """Uses CustomCall to annotate a value as sharded."""
+  # "Sharding" is a built-in custom call target that acts like an identity
+  # function, and is used to attach an OpSharding to.
   return with_sharding(builder, sharding, xops.CustomCall,
                        builder, b"Sharding", [op], builder.GetShape(op))
 

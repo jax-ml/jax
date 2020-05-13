@@ -19,11 +19,10 @@ from __future__ import print_function
 from functools import partial
 from unittest import SkipTest
 
-import numpy as onp
+import numpy as np
 from absl.testing import absltest
 
 import jax
-import jax.numpy as np
 from jax import test_util as jtu
 from jax.interpreters import pxla
 from jax.interpreters.sharded_jit import sharded_jit
@@ -35,8 +34,12 @@ config.parse_flags_with_absl()
 
 class ShardedJitTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest
+
   def testBasic(self):
-    if jtu.device_under_test() != "tpu" or jax.device_count() < 2:
+    if jax.device_count() < 2:
       raise SkipTest
 
     @partial(sharded_jit, in_parts=(P(2, 1), P(2, 1)), out_parts=None)
@@ -44,7 +47,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       return x + y
 
     shape = (8, 8)
-    x = onp.arange(onp.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
     actual = f(x, x + 1)
     expected = x + (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -54,7 +57,7 @@ class ShardedJitTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def testPyTreeArgs(self):
-    if jtu.device_under_test() != "tpu" or jax.device_count() < 2:
+    if jax.device_count() < 2:
       raise SkipTest
 
     def f(a, b, c):
@@ -63,7 +66,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       return a1 + a2 + b + c1 + c2 + c3
 
     def _make_arg(*shape):
-      return onp.arange(onp.prod(shape)).reshape(shape)
+      return np.arange(np.prod(shape)).reshape(shape)
 
     a = (_make_arg(4, 4), _make_arg())
     b = _make_arg(4, 4)
@@ -86,14 +89,14 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertLen(result.device_buffers, 2)
 
   def testPyTreeOutputs(self):
-    if jtu.device_under_test() != "tpu" or jax.device_count() < 2:
+    if jax.device_count() < 2:
       raise SkipTest
 
     def f(x):
       return x + 1, ((x + 2, x + 3), x + 4)
 
     shape = (4, 4)
-    x = onp.arange(onp.prod(shape)).reshape(shape)
+    x = np.arange(np.prod(shape)).reshape(shape)
     in_parts = (P(2, 1),)
     out_parts = (P(2, 1), ((P(1, 2), None), P(2, 1)))
 
@@ -105,10 +108,7 @@ class ShardedJitTest(jtu.JaxTestCase):
     result = sharded_jit(f, in_parts, out_parts)(x)
     self.assertAllClose(result, expected, check_dtypes=False)
 
-  def testAllReplicated(self):
-    if jtu.device_under_test() != "tpu":
-      raise SkipTest
-
+  def testAllArgsOutputsReplicated(self):
     @partial(sharded_jit, in_parts=None, out_parts=None)
     def f(x):
       return x + 1
@@ -117,6 +117,8 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertEqual(result, 2.)
     self.assertIsInstance(result, pxla.ShardedDeviceArray)
     self.assertLen(result.device_buffers, 1)
+
+# TODO(skye): add error tests
 
 
 if __name__ == "__main__":

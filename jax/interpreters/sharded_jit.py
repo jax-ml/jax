@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Dict, Optional, Sequence, Type
+from typing import Callable, Dict, Optional, Sequence, Type
 
-import numpy as onp
+import numpy as np
 
 from .. import core
 from . import partial_eval as pe
@@ -102,8 +102,8 @@ def _sharded_callable(fun, num_partitions, partitions, out_parts_thunk, name,
 
   devices = xb.local_devices()[:num_partitions]
   assert len(devices) == num_partitions
-  device_assignment = onp.array([[d.id for d in devices]])
-  device_assignment = onp.reshape(device_assignment, (-1, num_partitions))
+  device_assignment = np.array([[d.id for d in devices]])
+  device_assignment = np.reshape(device_assignment, (-1, num_partitions))
   # device_assignment = None  # TODO(skye): replace with default device assignment?
 
   compiled = xb.get_backend().compile(
@@ -158,23 +158,19 @@ def _xla_sharded_args(c, avals, partitions):
   return xla_args
 
 
-def _get_num_partitions(partitions):
-  if not partitions:
-    return None
-  num_partitions = onp.prod(partitions)
-  return num_partitions
-
-
 def get_num_partitions(*partitions):
-  num_partitions_set = set(
-      _get_num_partitions(parts) for parts in tree_flatten(partitions)[0])
-  num_partitions_set.discard(None)
-  if len(num_partitions_set) == 0:
+  partition_specs = tree_flatten(partitions)[0]
+  if len(partition_specs) == 0:
+    # Everything is specified as replicated (all Nones).
     return 1
+  num_partitions_set = set(np.prod(spec) for spec in partition_specs)
   if len(num_partitions_set) > 1:
     raise ValueError(
-        "All partition specs must use the same number of total partitions, "
-        "got: %s %s" % (partitions, num_partitions_set))
+        f"All partition specs must use the same number of total partitions, "
+        "got {partitions}, with distinct number of partitions "
+        "{num_partitions_set} (the total number of partitions is the product of "
+        "a partition spec)")
+  assert len(num_partitions_set) == 1
   return num_partitions_set.pop()
 
 
@@ -195,6 +191,12 @@ sharded_call_p.def_impl(_sharded_call_impl)
 
 
 class PartitionSpec(tuple):
+  """Tuple of integer specifying how a value should be partitioned.
+
+  Each integer corresponds to how many ways a dimension is partitioned. We
+  create a separate class for this so JAX's pytree utilities can distinguish it
+  from a tuple that should be treated as a pytree.
+  """
   def __new__(cls, *partitions):
     return tuple.__new__(PartitionSpec, partitions)
 
@@ -202,7 +204,7 @@ class PartitionSpec(tuple):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
 
-def sharded_jit(fun, in_parts, out_parts):
+def sharded_jit(fun: Callable, in_parts, out_parts):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
   WARNING: this feature is still under active development! It may not work well,
