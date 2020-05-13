@@ -62,7 +62,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_mac_linalg_bug()
   def testCholesky(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -160,7 +159,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for nq in zip([2, 4, 6, 36], [(1, 2), (2, 2), (1, 2, 3), (3, 3, 1, 4)])
       for dtype in float_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_mac_linalg_bug()
   def testTensorsolve(self, m, nq, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -198,7 +196,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")
-  @jtu.skip_on_mac_linalg_bug()
   def testSlogdet(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -240,7 +237,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # TODO(phawkins): enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
-  @jtu.skip_on_mac_linalg_bug()
   def testEig(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -269,7 +265,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # TODO: enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
-  @jtu.skip_on_mac_linalg_bug()
   def testEigvals(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -664,7 +659,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (200, 200), (7, 7, 7, 7)]
       for dtype in float_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_mac_linalg_bug()
   def testTensorinv(self, shape, dtype, rng_factory):
     _skip_if_unsupported_type(dtype)
     rng = rng_factory(self.rng())
@@ -718,7 +712,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (5, 5, 5)]
       for dtype in float_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_mac_linalg_bug()
   def testInv(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -748,7 +741,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
-  @jtu.skip_on_mac_linalg_bug()
   def testPinv(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -949,7 +941,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_mac_linalg_bug()
   def testLu(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -1010,7 +1001,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for n in [1, 4, 5, 200]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_mac_linalg_bug()
   def testLuFactor(self, n, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -1235,7 +1225,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for n in [1, 4, 5, 20, 50, 100]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_small]))
-  @jtu.skip_on_mac_linalg_bug()
   def testExpm(self, n, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
@@ -1260,7 +1249,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     for n in [1, 4, 5, 20, 50, 100]
     for dtype in float_types + complex_types
   ))
-  @jtu.skip_on_mac_linalg_bug()
   def testIssue2131(self, n, dtype):
     args_maker_zeros = lambda: [np.zeros((n, n), dtype)]
     osp_fun = lambda a: osp.linalg.expm(a)
