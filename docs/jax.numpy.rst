@@ -140,11 +140,13 @@ Not every function in NumPy is implemented; contributions are welcome!
     hypot
     identity
     imag
+    in1d
     indices
     inner
     isclose
     iscomplex
     isfinite
+    isin
     isinf
     isnan
     isneginf

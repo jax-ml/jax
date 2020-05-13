@@ -1252,6 +1252,27 @@ else:
     return out
 
 
+@_wraps(np.in1d, lax_description="""
+In the JAX version, the `assume_unique` argument is not referenced.
+""")
+def in1d(ar1, ar2, assume_unique=False, invert=False):
+  # TODO(vanderplas): use sorting-based approach for larger inputs.
+  ar1 = ravel(ar1)
+  ar2 = ravel(ar2)
+  if invert:
+    return (ar1[:, None] != ar2).all(-1)
+  else:
+    return (ar1[:, None] == ar2).any(-1)
+
+
+@_wraps(np.isin, lax_description="""
+In the JAX version, the `assume_unique` argument is not referenced.
+""")
+def isin(element, test_elements, assume_unique=False, invert=False):
+  result = in1d(element, test_elements, assume_unique=assume_unique, invert=invert)
+  return result.reshape(shape(element))
+
+
 # The `jit` on `where` exists to avoid materializing constants in cases like
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
