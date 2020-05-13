@@ -514,7 +514,6 @@ class LaxRandomTest(jtu.JaxTestCase):
        "dim": dim, "dtype": dtype}
       for dim in [1, 3, 5]
       for dtype in [np.float32, np.float64]))
-  @jtu.skip_on_mac_linalg_bug()
   def testMultivariateNormal(self, dim, dtype):
     r = np.random.RandomState(dim)
     mean = r.randn(dim)
@@ -539,7 +538,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       # eigenvectors follow a standard normal distribution.
       self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
 
-  @jtu.skip_on_mac_linalg_bug()
   def testMultivariateNormalCovariance(self):
     # test code based on https://github.com/google/jax/issues/1869
     N = 100000

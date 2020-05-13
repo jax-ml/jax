@@ -371,14 +371,6 @@ def skip_on_flag(flag_name, skip_value):
     return test_method_wrapper
   return skip
 
-# TODO(phawkins): workaround for bug https://github.com/google/jax/issues/432
-# Delete this code after the minimum jaxlib version is 0.1.46 or greater.
-skip_on_mac_linalg_bug = partial(
-  unittest.skipIf,
-  (sys.platform == "darwin" and scipy.version.version > "1.1.0" and
-   lib.version < (0, 1, 46)),
-  "Test fails on Mac with new scipy (issue #432)")
-
 
 def format_test_name_suffix(opname, shapes, dtypes):
   arg_descriptions = (format_shape_dtype_string(shape, dtype)
