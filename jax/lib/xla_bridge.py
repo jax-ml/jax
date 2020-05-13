@@ -295,12 +295,15 @@ def constant(builder, py_val, canonicalize_types=True):
 # HLO instructions optionally can be annotated to say how the output should be
 # spatially partitioned (represented in XLA as OpSharding protos, see
 # _sharding_to_proto). For array outputs, the annotation is either an int per
-# dimension specifying the number of ways that dimension divided (meaning the
-# total number of shards in the product), or None to indicate the array should
-# be replicated. Tuple outputs are represented as tuples thereof. XLA supports
+# dimension specifying the number of ways that dimension divided (i.e. the total
+# number of shards is the product), or None to indicate the array should be
+# replicated. Tuple outputs are represented as tuples thereof. XLA supports
 # arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
-# checkers don't support recursive types).
-SpatialSharding = Union[Tuple[int], None, Tuple[Tuple[int], None]]
+# checkers don't support recursive types), so we only represent one level of
+# nesting in this type definition.
+SpatialSharding = Union[Tuple[int, ...],
+                        None,
+                        Tuple[Union[Tuple[int, ...], None], ...]]
 
 def _sharding_to_proto(sharding: SpatialSharding):
   """Converts a SpatialSharding to an OpSharding.
@@ -310,10 +313,9 @@ def _sharding_to_proto(sharding: SpatialSharding):
   for details on the OpSharding proto.
   """
   proto = xla_client.OpSharding()
-  if isinstance(sharding, tuple):
-    if sharding[0] is None or isinstance(sharding[0], tuple):
-      assert all(s is None or isinstance(s, tuple) for s in sharding[1:])
-      sub_protos = [_sharding_to_proto(s) for s in sharding]
+  if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
+      assert all(s is None or isinstance(s, tuple) for s in sharding)
+      sub_protos = [_sharding_to_proto(s) for s in sharding]  # type: ignore
       proto.type = xla_client.OpSharding.Type.TUPLE
       proto.tuple_shardings = sub_protos
       return proto
