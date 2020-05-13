@@ -2087,7 +2087,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      out = np.array([], dtype or float_)
+      out = array(np.array([], dtype or float_))
   else:
     try:
       view = memoryview(object)

@@ -1843,6 +1843,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue121(self):
     assert not onp.isscalar(jnp.array(3))
 
+  def testArrayOutputsDeviceArrays(self):
+    assert type(jnp.array([])) == jax.interpreters.xla.DeviceArray
+    assert type(jnp.array(onp.array([]))) == jax.interpreters.xla.DeviceArray
+
+    class NDArrayLike:
+        def __array__(self, dtype=None):
+            return onp.array([], dtype=dtype)
+    assert type(jnp.array(NDArrayLike())) == jax.interpreters.xla.DeviceArray
+
+    class DeviceArrayLike:
+        def __array__(self, dtype=None):
+            return jnp.array([], dtype=dtype)
+    assert type(jnp.array(DeviceArrayLike())) == jax.interpreters.xla.DeviceArray
+
   def testArrayMethod(self):
     class arraylike(object):
       dtype = onp.float32
