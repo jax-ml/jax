@@ -2952,9 +2952,9 @@ def sort(a, axis=-1, kind='quicksort', order=None):
     raise ValueError("'order' argument to sort is not supported.")
 
   if axis is None:
-    return lax.sort(a.ravel(), 0)
+    return lax.sort(a.ravel(), dimension=0)
   else:
-    return lax.sort(a, _canonicalize_axis(axis, ndim(a)))
+    return lax.sort(a, dimension=_canonicalize_axis(axis, ndim(a)))
 
 
 @_wraps(np.argsort)
