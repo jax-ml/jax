@@ -834,6 +834,41 @@ degrees = rad2deg
 radians = deg2rad
 
 
+@_wraps(np.histogram_bin_edges)
+def histogram_bin_edges(a, bins=10, range=None, weights=None):
+  if isinstance(bins, str):
+    raise NotImplementedError("string values for `bins` not implemented.")
+  a = ravel(a)
+  b = array(bins)
+  if b.ndim == 1:
+    return b
+  if range is None:
+    range = a.min(), a.max()
+  if not isinstance(a, core.Tracer) and range[0] == range[1]:
+    range = range[0] - 0.5, range[0] + 0.5
+  bin_dtype = promote_types(_dtype(a), float32)
+  return linspace(range[0], range[1], bins + 1, dtype=bin_dtype)
+
+
+@_wraps(np.histogram)
+def histogram(a, bins=10, range=None, weights=None, density=None):
+  if weights is not None and a.shape != weights.shape:
+    raise ValueError("weights should have the same shape as a.")
+  a = ravel(a)
+  if weights is not None:
+    weights = ravel(weights)
+  else:
+    weights = ones_like(a)
+  bin_edges = histogram_bin_edges(a, bins, range, weights)
+  bin_idx = searchsorted(bin_edges, a, side='right')
+  bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
+  counts = bincount(bin_idx, weights, length=len(bin_edges))[1:]
+  if density:
+    bin_widths = diff(bin_edges)
+    counts = counts / bin_widths / counts.sum()
+  return counts, bin_edges
+
+
 @_wraps(np.heaviside)
 def heaviside(x1, x2):
   x1, x2 = _promote_dtypes_inexact(x1, x2)
