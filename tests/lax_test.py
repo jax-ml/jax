@@ -1307,6 +1307,7 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(5,), (5, 7)]
       for axis in [-1, len(shape) - 1]))
   def testSort(self, shape, dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
     if (onp.issubdtype(dtype, onp.complexfloating) and (
         (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
          jtu.device_under_test() == "tpu")):
@@ -1324,6 +1325,7 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(5,), (5, 7)]
       for axis in [-1, len(shape) - 1]))
   def testSortAgainstNumpy(self, shape, dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
     if (onp.issubdtype(dtype, onp.complexfloating) and (
         (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
          jtu.device_under_test() == "tpu")):
