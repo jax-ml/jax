@@ -1307,9 +1307,10 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(5,), (5, 7)]
       for axis in [-1, len(shape) - 1]))
   def testSort(self, shape, dtype, axis):
-    if (jtu.device_under_test() == "cpu" and
-        onp.issubdtype(dtype, onp.complexfloating)):
-      raise SkipTest("Complex sort not implemented on CPU")
+    if (onp.issubdtype(dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: lax.sort(x, dimension=axis)
@@ -1323,9 +1324,10 @@ class LaxTest(jtu.JaxTestCase):
       for shape in [(5,), (5, 7)]
       for axis in [-1, len(shape) - 1]))
   def testSortAgainstNumpy(self, shape, dtype, axis):
-    if (jtu.device_under_test() == "cpu" and
-        onp.issubdtype(dtype, onp.complexfloating)):
-      raise SkipTest("Complex sort not implemented on CPU")
+    if (onp.issubdtype(dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     op = lambda x: lax.sort(x, dimension=axis)
