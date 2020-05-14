@@ -210,7 +210,7 @@ def scale_by_stddev(decay=0.9, eps=1e-8):
 ScaleByAdamState = collections.namedtuple("ScaleByAdamState", "count mu nu")
 
 
-def scale_by_adam(b1=0.9, b2=0.999, eps=1e-8):
+def scale_by_adam(b1=0.9, b2=0.999, eps=1e-8, eps2=0.0):
   """Rescale updates according to the Adam algorithm.
 
   References:
@@ -220,6 +220,8 @@ def scale_by_adam(b1=0.9, b2=0.999, eps=1e-8):
     b1: decay rate for the exponentially weighted average of grads.
     b2: decay rate for the exponentially weighted average of squared grads.
     eps: term added to the denominator to improve numerical stability.
+    eps2: term added to the denominator inside the square-root to improve
+      numerical stability of meta-gradients.
 
   Returns:
     An (init_fn, update_fn) tuple.
@@ -236,7 +238,7 @@ def scale_by_adam(b1=0.9, b2=0.999, eps=1e-8):
     mu_hat = tree_multimap(lambda t: t / (1 - b1 ** (state.count + 1)), mu)
     nu_hat = tree_multimap(lambda t: t / (1 - b2 ** (state.count + 1)), nu)
     updates = tree_multimap(
-        lambda m, v: m / (jnp.sqrt(v) + eps), mu_hat, nu_hat)
+        lambda m, v: m / (jnp.sqrt(v + eps2) + eps), mu_hat, nu_hat)
     return updates, ScaleByAdamState(count=state.count + 1, mu=mu, nu=nu)
 
   return init_fn, update_fn
