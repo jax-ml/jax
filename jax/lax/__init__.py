@@ -248,7 +248,6 @@ from .lax import (
   slice_p,
   sort,
   sort_key_val,
-  sort_key_val_p,
   sort_p,
   sqrt,
   sqrt_p,

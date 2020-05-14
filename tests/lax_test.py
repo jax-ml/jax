@@ -1310,7 +1310,7 @@ class LaxTest(jtu.JaxTestCase):
   def testSort(self, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    fun = lambda x: lax.sort(x, axis)
+    fun = lambda x: lax.sort(x, dimension=axis)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1324,7 +1324,7 @@ class LaxTest(jtu.JaxTestCase):
   def testSortAgainstNumpy(self, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    op = lambda x: lax.sort(x, axis)
+    op = lambda x: lax.sort(x, dimension=axis)
     numpy_op = lambda x: lax_reference.sort(x, axis)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
@@ -2442,7 +2442,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testSortGrad(self, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
     operand = rng(shape, dtype)
-    sort = lambda x: lax.sort(x, axis)
+    sort = lambda x: lax.sort(x, dimension=axis)
     check_grads(sort, (operand,), 2, ["fwd", "rev"], eps=1e-2)
 
   # TODO(b/205052657): enable more tests when supported
@@ -2678,7 +2678,8 @@ class LaxVmapTest(jtu.JaxTestCase):
 
   def _CheckBatching(self, op, bdim_size, bdims, shapes, dtypes, rng,
                      rtol=None, atol=None):
-    batched_shapes = list(map(partial(add_bdim, bdim_size), bdims, shapes))
+    batched_shapes = list(jax.util.safe_map(partial(add_bdim, bdim_size),
+                                            bdims, shapes))
     args = [rng(shape, dtype)
             for shape, dtype in jax.util.safe_zip(batched_shapes, dtypes)]
     args_slice = args_slicer(args, bdims)
@@ -3241,12 +3242,33 @@ class LaxVmapTest(jtu.JaxTestCase):
     op2 = lambda x: lax.top_k(x, k=k)[1]
     self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_dimension={}_arity={}_bdims={}"
+       .format(jtu.format_shape_dtype_string(shape, onp.float32), dimension,
+               arity, bdims),
+       "shape": shape, "dimension": dimension, "arity": arity, "bdims": bdims}
+      for shape in [(2, 3)]
+      for dimension in [0, 1]
+      for arity in range(3)
+      for bdims in all_bdims(*((shape,) * arity))))
+  def testSort(self, shape, dimension, arity, bdims):
+    rng = jtu.rand_default(self.rng())
+    if arity == 1:
+      fun = partial(lax.sort, dimension=dimension)
+      self._CheckBatching(fun, 5, bdims, (shape,) * arity, (onp.float32,) * arity,
+                          rng)
+    else:
+      for i in range(arity):
+        fun = lambda *args, i=i: lax.sort(args, dimension=dimension)[i]
+        self._CheckBatching(fun, 5, bdims, (shape,) * arity,
+                            (onp.float32,) * arity, rng)
+
+
   # TODO Concatenate
   # TODO Reverse
   # TODO DynamicSlice
   # TODO DynamicUpdateSlice
-  # TODO Sort
-  # TODO SortKeyVal
   # TODO Collapse
   # TODO Scatter
 
