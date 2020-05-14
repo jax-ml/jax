@@ -116,6 +116,30 @@ class LaxRandomTest(jtu.JaxTestCase):
     np.testing.assert_equal(result[:n], np.full((n,), 0xc4923a9c, dtype=np.uint32))
     np.testing.assert_equal(result[n:], np.full((n,), 0x483df7a0, dtype=np.uint32))
 
+  def testRngRandomBits(self):
+    # Test specific outputs to ensure consistent random values between JAX versions.
+    key = random.PRNGKey(1701)
+
+    bits8 = random._random_bits(key, 8, (3,))
+    expected8 = np.array([193, 148, 117], dtype=np.uint8)
+    self.assertArraysEqual(bits8, expected8, check_dtypes=True)
+
+    bits16 = random._random_bits(key, 16, (3,))
+    expected16 = np.array([37450, 20880, 48825], dtype=np.uint16)
+    self.assertArraysEqual(bits16, expected16, check_dtypes=True)
+
+    bits32 = random._random_bits(key, 32, (3,))
+    expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
+    self.assertArraysEqual(bits32, expected32, check_dtypes=True)
+
+    bits64 = random._random_bits(key, 64, (3,))
+    if FLAGS.jax_enable_x64:
+      expected64 = np.array([3982329540505020460, 16822122385914693683,
+                             7882654074788531506], dtype=np.uint64)
+    else:
+      expected64 = np.array([676898860, 3164047411, 4010691890], dtype=np.uint32)
+    self.assertArraysEqual(bits64, expected64, check_dtypes=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
       for dtype in [np.float32, np.float64]))

@@ -273,9 +273,11 @@ def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")
-  if bit_width not in (32, 64):
-    raise TypeError("requires 32- or 64-bit field width.")
-  max_count = (bit_width // 32) * onp.prod(shape)
+  if bit_width not in (8, 16, 32, 64):
+    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+  size = onp.prod(shape)
+  bits = bit_width * size
+  max_count = (bits // 32) + (bits % 32)
   if max_count >= np.iinfo(onp.uint32).max:
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
@@ -285,6 +287,15 @@ def _random_bits(key, bit_width, shape):
   if bit_width == 64:
     bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
     bits = lax.shift_left(bits[0], onp.uint64(32)) | bits[1]
+  elif bit_width in [8, 16]:
+    dtype = {8: np.uint8, 16: np.uint16}[bit_width]
+    bits = lax.concatenate([
+      lax.bitwise_and(
+        lax.shift_right_logical(bits, np.uint32(i)),
+        np.uint32(np.iinfo(dtype).max)
+      ).astype(dtype)
+      for i in range(0, 32, bit_width)
+    ], 0)[:size]
   return lax.reshape(bits, shape)
 
 
