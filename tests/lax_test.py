@@ -1343,7 +1343,7 @@ class LaxTest(jtu.JaxTestCase):
           axis),
        "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
        "axis": axis}
-      for key_dtype in all_dtypes
+      for key_dtype in float_dtypes + complex_dtypes + int_dtypes + uint_dtypes
       for val_dtype in [onp.float32, onp.int32, onp.uint32]
       for shape in [(3,), (5, 3)]
       for axis in [-1, len(shape) - 1]))
@@ -1373,7 +1373,7 @@ class LaxTest(jtu.JaxTestCase):
           axis),
        "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
        "axis": axis}
-      for key_dtype in all_dtypes
+      for key_dtype in float_dtypes + complex_dtypes + int_dtypes + uint_dtypes
       for val_dtype in [onp.float32, onp.int32, onp.uint32]
       for shape in [(3,), (5, 3)]
       for axis in [-1, len(shape) - 1]))
