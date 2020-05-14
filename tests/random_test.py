@@ -121,11 +121,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = random.PRNGKey(1701)
 
     bits8 = random._random_bits(key, 8, (3,))
-    expected8 = np.array([193, 148, 117], dtype=np.uint8)
+    expected8 = np.array([216, 115,  43], dtype=np.uint8)
     self.assertArraysEqual(bits8, expected8, check_dtypes=True)
 
     bits16 = random._random_bits(key, 16, (3,))
-    expected16 = np.array([37450, 20880, 48825], dtype=np.uint16)
+    expected16 = np.array([41682, 55017, 1300], dtype=np.uint16)
     self.assertArraysEqual(bits16, expected16, check_dtypes=True)
 
     bits32 = random._random_bits(key, 32, (3,))

@@ -276,8 +276,7 @@ def _random_bits(key, bit_width, shape):
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
   size = onp.prod(shape)
-  bits = bit_width * size
-  max_count = (bits // 32) + (bits % 32)
+  max_count = int(onp.ceil(bit_width * size / 32))
   if max_count >= np.iinfo(onp.uint32).max:
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
