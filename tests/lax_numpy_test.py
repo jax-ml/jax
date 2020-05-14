@@ -2109,9 +2109,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testAstype(self):
     rng = onp.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
-    op = lambda x: x.astype(jnp.int32)
-    self._CheckAgainstNumpy(op, op, args_maker, check_dtypes=True)
-    self._CompileAndCheck(op, args_maker, check_dtypes=True)
+    onp_op = lambda x: onp.asarray(x).astype(jnp.int32)
+    jnp_op = lambda x: jnp.asarray(x).astype(jnp.int32)
+    self._CheckAgainstNumpy(jnp_op, onp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_dtype={}".format(
