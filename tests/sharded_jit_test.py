@@ -68,9 +68,9 @@ class ShardedJitTest(jtu.JaxTestCase):
     def _make_arg(*shape):
       return np.arange(np.prod(shape)).reshape(shape)
 
-    a = (_make_arg(4, 4), _make_arg())
+    a = (_make_arg(4, 4), 1)
     b = _make_arg(4, 4)
-    c = [_make_arg(), (_make_arg(4, 4), _make_arg(4, 4))]
+    c = [2, (_make_arg(4, 4), _make_arg(4, 4))]
 
     in_parts = (None, P(2, 1), [None, P(2, 1)])
     out_parts = P(2, 1)
