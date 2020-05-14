@@ -1302,13 +1302,15 @@ class LaxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
-       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
-      for dtype in [onp.float32, onp.int32, onp.uint32]
+       "shape": shape, "dtype": dtype, "axis": axis}
+      for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSort(self, shape, dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSort(self, shape, dtype, axis):
+    if (jtu.device_under_test() == "cpu" and
+        onp.issubdtype(dtype, onp.complexfloating)):
+      raise SkipTest("Complex sort not implemented on CPU")
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: lax.sort(x, dimension=axis)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
@@ -1316,13 +1318,15 @@ class LaxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
-       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
-      for dtype in [onp.float32, onp.int32, onp.uint32]
+        "shape": shape, "dtype": dtype, "axis": axis}
+      for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSortAgainstNumpy(self, shape, dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSortAgainstNumpy(self, shape, dtype, axis):
+    if (jtu.device_under_test() == "cpu" and
+        onp.issubdtype(dtype, onp.complexfloating)):
+      raise SkipTest("Complex sort not implemented on CPU")
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     op = lambda x: lax.sort(x, dimension=axis)
     numpy_op = lambda x: lax_reference.sort(x, axis)
