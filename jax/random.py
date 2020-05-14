@@ -1241,6 +1241,7 @@ def _logistic(key, shape, dtype):
   # Thus we can compute
   #  z = log[y / (1 + ε - y)]
   #    = log[(x + ε)/(1 - x)]
+  _check_shape("logistic", shape)
   x = uniform(key, shape, dtype)
   eps = np.finfo(dtype).eps
   return lax.log(lax.div(lax.add(lax._const(x, eps), x), lax.sub(lax._const(x, 1), x)))
