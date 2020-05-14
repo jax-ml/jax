@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from absl.testing import absltest
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.tools.jax_to_hlo import jax_to_hlo
 from jax.lib import xla_client
 
@@ -27,7 +24,7 @@ class JaxToHloTest(absltest.TestCase):
   def test_convert_axpy(self):
 
     def axpy(a, x, y):
-      return a * x + y[:,np.newaxis]
+      return a * x + y[:, jnp.newaxis]
 
     hlo_proto, hlo_text = jax_to_hlo(
         axpy, [

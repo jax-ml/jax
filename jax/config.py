@@ -12,7 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import sys
+
+def bool_env(varname: str, default: bool) -> bool:
+  """Read an environment variable and interpret it as a boolean.
+
+  True values are (case insensitive): 'y', 'yes', 't', 'true', 'on', and '1';
+  false values are 'n', 'no', 'f', 'false', 'off', and '0'.
+
+  Args:
+    varname: the name of the variable
+    default: the default boolean value
+  Raises: ValueError if the environment variable is anything else.
+  """
+  val = os.getenv(varname, str(default))
+  val = val.lower()
+  if val in ('y', 'yes', 't', 'true', 'on', '1'):
+    return True
+  elif val in ('n', 'no', 'f', 'false', 'off', '0'):
+    return False
+  else:
+    raise ValueError("invalid truth value %r for environment %r" % (val, varname))
 
 
 class Config(object):
@@ -102,4 +123,13 @@ class NameSpace(object):
 
 config = Config()
 flags = config
+FLAGS = flags.FLAGS
+
 already_configured_with_absl = False
+
+flags.DEFINE_bool(
+    'jax_enable_checks',
+    bool_env('JAX_ENABLE_CHECKS', False),
+    help=
+    'Turn on invariant checking (core.skip_checks = False)'
+)

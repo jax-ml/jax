@@ -17,13 +17,14 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 31)
+_minimum_jaxlib_version = (0, 1, 47)
 try:
   from jaxlib import version as jaxlib_version
-except:
+except Exception as err:
   # jaxlib is too old to have version number.
   msg = 'This version of jax requires jaxlib version >= {}.'
-  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version))))
+  raise ImportError(msg.format('.'.join(map(str, _minimum_jaxlib_version)))
+                    ) from err
 
 version = tuple(int(x) for x in jaxlib_version.__version__.split('.'))
 
@@ -44,12 +45,17 @@ def _check_jaxlib_version():
 _check_jaxlib_version()
 
 
-try:
-  from jaxlib import tpu_client
-except:
-  tpu_client = None
 from jaxlib import xla_client
 from jaxlib import lapack
 
 from jaxlib import pytree
 from jaxlib import cusolver
+try:
+  from jaxlib import cuda_prng
+except ImportError:
+  cuda_prng = None
+
+try:
+  from jaxlib import tpu_client  # pytype: disable=import-error
+except:
+  tpu_client = None

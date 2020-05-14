@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import os
 import sys
@@ -22,11 +19,11 @@ import sys
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 
 from jax import test_util as jtu
 from jax import random
-import jax.numpy as np
+import jax.numpy as jnp
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from examples import kernel_lsq
@@ -41,7 +38,7 @@ FLAGS = config.FLAGS
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   jax_rng = random.PRNGKey(0)
   result_shape, params = init_fun(jax_rng, input_shape)
-  rng = onp.random.RandomState(0)
+  rng = np.random.RandomState(0)
   result = apply_fun(params, rng.randn(*input_shape).astype(dtype="float32"))
   test_case.assertEqual(result.shape, result_shape)
 
@@ -79,23 +76,21 @@ class ExamplesTest(jtu.JaxTestCase):
 
   def testKernelRegressionGram(self):
     n, d = 100, 20
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     truth = rng.randn(d)
     xs = rng.randn(n, d)
-    ys = np.dot(xs, truth)
-    kernel = lambda x, y: np.dot(x, y)
-    self.assertAllClose(kernel_lsq.gram(kernel, xs), np.dot(xs, xs.T),
+    ys = jnp.dot(xs, truth)
+    kernel = lambda x, y: jnp.dot(x, y)
+    self.assertAllClose(kernel_lsq.gram(kernel, xs), jnp.dot(xs, xs.T),
                         check_dtypes=False)
 
   def testKernelRegressionTrainAndPredict(self):
-    # TODO(frostig): reenable this test.
-    self.skipTest("Test is broken")
     n, d = 100, 20
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     truth = rng.randn(d)
     xs = rng.randn(n, d)
-    ys = np.dot(xs, truth)
-    kernel = lambda x, y: np.dot(x, y)
+    ys = jnp.dot(xs, truth)
+    kernel = lambda x, y: jnp.dot(x, y)
     predict = kernel_lsq.train(kernel, xs, ys)
     self.assertAllClose(predict(xs), ys, atol=1e-3, rtol=1e-3,
                         check_dtypes=False)

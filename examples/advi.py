@@ -18,8 +18,6 @@ This demo fits a Gaussian approximation to an intractable, unnormalized
 density, by differentiating through a Monte Carlo estimate of the
 variational evidence lower bound (ELBO)."""
 
-from __future__ import absolute_import
-from __future__ import print_function
 
 from functools import partial
 import matplotlib.pyplot as plt
@@ -27,7 +25,7 @@ import matplotlib.pyplot as plt
 from jax.api import jit, grad, vmap
 from jax import random
 from jax.experimental import optimizers
-import jax.numpy as np
+import jax.numpy as jnp
 import jax.scipy.stats.norm as norm
 
 
@@ -35,11 +33,11 @@ import jax.scipy.stats.norm as norm
 
 def diag_gaussian_sample(rng, mean, log_std):
     # Take a single sample from a diagonal multivariate Gaussian.
-    return mean + np.exp(log_std) * random.normal(rng, mean.shape)
+    return mean + jnp.exp(log_std) * random.normal(rng, mean.shape)
 
 def diag_gaussian_logpdf(x, mean, log_std):
     # Evaluate a single point on a diagonal multivariate Gaussian.
-    return np.sum(vmap(norm.logpdf)(x, mean, np.exp(log_std)))
+    return jnp.sum(vmap(norm.logpdf)(x, mean, jnp.exp(log_std)))
 
 def elbo(logprob, rng, mean, log_std):
     # Single-sample Monte Carlo estimate of the variational lower bound.
@@ -50,26 +48,28 @@ def batch_elbo(logprob, rng, params, num_samples):
     # Average over a batch of random samples.
     rngs = random.split(rng, num_samples)
     vectorized_elbo = vmap(partial(elbo, logprob), in_axes=(0, None, None))
-    return np.mean(vectorized_elbo(rngs, *params))
+    return jnp.mean(vectorized_elbo(rngs, *params))
 
 
 # ========= Helper function for plotting. =========
 
 @partial(jit, static_argnums=(0, 1, 2, 4))
-def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
+def _mesh_eval(func, x_limits, y_limits, params, num_ticks):
     # Evaluate func on a 2D grid defined by x_limits and y_limits.
-    x = np.linspace(*x_limits, num=num_ticks)
-    y = np.linspace(*y_limits, num=num_ticks)
-    X, Y = np.meshgrid(x, y)
-    xy_vec = np.stack([X.ravel(), Y.ravel()]).T
+    x = jnp.linspace(*x_limits, num=num_ticks)
+    y = jnp.linspace(*y_limits, num=num_ticks)
+    X, Y = jnp.meshgrid(x, y)
+    xy_vec = jnp.stack([X.ravel(), Y.ravel()]).T
     zs = vmap(func, in_axes=(0, None))(xy_vec, params)
     return X, Y, zs.reshape(X.shape)
 
+def mesh_eval(func, x_limits, y_limits, params, num_ticks=101):
+    return _mesh_eval(func, x_limits, y_limits, params, num_ticks)
 
 # ========= Define an intractable unnormalized density =========
 
 def funnel_log_density(params):
-    return norm.logpdf(params[0], 0, np.exp(params[1])) + \
+    return norm.logpdf(params[0], 0, jnp.exp(params[1])) + \
            norm.logpdf(params[1], 0, 1.35)
 
 
@@ -88,8 +88,8 @@ if __name__ == "__main__":
     plt.show(block=False)
     x_limits = [-2, 2]
     y_limits = [-4, 2]
-    target_dist = lambda x, _: np.exp(funnel_log_density(x))
-    approx_dist = lambda x, params: np.exp(diag_gaussian_logpdf(x, *params))
+    target_dist = lambda x, _: jnp.exp(funnel_log_density(x))
+    approx_dist = lambda x, params: jnp.exp(diag_gaussian_logpdf(x, *params))
 
     def callback(params, t):
         print("Iteration {} lower bound {}".format(t, objective(params, t)))
@@ -117,8 +117,8 @@ if __name__ == "__main__":
 
     # Set up optimizer.
     D = 2
-    init_mean = np.zeros(D)
-    init_std  = np.zeros(D)
+    init_mean = jnp.zeros(D)
+    init_std  = jnp.zeros(D)
     init_params = (init_mean, init_std)
     opt_init, opt_update, get_params = optimizers.momentum(step_size=0.1, mass=0.9)
     opt_state = opt_init(init_params)

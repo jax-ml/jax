@@ -38,6 +38,9 @@ PY_TAG=$(python -c "import wheel; import wheel.pep425tags as t; print(t.get_abbr
 
 echo "Python tag: $PY_TAG"
 
+# Workaround for https://github.com/bazelbuild/bazel/issues/9254
+export BAZEL_LINKLIBS="-lstdc++"
+
 case $2 in
   cuda-included)
     python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root"
@@ -49,8 +52,7 @@ case $2 in
     PLAT_NAME="linux_x86_64"
     ;;
   nocuda)
-    python build.py --enable_cuda --include_gpu_backend_if_cuda_enabled=false \
-      --bazel_startup_options="--output_user_root=/build/root"
+    python build.py --bazel_startup_options="--output_user_root=/build/root"
     PLAT_NAME="manylinux2010_x86_64"
     ;;
   *)

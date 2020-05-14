@@ -18,16 +18,13 @@ This file uses the stax network definition library and the optimizers
 optimization library.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import os
 import time
 
 import matplotlib.pyplot as plt
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.config import config
 from jax import jit, grad, lax, random
 from jax.experimental import optimizers
@@ -38,15 +35,15 @@ from examples import datasets
 
 def gaussian_kl(mu, sigmasq):
   """KL divergence from a diagonal Gaussian to the standard Gaussian."""
-  return -0.5 * np.sum(1. + np.log(sigmasq) - mu**2. - sigmasq)
+  return -0.5 * jnp.sum(1. + jnp.log(sigmasq) - mu**2. - sigmasq)
 
 def gaussian_sample(rng, mu, sigmasq):
   """Sample a diagonal Gaussian."""
-  return mu + np.sqrt(sigmasq) * random.normal(rng, mu.shape)
+  return mu + jnp.sqrt(sigmasq) * random.normal(rng, mu.shape)
 
 def bernoulli_logpdf(logits, x):
   """Bernoulli log pdf of data x given logits."""
-  return -np.sum(np.logaddexp(0., np.where(x, -1., 1.) * logits))
+  return -jnp.sum(jnp.logaddexp(0., jnp.where(x, -1., 1.) * logits))
 
 def elbo(rng, params, images):
   """Monte Carlo estimate of the negative evidence lower bound."""
@@ -60,13 +57,13 @@ def image_sample(rng, params, nrow, ncol):
   _, dec_params = params
   code_rng, img_rng = random.split(rng)
   logits = decode(dec_params, random.normal(code_rng, (nrow * ncol, 10)))
-  sampled_images = random.bernoulli(img_rng, np.logaddexp(0., logits))
+  sampled_images = random.bernoulli(img_rng, jnp.logaddexp(0., logits))
   return image_grid(nrow, ncol, sampled_images, (28, 28))
 
 def image_grid(nrow, ncol, imagevecs, imshape):
   """Reshape a stack of image vectors into an image grid for plotting."""
   images = iter(imagevecs.reshape((-1,) + imshape))
-  return np.vstack([np.hstack([next(images).T for _ in range(ncol)][::-1])
+  return jnp.vstack([jnp.hstack([next(images).T for _ in range(ncol)][::-1])
                     for _ in range(nrow)]).T
 
 

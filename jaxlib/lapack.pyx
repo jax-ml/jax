@@ -16,9 +16,13 @@
 # distutils: language = c++
 
 # Shims that allow the XLA CPU backend to call scipy-provided LAPACK kernels
-# via CustomCall.
+# via CustomCallWithLayout.
 
 from __future__ import print_function
+
+cdef extern from "<cmath>" namespace "std":
+  bint isnan(float x) nogil
+  bint isnan(double x) nogil
 
 from libc.stdlib cimport malloc, free
 from libc.stdint cimport int32_t, int64_t
@@ -39,13 +43,22 @@ from scipy.linalg.cython_lapack cimport sgeev, dgeev, cgeev, zgeev
 import numpy as np
 from jaxlib import xla_client
 
+_ops = xla_client.ops
+
 Shape = xla_client.Shape
 
 
 cdef register_cpu_custom_call_target(fn_name, void* fn):
-  cdef const char* name = "xla._CPU_CUSTOM_CALL_TARGET"
-  xla_client.register_cpu_custom_call_target(
-    fn_name, PyCapsule_New(fn, name, NULL))
+  cdef const char* name = "xla._CUSTOM_CALL_TARGET"
+  xla_client.register_custom_call_target(fn_name, PyCapsule_New(fn, name, NULL))
+
+def _constant_s32_scalar(c, x):
+  return _ops.Constant(c, np.int32(x))
+
+# TODO(phawkins): remove after we no longer need to support old jax releases.
+def _unpack_builder(c):
+  # If `c` is a ComputationBuilder object, extracts the underlying XlaBuilder.
+  return getattr(c, "_builder", c)
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
 
@@ -59,13 +72,14 @@ cdef void blas_strsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef float* alpha = <float*>(data[6])
-  cdef float* a = <float*>(data[7])
-  cdef float* b = <float*>(data[8])
+  cdef int batch = (<int32_t*>(data[6]))[0]
+  cdef float* alpha = <float*>(data[7])
+  cdef float* a = <float*>(data[8])
+  cdef float* b = <float*>(data[9])
 
   cdef float* x = <float*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(float))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(float))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -77,7 +91,14 @@ cdef void blas_strsm(void* out, void** data) nogil:
   cdef char cdiag = 'U' if diag else 'N'
   cdef int lda = m if left_side else n
   cdef int ldb = m
-  strsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
+    strsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+    x += x_plus
+    a += a_plus
 
 register_cpu_custom_call_target(b"blas_strsm", <void*>(blas_strsm))
 
@@ -88,13 +109,14 @@ cdef void blas_dtrsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef double* alpha = <double*>(data[6])
-  cdef double* a = <double*>(data[7])
-  cdef double* b = <double*>(data[8])
+  cdef int batch = (<int32_t*>(data[6]))[0]
+  cdef double* alpha = <double*>(data[7])
+  cdef double* a = <double*>(data[8])
+  cdef double* b = <double*>(data[9])
 
   cdef double* x = <double*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(double))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(double))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -106,7 +128,15 @@ cdef void blas_dtrsm(void* out, void** data) nogil:
   cdef char cdiag = 'U' if diag else 'N'
   cdef int lda = m if left_side else n
   cdef int ldb = m
-  dtrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
+    dtrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+    x += x_plus
+    a += a_plus
+
 
 register_cpu_custom_call_target(b"blas_dtrsm", <void*>(blas_dtrsm))
 
@@ -118,13 +148,14 @@ cdef void blas_ctrsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef float complex* alpha = <float complex*>(data[6])
-  cdef float complex* a = <float complex*>(data[7])
-  cdef float complex* b = <float complex*>(data[8])
+  cdef int batch = (<int32_t*>(data[6]))[0]
+  cdef float complex* alpha = <float complex*>(data[7])
+  cdef float complex* a = <float complex*>(data[8])
+  cdef float complex* b = <float complex*>(data[9])
 
   cdef float complex* x = <float complex*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(float complex))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -136,7 +167,15 @@ cdef void blas_ctrsm(void* out, void** data) nogil:
   cdef char cdiag = 'U' if diag else 'N'
   cdef int lda = m if left_side else n
   cdef int ldb = m
-  ctrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
+    ctrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+    x += x_plus
+    a += a_plus
+
 
 register_cpu_custom_call_target(b"blas_ctrsm", <void*>(blas_ctrsm))
 
@@ -147,13 +186,14 @@ cdef void blas_ztrsm(void* out, void** data) nogil:
   cdef int32_t diag = (<int32_t*>(data[3]))[0]
   cdef int m = (<int32_t*>(data[4]))[0]
   cdef int n = (<int32_t*>(data[5]))[0]
-  cdef double complex* alpha = <double complex*>(data[6])
-  cdef double complex* a = <double complex*>(data[7])
-  cdef double complex* b = <double complex*>(data[8])
+  cdef int batch = (<int32_t*>(data[6]))[0]
+  cdef double complex* alpha = <double complex*>(data[7])
+  cdef double complex* a = <double complex*>(data[8])
+  cdef double complex* b = <double complex*>(data[9])
 
   cdef double complex* x = <double complex*>(out)
   if x != b:
-    memcpy(x, b, <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
+    memcpy(x, b, <int64_t>(batch) * <int64_t>(m) * <int64_t>(n) * sizeof(double complex))
 
   cdef char cside = 'L' if left_side else 'R'
   cdef char cuplo = 'L' if lower else 'U'
@@ -165,20 +205,37 @@ cdef void blas_ztrsm(void* out, void** data) nogil:
   cdef char cdiag = 'U' if diag else 'N'
   cdef int lda = m if left_side else n
   cdef int ldb = m
-  ztrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+
+  cdef int64_t x_plus = <int64_t>(m) * <int64_t>(n)
+  cdef int64_t a_plus = <int64_t>(lda) * <int64_t>(lda)
+
+  for _ in range(batch):
+    ztrsm(&cside, &cuplo, &ctransa, &cdiag, &m, &n, alpha, a, &lda, x, &ldb)
+    x += x_plus
+    a += a_plus
 
 register_cpu_custom_call_target(b"blas_ztrsm", <void*>(blas_ztrsm))
 
 
 def trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
-             conj_a=False, diag=False):
-  b_shape = c.GetShape(b)
+         conj_a=False, diag=False):
+  c = _unpack_builder(c)
+  a_shape = c.get_shape(a)
+  b_shape = c.get_shape(b)
   dtype = b_shape.element_type()
-  m, n = b_shape.dimensions()
+
+  dims = b_shape.dimensions()
+
+  m, n = dims[-2:]
   k = m if left_side else n
 
-  a_shape = c.GetShape(a)
-  if (k, k) != a_shape.dimensions() or a_shape.element_type() != dtype:
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  num_b = 1
+  for d in batch_dims:
+    num_b *= d
+
+  if batch_dims + (k, k) != a_shape.dimensions() or a_shape.element_type() != dtype:
     raise ValueError("Argument mismatch for trsm, got {} and {}".format(
       a_shape, b_shape))
 
@@ -196,28 +253,31 @@ def trsm(c, alpha, a, b, left_side=False, lower=False, trans_a=False,
   if conj_a and not trans_a:
     raise NotImplementedError("Conjugation without transposition not supported")
 
-  return c.CustomCall(
-      fn,
-      operands=(
-        c.ConstantS32Scalar(int(left_side)),
-        c.ConstantS32Scalar(int(lower)),
-        c.ConstantS32Scalar((2 if conj_a else 1) if trans_a else 0),
-        c.ConstantS32Scalar(int(diag)),
-        c.ConstantS32Scalar(m),
-        c.ConstantS32Scalar(n),
-        alpha, a, b),
-      shape_with_layout=Shape.array_shape(dtype, b_shape.dimensions(), (0, 1)),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(dtype, (), ()),
-          Shape.array_shape(dtype, a_shape.dimensions(), (0, 1)),
-          Shape.array_shape(dtype, b_shape.dimensions(), (0, 1)),
-      ))
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  return _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(
+      _constant_s32_scalar(c, int(left_side)),
+      _constant_s32_scalar(c, int(lower)),
+      _constant_s32_scalar(c, (2 if conj_a else 1) if trans_a else 0),
+      _constant_s32_scalar(c, int(diag)),
+      _constant_s32_scalar(c, m),
+      _constant_s32_scalar(c, n),
+      _constant_s32_scalar(c, num_b),
+      alpha, a, b),
+    shape_with_layout=Shape.array_shape(dtype, b_shape.dimensions(), layout),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(dtype, (), ()),
+        Shape.array_shape(dtype, a_shape.dimensions(), layout),
+        Shape.array_shape(dtype, b_shape.dimensions(), layout),
+    ))
 jax_trsm = trsm
 
 # ?getrf: LU decomposition
@@ -314,9 +374,10 @@ cdef void lapack_zgetrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_zgetrf", <void*>(lapack_zgetrf))
 
 def getrf(c, a):
+  c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -338,38 +399,35 @@ def getrf(c, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
-      fn,
-      operands=(
-        c.ConstantS32Scalar(b),
-        c.ConstantS32Scalar(m),
-        c.ConstantS32Scalar(n),
-        a),
-      shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(
-            dtype,
-            batch_dims + (m, n),
-            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-          Shape.array_shape(
-            np.dtype(np.int32),
-            batch_dims + (min(m, n),),
-            tuple(range(num_bd, -1, -1))),
-          Shape.array_shape(np.dtype(np.int32), batch_dims,
-            tuple(range(num_bd - 1, -1, -1))),
-      )),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(
-            dtype,
-            batch_dims + (m, n),
-            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      ))
-  return tuple(c.GetTupleElement(out, i) for i in range(3))
-
-def jax_getrf(c, a):
-  return c.Tuple(*getrf(c, a))
+  out = _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(
+      _constant_s32_scalar(c, b),
+      _constant_s32_scalar(c, m),
+      _constant_s32_scalar(c, n),
+      a),
+    shape_with_layout=Shape.tuple_shape((
+        Shape.array_shape(
+          dtype,
+          batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+        Shape.array_shape(
+          np.dtype(np.int32),
+          batch_dims + (min(m, n),),
+          tuple(range(num_bd, -1, -1))),
+        Shape.array_shape(np.dtype(np.int32), batch_dims,
+          tuple(range(num_bd - 1, -1, -1))),
+    )),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(
+          dtype,
+          batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+    ))
+  return tuple(_ops.GetTupleElement(out, i) for i in range(3))
 
 # ?geqrf: QR decomposition
 
@@ -502,9 +560,10 @@ cdef void lapack_zgeqrf(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_zgeqrf", <void*>(lapack_zgeqrf))
 
 def geqrf(c, a):
+  c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -530,39 +589,39 @@ def geqrf(c, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
-      fn,
-      operands=(
-        c.ConstantS32Scalar(b),
-        c.ConstantS32Scalar(m),
-        c.ConstantS32Scalar(n),
-        c.ConstantS32Scalar(lwork),
-        a,
-      ),
-      shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(
-            dtype,
-            batch_dims + (m, n),
-            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-          Shape.array_shape(
-            np.dtype(dtype),
-            batch_dims + (min(m, n),),
-            tuple(range(num_bd, -1, -1))),
-          Shape.array_shape(np.dtype(np.int32), batch_dims,
-            tuple(range(num_bd - 1, -1, -1))),
-          Shape.array_shape(np.dtype(dtype), (lwork,), (0,)),
-      )),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(
-            dtype,
-            batch_dims + (m, n),
-            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-      ))
-  return tuple(c.GetTupleElement(out, i) for i in range(3))
+  out = _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(
+      _constant_s32_scalar(c, b),
+      _constant_s32_scalar(c, m),
+      _constant_s32_scalar(c, n),
+      _constant_s32_scalar(c, lwork),
+      a,
+    ),
+    shape_with_layout=Shape.tuple_shape((
+        Shape.array_shape(
+          dtype,
+          batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+        Shape.array_shape(
+          np.dtype(dtype),
+          batch_dims + (min(m, n),),
+          tuple(range(num_bd, -1, -1))),
+        Shape.array_shape(np.dtype(np.int32), batch_dims,
+          tuple(range(num_bd - 1, -1, -1))),
+        Shape.array_shape(np.dtype(dtype), (lwork,), (0,)),
+    )),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(
+          dtype,
+          batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+    ))
+  return tuple(_ops.GetTupleElement(out, i) for i in range(3))
 
 # ?orgqr: product of elementary Householder reflectors:
 
@@ -699,9 +758,10 @@ cdef void lapack_zungqr(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_zungqr", <void*>(lapack_zungqr))
 
 def orgqr(c, a, tau):
+  c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -712,7 +772,7 @@ def orgqr(c, a, tau):
   for d in batch_dims:
     b *= d
 
-  tau_dims = c.GetShape(tau).dimensions()
+  tau_dims = c.get_shape(tau).dimensions()
   assert tau_dims[:-1] == dims[:-2]
   k = tau_dims[-1]
 
@@ -731,118 +791,140 @@ def orgqr(c, a, tau):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
-      fn,
-      operands=(
-        c.ConstantS32Scalar(b),
-        c.ConstantS32Scalar(m),
-        c.ConstantS32Scalar(n),
-        c.ConstantS32Scalar(k),
-        c.ConstantS32Scalar(lwork),
-        a,
-        tau,
-      ),
-      shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(
-            dtype,
-            batch_dims + (m, n),
-            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-          Shape.array_shape(np.dtype(np.int32), batch_dims,
-            tuple(range(num_bd - 1, -1, -1))),
-          Shape.array_shape(dtype, (lwork,), (0,)),
-      )),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(
-            dtype,
-            batch_dims + (m, n),
-            (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
-          Shape.array_shape(
-            dtype,
-            batch_dims + (k,),
-            tuple(range(num_bd, -1, -1))),
-      ))
-  return tuple(c.GetTupleElement(out, i) for i in range(2))
+  out = _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(
+      _constant_s32_scalar(c, b),
+      _constant_s32_scalar(c, m),
+      _constant_s32_scalar(c, n),
+      _constant_s32_scalar(c, k),
+      _constant_s32_scalar(c, lwork),
+      a,
+      tau,
+    ),
+    shape_with_layout=Shape.tuple_shape((
+        Shape.array_shape(
+          dtype,
+          batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+        Shape.array_shape(np.dtype(np.int32), batch_dims,
+          tuple(range(num_bd - 1, -1, -1))),
+        Shape.array_shape(dtype, (lwork,), (0,)),
+    )),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(
+          dtype,
+          batch_dims + (m, n),
+          (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))),
+        Shape.array_shape(
+          dtype,
+          batch_dims + (k,),
+          tuple(range(num_bd, -1, -1))),
+    ))
+  return tuple(_ops.GetTupleElement(out, i) for i in range(2))
 
 
 # ?potrf: Cholesky decomposition
 
 cdef void lapack_spotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float* a_in = <float*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float* a_in = <float*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef float* a_out = <float*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(float))
 
-  spotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    spotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_spotrf", <void*>(lapack_spotrf))
 
 
 cdef void lapack_dpotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double* a_in = <double*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double* a_in = <double*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef double* a_out = <double*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(double))
 
-  dpotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    dpotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_dpotrf", <void*>(lapack_dpotrf))
 
 
 cdef void lapack_cpotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const float complex* a_in = <float complex*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const float complex* a_in = <float complex*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef float complex* a_out = <float complex*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(float complex))
 
-  cpotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    cpotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_cpotrf", <void*>(lapack_cpotrf))
 
 cdef void lapack_zpotrf(void* out_tuple, void** data) nogil:
   cdef int32_t lower = (<int32_t*>(data[0]))[0]
-  cdef int n = (<int32_t*>(data[1]))[0]
-  cdef const double complex* a_in = <double complex*>(data[2])
+  cdef int b = (<int32_t*>(data[1]))[0]
+  cdef int n = (<int32_t*>(data[2]))[0]
+  cdef const double complex* a_in = <double complex*>(data[3])
   cdef char uplo = 'L' if lower else 'U'
 
   cdef void** out = <void**>(out_tuple)
   cdef double complex* a_out = <double complex*>(out[0])
   cdef int* info = <int*>(out[1])
   if a_out != a_in:
-    memcpy(a_out, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double complex))
+    memcpy(a_out, a_in,
+           <int64_t>(b) * <int64_t>(n) * <int64_t>(n) * sizeof(double complex))
 
-  zpotrf(&uplo, &n, a_out, &n, info)
+  for i in range(b):
+    zpotrf(&uplo, &n, a_out, &n, info)
+    a_out += <int64_t>(n) * <int64_t>(n)
+    info += 1
 
 register_cpu_custom_call_target(b"lapack_zpotrf", <void*>(lapack_zpotrf))
 
 def potrf(c, a, lower=False):
+  c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
-  m, n = a_shape.dimensions()
+  dims = a_shape.dimensions()
+  m, n = dims[-2:]
   if m != n:
     raise ValueError("potrf expects a square matrix, got {}".format(a_shape))
   if dtype == np.float32:
@@ -855,23 +937,29 @@ def potrf(c, a, lower=False):
     fn = b"lapack_zpotrf"
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
 
-  out = c.CustomCall(
-      fn,
-      operands=(c.ConstantS32Scalar(int(lower)), c.ConstantS32Scalar(n), a),
-      shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(dtype, (n, n), (0, 1)),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-      )),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(dtype, (n, n), (0, 1)),
-      ))
-  return tuple(c.GetTupleElement(out, i) for i in range(2))
-
-def jax_potrf(c, a, lower=False):
-  return c.Tuple(*potrf(c, a, lower))
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  out = _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(_constant_s32_scalar(c, int(lower)),
+              _constant_s32_scalar(c, b), _constant_s32_scalar(c, n), a),
+    shape_with_layout=Shape.tuple_shape((
+        Shape.array_shape(dtype, dims, layout),
+        Shape.array_shape(
+            np.dtype(np.int32), batch_dims, tuple(range(num_bd - 1, -1, -1))),
+    )),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(dtype, dims, layout),
+    ))
+  return tuple(_ops.GetTupleElement(out, i) for i in range(2))
 
 
 # ?gesdd: Singular value decomposition
@@ -1106,9 +1194,10 @@ cdef void lapack_zgesdd(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_zgesdd", <void*>(lapack_zgesdd))
 
 def gesdd(c, a, full_matrices=True, compute_uv=True):
+  c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -1161,40 +1250,37 @@ def gesdd(c, a, full_matrices=True, compute_uv=True):
   scalar_layout = tuple(range(num_bd - 1, -1, -1))
   vector_layout = (num_bd,) + scalar_layout
   matrix_layout = (num_bd, num_bd + 1) + scalar_layout
-  out = c.CustomCall(
-      fn,
-      operands=(c.ConstantS32Scalar(int(full_matrices)),
-                c.ConstantS32Scalar(int(compute_uv)),
-                c.ConstantS32Scalar(b),
-                c.ConstantS32Scalar(m), c.ConstantS32Scalar(n),
-                c.ConstantS32Scalar(lwork), a),
-      shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
-          Shape.array_shape(np.dtype(singular_vals_dtype),
-                            batch_dims + (min(m, n),), vector_layout),
-          Shape.array_shape(dtype,
-                            batch_dims + (m, m if full_matrices else min(m, n)),
-                            matrix_layout),
-          Shape.array_shape(dtype,
-                            batch_dims + (n if full_matrices else min(m, n), n),
-                            matrix_layout),
-          Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
-        ) + workspace
-      ),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
-      ))
-  return (c.GetTupleElement(out, 1), c.GetTupleElement(out, 2),
-          c.GetTupleElement(out, 3), c.GetTupleElement(out, 4))
-
-def jax_gesdd(c, a, full_matrices=True, compute_uv=True):
-  return c.Tuple(*gesdd(c, a, full_matrices, compute_uv))
+  out = _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(_constant_s32_scalar(c, int(full_matrices)),
+              _constant_s32_scalar(c, int(compute_uv)),
+              _constant_s32_scalar(c, b),
+              _constant_s32_scalar(c, m), _constant_s32_scalar(c, n),
+              _constant_s32_scalar(c, lwork), a),
+    shape_with_layout=Shape.tuple_shape((
+        Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
+        Shape.array_shape(np.dtype(singular_vals_dtype),
+                          batch_dims + (min(m, n),), vector_layout),
+        Shape.array_shape(dtype,
+                          batch_dims + (m, m if full_matrices else min(m, n)),
+                          matrix_layout),
+        Shape.array_shape(dtype,
+                          batch_dims + (n if full_matrices else min(m, n), n),
+                          matrix_layout),
+        Shape.array_shape(np.dtype(np.int32), batch_dims, scalar_layout),
+      ) + workspace
+    ),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(dtype, batch_dims + (m, n), matrix_layout),
+    ))
+  return (_ops.GetTupleElement(out, 1), _ops.GetTupleElement(out, 2),
+          _ops.GetTupleElement(out, 3), _ops.GetTupleElement(out, 4))
 
 
 # syevd: Symmetric eigendecomposition
@@ -1339,9 +1425,10 @@ cdef void lapack_zheevd(void* out_tuple, void** data) nogil:
 register_cpu_custom_call_target(b"lapack_zheevd", <void*>(lapack_zheevd))
 
 def syevd(c, a, lower=False):
+  c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -1385,31 +1472,28 @@ def syevd(c, a, lower=False):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
-      fn,
-      operands=(c.ConstantS32Scalar(1 if lower else 0),
-                c.ConstantS32Scalar(b),
-                c.ConstantS32Scalar(n),
-                a),
-      shape_with_layout=Shape.tuple_shape((
-          Shape.array_shape(dtype, dims, layout),
-          Shape.array_shape(np.dtype(eigvals_type), batch_dims + (n,),
-                            tuple(range(num_bd, -1, -1))),
-          Shape.array_shape(np.dtype(np.int32), batch_dims,
-                            tuple(range(num_bd - 1, -1, -1))))
-          + workspace
-      ),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(dtype, dims, layout),
-      ))
-  return (c.GetTupleElement(out, 0), c.GetTupleElement(out, 1),
-          c.GetTupleElement(out, 2))
-
-def jax_syevd(c, a, lower=False):
-  return c.Tuple(*syevd(c, a, lower))
+  out = _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(_constant_s32_scalar(c, 1 if lower else 0),
+              _constant_s32_scalar(c, b),
+              _constant_s32_scalar(c, n),
+              a),
+    shape_with_layout=Shape.tuple_shape((
+        Shape.array_shape(dtype, dims, layout),
+        Shape.array_shape(np.dtype(eigvals_type), batch_dims + (n,),
+                          tuple(range(num_bd, -1, -1))),
+        Shape.array_shape(np.dtype(np.int32), batch_dims,
+                          tuple(range(num_bd - 1, -1, -1))))
+        + workspace
+    ),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(dtype, dims, layout),
+    ))
+  return (_ops.GetTupleElement(out, 0), _ops.GetTupleElement(out, 1),
+          _ops.GetTupleElement(out, 2))
 
 
 # geev: Nonsymmetric eigendecomposition
@@ -1424,7 +1508,7 @@ cdef void _unpack_float_eigenvectors(
   cdef int j, k
   j = 0
   while j < n:
-    if im_eigenvalues[j] == 0.:
+    if im_eigenvalues[j] == 0. or isnan(im_eigenvalues[j]):
       for k in range(n):
         unpacked[j*n + k].real = packed[j*n + k]
         unpacked[j*n + k].imag = 0.
@@ -1466,8 +1550,9 @@ cdef void lapack_sgeev(void* out_tuple, void** data) nogil:
     memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(float))
     sgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
           vr_work, &n, work, &lwork, info_out)
-    _unpack_float_eigenvectors(n, wi_out, vl_work, vl_out)
-    _unpack_float_eigenvectors(n, wi_out, vr_work, vr_out)
+    if info_out[0] == 0:
+      _unpack_float_eigenvectors(n, wi_out, vl_work, vl_out)
+      _unpack_float_eigenvectors(n, wi_out, vr_work, vr_out)
 
     a_in += n * n
     wr_out += n
@@ -1479,7 +1564,6 @@ cdef void lapack_sgeev(void* out_tuple, void** data) nogil:
 
 register_cpu_custom_call_target(b"lapack_sgeev", <void*>(lapack_sgeev))
 
-
 cdef void _unpack_double_eigenvectors(
     int n, const double* im_eigenvalues, const double* packed,
     double complex* unpacked) nogil:
@@ -1487,7 +1571,7 @@ cdef void _unpack_double_eigenvectors(
   cdef int j, k
   j = 0
   while j < n:
-    if im_eigenvalues[j] == 0.:
+    if im_eigenvalues[j] == 0. or isnan(im_eigenvalues[j]):
       for k in range(n):
         unpacked[j*n + k].real = packed[j*n + k]
         unpacked[j*n + k].imag = 0.
@@ -1500,6 +1584,7 @@ cdef void _unpack_double_eigenvectors(
         unpacked[j*n + k].imag = im
         unpacked[(j + 1)*n + k].imag = -im
       j += 2
+
 
 cdef void lapack_dgeev(void* out_tuple, void** data) nogil:
   cdef int b = (<int32_t*>(data[0]))[0]
@@ -1529,8 +1614,9 @@ cdef void lapack_dgeev(void* out_tuple, void** data) nogil:
     memcpy(a_work, a_in, <int64_t>(n) * <int64_t>(n) * sizeof(double))
     dgeev(&jobvlr, &jobvlr, &n, a_work, &n, wr_out, wi_out, vl_work, &n,
           vr_work, &n, work, &lwork, info_out)
-    _unpack_double_eigenvectors(n, wi_out, vl_work, vl_out)
-    _unpack_double_eigenvectors(n, wi_out, vr_work, vr_out)
+    if info_out[0] == 0:
+      _unpack_double_eigenvectors(n, wi_out, vl_work, vl_out)
+      _unpack_double_eigenvectors(n, wi_out, vr_work, vr_out)
 
     a_in += n * n
     wr_out += n
@@ -1621,9 +1707,10 @@ register_cpu_custom_call_target(b"lapack_zgeev", <void*>(lapack_zgeev))
 
 
 def geev(c, a):
+  c = _unpack_builder(c)
   assert sizeof(int32_t) == sizeof(int)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -1677,27 +1764,25 @@ def geev(c, a):
   else:
     raise NotImplementedError("Unsupported dtype {}".format(dtype))
 
-  out = c.CustomCall(
-      fn,
-      operands=(c.ConstantS32Scalar(b), c.ConstantS32Scalar(n), a),
-      shape_with_layout=Shape.tuple_shape(workspaces + eigvals + (
-          Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
-          Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
-          Shape.array_shape(np.dtype(np.int32), batch_dims,
-                            tuple(range(num_bd - 1, -1, -1))))
-      ),
-      operand_shapes_with_layout=(
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(np.dtype(np.int32), (), ()),
-          Shape.array_shape(dtype, dims, layout),
-      ))
+  out = _ops.CustomCallWithLayout(
+    c, fn,
+    operands=(_constant_s32_scalar(c, b), _constant_s32_scalar(c, n), a),
+    shape_with_layout=Shape.tuple_shape(workspaces + eigvals + (
+        Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
+        Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
+        Shape.array_shape(np.dtype(np.int32), batch_dims,
+                          tuple(range(num_bd - 1, -1, -1))))
+    ),
+    operand_shapes_with_layout=(
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(np.dtype(np.int32), (), ()),
+        Shape.array_shape(dtype, dims, layout),
+    ))
   if real:
-    return (c.Complex(c.GetTupleElement(out, 3), c.GetTupleElement(out, 4)),
-            c.GetTupleElement(out, 5), c.GetTupleElement(out, 6),
-            c.GetTupleElement(out, 7))
+    return (_ops.Complex(_ops.GetTupleElement(out, 3),
+                         _ops.GetTupleElement(out, 4)),
+            _ops.GetTupleElement(out, 5), _ops.GetTupleElement(out, 6),
+            _ops.GetTupleElement(out, 7))
   else:
-    return (c.GetTupleElement(out, 2), c.GetTupleElement(out, 3),
-            c.GetTupleElement(out, 4), c.GetTupleElement(out, 5))
-
-def jax_geev(c, a):
-  return c.Tuple(*geev(c, a))
+    return (_ops.GetTupleElement(out, 2), _ops.GetTupleElement(out, 3),
+            _ops.GetTupleElement(out, 4), _ops.GetTupleElement(out, 5))

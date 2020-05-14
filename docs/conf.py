@@ -60,6 +60,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'nbsphinx',
+    'sphinx_autodoc_typehints',
 ]
 
 intersphinx_mapping = {
@@ -94,6 +95,12 @@ exclude_patterns = [
     'notebooks/neural_network_with_tfds_data.ipynb',
     # Slow notebook
     'notebooks/Neural_Network_and_Data_Loading.ipynb',
+    'notebooks/score_matching.ipynb',
+    'notebooks/maml.ipynb',
+    # Fails with shape error in XL
+    'notebooks/XLA_in_Python.ipynb',
+    # Sometimes sphinx reads its own outputs as inputs!
+    'build/html',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
@@ -120,7 +127,7 @@ nbsphinx_execute = 'always'
 
 
 # Controls when a cell will time out (defaults to 30; use -1 for no timeout):
-nbsphinx_timeout = 90
+nbsphinx_timeout = 180
 
 # Default Pygments lexer for syntax highlighting in code cells:
 #nbsphinx_codecell_lexer = 'ipython3'

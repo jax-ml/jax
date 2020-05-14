@@ -12,17 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from functools import partial
 
-from six.moves import xrange
-
 import numpy.random as npr
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.config import config
 from jax.experimental import optimizers
 from jax import grad, jit, make_jaxpr, vmap
@@ -50,7 +45,7 @@ def minimize(f, x, num_steps=10000, step_size=0.000001, mass=0.9):
     return opt_update(i, grad(f)(x), opt_state)
 
   opt_state = opt_init(x)
-  for i in xrange(num_steps):
+  for i in range(num_steps):
     opt_state = update(i, opt_state)
   return get_params(opt_state)
 
@@ -61,15 +56,15 @@ def train(kernel, xs, ys, regularization=0.01):
   n = xs.shape[0]
 
   def objective(v):
-    risk = .5 * np.sum((np.dot(gram_mat, v) - ys) ** 2.0)
-    reg = regularization * np.sum(v ** 2.0)
+    risk = .5 * jnp.sum((jnp.dot(gram_mat, v) - ys) ** 2.0)
+    reg = regularization * jnp.sum(v ** 2.0)
     return risk + reg
 
-  v = minimize(objective, np.zeros(n))
+  v = minimize(objective, jnp.zeros(n))
 
   def predict(x):
     prods = vmap(lambda x_: kernel(x, x_))(xs)
-    return np.sum(v * prods)
+    return jnp.sum(v * prods)
 
   return jit(vmap(predict))
 
@@ -80,19 +75,19 @@ if __name__ == "__main__":
 
   # linear kernel
 
-  linear_kernel = lambda x, y: np.dot(x, y)
+  linear_kernel = lambda x, y: jnp.dot(x, y)
   truth = npr.randn(d)
   xs = npr.randn(n, d)
-  ys = np.dot(xs, truth)
+  ys = jnp.dot(xs, truth)
 
   predict = train(linear_kernel, xs, ys)
 
-  print('MSE:', np.sum((predict(xs) - ys) ** 2.))
+  print('MSE:', jnp.sum((predict(xs) - ys) ** 2.))
 
   def gram_jaxpr(kernel):
     return make_jaxpr(partial(gram, kernel))(xs)
 
-  rbf_kernel = lambda x, y: np.exp(-np.sum((x - y) ** 2))
+  rbf_kernel = lambda x, y: jnp.exp(-jnp.sum((x - y) ** 2))
 
   print()
   print('jaxpr of gram(linear_kernel):')

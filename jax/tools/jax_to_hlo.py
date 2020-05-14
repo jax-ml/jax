@@ -28,10 +28,10 @@ See tensorflow/compiler/xla/service/hlo_runner.h.
 Usage:
 
   $ cat prog.py
-  import jax.numpy as np
+  import jax.numpy as jnp
 
   def fn(x, y, z):
-    return np.dot(x, y) / z
+    return jnp.dot(x, y) / z
 
   $ python jax_to_hlo.py \
     --fn prog.fn \
@@ -48,9 +48,9 @@ The order of elements in input_shapes determines the order of parameters in the
 resulting HLO program.
 
 Values of `constants` which are lists are converted to Numpy arrays using
-np.asarray.  In addition, you can specify constants using the flag
+jnp.asarray.  In addition, you can specify constants using the flag
 --evaled_constants; values there that are strings are first evaluated using
-ast.literal_eval.  --evaled_constants is primarly useful for genrules; Skylark
+ast.literal_eval.  --evaled_constants is primarily useful for genrules; Skylark
 doesn't support floating-point types, so genrules need to deal in strings.
 
 Note that XLA's backwards-compatibility guarantees for saved HLO are currently
@@ -63,9 +63,6 @@ Implementation note: This script must be python2 compatible for now, because
 Google's genrules still run with python2, b/66712815.
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from ast import literal_eval
 import importlib
@@ -74,7 +71,7 @@ import functools
 from absl import app
 from absl import flags
 import jax.api
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.lib import xla_client
 
 FLAGS = flags.FLAGS
@@ -122,7 +119,7 @@ def jax_to_hlo(fn, input_shapes, constants=None):
       raise ValueError('Shape %s has a non-default layout, but only '
                        'the default layout is allowed.' % str(shape))
 
-    args.append(np.zeros(shape.dimensions(), dtype=shape.numpy_dtype()))
+    args.append(jnp.zeros(shape.dimensions(), dtype=shape.numpy_dtype()))
 
   # Curry `constants` into the function.
   fn_curried = functools.partial(fn, **constants)
@@ -134,7 +131,7 @@ def jax_to_hlo(fn, input_shapes, constants=None):
     return fn_curried(**dict(zip(arg_names, args)))
 
   comp = jax.api.xla_computation(ordered_wrapper)(*args)
-  return (comp.GetSerializedProto(), comp.GetHloText())
+  return (comp.as_serialized_hlo_module_proto(), comp.as_hlo_text())
 
 
 def main(argv):
@@ -156,14 +153,14 @@ def main(argv):
   constants = {}
   for k, v in literal_eval(FLAGS.constants).items():
     if isinstance(v, list):
-      v = np.asarray(v)
+      v = jnp.asarray(v)
     constants[k] = v
 
   for k, v in literal_eval(FLAGS.evaled_constants).items():
     if isinstance(v, str):
       v = literal_eval(v)
     if isinstance(v, list):
-      v = np.asarray(v)
+      v = jnp.asarray(v)
     if k in constants:
       raise ValueError(
           'Argument appears in both --constants and --evaled_constants: %s' % k)

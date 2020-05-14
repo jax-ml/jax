@@ -12,25 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy import lax_numpy as np
+from ...numpy._util import _wraps
+from ...numpy import lax_numpy as jnp
 from ..special import xlogy, gammaln
 
 
-@np._wraps(osp_stats.poisson.logpmf, update_doc=False)
+@_wraps(osp_stats.poisson.logpmf, update_doc=False)
 def logpmf(k, mu, loc=0):
-  k, mu, loc = np._promote_args_like(osp_stats.poisson.logpmf, k, mu, loc)
-  zero = np._constant_like(k, 0)
+  k, mu, loc = jnp._promote_args_inexact("poisson.logpmf", k, mu, loc)
+  zero = jnp._constant_like(k, 0)
   x = lax.sub(k, loc)
   log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
-  return np.where(lax.lt(x, zero), -np.inf, log_probs)
+  return jnp.where(lax.lt(x, zero), -jnp.inf, log_probs)
 
-@np._wraps(osp_stats.poisson.pmf, update_doc=False)
+@_wraps(osp_stats.poisson.pmf, update_doc=False)
 def pmf(k, mu, loc=0):
-  return np.exp(pmf(k, mu, loc))
+  return jnp.exp(logpmf(k, mu, loc))

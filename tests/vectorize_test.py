@@ -13,16 +13,11 @@
 # limitations under the License.
 
 """Tests for Vectorize library."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
-
-from jax import numpy as np
+from jax import numpy as jnp
 from jax import test_util as jtu
 from jax import random
 from jax.experimental.vectorize import vectorize
@@ -30,24 +25,24 @@ from jax.experimental.vectorize import vectorize
 from jax.config import config
 config.parse_flags_with_absl()
 
-matmat = vectorize('(n,m),(m,k)->(n,k)')(np.dot)
-matvec = vectorize('(n,m),(m)->(n)')(np.dot)
-vecmat = vectorize('(m),(m,k)->(k)')(np.dot)
-vecvec = vectorize('(m),(m)->()')(np.dot)
+matmat = vectorize('(n,m),(m,k)->(n,k)')(jnp.dot)
+matvec = vectorize('(n,m),(m)->(n)')(jnp.dot)
+vecmat = vectorize('(m),(m,k)->(k)')(jnp.dot)
+vecvec = vectorize('(m),(m)->()')(jnp.dot)
 
 @vectorize('(n)->()')
 def magnitude(x):
-  return np.dot(x, x)
+  return jnp.dot(x, x)
 
-mean = vectorize('(n)->()')(np.mean)
+mean = vectorize('(n)->()')(jnp.mean)
 
 @vectorize('()->(n)')
 def stack_plus_minus(x):
-  return np.stack([x, -x])
+  return jnp.stack([x, -x])
 
 @vectorize('(n)->(),(n)')
 def center(array):
-  bias = np.mean(array)
+  bias = jnp.mean(array)
   debiased = array - bias
   return bias, debiased
 
@@ -63,8 +58,8 @@ class VectorizeTest(jtu.JaxTestCase):
           ((6, 5, 2, 3), (3, 4), (6, 5, 2, 4)),
       ]))
   def test_matmat(self, left_shape, right_shape, result_shape):
-    self.assertEqual(matmat(np.zeros(left_shape),
-                            np.zeros(right_shape)).shape, result_shape)
+    self.assertEqual(matmat(jnp.zeros(left_shape),
+                            jnp.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
@@ -76,8 +71,8 @@ class VectorizeTest(jtu.JaxTestCase):
           ((5, 4, 2, 3), (1, 3), (5, 4, 2)),
       ]))
   def test_matvec(self, left_shape, right_shape, result_shape):
-    self.assertEqual(matvec(np.zeros(left_shape),
-                            np.zeros(right_shape)).shape, result_shape)
+    self.assertEqual(matvec(jnp.zeros(left_shape),
+                            jnp.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_leftshape={}_rightshape={}".format(left_shape, right_shape),
@@ -88,8 +83,8 @@ class VectorizeTest(jtu.JaxTestCase):
           ((4, 2, 3), (3,), (4, 2)),
       ]))
   def test_vecvec(self, left_shape, right_shape, result_shape):
-    self.assertEqual(vecvec(np.zeros(left_shape),
-                            np.zeros(right_shape)).shape, result_shape)
+    self.assertEqual(vecvec(jnp.zeros(left_shape),
+                            jnp.zeros(right_shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(shape),
@@ -103,7 +98,7 @@ class VectorizeTest(jtu.JaxTestCase):
     size = 1
     for x in shape:
         size *= x
-    self.assertEqual(magnitude(np.arange(size).reshape(shape)).shape, result_shape)
+    self.assertEqual(magnitude(jnp.arange(size).reshape(shape)).shape, result_shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(shape),
@@ -114,10 +109,10 @@ class VectorizeTest(jtu.JaxTestCase):
           ((1, 2, 3, 4), (1, 2, 3)),
       ]))
   def test_mean(self, shape, result_shape):
-    self.assertEqual(mean(np.zeros(shape)).shape, result_shape)
+    self.assertEqual(mean(jnp.zeros(shape)).shape, result_shape)
 
   def test_mean_axis(self):
-      self.assertEqual(mean(np.zeros((2, 3)), axis=0).shape, (3,))
+      self.assertEqual(mean(jnp.zeros((2, 3)), axis=0).shape, (3,))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(shape),
@@ -127,24 +122,24 @@ class VectorizeTest(jtu.JaxTestCase):
           ((3,), (3,2,)),
       ]))
   def test_stack_plus_minus(self, shape, result_shape):
-    self.assertEqual(stack_plus_minus(np.zeros(shape)).shape, result_shape)
+    self.assertEqual(stack_plus_minus(jnp.zeros(shape)).shape, result_shape)
 
   def test_center(self):
-    b, a = center(np.arange(3))
+    b, a = center(jnp.arange(3))
     self.assertEqual(a.shape, (3,))
     self.assertEqual(b.shape, ())
     self.assertAllClose(1.0, b, False)
 
-    X = np.arange(12).reshape((3, 4))
+    X = jnp.arange(12).reshape((3, 4))
     b, a = center(X, axis=1)
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (3,))
-    self.assertAllClose(np.mean(X, axis=1), b, True)
+    self.assertAllClose(jnp.mean(X, axis=1), b, True)
     
     b, a = center(X, axis=0)
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (4,))
-    self.assertAllClose(np.mean(X, axis=0), b, True)
+    self.assertAllClose(jnp.mean(X, axis=0), b, True)
     
 
 if __name__ == "__main__":
