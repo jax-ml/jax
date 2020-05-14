@@ -239,7 +239,7 @@ class ScaleByAdamState(OptState):
 def scale_by_adam(b1: float = 0.9,
                   b2: float = 0.999,
                   eps: float = 1e-8,
-                  eps2: float = 0.0) -> InitUpdate:
+                  eps_root: float = 0.0) -> InitUpdate:
   """Rescale updates according to the Adam algorithm.
 
   References:
@@ -249,8 +249,8 @@ def scale_by_adam(b1: float = 0.9,
     b1: decay rate for the exponentially weighted average of grads.
     b2: decay rate for the exponentially weighted average of squared grads.
     eps: term added to the denominator to improve numerical stability.
-    eps2: term added to the denominator inside the square-root to improve
-      numerical stability of meta-gradients.
+    eps_root: term added to the denominator inside the square-root to improve
+      numerical stability when backpropagating gradients through the rescaling.
 
   Returns:
     An (init_fn, update_fn) tuple.
@@ -267,7 +267,7 @@ def scale_by_adam(b1: float = 0.9,
     mu_hat = tree_multimap(lambda t: t / (1 - b1 ** (state.count + 1)), mu)
     nu_hat = tree_multimap(lambda t: t / (1 - b2 ** (state.count + 1)), nu)
     updates = tree_multimap(
-        lambda m, v: m / (jnp.sqrt(v + eps2) + eps), mu_hat, nu_hat)
+        lambda m, v: m / (jnp.sqrt(v + eps_root) + eps), mu_hat, nu_hat)
     return updates, ScaleByAdamState(count=state.count + 1, mu=mu, nu=nu)
 
   return InitUpdate(init_fn, update_fn)
