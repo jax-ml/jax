@@ -1341,15 +1341,19 @@ class LaxTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
           axis),
-       "rng_factory": rng_factory, "shape": shape,
-       "key_dtype": key_dtype, "val_dtype": val_dtype, "axis": axis}
-      for key_dtype in [onp.float32, onp.int32, onp.uint32]
+       "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
+       "axis": axis}
+      for key_dtype in all_dtypes
       for val_dtype in [onp.float32, onp.int32, onp.uint32]
       for shape in [(3,), (5, 3)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSortKeyVal(self, shape, key_dtype, val_dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSortKeyVal(self, shape, key_dtype, val_dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
+    if (onp.issubdtype(key_dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
+    rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
@@ -1367,15 +1371,19 @@ class LaxTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
           axis),
-       "rng_factory": rng_factory, "shape": shape,
-       "key_dtype": key_dtype, "val_dtype": val_dtype, "axis": axis}
-      for key_dtype in [onp.float32, onp.int32, onp.uint32]
+       "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
+       "axis": axis}
+      for key_dtype in all_dtypes
       for val_dtype in [onp.float32, onp.int32, onp.uint32]
       for shape in [(3,), (5, 3)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSortKeyValAgainstNumpy(self, shape, key_dtype, val_dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSortKeyValAgainstNumpy(self, shape, key_dtype, val_dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
+    if (onp.issubdtype(key_dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
+    rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
