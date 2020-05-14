@@ -4289,6 +4289,11 @@ _UINT_DTYPES = {
   64: onp.uint64,
 }
 
+_INT_DTYPES = {
+  16: onp.int16,
+  32: onp.int32,
+  64: onp.int64,
+}
 
 def _select_and_gather_add_translation(
     c, tangents, operand, *, select_prim, window_dimensions, window_strides,
@@ -4563,8 +4568,69 @@ def _sort_abstract_eval(*args, **kwargs):
     raise TypeError(f"Arguments to sort must have equal shapes, got: {shapes}")
   return args
 
+
+def _float_to_int_for_sort(x):
+  # Switch from a floating point value to a integer value in such a way that
+  # when using the integer value to compare, we get the same result for normal
+  # values, and -nan is treated as the smallest value, and nan is treated as
+  # the largest value.
+  # If f is a float, and
+  # x = bit_cast<int32>(f);
+  # y = x < 0 ? int32_max - x : x;
+  # then y is ordered as an int32 such that finite values have the obvious
+  # order, -0 is ordered before 0, and -NaN and NaN appear at the beginning
+  # and end of the ordering.
+  # Note that in order to avoid -x to overflow, we calculate
+  # int32_max - x as unsigned, and then convert back to signed.
+  if x.dtype == dtypes.bfloat16:
+    x = convert_element_type(x, onp.float32)
+  nbits = onp.finfo(x).bits
+  signed_dtype = _INT_DTYPES[nbits]
+  unsigned_dtype = _UINT_DTYPES[nbits]
+
+  signed = bitcast_convert_type(x, signed_dtype)
+  unsigned = bitcast_convert_type(x, unsigned_dtype)
+  flipped = bitcast_convert_type(
+    sub(unsigned_dtype(onp.iinfo(signed_dtype).max), unsigned), signed_dtype)
+  return select(lt(signed, _zero(signed)), flipped, signed)
+
+# Default comparator that sorts the operands only on their first arguments.
+# For floating point types, a total order is created where
+# -NaN < -infinity < ... < -0 < 0 < ... < infinity < NaN.
+# For complex types, the (real, imag) pairs are sorted lexicographically
+# (following NumPy's semantics).
+# This code adds complex-number support to the algorithm from:
+# https://github.com/tensorflow/tensorflow/blob/ba43780830f09da72081fe5061c436f1c6203a92/tensorflow/compiler/xla/client/lib/comparators.h#L33
+def _sort_lt_comparator(*operands):
+  assert len(operands) >= 2 and len(operands) % 2 == 0, operands
+  x, y = operands[:2]
+  assert x.dtype == y.dtype, (x.dtype, y.dtype)
+  if onp.issubdtype(x.dtype, onp.complexfloating):
+    x_keys = [_float_to_int_for_sort(real(x)), _float_to_int_for_sort(imag(x))]
+    y_keys = [_float_to_int_for_sort(real(y)), _float_to_int_for_sort(imag(y))]
+  elif onp.issubdtype(x.dtype, onp.floating):
+    x_keys = [_float_to_int_for_sort(x)]
+    y_keys = [_float_to_int_for_sort(y)]
+  else:
+    x_keys = [x]
+    y_keys = [y]
+
+  p = None
+  for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
+    p = (bitwise_or(lt(xk, yk), bitwise_and(eq(xk, yk), p)) if p is not None
+         else lt(xk, yk))
+  return p
+
 def _sort_translation_rule(c, *operands, dimension):
-  out = xops.Sort(c, operands, dimension=dimension, is_stable=True)
+  types = [c.get_shape(x).xla_element_type() for x in operands]
+  subc = xla_bridge.make_computation_builder("sort_lt_comparator")
+  params = [xb.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
+            for i, typ in enumerate(types) for j in range(2)]
+  result = xla.lower_fun(_sort_lt_comparator,
+                         multiple_results=False)(subc, *params)
+  comparator = subc.build(result)
+  out = xops.Sort(c, operands, dimension=dimension, is_stable=True,
+                  comparator=comparator)
   return out if len(operands) != 1 else xops.Tuple(c, [out])
 
 def _sort_jvp(primals, tangents, *, dimension):

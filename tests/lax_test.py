@@ -1302,13 +1302,17 @@ class LaxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
-       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
-      for dtype in [onp.float32, onp.int32, onp.uint32]
+       "shape": shape, "dtype": dtype, "axis": axis}
+      for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSort(self, shape, dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSort(self, shape, dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
+    if (onp.issubdtype(dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: lax.sort(x, dimension=axis)
     self._CompileAndCheck(fun, args_maker, check_dtypes=True)
@@ -1316,13 +1320,17 @@ class LaxTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
-       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
-      for dtype in [onp.float32, onp.int32, onp.uint32]
+        "shape": shape, "dtype": dtype, "axis": axis}
+      for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSortAgainstNumpy(self, shape, dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSortAgainstNumpy(self, shape, dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
+    if (onp.issubdtype(dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     op = lambda x: lax.sort(x, dimension=axis)
     numpy_op = lambda x: lax_reference.sort(x, axis)
@@ -1333,15 +1341,19 @@ class LaxTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
           axis),
-       "rng_factory": rng_factory, "shape": shape,
-       "key_dtype": key_dtype, "val_dtype": val_dtype, "axis": axis}
-      for key_dtype in [onp.float32, onp.int32, onp.uint32]
+       "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
+       "axis": axis}
+      for key_dtype in float_dtypes + complex_dtypes + int_dtypes + uint_dtypes
       for val_dtype in [onp.float32, onp.int32, onp.uint32]
       for shape in [(3,), (5, 3)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSortKeyVal(self, shape, key_dtype, val_dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSortKeyVal(self, shape, key_dtype, val_dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
+    if (onp.issubdtype(key_dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
+    rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
@@ -1359,15 +1371,19 @@ class LaxTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
           axis),
-       "rng_factory": rng_factory, "shape": shape,
-       "key_dtype": key_dtype, "val_dtype": val_dtype, "axis": axis}
-      for key_dtype in [onp.float32, onp.int32, onp.uint32]
+       "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
+       "axis": axis}
+      for key_dtype in float_dtypes + complex_dtypes + int_dtypes + uint_dtypes
       for val_dtype in [onp.float32, onp.int32, onp.uint32]
       for shape in [(3,), (5, 3)]
-      for axis in [-1, len(shape) - 1]
-      for rng_factory in [jtu.rand_default]))
-  def testSortKeyValAgainstNumpy(self, shape, key_dtype, val_dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
+      for axis in [-1, len(shape) - 1]))
+  def testSortKeyValAgainstNumpy(self, shape, key_dtype, val_dtype, axis):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
+    if (onp.issubdtype(key_dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
+    rng = jtu.rand_default(self.rng())
     # This test relies on the property that wherever keys are tied, values are
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
