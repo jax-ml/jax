@@ -4569,32 +4569,16 @@ def _sort_translation_rule(c, *operands, dimension):
 
 def _sort_jvp(primals, tangents, *, dimension):
   shape = primals[0].shape
-  ids = broadcasted_iota(onp.int32, shape, dimension)
-  outs = sort_p.bind(*(primals + (ids,)), dimension=dimension)
-  primals_out = outs[:-1]
-  sorted_ids = outs[-1]
-
-  dnums = GatherDimensionNumbers(
-    offset_dims=(),
-    collapsed_slice_dims=tuple(range(len(shape))),
-    start_index_map=tuple(range(len(shape))))
-  gather_id_list = []
-  for i in range(len(shape)):
-    if i == dimension:
-      gather_id_list.append(
-        broadcast_in_dim(sorted_ids, shape + (1,),
-                         broadcast_dimensions=list(range(len(shape)))))
-    else:
-      gather_id_list.append(broadcasted_iota(onp.int32, shape + (1,), dimension=i))
-  gather_ids = concatenate(gather_id_list, dimension=len(shape))
-  tangents_out = []
-  for t in tangents:
-    if t is ad_util.zero:
-      t_out = ad_util.zero
-    else:
-      t_out = gather(t, gather_ids, dnums, slice_sizes=[1] * len(shape))
-    tangents_out.append(t_out)
-  return tuple(primals_out), tuple(tangents_out)
+  iotas = []
+  for dim, size in enumerate(shape):
+    dtype = onp.int32 if size < onp.iinfo(onp.int32).max else onp.int64
+    iotas.append(broadcasted_iota(dtype, shape, dim))
+  primals = sort_p.bind(*(primals + (iotas[dimension],)), dimension=dimension)
+  idx = tuple(primals[-1] if i == dimension else iotas[i]
+              for i in range(len(shape)))
+  tangents_out = tuple(ad_util.zero if t is ad_util.zero else t[idx]
+                       for t in tangents)
+  return tuple(primals[:-1]), tangents_out
 
 def _sort_batch_rule(batched_args, batch_dims, *, dimension):
   prototype_arg, new_bdim = next(
@@ -4604,8 +4588,6 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension):
     if bdim is None:
       dims = onp.delete(onp.arange(prototype_arg.ndim), new_bdim)
       new_args.append(broadcast_in_dim(arg, prototype_arg.shape, dims))
-    elif bdim == new_bdim:
-      new_args.append(arg)
     else:
       new_args.append(batching.moveaxis(arg, bdim, new_bdim))
   new_dimension = dimension + (new_bdim <= dimension)
