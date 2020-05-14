@@ -456,6 +456,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertRaisesRegex(TypeError, "", thunk)
 
   def test_jit(self):
+    raise SkipTest
     @partial(mask, in_shapes=['n'], out_shape='2*n')
     @jit
     def duplicate(x):
