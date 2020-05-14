@@ -1227,8 +1227,23 @@ def logistic(key, shape=(), dtype=onp.float64):
 
 @partial(jit, static_argnums=(1, 2))
 def _logistic(key, shape, dtype):
-  _check_shape("logistic", shape)
-  return logit(uniform(key, shape, dtype))
+  # Mathematically, we can compute the distribution by generating uniformly-distributed
+  # numbers x in the open interval (0, a) and computing:
+  #   z = log(x / (a - x))
+  # It's important to avoid x=0 or x=a, which lead to infinite values for z.
+  # The uniform() function genreates pseudorandom floating point numbers x in the
+  # semi-closed interval [0, 1), so if used directly it will lead to infinite output in
+  # a small number of cases (as many as 1 in 2^23 for float32).
+  #
+  # To approximate an doubly-open interval with uniform(), we choose a small number ε
+  # and let y = x + ε. Then y is in the range [ε, 1 + ε), which approximates (0, 1 + ε)
+  # if ε represents the spacing between adjacent floating point numbers.
+  # Thus we can compute
+  #  z = log[y / (1 + ε - y)]
+  #    = log[(x + ε)/(1 - x)]
+  x = uniform(key, shape, dtype)
+  eps = np.finfo(dtype).eps
+  return lax.log(lax.div(lax.add(lax._const(x, eps), x), lax.sub(lax._const(x, 1), x)))
 
 
 def pareto(key, b, shape=None, dtype=onp.float64):
