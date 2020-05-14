@@ -149,6 +149,7 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(dtypes.issubdtype(t, t))
       self.assertTrue(dtypes.issubdtype(np.dtype(t).type, t))
       self.assertTrue(dtypes.issubdtype(t, np.dtype(t).type))
+      self.assertTrue(dtypes.issubdtype(t, np.dtype(t)))
       if t != jnp.bfloat16:
         for category in [np.generic, jnp.inexact, jnp.integer, jnp.signedinteger,
                          jnp.unsignedinteger, jnp.floating, jnp.complexfloating]:

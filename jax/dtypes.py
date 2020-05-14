@@ -125,12 +125,22 @@ def finfo(dtype):
   else:
     return np.finfo(dtype)
 
+def _issubclass(a, b):
+  """Determines if ``a`` is a subclass of ``b``.
+
+  Similar to issubclass, but returns False instead of an exception if `a` is not
+  a class.
+  """
+  try:
+    return issubclass(a, b)
+  except TypeError:
+    return False
 
 def issubdtype(a, b):
   if a == bfloat16:
     return b in [bfloat16, _bfloat16_dtype, np.floating, np.inexact,
                  np.number]
-  if not issubclass(b, np.generic):
+  if not _issubclass(b, np.generic):
     # Workaround for JAX scalar types. NumPy's issubdtype has a backward
     # compatibility behavior for the second argument of issubdtype that
     # interacts badly with JAX's custom scalar types. As a workaround,
