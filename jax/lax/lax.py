@@ -4599,7 +4599,7 @@ def _float_to_int_for_sort(x):
 # -NaN < -infinity < ... < -0 < 0 < ... < infinity < NaN.
 # For complex types, the (real, imag) pairs are sorted lexicographically
 # (following NumPy's semantics).
-# See also:
+# This code adds complex-number support to the algorithm from:
 # https://github.com/tensorflow/tensorflow/blob/ba43780830f09da72081fe5061c436f1c6203a92/tensorflow/compiler/xla/client/lib/comparators.h#L33
 def _sort_lt_comparator(*operands):
   assert len(operands) >= 2 and len(operands) % 2 == 0, operands
