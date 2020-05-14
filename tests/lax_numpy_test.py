@@ -2120,6 +2120,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in [(8,), (3, 8)]  # last dim = 8 to ensure shape compatibility
       for a_dtype in [onp.bool_, onp.uint8, onp.float16, onp.int32, onp.float64]
       for dtype in [onp.bool_, onp.int8, onp.int16, onp.float32, onp.float64]))
+  @jtu.skip_on_devices("tpu")
   def testView(self, shape, a_dtype, dtype):
     if jtu.device_under_test() == "tpu":
       self.skipTest("view() is not supported on TPU")
