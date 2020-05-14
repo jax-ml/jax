@@ -369,8 +369,9 @@ where: 3
       x2 = hcb.id_print(x1 + 1, where="2", output_stream=testing_stream)
 
       x4 = lax.cond(x % 2 == 0,
-                    x2 + 1, lambda x: hcb.id_print(x, where="cond_t", output_stream=testing_stream),
-                    x2 + 1, lambda x: hcb.id_print(-1, where="cond_f", result=x, output_stream=testing_stream))
+                    lambda x: hcb.id_print(x, where="cond_t", output_stream=testing_stream),
+                    lambda x: hcb.id_print(-1, where="cond_f", result=x, output_stream=testing_stream),
+                    x2 + 1)
       x5 = hcb.id_print(x4 + 1, where="end", output_stream=testing_stream)
       return x5
 
@@ -404,10 +405,11 @@ where: end
       def body(x):
         x3 = hcb.id_print(x, where="w_b_1", output_stream=testing_stream)
         x4 = lax.cond(x % 2 == 0,
-                      x3 + 1, lambda x: hcb.id_print(x, where="w_b_t",
-                                                     output_stream=testing_stream),
-                      x3 + 1, lambda x: hcb.id_print(-1, where="w_b_f",
-                                                     result=x, output_stream=testing_stream))
+                      lambda x: hcb.id_print(x, where="w_b_t",
+                                             output_stream=testing_stream),
+                      lambda x: hcb.id_print(-1, where="w_b_f",
+                                             result=x, output_stream=testing_stream),
+                      x3 + 1)
         return hcb.id_print(x4, where="w_b_2", output_stream=testing_stream)
       x10 = lax.while_loop(lambda x: x <= 3, body, x2)
       res = hcb.id_print(x10, where="end", output_stream=testing_stream)
@@ -480,8 +482,9 @@ where: end
       def body(c, x):
         x3 = hcb.id_print(x, where="s_1", output_stream=testing_stream)
         x4 = lax.cond(x % 2 == 0,
-                      x3 + 1, lambda x: hcb.id_print(x, where="s_t", output_stream=testing_stream),
-                      x3 + 1, lambda x: hcb.id_print(-1, where="s_f", result=x, output_stream=testing_stream))
+                      lambda x: hcb.id_print(x, where="s_t", output_stream=testing_stream),
+                      lambda x: hcb.id_print(-1, where="s_f", result=x, output_stream=testing_stream),
+                      x3 + 1)
         return (c, hcb.id_print(x4, where="s_2", output_stream=testing_stream))
 
       _, x10 = lax.scan(body, x2, jnp.arange(3))
@@ -675,10 +678,11 @@ what: x3
     def cfun(x):
       return lax.cond(
           lax.lt(x, 2),
-          x, lambda x: x,
-          x, lambda x: lax.cond(x < 5,
-                                3, lambda x: x,
-                                4, lambda y: y))
+          lambda x: x,
+          lambda x: lax.cond(x < 5,
+                             3, lambda x: x,
+                             4, lambda y: y),
+          x)
     print(self._testMethodName, api.xla_computation(cfun)(1).as_hlo_text())
     cfun(1)
 
