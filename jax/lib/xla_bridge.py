@@ -22,7 +22,7 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
-from typing import Callable, Dict
+from typing import Callable, Dict, Sequence, Tuple, Union
 import warnings
 
 from absl import logging
@@ -291,6 +291,57 @@ def constant(builder, py_val, canonicalize_types=True):
     return _constant_handlers[py_type](builder, py_val, canonicalize_types)
   else:
     raise TypeError("No constant handler for type: {}".format(py_type))
+
+# HLO instructions optionally can be annotated to say how the output should be
+# spatially partitioned (represented in XLA as OpSharding protos, see
+# _sharding_to_proto). For array outputs, the annotation is either an int per
+# dimension specifying the number of ways that dimension divided (i.e. the total
+# number of shards is the product), or None to indicate the array should be
+# replicated. Tuple outputs are represented as tuples thereof. XLA supports
+# arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
+# checkers don't support recursive types), so we only represent one level of
+# nesting in this type definition.
+SpatialSharding = Union[Tuple[int, ...],
+                        None,
+                        Tuple[Union[Tuple[int, ...], None], ...]]
+
+def _sharding_to_proto(sharding: SpatialSharding):
+  """Converts a SpatialSharding to an OpSharding.
+
+  See
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
+  for details on the OpSharding proto.
+  """
+  proto = xla_client.OpSharding()
+  if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
+      assert all(s is None or isinstance(s, tuple) for s in sharding)
+      sub_protos = [_sharding_to_proto(s) for s in sharding]  # type: ignore
+      proto.type = xla_client.OpSharding.Type.TUPLE
+      proto.tuple_shardings = sub_protos
+      return proto
+
+  if sharding is None:
+    proto.type = xla_client.OpSharding.Type.REPLICATED
+  else:
+    proto.type = xla_client.OpSharding.Type.OTHER
+    proto.tile_assignment_dimensions = list(sharding)
+    proto.tile_assignment_devices = list(range(onp.product(sharding)))
+  return proto
+
+def set_sharding(builder, op, sharding: SpatialSharding):
+  """Uses CustomCall to annotate a value as sharded."""
+  # "Sharding" is a built-in custom call target that acts like an identity
+  # function, and is used to attach an OpSharding to.
+  return with_sharding(builder, sharding, xops.CustomCall,
+                       builder, b"Sharding", [op], builder.GetShape(op))
+
+def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  builder.SetSharding(_sharding_to_proto(sharding))
+  try:
+    return op_fn(*args, **kwargs)
+  finally:
+    builder.ClearSharding()
 
 def make_computation_builder(name):
   return xla_client.XlaBuilder(name)
