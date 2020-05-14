@@ -51,16 +51,17 @@ def jet(fun, primals, series):
     yield tree_flatten(ans)
 
   f, out_tree = flatten_fun_output(lu.wrap_init(fun))
-  out_primals, out_terms = jet_fun(jet_subtrace(f)).call_wrapped(primals, series)
+  out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
 @lu.transformation
-def jet_fun(primals, series):
+def jet_fun(order, primals, series):
   with core.new_master(JetTrace) as master:
+    master.order = order
     out_primals, out_terms = yield (master, primals, series), {}
     del master
-  out_terms = [tree_map(lambda x: onp.zeros_like(x, dtype=onp.result_type(out_primals[0])), series[0])
-               if s is zero_series else s for s in out_terms]
+  out_terms = [[onp.zeros_like(p)] * order if s is zero_series else s
+               for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms
 
 @lu.transformation
@@ -112,8 +113,8 @@ class JetTrace(core.Trace):
 
   def process_primitive(self, primitive, tracers, params):
     assert not primitive.multiple_results  # TODO
+    order = self.master.order
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
-    order, = {len(terms) for terms in series_in if terms is not zero_series}
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
     # TODO(mattjj): avoid always instantiating zeros
