@@ -543,8 +543,7 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 ### cond
 
-def cond(pred, true_fun: Callable, false_fun: Callable, operand,
-         *deprecated_args):
+def cond(pred, true_fun, false_fun, operand, *deprecated_args):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Has equivalent semantics to this Python implementation::
