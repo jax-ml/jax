@@ -14,6 +14,12 @@ jax 0.1.68 (unreleased)
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.67...master>`_.
 
+* New features:
+
+  * `lax.cond` supports a single-operand form, taken as the argument
+    to both branches
+    `#2993 <https://github.com/google/jax/pull/2993>`_.
+
 jax 0.1.67 (May 12, 2020)
 ---------------------------
 
