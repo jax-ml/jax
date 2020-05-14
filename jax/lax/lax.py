@@ -4595,6 +4595,10 @@ def _float_to_int_for_sort(x):
   return select(lt(signed, _zero(signed)), flipped, signed)
 
 # Default comparator that sorts the operands only on their first arguments.
+# For floating point types, a total order is created where
+# -NaN < -infinity < ... < -0 < 0 < ... < infinity < NaN.
+# For complex types, the (real, imag) pairs are sorted lexicographically
+# (following NumPy's semantics).
 def _sort_lt_comparator(*operands):
   assert len(operands) >= 2 and len(operands) % 2 == 0, operands
   x, y = operands[:2]
