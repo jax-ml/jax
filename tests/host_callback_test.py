@@ -1011,15 +1011,15 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     self.assertRewrite("""
 { lambda d e ; a b h.
   let c = gt b 0
-      f g i = cond[ false_jaxpr={ lambda  ; c a d.
-                                  let b e = id_tap[ arg_treedef=*
+      f g i = cond[ false_jaxpr={ lambda  ; a_ e a b c f.
+                                  let d g = id_tap[ arg_treedef=*
                                                     func=_print
-                                                     ] a d
-                                  in (b, c, e) }
-                    linear=(False, False, False, False, False, False, False)
-                    true_jaxpr={ lambda  ; c a b d.
+                                                     ] c f
+                                  in (d, e, g) }
+                    linear=(False, False, False, False, False, False)
+                    true_jaxpr={ lambda  ; d b_ a b c e.
                                  let 
-                                 in (a, c, d) } ] c d 1 2 h e b h
+                                 in (a, d, e) } ] c d e 1 2 b h
   in (f, g, i) }""", func, [y, 5])
 
   def test_while(self):
