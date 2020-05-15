@@ -354,7 +354,7 @@ def xla_computation(fun: Callable,
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
                                          instantiate=instantiate_const_outputs,
                                          stage_out=True)
-    jaxpr, _ = xla.apply_outfeed_rewriter(jaxpr)
+    jaxpr = xla.apply_outfeed_rewriter(jaxpr)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(partial(xb.constant, c), consts)
