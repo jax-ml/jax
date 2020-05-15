@@ -1231,7 +1231,7 @@ def _logistic(key, shape, dtype):
   # numbers x in the open interval (a, b) and computing:
   #   z = log[ (x - a) / (b - x))
   # It's important to avoid x=a or x=b, which lead to infinite values for z.
-  # The uniform() function genreates pseudorandom floating point numbers x in the
+  # The uniform() function generates pseudorandom floating point numbers x in the
   # semi-closed interval [0, 1), so if used directly  with (a,b)=(0,1), it will
   # lead to infinite output in a small number of cases (as many as 1 in 2^23 for float32).
   #
