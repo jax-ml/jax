@@ -252,8 +252,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
         scipy_res = smin(rosenbrock_onp, x0, method='BFGS')
 
-        self.assertAllClose(scipy_res.x, jax_res1.x_k, check_dtypes=False)
-        self.assertAllClose(scipy_res.x, jax_res2.x_k, check_dtypes=False)
+        self.assertAllClose(scipy_res.x, jax_res1.x_k, check_dtypes=False, rtol=1e-6, atol=1e-6)
+        self.assertAllClose(scipy_res.x, jax_res2.x_k, check_dtypes=False, rtol=1e-6, atol=1e-6)
 
 
 if __name__ == "__main__":
