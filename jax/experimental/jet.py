@@ -113,7 +113,7 @@ class JetTrace(core.Trace):
 
   def process_primitive(self, primitive, tracers, params):
     assert not primitive.multiple_results  # TODO
-    order = self.master.order
+    order = self.master.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
@@ -436,4 +436,3 @@ def _select_taylor_rule(primal_in, series_in, **params):
   series_out = [sel(*terms_in, **params) for terms_in in zip(*series_in)]
   return primal_out, series_out
 jet_rules[lax.select_p] = _select_taylor_rule
-
