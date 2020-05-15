@@ -12,17 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-
-from absl.testing import parameterized
 from absl.testing import absltest
 import numpy as np
-import scipy.sparse.linalg
 
 import jax
-from jax import jit, numpy as np
-import jax.numpy as jnp
-from jax import lax
+from jax import numpy as np
 from jax import test_util as jtu
 import jax.scipy.sparse.linalg
 from jax.config import config
@@ -34,9 +28,6 @@ config.parse_flags_with_absl()
 from jax.config import config
 
 config.parse_flags_with_absl()
-
-float_types = [np.float32, np.float64]
-complex_types = [np.complex64, np.complex128]
 
 
 def line_search_nojit(value_and_gradient, position, direction, f_0=None, g_0=None, max_iterations=50, c1=1e-4, c2=0.9):
@@ -240,7 +231,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
         jax_res1_nojit = bfgs_minimize_nojit(rosenbrock, x0, options=dict(analytic_initial_hessian=True))
 
-        self.assertAllClose(jax_res1.x_k, jax_res1_nojit.x_k, check_dtypes=True)
+        self.assertAllClose(jax_res1.x_k, jax_res1_nojit.x_k, check_dtypes=False)
 
         @jax.jit
         def min_op(x0):
@@ -251,7 +242,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
         jax_res2_nojit = bfgs_minimize_nojit(rosenbrock, x0, options=dict(analytic_initial_hessian=True))
 
-        self.assertAllClose(jax_res2.x_k, jax_res2_nojit.x_k, check_dtypes=True)
+        self.assertAllClose(jax_res2.x_k, jax_res2_nojit.x_k, check_dtypes=False)
 
         from scipy.optimize import minimize as smin
         import numpy as onp
