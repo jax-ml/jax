@@ -92,11 +92,12 @@ def _map_coordinates(input, coordinates, order, mode, cval):
   outputs = []
   for items in itertools.product(*valid_1d_interpolations):
     indices, validities, weights = zip(*items)
-    if any(valid is not True for valid in validities):
+    if all(valid is True for valid in validities):
+      # fast path
+      contribution = input[indices]
+    else:
       all_valid = functools.reduce(operator.and_, validities)
       contribution = jnp.where(all_valid, input[indices], cval)
-    else:
-      contribution = input[indices]
     outputs.append(_nonempty_prod(weights) * contribution)
   result = _nonempty_sum(outputs)
   return result
