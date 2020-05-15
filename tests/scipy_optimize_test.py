@@ -13,10 +13,9 @@
 # limitations under the License.
 
 from absl.testing import absltest
-import numpy as np
 
 import jax
-from jax import numpy as np
+from jax import numpy as jnp
 from jax import test_util as jtu
 import jax.scipy.sparse.linalg
 from jax.config import config
@@ -60,7 +59,7 @@ def line_search_nojit(value_and_gradient, position, direction, f_0=None, g_0=Non
 
     grad_restricted = jax.grad(lambda t: restricted_func(t)[0])
 
-    state = LineSearchResults(failed=np.array(True), nfev=0, ngev=0, k=0, a_k=1., f_k=None, g_k=None)
+    state = LineSearchResults(failed=jnp.array(True), nfev=0, ngev=0, k=0, a_k=1., f_k=None, g_k=None)
     rho_neg = 0.8
     rho_pos = 1.2
 
@@ -74,11 +73,11 @@ def line_search_nojit(value_and_gradient, position, direction, f_0=None, g_0=Non
         # print(f_kp1, g_kp1)
         state = state._replace(nfev=state.nfev + 1, ngev=state.ngev + 1)
         # Wolfe 1 (3.6a)
-        wolfe_1 = f_kp1 <= state.f_k + c1 * state.a_k * np.dot(state.g_k, direction)
+        wolfe_1 = f_kp1 <= state.f_k + c1 * state.a_k * jnp.dot(state.g_k, direction)
         # Wolfe 2 (3.7b)
-        wolfe_2 = np.abs(np.dot(g_kp1, direction)) <= c2 * np.abs(np.dot(state.g_k, direction))
+        wolfe_2 = jnp.abs(jnp.dot(g_kp1, direction)) <= c2 * jnp.abs(jnp.dot(state.g_k, direction))
 
-        state = state._replace(failed=~np.logical_and(wolfe_1, wolfe_2), k=state.k + 1)
+        state = state._replace(failed=~jnp.logical_and(wolfe_1, wolfe_2), k=state.k + 1)
         if not state.failed:
             # print('break')
             state = state._replace(f_k=f_kp1, g_k=g_kp1)
@@ -138,7 +137,7 @@ def bfgs_minimize_nojit(func, x0, options=None):
                         H_k=None)
 
     if maxiter is None:
-        maxiter = np.inf
+        maxiter = jnp.inf
 
     D = x0.shape[0]
 
@@ -146,19 +145,19 @@ def bfgs_minimize_nojit(func, x0, options=None):
         hess = jax.hessian(func, argnums=0)
         initial_B = hess(x0)
         # TODO: pinv may give pathological behaviour if function not C^2 and hess is all zeros
-        initial_H = np.linalg.pinv(initial_B)
+        initial_H = jnp.linalg.pinv(initial_B)
         state = state._replace(nhev=state.nhev + 1)
     else:
-        initial_H = np.eye(D)
+        initial_H = jnp.eye(D)
 
     value_and_grad = jax.value_and_grad(func)
 
     f_0, g_0 = value_and_grad(x0)
     state = state._replace(f_k=f_0, g_k=g_0, H_k=initial_H, nfev=state.nfev + 1, ngev=state.ngev + 1,
-                           converged=np.linalg.norm(g_0) < g_tol)
+                           converged=jnp.linalg.norm(g_0) < g_tol)
 
     while not state.converged and not state.failed and state.k < maxiter:
-        p_k = -np.dot(state.H_k, state.g_k)
+        p_k = -jnp.dot(state.H_k, state.g_k)
         line_search_results = line_search_nojit(value_and_grad, state.x_k, p_k, f_0=state.f_k, g_0=state.g_k,
                                                 max_iterations=ls_maxiter)
         state = state._replace(nfev=state.nfev + line_search_results.nfev,
@@ -169,13 +168,13 @@ def bfgs_minimize_nojit(func, x0, options=None):
         f_kp1 = line_search_results.f_k
         g_kp1 = line_search_results.g_k
         y_k = g_kp1 - state.g_k
-        rho_k = np.reciprocal(np.dot(y_k, s_k))
+        rho_k = jnp.reciprocal(jnp.dot(y_k, s_k))
 
         sy_k = s_k[:, None] * y_k[None, :]
-        w = np.eye(D) - rho_k * sy_k
-        H_kp1 = np.dot(np.dot(w, state.H_k), w.T) + rho_k * s_k[:, None] * s_k[None, :]
+        w = jnp.eye(D) - rho_k * sy_k
+        H_kp1 = jnp.dot(jnp.dot(w, state.H_k), w.T) + rho_k * s_k[:, None] * s_k[None, :]
 
-        converged = np.linalg.norm(g_kp1) < g_tol
+        converged = jnp.linalg.norm(g_kp1) < g_tol
 
         state = state._replace(converged=converged,
                                k=state.k + 1,
@@ -191,14 +190,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     def test_line_search(self):
         def f(x):
-            return np.sum(x) ** 3
+            return jnp.sum(x) ** 3
 
-        self.assertTrue(line_search(jax.value_and_grad(f), np.ones(2), np.array([0.5, -0.25])).failed)
+        self.assertTrue(line_search(jax.value_and_grad(f), jnp.ones(2), jnp.array([0.5, -0.25])).failed)
 
         def f(x):
-            return np.sum(x) ** 3
+            return jnp.sum(x) ** 3
 
-        self.assertTrue(not line_search(jax.value_and_grad(f), np.ones(2), np.array([-0.5, -0.25])).failed)
+        self.assertTrue(not line_search(jax.value_and_grad(f), jnp.ones(2), jnp.array([-0.5, -0.25])).failed)
 
         v_g = jax.value_and_grad(f)
 
@@ -206,21 +205,21 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         def jit_line_search(position, direction):
             return line_search(v_g, position, direction)
 
-        position, direction = np.ones(2), np.array([-0.5, -0.25])
+        position, direction = jnp.ones(2), jnp.array([-0.5, -0.25])
 
         self.assertAllClose(jit_line_search(position, direction).a_k, line_search_nojit(v_g, position, direction).a_k,
                             check_dtypes=False)
 
-        position, direction = np.ones(2), np.array([0.5, -0.25])
+        position, direction = jnp.ones(2), jnp.array([0.5, -0.25])
         # need to use isclose because the a_k stays as a pythonic float in nojit version and may be 32 or 64 but in jax.
         self.assertAllClose(jit_line_search(position, direction).a_k, line_search_nojit(v_g, position, direction).a_k,
                             check_dtypes=False)
 
     def test_minimize(self):
         def rosenbrock(x):
-            return np.sum(100. * np.diff(x) ** 2 + (1. - x[:-1]) ** 2)
+            return jnp.sum(100. * jnp.diff(x) ** 2 + (1. - x[:-1]) ** 2)
 
-        x0 = np.zeros(2)
+        x0 = jnp.zeros(2)
 
         @jax.jit
         def min_op(x0):

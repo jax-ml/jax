@@ -1,10 +1,17 @@
-import jax.numpy as np
+import jax.numpy as jnp
 import jax
 from jax.lax import while_loop, cond
-from collections import namedtuple
-from functools import partial
+from typing import NamedTuple
 
-LineSearchResults = namedtuple('LineSearchResults', ['failed', 'nfev', 'ngev', 'k', 'a_k', 'f_k', 'g_k'])
+LineSearchResults = NamedTuple('LineSearchResults',
+                               [('failed', bool),  # Were both Wolfe criteria satisfied
+                                ('nfev', int),  # Number of functions evaluations
+                                ('ngev', int),  # Number of gradients evaluations
+                                ('k', int),  # Number of iterations
+                                ('a_k', float),  # Step size
+                                ('f_k', jnp.ndarray),  # Final function value
+                                ('g_k', jnp.ndarray)  # Final gradient value
+                                ])
 
 
 def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max_iterations=50, c1=1e-4, c2=0.9):
@@ -35,7 +42,7 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
 
     grad_restricted = jax.grad(lambda t: restricted_func(t)[0])
 
-    state = LineSearchResults(failed=np.array(True), nfev=0, ngev=0, k=0, a_k=1., f_k=None, g_k=None)
+    state = LineSearchResults(failed=jnp.array(True), nfev=0, ngev=0, k=0, a_k=1., f_k=None, g_k=None)
     rho_neg = 0.8
     rho_pos = 1.2
 
@@ -48,9 +55,9 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
         f_kp1, g_kp1 = restricted_func(state.a_k)
         state = state._replace(nfev=state.nfev + 1, ngev=state.ngev + 1)
         # Wolfe 1 (3.6a)
-        wolfe_1 = f_kp1 <= state.f_k + c1 * state.a_k * np.dot(state.g_k, direction)
+        wolfe_1 = f_kp1 <= state.f_k + c1 * state.a_k * jnp.dot(state.g_k, direction)
         # Wolfe 2 (3.7b)
-        wolfe_2 = np.abs(np.dot(g_kp1, direction)) <= c2 * np.abs(np.dot(state.g_k, direction))
+        wolfe_2 = jnp.abs(jnp.dot(g_kp1, direction)) <= c2 * jnp.abs(jnp.dot(state.g_k, direction))
 
         state = state._replace(failed=~(wolfe_1 & wolfe_2), k=state.k + 1)
 
@@ -61,7 +68,7 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
             state = state._replace(ngev=state.ngev + 1)
             # state = state._replace(a_k=cond(u > 0, None, lambda *x: state.a_k * rho_neg,
             # None, lambda *x: state.a_k * rho_pos))
-            a_k = state.a_k * np.where(u > 0, rho_neg, rho_pos)
+            a_k = state.a_k * jnp.where(u > 0, rho_neg, rho_pos)
             state = state._replace(a_k=a_k)
             return state
 
