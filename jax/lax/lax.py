@@ -2718,6 +2718,9 @@ def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision):
 def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
                               precision):
   lhs, rhs = padded_vals
+  # Only need to mask off contraction dims of one side - we mask the lhs here
+  # but this is arbitrary. Could check the sizes of lhs and rhs and mask
+  # whichever is smallest.
   lhs_shape, _ = logical_shapes
   (lhs_contract, _), _ = dimension_numbers
   return dot_general(_masked(lhs, lhs_shape, lhs_contract),
