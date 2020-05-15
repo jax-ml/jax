@@ -464,7 +464,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       def false_fun(x):
         y = lax.mul(2, x)
         return y, lax.mul(2, y)
-      return lax.cond(lax.lt(x, 3), x, lambda x: (x, x), x, false_fun)
+      return lax.cond(lax.lt(x, 3), lambda x: (x, x), false_fun, x)
 
     self.assertEqual(fun(0), cfun(0))
     self.assertEqual(fun(0), (0, 0))
@@ -480,7 +480,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testIssue1379(self):
 
     def fun(pred):
-      return lax.cond(pred, pred, lambda x: (True, x), pred, lambda x: (False, x))
+      return lax.cond(pred, lambda x: (True, x), lambda x: (False, x), pred)
 
     @api.jit
     def cfun(pred):
@@ -510,10 +510,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def cfun(x):
       return lax.cond(
           lax.lt(x, 2),
-          x, lambda x: lax.mul(2, x),
-          x, lambda x: lax.cond(lax.lt(x, 5),
-                                x, lambda x: lax.mul(3, x),
-                                4, lambda y: lax.mul(y, x)))
+          lambda x: lax.mul(2, x),
+          lambda x: lax.cond(lax.lt(x, 5),
+                             x, lambda x: lax.mul(3, x),
+                             4, lambda y: lax.mul(y, x)),
+          x)
+
     self.assertEqual(cfun(1), 2)
     self.assertEqual(cfun(3), 9)
     self.assertEqual(cfun(6), 24)
@@ -525,20 +527,16 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     """Test typing error messages for  cond."""
     with self.assertRaisesRegex(TypeError,
         re.escape("Pred type must be either boolean or number, got <function")):
-      lax.cond(lambda x: True,
-               1., lambda top: 1., 2., lambda fop: 2.)
+      lax.cond(lambda x: True, lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
         re.escape("Pred type must be either boolean or number, got foo.")):
-      lax.cond("foo",
-               1., lambda top: 1., 2., lambda fop: 2.)
+      lax.cond("foo", lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
         re.escape("Pred must be a scalar, got (1.0, 1.0) of shape (2,).")):
-      lax.cond((1., 1.),
-               1., lambda top: 1., 2., lambda fop: 2.)
+      lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
         re.escape("true_fun and false_fun output must have same type structure, got * and PyTreeDef(tuple, [*,*]).")):
-      lax.cond(True,
-               1., lambda top: 1., 2., lambda fop: (2., 2.))
+      lax.cond(True, lambda top: 2., lambda fop: (3., 3.), 1.)
     with self.assertRaisesWithLiteralMatch(
         TypeError,
         "true_fun and false_fun output must have identical types, got\n"
@@ -546,9 +544,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         "and\n"
         "ShapedArray(float32[])."):
       lax.cond(True,
-               1., lambda top: jnp.array([1.], jnp.float32),
-               2., lambda fop: jnp.float32(1.))
-
+               lambda top: jnp.array([1.], jnp.float32),
+               lambda fop: jnp.float32(1.),
+               1.)
 
   def testCondOneBranchConstant(self):
     def fun(x):
@@ -559,7 +557,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     @api.jit
     def cfun(x):
-      return lax.cond(lax.lt(x, 3), x, lambda x: 5, x, lambda x: x)
+      return lax.cond(lax.lt(x, 3), lambda x: 5, lambda x: x, x)
 
     self.assertEqual(fun(0), cfun(0))
     self.assertEqual(cfun(0), 5)
@@ -576,8 +574,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     @api.jit
     def cfun(x):
       return lax.cond(lax.lt(x, 3),
-                      x, lambda x: (1, 2., 3.),
-                      x, lambda x: (x, 2., 4.))
+                      lambda x: (1, 2., 3.),
+                      lambda x: (x, 2., 4.),
+                      x)
 
     self.assertEqual(fun(0), cfun(0))
     self.assertEqual(cfun(0), (1, 2., 3.))
@@ -648,7 +647,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       def false_fun(x):
         y = 2 * x
         return y, 2 * y
-      return lax.cond(x < 3, x, lambda x: (x, x), x, false_fun)
+      return lax.cond(x < 3, lambda x: (x, x), false_fun, x)
 
     x = 3.14
     ans = api.jvp(fun, (x,), (x,))
@@ -689,7 +688,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return 3. * x if x < 2 else jnp.sin(x)
 
     def f(x):
-      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: jnp.sin(x))
+      return lax.cond(x < 2, lambda x: 3. * x, lambda x: jnp.sin(x), x)
 
     x = 2.14
     ans = api.grad(f)(x)
@@ -711,8 +710,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def _f(x):
       return lax.cond(
           x[0] < 2,
-          x, lambda x: jnp.array([1., 2.]) * x,
-          x, lambda x: jnp.sin(x))
+          lambda x: jnp.array([1., 2.]) * x,
+          lambda x: jnp.sin(x),
+          x)
 
     f = lambda x: api.jit(_f)(x).sum()
 
@@ -779,7 +779,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testCondLinearize(self):
     def f(x):
-      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: jnp.sin(x))
+      return lax.cond(x < 2, lambda x: 3. * x, lambda x: jnp.sin(x), x)
     y, f_lin = api.linearize(f, 1.)
     self.assertAllClose(y, 3., check_dtypes=False)
     self.assertAllClose(f_lin(2.), 6., check_dtypes=False)
@@ -795,8 +795,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(x):
       return lax.cond(
           x[0] < 2,
-          x, lambda x: jnp.array([1., 2.]) * x,
-          x, lambda x: jnp.cos(jnp.sin(x))).sum()
+          lambda x: jnp.array([1., 2.]) * x,
+          lambda x: jnp.cos(jnp.sin(x)),
+          x).sum()
 
     x = 2.14 * jnp.ones(2)
     y, f_lin = api.linearize(f, x)
@@ -819,7 +820,57 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testCondJit(self):
     def f(x):
-      return lax.cond(x < 2, x, lambda x: 3. * x, x, lambda x: jnp.sin(x))
+      return lax.cond(x < 2, lambda x: 3. * x, lambda x: jnp.sin(x), x)
+    y = api.jit(f)(1.)
+    expected = f(1.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+    y = api.jit(f)(4.)
+    expected = f(4.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+
+  def testCondJitDisabled(self):
+    def f_ref(x):
+      return 3. * x if x < 2 else jnp.sin(x)
+    def f(x):
+      return lax.cond(x < 2, lambda x: 3. * x, lambda x: jnp.sin(x), x)
+
+    with api.disable_jit():
+      y = f(1.)
+      expected = f_ref(1.)
+      self.assertAllClose(y, expected, check_dtypes=False)
+
+    with api.disable_jit():
+      y = api.jit(f)(1.)
+      expected = f(1.)
+      self.assertAllClose(y, expected, check_dtypes=False)
+
+  def testCondWithConsts(self):
+    def f(x):
+      return lax.cond(x < 2,
+                      lambda x: np.array([1., 2.]) * x,
+                      lambda x: np.array([3., 4.]) * jnp.sin(x),
+                      x)
+
+    def f_ref(x):
+      if x < 2:
+        return np.array([1., 2.]) * x
+      else:
+        return np.array([3., 4.]) * np.sin(x)
+
+    y = f(1.)
+    expected = f_ref(1.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+    y = f(4.)
+    expected = f_ref(4.)
+    self.assertAllClose(y, expected, check_dtypes=False)
+
+  def testCondJitWithConsts(self):
+    def f(x):
+      return lax.cond(x < 2,
+                      lambda x: np.array([1., 2.]) * x,
+                      lambda x: np.array([3., 4.]) * jnp.sin(x),
+                      x)
+
     y = api.jit(f)(1.)
     expected = f(1.)
     self.assertAllClose(y, expected, check_dtypes=False)
@@ -832,7 +883,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f_1(x): return x ** 2
     def f_2(x): return x ** 3
 
-    def f(x): return lax.cond(x > 0, x, f_1, x, f_2)
+    def f(x): return lax.cond(x > 0, f_1, f_2, x)
     def g(x): return jnp.where(x > 0, f_1(x), f_2(x))
 
     x = jnp.linspace(-1, 1, 20)

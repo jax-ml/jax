@@ -522,17 +522,16 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
   elif eqn.primitive is lax.cond_p:
     true_jaxpr, false_jaxpr, linear = util.split_dict(
       eqn.params, ["true_jaxpr", "false_jaxpr", "linear"])
-    nr_true_invars = len(true_jaxpr.jaxpr.invars)
-    pred, true_invars, false_invars = util.split_list(eqn.invars,
-                                                      [1, nr_true_invars])
-    new_invars = pred + true_invars + [input_token_var] + false_invars + [input_token_var]
+    nr_operands = len(true_jaxpr.jaxpr.invars)
+    pred, *operands = eqn.invars
+    new_invars = (pred, *operands, input_token_var)
     eqns.append(core.new_jaxpr_eqn(
       new_invars, eqn.outvars + [output_token_var],
       eqn.primitive,
       dict(eqn.params,
            true_jaxpr=_rewrite_typed_jaxpr(true_jaxpr, True, True)[0],
            false_jaxpr=_rewrite_typed_jaxpr(false_jaxpr, True, True)[0],
-           linear=linear + (False, False))))
+           linear=(*linear, False))))
   elif eqn.primitive is lax.scan_p:
     num_consts, num_carry, carry_jaxpr, linear, _, _ = util.split_dict(
       eqn.params, ["num_consts", "num_carry", "jaxpr", "linear",

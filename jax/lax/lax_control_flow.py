@@ -19,6 +19,7 @@ Control flow primitives.
 
 import collections
 import functools
+import inspect
 import itertools
 import operator
 import threading
@@ -29,6 +30,7 @@ import numpy as onp
 import jax
 from jax import core
 from jax import dtypes
+from jax import util
 from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
@@ -41,7 +43,7 @@ from jax.interpreters import batching
 from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
-from jax.util import (partial, unzip2, safe_map, safe_zip, split_list,
+from jax.util import (partial, unzip2, unzip4, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_leaves,
@@ -54,19 +56,65 @@ _map = safe_map
 zip = safe_zip
 _reduce = functools.reduce
 
-
 @cache()
-def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
+def _initial_style_untyped_jaxpr(fun: Callable, in_tree, in_avals):
   in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   with core.initial_style_staging():
     jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
       wrapped_fun, in_pvals, instantiate=True, stage_out=False)
+  return jaxpr, out_pvals, consts, out_tree
+
+@cache()
+def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
+  jaxpr, out_pvals, consts, out_tree = _initial_style_untyped_jaxpr(
+      fun, in_tree, in_avals)
   out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
                                 (), const_avals + in_avals, out_avals)
   return typed_jaxpr, consts, out_tree()
+
+def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
+                                             in_tree, in_avals):
+  # When staging the branches of a conditional into jaxprs, constants are
+  # extracted from each branch and converted to jaxpr arguments. To use the
+  # staged jaxprs as the branches to a conditional *primitive*, we need for
+  # their (input) signatures to match. This function "joins" the staged jaxprs:
+  # for each one, it makes another that accepts *all* constants, but only uses
+  # those that it needs (dropping the rest).
+
+  jaxprs, all_out_pvals, all_consts, all_out_trees = unzip4([
+      _initial_style_untyped_jaxpr(fun, in_tree, in_avals) for fun in funs])
+
+  newvar = core.gensym('_')     # TODO(frostig): safer gensym
+  all_const_avals = tuple(
+      tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
+      for consts in all_consts)
+  unused_const_vars = tuple(
+      tuple(newvar(aval) for aval in const_avals)
+      for const_avals in all_const_avals)
+
+  def pad_jaxpr_constvars(i, jaxpr):
+    prefix = util.concatenate(unused_const_vars[:i])
+    suffix = util.concatenate(unused_const_vars[i+1:])
+    constvars = prefix + jaxpr.constvars + suffix
+    return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
+                      outvars=jaxpr.outvars, eqns=jaxpr.eqns)
+
+  const_avals = tuple(util.concatenate(all_const_avals))
+
+  def type_and_const_convert_jaxpr(jaxpr, out_pvals):
+    out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
+    return core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
+                           (), const_avals + in_avals, out_avals)
+
+  jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
+  typed_jaxprs = _map(type_and_const_convert_jaxpr, jaxprs, all_out_pvals)
+
+  return (tuple(typed_jaxprs),
+          tuple(util.concatenate(all_consts)),
+          tuple(out_tree() for out_tree in all_out_trees))
 
 def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
@@ -496,23 +544,41 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 ### cond
 
-def cond(pred, true_operand, true_fun, false_operand, false_fun):
+def cond(*args, **kwargs):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Has equivalent semantics to this Python implementation::
 
-    def cond(pred, true_operand, true_fun, false_operand, false_fun):
+    def cond(pred, true_fun, false_fun, operand):
       if pred:
-        return true_fun(true_operand)
+        return true_fun(operand)
       else:
-        return false_fun(false_operand)
+        return false_fun(operand)
 
-  Pred has to be a scalar type, collection types (list, tuple) are not supported
+  Pred must be a scalar type.
 
+  Arguments:
+    pred: Boolean scalar type, indicating which branch function to
+      apply. Collections (list, tuple) are not supported.
+    true_fun: Function (A -> B), to be applied if `pred` is True.
+    false_fun: Function (A -> B), to be applied if `pred` is False.
+    operand: Operand (A) input to either branch depending on `pred`.
   """
 
+  # detect an attempt to call the former, deprecated cond
+  try:
+    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
+  except TypeError:
+    pass
+  else:
+    return _cond_with_per_branch_args(*ba.args)
+
+  return _cond(*args, **kwargs)
+
+def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
   if len(onp.shape(pred)) != 0:
-    raise TypeError("Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
+    raise TypeError(
+        f"Pred must be a scalar, got {pred} of shape {onp.shape(pred)}.")
 
   try:
     pred_dtype = dtypes.result_type(pred)
@@ -529,25 +595,47 @@ def cond(pred, true_operand, true_fun, false_operand, false_fun):
 
   if jax.api._jit_is_disabled():
     if pred:
-      return true_fun(true_operand)
+      return true_fun(operand)
     else:
-      return false_fun(false_operand)
+      return false_fun(operand)
 
-  true_ops, true_tree = tree_flatten((true_operand,))
-  true_avals = tuple(_map(_abstractify, true_ops))
-  true_jaxpr, true_consts, true_out_tree = _initial_style_jaxpr(true_fun, true_tree, true_avals)
-  false_ops, false_tree = tree_flatten((false_operand,))
-  false_avals = tuple(_map(_abstractify, false_ops))
-  false_jaxpr, false_consts, false_out_tree = _initial_style_jaxpr(false_fun, false_tree, false_avals)
+  ops, ops_tree = tree_flatten((operand,))
+  ops_avals = tuple(_map(_abstractify, ops))
+
+  jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
+      (true_fun, false_fun), ops_tree, ops_avals)
+  true_jaxpr, false_jaxpr = jaxprs
+  out_tree, false_out_tree = out_trees
+
   _check_tree_and_avals("true_fun and false_fun output",
-                        true_out_tree, true_jaxpr.out_avals,
+                        out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
-  linear = (False,) * (len(true_consts) + len(true_ops) + len(false_consts) +
-                       len(false_ops))
+
+  linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
-      *itertools.chain([pred], true_consts, true_ops, false_consts, false_ops),
+      pred, *consts, *ops,
       true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
-  return tree_unflatten(true_out_tree, out)
+  return tree_unflatten(out_tree, out)
+
+def _cond_with_per_branch_args(pred,
+                               true_operand, true_fun: Callable,
+                               false_operand, false_fun: Callable):
+  """Conditionally apply ``true_fun`` or ``false_fun``.
+
+  Has equivalent semantics to this Python implementation::
+
+    def cond(pred, true_operand, true_fun, false_operand, false_fun):
+      if pred:
+        return true_fun(true_operand)
+      else:
+        return false_fun(false_operand)
+
+  Pred has to be a scalar type, collection types (list, tuple) are not supported
+  """
+  return _cond(pred,
+               lambda op: true_fun(op[0]),
+               lambda op: false_fun(op[1]),
+               (true_operand, false_operand))
 
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
@@ -555,7 +643,6 @@ def _cond_abstract_eval(*args, **kwargs):
 def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
                            pred, *args, true_jaxpr, false_jaxpr, linear):
   del linear  # Unused.
-  true_ops, false_ops = split_list(args, [len(true_jaxpr.in_avals)])
 
   def make_computation(name, jaxpr, op_shape):
     c = xb.make_computation_builder(name + '_comp')
@@ -566,13 +653,11 @@ def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
                              extend_name_stack(name_stack, name + '_fun'), *ops)
     return c.build(xops.Tuple(c, outs))
 
-  true_op = xops.Tuple(c, true_ops)
-  true_c = make_computation('true', true_jaxpr, c.get_shape(true_op))
-
-  false_op = xops.Tuple(c, false_ops)
-  false_c = make_computation('false', false_jaxpr, c.get_shape(false_op))
-
-  return xops.Conditional(pred, true_op, true_c, false_op, false_c)
+  op = xops.Tuple(c, args)
+  op_shape = c.get_shape(op)
+  true_c = make_computation('true', true_jaxpr, op_shape)
+  false_c = make_computation('false', false_jaxpr, op_shape)
+  return xops.Conditional(pred, op, true_c, op, false_c)
 
 def _cond_pred_bcast_select(pred, x, y):
   if core.get_aval(x) is core.get_aval(y) is core.abstract_unit:
@@ -588,19 +673,19 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
           else x for x, d in zip(args, dims)]
   orig_bat = [d is not batching.not_mapped for d in dims]
   del dims
-  (pred,), true_ops, false_ops = split_list(args, [1, len(true_jaxpr.in_avals)])
-  (pred_bat,), t_bat, f_bat = split_list(orig_bat, [1, len(true_jaxpr.in_avals)])
+  pred, *ops = args
+  pred_bat, *bat = orig_bat
 
-  _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, t_bat, False)
-  _, false_out_bat = batching.batch_jaxpr(false_jaxpr, size, f_bat, False)
+  _, true_out_bat = batching.batch_jaxpr(true_jaxpr, size, bat, False)
+  _, false_out_bat = batching.batch_jaxpr(false_jaxpr, size, bat, False)
   out_bat = [a or b for a, b in zip(true_out_bat, false_out_bat)]
 
-  true_jaxpr_batched, _ = batching.batch_jaxpr(true_jaxpr, size, t_bat, out_bat)
-  false_jaxpr_batched, _ = batching.batch_jaxpr(false_jaxpr, size, f_bat, out_bat)
+  true_jaxpr_batched, _ = batching.batch_jaxpr(true_jaxpr, size, bat, out_bat)
+  false_jaxpr_batched, _ = batching.batch_jaxpr(false_jaxpr, size, bat, out_bat)
 
   if pred_bat:
-    true_out = core.jaxpr_as_fun(true_jaxpr_batched)(*true_ops)
-    false_out = core.jaxpr_as_fun(false_jaxpr_batched)(*false_ops)
+    true_out = core.jaxpr_as_fun(true_jaxpr_batched)(*ops)
+    false_out = core.jaxpr_as_fun(false_jaxpr_batched)(*ops)
     true_out = [batching.broadcast(x, size, 0) if not b else x
                 for x, b in zip(true_out, out_bat)]
     false_out = [batching.broadcast(x, size, 0) if not b else x
@@ -610,34 +695,32 @@ def _cond_batching_rule(args, dims, true_jaxpr, false_jaxpr, linear):
   else:
     out_dims = [0 if b else batching.not_mapped for b in out_bat]
     out = cond_p.bind(
-      *itertools.chain([pred], true_ops, false_ops),
-      true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched, linear=linear)
+        pred, *ops,
+        true_jaxpr=true_jaxpr_batched, false_jaxpr=false_jaxpr_batched,
+        linear=linear)
     return out, out_dims
 
 def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, linear):
   nonzeros = [t is not ad_util.zero for t in tangents]
 
-  (pred_nz,), t_nz, f_nz = split_list(nonzeros, [1, len(true_jaxpr.in_avals)])
+  pred_nz, *ops_nz = nonzeros
   assert pred_nz is False
 
-  _, true_out_nz = ad.jvp_jaxpr(true_jaxpr, t_nz, instantiate=False)
-  _, false_out_nz = ad.jvp_jaxpr(false_jaxpr, f_nz, instantiate=False)
+  _, true_out_nz = ad.jvp_jaxpr(true_jaxpr, ops_nz, instantiate=False)
+  _, false_out_nz = ad.jvp_jaxpr(false_jaxpr, ops_nz, instantiate=False)
   out_nz = [a or b for a, b in zip(true_out_nz, false_out_nz)]
 
-  true_jvp, _ = ad.jvp_jaxpr(true_jaxpr, t_nz, instantiate=out_nz)
-  false_jvp, _ = ad.jvp_jaxpr(false_jaxpr, f_nz, instantiate=out_nz)
+  true_jvp, _ = ad.jvp_jaxpr(true_jaxpr, ops_nz, instantiate=out_nz)
+  false_jvp, _ = ad.jvp_jaxpr(false_jaxpr, ops_nz, instantiate=out_nz)
 
-  (pred,), tops, fops = split_list(primals, [1, len(true_jaxpr.in_avals)])
-  _, tops_dot, fops_dot = split_list(tangents, [1, len(true_jaxpr.in_avals)])
+  pred, *ops = primals
+  _, *ops_dot = tangents
+  ops_dot = _prune_zeros(ops_dot)
 
-  tops_dot = _prune_zeros(tops_dot)
-  fops_dot = _prune_zeros(fops_dot)
-
-  tops_lin, fops_lin = _map(tuple, split_list(linear, [len(tops)]))
-  linear_jvp = (tops_lin + (True,) * len(tops_dot) +
-                fops_lin + (True,) * len(fops_dot))
+  ops_lin = tuple(linear)
+  linear_jvp = ops_lin + (True,) * len(ops_dot)
   out = cond_p.bind(
-      *itertools.chain([pred], tops, tops_dot, fops, fops_dot),
+      pred, *ops, *ops_dot,
       true_jaxpr=true_jvp, false_jaxpr=false_jvp, linear=linear_jvp)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
@@ -648,33 +731,37 @@ def _cond_jvp(primals, tangents, true_jaxpr, false_jaxpr, linear):
 def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   unknowns = [t.pval[0] is not None for t in tracers]
 
-  (pred_uk,), t_uk, f_uk = split_list(unknowns, [1, len(true_jaxpr.in_avals)])
+  pred_uk, *ops_uk = unknowns
 
   if pred_uk:
     # When the predicate is unknown, we stage out the whole cond.
     params = dict(true_jaxpr=true_jaxpr, false_jaxpr=false_jaxpr, linear=linear)
     return trace.default_process_primitive(cond_p, tracers, params)
 
-  _, _, t_out_uks = pe.partial_eval_jaxpr(true_jaxpr, t_uk, instantiate=False,
+  _, _, t_out_uks = pe.partial_eval_jaxpr(true_jaxpr, ops_uk, instantiate=False,
                                           trace_type=trace.master.trace_type)
-  _, _, f_out_uks = pe.partial_eval_jaxpr(false_jaxpr, f_uk, instantiate=False,
+  _, _, f_out_uks = pe.partial_eval_jaxpr(false_jaxpr, ops_uk, instantiate=False,
                                           trace_type=trace.master.trace_type)
   out_uks = [a or b for a, b in zip(t_out_uks, f_out_uks)]
 
-  true_jaxpr_1, true_jaxpr_2, _ = pe.partial_eval_jaxpr(true_jaxpr, t_uk,
-                                                        instantiate=out_uks,
-                                                        trace_type=trace.master.trace_type)
-  false_jaxpr_1, false_jaxpr_2, _ = pe.partial_eval_jaxpr(false_jaxpr, f_uk,
-                                                          instantiate=out_uks,
-                                                          trace_type=trace.master.trace_type)
+  true_jaxpr_1, true_jaxpr_2, _ = pe.partial_eval_jaxpr(
+      true_jaxpr, ops_uk, instantiate=out_uks,
+      trace_type=trace.master.trace_type)
+  false_jaxpr_1, false_jaxpr_2, _ = pe.partial_eval_jaxpr(
+      false_jaxpr, ops_uk, instantiate=out_uks,
+      trace_type=trace.master.trace_type)
 
   num_t_res = len(true_jaxpr_1.out_avals) - len(out_uks)
   num_f_res = len(false_jaxpr_1.out_avals) - len(out_uks)
 
+  assert len(true_jaxpr.in_avals) == len(false_jaxpr.in_avals)
+  assert len(true_jaxpr.in_avals) == len(tracers) - 1
+  assert len(true_jaxpr.in_avals) == len(ops_uk)
+
   # Move the residuals to front
-  move = [False] * len(true_jaxpr.in_avals) + [True] * num_t_res
+  move = [False] * len(ops_uk) + [True] * num_t_res
   true_jaxpr_2 = pe.move_binders_to_front(true_jaxpr_2, move)
-  move = [False] * len(false_jaxpr.in_avals) + [True] * num_f_res
+  move = [False] * len(ops_uk) + [True] * num_f_res
   false_jaxpr_2 = pe.move_binders_to_front(false_jaxpr_2, move)
 
   # TODO(frostig,mattjj): pe.partial_eval_jaxpr should raise to shaped avals
@@ -684,10 +771,15 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   assert len(true_jaxpr_2.out_avals) == len(false_jaxpr_2.out_avals)
   num_outs = len(true_jaxpr_2.out_avals)
 
-  true_jaxpr_1 = _join_cond_outputs(
-      true_jaxpr_1, num_outs, f_res_avals, zeros_on_left=False)
+  # TODO(frostig): support joining a list of jaxpr/aval pairs rather than only a
+  # true/false pair special case, in preparation for switch
   false_jaxpr_1 = _join_cond_outputs(
-      false_jaxpr_1, num_outs, t_res_avals, zeros_on_left=True)
+      false_jaxpr_1, num_outs, t_res_avals, zeros_on_left=False)
+  true_jaxpr_1 = _join_cond_outputs(
+      true_jaxpr_1, num_outs, f_res_avals, zeros_on_left=True)
+
+  false_jaxpr_2, true_jaxpr_2 = _join_cond_pe_staged_jaxpr_inputs(
+      [false_jaxpr_2, true_jaxpr_2], [f_res_avals, t_res_avals])
 
   # TODO(frostig,mattjj): reinstate this assertion once pe.partial_eval_jaxpr
   # raises to shaped avals
@@ -710,24 +802,17 @@ def _cond_partial_eval(trace, *tracers, true_jaxpr, false_jaxpr, linear):
   ops_tracers = [trace.instantiate_const(t) if uk
                  else trace.new_instantiated_literal(core.unit)
                  for uk, t in zip(unknowns[1:], tracers[1:])]
-  true_ops_tracers, false_ops_tracers = split_list(
-      ops_tracers, [len(true_jaxpr.in_avals)])
 
   res_tracers = _map(trace.new_instantiated_const, res)
-  true_res_tracers, false_res_tracers = split_list(res_tracers, [num_t_res])
 
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal((pv, const)), None)
                  for pv, const in zip(out_pvs, out_consts)]
 
-  tops_lin, fops_lin = _map(tuple, split_list(linear, [len(true_jaxpr.in_avals)]))
-  linear_2 = ((False,) * num_t_res + tops_lin + (False,) * num_f_res + fops_lin)
+  linear_2 = (False,) * num_res + linear
   params = dict(true_jaxpr=true_jaxpr_2, false_jaxpr=false_jaxpr_2,
                 linear=linear_2)
-  eqn = pe.new_eqn_recipe([pred_tracer] +
-                          true_res_tracers + true_ops_tracers +
-                          false_res_tracers + false_ops_tracers,
-                          out_tracers,
-                          cond_p, params)
+  eqn = pe.new_eqn_recipe(
+      [pred_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params)
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -743,6 +828,44 @@ def _join_cond_outputs(jaxpr, num_prefix, zeros_avals, zeros_on_left):
       return prefix + rest + zeros
 
   return _make_typed_jaxpr(f_aug, jaxpr.in_avals)
+
+def _join_cond_pe_staged_jaxpr_inputs(jaxprs, res_avals_per_jaxpr):
+  # When partially evaluating conditionals, each branch produces residuals
+  # depending on the computation carried out by the branch, and a corresponding
+  # staged jaxpr that accepts those residuals as its first few inputs. To use
+  # these staged jaxprs as the branches of another conditional, we need for
+  # their (input) signatures to match. This function "joins" the staged jaxprs:
+  # for each one, it makes another that accepts *all* residuals, but still only
+  # uses those that it needs (dropping the rest).
+
+  newvar = core.gensym('~')     # TODO(frostig): safer gensym
+  unused_res_vars = tuple(
+      tuple(newvar(aval) for aval in res_avals)
+      for res_avals in res_avals_per_jaxpr)
+
+  def pad_jaxpr_res_avals(i, jaxpr):
+    res_vars_prefix = util.concatenate(unused_res_vars[:i])
+    res_vars_suffix = util.concatenate(unused_res_vars[i+1:])
+    res_avals_prefix = util.concatenate(res_avals_per_jaxpr[:i])
+    res_avals_suffix = util.concatenate(res_avals_per_jaxpr[i+1:])
+
+    res_avals = res_avals_per_jaxpr[i]
+    num_res = len(res_avals)
+    res_vars = jaxpr.jaxpr.invars[:num_res]
+
+    non_res_vars = jaxpr.jaxpr.invars[num_res:]
+    non_res_avals = jaxpr.in_avals[num_res:]
+
+    aug_invars = res_vars_prefix + res_vars + res_vars_suffix + non_res_vars
+    aug_avals = res_avals_prefix + res_avals + res_avals_suffix + non_res_avals
+
+    jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
+                           jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
+    jaxpr_aug = core.TypedJaxpr(jaxpr_aug, jaxpr.literals, aug_avals,
+                                jaxpr.out_avals)
+    return jaxpr_aug
+
+  return [pad_jaxpr_res_avals(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
 
 def _transpose_cond_jaxpr(jaxpr, num_res):
   num_non_res = len(jaxpr.in_avals) - num_res
@@ -761,35 +884,22 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
   return _make_typed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
 def _cond_transpose(cts, *args, true_jaxpr, false_jaxpr, linear):
-  (pred,), tops, fops = split_list(args, [1, len(true_jaxpr.in_avals)])
-  tops_lin, fops_lin = split_list(linear, [len(true_jaxpr.in_avals)])
-  in_avals = _map(raise_to_shaped, true_jaxpr.in_avals + false_jaxpr.in_avals)
+  pred, *ops = args
+  in_avals = _map(raise_to_shaped, true_jaxpr.in_avals)
+  num_res = len(ops) - sum(linear)
 
-  num_t_res = len(tops) - sum(tops_lin)
-  num_f_res = len(fops) - sum(fops_lin)
-
-  t_jaxpr_trans = _transpose_cond_jaxpr(true_jaxpr, num_t_res)
-  f_jaxpr_trans = _transpose_cond_jaxpr(false_jaxpr, num_f_res)
+  t_jaxpr_trans = _transpose_cond_jaxpr(true_jaxpr, num_res)
+  f_jaxpr_trans = _transpose_cond_jaxpr(false_jaxpr, num_res)
   lin_in_avals = _map(raise_to_shaped, [a for a, l in zip(in_avals, linear) if l])
-  assert t_jaxpr_trans.out_avals + f_jaxpr_trans.out_avals == lin_in_avals
+  assert t_jaxpr_trans.out_avals == f_jaxpr_trans.out_avals == lin_in_avals
 
-  t_jaxpr_trans_ = _join_cond_outputs(
-      t_jaxpr_trans, 0, f_jaxpr_trans.out_avals, zeros_on_left=False)
-  f_jaxpr_trans_ = _join_cond_outputs(
-      f_jaxpr_trans, 0, t_jaxpr_trans.out_avals, zeros_on_left=True)
-  assert t_jaxpr_trans_.out_avals == f_jaxpr_trans_.out_avals == lin_in_avals
-
-  t_res, _ = split_list(tops, [num_t_res])
-  f_res, _ = split_list(fops, [num_f_res])
-
-  linear_trans = ((False,) * num_t_res + (True,) * len(cts) +
-                  (False,) * num_f_res + (True,) * len(cts))
-
+  res = ops[:num_res]
   cts = _map(ad.instantiate_zeros_aval, true_jaxpr.out_avals, cts)
+  linear_trans = (False,) * num_res + (True,) * len(cts)
 
   out = cond_p.bind(
-      pred, *itertools.chain(t_res, cts, f_res, cts),
-      true_jaxpr=t_jaxpr_trans_, false_jaxpr=f_jaxpr_trans_,
+      pred, *res, *cts,
+      true_jaxpr=t_jaxpr_trans, false_jaxpr=f_jaxpr_trans,
       linear=linear_trans)
   assert all(_map(typecheck, lin_in_avals, out))
 
@@ -801,10 +911,14 @@ def _cond_transpose(cts, *args, true_jaxpr, false_jaxpr, linear):
 def cond_bind(*args, true_jaxpr, false_jaxpr, linear):
   if not core.skip_checks:
     assert len(linear) + 1 == len(args)
-    assert len(args) == 1 + len(true_jaxpr.in_avals) + len(false_jaxpr.in_avals)
-    (pred,), tops, fops = split_list(args, [1, len(true_jaxpr.in_avals)])
-    assert all(_map(typecheck, true_jaxpr.in_avals, tops))
-    assert all(_map(typecheck, false_jaxpr.in_avals, fops))
+    assert len(args) == 1 + len(true_jaxpr.in_avals)
+    assert len(true_jaxpr.in_avals) == len(false_jaxpr.in_avals)
+    assert len(true_jaxpr.out_avals) == len(false_jaxpr.out_avals)
+    assert all(_map(typematch, true_jaxpr.in_avals, false_jaxpr.in_avals))
+    assert all(_map(typematch, true_jaxpr.out_avals, false_jaxpr.out_avals))
+    pred, *ops = args
+    assert all(_map(typecheck, true_jaxpr.in_avals, ops))
+    assert all(_map(typecheck, false_jaxpr.in_avals, ops))
     core.check_jaxpr(true_jaxpr.jaxpr)
     core.check_jaxpr(false_jaxpr.jaxpr)
   return core.Primitive.bind(cond_p, *args, true_jaxpr=true_jaxpr,

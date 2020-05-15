@@ -508,13 +508,16 @@ class _CondBuilder(_LoopBuilder):
   def build_output_vals(self, scope, carried_state_names, carried_tree,
                         init_vals, body_typed_jaxpr, body_const_vals):
     # Simulate a pass-through false branch
-    init_avals = safe_map(_BodyTracer.abstractify, init_vals)
+    in_vals, in_tree = tree_util.tree_flatten(
+        (body_const_vals, tree_util.tree_unflatten(carried_tree, init_vals)))
+    in_avals = safe_map(_BodyTracer.abstractify, in_vals)
     false_body_typed_jaxpr, false_body_const_vals, _ = (
-      lax_control_flow._initial_style_jaxpr(lambda *args: args,
-                                            carried_tree,
-                                            tuple(init_avals)))
-    args = list(itertools.chain(body_const_vals, init_vals,
-                                false_body_const_vals, init_vals))
+      lax_control_flow._initial_style_jaxpr(
+          lambda *args: args[1],
+          in_tree,
+          tuple(in_avals)))
+    assert len(false_body_const_vals) == 0
+    args = list(itertools.chain(body_const_vals, init_vals))
     return lax_control_flow.cond_p.bind(
         self.pred, *args,
         true_jaxpr=body_typed_jaxpr,
