@@ -44,13 +44,10 @@ def _nearest_indices_and_weights(coordinate):
 
 def _linear_indices_and_weights(coordinate):
   lower = jnp.floor(coordinate)
-  upper = jnp.ceil(coordinate)
-  l_index = lower.astype(jnp.int32)
-  u_index = upper.astype(jnp.int32)
-  one = coordinate.dtype.type(1)
-  l_weight = one - (coordinate - lower)
-  u_weight = one - l_weight  # handles the edge case lower==upper
-  return [(l_index, l_weight), (u_index, u_weight)]
+  upper_weight = coordinate - lower
+  lower_weight = 1 - upper_weight
+  index = lower.astype(jnp.int32)
+  return [(index, lower_weight), (index + 1, upper_weight)]
 
 
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
