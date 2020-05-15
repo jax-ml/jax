@@ -333,15 +333,15 @@ def set_sharding(builder, op, sharding: SpatialSharding):
   # "Sharding" is a built-in custom call target that acts like an identity
   # function, and is used to attach an OpSharding to.
   return with_sharding(builder, sharding, xops.CustomCall,
-                       builder, b"Sharding", [op], builder.GetShape(op))
+                       builder, b"Sharding", [op], builder.get_shape(op))
 
 def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
   """Builds op_fn(*args, **kwargs) with sharding annotation."""
-  builder.SetSharding(_sharding_to_proto(sharding))
+  builder.set_sharding(_sharding_to_proto(sharding))
   try:
     return op_fn(*args, **kwargs)
   finally:
-    builder.ClearSharding()
+    builder.clear_sharding()
 
 def make_computation_builder(name):
   return xla_client.XlaBuilder(name)
