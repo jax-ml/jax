@@ -112,7 +112,7 @@ def bfgs_minimize_nojit(func, x0, options=None):
                 analytic_initial_hessian: bool,
                     whether to use JAX to get hessian for the initialisation, otherwise it's eye.
                 g_tol: float
-                    stopping criteria is |grad(func)|_2 \lt g_tol
+                    stopping criteria is |grad(func)|_2 lt g_tol
                 ls_maxiter: int or None which means inf
                     Maximum number of line search iterations to perform
 
