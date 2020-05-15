@@ -1,1 +1,1 @@
-from .bfgs_minimize import minimize
+from .minimize import minimize
