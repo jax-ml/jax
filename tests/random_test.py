@@ -116,6 +116,18 @@ class LaxRandomTest(jtu.JaxTestCase):
     np.testing.assert_equal(result[:n], np.full((n,), 0xc4923a9c, dtype=np.uint32))
     np.testing.assert_equal(result[n:], np.full((n,), 0x483df7a0, dtype=np.uint32))
 
+  def testRngRandomBitsViewProperty(self):
+    # TODO: add 64-bit if it ever supports this property.
+    # TODO: will this property hold across endian-ness?
+    N = 10
+    key = random.PRNGKey(1701)
+    r32 = random._random_bits(key, 32, (N,))
+    r16 = random._random_bits(key, 16, (2 * N,))
+    r8 = random._random_bits(key, 8, (4 * N,))
+
+    self.assertArraysEqual(np.array(r32).view(np.uint8), np.array(r8), check_dtypes=True)
+    self.assertArraysEqual(np.array(r16).view(np.uint8), np.array(r8), check_dtypes=True)
+
   def testRngRandomBits(self):
     # Test specific outputs to ensure consistent random values between JAX versions.
     key = random.PRNGKey(1701)
@@ -125,7 +137,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysEqual(bits8, expected8, check_dtypes=True)
 
     bits16 = random._random_bits(key, 16, (3,))
-    expected16 = np.array([41682, 55017, 1300], dtype=np.uint16)
+    expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
     self.assertArraysEqual(bits16, expected16, check_dtypes=True)
 
     bits32 = random._random_bits(key, 32, (3,))
