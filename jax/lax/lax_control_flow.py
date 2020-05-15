@@ -19,6 +19,7 @@ Control flow primitives.
 
 import collections
 import functools
+import inspect
 import itertools
 import operator
 import threading
@@ -543,7 +544,7 @@ batching.primitive_batchers[while_p] = _while_loop_batching_rule
 
 ### cond
 
-def cond(pred, true_fun, false_fun, operand, *deprecated_args):
+def cond(*args, **kwargs):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
   Has equivalent semantics to this Python implementation::
@@ -554,19 +555,27 @@ def cond(pred, true_fun, false_fun, operand, *deprecated_args):
       else:
         return false_fun(operand)
 
-  Pred must be a scalar type. Collections (list, tuple) are not supported.
+  Pred must be a scalar type.
+
+  Arguments:
+    pred: Boolean scalar type, indicating which branch function to
+      apply. Collections (list, tuple) are not supported.
+    true_fun: Function (A -> B), to be applied if `pred` is True.
+    false_fun: Function (A -> B), to be applied if `pred` is False.
+    operand: Operand (A) input to either branch depending on `pred`.
   """
 
   # detect an attempt to call the former, deprecated cond
-  if len(deprecated_args) == 1:
-    true_op, true_fun, false_op, false_fun = (
-        true_fun, false_fun, operand, deprecated_args[0])
-    return _cond_with_per_branch_args(pred, true_op, true_fun, false_op, false_fun)
-  elif len(deprecated_args) > 0:
-    num_args = 4 + len(deprecated_args)
-    raise TypeError(
-        f"cond() takes 4 positional arguments but {num_args} were given")
+  try:
+    ba = inspect.signature(_cond_with_per_branch_args).bind(*args, **kwargs)
+  except TypeError:
+    pass
+  else:
+    return _cond_with_per_branch_args(*ba.args)
 
+  return _cond(*args, **kwargs)
+
+def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
   if len(onp.shape(pred)) != 0:
     raise TypeError(
         f"Pred must be a scalar, got {pred} of shape {onp.shape(pred)}.")
@@ -623,10 +632,10 @@ def _cond_with_per_branch_args(pred,
 
   Pred has to be a scalar type, collection types (list, tuple) are not supported
   """
-  return cond(pred,
-              lambda op: true_fun(op[0]),
-              lambda op: false_fun(op[1]),
-              (true_operand, false_operand))
+  return _cond(pred,
+               lambda op: true_fun(op[0]),
+               lambda op: false_fun(op[1]),
+               (true_operand, false_operand))
 
 def _cond_abstract_eval(*args, **kwargs):
   return _map(raise_to_shaped, kwargs["true_jaxpr"].out_avals)
