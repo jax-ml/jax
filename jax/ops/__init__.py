@@ -14,5 +14,6 @@
 
 # flake8: noqa: F401
 from .scatter import (
-  index, index_add, index_mul, index_update, index_min, index_max, segment_sum
+    index, index_add, index_mul, index_update, index_min, index_max,
+    segment_max, segment_sum
 )

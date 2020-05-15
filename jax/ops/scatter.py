@@ -280,6 +280,7 @@ def index_update(x, idx, y):
   """
   return _scatter_update(x, idx, y, lax.scatter)
 
+
 def segment_sum(data, segment_ids, num_segments=None):
   """Computes the sum within segments of an array.
 
@@ -308,3 +309,35 @@ def segment_sum(data, segment_ids, num_segments=None):
   out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
   segment_ids = jnp.mod(segment_ids, num_segments)
   return index_add(out, segment_ids, data)
+
+
+def segment_max(data, segment_ids, num_segments=None):
+  """Computes the max within segments of an array.
+
+  Similar to TensorFlow's segment_max:
+  https://www.tensorflow.org/api_docs/python/tf/math/segment_max
+  Args:
+    data: an array with the values to be aggregated by max.
+    segment_ids: an array with integer dtype that indicates the segments of
+      `data` (along its leading axis). Values can be repeated and
+      need not be sorted.
+    num_segments: optional, an int with positive value indicating the number of
+      segments. The default is ``max(segment_ids % data.shape[0]) + 1`` but
+      since `num_segments` determines the size of the output, a static value
+      must be provided to use `segment_max` in a `jit`-compiled function.
+  Returns:
+    An array with shape :code:`(num_segments,) + data.shape[1:]` representing
+    the max of the associated segments.
+  """
+  if num_segments is None:
+    num_segments = jnp.max(jnp.mod(segment_ids, data.shape[0])) + 1
+  num_segments = int(num_segments)
+
+  full_zeros = jnp.zeros((num_segments,) + data.shape[1:], dtype=jnp.bool_)
+  full_ones = jnp.ones((num_segments,) + data.shape[1:], dtype=data.dtype)
+
+  valid_updates = index_update(full_zeros, segment_ids,
+                               jnp.ones_like(data, dtype=jnp.bool_))
+  updated = index_max(full_ones * -jnp.inf, segment_ids, data)
+
+  return jnp.where(valid_updates, updated, full_zeros)

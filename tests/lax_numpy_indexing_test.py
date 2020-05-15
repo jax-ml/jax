@@ -982,6 +982,42 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     expected = onp.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_val={}_idx={}".format(
+          jtu.format_shape_dtype_string(data_shape, val_dtype),
+          jtu.format_shape_dtype_string(data_shape, idx_dtype)),
+       "val_dtype": val_dtype, "idx_dtype": idx_dtype,
+       "rng_idx_factory": rng_idx_factory,
+       "rng_factory": rng_factory,
+       "data_shape": data_shape
+      }
+      for idx_dtype in int_dtypes
+      for val_dtype in default_dtypes
+      for data_shape in [(3,), (3, 4), (3, 4, 4)]
+      for rng_idx_factory in [partial(jtu.rand_int, high=data_shape[0])]
+      for rng_factory in [jtu.rand_default]))
+  def testSegmentMax(self, val_dtype, idx_dtype, rng_idx_factory, rng_factory,
+                     data_shape):
+    def args_maker():
+      rng = rng_factory(onp.random.RandomState(0))
+      rng_idx = rng_idx_factory(self.rng())
+      vals = rng(data_shape, val_dtype)
+      idxs = rng_idx(data_shape[0], idx_dtype)
+      return vals, idxs
+
+    def np_fn(vals, idxs):
+      idx_map = [[] for _ in range(onp.max(idxs) + 1)]
+      for i, idx in enumerate(idxs):
+        idx_map[idx].append(vals[i, ...])
+
+      return onp.array([onp.max(v, axis=0) if v else onp.zeros(vals.shape[1:])
+                        for v in idx_map])
+
+    jax_fn = ops.segment_max
+
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=False,
+                            tol=3e-6)
+
   def testIndexDtypeError(self):
     # https://github.com/google/jax/issues/2795
     jnp.array(1)  # get rid of startup warning
