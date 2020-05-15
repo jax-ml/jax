@@ -17,4 +17,4 @@ jaxpr = lin2(f, 3., 4.)
 
 ### test
 
-lin.lin(lu.wrap_init(f), 3., 4.)
+print(lin.lin(lu.wrap_init(f), 3., 4.))
