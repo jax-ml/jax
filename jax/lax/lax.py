@@ -3340,7 +3340,6 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
   if (not masking.is_polymorphic(limit_indices) and
-      not masking.is_polymorphic(operand.shape) and
       not onp.all(onp.greater_equal(limit_indices, start_indices))):
     msg = ("slice limit_indices must be greater than or equal to start_indices,"
            " got start_indices {} and limit_indices {}.")
@@ -3401,8 +3400,8 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-def _slice_masking_rule(padded_vals, logical_shapes, start_indices, limit_indices,
-                        strides):
+def _slice_masking_rule(
+    padded_vals, logical_shapes, start_indices, limit_indices, strides):
   operand, = padded_vals
   return slice(operand,
                start_indices=masking.padded_shape_as_value(start_indices),
