@@ -121,20 +121,22 @@ class LaxRandomTest(jtu.JaxTestCase):
     # TODO: will this property hold across endian-ness?
     N = 10
     key = random.PRNGKey(1701)
-    r32 = random._random_bits(key, 32, (N,))
-    r16 = random._random_bits(key, 16, (2 * N,))
-    r8 = random._random_bits(key, 8, (4 * N,))
-
-    self.assertArraysEqual(np.array(r32).view(np.uint8), np.array(r8), check_dtypes=True)
-    self.assertArraysEqual(np.array(r16).view(np.uint8), np.array(r8), check_dtypes=True)
+    nbits = [8, 16, 32]
+    if jtu.device_under_test() == "tpu":
+      nbits = [16, 32]
+    rand_bits = [random._random_bits(key, n, (N * 64 // n,)) for n in nbits]
+    rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
+    print(rand_bits_32)
+    assert np.all(rand_bits_32 == rand_bits_32[0])
 
   def testRngRandomBits(self):
     # Test specific outputs to ensure consistent random values between JAX versions.
     key = random.PRNGKey(1701)
 
-    bits8 = random._random_bits(key, 8, (3,))
-    expected8 = np.array([216, 115,  43], dtype=np.uint8)
-    self.assertArraysEqual(bits8, expected8, check_dtypes=True)
+    if jtu.device_under_test() != "tpu":
+      bits8 = random._random_bits(key, 8, (3,))
+      expected8 = np.array([216, 115,  43], dtype=np.uint8)
+      self.assertArraysEqual(bits8, expected8, check_dtypes=True)
 
     bits16 = random._random_bits(key, 16, (3,))
     expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
