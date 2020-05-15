@@ -2544,7 +2544,8 @@ def _conv_general_dilated_masking_rule(
   lhs, rhs = padded_vals
   logical_lhs_shape, rhs_shape = logical_shapes
   assert (masking.padded_shape_as_value(rhs_shape) ==
-          masking.shape_as_value(rhs_shape))
+          masking.shape_as_value(rhs_shape)), "Conv filter masking not yet " \
+              "implemented."
 
   n, c, *padded_dimensions = dimension_numbers.lhs_spec
 
@@ -3301,11 +3302,11 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   return select(pred, on_true, on_false), 0
 
 def _select_masking_rule(padded_vals, logical_shapes):
-  pred_shape, true_shape, false_shape = map(lambda x: masking.padded_shape_as_value(x.shape), padded_vals)
+  pred_shape, true_shape, false_shape = [
+      masking.padded_shape_as_value(val.shape) for val in padded_vals]
   assert onp.array_equal(pred_shape, true_shape)
   assert onp.array_equal(pred_shape, false_shape)
-  # ensure all arguments have the same, concrete shape:
-  return select(*(reshape(val, pred_shape) for val in padded_vals))
+  return select(*padded_vals)
 
 select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
 ad.defjvp(select_p,
