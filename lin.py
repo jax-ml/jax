@@ -5,10 +5,7 @@ import jax.numpy as np
 def f(x, y):
   return -np.sin(x) * y
 
-lin.lin(lu.wrap_init(f), 3., 4.)
-
-
-###
+### reference
 
 from jax import make_jaxpr, jvp
 
@@ -17,3 +14,7 @@ def lin2(f, *args):
   print(jaxpr)
 
 jaxpr = lin2(f, 3., 4.)
+
+### test
+
+lin.lin(lu.wrap_init(f), 3., 4.)
