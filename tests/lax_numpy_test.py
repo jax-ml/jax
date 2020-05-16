@@ -897,9 +897,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_{}".format(
+      {"testcase_name": "_{}_{}_invert={}".format(
           jtu.format_shape_dtype_string(element_shape, dtype),
-          jtu.format_shape_dtype_string(test_shape, dtype)),
+          jtu.format_shape_dtype_string(test_shape, dtype), invert),
        "element_shape": element_shape, "test_shape": test_shape,
        "dtype": dtype, "invert": invert}
       for element_shape in all_shapes
@@ -916,9 +916,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_{}".format(
+      {"testcase_name": "_{}_{}_invert={}".format(
           jtu.format_shape_dtype_string(element_shape, dtype),
-          jtu.format_shape_dtype_string(test_shape, dtype)),
+          jtu.format_shape_dtype_string(test_shape, dtype), invert),
        "element_shape": element_shape, "test_shape": test_shape,
        "dtype": dtype, "invert": invert}
       for element_shape in all_shapes
