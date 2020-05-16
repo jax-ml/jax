@@ -1656,7 +1656,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol = {onp.float16: 1E-2}
     # linspace() compares poorly to numpy when using bfloat16
     if dtype != jnp.bfloat16:
-      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False)
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True,
                           atol=tol, rtol=tol)
 
