@@ -1520,10 +1520,10 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
 
-    if isinstance(a, tuple):
-      a = asarray(a)
-    if not isinstance(a, ndarray):
-      raise TypeError(f"Reductions only work on ndarrays and tuples, input is of type {type(a)}")
+
+    if isinstance(a, list):
+      raise TypeError(f"Reductions don't work on list, pass a ndarray, tuple or scalar instead")
+    a = asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
     result_dtype = dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a))))
