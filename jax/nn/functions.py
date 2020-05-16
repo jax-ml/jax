@@ -95,7 +95,7 @@ def elu(x, alpha=1.0):
   .. math::
     \mathrm{elu}(x) = \begin{cases}
       x, & x > 0\\
-      \alpha \exp(x - 1), & x \le 0
+      \alpha \left(\exp(x) - 1\right), & x \le 0
     \end{cases}
   """
   safe_x = jnp.where(x > 0, 0., x)
@@ -138,7 +138,7 @@ def celu(x, alpha=1.0):
   .. math::
     \mathrm{celu}(x) = \begin{cases}
       x, & x > 0\\
-      \alpha \exp(\frac{x}{\alpha} - 1), & x \le 0
+      \alpha \left(\exp(\frac{x}{\alpha}) - 1\right), & x \le 0
     \end{cases}
 
   For more information, see
