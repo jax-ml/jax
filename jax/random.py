@@ -45,6 +45,9 @@ from jax.interpreters import xla
 from jax.util import prod
 
 
+_UINT_DTYPES = {8: np.uint8, 16: np.uint16, 32: np.uint32, 64: np.uint64}
+
+
 def PRNGKey(seed: int) -> np.ndarray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
@@ -273,18 +276,34 @@ def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_prng_key(key):
     raise TypeError("_random_bits got invalid prng key.")
-  if bit_width not in (32, 64):
-    raise TypeError("requires 32- or 64-bit field width.")
-  max_count = (bit_width // 32) * onp.prod(shape)
+  if bit_width not in (8, 16, 32, 64):
+    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+  size = onp.prod(shape)
+  max_count = int(onp.ceil(bit_width * size / 32))
   if max_count >= np.iinfo(onp.uint32).max:
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
   counts = lax.tie_in(key, lax.iota(onp.uint32, max_count))
   bits = threefry_2x32(key, counts)
+  dtype = _UINT_DTYPES[bit_width]
   if bit_width == 64:
-    bits = [lax.convert_element_type(x, onp.uint64) for x in np.split(bits, 2)]
-    bits = lax.shift_left(bits[0], onp.uint64(32)) | bits[1]
+    bits = [lax.convert_element_type(x, dtype) for x in np.split(bits, 2)]
+    bits = lax.shift_left(bits[0], dtype(32)) | bits[1]
+  elif bit_width in [8, 16]:
+    # this is essentially bits.view(dtype)[:size]
+    bits = lax.bitwise_and(
+      onp.uint32(onp.iinfo(dtype).max),
+      lax.shift_right_logical(
+        lax.broadcast(bits, (1,)),
+        lax.mul(
+          onp.uint32(bit_width),
+          lax.broadcasted_iota(onp.uint32, (32 // bit_width, 1), 0)
+        )
+      )
+    )
+    bits = lax.reshape(bits, (onp.uint32(max_count * 32 // bit_width),), (1, 0))
+    bits = lax.convert_element_type(bits, dtype)[:size]
   return lax.reshape(bits, shape)
 
 

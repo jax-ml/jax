@@ -705,6 +705,12 @@ class JaxTestCase(parameterized.TestCase):
   def rng(self):
     return self._rng
 
+  def assertArraysEqual(self, x, y, check_dtypes):
+    """Assert that x and y arrays are exactly equal."""
+    if check_dtypes:
+      self.assertDtypesMatch(x, y)
+    np.testing.assert_equal(x, y)
+
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
