@@ -143,7 +143,7 @@ class SolversTest(jtu.JaxTestCase):
     np.testing.assert_array_less(
         info['residual_norm'][last_iteration, :2], tolerance)
     np.testing.assert_allclose(info['precondition'], 0.0, atol=2e-5)
-    np.testing.assert_allclose(w_actual, self.w_expected[:2], atol=3e-6)
+    np.testing.assert_allclose(w_actual, self.w_expected[:2], atol=5e-6)
     np.testing.assert_allclose(
         abs(v_actual), abs(self.v_expected[:, :2]), atol=1e-4)
 
