@@ -1114,7 +1114,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default}
       for repeats in [0, 1, 2]
       for shape, dtype in _shape_and_dtypes(all_shapes, default_dtypes)
-      for axis in [None] + list(range(-len(shape), len(shape)))))
+      for axis in [None] + list(range(-len(shape), max(1, len(shape))))))
   def testRepeat(self, axis, shape, dtype, repeats, rng_factory):
     rng = rng_factory(self.rng())
     onp_fun = lambda arg: onp.repeat(arg, repeats=repeats, axis=axis)
