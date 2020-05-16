@@ -133,6 +133,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     hamming
     hanning
     heaviside
+    histogram
+    histogram_bin_edges
     hsplit
     hstack
     hypot

@@ -1631,6 +1631,69 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             (2,), (1,))
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_bins={}_range={}_weights={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), bins, range, weights),
+      "shape": shape,
+      "dtype": dtype,
+      "bins": bins,
+      "range": range,
+      "weights": weights,
+    }
+    for shape in [(5,), (5, 5)]
+    for dtype in number_dtypes
+    for bins in [10, onp.arange(-5, 6), [-5, 0, 3]]
+    for range in [None, (0, 10)]
+    for weights in [True, False]
+  ))
+  def testHistogramBinEdges(self, shape, dtype, bins, range, weights):
+    rng = jtu.rand_default(self.rng())
+    _weights = lambda w: abs(w) if weights else None
+    onp_fun = lambda a, w: onp.histogram_bin_edges(a, bins=bins, range=range,
+                                                   weights=_weights(w))
+    jnp_fun = lambda a, w: jnp.histogram_bin_edges(a, bins=bins, range=range,
+                                                   weights=_weights(w))
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    tol = {jnp.bfloat16: 2E-2, onp.float16: 1E-2}
+    # linspace() compares poorly to numpy when using bfloat16
+    if dtype != jnp.bfloat16:
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True,
+                          atol=tol, rtol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_bins={}_density={}_weights={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), bins, density, weights),
+      "shape": shape,
+      "dtype": dtype,
+      "bins": bins,
+      "density": density,
+      "weights": weights,
+    }
+    for shape in [(5,), (5, 5)]
+    for dtype in default_dtypes
+    # We only test explicit integer-valued bin edges beause in other cases
+    # rounding errors lead to flaky tests.
+    for bins in [onp.arange(-5, 6), [-5, 0, 3]]
+    for density in [True, False]
+    for weights in [True, False]
+  ))
+  def testHistogram(self, shape, dtype, bins, density, weights):
+    rng = jtu.rand_default(self.rng())
+    _weights = lambda w: abs(w) if weights else None
+    onp_fun = lambda a, w: onp.histogram(a, bins=bins, density=density,
+                                         weights=_weights(w))
+    jnp_fun = lambda a, w: jnp.histogram(a, bins=bins, density=density,
+                                         weights=_weights(w))
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    tol = {jnp.bfloat16: 2E-2, onp.float16: 1E-1}
+    # np.searchsorted errors on bfloat16 with
+    # "TypeError: invalid type promotion with custom data type"
+    if dtype != jnp.bfloat16:
+      self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False,
+                              tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_axis={}_{}sections".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
        "shape": shape, "num_sections": num_sections, "axis": axis,
