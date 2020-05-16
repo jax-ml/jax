@@ -145,7 +145,7 @@ def exp(x: Array) -> Array:
   return exp_p.bind(x)
 
 def expm1(x: Array) -> Array:
-  r"""Elementwise :math:`e^{x - 1}`."""
+  r"""Elementwise :math:`e^{x} - 1`."""
   return expm1_p.bind(x)
 
 def log(x: Array) -> Array:
