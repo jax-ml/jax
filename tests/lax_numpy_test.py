@@ -1653,7 +1653,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda a, w: jnp.histogram_bin_edges(a, bins=bins, range=range,
                                                    weights=_weights(w))
     args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
-    tol = {onp.float16: 1E-2}
+    tol = {jnp.bfloat16: 2E-2, onp.float16: 1E-2}
     # linspace() compares poorly to numpy when using bfloat16
     if dtype != jnp.bfloat16:
       self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
@@ -1685,7 +1685,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda a, w: jnp.histogram(a, bins=bins, density=density,
                                          weights=_weights(w))
     args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
-    tol = {onp.float16: 1E-1}
+    tol = {jnp.bfloat16: 2E-2, onp.float16: 1E-1}
     # np.searchsorted errors on bfloat16 with
     # "TypeError: invalid type promotion with custom data type"
     if dtype != jnp.bfloat16:
