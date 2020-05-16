@@ -163,30 +163,30 @@ def id_tap(func: Callable, arg, *,
            **kwargs):
   """Host-callback tap primitive, like identity function with a call to ``func``.
 
-**Experimental: please give feedback, and expect changes!**
+  **Experimental: please give feedback, and expect changes!**
 
-``id_tap`` behaves semantically like the identity function but has the side-effect
-that a user-defined Python function is called with the runtime values of the
-argument.
+  ``id_tap`` behaves semantically like the identity function but has the side-effect
+  that a user-defined Python function is called with the runtime values of the
+  argument.
 
-Args:
-  * arg: the argument passed to the tap function, can be a pytree of JAX
-    types.
-  * result: if given, specifies the return value of ``id_tap``. By default,
-    the return type is ``arg``.
-  * kwargs: will be passed directly to the tap function. Can be anything that
-    is hashable, these are kept in the host Python process until outfeeds are
-    received.
+  Args:
+    * arg: the argument passed to the tap function, can be a pytree of JAX
+      types.
+    * result: if given, specifies the return value of ``id_tap``. By default,
+      the return type is ``arg``.
+    * kwargs: will be passed directly to the tap function. Can be anything that
+      is hashable, these are kept in the host Python process until outfeeds are
+      received.
 
-Returns:
-  * ``arg``, or ``result`` if given.
+  Returns:
+    * ``arg``, or ``result`` if given.
 
-Tapping works even for code executed on accelerators and even for code under
-JAX transformations. Code that uses taps must be run embedded in
-:func:`outfeed_receiver`.
+  Tapping works even for code executed on accelerators and even for code under
+  JAX transformations. Code that uses taps must be run embedded in
+  :func:`outfeed_receiver`.
 
-For more details see the
-`module documentation <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_.
+  For more details see the
+  `module documentation <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_.
   """
   if _OUTFEED_MECHANISM == "none":
     raise NotImplementedError("id_tap works only with jaxlib 0.1.47 and higher")
@@ -216,19 +216,19 @@ def id_print(arg, *, result=None, output_stream=None, threshold=None,
              **kwargs):
   """Like :func:`id_tap` with a printing tap function.
 
-     **Experimental: please give feedback, and expect changes!**
+   **Experimental: please give feedback, and expect changes!**
 
-     On each invocation of the printing tap, the ``kwargs`` if present
-     will be printed first (sorted by keys). Then arg will be printed,
-     with the arrays stringified with ``numpy.array2string``.
+   On each invocation of the printing tap, the ``kwargs`` if present
+   will be printed first (sorted by keys). Then arg will be printed,
+   with the arrays stringified with ``numpy.array2string``.
 
-     See the :func:`id_tap` documentation.
+   See the :func:`id_tap` documentation.
 
-     Additional keyword arguments:
+   Additional keyword arguments:
 
-     * ``output_stream`` if given then it will be used instead of the
-       built-in ``print``. The string will be passed as ``output_stream.write(s)``.
-     * ``threshold`` is passed to ``numpy.array2string``.
+   * ``output_stream`` if given then it will be used instead of the
+     built-in ``print``. The string will be passed as ``output_stream.write(s)``.
+   * ``threshold`` is passed to ``numpy.array2string``.
   """
   return id_tap(_print_consumer, arg,
                 result=result, output_stream=output_stream,
