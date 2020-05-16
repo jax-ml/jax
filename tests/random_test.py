@@ -123,7 +123,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = random.PRNGKey(1701)
     nbits = [8, 16, 32]
     if jtu.device_under_test() == "tpu":
-      nbits = [16, 32]
+      # U8 and U16 are not supported on TPU.
+      nbits = [32]
     rand_bits = [random._random_bits(key, n, (N * 64 // n,)) for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
     print(rand_bits_32)
@@ -133,14 +134,15 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test specific outputs to ensure consistent random values between JAX versions.
     key = random.PRNGKey(1701)
 
+    # U8 and U16 are not supported on TPU.
     if jtu.device_under_test() != "tpu":
       bits8 = random._random_bits(key, 8, (3,))
       expected8 = np.array([216, 115,  43], dtype=np.uint8)
       self.assertArraysEqual(bits8, expected8, check_dtypes=True)
 
-    bits16 = random._random_bits(key, 16, (3,))
-    expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
-    self.assertArraysEqual(bits16, expected16, check_dtypes=True)
+      bits16 = random._random_bits(key, 16, (3,))
+      expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
+      self.assertArraysEqual(bits16, expected16, check_dtypes=True)
 
     bits32 = random._random_bits(key, 32, (3,))
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
