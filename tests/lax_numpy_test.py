@@ -1640,7 +1640,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       "weights": weights,
     }
     for shape in [(5,), (5, 5)]
-    for dtype in default_dtypes
+    for dtype in number_dtypes
     for bins in [10, onp.arange(-5, 6), [-5, 0, 3]]
     for range in [None, (0, 10)]
     for weights in [True, False]

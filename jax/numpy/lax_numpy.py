@@ -846,8 +846,10 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
     range = a.min(), a.max()
   if not isinstance(a, core.Tracer) and range[0] == range[1]:
     range = range[0] - 0.5, range[0] + 0.5
-  bin_dtype = promote_types(_dtype(a), float32)
-  return linspace(range[0], range[1], bins + 1, dtype=bin_dtype)
+  dtype = _dtype(a)
+  if issubdtype(dtype, integer):
+    dtype = promote_types(dtype, float32)
+  return linspace(range[0], range[1], bins + 1, dtype=dtype)
 
 
 @_wraps(np.histogram)
