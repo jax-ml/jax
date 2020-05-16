@@ -8,7 +8,7 @@ program:
 >>> from jax import numpy as np
 >>> from jax import random
 >>> x = random.uniform(random.PRNGKey(0), (1000, 1000))
->>> np.dot(x, x) + 3.
+>>> np.dot(x, x) + 3.  # doctest: +SKIP
 DeviceArray([[258.01971436, 249.64862061, 257.13372803, ...,
               236.67948914, 250.68939209, 241.36853027],
              [265.65979004, 256.28912354, 262.18252563, ...,
@@ -44,7 +44,7 @@ arbitrary amounts of work and avoid having the accelerator wait.
 
 Asynchronous dispatch has a slightly surprising consequence for microbenchmarks.
 
->>> %time np.dot(x, x)
+>>> %time np.dot(x, x)  # doctest: +SKIP
 CPU times: user 267 µs, sys: 93 µs, total: 360 µs
 Wall time: 269 µs 
 DeviceArray([[255.01972961, 246.64862061, 254.13371277, ...,
@@ -70,7 +70,7 @@ use the :meth:`~jaxDeviceArray.block_until_ready` method on a
 :class:`DeviceArray` value to wait for the computation that produced it to
 complete.
 
->>> %time onp.asarray(np.dot(x, x))
+>>> %time onp.asarray(np.dot(x, x))  # doctest: +SKIP
 CPU times: user 61.1 ms, sys: 0 ns, total: 61.1 ms
 Wall time: 8.09 ms
 Out[16]: 
@@ -87,7 +87,7 @@ array([[255.01973, 246.64862, 254.13371, ..., 233.67949, 247.68939,
         258.337  ],
        [254.16135, 251.75433, 256.083  , ..., 238.59848, 245.62598,
         240.22348]], dtype=float32)
->>> %time np.dot(x, x).block_until_ready()
+>>> %time np.dot(x, x).block_until_ready()  # doctest: +SKIP
 CPU times: user 50.3 ms, sys: 928 µs, total: 51.2 ms
 Wall time: 4.92 ms
 DeviceArray([[255.01972961, 246.64862061, 254.13371277, ...,

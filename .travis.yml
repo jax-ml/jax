@@ -12,7 +12,7 @@ jobs:
     - python: "3.6"
       env: JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
     - python: "3.7"
-      env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
+      env: JAX_ENABLE_X64=0 JAX_ONLY_DOCUMENTATION=true
 
 before_install:
   - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
@@ -44,6 +44,8 @@ install:
 script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
+      pytest docs ;
+      pytest --doctest-modules jax/api.py ;
     elif [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       echo "===== Checking with mypy ====" &&
       time mypy --config-file=mypy.ini jax ;
