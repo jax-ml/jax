@@ -182,8 +182,7 @@ def gelu(x):
   <https://arxiv.org/abs/1606.08415>`_, section 2.
   """
   sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
-  x_cubed = lax.integer_pow(x, 3)
-  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * x_cubed)))
+  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
   return x * cdf
 
 def glu(x, axis=-1):
