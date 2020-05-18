@@ -24,10 +24,6 @@ import jax.numpy as jnp
 from jax import lax
 from jax import test_util as jtu
 import jax.scipy.sparse.linalg
-from jax.config import config
-
-
-config.parse_flags_with_absl()
 
 from jax.config import config
 config.parse_flags_with_absl()
