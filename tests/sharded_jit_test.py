@@ -140,10 +140,10 @@ class ShardedJitTest(jtu.JaxTestCase):
     # Mismatched sharded_jit partitions
     with self.assertRaisesRegex(
         ValueError,
-        "with_sharding_constraint with partitions=PartitionSpec\(1, 2\) "
-        "\(total partitions: 2\) doesn't match expected number of partitions: "
-        "4. If these partitions look right, check outer sharded_jit and/or "
-        "other with_sharding_constraint calls."):
+        r"with_sharding_constraint with partitions=PartitionSpec\(1, 2\) "
+        r"\(total partitions: 2\) doesn't match expected number of partitions: "
+        r"4. If these partitions look right, check outer sharded_jit and/or "
+        r"other with_sharding_constraint calls."):
       sharded_jit(f, in_parts=P(2,2), out_parts=P(2,2))(x)
 
     # Replicated sharded_jit
