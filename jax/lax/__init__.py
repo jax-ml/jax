@@ -144,6 +144,8 @@ from .lax import (
   index_take,
   infeed,
   infeed_p,
+  integer_pow,
+  integer_pow_p,
   iota,
   is_finite,
   is_finite_p,

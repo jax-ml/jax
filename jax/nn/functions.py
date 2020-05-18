@@ -182,9 +182,7 @@ def gelu(x):
   <https://arxiv.org/abs/1606.08415>`_, section 2.
   """
   sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
-  # Does not use the power operator here.
-  # See https://github.com/google/jax/pull/3036
-  x_cubed = x * x * x
+  x_cubed = lax.integer_pow(x, 3)
   cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * x_cubed)))
   return x * cdf
 

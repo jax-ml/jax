@@ -261,6 +261,15 @@ def _pow_taylor(primals_in, series_in):
   return primal_out, series_out
 jet_rules[lax.pow_p] = _pow_taylor
 
+def _integer_pow_taylor(primals_in, series_in, *, y):
+  if y == 2:
+    fn = lambda x: x * x
+  else:
+    fn = lambda x: lax.pow(x, onp.array(y, dtype=x.dtype))
+  return jet(fn, primals_in, series_in)
+jet_rules[lax.integer_pow_p] = _integer_pow_taylor
+
+
 def _expit_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
