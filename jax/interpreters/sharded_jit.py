@@ -217,7 +217,7 @@ def get_num_partitions(*partitions):
 
 
 def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
-  """Returns the total number of partitions from PartitonSpecs inside `jaxpr`.
+  """Returns the total number of partitions from PartitionSpecs inside `jaxpr`.
 
   Also validates that this number matches `expected_num_parts` if provided.
   """
