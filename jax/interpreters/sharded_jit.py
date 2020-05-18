@@ -222,7 +222,7 @@ def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
   Also validates that this number matches `expected_num_parts` if provided.
   """
   for eqn in jaxpr.eqns:
-    if eqn.primitive == set_sharding_p:
+    if eqn.primitive == sharding_constraint_p:
       parts = eqn.params["partitions"]
       nparts = get_num_partitions(parts)
       if expected_num_parts is None:
@@ -230,10 +230,11 @@ def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
       elif nparts != expected_num_parts:
         # TODO(skye): raise this error as we trace the jaxpr
         raise ValueError(
-            f"set_sharding with partitions={parts} (total partitions: {nparts})"
-            f" doesn't match expected number of partitions: "
-            f"{expected_num_parts}. If these partitions look right, check "
-            f"outer sharded_jit and/or other set_sharding calls.")
+            f"with_sharding_constraint with partitions={parts} "
+            f"(total partitions: {nparts}) doesn't match expected number of "
+            f"partitions: {expected_num_parts}. If these partitions look "
+            f"right, check outer sharded_jit and/or other "
+            f"with_sharding_constraint calls.")
       elif eqn.primitive.call_primitive:
         expected_num_parts = _inner_partitions(eqn.params["call_jaxpr"],
                                                expected_num_parts)
@@ -338,22 +339,23 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
   return wrapped
 
 
-def _set_sharding_impl(x, partitions):
+def _sharding_constraint_impl(x, partitions):
   # TODO(skye): can we also prevent this from being called in other
   # non-sharded_jit contexts? (e.g. pmap, control flow)
   raise NotImplementedError(
-      "set_sharding() should only be called inside sharded_jit()")
+      "with_sharding_constraint() should only be called inside sharded_jit()")
 
-def _set_sharding_translation_rule(c, x_node, partitions):
-  return xb.set_sharding(c, x_node, partitions)
+def _sharding_constraint_translation_rule(c, x_node, partitions):
+  return xb.with_sharding_constraint(c, x_node, partitions)
 
-set_sharding_p = core.Primitive("set_sharding")
-set_sharding_p.def_impl(_set_sharding_impl)
-set_sharding_p.def_abstract_eval(lambda x, partitions: x)
-ad.deflinear(set_sharding_p, lambda ct, partitions: (set_sharding(ct, partitions),))
-xla.translations[set_sharding_p] = _set_sharding_translation_rule
+sharding_constraint_p = core.Primitive("sharding_constraint")
+sharding_constraint_p.def_impl(_sharding_constraint_impl)
+sharding_constraint_p.def_abstract_eval(lambda x, partitions: x)
+ad.deflinear(sharding_constraint_p,
+             lambda ct, partitions: (with_sharding_constraint(ct, partitions),))
+xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
 
-def set_sharding(x, partitions: Optional[PartitionSpec]):
+def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
   """Identity-like function that specifies how ``x`` should be sharded.
 
   WARNING: this feature is still under active development! It may not work well,
@@ -362,27 +364,28 @@ def set_sharding(x, partitions: Optional[PartitionSpec]):
   This should only be called inside a function transformed by ``sharded_jit``.
   It constrains how the function is sharded: regardless of any other specified
   partitions, the compiler will make sure that ``x`` is sharded according to
-  ``partitions``.  Note that a ``set_sharding`` call doesn't necessarily
-  correspond to a reshard, since the compiler is free to achieve this sharding
-  as long as the constraint is met, e.g. it might insert a reshard earlier in
-  the computation. Another way to think of this is that the ``set_sharding``
-  call may flow "up" the function to preceding operations as well as "down" to
-  subsequent ones.
+  ``partitions``.  Note that a ``with_sharding_constraint`` call doesn't
+  necessarily correspond to a reshard, since the compiler is free to achieve
+  this sharding as long as the constraint is met, e.g. it might insert a reshard
+  earlier in the computation. Another way to think of this is that the
+  ``with_sharding_constraint`` call may flow "up" the function to preceding
+  operations as well as "down" to subsequent ones.
 
   ``partitions`` must correspond to the same number of total partitions dictated
-  by the outer ``sharded_jit`` and any other ``set_sharding`` calls. In the case
-  where only replication has been specified, any ``partitions`` are valid.
+  by the outer ``sharded_jit`` and any other ``with_sharding_constraint`` calls.
+  In the case where only replication has been specified, any ``partitions`` are
+  valid.
 
   Example usage:
     @partial(sharded_jit, in_parts=None, out_parts=None, num_shards=2
     def f(x):
       y = x + 1
-      y = set_sharding(y, PartitionSpec(2,1))
+      y = with_sharding_constraint(y, PartitionSpec(2,1))
       return y * 2
 
   In this example, the inputs and outputs of ``f`` will be replicated, but the
   inner value of ``y`` will be partitioned in half. ``f`` will run on two
-  devices due to the set_sharding call.
+  devices due to the with_sharding_constraint call.
 
   Args:
     x: Array value
@@ -392,4 +395,4 @@ def set_sharding(x, partitions: Optional[PartitionSpec]):
   Returns:
     A new version of ``x`` with the specified sharding applied.
   """
-  return set_sharding_p.bind(x, partitions=partitions)
+  return sharding_constraint_p.bind(x, partitions=partitions)

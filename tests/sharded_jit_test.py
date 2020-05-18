@@ -26,7 +26,7 @@ import jax
 from jax import vjp
 from jax import test_util as jtu
 from jax.interpreters import pxla
-from jax.interpreters.sharded_jit import sharded_jit, set_sharding
+from jax.interpreters.sharded_jit import sharded_jit, with_sharding_constraint
 from jax.interpreters.sharded_jit import PartitionSpec as P
 import jax.numpy as jnp
 
@@ -120,10 +120,10 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertIsInstance(result, pxla.ShardedDeviceArray)
     self.assertLen(result.device_buffers, 1)
 
-  def testSetSharding(self):
+  def testShardingConstraint(self):
     def f(x):
       y = x + 1
-      y = set_sharding(y, P(1,2))
+      y = with_sharding_constraint(y, P(1,2))
       return y * 2
 
     shape = (8, 8)
@@ -140,10 +140,10 @@ class ShardedJitTest(jtu.JaxTestCase):
     # Mismatched sharded_jit partitions
     with self.assertRaisesRegex(
         ValueError,
-        "set_sharding with partitions=PartitionSpec\(1, 2\) "
-        "\(total partitions: 2\) doesn't match expected number of partitions: 4. "
-        "If these partitions look right, check outer sharded_jit and/or other "
-        "set_sharding calls."):
+        "with_sharding_constraint with partitions=PartitionSpec\(1, 2\) "
+        "\(total partitions: 2\) doesn't match expected number of partitions: "
+        "4. If these partitions look right, check outer sharded_jit and/or "
+        "other with_sharding_constraint calls."):
       sharded_jit(f, in_parts=P(2,2), out_parts=P(2,2))(x)
 
     # Replicated sharded_jit
@@ -154,14 +154,14 @@ class ShardedJitTest(jtu.JaxTestCase):
                         actual.device_buffers[1].to_py(),
                         check_dtypes=False)
 
-  def testGradOfSetSharding(self):
+  def testGradOfShardingConstraint(self):
     if jax.local_device_count() < 4:
       raise SkipTest("requires 4 devices")
 
     @partial(sharded_jit, in_parts=P(4,1), out_parts=None)
     def f(x):
       y = x + 1
-      p, vjp_f = vjp(lambda z: jnp.sin(set_sharding(z, P(2,2))), y)
+      p, vjp_f = vjp(lambda z: jnp.sin(with_sharding_constraint(z, P(2,2))), y)
       return vjp_f(p)
 
     def expected_f(x):
@@ -192,16 +192,16 @@ class ShardedJitTestNoTpu(jtu.JaxTestCase):
     self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
-  def testSetShardingAnnotation(self):
+  def testShardingConstraintAnnotation(self):
     @partial(sharded_jit, in_parts=None, out_parts=None)
     def f(x):
       y = x + 1
-      y = set_sharding(y, P(2,1))
+      y = with_sharding_constraint(y, P(2,1))
       return y * 2
 
     shape = (8, 8)
     hlo = jax.xla_computation(f)(np.ones(shape))
-    # Annotation from set_sharding
+    # Annotation from with_sharding_constraint
     self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
     # Annotation from sharded_jit
     self.assertIn("sharding={replicated}", hlo.as_hlo_text())
