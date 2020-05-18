@@ -360,10 +360,18 @@ def set_sharding(x, partitions: Optional[PartitionSpec]):
   and may change without warning!
 
   This should only be called inside a function transformed by ``sharded_jit``.
-  It refines how ``f`` is sharded. ``partitions`` must correspond to the same
-  number of total partitions dictated by the outer ``sharded_jit`` and any other
-  ``set_sharding`` calls. In the case where only replication has been specified,
-  any ``partitions`` are valid.
+  It constrains how the function is sharded: regardless of any other specified
+  partitions, the compiler will make sure that ``x`` is sharded according to
+  ``partitions``.  Note that a ``set_sharding`` call doesn't necessarily
+  correspond to a reshard, since the compiler is free to achieve this sharding
+  as long as the constraint is met, e.g. it might insert a reshard earlier in
+  the computation. Another way to think of this is that the ``set_sharding``
+  call may flow "up" the function to preceeding operations as well as "down" to
+  subsequent ones.
+
+  ``partitions`` must correspond to the same number of total partitions dictated
+  by the outer ``sharded_jit`` and any other ``set_sharding`` calls. In the case
+  where only replication has been specified, any ``partitions`` are valid.
 
   Example usage:
     @partial(sharded_jit, in_parts=None, out_parts=None, num_shards=2
