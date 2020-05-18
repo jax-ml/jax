@@ -120,6 +120,21 @@ class ShardedJitTest(jtu.JaxTestCase):
 
 # TODO(skye): add error tests
 
+# Tests that don't need a TPU to run.
+class ShardedJitTestNoTpu(jtu.JaxTestCase):
+
+  def testTranslationRule(self):
+    @partial(sharded_jit, in_parts=(P(2, 1), P(2, 1)), out_parts=None)
+    def f(x, y):
+      return x + y
+
+    # Test that the translation rule runs without error and produces the
+    # OpShardings we expect somewhere.
+    shape = (8, 8)
+    hlo = jax.xla_computation(f)(np.ones(shape), np.ones(shape))
+    self.assertIn("sharding={devices=[2,1]0,1}", hlo.as_hlo_text())
+    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
+
 
 if __name__ == "__main__":
   absltest.main()

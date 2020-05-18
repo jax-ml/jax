@@ -73,10 +73,6 @@ def _pval_to_result_handler(npart, parts, pval):
 @lu.cache
 def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
                       *abstract_args):
-  if xb.get_backend().platform != "tpu":
-    # TODO(skye): fall back to regular jit?
-    raise ValueError("sharded_jit only works on TPU!")
-
   nrep = 1
   in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
@@ -87,6 +83,10 @@ def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
     return lambda *_: [
         const if pv is None else core.unit for pv, const in out_pvals
     ]
+
+  if xb.get_backend().platform != "tpu":
+    # TODO(skye): fall back to regular jit?
+    raise ValueError("sharded_jit only works on TPU!")
 
   out_parts = out_parts_thunk()
 
@@ -144,6 +144,35 @@ def _partitioned_sharding_spec(num_partitions: int,
         replication_factor=1)
 
 
+def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
+                                  in_parts, out_parts_thunk, num_partitions,
+                                  backend, name, call_jaxpr):
+  subc = xc.XlaBuilder(f"sharded_jit_{name}")
+
+  # We assume any extra leading in_nodes are constants and replicate them.
+  num_extra_nodes = len(in_nodes) - len(in_parts)
+  assert num_extra_nodes >= 0
+  in_parts = (None,) * num_extra_nodes + in_parts
+
+  args = []
+  for i, (n, sharding) in enumerate(safe_zip(in_nodes, in_parts)):
+    # We use xb.set_sharding instead of xb.with_sharding because inlined calls
+    # shouldn't have shardings set directly on the inputs or outputs.
+    arg = xb.parameter(subc, i, c.GetShape(n))
+    args.append(xb.set_sharding(subc, arg, sharding))
+
+  out_nodes = xla.jaxpr_subcomp(
+      subc, call_jaxpr, backend, axis_env, (),
+      extend_name_stack(name_stack, wrap_name(name, "sharded_jit")), *args)
+  out_parts = out_parts_thunk()
+  assert len(out_parts) == len(out_nodes)
+  out_nodes = [xb.set_sharding(subc, out, sharding)
+               for out, sharding in safe_zip(out_nodes, out_parts)]
+
+  subc = subc.build(xops.Tuple(subc, out_nodes))
+  return xops.Call(c, subc, list(in_nodes))
+
+
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.execute_on_local_devices(list(input_bufs))
@@ -189,6 +218,7 @@ sharded_call_p.multiple_results = True
 sharded_call = partial(core.call_bind, sharded_call_p)
 sharded_call_p.def_custom_bind(sharded_call)
 sharded_call_p.def_impl(_sharded_call_impl)
+xla.call_translations[sharded_call_p] = _sharded_jit_translation_rule
 
 
 class PartitionSpec(tuple):
