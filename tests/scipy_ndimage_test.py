@@ -21,6 +21,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import scipy.ndimage as osp_ndimage
 
+from jax import grad
 from jax import test_util as jtu
 from jax import dtypes
 from jax.scipy import ndimage as lsp_ndimage
@@ -118,6 +119,21 @@ class NdimageTest(jtu.JaxTestCase):
   def testMapCoordinateDocstring(self):
     self.assertIn("Only linear interpolation",
                   lsp_ndimage.map_coordinates.__doc__)
+
+  def testContinuousGradients(self):
+    # regression test for https://github.com/google/jax/issues/3024
+
+    def loss(delta):
+      x = onp.arange(100.0)
+      border = 10
+      indices = onp.arange(x.size) + delta
+      # linear interpolation of the linear function y=x should be exact
+      shifted = lsp_ndimage.map_coordinates(x, [indices], order=1)
+      return ((x - shifted) ** 2)[border:-border].mean()
+
+    # analytical gradient of (x - (x - delta)) ** 2 is 2 * delta
+    self.assertAllClose(grad(loss)(0.5), 1.0, check_dtypes=False)
+    self.assertAllClose(grad(loss)(1.0), 2.0, check_dtypes=False)
 
 
 if __name__ == "__main__":

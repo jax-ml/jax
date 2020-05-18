@@ -44,13 +44,10 @@ def _nearest_indices_and_weights(coordinate):
 
 def _linear_indices_and_weights(coordinate):
   lower = jnp.floor(coordinate)
-  upper = jnp.ceil(coordinate)
-  l_index = lower.astype(jnp.int32)
-  u_index = upper.astype(jnp.int32)
-  one = coordinate.dtype.type(1)
-  l_weight = one - (coordinate - lower)
-  u_weight = one - l_weight  # handles the edge case lower==upper
-  return [(l_index, l_weight), (u_index, u_weight)]
+  upper_weight = coordinate - lower
+  lower_weight = 1 - upper_weight
+  index = lower.astype(jnp.int32)
+  return [(index, lower_weight), (index + 1, upper_weight)]
 
 
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
@@ -95,11 +92,12 @@ def _map_coordinates(input, coordinates, order, mode, cval):
   outputs = []
   for items in itertools.product(*valid_1d_interpolations):
     indices, validities, weights = zip(*items)
-    if any(valid is not True for valid in validities):
+    if all(valid is True for valid in validities):
+      # fast path
+      contribution = input[indices]
+    else:
       all_valid = functools.reduce(operator.and_, validities)
       contribution = jnp.where(all_valid, input[indices], cval)
-    else:
-      contribution = input[indices]
     outputs.append(_nonempty_prod(weights) * contribution)
   result = _nonempty_sum(outputs)
   return result
