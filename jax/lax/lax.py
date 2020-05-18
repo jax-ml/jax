@@ -255,6 +255,15 @@ def pow(x: Array, y: Array) -> Array:
   r"""Elementwise power: :math:`x^y`."""
   return pow_p.bind(x, y)
 
+def integer_pow(x: Array, y: int) -> Array:
+  r"""Elementwise power: :math:`x^y`, where :math:`y` is a fixed integer."""
+  if y == 0:
+    return _ones(x)
+  elif y == 1:
+    return x
+  else:
+    return integer_pow_p.bind(x, y=y)
+
 def sqrt(x: Array) -> Array:
   r"""Elementwise square root: :math:`\sqrt{x}`."""
   return sqrt_p.bind(x)
@@ -1604,11 +1613,11 @@ def batch_matmul(lhs: Array, rhs: Array,
 
 def square(x: Array) -> Array:
   r"""Elementwise square: :math:`x^2`."""
-  return mul(x, x)
+  return integer_pow(x, 2)
 
 def reciprocal(x: Array) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
-  return div(_const(x, 1), x)
+  return integer_pow(x, -1)
 
 def _upcast_fp16_for_computation(f):
   @functools.wraps(f)
@@ -2054,6 +2063,41 @@ def _pow_jvp_rhs(g, ans, x, y):
   return mul(_brcast(g, x), mul(log(_replace_zero(x)), ans))
 
 ad.defjvp2(pow_p, _pow_jvp_lhs, _pow_jvp_rhs)
+
+
+def _integer_pow_dtype_rule(x, *, y):
+  dtype = unop_dtype_rule(_identity, _int | _float | _complex, 'integer_pow', x)
+  if y < 0 and dtypes.issubdtype(dtype, onp.integer):
+    raise TypeError("Integers cannot be raised to negative powers, got "
+                    f"integer_pow({x}, {y})")
+  return dtype
+
+def _integer_pow_translation_rule(c, x, *, y):
+  if y == 0:
+    shape = c.get_shape(x)
+    return xb.constant(c, onp.array(1, dtype=shape.numpy_dtype()))
+  is_reciprocal = y < 0
+  if is_reciprocal:
+    y = -y
+  acc = None
+  while y > 0:
+    if y & 1:
+      acc = x if acc is None else xops.Mul(acc, x)
+    y >>= 1
+    if y > 0:
+      x = xops.Mul(x, x)
+  return xops.Reciprocal(acc) if is_reciprocal else acc
+
+def _integer_pow_jvp(g, x, *, y):
+  return g if y == 0 else mul(g, mul(_const(x, y), integer_pow(x, y - 1)))
+
+integer_pow_p = standard_primitive(
+  _attrgetter('shape'), _integer_pow_dtype_rule, 'integer_pow',
+  translation_rule=_integer_pow_translation_rule)
+batching.defvectorized(integer_pow_p)
+masking.defvectorized(integer_pow_p)
+ad.defjvp(integer_pow_p, _integer_pow_jvp)
+
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_bool_or_int, 'not')
@@ -2103,7 +2147,7 @@ def _div_transpose_rule(cotangent, x, y):
 div_p = standard_naryop([_num, _num], 'div')
 ad.defjvp(div_p,
           lambda g, x, y: div(_brcast(g, y), y),
-          lambda g, x, y: div(mul(neg(_brcast(g, x)), x), square(y)))
+          lambda g, x, y: mul(mul(neg(_brcast(g, x)), x), integer_pow(y, -2)))
 ad.primitive_transposes[div_p] = _div_transpose_rule
 
 rem_p = standard_naryop([_num, _num], 'rem')

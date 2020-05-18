@@ -2668,6 +2668,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
+  def testHigherOrderGradientOfReciprocal(self):
+    # Regression test for https://github.com/google/jax/issues/3136
+    def inv(x):
+      # N.B.: intentionally written as 1/x, not x ** -1 or reciprocal(x)
+      return 1 / x
+    grad_fn = jax.grad(jax.grad(jax.grad(jax.grad(jax.grad(jax.grad(inv))))))
+    self.assertAllClose(onp.float32(0.0439453125), grad_fn(onp.float32(4.)),
+                        check_dtypes=True)
 
 def all_bdims(*shapes):
   bdims = (itertools.chain([cast(Optional[int], None)],
