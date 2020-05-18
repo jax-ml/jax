@@ -147,7 +147,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       sharded_jit(f, in_parts=P(2,2), out_parts=P(2,2))(x)
 
     # Replicated sharded_jit
-    actual = sharded_jit(f, in_parts=None, out_parts=None)
+    actual = sharded_jit(f, in_parts=None, out_parts=None)(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertLen(actual.device_buffers, 2)
     self.assertAllClose(actual.device_buffers[0].to_py(),
