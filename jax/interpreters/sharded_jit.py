@@ -346,7 +346,7 @@ def _sharding_constraint_impl(x, partitions):
       "with_sharding_constraint() should only be called inside sharded_jit()")
 
 def _sharding_constraint_translation_rule(c, x_node, partitions):
-  return xb.with_sharding_constraint(c, x_node, partitions)
+  return xb.set_sharding(c, x_node, partitions)
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
