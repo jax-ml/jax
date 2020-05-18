@@ -127,7 +127,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       nbits = [32]
     rand_bits = [random._random_bits(key, n, (N * 64 // n,)) for n in nbits]
     rand_bits_32 = np.array([np.array(r).view(np.uint32) for r in rand_bits])
-    print(rand_bits_32)
     assert np.all(rand_bits_32 == rand_bits_32[0])
 
   def testRngRandomBits(self):
@@ -158,7 +157,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.float32, np.float64]))
+      for dtype in [jnp.bfloat16, np.float16, np.float32, np.float64]))
   def testRngUniform(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
@@ -173,8 +172,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.int32, np.int64]))
+      for dtype in [np.int8, np.int16, np.int32, np.int64,
+                    np.uint8, np.uint16, np.uint32, np.uint64]))
   def testRngRandint(self, dtype):
+    if dtype == np.int8 and jtu.device_under_test() == 'tpu':
+      raise SkipTest("8-bit inputs not supported on TPU")
+
     lo = 5
     hi = 10
 
