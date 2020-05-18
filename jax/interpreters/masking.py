@@ -276,9 +276,9 @@ class ShapeSpec(tuple):
   def __str__(self):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
-def finalize_spec(spec, shape):
+def finalize_spec(polymorphic_shape, padded_shape):
   return tuple(_parse_lit(d) if e is _monomorphic_dim else e
-               for e, d in zip(spec, shape))
+               for e, d in zip(polymorphic_shape, padded_shape))
 
 def parse_spec(spec=''):
   if not spec:
