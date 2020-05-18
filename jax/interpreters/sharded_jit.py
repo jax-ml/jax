@@ -366,7 +366,7 @@ def set_sharding(x, partitions: Optional[PartitionSpec]):
   correspond to a reshard, since the compiler is free to achieve this sharding
   as long as the constraint is met, e.g. it might insert a reshard earlier in
   the computation. Another way to think of this is that the ``set_sharding``
-  call may flow "up" the function to preceeding operations as well as "down" to
+  call may flow "up" the function to preceding operations as well as "down" to
   subsequent ones.
 
   ``partitions`` must correspond to the same number of total partitions dictated
