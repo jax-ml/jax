@@ -64,7 +64,7 @@ def _pval_to_result_handler(npart, parts, pval):
     raise NotImplementedError  # TODO(skye): handle constant outputs
   else:
     if pv is not core.abstract_unit:
-      spec = _partitioned_sharding_spec(npart, parts, pv)
+      spec = pxla.partitioned_sharding_spec(npart, parts, pv)
       indices = pxla.spec_to_indices(pv.shape, spec)
     else:
       spec = indices = None
@@ -92,14 +92,7 @@ def _sharded_callable(
     # TODO(skye): fall back to regular jit?
     raise ValueError("sharded_jit only works on TPU!")
 
-  num_inner_parts = _inner_partitions(jaxpr, num_partitions)
-  if num_partitions is None:
-    num_partitions = num_inner_parts
-  assert num_partitions == num_inner_parts
-  if num_partitions is None:
-    # No partitions specified anywhere, everything is replicated.
-    num_partitions = 1
-
+  num_partitions = pxla.reconcile_num_partitions(jaxpr, num_partitions)
   out_parts = out_parts_thunk()
 
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
@@ -123,7 +116,7 @@ def _sharded_callable(
           nrep, num_partitions, device_assignment))
 
   input_specs = [
-      _partitioned_sharding_spec(num_partitions, parts, aval)
+      pxla.partitioned_sharding_spec(num_partitions, parts, aval)
       for parts, aval in zip(in_parts, abstract_args)]
   input_indices = [pxla.spec_to_indices(aval.shape, spec)
                    if spec is not None else None
@@ -135,25 +128,6 @@ def _sharded_callable(
                                           out_pvals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
                  handle_outs)
-
-
-def _partitioned_sharding_spec(num_partitions: int,
-                               partitions: Optional[Sequence[int]], aval):
-  if aval is core.abstract_unit:
-    return None
-
-  if partitions is None:
-    return pxla.ShardingSpec(
-        # int(1) because pytype is confused by 1 (???)
-        shards_per_axis=(int(1),) * len(aval.shape),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=num_partitions)
-  else:
-    assert len(partitions) == len(aval.shape)
-    return pxla.ShardingSpec(
-        shards_per_axis=tuple(partitions),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=1)
 
 
 def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
@@ -199,47 +173,6 @@ def _xla_sharded_args(c, avals, in_parts):
     xla_args.append(param)
   return xla_args
 
-
-def get_num_partitions(*partitions):
-  partition_specs = tree_flatten(partitions)[0]
-  if len(partition_specs) == 0:
-    # Everything is specified as replicated (all Nones).
-    return None
-  num_partitions_set = set(np.prod(spec) for spec in partition_specs)
-  if len(num_partitions_set) > 1:
-    raise ValueError(
-        f"All partition specs must use the same number of total partitions, "
-        f"got {partitions}, with distinct number of partitions "
-        f"{num_partitions_set} (the total number of partitions is the product "
-        f"of a partition spec)")
-  assert len(num_partitions_set) == 1
-  return num_partitions_set.pop()
-
-
-def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
-  """Returns the total number of partitions from PartitionSpecs inside `jaxpr`.
-
-  Also validates that this number matches `expected_num_parts` if provided.
-  """
-  for eqn in jaxpr.eqns:
-    if eqn.primitive == sharding_constraint_p:
-      parts = eqn.params["partitions"]
-      nparts = get_num_partitions(parts)
-      if expected_num_parts is None:
-        expected_num_parts = nparts
-      elif nparts != expected_num_parts:
-        # TODO(skye): raise this error as we trace the jaxpr
-        raise ValueError(
-            f"with_sharding_constraint with partitions={parts} "
-            f"(total partitions: {nparts}) doesn't match expected number of "
-            f"partitions: {expected_num_parts}. If these partitions look "
-            f"right, check outer sharded_jit and/or other "
-            f"with_sharding_constraint calls.")
-      elif eqn.primitive.call_primitive:
-        expected_num_parts = _inner_partitions(eqn.params["call_jaxpr"],
-                                               expected_num_parts)
-      # TODO(skye): control flow
-  return expected_num_parts
 
 def _sharded_call_impl(fun, *args, num_partitions, in_parts, out_parts_thunk,
                        name):
@@ -315,7 +248,7 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
   """
-  num_parts = get_num_partitions(in_parts, out_parts)
+  num_parts = pxla.get_num_partitions(in_parts, out_parts)
 
   def wrapped(*args, **kwargs):
     if kwargs:
