@@ -123,7 +123,7 @@ its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
-[multi_device_test.py](https://github.com/google/jax/blob/master/tests/multi_device_test.py).
+`multi_device_test.py <https://github.com/google/jax/blob/master/tests/multi_device_test.py>`_.
 
 .. comment We refer to the anchor below in JAX error messages
 
