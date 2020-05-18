@@ -51,7 +51,7 @@ outfeed listening does not stop until the body of the
 At that point, a ``TapFunctionException`` is raised if there was an exception
 in one of the tap functions.
 
-**We intend to implement an alternative outfeed reception mechanism that will
+**We intend to implement an alternative outfeed receiving mechanism that will
 not require the user to start the `outfeed_receiver`.**
 
 The current implementation uses the outfeed mechanism provided by XLA. The
@@ -72,16 +72,16 @@ following function definition::
      return y * x
 
 
-For :func:`jax.vmap` the arguments are batched, ``vmap`` is appended
-to ``transforms``, and `batch_dims` is added to specify the tuple of
+For :func:`jax.vmap` the arguments are batched, ``('batch', batch_dims)`` is
+appended to ``transforms``, where ``batch_dims`` specifies the tuple of
 batched dimensions::
 
   jax.vmap(power3)(np.arange(3.))
-  # what=x,x^2 transforms=vmap batch_dims=(0, 0): ([0, 1, 2], [0, 1, 4])
+  # what=x,x^2 transforms=(batch, (0, 0)): ([0, 1, 2], [0, 1, 4])
 
 
-For :func:`jax.jvp` there will be two callbacks, one with the values of the primals and
-one with the tangents::
+For :func:`jax.jvp` there will be two callbacks, one with the values of
+the primals and one with the tangents::
 
   jax.jvp(power3, (3.,), (0.1,))
   # what=x,x^2: (3., 9.)
@@ -307,20 +307,28 @@ positional arguments and parameters:
   * nr_untapped: how many positional arguments (from the tail) should not be
   passed to the tap function.
   * arg_treedef: the treedef of the tapped positional arguments.
-  * transforms: a tuple of the transformations that have been applied.
-  * batch_dims: a tuple of the dims that have been batched, for vmap.
-  * logical_shapes: a tuple of evaluated logical shapes, for mask.
+  * transforms: a tuple of the transformations that have been applied. Most
+    elements of this tuple are a string naming the transformations. For some
+    transformation, the elements are a tuple of the name of the transformation
+    and the parameters. For example, for vmap, the parameters are the 
+    dimensions that have been batched. Also, for mask, the parameter is the 
+    logical shapes. 
 
   * the remaining parameters are passed to the tap function.
 """
-# TODO(necula): handle nested vmap and mask
 id_tap_p = core.Primitive("id_tap")
 id_tap_p.multiple_results = True
 xla.outfeed_primitives.add(id_tap_p)
 
-def _add_transform_name(params: Dict, transform: str) -> Dict:
+def _add_transform_name(params: Dict, transform: str,
+                        transform_params: Any = None) -> Dict:
   """Adds the `transform` to the params["transforms"]."""
-  return dict(params, transforms=params.get("transforms", ()) + (transform,))
+  if transform_params is None:
+    new_transform = transform
+  else:
+    new_transform = (transform, transform_params)
+  return dict(params, transforms=(
+      params.get("transforms", ()) + (new_transform,)))
 
 
 def _id_tap_impl(*arrays, **params):
@@ -382,8 +390,7 @@ ad.primitive_transposes[id_tap_p] = _id_tap_transpose_rule
 
 
 def _id_tap_batching_rule(batched_args, batch_dims, **params):
-  new_params = _add_transform_name(params, "batch")
-  new_params["batch_dims"] = batch_dims
+  new_params = _add_transform_name(params, "batch", batch_dims)
   res = id_tap_p.bind(*batched_args, **new_params)
   return res, batch_dims
 
@@ -396,8 +403,8 @@ batching.primitive_batchers[id_tap_p] = _id_tap_batching_rule
 # masking.shape_rules[id_tap_p] = _id_tap_shape_rule  # type: ignore[module-attr]
 
 def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
-  new_params = _add_transform_name(params, "mask")
-  new_params["logical_shapes"] = operands_logical_shapes
+  new_params = _add_transform_name(params, "mask",
+                                   operands_logical_shapes)
   return id_tap_p.bind(*operands, **new_params)
 
 masking.masking_rules[id_tap_p] = _id_tap_masking_rule

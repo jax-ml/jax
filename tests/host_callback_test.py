@@ -872,7 +872,6 @@ transforms: ('jvp', 'transpose') what: x * 2
 3.00""", testing_stream.output)
     testing_stream.reset()
 
-
   def test_vmap(self):
     vmap_fun1 = api.vmap(fun1)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
@@ -880,25 +879,23 @@ transforms: ('jvp', 'transpose') what: x * 2
 { lambda  ; a.
   let b = mul a 2.00
       c = id_tap[ arg_treedef=*
-                  batch_dims=(0,)
                   func=_print
-                  transforms=('batch',)
+                  transforms=(('batch', (0,)),)
                   what=a * 2 ] b
       d = mul c 3.00
       e f = id_tap[ arg_treedef=*
-                    batch_dims=(0, 0)
                     func=_print
                     nr_untapped=1
-                    transforms=('batch',)
+                    transforms=(('batch', (0, 0)),)
                     what=y * 3 ] d c
       g = integer_pow[ y=2 ] f
   in (g,) }""", str(api.make_jaxpr(vmap_fun1)(vargs)))
     with hcb.outfeed_receiver():
       res_vmap = vmap_fun1(vargs)
     assertMultiLineStrippedEqual(self, """
-batch_dims: (0,) transforms: ('batch',) what: a * 2
+transforms: (('batch', (0,)),) what: a * 2
 [ 8.00 10.00]
-batch_dims: (0, 0) transforms: ('batch',) what: y * 3
+transforms: (('batch', (0, 0)),) what: y * 3
 [24.00 30.00]""", testing_stream.output)
     testing_stream.reset()
 
@@ -914,18 +911,48 @@ batch_dims: (0, 0) transforms: ('batch',) what: y * 3
     assertMultiLineStrippedEqual(self, """
 { lambda  ; a.
   let b c = id_tap[ arg_treedef=PyTreeDef(tuple, [*,*])
-                    batch_dims=(None, 0)
                     func=_print
-                    transforms=('batch',) ] 3.00 a
+                    transforms=(('batch', (None, 0)),) ] 3.00 a
       d = add c 3.00
   in (d,) }""", str(api.make_jaxpr(vmap_func)(vargs)))
     with hcb.outfeed_receiver():
       res_vmap = vmap_func(vargs)
     assertMultiLineStrippedEqual(self, """
-batch_dims: (None, 0) transforms: ('batch',)
+transforms: (('batch', (None, 0)),)
 [ 3.00
   [4.00 5.00] ]
    """, testing_stream.output)
+    testing_stream.reset()
+
+  def test_double_vmap(self):
+    # A 2D tensor with x[i, j] = i + j using 2 vmap
+    def sum(x, y):
+      return hcb.id_print(x + y, output_stream=testing_stream)
+    def sum_rows(xv, y):
+      return api.vmap(sum, in_axes=(0, None))(xv, y)
+    def sum_all(xv, yv):
+      return api.vmap(sum_rows, in_axes=(None, 0))(xv, yv)
+
+    xv = jnp.arange(5, dtype=np.int32)
+    yv = jnp.arange(3, dtype=np.int32)
+    assertMultiLineStrippedEqual(self, """
+{ lambda  ; a b.
+  let c = broadcast_in_dim[ broadcast_dimensions=(1,)
+                            shape=(3, 5) ] a
+      d = reshape[ dimensions=None
+                   new_sizes=(3, 1) ] b
+      e = add c d
+      f = id_tap[ arg_treedef=*
+                  func=_print
+                  transforms=(('batch', (0,)), ('batch', (0,))) ] e
+  in (f,) }""", str(api.make_jaxpr(sum_all)(xv, yv)))
+    with hcb.outfeed_receiver():
+      res_vmap = sum_all(xv, yv)
+    assertMultiLineStrippedEqual(self, """
+transforms: (('batch', (0,)), ('batch', (0,)))
+[[0 1 2 3 4]
+ [1 2 3 4 5]
+ [2 3 4 5 6]]""", testing_stream.output)
     testing_stream.reset()
 
   def test_pmap(self):
