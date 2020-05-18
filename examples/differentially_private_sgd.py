@@ -64,6 +64,7 @@ Example invocations:
    --learning_rate=.25 \
 """
 
+from functools import partial
 import itertools
 import time
 import warnings
@@ -73,7 +74,6 @@ from absl import flags
 
 from jax import grad
 from jax import jit
-from jax import partial
 from jax import random
 from jax import tree_util
 from jax import vmap
