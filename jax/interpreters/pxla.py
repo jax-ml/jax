@@ -923,6 +923,25 @@ def _pmap_sharding_spec(nrep, axis_size, sharded_aval, mapped):
         replication_factor=replication_factor * axis_size)
 
 
+def partitioned_sharding_spec(num_partitions: int,
+                              partitions: Optional[Sequence[int]], aval):
+  if aval is core.abstract_unit:
+    return None
+
+  if partitions is None:
+    return ShardingSpec(
+        # int(1) because pytype is confused by 1 (???)
+        shards_per_axis=(int(1),) * len(aval.shape),
+        is_axis_materialized=(True,) * len(aval.shape),
+        replication_factor=num_partitions)
+  else:
+    assert len(partitions) == len(aval.shape)
+    return ShardingSpec(
+        shards_per_axis=tuple(partitions),
+        is_axis_materialized=(True,) * len(aval.shape),
+        replication_factor=1)
+
+
 def execute_replicated(compiled,
                        uses_outfeed, backend, in_handler, out_handler, *args):
   xla.check_before_outfeed_execution(uses_outfeed)

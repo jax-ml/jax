@@ -64,7 +64,7 @@ def _pval_to_result_handler(npart, parts, pval):
     raise NotImplementedError  # TODO(skye): handle constant outputs
   else:
     if pv is not core.abstract_unit:
-      spec = _partitioned_sharding_spec(npart, parts, pv)
+      spec = pxla.partitioned_sharding_spec(npart, parts, pv)
       indices = pxla.spec_to_indices(pv.shape, spec)
     else:
       spec = indices = None
@@ -116,7 +116,7 @@ def _sharded_callable(
           nrep, num_partitions, device_assignment))
 
   input_specs = [
-      _partitioned_sharding_spec(num_partitions, parts, aval)
+      pxla.partitioned_sharding_spec(num_partitions, parts, aval)
       for parts, aval in zip(in_parts, abstract_args)]
   input_indices = [pxla.spec_to_indices(aval.shape, spec)
                    if spec is not None else None
@@ -128,25 +128,6 @@ def _sharded_callable(
                                           out_pvals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
                  handle_outs)
-
-
-def _partitioned_sharding_spec(num_partitions: int,
-                               partitions: Optional[Sequence[int]], aval):
-  if aval is core.abstract_unit:
-    return None
-
-  if partitions is None:
-    return pxla.ShardingSpec(
-        # int(1) because pytype is confused by 1 (???)
-        shards_per_axis=(int(1),) * len(aval.shape),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=num_partitions)
-  else:
-    assert len(partitions) == len(aval.shape)
-    return pxla.ShardingSpec(
-        shards_per_axis=tuple(partitions),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=1)
 
 
 def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
