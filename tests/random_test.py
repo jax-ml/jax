@@ -38,6 +38,13 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([jnp.bfloat16, np.float16, np.float32, np.float64])
+int_dtypes = supported_dtypes([np.int8, np.int16, np.int32, np.int64])
+uint_dtypes = supported_dtypes([np.uint8, np.uint16, np.uint32, np.uint64])
+
 class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckCollisions(self, samples, nbits):
@@ -157,7 +164,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [jnp.bfloat16, np.float16, np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testRngUniform(self, dtype):
     key = random.PRNGKey(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
@@ -172,12 +179,8 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.int8, np.int16, np.int32, np.int64,
-                    np.uint8, np.uint16, np.uint32, np.uint64]))
+      for dtype in int_dtypes + uint_dtypes))
   def testRngRandint(self, dtype):
-    if dtype == np.int8 and jtu.device_under_test() == 'tpu':
-      raise SkipTest("8-bit inputs not supported on TPU")
-
     lo = 5
     hi = 10
 

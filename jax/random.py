@@ -350,7 +350,7 @@ def _uniform(key, shape, dtype, minval, maxval):
   _check_shape("uniform", shape)
   if not np.issubdtype(dtype, onp.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
-  
+
   minval = lax.convert_element_type(minval, dtype)
   maxval = lax.convert_element_type(maxval, dtype)
   finfo = np.finfo(dtype)
