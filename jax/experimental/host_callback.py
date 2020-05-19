@@ -193,14 +193,14 @@ For more details see the
   if func not in (_end_consumer, _unknown_testing_consumer):
     api._check_callable(func)
   flat_args, arg_treedef = pytree.flatten(arg)
-  api._check_args(flat_args)
+  for arg in flat_args: api._check_arg(arg)
   params = dict(kwargs)  #  we pass a copy of params to the primitive
   # See definition of id_tap_p for what parameters it takes
   params["func"] = func
   params["arg_treedef"] = arg_treedef
   if result is not None:
     flat_results, result_treedef = pytree.flatten(result)
-    api._check_args(flat_results)
+    for result in flat_results: api._check_arg(result)
     all_args = flat_args + flat_results
     params["nr_untapped"] = len(flat_results)
   else:
