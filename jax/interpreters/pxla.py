@@ -784,7 +784,7 @@ def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
   Also validates that this number matches `expected_num_parts` if provided.
   """
   for eqn in jaxpr.eqns:
-    if eqn.primitive == "sharding_constraint":
+    if eqn.primitive.name == "sharding_constraint":
       parts = eqn.params["partitions"]
       nparts = get_num_partitions(parts)
       if expected_num_parts is None:
