@@ -318,6 +318,56 @@ ADVANCED_INDEXING_TESTS_NO_REPEATS = [
      ]),
 ]
 
+ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED = [
+    ("One1DIntArrayIndex",
+     [IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
+      IndexSpec(shape=(3, 3), indexer=onp.array([0, 1, 2])),
+      IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 1, 2])),
+      IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
+      IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
+      IndexSpec(shape=(0,), indexer=onp.array([], dtype=onp.int32)),
+     ]),
+    ("One2DIntArrayIndex",
+     [IndexSpec(shape=(3,), indexer=onp.array([[0, 1]])),
+      IndexSpec(shape=(6, 6), indexer=onp.array([[-1, 0, 1],
+                                                 [ 2, 3, 4]])),
+     ]),
+    ("Two1DIntArrayIndicesNoBroadcasting",
+     [IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]),
+                                       onp.array([1, 2])]),
+      IndexSpec(shape=(4, 5, 6), indexer=[onp.array([0, 1, 2, 3]),
+                                          onp.array([-2, -1, 0, 1])]),
+     ]),
+    ("Two1DIntArrayIndicesWithBroadcasting",
+     [IndexSpec(shape=(3, 3), indexer=[onp.array([[0, 1]]),
+                                       onp.array([1, 2])]),
+      IndexSpec(shape=(4, 5, 6), indexer=[onp.array([[-1, 0, 1, 2]]),
+                                          onp.array([-2, -1, 0, 2])]),
+     ]),
+    ("ListOfPythonInts",
+     [IndexSpec(shape=(3,), indexer=[0, 1, 2]),
+      IndexSpec(shape=(3, 4, 5), indexer=[-1, 0]),
+     ]),
+    ("ListOfListsOfPythonInts",
+     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
+      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[0, 2, 3]]]),
+     ]),
+    ("TupleOfListsOfPythonInts",
+     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
+      IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[0, 2, 3]])),
+     ]),
+    ("ListOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
+      IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
+                                          onp.array([[0, 2, 3]])]),
+     ]),
+    ("ListOfListsOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
+      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
+                                          onp.array([[0, 2, 3]])]),
+     ]),
+]
+
 MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS = [
     ("SlicesAndOneIntArrayIndex",
      [IndexSpec(shape=(2, 3), indexer=(np.array([0, 1]), slice(1, 2))),
@@ -829,16 +879,19 @@ class UpdateOps(enum.Enum):
     }[op]()
     return x
 
-  def jax_fn(op, indexer, x, y):
+  def jax_fn(op, indexer, x, y, indices_are_sorted=False,
+             unique_indices=False):
     return {
       UpdateOps.UPDATE: ops.index_update,
       UpdateOps.ADD: ops.index_add,
       UpdateOps.MUL: ops.index_mul,
       UpdateOps.MIN: ops.index_min,
       UpdateOps.MAX: ops.index_max,
-    }[op](x, indexer, y)
+    }[op](x, indexer, y, indices_are_sorted=indices_are_sorted,
+          unique_indices=unique_indices)
 
-  def sugar_fn(op, indexer, x, y):
+  def sugar_fn(op, indexer, x, y, indices_are_sorted=False,
+             unique_indices=False):
     x = jnp.array(x)
     return {
       UpdateOps.UPDATE: x.at[indexer].set,
@@ -846,7 +899,8 @@ class UpdateOps(enum.Enum):
       UpdateOps.MUL: x.at[indexer].mul,
       UpdateOps.MIN: x.at[indexer].min,
       UpdateOps.MAX: x.at[indexer].max,
-    }[op](y)
+    }[op](y, indices_are_sorted=indices_are_sorted,
+          unique_indices=unique_indices)
 
 
 class IndexedUpdateTest(jtu.JaxTestCase):
@@ -899,11 +953,40 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
     if sugared:
-      jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
+      jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, unique_indices=True)
     else:
-      jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
+      jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, unique_indices=True)
+    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker)
     self._CompileAndCheck(jax_fn, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list({
+      "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
+          name, jtu.format_shape_dtype_string(shape, dtype), indexer,
+          jtu.format_shape_dtype_string(update_shape, update_dtype), sugared, op.name),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory, "indexer": indexer,
+       "update_shape": update_shape, "update_dtype": update_dtype,
+       "op": op, "sugared": sugared
+  } for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED
+    for shape, indexer in index_specs
+    for op in UpdateOps
+    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
+    for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for sugared in [True, False]
+    for rng_factory in [jtu.rand_default]))
+  def testAdvancedIndexingSorted(self, shape, dtype, update_shape, update_dtype,
+                           rng_factory, indexer, sugared, op):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
+    onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
+    if sugared:
+      jax_fn = lambda x, y: UpdateOps.sugar_fn(
+          op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
+    else:
+      jax_fn = lambda x, y: UpdateOps.jax_fn(
+          op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
+    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}_sugared={}".format(
