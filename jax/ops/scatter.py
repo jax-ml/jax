@@ -19,7 +19,8 @@ from .. import lax
 from ..numpy import lax_numpy as jnp
 
 
-def _scatter_update(x, idx, y, scatter_op):
+def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
+                    unique_indices):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -34,6 +35,8 @@ def _scatter_update(x, idx, y, scatter_op):
     y: values to be scattered.
     scatter_op: callable, one of lax.scatter, lax.scatter_add, lax.scatter_min,
       or lax_scatter_max.
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An ndarray representing an updated `x` after performing the scatter-update.
@@ -44,13 +47,15 @@ def _scatter_update(x, idx, y, scatter_op):
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx)
-  return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx)
+  return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
+                       indices_are_sorted, unique_indices)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
-def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
+def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
+                  indices_are_sorted, unique_indices):
   dtype = lax.dtype(x)
   x, y = jnp._promote_dtypes(x, y)
 
@@ -71,7 +76,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx):
     inserted_window_dims=indexer.dnums.collapsed_slice_dims,
     scatter_dims_to_operand_dims=indexer.dnums.start_index_map
   )
-  out = scatter_op(x, indexer.gather_indices, y, dnums)
+  out = scatter_op(x, indexer.gather_indices, y, dnums,
+                   indices_are_sorted=indices_are_sorted,
+                   unique_indices=unique_indices)
   return lax.convert_element_type(out, dtype)
 
 
@@ -93,7 +100,7 @@ class _Indexable(object):
 index = _Indexable()
 
 
-def index_add(x, idx, y):
+def index_add(x, idx, y, indices_are_sorted=False, unique_indices=False):
   """Pure equivalent of :code:`x[idx] += y`.
 
   Returns the value of `x` that would result from the
@@ -117,6 +124,8 @@ def index_add(x, idx, y):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
@@ -129,10 +138,11 @@ def index_add(x, idx, y):
          [1., 1., 1., 7., 7., 7.],
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter_add)
+  return _scatter_update(
+      x, idx, y, lax.scatter_add, indices_are_sorted, unique_indices)
 
 
-def index_mul(x, idx, y):
+def index_mul(x, idx, y, indices_are_sorted=False, unique_indices=False):
   """Pure equivalent of :code:`x[idx] *= y`.
 
   Returns the value of `x` that would result from the
@@ -156,6 +166,8 @@ def index_mul(x, idx, y):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
@@ -168,10 +180,11 @@ def index_mul(x, idx, y):
          [1., 1., 1., 6., 6., 6.],
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter_mul)
+  return _scatter_update(x, idx, y, lax.scatter_mul,
+                         indices_are_sorted, unique_indices)
 
 
-def index_min(x, idx, y):
+def index_min(x, idx, y, indices_are_sorted=False, unique_indices=False):
   """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
 
   Returns the value of `x` that would result from the
@@ -193,6 +206,8 @@ def index_min(x, idx, y):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array.
@@ -205,9 +220,10 @@ def index_min(x, idx, y):
          [1., 1., 1., 0., 0., 0.],
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter_min)
+  return _scatter_update(
+      x, idx, y, lax.scatter_min, indices_are_sorted, unique_indices)
 
-def index_max(x, idx, y):
+def index_max(x, idx, y, indices_are_sorted=False, unique_indices=False):
   """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
 
   Returns the value of `x` that would result from the
@@ -229,6 +245,8 @@ def index_max(x, idx, y):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array.
@@ -241,9 +259,10 @@ def index_max(x, idx, y):
          [1., 1., 1., 6., 6., 6.],
          [1., 1., 1., 1., 1., 1.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter_max)
+  return _scatter_update(
+      x, idx, y, lax.scatter_max, indices_are_sorted, unique_indices)
 
-def index_update(x, idx, y):
+def index_update(x, idx, y, indices_are_sorted=False, unique_indices=False):
   """Pure equivalent of :code:`x[idx] = y`.
 
   Returns the value of `x` that would result from the
@@ -266,6 +285,8 @@ def index_update(x, idx, y):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array.
@@ -278,9 +299,11 @@ def index_update(x, idx, y):
          [1., 1., 1., 1., 1., 1.],
          [1., 1., 1., 6., 6., 6.]], dtype=float32)
   """
-  return _scatter_update(x, idx, y, lax.scatter)
+  return _scatter_update(
+      x, idx, y, lax.scatter, indices_are_sorted, unique_indices)
 
-def segment_sum(data, segment_ids, num_segments=None):
+def segment_sum(data, segment_ids, num_segments=None,
+                indices_are_sorted=False, unique_indices=False):
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's segment_sum:
@@ -296,6 +319,8 @@ def segment_sum(data, segment_ids, num_segments=None):
       segments. The default is ``max(segment_ids % data.shape[0]) + 1`` but
       since `num_segments` determines the size of the output, a static value
       must be provided to use `segment_sum` in a `jit`-compiled function.
+    indices_are_sorted: whether `segment_ids` is known to be sorted
+    unique_indices: whether `segment_ids` is known to be free of duplicates
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -307,4 +332,4 @@ def segment_sum(data, segment_ids, num_segments=None):
 
   out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
   segment_ids = jnp.mod(segment_ids, num_segments)
-  return index_add(out, segment_ids, data)
+  return index_add(out, segment_ids, data, indices_are_sorted, unique_indices)

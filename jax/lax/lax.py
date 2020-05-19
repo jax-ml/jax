@@ -836,7 +836,9 @@ class ScatterDimensionNumbers(NamedTuple):
   scatter_dims_to_operand_dims: Sequence[int]
 
 def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-add operator.
 
   Wraps `XLA's Scatter operator
@@ -853,6 +855,8 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -860,10 +864,13 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(add, _abstractify(_const(operand, 0)))
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-multiply operator.
 
   Wraps `XLA's Scatter operator
@@ -880,6 +887,8 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -887,10 +896,13 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(mul, _abstractify(_const(operand, 1)))
   return scatter_mul_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-min operator.
 
   Wraps `XLA's Scatter operator
@@ -907,6 +919,8 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -914,10 +928,13 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(min, _abstractify(_const(operand, 0)))
   return scatter_min_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-max operator.
 
   Wraps `XLA's Scatter operator
@@ -934,6 +951,8 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -941,13 +960,16 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(max, _abstractify(_const(operand, 0)))
   return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 # Define this outside of scatter to ensure cache hits.
 _scatter_reduction_computation = lambda x, y: y
 
-def scatter(operand: Array, scatter_indices:Array, updates: Array,
-            dimension_numbers: ScatterDimensionNumbers) -> Array:
+def scatter(operand: Array, scatter_indices: Array, updates: Array,
+            dimension_numbers: ScatterDimensionNumbers, *,
+            indices_are_sorted: bool = False,
+            unique_indices: bool = False) -> Array:
   """Scatter-update operator.
 
   Wraps `XLA's Scatter operator
@@ -967,6 +989,8 @@ def scatter(operand: Array, scatter_indices:Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted
+    unique_indices: whether `scatter_indices` is known to be free of duplicates
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -975,7 +999,8 @@ def scatter(operand: Array, scatter_indices:Array, updates: Array,
                                    _abstractify(_const(operand, 0)))
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
   indices = concatenate([expand_dims(i, (1,)) for i in idxs], 1)
@@ -3806,7 +3831,10 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
     scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
-  return [scatter_add(zeros, start_indices, t, scatter_dnums), ad_util.Zero.from_value(start_indices)]
+  out = scatter_add(zeros, start_indices, t, scatter_dnums,
+                    indices_are_sorted=False,
+                    unique_indices=False)
+  return [out, ad_util.Zero.from_value(start_indices)]
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                           slice_sizes):
@@ -3891,8 +3919,9 @@ def _scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
 def _scatter_shape_rule(operand, scatter_indices, updates, **kwargs):
   return operand.shape
 
-def _scatter_translation_rule(c, operand, scatter_indices, updates,
-                              update_jaxpr, update_consts, dimension_numbers):
+def _scatter_translation_rule(c, operand, scatter_indices, updates, *,
+                              update_jaxpr, update_consts, dimension_numbers,
+                              indices_are_sorted, unique_indices):
   dtype = c.get_shape(operand).numpy_dtype()
   init_value = xb.constant(c, np.array(0, dtype))
   update_computation = _reduction_computation(
@@ -3900,15 +3929,16 @@ def _scatter_translation_rule(c, operand, scatter_indices, updates,
   indices_shape = c.get_shape(scatter_indices)
   return xops.Scatter(operand, scatter_indices, updates, update_computation,
                       _scatter_dimensions_proto(indices_shape, dimension_numbers),
-                      False, False)
+                      indices_are_sorted, unique_indices)
 
 def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
-                     dimension_numbers):
+                     dimension_numbers, indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
   val_out = scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=dimension_numbers)
+      update_consts=update_consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
@@ -3916,11 +3946,13 @@ def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
     g_updates = ad.instantiate_zeros(g_updates)
     tangent_out = scatter_add_p.bind(
         g_operand, scatter_indices, g_updates, update_jaxpr=update_jaxpr,
-        update_consts=update_consts, dimension_numbers=dimension_numbers)
+        update_consts=update_consts, dimension_numbers=dimension_numbers,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   return val_out, tangent_out
 
 def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
-                                update_jaxpr, update_consts, dimension_numbers):
+                                update_jaxpr, update_consts, dimension_numbers,
+                                indices_are_sorted, unique_indices):
   assert not ad.is_undefined_primal(scatter_indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
@@ -3951,7 +3983,8 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
   return [operand_t, None, update_t]
 
 def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
-                                update_jaxpr, update_consts, dimension_numbers):
+                                update_jaxpr, update_consts, dimension_numbers,
+                                indices_are_sorted, unique_indices):
   assert not ad.is_undefined_primal(scatter_indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
@@ -3962,8 +3995,9 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
 
   operand_t = update_t = None
   if ad.is_undefined_primal(operand):
-    operand_t = scatter_mul(t, scatter_indices, updates,
-                            dimension_numbers=dimension_numbers)
+    operand_t = scatter_mul(
+        t, scatter_indices, updates, dimension_numbers=dimension_numbers,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
   if ad.is_undefined_primal(updates):
     gather_dnums = GatherDimensionNumbers(
@@ -3984,7 +4018,8 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
 
 
 def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
-                           update_jaxpr, update_consts, dimension_numbers):
+                           update_jaxpr, update_consts, dimension_numbers,
+                           indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = batched_args
   operand_bdim, scatter_indices_bdim, updates_bdim = batch_dims
   del update_jaxpr, update_consts  # Unused.
@@ -4006,7 +4041,9 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
         update_window_dims=update_window_dims,
         inserted_window_dims=inserted_window_dims,
         scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-    return scatter_op(operand, scatter_indices, updates, dnums), 0
+    return scatter_op(
+      operand, scatter_indices, updates, dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices), 0
 
 
   # see the third case in _gather_batching_rule for comparison and comments
@@ -4027,7 +4064,9 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
       update_window_dims=update_window_dims,
       inserted_window_dims=inserted_window_dims,
       scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-  return scatter_op(operand, scatter_indices, updates, dnums), 0
+  return scatter_op(
+      operand, scatter_indices, updates, dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices), 0
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
@@ -4042,9 +4081,11 @@ scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
     _scatter_translation_rule)
 
-def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers, **kw):
-  return mul(x, scatter_add(zeros_like_array(x), i, g,
-                            dimension_numbers=dimension_numbers))
+def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
+                         indices_are_sorted, unique_indices, **kw):
+  return mul(x, scatter_add(
+      zeros_like_array(x), i, g, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices))
 
 ad.defjvp(scatter_mul_p,
           lambda g, x, i, y, **kw: scatter_mul_p.bind(g, i, y, **kw),
@@ -4163,7 +4204,7 @@ batching.primitive_batchers[scatter_max_p] = (
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
 
 def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
-                 dimension_numbers):
+                 dimension_numbers, indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
   dnums = dimension_numbers
@@ -4171,7 +4212,8 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     val_out = scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=dnums)
+      update_consts=update_consts, dimension_numbers=dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
     return val_out, ad_util.Zero.from_value(val_out)
 
   g_operand = ad.instantiate_zeros(g_operand)
@@ -4222,7 +4264,8 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
     scatter_dims_to_operand_dims=tuple(d + 1 for d in dnums.scatter_dims_to_operand_dims))
   outputs = scatter_p.bind(
       new_operand, scatter_indices, updates_and_ids, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=new_dnums)
+      update_consts=update_consts, dimension_numbers=new_dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   val_out = index_in_dim(outputs, 0, keepdims=False)
   scattered_ids = index_in_dim(outputs, 1, keepdims=False)
 
@@ -4251,7 +4294,9 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
   # d) perform a scatter-add to compute the tangent output.
   tangent_out = scatter_add(masked_g_operand, scatter_indices, masked_g_updates,
-                            dimension_numbers=dnums)
+                            dimension_numbers=dnums,
+                            indices_are_sorted=indices_are_sorted,
+                            unique_indices=unique_indices)
   return val_out, tangent_out
 
 
