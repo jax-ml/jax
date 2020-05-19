@@ -167,7 +167,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dtype in float_dtypes))
   def testRngUniform(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
-      raise SkipTest("rng.uniform() not supported on TPU for 16-bit types.")
+      raise SkipTest("random.uniform() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -184,7 +184,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dtype in int_dtypes + uint_dtypes))
   def testRngRandint(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
-      raise SkipTest("rng.randint() not supported on TPU for 8- or 16-bit types.")
+      raise SkipTest("random.randint() not supported on TPU for 8- or 16-bit types.")
     lo = 5
     hi = 10
 
