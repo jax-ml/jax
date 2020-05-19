@@ -897,6 +897,44 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_invert={}".format(
+          jtu.format_shape_dtype_string(element_shape, dtype),
+          jtu.format_shape_dtype_string(test_shape, dtype), invert),
+       "element_shape": element_shape, "test_shape": test_shape,
+       "dtype": dtype, "invert": invert}
+      for element_shape in all_shapes
+      for test_shape in all_shapes
+      for dtype in default_dtypes
+      for invert in [True, False]))
+  def testIsin(self, element_shape, test_shape, dtype, invert):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(element_shape, dtype), rng(test_shape, dtype)]
+    jnp_fun = lambda e, t: jnp.isin(e, t, invert=invert)
+    onp_fun = lambda e, t: onp.isin(e, t, invert=invert)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_{}_invert={}".format(
+          jtu.format_shape_dtype_string(element_shape, dtype),
+          jtu.format_shape_dtype_string(test_shape, dtype), invert),
+       "element_shape": element_shape, "test_shape": test_shape,
+       "dtype": dtype, "invert": invert}
+      for element_shape in all_shapes
+      for test_shape in all_shapes
+      for dtype in default_dtypes
+      for invert in [True, False]))
+  def testIn1d(self, element_shape, test_shape, dtype, invert):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(element_shape, dtype), rng(test_shape, dtype)]
+    jnp_fun = lambda e, t: jnp.in1d(e, t, invert=invert)
+    onp_fun = lambda e, t: onp.in1d(e, t, invert=invert)
+    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}".format(
           jtu.format_shape_dtype_string(lhs_shape, lhs_dtype),
           jtu.format_shape_dtype_string(rhs_shape, rhs_dtype)),
