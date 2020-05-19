@@ -1184,6 +1184,26 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-3, rtol=1e-3)
     self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-3, rtol=1e-3)
 
+  def testPsumOnBooleanDtype(self):
+    # https://github.com/google/jax/issues/3123
+    n = xla_bridge.device_count()
+    if n > 1:
+      x = jnp.array([True, False])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1, 1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1/2, 1/2])
+    else:
+      x = jnp.array([True])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
