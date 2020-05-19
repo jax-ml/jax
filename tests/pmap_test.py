@@ -1186,13 +1186,23 @@ class PmapTest(jtu.JaxTestCase):
 
   def testPsumOnBooleanDtype(self):
     # https://github.com/google/jax/issues/3123
-    x = jnp.array([True, False, True, False])
+    n = xla_bridge.device_count()
+    if n > 1:
+      x = jnp.array([True, False])
 
-    out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
-    self.assertEqual(list(out), [2, 2, 2, 2])
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1, 1])
 
-    out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
-    self.assertEqual(list(out), [1/2, 1/2, 1/2, 1/2])
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1/2, 1/2])
+    else:
+      x = jnp.array([True])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1/2])
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
