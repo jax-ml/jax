@@ -736,13 +736,13 @@ what: x3
       j k = id_tap[ arg_treedef=*
                     func=_print
                     nr_untapped=1
-                    transforms=('jvp',)
+                    transforms=(('jvp',),)
                     what=a * 2 ] i d
       l = mul j 3.00
       m n o = id_tap[ arg_treedef=*
                       func=_print
                       nr_untapped=2
-                      transforms=('jvp',)
+                      transforms=(('jvp',),)
                       what=y * 3 ] l j f
       p = mul 2.00 g
       q = mul n p
@@ -755,11 +755,11 @@ what: x3
     assertMultiLineStrippedEqual(self, """
 what: a * 2
 10.00
-transforms: ('jvp',) what: a * 2
+transforms: (('jvp',),) what: a * 2
 0.20
 what: y * 3
 30.00
-transforms: ('jvp',) what: y * 3
+transforms: (('jvp',),) what: y * 3
 0.60""", testing_stream.output)
     testing_stream.reset()
 
@@ -777,7 +777,7 @@ transforms: ('jvp',) what: y * 3
 
     # Just making the Jaxpr invokes the id_print once
     assertMultiLineStrippedEqual(self, """
-transforms: ('jvp', 'transpose') what: x * 3
+transforms: (('jvp',), ('transpose',)) what: x * 3
 2.00""", testing_stream.output)
     testing_stream.reset()
     
@@ -788,7 +788,7 @@ transforms: ('jvp', 'transpose') what: x * 3
     assertMultiLineStrippedEqual(self, """
 what: x * 3
 15.00
-transforms: ('jvp', 'transpose') what: x * 3
+transforms: (('jvp',), ('transpose',)) what: x * 3
 2.00""", testing_stream.output)
     testing_stream.reset()
 
@@ -803,13 +803,13 @@ transforms: ('jvp', 'transpose') what: x * 3
       c d = id_tap[ arg_treedef=*
                     func=_print
                     nr_untapped=1
-                    transforms=('jvp', 'transpose')
+                    transforms=(('jvp',), ('transpose',))
                     what=y * 3 ] b 0.00
       e = mul c 3.00
       f g = id_tap[ arg_treedef=*
                     func=_print
                     nr_untapped=1
-                    transforms=('jvp', 'transpose')
+                    transforms=(('jvp',), ('transpose',))
                     what=x * 2 ] e 0.00
       h = mul f 2.00
       i = mul a 2.00
@@ -834,9 +834,9 @@ what: x * 2
 10.00
 what: y * 3
 30.00
-transforms: ('jvp', 'transpose') what: y * 3
+transforms: (('jvp',), ('transpose',)) what: y * 3
 5.00
-transforms: ('jvp', 'transpose') what: x * 2
+transforms: (('jvp',), ('transpose',)) what: x * 2
 15.00""", testing_stream.output)
     testing_stream.reset()
 
@@ -853,9 +853,9 @@ transforms: ('jvp', 'transpose') what: x * 2
   in (12.00,) }""", str(api.make_jaxpr(grad_func)(5.)))
       # Just making the Jaxpr invokes the id_print twiceonce
       assertMultiLineStrippedEqual(self, """
-transforms: ('jvp', 'transpose') what: x * 2
+transforms: (('jvp',), ('transpose',)) what: x * 2
 3.00
-transforms: ('jvp', 'transpose', 'jvp', 'transpose') what: x * 2
+transforms: (('jvp',), ('transpose',), ('jvp',), ('transpose',)) what: x * 2
 2.00""", testing_stream.output)
       testing_stream.reset()
       res_grad = grad_func(jnp.float32(5.))
@@ -864,11 +864,11 @@ transforms: ('jvp', 'transpose', 'jvp', 'transpose') what: x * 2
     assertMultiLineStrippedEqual(self, """
 what: x * 2
 10.00
-transforms: ('jvp', 'transpose') what: x * 2
+transforms: (('jvp',), ('transpose',)) what: x * 2
 15.00
-transforms: ('jvp', 'transpose', 'jvp', 'transpose') what: x * 2
+transforms: (('jvp',), ('transpose',), ('jvp',), ('transpose',)) what: x * 2
 2.00
-transforms: ('jvp', 'transpose') what: x * 2
+transforms: (('jvp',), ('transpose',)) what: x * 2
 3.00""", testing_stream.output)
     testing_stream.reset()
 

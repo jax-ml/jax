@@ -85,7 +85,7 @@ the primals and one with the tangents::
 
   jax.jvp(power3, (3.,), (0.1,))
   # what=x,x^2: (3., 9.)
-  # what=x,x^2 transforms=jvp: (0.1, 0.6)
+  # what=x,x^2 transforms=(jvp): (0.1, 0.6)
 
 For :func:`jax.vjp` or :func:`jax.grad` there will be one callback with the values of
 the adjoints for the arguments. You may also see a callback with the values of
@@ -94,7 +94,7 @@ backward pass::
 
   jax.grad(power3)(3.)
   # what=x,x^2: (3., 9.)  # from forward pass, since y is needed in backward pass
-  # what=x,x^2 transforms=(jvp, transpose): (0., 3.)  # from backward pass, adjoints of _, y
+  # what=x,x^2 transforms=((jvp,), (transpose,)): (0., 3.)  # from backward pass, adjoints of _, y
 
 See documentation for :func:`id_tap` and :func:`id_print`.
 For usage example, see tests/host_callback_test.py.
@@ -307,12 +307,11 @@ positional arguments and parameters:
   * nr_untapped: how many positional arguments (from the tail) should not be
   passed to the tap function.
   * arg_treedef: the treedef of the tapped positional arguments.
-  * transforms: a tuple of the transformations that have been applied. Most
-    elements of this tuple are a string naming the transformations. For some
-    transformation, the elements are a tuple of the name of the transformation
-    and the parameters. For example, for vmap, the parameters are the 
-    dimensions that have been batched. Also, for mask, the parameter is the 
-    logical shapes. 
+  * transforms: a tuple of the transformations that have been applied. Each 
+    element of the tuple is itself a tuple with the first element the name
+    of the transform. The remaining elements depend on the transform. For 
+    example, for `batch`, the parameters are the dimensions that have been 
+    batched, and for `mask` the logical shapes. 
 
   * the remaining parameters are passed to the tap function.
 """
@@ -321,14 +320,11 @@ id_tap_p.multiple_results = True
 xla.outfeed_primitives.add(id_tap_p)
 
 def _add_transform_name(params: Dict, transform: str,
-                        transform_params: Any = None) -> Dict:
+                        *transform_params) -> Dict:
   """Adds the `transform` to the params["transforms"]."""
-  if transform_params is None:
-    new_transform = transform
-  else:
-    new_transform = (transform, transform_params)
-  return dict(params, transforms=(
-      params.get("transforms", ()) + (new_transform,)))
+  new_transform = (transform, *transform_params)
+  return dict(params, transforms=(params.get("transforms", ())
+                                  + (new_transform,)))
 
 
 def _id_tap_impl(*arrays, **params):
