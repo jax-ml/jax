@@ -162,7 +162,7 @@ def get_device_backend(device=None):
   return get_backend(platform)
 
 
-def device_count(backend=None):
+def device_count(backend: str = None):
   """Returns the total number of devices.
 
   On most platforms, this is the same as ``local_device_count()``. However, on
@@ -179,18 +179,20 @@ def device_count(backend=None):
   return int(get_backend(backend).device_count())
 
 
-def local_device_count(backend=None):
+def local_device_count(backend: str =None):
   """Returns the number of devices on this host."""
   return int(get_backend(backend).local_device_count())
 
 
-def devices(backend=None):
-  """Returns a list of all devices.
+def devices(backend: str = None):
+  """Returns a list of all devices for a given backend.
 
-  Each device is represented by a subclass of Device (e.g. CpuDevice,
-  GpuDevice). The length of the returned list is equal to
-  ``device_count()``. Local devices can be identified by comparing
+  Each device is represented by a subclass of ``Device`` (e.g. ``CpuDevice``,
+  ``GpuDevice``). The length of the returned list is equal to
+  ``device_count(backend)``. Local devices can be identified by comparing
   ``Device.host_id`` to ``host_id()``.
+
+  If ``backend`` is ``None``, returns all the devices from the default backend.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
@@ -202,14 +204,26 @@ def devices(backend=None):
   return get_backend(backend).devices()
 
 
-def local_devices(host_id=None, backend=None):
-  """Returns a list of devices local to a given host (this host by default)."""
+def local_devices(host_id: int = None, backend: str = None):
+  """Like ``devices``, but only returns devices local to a given host.
+
+  If ``host_id`` is ``None``, returns devices local to this host.
+
+  Args:
+    host_id: the integer ID of the host. Host IDs can be retrieved via
+      ``host_ids()``.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+
+  Returns:
+    List of Device subclasses.
+  """
   if host_id is None:
     host_id = get_backend(backend).host_id()
   return [d for d in devices(backend) if d.host_id == host_id]
 
 
-def host_id(backend=None):
+def host_id(backend: str = None):
   """Returns the integer host ID of this host.
 
   On most platforms, this will always be 0. This will vary on multi-host
@@ -225,12 +239,12 @@ def host_id(backend=None):
   return get_backend(backend).host_id()
 
 
-def host_ids(backend=None):
+def host_ids(backend: str = None):
   """Returns a sorted list of all host IDs."""
   return sorted(list(set(d.host_id for d in devices(backend))))
 
 
-def host_count(backend=None):
+def host_count(backend: str = None):
   """Returns the number of hosts."""
   return len(host_ids(backend))
 
