@@ -2223,18 +2223,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for a_dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)
       for dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)))
   def testView(self, shape, a_dtype, dtype):
-    def _itemsize(dtype):
-      if dtype == jnp.bool_:
-        return 8
-      elif jnp.issubdtype(dtype, jnp.integer):
-        return jnp.iinfo(dtype).bits
-      else:
-        return jnp.finfo(dtype).bits
     if jtu.device_under_test() == 'tpu':
-      if _itemsize(a_dtype) in [8, 16] or _itemsize(dtype) in [8, 16]:
-        self.skipTest("arr.view() not supported on TPU for 8-bit or 16-bit types.")
+      if jnp.dtype(a_dtype).itemsize in [8, 16] or jnp.dtype(dtype).itemsize in [8, 16]:
+        self.skipTest("arr.view() not supported on TPU for 8- or 16-bit types.")
     if not FLAGS.jax_enable_x64:
-      if _itemsize(a_dtype) == 64 or _itemsize(dtype) == 64:
+      if jnp.dtype(a_dtype).itemsize == 64 or jnp.dtype(dtype).itemsize == 64:
         self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, a_dtype)]
