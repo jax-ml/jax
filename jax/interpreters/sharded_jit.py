@@ -93,6 +93,12 @@ def _sharded_callable(
     raise ValueError("sharded_jit only works on TPU!")
 
   num_partitions = pxla.reconcile_num_partitions(jaxpr, num_partitions)
+  assert num_partitions is not None
+  if num_partitions > xb.local_device_count():
+    raise ValueError(
+        f"sharded_jit computation requires {num_partitions} devices, "
+        f"but only {xb.local_device_count()} devices are available.")
+
   out_parts = out_parts_thunk()
 
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
@@ -106,7 +112,6 @@ def _sharded_callable(
   built = c.Build(out_tuple)
 
   devices = xb.local_devices()[:num_partitions]
-  assert len(devices) == num_partitions
   device_assignment = np.array([[d.id for d in devices]])
   device_assignment = np.reshape(device_assignment, (-1, num_partitions))
   # device_assignment = None  # TODO(skye): replace with default device assignment?

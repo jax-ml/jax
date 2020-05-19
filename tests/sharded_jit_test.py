@@ -121,6 +121,9 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertLen(result.device_buffers, 1)
 
   def testShardingConstraint(self):
+    if jax.local_device_count() < 4:
+      raise SkipTest("requires 4 devices")
+
     def f(x):
       y = x + 1
       y = with_sharding_constraint(y, P(1,2))
@@ -175,7 +178,27 @@ class ShardedJitTest(jtu.JaxTestCase):
     expected = expected_f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
 
-# TODO(skye): add error tests
+
+# TODO(skye): add more error tests
+class ShardedJitErrorsTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest
+
+  def testNotEnoughDevices(self):
+    ndevices = jax.local_device_count()
+
+    @partial(sharded_jit, in_parts=P(ndevices + 1), out_parts=None)
+    def f(x):
+      return x + x
+
+    with self.assertRaisesRegex(
+        ValueError,
+        f"sharded_jit computation requires {ndevices + 1} devices, "
+        f"but only {ndevices} devices are available."):
+      f(np.ones(ndevices + 1))
+
 
 # Tests that don't need a TPU to run.
 class ShardedJitTestNoTpu(jtu.JaxTestCase):
