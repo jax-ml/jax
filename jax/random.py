@@ -356,7 +356,7 @@ def _uniform(key, shape, dtype, minval, maxval):
   finfo = np.finfo(dtype)
   nbits, nmant = finfo.bits, finfo.nmant
 
-  if nbits not in (32, 64):
+  if nbits not in (16, 32, 64):
     raise TypeError("uniform only accepts 32- or 64-bit dtypes.")
 
   bits = _random_bits(key, nbits, shape)
@@ -367,7 +367,7 @@ def _uniform(key, shape, dtype, minval, maxval):
   # equivalent float representations, which might not be true on all platforms.
   float_bits = lax.bitwise_or(
       lax.shift_right_logical(bits, onp.array(nbits - nmant, lax.dtype(bits))),
-      onp.array(1., dtype).view(onp.uint32 if nbits == 32 else onp.uint64))
+      onp.array(1., dtype).view(_UINT_DTYPES[nbits]))
   floats = lax.bitcast_convert_type(float_bits, dtype) - onp.array(1., dtype)
   return lax.max(
       minval,
@@ -408,8 +408,8 @@ def _randint(key, shape, minval, maxval, dtype):
   maxval = lax.convert_element_type(maxval, dtype)
   nbits = np.iinfo(dtype).bits
 
-  if nbits not in (32, 64):
-    raise TypeError("randint only accepts 32- or 64-bit dtypes.")
+  if nbits not in (8, 16, 32, 64):
+    raise TypeError("randint only accepts 8-, 16-, 32-, or 64-bit dtypes.")
 
   # if we don't have minval < maxval, just always return minval
   # https://github.com/google/jax/issues/222
@@ -422,16 +422,15 @@ def _randint(key, shape, minval, maxval, dtype):
   rbits = lambda key: _random_bits(key, nbits, shape)
   higher_bits, lower_bits = rbits(k1), rbits(k2)
 
-  unsigned_dtype = onp.uint32 if nbits == 32 else onp.uint64
+  unsigned_dtype = _UINT_DTYPES[nbits]
   span = lax.convert_element_type(maxval - minval, unsigned_dtype)
 
   # To compute a remainder operation on an integer that might have twice as many
   # bits as we can represent in the native unsigned dtype, we compute a
-  # multiplier equal to 2**nbits % span (using that nbits is 32 or 64).
-  multiplier = lax.rem(onp.array(2**16, unsigned_dtype), span)
+  # multiplier equal to 2**nbits % span. To avoid overflow, we use the identity:
+  #  (a * b) % N = [(a % N) * (b % N)] % N
+  multiplier = lax.rem(lax._const(span, 2 ** (nbits // 2)), span)
   multiplier = lax.rem(lax.mul(multiplier, multiplier), span)
-  if nbits == 64:
-    multiplier = lax.rem(lax.mul(multiplier, multiplier), span)
 
   random_offset = lax.add(lax.mul(lax.rem(higher_bits, span), multiplier),
                           lax.rem(lower_bits, span))

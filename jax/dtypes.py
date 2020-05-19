@@ -77,6 +77,8 @@ _dtype_to_32bit_dtype = {
 @util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
+  if isinstance(dtype, str) and dtype == "bfloat16":
+    dtype = bfloat16
   dtype = np.dtype(dtype)
 
   if FLAGS.jax_enable_x64:
@@ -120,7 +122,8 @@ iinfo = np.iinfo
 def finfo(dtype):
   # Since NumPy doesn't consider bfloat16 a floating-point type, we have to
   # provide an alternative implementation of finfo that does so.
-  if np.result_type(dtype) == _bfloat16_dtype:
+  if ((isinstance(dtype, str) and dtype == "bfloat16") or
+      np.result_type(dtype) == _bfloat16_dtype):
     return _bfloat16_finfo
   else:
     return np.finfo(dtype)
