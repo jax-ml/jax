@@ -1193,6 +1193,26 @@ class PmapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NameError, "unbound axis name: batch"):
       jax.pmap(test)(a)
 
+  def testPsumOnBooleanDtype(self):
+    # https://github.com/google/jax/issues/3123
+    n = xla_bridge.device_count()
+    if n > 1:
+      x = jnp.array([True, False])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1, 1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1/2, 1/2])
+    else:
+      x = jnp.array([True])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 

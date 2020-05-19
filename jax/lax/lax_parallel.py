@@ -44,6 +44,8 @@ def psum(x, axis_name, *, axis_index_groups=None):
   If ``x`` is a pytree then the result is equivalent to mapping this function to
   each leaf in the tree.
 
+  Inputs of boolean dtype are converted to integers before the reduction.
+
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
@@ -68,10 +70,13 @@ def psum(x, axis_name, *, axis_index_groups=None):
   >>> print(y)
   [ 0.          0.16666667  0.33333334  0.5       ]
   """
-  leaves, treedef = tree_util.tree_flatten(x)
   _validate_axis_index_groups(axis_index_groups)
-  return treedef.unflatten(
-      psum_p.bind(*leaves, axis_name=axis_name, axis_index_groups=axis_index_groups))
+  leaves, treedef = tree_util.tree_flatten(x)
+  leaves = [lax.convert_element_type(l, onp.int32)
+            if dtypes.dtype(l) == onp.bool_ else l for l in leaves]
+  out_flat = psum_p.bind(*leaves, axis_name=axis_name,
+                         axis_index_groups=axis_index_groups)
+  return tree_util.tree_unflatten(treedef, out_flat)
 
 def pmean(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
