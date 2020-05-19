@@ -85,12 +85,6 @@ def _shape_and_dtypes(shapes, dtypes):
     for dtype in _valid_dtypes_for_shape(shape, dtypes):
       yield (shape, dtype)
 
-def _dtype_info(dtype):
-  """Helper function for to get dtype info needed for clipping."""
-  if jnp.issubdtype(dtype, jnp.integer):
-    return jnp.iinfo(dtype)
-  return jnp.finfo(dtype)
-
 OpRecord = collections.namedtuple(
   "OpRecord",
   ["name", "nargs", "dtypes", "shapes", "rng_factory", "diff_modes",
@@ -2229,13 +2223,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for a_dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)
       for dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)))
   def testView(self, shape, a_dtype, dtype):
+    def _itemsize(dtype):
+      if dtype == jnp.bool_:
+        return 8
+      elif jnp.issubdtype(dtype, jnp.integer):
+        return jnp.iinfo(dtype).bits
+      else:
+        return jnp.finfo(dtype).bits
     if jtu.device_under_test() == 'tpu':
-      if (a_dtype == onp.bool_ or dtype == onp.bool_
-          or _dtype_info(a_dtype).bits in [8, 16]
-          or _dtype_info(dtype).bits in [8, 16]):
-        self.skipTest("arr.view() not supported on TPU for 8-bit or 16-bit inputs.")
-    if not FLAGS.jax_enable_x64 and a_dtype == onp.float64 or dtype == onp.float64:
-      self.skipTest("x64 types are disabled by jax_enable_x64")
+      if _itemsize(a_dtype) in [8, 16] or _itemsize(dtype) in [8, 16]:
+        self.skipTest("arr.view() not supported on TPU for 8-bit or 16-bit types.")
+    if not FLAGS.jax_enable_x64:
+      if _itemsize(a_dtype) == 64 or _itemsize(dtype) == 64:
+        self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, a_dtype)]
     np_op = lambda x: np.asarray(x).view(dtype)
