@@ -163,10 +163,10 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysEqual(bits64, expected64, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testRngUniform(self, dtype):
-    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
       raise SkipTest("random.uniform() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
