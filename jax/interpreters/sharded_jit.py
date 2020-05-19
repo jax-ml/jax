@@ -93,6 +93,7 @@ def _sharded_callable(
     raise ValueError("sharded_jit only works on TPU!")
 
   num_partitions = pxla.reconcile_num_partitions(jaxpr, num_partitions)
+  assert num_partitions is not None
   if num_partitions > xb.local_device_count():
     raise ValueError(
         f"sharded_jit computation requires {num_partitions} devices, "
