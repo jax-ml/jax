@@ -435,7 +435,7 @@ def check_backend_params(params, outer_backend):
   return {k: params[k] for k in params if k != 'backend'}
 
 
-class AxisEnv(object):
+class AxisEnv:
   def __init__(self, nreps, names=(), sizes=(), devices=None):
     assert isinstance(names, tuple)
     assert isinstance(sizes, tuple)
@@ -448,7 +448,10 @@ def extend_axis_env(env, name, size):
   return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,), env.devices)
 
 def axis_read(axis_env, axis_name):
-  return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
+  try:
+    return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
+  except ValueError:
+    raise NameError("unbound axis name: {}".format(axis_name))
 
 def axis_groups(axis_env, name):
   if isinstance(name, (list, tuple)):
