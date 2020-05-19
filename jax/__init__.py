@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax.version import __version__
 from .config import config
 from .api import (
   ad,  # TODO(phawkins): update users to avoid this.
@@ -73,16 +72,19 @@ from .api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation,
 )
-from jax import nn
-from jax import random
+from .version import __version__
 
-
+# These submodules are separate because they are in an import cycle with
+# jax and rely on the names imported above.
+from . import lax
+from . import nn
+from . import random
 
 def _init():
   import os
   os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
 
-  import jax.numpy # side-effecting import sets up operator overloads
+  from . import numpy # side-effecting import sets up operator overloads
 
 _init()
 del _init
