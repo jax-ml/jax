@@ -1131,7 +1131,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
-class _TempAxisName(object):
+class _TempAxisName:
   def __init__(self, obj):
     self.obj = obj
   def __repr__(self):
@@ -1139,7 +1139,7 @@ class _TempAxisName(object):
   def __hash__(self):
     return hash(self.obj)
   def __eq__(self, other):
-    return self.obj is other.obj
+    return type(other) is _TempAxisName and self.obj is other.obj
 
 
 def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,

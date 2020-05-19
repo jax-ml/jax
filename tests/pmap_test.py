@@ -1184,6 +1184,15 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-3, rtol=1e-3)
     self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-3, rtol=1e-3)
 
+  def testPmapAxisNameError(self):
+    # https://github.com/google/jax/issues/3120
+    a = np.arange(4)[np.newaxis,:]
+    def test(x):
+      return jax.lax.psum(x, axis_name='batch')
+
+    with self.assertRaisesRegex(NameError, "unbound axis name: batch"):
+      jax.pmap(test)(a)
+
   def testPsumOnBooleanDtype(self):
     # https://github.com/google/jax/issues/3123
     n = xla_bridge.device_count()
