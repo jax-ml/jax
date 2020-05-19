@@ -801,8 +801,49 @@ class APITest(jtu.JaxTestCase):
     dfn = grad(lambda x: x ** 2)
     self.assertRaisesRegex(
       TypeError,
-      "Primal inputs to reverse-mode differentiation must be of float or "
-      "complex type, got type int..", lambda: dfn(3))
+      (r"grad requires real- or complex-valued inputs \(input dtype that is a "
+       r"sub-dtype of np.floating or np.complexfloating\), but got int.*."),
+      lambda: dfn(3))
+
+  def test_grad_complex_result_errors(self):
+    dfn = grad(lambda x: x ** 2 + 1j)
+    self.assertRaisesRegex(
+      TypeError,
+      (r"grad requires real-valued outputs \(output dtype that is a "
+       r"sub-dtype of np.floating\), but got complex.*"),
+      lambda: dfn(3.))
+
+  def test_holomorphic_grad_of_float_errors(self):
+    dfn = grad(lambda x: x ** 2, holomorphic=True)
+    self.assertRaisesRegex(
+      TypeError,
+      (r"grad with holomorphic=True requires inputs with complex dtype, "
+       r"but got float.*"),
+      lambda: dfn(3.))
+
+  def test_holomorphic_jacrev_of_float_errors(self):
+    dfn = jacrev(lambda x: x ** 2, holomorphic=True)
+    self.assertRaisesRegex(
+      TypeError,
+      (r"jacrev with holomorphic=True requires inputs with complex dtype, "
+       r"but got float.*"),
+      lambda: dfn(3.))
+
+  def test_holomorphic_jacfwd_of_float_errors(self):
+    dfn = jacfwd(lambda x: x ** 2, holomorphic=True)
+    self.assertRaisesRegex(
+      TypeError,
+      (r"jacfwd with holomorphic=True requires inputs with complex dtype, "
+       r"but got float.*"),
+      lambda: dfn(3.))
+
+  def test_jacfwd_of_complex_errors(self):
+    dfn = jacfwd(lambda x: x ** 2)
+    self.assertRaisesRegex(
+      TypeError,
+      (r"jacfwd requires real-valued inputs \(input dtype that is a "
+       r"sub-dtype of np.floating\), but got complex.*"),
+      lambda: dfn(3. + 1j))
 
   def test_xla_computation(self):
     # these tests basically check the examples in the xla_computation docstring
