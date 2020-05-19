@@ -3979,12 +3979,12 @@ def _view(arr, dtype=None, type=None):
   arr_dtype = _dtype(arr)
   if arr_dtype == dtype:
     return arr
-  nbits_in = 8 * arr_dtype.itemsize
-  nbits_out = 8 * _dtype(dtype).itemsize
   # bool is implemented as lax:PRED, which is not compatible with lax.bitcast_convert_type.
   # We work around this by casting bool to uint8.
   if arr_dtype == bool_:
     arr = arr.astype(uint8)
+  nbits_in = 8 * arr_dtype.itemsize
+  nbits_out = 8 * _dtype(dtype).itemsize
   if nbits_in == nbits_out:
     if dtype == bool_:
       return lax.bitcast_convert_type(arr, uint8).astype(dtype)
@@ -3997,14 +3997,16 @@ def _view(arr, dtype=None, type=None):
     raise NotImplementedError(f"arr.view() for arr.dtype={arr_dtype}")
   if nbits_out not in byte_dtypes:
     raise NotImplementedError(f"arr.view(dtype) for dtype={dtype}")
-  arr_bytes = lax.bitcast_convert_type(arr, byte_dtypes[nbits_in])
+  dt_in = byte_dtypes[nbits_in]
+  dt_out = byte_dtypes[nbits_out]
+  arr_bytes = lax.bitcast_convert_type(arr, dt_in)
   if nbits_in < nbits_out:
-    shifts = arange(0, nbits_out, nbits_in, dtype=byte_dtypes[nbits_out])
-    arr_bytes = arr_bytes.reshape(arr.shape[:-1] + (-1, nbits_out // nbits_in)).astype(byte_dtypes[nbits_out])
-    arr_bytes = (arr_bytes << shifts).sum(-1).astype(byte_dtypes[nbits_out])
+    shifts = arange(0, nbits_out, nbits_in, dtype=dt_out)
+    arr_bytes = arr_bytes.reshape(arr.shape[:-1] + (-1, nbits_out // nbits_in)).astype(dt_out)
+    arr_bytes = (arr_bytes << shifts).sum(-1).astype(dt_out)
   else:
-    shifts = arange(0, nbits_in, nbits_out, dtype=byte_dtypes[nbits_in])
-    arr_bytes = ((arr_bytes[..., newaxis] >> shifts) & iinfo(byte_dtypes[nbits_out]).max).astype(byte_dtypes[nbits_out])
+    shifts = arange(0, nbits_in, nbits_out, dtype=dt_in)
+    arr_bytes = ((arr_bytes[..., newaxis] >> shifts) & iinfo(dt_out).max).astype(dt_out)
     arr_bytes = arr_bytes.reshape(arr_bytes.shape[:-2] + (-1,))
   if dtype == bool_:
     return lax.bitcast_convert_type(arr_bytes, uint8).astype(dtype)
