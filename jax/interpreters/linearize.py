@@ -84,7 +84,8 @@ class LinTrace(core.Trace):
 
   def instantiate_const(self, val):
     # TODO: Should we keep the val in the primal, or should it be None?
-    return LinTracer(self, None, None, ConstVar(val))
+    # TODO: Those do not get used in the linear trace, so we might want to drop the second recipe
+    return LinTracer(self, val, None, ConstVar(val))
 
   def process_primitive(self, primitive, tracers, params):
     primals_in, primal_recipes_in, _ = unzip3((t.primal, t.primal_recipe, t.linear_recipe) for t in tracers)
@@ -113,7 +114,8 @@ class LinTrace(core.Trace):
     linear_jaxpr = typed_linear_jaxpr.jaxpr
 
     # Primal jaxpr outputs only primals and possibly residuals
-    primal_jaxpr.invars = primal_jaxpr.invars[:num_args]
+    primal_jaxpr.invars = [v for v, recipe in zip(primal_jaxpr.invars[:num_args], primal_recipes_in)
+                           if recipe is not None]
     primal_jaxpr.outvars = primal_jaxpr.outvars[:num_outputs] + primal_jaxpr.outvars[num_outputs * 2:]
     residual_avals = map(core.raise_to_shaped, typed_primal_jaxpr.out_avals[num_outputs * 2:])
     # Linear jaxpr only takes in tangents and residulas, and only returns the tangents
@@ -125,8 +127,9 @@ class LinTrace(core.Trace):
     residual_tracers = [LinTracer(self, None, None, None) for _ in primal_jaxpr.outvars[num_outputs:]]
     const_tracers = map(self.instantiate_const, consts)
 
+    tracers_with_recipes = [t for t, recipe in zip(tracers, primal_recipes_in) if recipe is not None]
     primal_recipe = NonLinearSubJaxpr(object(),
-                                      [*const_tracers, *tracers],
+                                      [*const_tracers, *tracers_with_recipes],
                                       [*primal_tracers, *residual_tracers],
                                       primal_jaxpr)
     linear_recipe = SubJaxpr(object(),
