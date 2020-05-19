@@ -2395,7 +2395,7 @@ def _repeat_scalar(a, repeats, axis=None):
   if not isscalar(repeats):
     raise NotImplementedError(
         "_repeat_scalar implementation only supports scalar repeats")
-  if axis is None or isscalar(a):
+  if axis is None or isscalar(a) or len(shape(a)) == 0:
     a = ravel(a)
     axis = 0
   a_shape = list(shape(a))
