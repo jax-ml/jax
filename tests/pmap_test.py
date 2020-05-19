@@ -1202,7 +1202,7 @@ class PmapTest(jtu.JaxTestCase):
       self.assertEqual(list(out), [1])
 
       out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
-      self.assertEqual(list(out), [1/2])
+      self.assertEqual(list(out), [1])
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
