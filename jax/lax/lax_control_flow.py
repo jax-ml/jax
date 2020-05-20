@@ -267,10 +267,15 @@ def while_loop(cond_fun, body_fun, init_val):
     The output from the final iteration of body_fun, of type ``a``.
   """
   if jax.api._jit_is_disabled():
-    val = init_val
-    while cond_fun(val):
-      val = body_fun(val)
-    return val
+    try:
+      val = init_val
+      while cond_fun(val):
+        val = body_fun(val)
+      return val
+    except core.ConcretizationTypeError:
+      # Can't run this while_loop in Python (e.g. because there's a vmap
+      # transformation on it), so we fall back to the primitive version.
+      pass
 
   init_vals, in_tree = tree_flatten((init_val,))
   init_avals = tuple(_map(_abstractify, init_vals))
