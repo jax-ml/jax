@@ -14,246 +14,272 @@
 
 from absl.testing import absltest
 
-import jax
 from jax import numpy as jnp
 from jax import test_util as jtu
-import jax.scipy.sparse.linalg
 from jax.config import config
-from jax.scipy.optimize.bfgs_minimize import BFGSResults, bfgs_minimize
-from jax.scipy.optimize.line_search import LineSearchResults, line_search
-
-config.parse_flags_with_absl()
-
-from jax.config import config
+from jax.scipy.optimize.bfgs_minimize import bfgs_minimize
+from jax.scipy.optimize.line_search import line_search
+import numpy as np
 
 config.parse_flags_with_absl()
 
 
-def line_search_nojit(value_and_gradient, position, direction, f_0=None, g_0=None, max_iterations=50, c1=1e-4, c2=0.9):
+def value_and_grad(f, fprime):
+  def func(x):
+    return f(x), fprime(x)
+
+  return func
+
+
+class TestLineSearch(jtu.JaxTestCase):
+  # -- scalar functions; must have dphi(0.) < 0
+
+  def assert_wolfe(self, s, phi, derphi, c1=1e-4, c2=0.9, err_msg=""):
     """
-        Performs an inexact line-search. It is a modified backtracking line search. Instead of reducing step size by a
-        number < 1 if Wolfe conditions are not met, we check the sign of  u = del_t restricted_func(t).
-        If u > 0 then we do normal backtrack, otherwise we search forward. Normal backtracking can fail to satisfy strong
-        Wolfe conditions. This extra step costs one extra gradient evaluation. For explaination see figures 3.1--3.4 in
-        https://pages.mtu.edu/~struther/Courses/OLD/Sp2013/5630/Jorge_Nocedal_Numerical_optimization_267490.pdf
-
-        The original backtracking algorithim is p. 37.
-
-        This version is with pythonic loops for comparison with the jittable version
-
-        Args:
-            value_and_gradient: function and gradient
-            position: position to search from
-            direction: descent direction to search along
-            f_0: optionally give starting function value at position
-            g_0: optionally give starting gradient at position
-            max_iterations: maximum number of searches
-            c1, c2: Wolfe criteria numbers from above reference
-
-        Returns: LineSearchResults
-
-        """
-
-    def restricted_func(t):
-        return value_and_gradient(position + t * direction)
-
-    grad_restricted = jax.grad(lambda t: restricted_func(t)[0])
-
-    state = LineSearchResults(failed=jnp.array(True), nfev=0, ngev=0, k=0, a_k=1., f_k=None, g_k=None)
-    rho_neg = 0.8
-    rho_pos = 1.2
-
-    if f_0 is None or g_0 is None:
-        f_0, g_0 = value_and_gradient(position)
-        state = state._replace(nfev=state.nfev + 1, ngev=state.ngev + 1)
-    state = state._replace(f_k=f_0, g_k=g_0)
-
-    while state.failed and state.k < max_iterations:
-        f_kp1, g_kp1 = restricted_func(state.a_k)
-        # print(f_kp1, g_kp1)
-        state = state._replace(nfev=state.nfev + 1, ngev=state.ngev + 1)
-        # Wolfe 1 (3.6a)
-        wolfe_1 = f_kp1 <= state.f_k + c1 * state.a_k * jnp.dot(state.g_k, direction)
-        # Wolfe 2 (3.7b)
-        wolfe_2 = jnp.abs(jnp.dot(g_kp1, direction)) <= c2 * jnp.abs(jnp.dot(state.g_k, direction))
-
-        state = state._replace(failed=~jnp.logical_and(wolfe_1, wolfe_2), k=state.k + 1)
-        if not state.failed:
-            # print('break')
-            state = state._replace(f_k=f_kp1, g_k=g_kp1)
-            break
-
-        u = grad_restricted(state.a_k)
-        state = state._replace(ngev=state.ngev + 1)
-        if u > 0:
-            state = state._replace(a_k=state.a_k * rho_neg)
-        else:
-            state = state._replace(a_k=state.a_k * rho_pos)
-
-    if state.failed:
-        f_kp1, g_kp1 = restricted_func(state.a_k)
-        state = state._replace(f_k=f_kp1, g_k=g_kp1, nfev=state.nfev + 1, ngev=state.ngev + 1)
-    return state
-
-
-def bfgs_minimize_nojit(func, x0, options=None):
+    Check that strong Wolfe conditions apply
     """
-        Minimisation with BFGS. Inexact line search is performed satisfying both Wolfe conditions
-        (strong version of second one).
+    phi1 = phi(s)
+    phi0 = phi(0)
+    derphi0 = derphi(0)
+    derphi1 = derphi(s)
+    msg = "s = %s; phi(0) = %s; phi(s) = %s; phi'(0) = %s; phi'(s) = %s; %s" % (
+      s, phi0, phi1, derphi0, derphi1, err_msg)
 
-        Args:
-            func: function to minimise, should take a single flat parameter, similar to numpy
-            x0: initial guess of parameter
-            options: A dictionary of solver options. All methods accept the following generic options:
-                maxiter : int or None which means inf
-                    Maximum number of iterations to perform. Depending on the
-                    method each iteration may use several function evaluations.
-                analytic_initial_hessian: bool,
-                    whether to use JAX to get hessian for the initialisation, otherwise it's eye.
-                g_tol: float
-                    stopping criteria is |grad(func)|_2 lt g_tol
-                ls_maxiter: int or None which means inf
-                    Maximum number of line search iterations to perform
+    self.assertTrue(phi1 <= phi0 + c1 * s * derphi0, "Wolfe 1 failed: " + msg)
+    self.assertTrue(abs(derphi1) <= abs(c2 * derphi0), "Wolfe 2 failed: " + msg)
 
-        Returns: BFGSResults
+  def assert_line_wolfe(self, x, p, s, f, fprime, **kw):
+    self.assert_wolfe(s, phi=lambda sp: f(x + p * sp),
+                      derphi=lambda sp: jnp.dot(fprime(x + p * sp), p), **kw)
 
-    """
-    if options is None:
-        options = dict()
-    maxiter: int = options.get('maxiter', None)
-    analytic_initial_hessian: bool = options.get('analytic_initial_hessian', True)
-    g_tol: float = options.get('g_tol', 1e-8)
-    ls_maxiter: int = options.get('ls_maxiter', 50)
+  def _scalar_func_1(self, s):
+    self.fcount += 1
+    p = -s - s ** 3 + s ** 4
+    dp = -1 - 3 * s ** 2 + 4 * s ** 3
+    return p, dp
 
-    state = BFGSResults(converged=False,
-                        failed=False,
-                        k=0,
-                        nfev=0,
-                        ngev=0,
-                        nhev=0,
-                        x_k=x0,
-                        f_k=None,
-                        g_k=None,
-                        H_k=None)
+  def _scalar_func_2(self, s):
+    self.fcount += 1
+    p = jnp.exp(-4 * s) + s ** 2
+    dp = -4 * jnp.exp(-4 * s) + 2 * s
+    return p, dp
 
-    if maxiter is None:
-        maxiter = jnp.inf
+  def _scalar_func_3(self, s):
+    self.fcount += 1
+    p = -jnp.sin(10 * s)
+    dp = -10 * jnp.cos(10 * s)
+    return p, dp
 
-    D = x0.shape[0]
+  # -- n-d functions
 
-    if analytic_initial_hessian:
-        hess = jax.hessian(func, argnums=0)
-        initial_B = hess(x0)
-        # TODO: pinv may give pathological behaviour if function not C^2 and hess is all zeros
-        initial_H = jnp.linalg.pinv(initial_B)
-        state = state._replace(nhev=state.nhev + 1)
-    else:
-        initial_H = jnp.eye(D)
+  def _line_func_1(self, x):
+    self.fcount += 1
+    f = jnp.dot(x, x)
+    df = 2 * x
+    return f, df
 
-    value_and_grad = jax.value_and_grad(func)
+  def _line_func_2(self, x):
+    self.fcount += 1
+    f = jnp.dot(x, jnp.dot(self.A, x)) + 1
+    df = jnp.dot(self.A + self.A.T, x)
+    return f, df
 
-    f_0, g_0 = value_and_grad(x0)
-    state = state._replace(f_k=f_0, g_k=g_0, H_k=initial_H, nfev=state.nfev + 1, ngev=state.ngev + 1,
-                           converged=jnp.linalg.norm(g_0) < g_tol)
+  # --
 
-    while not state.converged and not state.failed and state.k < maxiter:
-        p_k = -jnp.dot(state.H_k, state.g_k)
-        line_search_results = line_search_nojit(value_and_grad, state.x_k, p_k, f_0=state.f_k, g_0=state.g_k,
-                                                max_iterations=ls_maxiter)
-        state = state._replace(nfev=state.nfev + line_search_results.nfev,
-                               ngev=state.ngev + line_search_results.ngev,
-                               failed=line_search_results.failed)
-        s_k = line_search_results.a_k * p_k
-        x_kp1 = state.x_k + s_k
-        f_kp1 = line_search_results.f_k
-        g_kp1 = line_search_results.g_k
-        y_k = g_kp1 - state.g_k
-        rho_k = jnp.reciprocal(jnp.dot(y_k, s_k))
+  def setup_method(self):
+    self.scalar_funcs = []
+    self.line_funcs = []
+    self.N = 20
+    self.fcount = 0
 
-        sy_k = s_k[:, None] * y_k[None, :]
-        w = jnp.eye(D) - rho_k * sy_k
-        H_kp1 = jnp.dot(jnp.dot(w, state.H_k), w.T) + rho_k * s_k[:, None] * s_k[None, :]
+    def bind_index(func, idx):
+      # Remember Python's closure semantics!
+      return lambda *a, **kw: func(*a, **kw)[idx]
 
-        converged = jnp.linalg.norm(g_kp1) < g_tol
+    for name in sorted(dir(self)):
+      if name.startswith('_scalar_func_'):
+        value = getattr(self, name)
+        self.scalar_funcs.append(
+          (name, bind_index(value, 0), bind_index(value, 1)))
+      elif name.startswith('_line_func_'):
+        value = getattr(self, name)
+        self.line_funcs.append(
+          (name, bind_index(value, 0), bind_index(value, 1)))
 
-        state = state._replace(converged=converged,
-                               k=state.k + 1,
-                               x_k=x_kp1,
-                               f_k=f_kp1,
-                               g_k=g_kp1,
-                               H_k=H_kp1
-                               )
-    return state
+    np.random.seed(1234)
+    self.A = np.random.randn(self.N, self.N)
+
+  def scalar_iter(self):
+    for name, phi, derphi in self.scalar_funcs:
+      for old_phi0 in np.random.randn(3):
+        yield name, phi, derphi, old_phi0
+
+  def line_iter(self):
+    for name, f, fprime in self.line_funcs:
+      k = 0
+      while k < 9:
+        x = np.random.randn(self.N)
+        p = np.random.randn(self.N)
+        if jnp.dot(p, fprime(x)) >= 0:
+          # always pick a descent direction
+          continue
+        k += 1
+        old_fv = float(np.random.randn())
+        yield name, f, fprime, x, p, old_fv
+
+  # -- Generic scalar searches
+
+  def test_scalar_search_wolfe2(self):
+    for name, phi, derphi, old_phi0 in self.scalar_iter():
+      res = line_search(value_and_grad(phi, derphi), 0., 1.)
+      s, phi1, derphi1 = res.a_k, res.f_k, res.g_k
+      # s, phi1, phi0, derphi1 = ls.scalar_search_wolfe2(
+      #     phi, derphi, phi(0), old_phi0, derphi(0))
+      self.assertAllClose(phi1, phi(s), check_dtypes=False, atol=1e-6)
+      if derphi1 is not None:
+        self.assertAllClose(derphi1, derphi(s), check_dtypes=False, atol=1e-6)
+      self.assert_wolfe(s, phi, derphi, err_msg="%s %g" % (name, old_phi0))
+
+  # -- Generic line searches
+
+  def test_line_search_wolfe2(self):
+    c = 0
+    smax = 512
+    for name, f, fprime, x, p, old_f in self.line_iter():
+      f0 = f(x)
+      g0 = fprime(x)
+      self.fcount = 0
+      res = line_search(value_and_grad(f, fprime), x, p, f_0=f0, g_0=g0)
+      s = res.a_k
+      fc = res.nfev
+      gc = res.ngev
+      fv = res.f_k
+      gv = res.g_k
+      # s, fc, gc, fv, ofv, gv = ls.line_search_wolfe2(f, fprime, x, p,
+      #                                                g0, f0, old_f,
+      #                                                amax=smax)
+      # assert_equal(self.fcount, fc+gc)
+      self.assertAllClose(fv, f(x + s * p), check_dtypes=False, atol=1e-5)
+      if gv is not None:
+        self.assertAllClose(gv, fprime(x + s * p), check_dtypes=False, atol=1e-5)
+      if s < smax:
+        c += 1
+    self.assertTrue(c > 3)  # check that the iterator really works...
+
+  def test_line_search_wolfe2_bounds(self):
+    # See gh-7475
+
+    # For this f and p, starting at a point on axis 0, the strong Wolfe
+    # condition 2 is met if and only if the step length s satisfies
+    # |x + s| <= c2 * |x|
+    f = lambda x: jnp.dot(x, x)
+    fp = lambda x: 2 * x
+    p = jnp.array([1, 0])
+
+    # Smallest s satisfying strong Wolfe conditions for these arguments is 30
+    x = -60 * p
+    c2 = 0.5
+
+    res = line_search(value_and_grad(f, fp), x, p, c2=c2)
+    s = res.a_k
+    # s, _, _, _, _, _ = ls.line_search_wolfe2(f, fp, x, p, amax=30, c2=c2)
+    self.assert_line_wolfe(x, p, s, f, fp)
+    self.assertTrue(s >= 30.)
+
+    res = line_search(value_and_grad(f, fp), x, p, c2=c2, max_iterations=5)
+    self.assertTrue(res.failed)
+    # s=30 will only be tried on the 6th iteration, so this won't converge
+
+  def test_line_search(self):
+    import jax
+
+    import jax.numpy as np
+
+    def f(x):
+      return np.cos(np.sum(np.exp(-x)) ** 2)
+
+    # assert not line_search(jax.value_and_grad(f), np.ones(2), np.array([-0.5, -0.25])).failed
+    xk = np.ones(2)
+    pk = np.array([-0.5, -0.25])
+    res = line_search(jax.value_and_grad(f), xk, pk, max_iterations=100)
+
+    from scipy.optimize.linesearch import line_search_wolfe2
+
+    scipy_res = line_search_wolfe2(f, jax.grad(f), xk, pk)
+
+    # print(scipy_res[0], res.a_k)
+    # print(scipy_res[3], res.f_k)
+
+    self.assertAllClose(scipy_res[0], res.a_k, atol=1e-5, check_dtypes=False)
+    self.assertAllClose(scipy_res[3], res.f_k, atol=1e-5, check_dtypes=False)
+
+  # -- More specific tests
 
 
-class LaxBackedScipyTests(jtu.JaxTestCase):
+class TestBFGS(jtu.JaxTestCase):
+  def test_minimize(self):
+    from scipy.optimize import minimize as smin
+    import numpy as onp
 
-    def test_line_search(self):
-        def f(x):
-            return jnp.sum(x) ** 3
+    def compare(func, x0):
+      # @jax.jit
+      def min_op(x0):
+        result = bfgs_minimize(func(jnp), x0,
+                               options=dict(ls_maxiter=10, maxiter=10, analytic_initial_hessian=False,
+                                            g_tol=1e-6))
+        return result
 
-        self.assertTrue(line_search(jax.value_and_grad(f), jnp.ones(2), jnp.array([0.5, -0.25])).failed)
+      jax_res = min_op(x0)
 
-        def f(x):
-            return jnp.sum(x) ** 3
+      scipy_res = smin(func(onp), x0, method='BFGS')
+      # print(jax_res)
+      # print(scipy_res)
+      self.assertAllClose(scipy_res.x, jax_res.x_k, atol=1e-5, check_dtypes=False)
 
-        self.assertTrue(not line_search(jax.value_and_grad(f), jnp.ones(2), jnp.array([-0.5, -0.25])).failed)
+    def rosenbrock(np):
+      def func(x):
+        return np.sum(100. * np.diff(x) ** 2 + (1. - x[:-1]) ** 2)
 
-        v_g = jax.value_and_grad(f)
+      return func
 
-        @jax.jit
-        def jit_line_search(position, direction):
-            return line_search(v_g, position, direction)
+    x0 = jnp.zeros(2)
 
-        position, direction = jnp.ones(2), jnp.array([-0.5, -0.25])
+    compare(rosenbrock, x0)
 
-        self.assertAllClose(jit_line_search(position, direction).a_k, line_search_nojit(v_g, position, direction).a_k,
-                            check_dtypes=False)
+    def himmelblau(np):
+      def func(p):
+        x, y = p
+        return (x ** 2 + y - 11.) ** 2 + (x + y ** 2 - 7.) ** 2
 
-        position, direction = jnp.ones(2), jnp.array([0.5, -0.25])
-        # need to use isclose because the a_k stays as a pythonic float in nojit version and may be 32 or 64 but in jax.
-        self.assertAllClose(jit_line_search(position, direction).a_k, line_search_nojit(v_g, position, direction).a_k,
-                            check_dtypes=False)
+      return func
 
-    def test_minimize(self):
-        def rosenbrock(x):
-            return jnp.sum(100. * jnp.diff(x) ** 2 + (1. - x[:-1]) ** 2)
+    x0 = jnp.zeros(2)
 
-        x0 = jnp.zeros(2)
+    compare(himmelblau, x0)
 
-        @jax.jit
-        def min_op(x0):
-            result = bfgs_minimize(rosenbrock, x0, options=dict(analytic_initial_hessian=True))
-            return result
+    def matyas(np):
+      def func(p):
+        x, y = p
+        return 0.26 * (x ** 2 + y ** 2) - 0.48 * x * y
 
-        jax_res1 = min_op(x0)
+      return func
 
-        jax_res1_nojit = bfgs_minimize_nojit(rosenbrock, x0, options=dict(analytic_initial_hessian=True))
+    x0 = jnp.ones(2) * 6.
 
-        self.assertAllClose(jax_res1.x_k, jax_res1_nojit.x_k, check_dtypes=False)
+    compare(matyas, x0)
 
-        @jax.jit
-        def min_op(x0):
-            result = bfgs_minimize(rosenbrock, x0, options=dict(analytic_initial_hessian=True))
-            return result
+    def eggholder(np):
+      def func(p):
+        x, y = p
+        return - (y + 47) * np.sin(np.sqrt(np.abs(x / 2. + y + 47.))) - x * np.sin(
+          np.sqrt(np.abs(x - (y + 47.))))
 
-        jax_res2 = min_op(x0)
+      return func
 
-        jax_res2_nojit = bfgs_minimize_nojit(rosenbrock, x0, options=dict(analytic_initial_hessian=True))
+    x0 = jnp.ones(2) * 100.
 
-        self.assertAllClose(jax_res2.x_k, jax_res2_nojit.x_k, check_dtypes=False)
-
-        from scipy.optimize import minimize as smin
-        import numpy as onp
-
-        def rosenbrock_onp(x):
-            return onp.sum(100. * onp.diff(x) ** 2 + (1. - x[:-1]) ** 2)
-
-        scipy_res = smin(rosenbrock_onp, x0, method='BFGS')
-
-        self.assertAllClose(scipy_res.x, jax_res1.x_k, check_dtypes=False, atol=1.6e-6)
-        self.assertAllClose(scipy_res.x, jax_res2.x_k, check_dtypes=False, atol=1.6e-6)
+    compare(eggholder, x0)
 
 
 if __name__ == "__main__":
-    absltest.main()
+  absltest.main()
