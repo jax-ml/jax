@@ -2229,7 +2229,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if not FLAGS.jax_enable_x64:
       if jnp.dtype(a_dtype).itemsize == 8 or jnp.dtype(dtype).itemsize == 8:
         self.skipTest("x64 types are disabled by jax_enable_x64")
-    rng = jtu.rand_default(self.rng())
+    rng = jtu.rand_fullrange(self.rng())
     args_maker = lambda: [rng(shape, a_dtype)]
     np_op = lambda x: np.asarray(x).view(dtype)
     jnp_op = lambda x: jnp.asarray(x).view(dtype)
