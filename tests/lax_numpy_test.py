@@ -2237,7 +2237,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
   def testPathologicalFloats(self):
-    args_maker = lamnda: [np.array([
+    args_maker = lambda: [np.array([
       0b_0111_1111_1000_0000_0000_0000_0000_0000, # inf
       0b_1111_1111_1000_0000_0000_0000_0000_0000, # -inf
       0b_0111_1111_1100_0000_0000_0000_0000_0000, # qnan
