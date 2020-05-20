@@ -1079,13 +1079,14 @@ class _JaxprContext(object):
 
   def read_env(self, v: Var):
     env = self.env
-    if type(v) is not Literal and v not in env:
-      raise Exception(
-          "Variable '{}' not defined".format(v) + self._msg_context())
-    if v.aval != env[v]:
-      raise TypeError(
-          "Variable '{}' inconsistently typed as {}, bound as {}".format(
-              v, v.aval, env[v]) + self._msg_context())
+    if type(v) is not Literal:
+      if v not in env:
+        raise Exception(
+            "Variable '{}' not defined".format(v) + self._msg_context())
+      if v.aval != env[v]:
+        raise TypeError(
+            "Variable '{}' inconsistently typed as {}, bound as {}".format(
+                v, v.aval, env[v]) + self._msg_context())
     return v
 
   def write_env(self, v: Var):
