@@ -2921,7 +2921,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     op = partial(lax.dot, precision=lax.Precision.HIGHEST)
     self._CheckBatching(op, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
-                        rng, rtol={onp.float16: 5e-2})
+                        rng, rtol={onp.float16: 5e-2, onp.float64: 5e-14})
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
