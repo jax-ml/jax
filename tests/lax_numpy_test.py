@@ -2233,11 +2233,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, a_dtype)]
     np_op = lambda x: np.asarray(x).view(dtype)
     jnp_op = lambda x: jnp.asarray(x).view(dtype)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True, standardize_nans=True)
-    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True, standardize_nans=True)
+    self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
-  def testViewSpecialFloats(self):
-    vals = np.array([
+  def testPathologicalFloats(self):
+    args_maker = lamnda: [np.array([
       0b_0111_1111_1000_0000_0000_0000_0000_0000, # inf
       0b_1111_1111_1000_0000_0000_0000_0000_0000, # -inf
       0b_0111_1111_1100_0000_0000_0000_0000_0000, # qnan
@@ -2248,11 +2248,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       0b_1111_1111_1000_0000_0000_1100_0000_0000, # -nonstandard nan
       0b_0000_0000_0000_0000_0000_0000_0000_0000, # zero
       0b_1000_0000_0000_0000_0000_0000_0000_0000, # -zero
-    ], dtype='uint32').view('float32')
+    ], dtype='uint32')]
 
-    args_maker = lambda: [vals]
-    np_op = lambda x: np.asarray(x).view('uint32')
-    jnp_op = lambda x: jnp.asarray(x).view('uint32')
+    np_op = lambda x: np.asarray(x).view('float32').view('uint32')
+    jnp_op = lambda x: jnp.asarray(x).view('float32').view('uint32')
 
     self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)

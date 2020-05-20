@@ -725,20 +725,11 @@ class JaxTestCase(parameterized.TestCase):
       self.assertDtypesMatch(x, y)
     np.testing.assert_equal(x, y)
 
-  def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None,
-                           standardize_nans=False):
+  def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
     atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
     rtol = max(tolerance(_dtype(x), rtol), tolerance(_dtype(y), rtol))
-
-    if standardize_nans:
-      if np.issubdtype(_dtype(x), np.floating) and np.any(np.isnan(x)):
-        x = np.copy(x)
-        x[np.isnan(x)] = np.nan
-      if np.issubdtype(_dtype(y), np.floating) and np.any(np.isnan(y)):
-        y = np.copy(y)
-        y[np.isnan(y)] == np.nan
 
     _assert_numpy_allclose(x, y, atol=atol, rtol=rtol)
 
@@ -749,20 +740,18 @@ class JaxTestCase(parameterized.TestCase):
     if FLAGS.jax_enable_x64:
       self.assertEqual(_dtype(x), _dtype(y))
 
-  def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None, standardize_nans=False):
+  def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
     if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
-        self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol,
-                            standardize_nans=standardize_nans)
+        self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
     elif is_sequence(x) and not hasattr(x, '__array__'):
       self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol,
-                            standardize_nans=standardize_nans)
+        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
     elif hasattr(x, '__array__') or np.isscalar(x):
       self.assertTrue(hasattr(y, '__array__') or np.isscalar(y))
       if check_dtypes:
@@ -784,7 +773,7 @@ class JaxTestCase(parameterized.TestCase):
                               msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
   def _CompileAndCheck(self, fun, args_maker, check_dtypes,
-                       rtol=None, atol=None, standardize_nans=False):
+                       rtol=None, atol=None):
     """Helper method for running JAX compilation and allclose assertions."""
     args = args_maker()
 
@@ -813,10 +802,8 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, monitored_ans, check_dtypes, atol, rtol,
-                        standardize_nans=standardize_nans)
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol,
-                        standardize_nans=standardize_nans)
+    self.assertAllClose(python_ans, monitored_ans, check_dtypes, atol, rtol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
 
     args = args_maker()
 
@@ -826,17 +813,15 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol,
-                        standardize_nans=standardize_nans)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
-                         check_dtypes=False, tol=None, standardize_nans=False):
+                         check_dtypes=False, tol=None):
     args = args_maker()
     lax_ans = lax_op(*args)
     numpy_ans = numpy_reference_op(*args)
-
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
-                        atol=tol, rtol=tol, standardize_nans=standardize_nans)
+                        atol=tol, rtol=tol)
 
 
 @contextmanager
