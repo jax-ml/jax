@@ -371,11 +371,18 @@ class Tracer(object):
   __slots__ = ['_trace', '__weakref__']
 
   def __array__(self, *args, **kw):
-    raise Exception("Tracer can't be used with raw numpy functions. "
-                    "You might have\n"
-                    "  import numpy as np\n"
-                    "instead of\n"
-                    "  import jax.numpy as jnp")
+    msg = (f"The numpy.ndarray conversion method __array__() was called on "
+           "the JAX Tracer object {self}.\n\n"
+           "This error can occurr when a JAX Tracer object is passed to a raw "
+           "numpy function, or a method on a numpy.ndarray object. You might "
+           "want to check that you are using `jnp` together with "
+           "`import jax.numpy as jnp` rather than using `np` via "
+           "`import numpy as np`. If this error arises on a line that involves "
+           "array indexing, like `x[idx]`, it may be that the array being "
+           "indexed `x` is a raw numpy.ndarray while the indices `idx` are a "
+           "JAX Tracer instance; in that case, you can instead write "
+           "`jax.device_put(x)[idx]`.")
+    raise Exception(msg)
 
   def __init__(self, trace):
     self._trace = trace
