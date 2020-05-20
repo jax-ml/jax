@@ -33,7 +33,7 @@ from jax import dtypes
 from jax import util
 from jax.lax import lax
 from jax import linear_util as lu
-from jax.abstract_arrays import ShapedArray, raise_to_shaped
+from jax.abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
 from jax.core import get_aval
 from jax.interpreters import ad
@@ -593,7 +593,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if jax.api._jit_is_disabled():
+  if jax.api._jit_is_disabled() and isinstance(core.get_aval(pred), ConcreteArray):
     if pred:
       return true_fun(operand)
     else:
