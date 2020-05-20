@@ -179,6 +179,12 @@ class JaxprTrace(Trace):
     out_pvs, jaxpr, env = aux()
     env_tracers = map(self.full_raise, env)
     out_pv_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+    if not jaxpr.eqns:
+      env = {core.unitvar: core.unit}
+      map(env.setdefault, jaxpr.invars, (*env_tracers, *tracers))
+      map(env.setdefault, jaxpr.constvars, consts)
+      return [pv_const if pv is None else v.val if type(v) is Literal else env[v]
+              for v, pv, pv_const in zip(jaxpr.outvars, out_pvs, out_pv_consts)]
     const_tracers = map(self.new_instantiated_const, consts)
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
     out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
