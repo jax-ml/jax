@@ -497,8 +497,6 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   primal_fun = lu.wrap_init(core.jaxpr_as_fun(primal_jaxpr))
   flat_primals, in_tree_def = tree_flatten(primals_in)
   primal_fun, _ = flatten_fun_nokwargs(primal_fun, in_tree_def)
-
-  params = dict(params, name=wrap_name(params['name'], 'transpose'))
   residuals = pe.remat_call_p.bind(primal_fun, *flat_primals, **params)[len(cotangents_in):]
 
   cotangents_out = call_transpose(pe.remat_call_p, params, tangent_jaxpr.jaxpr,
