@@ -155,6 +155,14 @@ class ODETest(jtu.JaxTestCase):
     rtol = {np.float64: 2e-15}
     self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
 
+  def test_disable_jit_odeint_with_vmap(self):
+    # https://github.com/google/jax/issues/2598
+    with jax.disable_jit():
+      t = jax.numpy.array([0.0, 1.0])
+      x0_eval = jax.numpy.zeros((5, 2))
+      f = lambda x0: odeint(lambda x, _t: x, x0, t)
+      jax.vmap(f)(x0_eval)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
