@@ -1567,6 +1567,59 @@ class APITest(jtu.JaxTestCase):
 
     api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
 
+  def test_remat_eval_counter(self):
+    # https://github.com/google/jax/issues/2737
+    add_one_p = Primitive('add_one')
+    add_one = add_one_p.bind
+
+    num_evals = 0
+
+    @contextmanager
+    def assertEvals(n):
+      start = num_evals
+      yield
+      assert num_evals - start == n
+
+    def add_one_impl(x):
+      nonlocal num_evals
+      num_evals += 1
+      return x + 1
+    add_one_p.def_impl(add_one_impl)
+
+    def add_one_jvp(pin, tin):
+      pout = add_one(pin[0])
+      return pout, pout * tin[0]
+    ad.primitive_jvps[add_one_p] = add_one_jvp
+
+    add_one_p.def_abstract_eval(lambda x: x)
+
+    v = np.zeros((1,))
+
+    f = jax.remat(add_one)
+    g = jax.remat(lambda x: add_one(f(x)))
+
+    # 2 calls needed to evaluate g
+    with assertEvals(2):
+      _, vjp = jax.vjp(g, v)
+    # 2 calls made while transposing g, 1 call made while transposing f
+    with assertEvals(3):
+      vjp(v)
+
+    @jax.util.curry
+    def call(f, *args):
+      return jax.core.call(jax.linear_util.wrap_init(lambda *args: [f(*args)]), *args)[0]
+
+    f = call(add_one)
+    g = jax.remat(lambda x: add_one(f(x)))
+
+    # 2 calls needed to evaluate g
+    with assertEvals(2):
+      _, vjp = jax.vjp(g, v)
+    # 2 calls made while transposing g, no reevaluation for transposition of f
+    with assertEvals(2):
+      vjp(v)
+
+
   def test_trivial_computations(self):
     x = jnp.array([1, 2, 3])
     y = api.jit(lambda x: x)(x)
@@ -1721,7 +1774,7 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(fun)(0.)
     self.assertMultiLineStrippedEqual("""
 { lambda b ; a.
-  let 
+  let
   in (a, 1.0, b) }
     """, str(jaxpr))
 
