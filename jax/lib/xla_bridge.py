@@ -193,6 +193,7 @@ def devices(backend: str = None):
   ``Device.host_id`` to ``host_id()``.
 
   If ``backend`` is ``None``, returns all the devices from the default backend.
+  The default backend is generally 'gpu' or 'tpu' if available, otherwise 'cpu'.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
@@ -220,6 +221,8 @@ def local_devices(host_id: int = None, backend: str = None):
   """
   if host_id is None:
     host_id = get_backend(backend).host_id()
+  if host_id not in host_ids():
+    raise ValueError(f"Unknown host_id {host_id}")
   return [d for d in devices(backend) if d.host_id == host_id]
 
 
