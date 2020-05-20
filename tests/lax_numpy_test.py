@@ -2233,8 +2233,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, a_dtype)]
     np_op = lambda x: np.asarray(x).view(dtype)
     jnp_op = lambda x: jnp.asarray(x).view(dtype)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True)
-    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True, standardize_nans=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True, standardize_nans=True)
 
   # TODO(mattjj): test other ndarray-like method overrides
 
