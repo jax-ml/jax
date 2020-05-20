@@ -37,7 +37,7 @@ _INDEX_FIXERS = {
 
 
 def _nearest_indices_and_weights(coordinate):
-  index = jnp.around(coordinate).astype(jnp.int32)
+  index = jnp.floor(coordinate + .5).astype(jnp.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
