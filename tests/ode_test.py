@@ -16,6 +16,7 @@ from functools import partial
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import numpy as np
 
 import jax
@@ -45,10 +46,11 @@ class ODETest(jtu.JaxTestCase):
     jax_fun = partial(fun, np)
     jax_result = odeint(jax_fun, y0, tspace, *args)
 
-    self.assertAllClose(jax_result, scipy_result, check_dtypes=False, atol=tol, rtol=tol)
+    self.assertAllClose(jax_result, scipy_result, check_dtypes=False,
+                        atol=tol, rtol=tol)
 
   @jtu.skip_on_devices("tpu")
-  def test_pend_grads(self):
+  def test_pend(self):
     def pend(_np, y, _, m, g):
       theta, omega = y
       return [omega, -m * omega - g * jnp.sin(theta)]
@@ -62,7 +64,6 @@ class ODETest(jtu.JaxTestCase):
     tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(pend, y0, ts, *args, tol=tol)
-
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     atol=tol, rtol=tol)
 
@@ -80,8 +81,7 @@ class ODETest(jtu.JaxTestCase):
     tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(dynamics, y0, ts, tol=tol)
-
-    jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
+    jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=1,
                     rtol=tol, atol=tol)
 
   @jtu.skip_on_devices("tpu")
@@ -100,8 +100,8 @@ class ODETest(jtu.JaxTestCase):
     tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(decay, y0, ts, *args, tol=tol)
-
-    jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
+    # # Don't check grads, just because it's slow.
+    jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=1,
                     rtol=tol, atol=tol)
 
   @jtu.skip_on_devices("tpu")
@@ -117,13 +117,25 @@ class ODETest(jtu.JaxTestCase):
     y0 = jnp.linspace(0.1, 0.9, 10)
     args = (0.1, 0.2)
     self.check_against_scipy(swoop, y0, ts, *args, tol=tol)
-    jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
+    # # Don't check grads, just because it's slow.
+    jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=1,
                     rtol=tol, atol=tol)
+
+  @jtu.skip_on_devices("tpu")
+  def test_swoop2(self):
+    def swoop(_np, y, t, arg1, arg2):
+      return jnp.array(y - jnp.sin(t) - jnp.cos(t) * arg1 + arg2)
+
+    integrate = partial(odeint, partial(swoop, np))
+
+    ts = jnp.array([0.1, 0.2])
+    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
 
     big_y0 = jnp.linspace(1.1, 10.9, 10)
     args = (0.1, 0.3)
-    self.check_against_scipy(swoop, y0, ts, *args, tol=tol)
-    jtu.check_grads(integrate, (big_y0, ts, *args), modes=["rev"], order=2,
+    self.check_against_scipy(swoop, big_y0, ts, *args, tol=tol)
+    # # Don't check grads, just because it's slow.
+    jtu.check_grads(integrate, (big_y0, ts, *args), modes=["rev"], order=1,
                     rtol=tol, atol=tol)
 
   def test_odeint_vmap_grad(self):
