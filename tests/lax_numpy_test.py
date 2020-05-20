@@ -2236,6 +2236,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True, standardize_nans=True)
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True, standardize_nans=True)
 
+  def testViewSpecialFloats(self):
+    vals = np.array([
+      0b_0111_1111_1000_0000_0000_0000_0000_0000, # inf
+      0b_1111_1111_1000_0000_0000_0000_0000_0000, # -inf
+      0b_0111_1111_1100_0000_0000_0000_0000_0000, # qnan
+      0b_1111_1111_1100_0000_0000_0000_0000_0000, # -qnan
+      0b_0111_1111_1000_0000_0000_0000_0000_0001, # snan
+      0b_1111_1111_1000_0000_0000_0000_0000_0001, # -snan
+      0b_0111_1111_1000_0000_0000_1100_0000_0000, # nonstandard nan
+      0b_1111_1111_1000_0000_0000_1100_0000_0000, # -nonstandard nan
+      0b_0000_0000_0000_0000_0000_0000_0000_0000, # zero
+      0b_1000_0000_0000_0000_0000_0000_0000_0000, # -zero
+    ], dtype='uint32').view('float32')
+
+    args_maker = lambda: [vals]
+    np_op = lambda x: np.asarray(x).view('uint32')
+    jnp_op = lambda x: jnp.asarray(x).view('uint32')
+
+    self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+
   # TODO(mattjj): test other ndarray-like method overrides
 
   def testNpMean(self):
