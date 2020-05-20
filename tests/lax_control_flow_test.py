@@ -31,6 +31,7 @@ from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
+from jax.experimental import unroll
 from jax.util import unzip2
 from jax.lib import xla_bridge
 import jax.numpy as jnp  # scan tests use numpy
@@ -38,6 +39,13 @@ import jax.scipy as jsp
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+
+SCAN_IMPLS = [
+    (lax.scan, 'lax'),
+    (unroll.unrolled_scan, 'unroll'),
+    (partial(unroll.block_unrolled_scan, 2), 'block'),
+]
 
 
 def while_loop_reference(cond, body, carry):
@@ -927,11 +935,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(out, (7, 10))
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
-       "jit_scan": jit_scan, "jit_f": jit_f}
+      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
+          jit_scan, jit_f, scan_name),
+       "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
-      for jit_f in [False, True])
-  def testScanImpl(self, jit_scan, jit_f):
+      for jit_f in [False, True]
+      for scan_impl, scan_name in SCAN_IMPLS)
+  def testScanImpl(self, jit_scan, jit_f, scan):
     rng = np.random.RandomState(0)
 
     d = rng.randn(2)
@@ -946,9 +956,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, (0,))
-    else:
-      scan = lax.scan
+      scan = api.jit(scan, (0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -958,11 +966,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
-       "jit_scan": jit_scan, "jit_f": jit_f}
+      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
+          jit_scan, jit_f, scan_name),
+       "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
-      for jit_f in [False, True])
-  def testScanJVP(self, jit_scan, jit_f):
+      for jit_f in [False, True]
+      for scan_impl, scan_name in SCAN_IMPLS)
+  def testScanJVP(self, jit_scan, jit_f, scan):
     rng = np.random.RandomState(0)
 
     d = rng.randn(2)
@@ -977,9 +987,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, (0,))
-    else:
-      scan = lax.scan
+      scan = api.jit(scan, (0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -992,11 +1000,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["fwd"])
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
-       "jit_scan": jit_scan, "jit_f": jit_f}
+      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
+          jit_scan, jit_f, scan_name),
+       "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
-      for jit_f in [False, True])
-  def testScanLinearize(self, jit_scan, jit_f):
+      for jit_f in [False, True]
+      for scan_impl, scan_name in SCAN_IMPLS)
+  def testScanLinearize(self, jit_scan, jit_f, scan):
     rng = np.random.RandomState(0)
 
     d = rng.randn(2)
@@ -1011,9 +1021,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, (0,))
-    else:
-      scan = lax.scan
+      scan = api.jit(scan, (0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1024,12 +1032,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         rtol={np.float64: 1e-14})
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}".format(jit_scan, jit_f),
-       "jit_scan": jit_scan, "jit_f": jit_f}
+      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
+          jit_scan, jit_f, scan_name),
+       "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
-      for jit_f in [False, True])
+      for jit_f in [False, True]
+      for scan_impl, scan_name in SCAN_IMPLS)
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
-  def testScanGrad(self, jit_scan, jit_f):
+  def testScanGrad(self, jit_scan, jit_f, scan):
     rng = np.random.RandomState(0)
 
     d = rng.randn(2)
@@ -1044,9 +1054,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, static_argnums=(0,))
-    else:
-      scan = lax.scan
+      scan = api.jit(scan, static_argnums=(0,))
 
     as_ = rng.randn(5, 3)
     c = rng.randn(4)
@@ -1193,7 +1201,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.scan(lambda c, x: (0, x), (1, 2), jnp.arange(5))
 
 
-  def testScanHigherOrderDifferentiation(self):
+  @parameterized.named_parameters(
+      {"testcase_name": "_{}".format(scan_name),
+       "scan": scan_impl}
+      for scan_impl, scan_name in SCAN_IMPLS)
+  def testScanHigherOrderDifferentiation(self, scan):
     d = 0.75
     def f(c, a):
       b = jnp.sin(c * jnp.sum(jnp.cos(d * a)))
@@ -1203,18 +1215,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     as_ = jnp.arange(6.).reshape((3, 2))
     c = 1.
 
-    jtu.check_grads(lambda c, as_: lax.scan(f, c, as_), (c, as_),
+    jtu.check_grads(lambda c, as_: scan(f, c, as_), (c, as_),
                     modes=["rev"], order=2, rtol={np.float32: 6e-3})
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}_in_axes={}".format(
-          jit_scan, jit_f, in_axes),
-       "jit_scan": jit_scan, "jit_f": jit_f, "in_axes": in_axes}
+      {"testcase_name": "_jit_scan={}_jit_f={}_in_axes={}_impl={}".format(
+          jit_scan, jit_f, in_axes, scan_name),
+       "jit_scan": jit_scan, "jit_f": jit_f, "in_axes": in_axes,
+       "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
+      for scan_impl, scan_name in SCAN_IMPLS
       for in_axes in itertools.product([None, 0, 1], [None, 0, 1, 2])
       if in_axes != (None, None))
-  def testScanVmap(self, jit_scan, jit_f, in_axes):
+  def testScanVmap(self, jit_scan, jit_f, in_axes, scan):
     rng = np.random.RandomState(0)
 
     d = rng.randn(2)
@@ -1229,9 +1243,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     if jit_f:
       f = api.jit(f)
     if jit_scan:
-      scan = api.jit(lax.scan, (0,))
-    else:
-      scan = lax.scan
+      scan = api.jit(scan, (0,))
 
     as_shape = [5, 3]
     c_shape = [4]
