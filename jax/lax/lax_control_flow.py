@@ -33,7 +33,7 @@ from jax import dtypes
 from jax import util
 from jax.lax import lax
 from jax import linear_util as lu
-from jax.abstract_arrays import ShapedArray, raise_to_shaped
+from jax.abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
 from jax.core import get_aval
 from jax.interpreters import ad
@@ -267,10 +267,15 @@ def while_loop(cond_fun, body_fun, init_val):
     The output from the final iteration of body_fun, of type ``a``.
   """
   if jax.api._jit_is_disabled():
-    val = init_val
-    while cond_fun(val):
-      val = body_fun(val)
-    return val
+    try:
+      val = init_val
+      while cond_fun(val):
+        val = body_fun(val)
+      return val
+    except core.ConcretizationTypeError:
+      # Can't run this while_loop in Python (e.g. because there's a vmap
+      # transformation on it), so we fall back to the primitive version.
+      pass
 
   init_vals, in_tree = tree_flatten((init_val,))
   init_avals = tuple(_map(_abstractify, init_vals))
@@ -593,7 +598,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred_dtype))
 
-  if jax.api._jit_is_disabled():
+  if jax.api._jit_is_disabled() and isinstance(core.get_aval(pred), ConcreteArray):
     if pred:
       return true_fun(operand)
     else:
