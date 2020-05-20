@@ -1966,6 +1966,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with api.disable_jit():
       self.assertAllClose(np.cumsum(x[::-1])[::-1], cumsum(x, True), check_dtypes=False)
 
+  def test_disable_jit_cond_with_vmap(self):
+    # https://github.com/google/jax/issues/3093
+    def fn(t):
+      return lax.cond(t > 0, 0, lambda x: 0, 0, lambda x: 1)
+    fn = api.vmap(fn)
+
+    with api.disable_jit():
+      outputs = fn(jnp.array([1]))  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
