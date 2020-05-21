@@ -177,10 +177,8 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return np.exp(x)
 
-    jtu.check_raises(lambda: grad(f)(np.zeros(3)), Exception,
-                     "Tracer can't be used with raw numpy functions. "
-                     "You might have\n  import numpy as np\ninstead of\n"
-                     "  import jax.numpy as jnp")
+    with self.assertRaisesRegex(Exception, "The numpy.ndarray conversion .*"):
+      grad(f)(np.zeros(3))
 
   def test_binop_mismatch(self):
     def f(x, y):
