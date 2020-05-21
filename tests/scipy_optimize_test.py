@@ -86,7 +86,7 @@ class TestLineSearch(jtu.JaxTestCase):
 
   # --
 
-  def setup_method(self):
+  def setup_method(self, *args):
     self.scalar_funcs = []
     self.line_funcs = []
     self.N = 20
