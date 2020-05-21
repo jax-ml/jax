@@ -803,7 +803,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   >>> x = 1.
   >>> def foo(dct, x):
   ...  return dct['a'] + dct['b'] + x
-  >>> out =vmap(foo, in_axes=({'a': None, 'b': 0}, None))(dct, x)
+  >>> out = vmap(foo, in_axes=({'a': None, 'b': 0}, None))(dct, x)
   >>> print(out)
   [1. 2. 3. 4. 5.]
 
