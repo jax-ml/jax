@@ -1473,6 +1473,10 @@ class ShardArgsTest(jtu.JaxTestCase):
           [(4, 8), pxla.ShardingSpec(shards_per_axis=(2, 2),
                                     is_axis_materialized=(True, True),
                                     replication_factor=1)],
+          # partitioned + sharding
+          [(2, 8), pxla.ShardingSpec(shards_per_axis=(2, 2),
+                                     is_axis_materialized=(False, True),
+                                     replication_factor=1)],
           # replication + sharding
           [(2, 8), pxla.ShardingSpec(shards_per_axis=(2, 1),
                                     is_axis_materialized=(False, True),
