@@ -463,6 +463,20 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(np.asarray(post(vals), dtype), shape, dtype)
 
 
+def rand_fullrange(rng, standardize_nans=True):
+  """Random numbers that span the full range of available bits."""
+  def gen(shape, dtype, post=lambda x: x):
+    dtype = np.dtype(dtype)
+    size = dtype.itemsize * np.prod(_dims_of_shape(shape))
+    vals = rng.randint(0, np.iinfo(np.uint8).max, size=size, dtype=np.uint8)
+    vals = post(vals).view(dtype).reshape(shape)
+    # Non-standard NaNs cause errors in numpy equality assertions.
+    if standardize_nans and np.issubdtype(dtype, np.floating):
+      vals[np.isnan(vals)] = np.nan
+    return _cast_to_shape(vals, shape, dtype)
+  return gen
+
+
 def rand_default(rng, scale=3):
   return partial(_rand_dtype, rng.randn, scale=scale)
 
