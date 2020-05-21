@@ -53,7 +53,7 @@ def _linear_indices_and_weights(coordinate):
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
 def _map_coordinates(input, coordinates, order, mode, cval):
   input = jnp.asarray(input)
-  coordinates = [jnp.asarray(c, input.dtype) for c in coordinates]
+  coordinates = [jnp.asarray(c) for c in coordinates]
   cval = jnp.asarray(cval, input.dtype)
 
   if len(coordinates) != input.ndim:
@@ -99,7 +99,7 @@ def _map_coordinates(input, coordinates, order, mode, cval):
       all_valid = functools.reduce(operator.and_, validities)
       contribution = jnp.where(all_valid, input[indices], cval)
     outputs.append(_nonempty_prod(weights) * contribution)
-  result = _nonempty_sum(outputs)
+  result = _nonempty_sum(outputs).astype(input.dtype)
   return result
 
 

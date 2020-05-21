@@ -74,7 +74,7 @@ class NdimageTest(jtu.JaxTestCase):
        "cval": cval, "impl": impl, "round_": round_}
       for shape in [(5,), (3, 4), (3, 4, 5)]
       for coords_shape in [(7,), (2, 3, 4)]
-      for dtype in float_dtypes
+      for dtype in float_dtypes + int_dtypes
       for coords_dtype in float_dtypes
       for order in [0, 1]
       for mode in ['wrap', 'constant', 'nearest']
@@ -100,10 +100,13 @@ class NdimageTest(jtu.JaxTestCase):
     impl_fun = (osp_ndimage.map_coordinates if impl == "original"
                 else _fixed_ref_map_coordinates)
     osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
-    epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
-                   for d in [dtype, coords_dtype]])
-    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon,
-                            check_dtypes=True)
+    if dtype in float_dtypes:
+      epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
+                     for d in [dtype, coords_dtype]])
+      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon,
+                              check_dtypes=True)
+    else:
+      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, check_dtypes=True)
 
   def testMapCoordinatesErrors(self):
     x = onp.arange(5.0)
