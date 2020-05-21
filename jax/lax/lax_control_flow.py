@@ -375,7 +375,8 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
     body_jaxpr_batched, carry_bat_out = batching.batch_jaxpr(
         body_jaxpr, size, batched, instantiate=carry_bat)
     cond_jaxpr_batched, (pred_bat,) = batching.batch_jaxpr(
-        cond_jaxpr, size, cconst_bat + carry_bat, instantiate=False)
+        cond_jaxpr, size, cconst_bat + carry_bat,
+        instantiate=bool(cond_jaxpr.out_avals[0].shape))
     carry_bat_out = _map(partial(operator.or_, pred_bat), carry_bat_out)
     if carry_bat_out == carry_bat:
       break
@@ -389,7 +390,7 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
   new_consts = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
                 else x for x, d in zip(consts, const_dims)]
   new_init = [batching.broadcast(x, size, 0) if now_bat and not was_bat
-              else batching.moveaxis(x, d, 0) if now_bat else x
+              else batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
               for x, d, was_bat, now_bat in zip(init, init_dims, init_bat, carry_bat)]
 
   outs = while_p.bind(*(new_consts + new_init),

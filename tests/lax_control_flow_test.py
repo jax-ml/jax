@@ -1982,6 +1982,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with api.disable_jit():
       api.vmap(trivial_while)(jnp.array([3.0,4.0]))  # doesn't crash
 
+  def test_vmaps_of_while_loop(self):
+    # https://github.com/google/jax/issues/3164
+    def f(x, n): return lax.fori_loop(0, n, lambda _, x: x + 1, x)
+    x, n = jnp.arange(3), jnp.arange(4)
+    api.vmap(api.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
