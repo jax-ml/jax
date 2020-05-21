@@ -1506,11 +1506,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_custom_root_scalar(self):
 
-    # TODO(shoyer): Figure out why this fails and re-enable it, if possible. My
-    # best guess is that TPUs use less stable numerics for pow().
-    if jtu.device_under_test() == "tpu":
-      raise SkipTest("Test fails on TPU")
-
     def scalar_solve(f, y):
       return y / f(1.0)
 
@@ -1534,7 +1529,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return solution
 
     def sqrt_cubed(x, tangent_solve=scalar_solve):
-      f = lambda y: y ** 2. - jnp.array(x) ** 3.
+      f = lambda y: y ** 2 - x ** 3
       return lax.custom_root(f, 0.0, binary_search, tangent_solve)
 
     value, grad = api.value_and_grad(sqrt_cubed)(5.0)
