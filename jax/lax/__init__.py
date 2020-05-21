@@ -297,6 +297,7 @@ from .lax_control_flow import (
   scan_p,
   while_loop,
   while_p,
+  associative_scan,
 )
 from .lax_fft import (
   fft,

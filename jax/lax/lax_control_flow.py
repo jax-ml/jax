@@ -1986,16 +1986,13 @@ def associative_scan(fn, elems):
   np.associative_scan(np.matmul, matrices)
   ```
   """
-  # TODO(mattjj)
-  import jax.numpy as np
-
   elems_flat, tree = tree_flatten(elems)
-  
+
   def lowered_fn(a_flat, b_flat):
     # Lower `fn` to operate on flattened sequences of elems.
     a = tree_unflatten(tree, a_flat)
     b = tree_unflatten(tree, b_flat)
-    c = fn(a, b)    
+    c = fn(a, b)
     c_flat, _ = tree_flatten(c)
     return c_flat
 
@@ -2008,7 +2005,7 @@ def associative_scan(fn, elems):
 
   if num_elems < 2:
     return elems
-    
+
   # Summary of algorithm:
   #
   # Consider elements of `_scan(elems)` at odd indices. That's the same as first
@@ -2035,14 +2032,15 @@ def associative_scan(fn, elems):
     if reduced_elems[0].shape[0] == 1:
       # Base case has either 2 or 3 elements.
       if num_elems == 2:
-        return [np.concatenate([elem[0:1], reduced_elem], axis=0)
+        return [lax.concatenate([elem[0:1], reduced_elem], dimension=0)
                 for (reduced_elem, elem) in zip(reduced_elems, elems)]
       elif num_elems == 3:
         reduced_reduced_elems = lowered_fn(
           reduced_elems,
           [elem[2:3] for elem in elems])
         return [
-            np.concatenate([elem[0:1], reduced_elem, reduced_reduced_elem], axis=0)
+            lax.concatenate([elem[0:1], reduced_elem, reduced_reduced_elem],
+                            dimension=0)
             for (reduced_reduced_elem, reduced_elem, elem)
             in zip(reduced_reduced_elems, reduced_elems, elems)]
 
@@ -2058,7 +2056,7 @@ def associative_scan(fn, elems):
 
     # The first element of a scan is the same as the first element
     # of the original `elems`.
-    even_elems = [np.concatenate([elem[0:1], result], axis=0)
+    even_elems = [lax.concatenate([elem[0:1], result], dimension=0)
                   for (elem, result) in zip(elems, results)]
     return tuple(_map(_interleave, even_elems, odd_elems))
 
