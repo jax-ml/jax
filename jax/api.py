@@ -796,6 +796,17 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   >>> print(vfoo(tree).shape)
   (6, 2, 5)
 
+  Here's another example using container types in ``in_axes``, this time a
+  dictionary, to specify the elements of the container to map over:
+
+  >>> dct = {'a': 0., 'b': np.arange(5.)}
+  >>> x = 1.
+  >>> def foo(dct, x):
+  ...  return dct['a'] + dct['b'] + x
+  >>> out =vmap(foo, in_axes=({'a': None, 'b': 0}, None))(dct, x)
+  >>> print(out)
+  [1. 2. 3. 4. 5.]
+
   The results of a vectorized function can be mapped or unmapped.
   For example, the function below returns a pair with the first
   element mapped and the second unmapped. Only for unmapped results
