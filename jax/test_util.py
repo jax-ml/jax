@@ -463,7 +463,7 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
   return _cast_to_shape(np.asarray(post(vals), dtype), shape, dtype)
 
 
-def rand_fullrange(rng, standardize_nans=True):
+def rand_fullrange(rng, standardize_nans=False):
   """Random numbers that span the full range of available bits."""
   def gen(shape, dtype, post=lambda x: x):
     dtype = np.dtype(dtype)

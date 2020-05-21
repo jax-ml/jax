@@ -107,7 +107,7 @@ For usage example, see tests/loops_test.py.
 import copy
 from functools import partial
 import itertools
-import numpy as onp
+import numpy as np
 import traceback
 from typing import Any, List, cast
 
@@ -179,12 +179,12 @@ class Scope(object):
         s.field = - s.field
     """
     # TODO: share these checks with lax_control_flow.cond
-    if len(onp.shape(pred)) != 0:
+    if len(np.shape(pred)) != 0:
       raise TypeError(
-        "Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
+        "Pred must be a scalar, got {} of shape {}.".format(pred, np.shape(pred)))
 
     try:
-      pred_dtype = onp.result_type(pred)
+      pred_dtype = np.result_type(pred)
     except TypeError as err:
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred)) from err
@@ -563,7 +563,7 @@ class _WhileBuilder(_LoopBuilder):
     if not tree_util.treedef_is_leaf(cond_tree):
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), onp.bool_)]:
+    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), np.bool_)]:
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
 
