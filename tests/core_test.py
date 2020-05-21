@@ -306,12 +306,12 @@ class CoreTest(jtu.JaxTestCase):
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
 
   def test_check_jaxpr_correct(self):
-    jaxpr = make_jaxpr(lambda x: np.sin(x) + np.cos(x))(1.).jaxpr
+    jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
     core.check_jaxpr(jaxpr)
 
   def test_check_jaxpr_eqn_mismatch(self):
     def f(x):
-      return np.sin(x) + np.cos(x)
+      return jnp.sin(x) + jnp.cos(x)
 
     def new_jaxpr():
       return make_jaxpr(f)(1.).jaxpr
