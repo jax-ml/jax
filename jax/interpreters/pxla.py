@@ -716,7 +716,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   if devices is None:
     if num_global_shards > xb.device_count(backend):
-      msg = ("compiling computation that requires {} replicas, but only {} XLA "
+      msg = ("compiling computation that requires {} logical devices, but only {} XLA "
              "devices are available (num_replicas={}, num_partitions={})")
       raise ValueError(msg.format(num_global_shards, xb.device_count(backend),
                                   num_global_replicas, num_partitions))
