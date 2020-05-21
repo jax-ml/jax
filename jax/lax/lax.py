@@ -1723,11 +1723,14 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, *args, **kwargs):
   least_specialized = _max(
       map(type, args), key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
-    return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs))
+    return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs),
+                         weak_type=all(x.weak_type for x in args))
   elif least_specialized is ShapedArray:
-    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs))
+    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs),
+                       weak_type=all(x.weak_type for x in args))
   elif least_specialized is UnshapedArray:
-    return UnshapedArray(dtype_rule(*args, **kwargs))
+    return UnshapedArray(dtype_rule(*args, **kwargs),
+                         weak_type=all(x.weak_type for x in args))
   else:
     raise TypeError(args, least_specialized)
 

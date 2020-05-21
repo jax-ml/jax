@@ -100,7 +100,8 @@ def aval_to_result_handler(device: Optional[Device], aval: core.ShapedArray):
     raise TypeError(f"No xla_result_handler for type: {type(aval)}") from err
 
 def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
-  return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
+  return partial(DeviceArray, raise_to_shaped(aval, weak_type=aval.weak_type),
+                 device, lazy.array(aval.shape))
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
     core.AbstractUnit: lambda _, __: lambda _: core.unit,

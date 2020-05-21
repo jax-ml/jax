@@ -1706,6 +1706,23 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       g(jnp.ones((1, 1)), b=1)
 
+  def test_weak_type_jit_caching(self):
+    # https://github.com/google/jax/issues/3163
+    my_fn_calls = 0
+
+    @jax.jit
+    def my_fn(x, y):
+        nonlocal my_fn_calls
+        my_fn_calls += 1
+        return x + y
+
+    x = 0
+    for i in range(10):
+        x = my_fn(x, i)
+
+    self.assertEqual(my_fn_calls, 1)
+
+
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):

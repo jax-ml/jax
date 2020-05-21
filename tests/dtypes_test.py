@@ -104,7 +104,7 @@ class DtypesTest(jtu.JaxTestCase):
     op = jax.jit(operator.add) if jit else operator.add
     for x, y, dtype in testcases:
       x, y = (y, x) if swap else (x, y)
-      z = x + y
+      z = op(x, y)
       self.assertTrue(isinstance(z, jnp.ndarray), msg=(x, y, z))
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
