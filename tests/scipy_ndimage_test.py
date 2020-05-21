@@ -120,6 +120,16 @@ class NdimageTest(jtu.JaxTestCase):
     self.assertIn("Only linear interpolation",
                   lsp_ndimage.map_coordinates.__doc__)
 
+  def testMapCoordinatesRoundHalf(self):
+    x = onp.arange(5)
+    c = onp.array([[1.5, 2.5, 3.5, 4.5]])
+    def args_maker():
+      return x, c
+
+    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=0)
+    osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=0)
+    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, check_dtypes=True)
+
   def testContinuousGradients(self):
     # regression test for https://github.com/google/jax/issues/3024
 
