@@ -1081,7 +1081,7 @@ class _JaxprContext(object):
     env = self.env
     if type(v) is not Literal:
       if v not in env:
-        raise Exception(
+        raise TypeError(
             "Variable '{}' not defined".format(v) + self._msg_context())
       if v.aval != env[v]:
         raise TypeError(
@@ -1092,7 +1092,7 @@ class _JaxprContext(object):
   def write_env(self, v: Var):
     env = self.env
     if v in env:
-      raise Exception(
+      raise TypeError(
           "Variable {} already bound".format(v) + self._msg_context())
     env[v] = v.aval
     return v
@@ -1126,7 +1126,7 @@ def check_jaxpr_eqn(ctx, eqn):
 
   if prim.call_primitive or prim.map_primitive:
     if "call_jaxpr" not in eqn.params:
-      raise Exception("Call primitive {} should have a 'call_jaxpr' parameter"
+      raise TypeError("Call primitive {} should have a 'call_jaxpr' parameter"
                       .format(prim))
 
   invars = map(ctx.read_env, eqn.invars)
