@@ -490,20 +490,20 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
                           instantiate=True,
                           trace_type=None)
 
-  # Make a primal_jaxpr into a function. The flattening business is necessary so
-  # that we can thread UndefinedPrimals through the bind call. Note that jaxpr_as_fun
-  # doesn't understand how to handle those either, but tangent arguments are usued,
-  # so it should just ignore them.
-  primal_fun = lu.wrap_init(core.jaxpr_as_fun(primal_jaxpr))
-  flat_primals, in_tree_def = tree_flatten(primals_in)
-  primal_fun, _ = flatten_fun_nokwargs(primal_fun, in_tree_def)
-  residuals = pe.remat_call_p.bind(primal_fun, *flat_primals, **params)[len(cotangents_in):]
+  def do_transpose(primals_in, cotangents_in):
+    # NOTE: This is passing in undefined primals in place of tangent arguments, but it
+    #       should all work out, because we're only computing the primal part here.
+    residuals = core.jaxpr_as_fun(primal_jaxpr)(*primals_in)[len(cotangents_in):]
+    # Now that we have a purely linear jaxpr, we can transpose it
+    cotangents_out = backward_pass(tangent_jaxpr.jaxpr, (), primals_in + residuals, cotangents_in)
+    # backward_pass will return cotangents computed for all invars, but some of them
+    # are residuals appended by partial eval, so we need to skip those before we return.
+    return cotangents_out[:len(primals_in)]
 
-  cotangents_out = call_transpose(pe.remat_call_p, params, tangent_jaxpr.jaxpr,
-                                  primals_in + residuals, cotangents_in, cotangent_in_avals)
-  # call_transpose will return cotangents computed for all invars, but some of them
-  # are residuals appended by partial eval, so we need to skip those before we return.
-  return cotangents_out[:len(primals_in)]
+  flat_args, in_tree_def = tree_flatten((primals_in, cotangents_in))
+  flat_do_transpose, out_tree = flatten_fun_nokwargs(lu.wrap_init(do_transpose), in_tree_def)
+  flat_cotangents_out = pe.remat_call_p.bind(flat_do_transpose, *flat_args, **params)
+  return tree_unflatten(out_tree(), flat_cotangents_out)
 primitive_transposes[pe.remat_call_p] = remat_transpose
 
 
