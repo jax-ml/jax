@@ -373,7 +373,7 @@ class Tracer(object):
   def __array__(self, *args, **kw):
     msg = ("The numpy.ndarray conversion method __array__() was called on "
            f"the JAX Tracer object {self}.\n\n"
-           "This error can occurr when a JAX Tracer object is passed to a raw "
+           "This error can occur when a JAX Tracer object is passed to a raw "
            "numpy function, or a method on a numpy.ndarray object. You might "
            "want to check that you are using `jnp` together with "
            "`import jax.numpy as jnp` rather than using `np` via "
