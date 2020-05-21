@@ -362,7 +362,8 @@ def _notuple_psum_translation_rule(c, *args, replica_groups):
   return xops.Tuple(c, list(map(_translate, args)))
 
 psum_p = standard_pmap_primitive('psum', multiple_results=True)
-psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
+psum_p.def_abstract_eval(
+    lambda *args, **params: tuple(map(raise_to_shaped, args)))
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
