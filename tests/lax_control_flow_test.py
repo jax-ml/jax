@@ -16,6 +16,7 @@
 import collections
 from functools import partial
 import itertools
+import operator
 import re
 from typing import Callable
 from unittest import SkipTest
@@ -1987,6 +1988,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(x, n): return lax.fori_loop(0, n, lambda _, x: x + 1, x)
     x, n = jnp.arange(3), jnp.arange(4)
     api.vmap(api.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
+
+  def testAssociativeScanUnstructured1000(self):
+    data = np.arange(1000)
+    expected = np.cumsum(data)
+    result = lax.associative_scan(operator.add, data)
+    self.assertAllClose(result, expected, check_dtypes=False)
+
+  def testAssociativeScanStructured3(self):
+    pair = collections.namedtuple('pair', ('first', 'second'))
+    data = pair(first=np.array([0., 1., 2.]),
+                second=np.array([0., 10., 20.]))
+
+    def fn(a, b):
+      return pair(first=a.first + b.first,
+                  second=a.second + b.second)
+
+    result = lax.associative_scan(fn, elems=data)
+    self.assertAllClose(result.first, np.array([0., 1., 3.]),
+                        check_dtypes=False)
+    self.assertAllClose(result.second, np.array([0., 10., 30.]),
+                        check_dtypes=False)
 
 
 if __name__ == '__main__':
