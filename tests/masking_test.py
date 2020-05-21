@@ -148,24 +148,29 @@ class MaskingTest(jtu.JaxTestCase):
     masked_fun = mask(fun, in_shapes, out_shape)
     padded_args = [rng(shape, dtype)
                    for shape, dtype in zip(padded_in_shapes, dtypes)]
-    padded_ans = masked_fun(padded_args, logical_env)
-    logical_out_shape = eval_polymorphic_shape(
-        finalize_spec(out_shape, padded_ans.shape), logical_env)
-    logical_ans = padded_ans[tuple(slice(d) for d in logical_out_shape)]
+    padded_outs, outs_tree = tree_flatten(masked_fun(padded_args, logical_env))
 
-    in_shapes = [finalize_spec(polymorphic_shape, padded_shape) for
-                 polymorphic_shape, padded_shape
-                 in zip(in_shapes, padded_in_shapes)]
-    logical_in_shapes = [eval_polymorphic_shape(shape, logical_env)
-                         for shape in in_shapes]
-    logical_args = [rng(shape, dtype)
-                    for shape, dtype in zip(logical_in_shapes, dtypes)]
-    logical_ans_expected = fun(*logical_args)
-    self.assertAllClose(logical_ans, logical_ans_expected, check_dtypes=True,
+    out_specs, _ = tree_flatten(out_shape)
+    out_specs = map(parse_spec, out_specs)
+    out_specs = map(finalize_spec, out_specs, map(np.shape, padded_outs))
+    logical_out_shapes = [eval_polymorphic_shape(s, logical_env)
+                          for s in out_specs]
+    logical_out_slices = [tuple(map(slice, s)) for s in logical_out_shapes]
+    logical_outs = [o[s] for o, s in zip(padded_outs, logical_out_slices)]
+
+    in_specs = map(parse_spec, in_shapes)
+    in_specs = map(finalize_spec, in_specs, padded_in_shapes)
+    logical_in_shapes = [eval_polymorphic_shape(s, logical_env)
+                         for s in in_specs]
+    logical_in_slices = [tuple(map(slice, s)) for s in logical_in_shapes]
+    logical_args = [a[s] for a, s in zip(padded_args, logical_in_slices)]
+    logical_outs_expected, _ = tree_flatten(fun(*logical_args))
+    self.assertAllClose(logical_outs, logical_outs_expected, check_dtypes=True,
                         atol=atol, rtol=rtol)
 
-    padded_ans_jit = jit(masked_fun)(padded_args, logical_env)
-    self.assertAllClose(padded_ans_jit, padded_ans)
+    padded_outs_jit, _ = tree_flatten(jit(masked_fun)(padded_args, logical_env))
+    self.assertAllClose(padded_outs_jit, padded_outs, check_dtypes=True,
+                        atol=atol, rtol=rtol)
 
 
   def test_add(self):
