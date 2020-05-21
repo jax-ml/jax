@@ -231,13 +231,13 @@ class JaxprTrace(Trace):
     params = dict(params, name=name)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     reduced_pvs = [None if pv is None else
-                   _mapped_aval(params['axis_size'], pv) if m else pv
+                   core.mapped_aval(params['axis_size'], pv) if m else pv
                    for pv, m in zip(in_pvs, params['mapped_invars'])]
     fun, aux = partial_eval(f, self, reduced_pvs)
     out_flat = map_primitive.bind(fun, *in_consts, **params)
     out_pvs_reduced, jaxpr, env = aux()
     out_pv_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
+    out_pvs = [None if pv is None else core.unmapped_aval(params['axis_size'], pv)
                for pv in out_pvs_reduced]
     const_tracers = map(self.new_instantiated_const, consts)
     env_tracers = map(self.full_raise, env)
@@ -261,7 +261,8 @@ class JaxprTrace(Trace):
   def post_process_map(self, map_primitive, out_tracers, params):
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
     out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
-    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
+    out_pvs = [None if pv is None
+               else core.unmapped_aval(params['axis_size'], pv)
                for pv in out_pvs_reduced]
     out = out_pv_consts + consts
     del consts, out_pv_consts
@@ -304,24 +305,6 @@ class JaxprTrace(Trace):
 # call primitives encountered (rather than doing partial evaluation into the call).
 class StagingJaxprTrace(JaxprTrace):
   pass
-
-def _mapped_aval(size, aval):
-  if aval is core.abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    # might be raising abstraction level from Concrete here
-    assert aval.shape[0] == size
-    return ShapedArray(aval.shape[1:], aval.dtype)
-  else:
-    raise TypeError(aval)
-
-def _unmapped_aval(size, aval):
-  if aval is core.abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    return ShapedArray((size,) + aval.shape, aval.dtype)
-  else:
-    raise TypeError(aval)
 
 custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 call_partial_eval_rules: Dict[core.Primitive, Callable] = {}

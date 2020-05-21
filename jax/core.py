@@ -1053,6 +1053,24 @@ call_p.def_impl(call_impl)
 
 # ------------------- Jaxpr checking -------------------
 
+def mapped_aval(size, aval):
+  if aval is abstract_unit:
+    return aval
+  elif isinstance(aval, ShapedArray):
+    # might be raising abstraction level from Concrete here
+    assert aval.shape[0] == size
+    return ShapedArray(aval.shape[1:], aval.dtype)
+  else:
+    raise TypeError(f"Mapped operand {aval}")
+
+def unmapped_aval(size, aval):
+  if aval is abstract_unit:
+    return aval
+  elif isinstance(aval, ShapedArray):
+    return ShapedArray((size,) + aval.shape, aval.dtype)
+  else:
+    raise TypeError(f"Mapped output {aval}")
+
 def typecheck(aval, x):
   return typecompat(aval, get_aval(x))
 
@@ -1121,27 +1139,71 @@ def check_jaxpr(jaxpr: Jaxpr):
 
   map(read, jaxpr.outvars)
 
+def _valid_eqn_assignment(dst_aval, src_aval):
+  # TODO(frostig): we'd rather this check simply be `typecompat` and not allow
+  # assignment to an AbstractUnit, but partial_eval.tracers_to_jaxpr types eqn
+  # outvars as AbstractUnit if the outvars are unused.
+  return dst_aval is abstract_unit or typecompat(dst_aval, src_aval)
+
 def check_jaxpr_eqn(ctx, eqn):
-  prim = eqn.primitive
-
-  if prim.call_primitive or prim.map_primitive:
-    if "call_jaxpr" not in eqn.params:
-      raise TypeError("Call primitive {} should have a 'call_jaxpr' parameter"
-                      .format(prim))
-
   invars = map(ctx.read_env, eqn.invars)
+  inferred_out_avals = type_transfer(eqn.primitive, invars, eqn.params)
   outvars = map(ctx.write_env, eqn.outvars)
 
-  in_avals = [v.aval for v in invars]
-  inferred_out_avals = prim.abstract_eval(*in_avals, **eqn.params)
-  if not prim.multiple_results:
-    inferred_out_avals = [inferred_out_avals]
-
   for outvar, inferred_out_aval in zip(outvars, inferred_out_avals):
-    if not typecompat(outvar.aval, inferred_out_aval):
+    if not _valid_eqn_assignment(outvar.aval, inferred_out_aval):
       raise TypeError(
-          "Jaxpr equation LHS {} is {}, RHS is inferred as {}, in '{}'".format(
-              outvar, outvar.aval, inferred_out_aval, eqn))
+          f"Jaxpr equation LHS {outvar} is {outvar.aval}, "
+          f"RHS is inferred as {inferred_out_aval}, in '{eqn}'")
+
+def type_transfer(prim, invars, params):
+  in_avals = [v.aval for v in invars]
+
+  if prim.call_primitive or prim.map_primitive:
+    if "call_jaxpr" not in params:
+      raise TypeError(
+          f"Call primitive {prim} missing 'call_jaxpr' parameter")
+
+    if prim.map_primitive:
+      if "axis_size" not in params:
+        raise TypeError(
+            f"Map primitive {prim} missing 'axis_size' parameter")
+      if "mapped_invars" not in params:
+        raise TypeError(
+            f"Map primitive {prim} missing 'mapped_invars' parameter")
+
+    call_jaxpr = params["call_jaxpr"]
+    if len(invars) != len(call_jaxpr.invars):
+      raise TypeError(
+          f"Call primitive {prim} with {len(invars)} operands "
+          f"cannot call jaxpr with {len(call_jaxpr.invars)} invars")
+
+    binder_avals = [v.aval for v in call_jaxpr.invars]
+
+    if prim.map_primitive:
+      axis_size = params["axis_size"]
+      mapped_invars = params["mapped_invars"]
+      binder_avals = [unmapped_aval(axis_size, aval) if mapped else aval
+                      for aval, mapped in zip(binder_avals, mapped_invars)]
+
+    for binder_aval, in_aval in zip(binder_avals, in_avals):
+      if not typecompat(binder_aval, in_aval):
+        raise TypeError(
+            f"Call primitive {prim} passes operand {in_aval} "
+            f"to jaxpr expecting {binder_aval}")
+
+    out_avals = [v.aval for v in call_jaxpr.outvars]
+
+    if prim.map_primitive:
+      axis_size = params["axis_size"]
+      out_avals = [unmapped_aval(axis_size, aval) for aval in out_avals]
+  else:
+    out_avals = prim.abstract_eval(*in_avals, **params)
+
+  if not prim.multiple_results:
+    out_avals = [out_avals]
+
+  return out_avals
 
 
 # ------------------- Jaxpr printed representation -------------------
