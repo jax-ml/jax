@@ -607,7 +607,7 @@ _replicated_param = object()
 
 def _xla_callable_args(
     c, avals, tuple_args, replicated=None,
-    partitions: Optional[Sequence[Optional[Tuple[int]]]] = None):
+    partitions: Optional[Sequence[Optional[Sequence[int]]]] = None):
   assert partitions is None or len(partitions) == len(avals)
   if not tuple_args:
     if replicated is None:

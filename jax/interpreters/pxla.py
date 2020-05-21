@@ -748,6 +748,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
                        "but %s devices were specified" %
                        (num_global_shards, len(devices)))
 
+  # 'devices' may be 1D or 2D at this point (e.g.
+  # get_default_device_assignment() returns 2D assignment, caller may have
+  # provided 1D list of devices).
   device_assignment = tree_map(lambda d: d.id, devices)
   compile_options = xb.get_compile_options(
           num_replicas=num_global_replicas,
@@ -956,8 +959,8 @@ def _pval_to_result_handler(axis_size, nrep, npart, parts, pval, devices, backen
 
 def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, mapped):
   if not mapped and npart > 1:
-    # TODO(skye): ShardingSpec assumes replication is treated as the innermost
-    # axis, but in this case, it needs to be the outer axis.
+    # TODO(skye, jekbradbury): ShardingSpec assumes replication is treated as
+    # the innermost axis, but in this case, it needs to be the outer axis.
     raise NotImplementedError(
         "Using pmap(in_axes=None) over sharded_jit not yet implemented.")
 
