@@ -454,6 +454,8 @@ def _axis_index_translation_rule(c, nreps, sizes, soft_size, axis_name):
 
 axis_index_p = core.Primitive('axis_index')
 axis_index_p.def_custom_bind(_axis_index_bind)
+axis_index_p.def_abstract_eval(
+    lambda *args, **params: ShapedArray((), onp.int32))
 xla.translations[axis_index_p] = _axis_index_translation_rule
 
 

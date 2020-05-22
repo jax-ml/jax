@@ -25,7 +25,8 @@ from absl.testing import parameterized
 from jax import core
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax.api import jvp, linearize, vjp, jit
+from jax.abstract_arrays import make_shaped_array
+from jax.api import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray, ConcreteArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.util import partial
@@ -303,6 +304,42 @@ class CoreTest(jtu.JaxTestCase):
         newsym(core.abstract_unit), newsym(core.abstract_unit))
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
+
+  def test_check_jaxpr_correct(self):
+    jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
+    core.check_jaxpr(jaxpr)
+
+  def test_check_jaxpr_eqn_mismatch(self):
+    def f(x):
+      return jnp.sin(x) + jnp.cos(x)
+
+    def new_jaxpr():
+      return make_jaxpr(f)(1.).jaxpr
+
+    # jaxpr is:
+    #
+    # { lambda  ; a.
+    #   let b = sin a
+    #       c = cos a
+    #       d = add b c
+    #   in (d,) }
+    #
+    # NB: eqns[0].outvars[0] and eqns[2].invars[0] are both 'b'
+
+    jaxpr = new_jaxpr()
+    jaxpr.eqns[0].outvars[0].aval = make_shaped_array(2)   # int, not float!
+    jtu.check_raises_regexp(
+        lambda: core.check_jaxpr(jaxpr),
+        TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
+                    "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
+
+    jaxpr = new_jaxpr()
+    jaxpr.eqns[0].outvars[0].aval = make_shaped_array(np.ones((2, 3)))
+    jtu.check_raises_regexp(
+        lambda: core.check_jaxpr(jaxpr),
+        TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
+                    "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
+
 
 if __name__ == '__main__':
   absltest.main()
