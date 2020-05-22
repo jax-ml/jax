@@ -21,7 +21,7 @@ from jax.experimental import optimizers
 from jax.experimental import optix
 import jax.test_util
 from jax.tree_util import tree_leaves
-import numpy as onp
+import numpy as np
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -58,7 +58,7 @@ class OptixTest(absltest.TestCase):
 
     # Check equivalence.
     for x, y in zip(tree_leaves(jax_params), tree_leaves(optix_params)):
-      onp.testing.assert_allclose(x, y, rtol=1e-5)
+      np.testing.assert_allclose(x, y, rtol=1e-5)
 
   jax.test_util.skip_on_devices("tpu")
   def test_apply_every(self):
@@ -92,13 +92,13 @@ class OptixTest(absltest.TestCase):
         for x, y in zip(
             tree_leaves(optix_sgd_apply_every_params),
             tree_leaves(optix_sgd_params)):
-          onp.testing.assert_allclose(x, y, atol=1e-6, rtol=100)
+          np.testing.assert_allclose(x, y, atol=1e-6, rtol=100)
       else:
         # Check updaue is zero.
         for x, y in zip(
             tree_leaves(updates_sgd_apply_every),
             tree_leaves(zero_update)):
-          onp.testing.assert_allclose(x, y, atol=1e-10, rtol=1e-5)
+          np.testing.assert_allclose(x, y, atol=1e-10, rtol=1e-5)
 
   def test_adam(self):
     b1, b2, eps = 0.9, 0.999, 1e-8
@@ -121,7 +121,7 @@ class OptixTest(absltest.TestCase):
 
     # Check equivalence.
     for x, y in zip(tree_leaves(jax_params), tree_leaves(optix_params)):
-      onp.testing.assert_allclose(x, y, rtol=1e-4)
+      np.testing.assert_allclose(x, y, rtol=1e-4)
 
   def test_rmsprop(self):
     decay, eps = .9, 0.1
@@ -144,7 +144,7 @@ class OptixTest(absltest.TestCase):
 
     # Check equivalence.
     for x, y in zip(tree_leaves(jax_params), tree_leaves(optix_params)):
-      onp.testing.assert_allclose(x, y, rtol=1e-5)
+      np.testing.assert_allclose(x, y, rtol=1e-5)
 
 
 if __name__ == '__main__':

@@ -796,6 +796,17 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   >>> print(vfoo(tree).shape)
   (6, 2, 5)
 
+  Here's another example using container types in ``in_axes``, this time a
+  dictionary, to specify the elements of the container to map over:
+
+  >>> dct = {'a': 0., 'b': np.arange(5.)}
+  >>> x = 1.
+  >>> def foo(dct, x):
+  ...  return dct['a'] + dct['b'] + x
+  >>> out = vmap(foo, in_axes=({'a': None, 'b': 0}, None))(dct, x)
+  >>> print(out)
+  [1. 2. 3. 4. 5.]
+
   The results of a vectorized function can be mapped or unmapped.
   For example, the function below returns a pair with the first
   element mapped and the second unmapped. Only for unmapped results
@@ -825,11 +836,16 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  if (not isinstance(in_axes, (list, tuple, type(None), int))
-      or not isinstance(out_axes, (list, tuple, type(None), int))):
-    msg = ("vmap arguments in_axes and out_axes must each be an integer, None, "
-           "or a (nested) tuple of those types, got {} and {} respectively.")
-    raise TypeError(msg.format(type(in_axes), type(out_axes)))
+  if not all(isinstance(l, (type(None), int, batching._Last))
+             for l in tree_leaves(in_axes)):
+    msg = ("vmap in_axes must be an int, None, or (nested) container with "
+           "those types as leaves, but got {}.")
+    raise TypeError(msg.format(in_axes))
+  if not all(isinstance(l, (type(None), int, batching._Last))
+             for l in tree_leaves(out_axes)):
+    msg = ("vmap out_axes must be an int, None, or (nested) container with "
+           "those types as leaves, but got {}.")
+    raise TypeError(msg.format(out_axes))
 
   @wraps(fun, docstr=docstr)
   def batched_fun(*args):

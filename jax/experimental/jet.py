@@ -15,7 +15,7 @@
 
 from functools import partial
 
-import numpy as onp
+import numpy as np
 
 import jax
 from jax import core
@@ -60,7 +60,7 @@ def jet_fun(order, primals, series):
     master.order = order
     out_primals, out_terms = yield (master, primals, series), {}
     del master
-  out_terms = [[onp.zeros_like(p)] * order if s is zero_series else s
+  out_terms = [[np.zeros_like(p)] * order if s is zero_series else s
                for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms
 
@@ -118,7 +118,7 @@ class JetTrace(core.Trace):
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
     # TODO(mattjj): avoid always instantiating zeros
-    series_in = [[onp.zeros(onp.shape(x), dtype=onp.result_type(x))
+    series_in = [[np.zeros(np.shape(x), dtype=np.result_type(x))
                   if t is zero_term else t for t in series]
                  for x, series in zip(primals_in, series_in)]
     rule = jet_rules[primitive]
@@ -232,7 +232,7 @@ def deriv_prop(prim, deriv, primals_in, series_in):
   return primal_out, series_out
 
 
-def_deriv(lax.erf_p, lambda x: lax.mul(lax._const(x, 2. / onp.sqrt(onp.pi)), lax.exp(lax.neg(lax.square(x)))))
+def_deriv(lax.erf_p, lambda x: lax.mul(lax._const(x, 2. / np.sqrt(np.pi)), lax.exp(lax.neg(lax.square(x)))))
 
 def def_comp(prim, comp):
   """
@@ -294,7 +294,7 @@ def _integer_pow_taylor(primals_in, series_in, *, y):
   if y == 2:
     fn = lambda x: x * x
   else:
-    fn = lambda x: lax.pow(x, onp.array(y, dtype=x.dtype))
+    fn = lambda x: lax.pow(x, np.array(y, dtype=x.dtype))
   return jet(fn, primals_in, series_in)
 jet_rules[lax.integer_pow_p] = _integer_pow_taylor
 

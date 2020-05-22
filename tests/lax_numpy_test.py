@@ -2220,16 +2220,41 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, a_dtype), dtype),
       "shape": shape, "a_dtype": a_dtype, "dtype": dtype}
       for shape in [(8,), (3, 8)]  # last dim = 8 to ensure shape compatibility
-      for a_dtype in [np.bool_, np.uint8, np.float16, np.int32, np.float64]
-      for dtype in [np.bool_, np.int8, np.int16, np.float32, np.float64]))
-  @jtu.skip_on_devices("tpu")
+      for a_dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)
+      for dtype in (default_dtypes + unsigned_dtypes + bool_dtypes)))
   def testView(self, shape, a_dtype, dtype):
-    if not FLAGS.jax_enable_x64 and a_dtype == np.float64 or dtype == np.float64:
-      self.skipTest("x64 types are disabled by jax_enable_x64")
-    rng = jtu.rand_default(self.rng())
+    if jtu.device_under_test() == 'tpu':
+      if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:
+        self.skipTest("arr.view() not supported on TPU for 8- or 16-bit types.")
+    if not FLAGS.jax_enable_x64:
+      if jnp.dtype(a_dtype).itemsize == 8 or jnp.dtype(dtype).itemsize == 8:
+        self.skipTest("x64 types are disabled by jax_enable_x64")
+    rng = jtu.rand_fullrange(self.rng())
     args_maker = lambda: [rng(shape, a_dtype)]
     np_op = lambda x: np.asarray(x).view(dtype)
     jnp_op = lambda x: jnp.asarray(x).view(dtype)
+    # Above may produce signaling nans; ignore warnings from invalid values.
+    with np.errstate(invalid='ignore'):
+      self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True)
+      self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+
+  def testPathologicalFloats(self):
+    args_maker = lambda: [np.array([
+      0b_0111_1111_1000_0000_0000_0000_0000_0000, # inf
+      0b_1111_1111_1000_0000_0000_0000_0000_0000, # -inf
+      0b_0111_1111_1100_0000_0000_0000_0000_0000, # qnan
+      0b_1111_1111_1100_0000_0000_0000_0000_0000, # -qnan
+      0b_0111_1111_1000_0000_0000_0000_0000_0001, # snan
+      0b_1111_1111_1000_0000_0000_0000_0000_0001, # -snan
+      0b_0111_1111_1000_0000_0000_1100_0000_0000, # nonstandard nan
+      0b_1111_1111_1000_0000_0000_1100_0000_0000, # -nonstandard nan
+      0b_0000_0000_0000_0000_0000_0000_0000_0000, # zero
+      0b_1000_0000_0000_0000_0000_0000_0000_0000, # -zero
+    ], dtype='uint32')]
+
+    np_op = lambda x: np.asarray(x).view('float32').view('uint32')
+    jnp_op = lambda x: jnp.asarray(x).view('float32').view('uint32')
+
     self._CheckAgainstNumpy(jnp_op, np_op, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 

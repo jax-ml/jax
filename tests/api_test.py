@@ -177,10 +177,8 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return np.exp(x)
 
-    jtu.check_raises(lambda: grad(f)(np.zeros(3)), Exception,
-                     "Tracer can't be used with raw numpy functions. "
-                     "You might have\n  import numpy as np\ninstead of\n"
-                     "  import jax.numpy as jnp")
+    with self.assertRaisesRegex(Exception, "The numpy.ndarray conversion .*"):
+      grad(f)(np.zeros(3))
 
   def test_binop_mismatch(self):
     def f(x, y):
@@ -1068,6 +1066,16 @@ class APITest(jtu.JaxTestCase):
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(jnp.ones(3))
     )
 
+  def test_vmap_in_axes_leaf_types(self):
+    with self.assertRaisesRegex(
+        TypeError, r"vmap in_axes must be an int, None, or .*"):
+      api.vmap(lambda x: x, in_axes=(jnp.array([1., 2.]),))(jnp.array([1., 2.]))
+
+  def test_vmap_out_axes_leaf_types(self):
+    with self.assertRaisesRegex(
+        TypeError, r"vmap out_axes must be an int, None, or .*"):
+      api.vmap(lambda x: x, out_axes=(jnp.array([1., 2.]),))(jnp.array([1., 2.]))
+
   def test_vmap_unbatched_object_passthrough_issue_183(self):
     # https://github.com/google/jax/issues/183
     fun = lambda f, x: f(x)
@@ -1115,10 +1123,6 @@ class APITest(jtu.JaxTestCase):
         ValueError, "vmap got arg 0 of rank 0 but axis to be mapped 0"):
       # The mapped inputs cannot be scalars
       api.vmap(lambda x: x)(1.)
-
-    with self.assertRaisesRegex(
-        ValueError, re.escape("vmap got arg 0 of rank 1 but axis to be mapped [1. 2.]")):
-      api.vmap(lambda x: x, in_axes=(jnp.array([1., 2.]),))(jnp.array([1., 2.]))
 
     with self.assertRaisesRegex(
         ValueError, "vmap must have at least one non-None value in in_axes"):
