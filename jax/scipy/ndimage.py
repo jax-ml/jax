@@ -101,8 +101,8 @@ def _map_coordinates(input, coordinates, order, mode, cval):
     outputs.append(_nonempty_prod(weights) * contribution)
   result = _nonempty_sum(outputs)
   if jnp.issubdtype(input.dtype, jnp.integer):
-    return jnp.around(result).astype(input.dtype)
-  return result
+    result = jnp.around(result)
+  return result.astype(input.dtype)
 
 
 @_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
