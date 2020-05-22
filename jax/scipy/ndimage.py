@@ -21,6 +21,7 @@ import textwrap
 import scipy.ndimage
 
 from .. import api
+from .. import lax
 from ..numpy import lax_numpy as jnp
 from ..numpy._util import _wraps
 from ..util import safe_zip as zip
@@ -36,12 +37,8 @@ _INDEX_FIXERS = {
 }
 
 
-def _round_half_up(a):
-    return jnp.floor(a + .5)
-
-
 def _round_half_away_from_zero(a):
-    return jnp.copysign(_round_half_up(jnp.abs(a)), a)
+  return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)
 
 
 def _nearest_indices_and_weights(coordinate):
