@@ -63,6 +63,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     atleast_2d
     atleast_3d
     bartlett
+    bincount
     bitwise_and
     bitwise_not
     bitwise_or
@@ -95,11 +96,13 @@ Not every function in NumPy is implemented; contributions are welcome!
     diag
     diag_indices
     diagonal
+    digitize
     divide
     divmod
     dot
     dsplit
     dstack
+    ediff1d
     einsum
     equal
     empty
@@ -130,15 +133,20 @@ Not every function in NumPy is implemented; contributions are welcome!
     hamming
     hanning
     heaviside
+    histogram
+    histogram_bin_edges
     hsplit
     hstack
     hypot
     identity
     imag
+    in1d
+    indices
     inner
     isclose
     iscomplex
     isfinite
+    isin
     isinf
     isnan
     isneginf
@@ -223,6 +231,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     rot90
     round
     row_stack
+    searchsorted
     select
     sign
     signbit
@@ -255,7 +264,9 @@ Not every function in NumPy is implemented; contributions are welcome!
     triu_indices
     true_divide
     trunc
+    unique
     unpackbits
+    unravel_index
     vander
     var
     vdot
@@ -306,6 +317,7 @@ jax.numpy.linalg
   eigvals
   eigvalsh
   inv
+  lstsq
   matrix_power
   matrix_rank
   multi_dot

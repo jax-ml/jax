@@ -17,7 +17,7 @@
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 45)
+_minimum_jaxlib_version = (0, 1, 47)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
@@ -45,10 +45,6 @@ def _check_jaxlib_version():
 _check_jaxlib_version()
 
 
-try:
-  from jaxlib import tpu_client  # pytype: disable=import-error
-except:
-  tpu_client = None
 from jaxlib import xla_client
 from jaxlib import lapack
 
@@ -58,3 +54,8 @@ try:
   from jaxlib import cuda_prng
 except ImportError:
   cuda_prng = None
+
+try:
+  from jaxlib import tpu_client  # pytype: disable=import-error
+except:
+  tpu_client = None

@@ -22,7 +22,7 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
-from typing import Callable, Dict
+from typing import Callable, Dict, Sequence, Tuple, Union
 import warnings
 
 from absl import logging
@@ -162,7 +162,7 @@ def get_device_backend(device=None):
   return get_backend(platform)
 
 
-def device_count(backend=None):
+def device_count(backend: str = None):
   """Returns the total number of devices.
 
   On most platforms, this is the same as ``local_device_count()``. However, on
@@ -179,18 +179,21 @@ def device_count(backend=None):
   return int(get_backend(backend).device_count())
 
 
-def local_device_count(backend=None):
+def local_device_count(backend: str =None):
   """Returns the number of devices on this host."""
   return int(get_backend(backend).local_device_count())
 
 
-def devices(backend=None):
-  """Returns a list of all devices.
+def devices(backend: str = None):
+  """Returns a list of all devices for a given backend.
 
-  Each device is represented by a subclass of Device (e.g. CpuDevice,
-  GpuDevice). The length of the returned list is equal to
-  ``device_count()``. Local devices can be identified by comparing
+  Each device is represented by a subclass of ``Device`` (e.g. ``CpuDevice``,
+  ``GpuDevice``). The length of the returned list is equal to
+  ``device_count(backend)``. Local devices can be identified by comparing
   ``Device.host_id`` to ``host_id()``.
+
+  If ``backend`` is ``None``, returns all the devices from the default backend.
+  The default backend is generally 'gpu' or 'tpu' if available, otherwise 'cpu'.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
@@ -202,14 +205,28 @@ def devices(backend=None):
   return get_backend(backend).devices()
 
 
-def local_devices(host_id=None, backend=None):
-  """Returns a list of devices local to a given host (this host by default)."""
+def local_devices(host_id: int = None, backend: str = None):
+  """Like ``devices``, but only returns devices local to a given host.
+
+  If ``host_id`` is ``None``, returns devices local to this host.
+
+  Args:
+    host_id: the integer ID of the host. Host IDs can be retrieved via
+      ``host_ids()``.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+
+  Returns:
+    List of Device subclasses.
+  """
   if host_id is None:
     host_id = get_backend(backend).host_id()
+  if host_id not in host_ids():
+    raise ValueError(f"Unknown host_id {host_id}")
   return [d for d in devices(backend) if d.host_id == host_id]
 
 
-def host_id(backend=None):
+def host_id(backend: str = None):
   """Returns the integer host ID of this host.
 
   On most platforms, this will always be 0. This will vary on multi-host
@@ -225,12 +242,12 @@ def host_id(backend=None):
   return get_backend(backend).host_id()
 
 
-def host_ids(backend=None):
+def host_ids(backend: str = None):
   """Returns a sorted list of all host IDs."""
   return sorted(list(set(d.host_id for d in devices(backend))))
 
 
-def host_count(backend=None):
+def host_count(backend: str = None):
   """Returns the number of hosts."""
   return len(host_ids(backend))
 
@@ -264,10 +281,12 @@ def _numpy_array_constant(builder, value, canonicalize_types=True):
     value = normalize_to_xla_dtypes(value)
   return xops.ConstantLiteral(builder, value)
 
-def parameter(builder, num, shape, name=None, replicated=False):
+def parameter(builder, num, shape, name=None, replicated=None):
   if name is None:
     name = ''
-  if isinstance(replicated, bool):
+  if replicated is None:
+    replicated = []
+  elif isinstance(replicated, bool):
     replicated = [replicated] * shape.leaf_count()
 
   return xops.Parameter(builder, num,
@@ -289,6 +308,57 @@ def constant(builder, py_val, canonicalize_types=True):
     return _constant_handlers[py_type](builder, py_val, canonicalize_types)
   else:
     raise TypeError("No constant handler for type: {}".format(py_type))
+
+# HLO instructions optionally can be annotated to say how the output should be
+# spatially partitioned (represented in XLA as OpSharding protos, see
+# _sharding_to_proto). For array outputs, the annotation is either an int per
+# dimension specifying the number of ways that dimension divided (i.e. the total
+# number of shards is the product), or None to indicate the array should be
+# replicated. Tuple outputs are represented as tuples thereof. XLA supports
+# arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
+# checkers don't support recursive types), so we only represent one level of
+# nesting in this type definition.
+SpatialSharding = Union[Tuple[int, ...],
+                        None,
+                        Tuple[Union[Tuple[int, ...], None], ...]]
+
+def _sharding_to_proto(sharding: SpatialSharding):
+  """Converts a SpatialSharding to an OpSharding.
+
+  See
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
+  for details on the OpSharding proto.
+  """
+  proto = xla_client.OpSharding()
+  if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
+      assert all(s is None or isinstance(s, tuple) for s in sharding)
+      sub_protos = [_sharding_to_proto(s) for s in sharding]  # type: ignore
+      proto.type = xla_client.OpSharding.Type.TUPLE
+      proto.tuple_shardings = sub_protos
+      return proto
+
+  if sharding is None:
+    proto.type = xla_client.OpSharding.Type.REPLICATED
+  else:
+    proto.type = xla_client.OpSharding.Type.OTHER
+    proto.tile_assignment_dimensions = list(sharding)
+    proto.tile_assignment_devices = list(range(onp.product(sharding)))
+  return proto
+
+def set_sharding(builder, op, sharding: SpatialSharding):
+  """Uses CustomCall to annotate a value as sharded."""
+  # "Sharding" is a built-in custom call target that acts like an identity
+  # function, and is used to attach an OpSharding to.
+  return with_sharding(builder, sharding, xops.CustomCall,
+                       builder, b"Sharding", [op], builder.get_shape(op))
+
+def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  builder.set_sharding(_sharding_to_proto(sharding))
+  try:
+    return op_fn(*args, **kwargs)
+  finally:
+    builder.clear_sharding()
 
 def make_computation_builder(name):
   return xla_client.XlaBuilder(name)
@@ -347,53 +417,3 @@ def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
 
 for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
-
-
-# Backwards-compatibility shim that provides a ComputationBuilder-like API to
-# older jaxlib releases.
-# TODO(phawkins): Remove when the minimum Jaxlib release is 0.1.46 or newer.
-class ComputationBuilderShim(object):
-  def __init__(self, builder):
-    self._builder = builder
-
-  def GetShape(self, op):
-    return self._builder.GetShape(op)
-
-  def Constant(self, value):
-    return xops.Constant(self._builder, value)
-
-  def ConstantS32Scalar(self, value):
-    return xops.Constant(self._builder, np.int32(value))
-
-  def CustomCallWithLayout(self,
-                           call_target_name,
-                           operands,
-                           shape_with_layout,
-                           operand_shapes_with_layout,
-                           opaque=None):
-    return xops.CustomCallWithLayout(self._builder, call_target_name,
-                                     list(operands), shape_with_layout,
-                                     list(operand_shapes_with_layout),
-                                     opaque or b'')
-
-  def GetTupleElement(self, op, i):
-    return xops.GetTupleElement(op, i)
-
-  def Complex(self, re, im):
-    return xops.Complex(re, im)
-
-  def Transpose(self, op, perm):
-    return xops.Transpose(op, perm)
-
-  def Conj(self, op):
-    return xops.Conj(op)
-
-  def Slice(self, operand, start_indices, limit_indices, strides=None):
-    if strides is None:
-      start_indices = list(start_indices)
-      strides = [1] * len(start_indices)
-    return xops.Slice(operand, start_indices, limit_indices, strides)
-
-
-def computation_builder_shim(b):
-  return b if version > (0, 1, 45) else ComputationBuilderShim(b)

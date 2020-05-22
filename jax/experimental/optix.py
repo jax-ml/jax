@@ -95,7 +95,8 @@ def clip(max_delta) -> InitUpdate:
 
 
 def global_norm(updates: Updates) -> Updates:
-  return jnp.sqrt(jnp.sum([jnp.sum(x**2) for x in tree_leaves(updates)]))
+  return jnp.sqrt(
+      jnp.sum([jnp.sum(jnp.square(x)) for x in tree_leaves(updates)]))
 
 
 class ClipByGlobalNormState(OptState):
@@ -222,7 +223,7 @@ def scale_by_stddev(decay: float = 0.9, eps: float = 1e-8) -> InitUpdate:
     mu = _update_moment(updates, state.mu, decay, 1)
     nu = _update_moment(updates, state.nu, decay, 2)
     updates = tree_multimap(
-        lambda g, m, n: g / jnp.sqrt(n - m**2 + eps), updates, mu, nu)
+        lambda g, m, n: g / jnp.sqrt(n - jnp.square(m) + eps), updates, mu, nu)
     return updates, ScaleByRStdDevState(mu=mu, nu=nu)
 
   return InitUpdate(init_fn, update_fn)
@@ -237,7 +238,8 @@ class ScaleByAdamState(OptState):
 
 def scale_by_adam(b1: float = 0.9,
                   b2: float = 0.999,
-                  eps: float = 1e-8) -> InitUpdate:
+                  eps: float = 1e-8,
+                  eps_root: float = 0.0) -> InitUpdate:
   """Rescale updates according to the Adam algorithm.
 
   References:
@@ -247,6 +249,8 @@ def scale_by_adam(b1: float = 0.9,
     b1: decay rate for the exponentially weighted average of grads.
     b2: decay rate for the exponentially weighted average of squared grads.
     eps: term added to the denominator to improve numerical stability.
+    eps_root: term added to the denominator inside the square-root to improve
+      numerical stability when backpropagating gradients through the rescaling.
 
   Returns:
     An (init_fn, update_fn) tuple.
@@ -263,7 +267,7 @@ def scale_by_adam(b1: float = 0.9,
     mu_hat = tree_multimap(lambda t: t / (1 - b1 ** (state.count + 1)), mu)
     nu_hat = tree_multimap(lambda t: t / (1 - b2 ** (state.count + 1)), nu)
     updates = tree_multimap(
-        lambda m, v: m / (jnp.sqrt(v) + eps), mu_hat, nu_hat)
+        lambda m, v: m / (jnp.sqrt(v + eps_root) + eps), mu_hat, nu_hat)
     return updates, ScaleByAdamState(count=state.count + 1, mu=mu, nu=nu)
 
   return InitUpdate(init_fn, update_fn)

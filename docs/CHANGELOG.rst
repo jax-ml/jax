@@ -9,13 +9,80 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.65 (unreleased)
+jax 0.1.69 (unreleased)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.64...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.68...master>`_.
 
-jaxlib 0.1.46 (unreleased)
+jax 0.1.68 (May 21, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.67...jax.-v0.1.68>`_.
+
+* New features:
+
+  * `lax.cond` supports a single-operand form, taken as the argument
+    to both branches
+    `#2993 <https://github.com/google/jax/pull/2993>`_.
+
+jax 0.1.67 (May 12, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.66...jax-v0.1.67>`_.
+
+* New features:
+
+  * Support for reduction over subsets of a pmapped axis using ``axis_index_groups``
+    `#2382 <https://github.com/google/jax/pull/2382>`_.
+  * Experimental support for printing and calling host-side Python function from
+    compiled code. See `id_print and id_tap <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_
+    (`#3006 <https://github.com/google/jax/pull/3006>`_).
+
+* Notable changes:
+
+  * The visibility of names exported from :py:module:`jax.numpy` has been
+    tightened. This may break code that was making use of names that were
+    previously exported accidentally.
+
+jaxlib 0.1.47 (May 8, 2020)
 ------------------------------
+
+* Fixes crash for outfeed.
+
+jax 0.1.66 (May 5, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.65...jax-v0.1.66>`_.
+
+* New features:
+
+  * Support for ``in_axes=None`` on :func:`pmap`
+    `#2896 <https://github.com/google/jax/pull/2896>`_.
+
+jaxlib 0.1.46 (May 5, 2020)
+------------------------------
+
+* Fixes crash for linear algebra functions on Mac OS X (#432).
+* Fixes an illegal instruction crash caused by using AVX512 instructions when
+  an operating system or hypervisor disabled them (#2906).
+
+jax 0.1.65 (April 30, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.64...jax-v0.1.65>`_.
+
+* New features:
+
+  * Differentiation of determinants of singular matrices
+    `#2809 <https://github.com/google/jax/pull/2809>`_.
+
+* Bug fixes:
+
+  * Fix :func:`odeint` differentiation with respect to time of ODEs with
+    time-dependent dynamics `#2817 <https://github.com/google/jax/pull/2817>`_,
+    also add ODE CI testing.
+  * Fix :func:`lax_linalg.qr` differentiation
+    `#2867 <https://github.com/google/jax/pull/2867>`_.
 
 jaxlib 0.1.45 (April 21, 2020)
 ------------------------------
@@ -165,7 +232,7 @@ jax 0.1.59 (February 11, 2020)
   * Added JAX_SKIP_SLOW_TESTS environment variable to skip tests known as slow.
 
 jaxlib 0.1.39 (February 11, 2020)
---------------------------------
+---------------------------------
 
 * Updates XLA.
 

@@ -25,6 +25,7 @@ import numpy as onp
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
+from ..ad_util import zero
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
                     wrap_name, cache)
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
@@ -49,7 +50,7 @@ class PartialVal(tuple):
     if not core.skip_checks:
       # type checks
       assert isinstance(pv, (AbstractValue, type(None))), xs
-      assert isinstance(const, core.Tracer) or core.valid_jaxtype(const), xs
+      assert isinstance(const, core.Tracer) or const is zero or core.valid_jaxtype(const), xs
       # invariant checks
       if isinstance(pv, AbstractValue):
         assert const == core.unit, xs
@@ -178,6 +179,12 @@ class JaxprTrace(Trace):
     out_pvs, jaxpr, env = aux()
     env_tracers = map(self.full_raise, env)
     out_pv_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
+    if not jaxpr.eqns:
+      env = {core.unitvar: core.unit}
+      map(env.setdefault, jaxpr.invars, (*env_tracers, *tracers))
+      map(env.setdefault, jaxpr.constvars, consts)
+      return [pv_const if pv is None else v.val if type(v) is Literal else env[v]
+              for v, pv, pv_const in zip(jaxpr.outvars, out_pvs, out_pv_consts)]
     const_tracers = map(self.new_instantiated_const, consts)
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
     out_tracers = [JaxprTracer(self, PartialVal((out_pv, out_pv_const)), None)
@@ -224,13 +231,13 @@ class JaxprTrace(Trace):
     params = dict(params, name=name)
     in_pvs, in_consts = unzip2([t.pval for t in tracers])
     reduced_pvs = [None if pv is None else
-                   _mapped_aval(params['axis_size'], pv) if m else pv
+                   core.mapped_aval(params['axis_size'], pv) if m else pv
                    for pv, m in zip(in_pvs, params['mapped_invars'])]
     fun, aux = partial_eval(f, self, reduced_pvs)
     out_flat = map_primitive.bind(fun, *in_consts, **params)
     out_pvs_reduced, jaxpr, env = aux()
     out_pv_consts, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
+    out_pvs = [None if pv is None else core.unmapped_aval(params['axis_size'], pv)
                for pv in out_pvs_reduced]
     const_tracers = map(self.new_instantiated_const, consts)
     env_tracers = map(self.full_raise, env)
@@ -254,7 +261,8 @@ class JaxprTrace(Trace):
   def post_process_map(self, map_primitive, out_tracers, params):
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
     out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
-    out_pvs = [None if pv is None else _unmapped_aval(params['axis_size'], pv)
+    out_pvs = [None if pv is None
+               else core.unmapped_aval(params['axis_size'], pv)
                for pv in out_pvs_reduced]
     out = out_pv_consts + consts
     del consts, out_pv_consts
@@ -297,24 +305,6 @@ class JaxprTrace(Trace):
 # call primitives encountered (rather than doing partial evaluation into the call).
 class StagingJaxprTrace(JaxprTrace):
   pass
-
-def _mapped_aval(size, aval):
-  if aval is core.abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    # might be raising abstraction level from Concrete here
-    assert aval.shape[0] == size
-    return ShapedArray(aval.shape[1:], aval.dtype)
-  else:
-    raise TypeError(aval)
-
-def _unmapped_aval(size, aval):
-  if aval is core.abstract_unit:
-    return aval
-  elif isinstance(aval, ShapedArray):
-    return ShapedArray((size,) + aval.shape, aval.dtype)
-  else:
-    raise TypeError(aval)
 
 custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 call_partial_eval_rules: Dict[core.Primitive, Callable] = {}

@@ -13,18 +13,18 @@
 # limitations under the License.
 
 
-import numpy as onp
+import numpy as np
 from .. import lax
-from . import lax_numpy as np
+from . import lax_numpy as jnp
 
 from jax import jit
-from .lax_numpy import _wraps
+from ._util import _wraps
 from .linalg import eigvals as _eigvals
 from .. import ops as jaxops
 
 
 def _to_inexact_type(type):
-  return type if np.issubdtype(type, np.inexact) else np.float_
+  return type if jnp.issubdtype(type, jnp.inexact) else jnp.float_
 
 
 def _promote_inexact(arr):
@@ -37,7 +37,7 @@ def _roots_no_zeros(p):
   p = _promote_inexact(p)
 
   # build companion matrix and find its eigenvalues (the roots)
-  A = np.diag(np.ones((p.size - 2,), p.dtype), -1)
+  A = jnp.diag(jnp.ones((p.size - 2,), p.dtype), -1)
   A = jaxops.index_update(A, jaxops.index[0, :], -p[1:] / p[0])
   roots = _eigvals(A)
   return roots
@@ -47,12 +47,12 @@ def _roots_no_zeros(p):
 def _nonzero_range(arr):
   # return start and end s.t. arr[:start] = 0 = arr[end:] padding zeros
   is_zero = arr == 0
-  start = np.argmin(is_zero)
-  end = is_zero.size - np.argmin(is_zero[::-1])
+  start = jnp.argmin(is_zero)
+  end = is_zero.size - jnp.argmin(is_zero[::-1])
   return start, end
 
 
-@_wraps(onp.roots, lax_description="""\
+@_wraps(np.roots, lax_description="""\
 If the input polynomial coefficients of length n do not start with zero,
 the polynomial is of degree n - 1 leading to n - 1 roots. 
 If the coefficients do have leading zeros, the polynomial they define
@@ -63,17 +63,17 @@ The general implementation can therefore not be transformed with jit.
 If the coefficients are guaranteed to have no leading zeros, use the 
 keyword argument `strip_zeros=False` to get a jit-compatible variant::
 
-    >>> roots_unsafe = jax.jit(jax.partial(np.roots, strip_zeros=False))
+    >>> roots_unsafe = jax.jit(functools.partial(jnp.roots, strip_zeros=False))
     >>> roots_unsafe([1, 2])     # ok
     DeviceArray([-2.+0.j], dtype=complex64)
     >>> roots_unsafe([0, 1, 2])  # problem
     DeviceArray([nan+nanj, nan+nanj], dtype=complex64)
-    >>> np.roots([0, 1, 2])         # use the no-jit version instead
+    >>> jnp.roots([0, 1, 2])         # use the no-jit version instead
     DeviceArray([-2.+0.j], dtype=complex64)
 """)
 def roots(p, *, strip_zeros=True):
   # ported from https://github.com/numpy/numpy/blob/v1.17.0/numpy/lib/polynomial.py#L168-L251
-  p = np.atleast_1d(p)
+  p = jnp.atleast_1d(p)
   if p.ndim != 1:
     raise ValueError("Input must be a rank-1 array.")
 
@@ -82,10 +82,10 @@ def roots(p, *, strip_zeros=True):
     if p.size > 1:
       return _roots_no_zeros(p)
     else:
-      return np.array([])
+      return jnp.array([])
 
-  if np.all(p == 0):
-    return np.array([])
+  if jnp.all(p == 0):
+    return jnp.array([])
 
   # factor out trivial roots
   start, end = _nonzero_range(p)
@@ -96,9 +96,9 @@ def roots(p, *, strip_zeros=True):
   p = p[start:end]
 
   if p.size < 2:
-    return np.zeros(trailing_zeros, p.dtype)
+    return jnp.zeros(trailing_zeros, p.dtype)
   else:
     roots = _roots_no_zeros(p)
     # combine roots and zero roots
-    roots = np.hstack((roots, np.zeros(trailing_zeros, p.dtype)))
+    roots = jnp.hstack((roots, jnp.zeros(trailing_zeros, p.dtype)))
     return roots
