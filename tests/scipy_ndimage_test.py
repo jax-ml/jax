@@ -74,7 +74,7 @@ class NdimageTest(jtu.JaxTestCase):
        "cval": cval, "impl": impl, "round_": round_}
       for shape in [(5,), (3, 4), (3, 4, 5)]
       for coords_shape in [(7,), (2, 3, 4)]
-      for dtype in float_dtypes
+      for dtype in float_dtypes + int_dtypes
       for coords_dtype in float_dtypes
       for order in [0, 1]
       for mode in ['wrap', 'constant', 'nearest']
@@ -100,10 +100,14 @@ class NdimageTest(jtu.JaxTestCase):
     impl_fun = (osp_ndimage.map_coordinates if impl == "original"
                 else _fixed_ref_map_coordinates)
     osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
-    epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
-                   for d in [dtype, coords_dtype]])
-    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon,
-                            check_dtypes=True)
+    if dtype in float_dtypes:
+      epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
+                     for d in [dtype, coords_dtype]])
+      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon,
+                              check_dtypes=True)
+    else:
+      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=0,
+                              check_dtypes=True)
 
   def testMapCoordinatesErrors(self):
     x = onp.arange(5.0)
@@ -119,6 +123,21 @@ class NdimageTest(jtu.JaxTestCase):
   def testMapCoordinateDocstring(self):
     self.assertIn("Only linear interpolation",
                   lsp_ndimage.map_coordinates.__doc__)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_order={}".format(onp.dtype(dtype), order),
+       "dtype": dtype, "order": order}
+      for dtype in float_dtypes + int_dtypes
+      for order in [0, 1]))
+  def testMapCoordinatesRoundHalf(self, dtype, order):
+    x = onp.arange(-3, 3, dtype=dtype)
+    c = onp.array([[.5, 1.5, 2.5, 3.5]])
+    def args_maker():
+      return x, c
+
+    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order)
+    osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=order)
+    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, check_dtypes=True)
 
   def testContinuousGradients(self):
     # regression test for https://github.com/google/jax/issues/3024
