@@ -755,11 +755,11 @@ what: x3
     assertMultiLineStrippedEqual(self, """
 what: a * 2
 10.00
-transforms: (('jvp',),) what: a * 2
+transforms: ({'name': 'jvp'},) what: a * 2
 0.20
 what: y * 3
 30.00
-transforms: (('jvp',),) what: y * 3
+transforms: ({'name': 'jvp'},) what: y * 3
 0.60""", testing_stream.output)
     testing_stream.reset()
 
@@ -777,7 +777,7 @@ transforms: (('jvp',),) what: y * 3
 
     # Just making the Jaxpr invokes the id_print once
     assertMultiLineStrippedEqual(self, """
-transforms: (('jvp',), ('transpose',)) what: x * 3
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 3
 2.00""", testing_stream.output)
     testing_stream.reset()
     
@@ -788,7 +788,7 @@ transforms: (('jvp',), ('transpose',)) what: x * 3
     assertMultiLineStrippedEqual(self, """
 what: x * 3
 15.00
-transforms: (('jvp',), ('transpose',)) what: x * 3
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 3
 2.00""", testing_stream.output)
     testing_stream.reset()
 
@@ -834,9 +834,9 @@ what: x * 2
 10.00
 what: y * 3
 30.00
-transforms: (('jvp',), ('transpose',)) what: y * 3
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: y * 3
 5.00
-transforms: (('jvp',), ('transpose',)) what: x * 2
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
 15.00""", testing_stream.output)
     testing_stream.reset()
 
@@ -853,9 +853,9 @@ transforms: (('jvp',), ('transpose',)) what: x * 2
   in (12.00,) }""", str(api.make_jaxpr(grad_func)(5.)))
       # Just making the Jaxpr invokes the id_print twiceonce
       assertMultiLineStrippedEqual(self, """
-transforms: (('jvp',), ('transpose',)) what: x * 2
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
 3.00
-transforms: (('jvp',), ('transpose',), ('jvp',), ('transpose',)) what: x * 2
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}, {'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
 2.00""", testing_stream.output)
       testing_stream.reset()
       res_grad = grad_func(jnp.float32(5.))
@@ -864,11 +864,11 @@ transforms: (('jvp',), ('transpose',), ('jvp',), ('transpose',)) what: x * 2
     assertMultiLineStrippedEqual(self, """
 what: x * 2
 10.00
-transforms: (('jvp',), ('transpose',)) what: x * 2
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
 15.00
-transforms: (('jvp',), ('transpose',), ('jvp',), ('transpose',)) what: x * 2
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}, {'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
 2.00
-transforms: (('jvp',), ('transpose',)) what: x * 2
+transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
 3.00""", testing_stream.output)
     testing_stream.reset()
 
@@ -893,9 +893,9 @@ transforms: (('jvp',), ('transpose',)) what: x * 2
     with hcb.outfeed_receiver():
       res_vmap = vmap_fun1(vargs)
     assertMultiLineStrippedEqual(self, """
-transforms: (('batch', (0,)),) what: a * 2
+transforms: ({'name': 'batch', 'batch_dims': (0,)},) what: a * 2
 [ 8.00 10.00]
-transforms: (('batch', (0, 0)),) what: y * 3
+transforms: ({'name': 'batch', 'batch_dims': (0, 0)},) what: y * 3
 [24.00 30.00]""", testing_stream.output)
     testing_stream.reset()
 
@@ -918,10 +918,9 @@ transforms: (('batch', (0, 0)),) what: y * 3
     with hcb.outfeed_receiver():
       res_vmap = vmap_func(vargs)
     assertMultiLineStrippedEqual(self, """
-transforms: (('batch', (None, 0)),)
+transforms: ({'name': 'batch', 'batch_dims': (None, 0)},)
 [ 3.00
-  [4.00 5.00] ]
-   """, testing_stream.output)
+  [4.00 5.00] ]""", testing_stream.output)
     testing_stream.reset()
 
   def test_double_vmap(self):
@@ -949,7 +948,7 @@ transforms: (('batch', (None, 0)),)
     with hcb.outfeed_receiver():
       res_vmap = sum_all(xv, yv)
     assertMultiLineStrippedEqual(self, """
-transforms: (('batch', (0,)), ('batch', (0,)))
+transforms: ({'name': 'batch', 'batch_dims': (0,)}, {'name': 'batch', 'batch_dims': (0,)})
 [[0 1 2 3 4]
  [1 2 3 4 5]
  [2 3 4 5 6]]""", testing_stream.output)
