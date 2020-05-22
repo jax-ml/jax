@@ -124,14 +124,19 @@ class NdimageTest(jtu.JaxTestCase):
     self.assertIn("Only linear interpolation",
                   lsp_ndimage.map_coordinates.__doc__)
 
-  def testMapCoordinatesRoundHalf(self):
-    x = onp.arange(5)
-    c = onp.array([[1.5, 2.5, 3.5, 4.5]])
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_order={}".format(onp.dtype(dtype), order),
+       "dtype": dtype, "order": order}
+      for dtype in float_dtypes + int_dtypes
+      for order in [0, 1]))
+  def testMapCoordinatesRoundHalf(self, dtype, order):
+    x = onp.arange(-3, 3, dtype=dtype)
+    c = onp.array([[.5, 1.5, 2.5, 3.5]])
     def args_maker():
       return x, c
 
-    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=0)
-    osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=0)
+    lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order)
+    osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=order)
     self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, check_dtypes=True)
 
   def testContinuousGradients(self):

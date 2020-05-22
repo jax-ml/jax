@@ -36,8 +36,16 @@ _INDEX_FIXERS = {
 }
 
 
+def _round_half_up(a):
+    return jnp.floor(a + .5)
+
+
+def _round_half_away_from_zero(a):
+    return jnp.copysign(_round_half_up(jnp.abs(a)), a)
+
+
 def _nearest_indices_and_weights(coordinate):
-  index = jnp.floor(coordinate + .5).astype(jnp.int32)
+  index = _round_half_away_from_zero(coordinate).astype(jnp.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
@@ -101,7 +109,7 @@ def _map_coordinates(input, coordinates, order, mode, cval):
     outputs.append(_nonempty_prod(weights) * contribution)
   result = _nonempty_sum(outputs)
   if jnp.issubdtype(input.dtype, jnp.integer):
-    result = jnp.around(result)
+    result = _round_half_away_from_zero(result)
   return result.astype(input.dtype)
 
 
