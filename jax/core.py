@@ -1086,32 +1086,30 @@ def typematch(aval1, aval2):
   return (raise_to_shaped(aval1).strip_weak_type() ==
           raise_to_shaped(aval2).strip_weak_type())
 
-class _JaxprContext(object):
-  __slots__ = ["env", "jaxpr"]
-  def __init__(self, jaxpr: Jaxpr):
+# For use in Jaxpr typechecking (under `check_jaxpr`)
+class _JaxprTypeEnvironment(object):
+  __slots__ = ["env"]
+
+  def __init__(self):
     self.env: Dict[Var, AbstractValue] = {}
-    self.jaxpr = jaxpr
 
-  def _msg_context(self):
-    return "\njaxpr:\n{}\n".format(self.jaxpr)
-
-  def read_env(self, v: Var):
+  def read(self, v: Var):
     env = self.env
     if type(v) is not Literal:
       if v not in env:
         raise TypeError(
-            "Variable '{}' not defined".format(v) + self._msg_context())
+            "Variable '{}' not defined".format(v))
       if v.aval != env[v]:
         raise TypeError(
             "Variable '{}' inconsistently typed as {}, bound as {}".format(
-                v, v.aval, env[v]) + self._msg_context())
+                v, v.aval, env[v]))
     return v
 
-  def write_env(self, v: Var):
+  def write(self, v: Var):
     env = self.env
     if v in env:
       raise TypeError(
-          "Variable {} already bound".format(v) + self._msg_context())
+          "Variable {} already bound".format(v))
     env[v] = v.aval
     return v
 
@@ -1122,22 +1120,35 @@ def check_jaxpr(jaxpr: Jaxpr):
   - variables that are read are bound beforehand
   - variables are typed equally throughout a jaxpr
   - variable type annotations are compatible with their binding expression
-  """
-  ctx = _JaxprContext(jaxpr)
-  read = ctx.read_env
-  write = ctx.write_env
 
-  write(unitvar)
-  map(write, jaxpr.constvars)
-  map(write, jaxpr.invars)
+  Raises `TypeError` if `jaxpr` is determined invalid. Returns `None` otherwise.
+  """
+  try:
+    _check_jaxpr(jaxpr)
+  except Exception as e:
+    exception_type = type(e)
+    msg_context = f"while checking jaxpr:\n\n{jaxpr}\n"
+    if len(e.args) == 0:
+      exception_args = (msg_context,)
+    else:
+      msg = f"{e.args[0]}\n\n" + msg_context
+      exception_args = (msg, *e.args[1:])
+    raise exception_type(*exception_args) from e
+
+def _check_jaxpr(jaxpr: Jaxpr):
+  env = _JaxprTypeEnvironment()
+
+  env.write(unitvar)
+  map(env.write, jaxpr.constvars)
+  map(env.write, jaxpr.invars)
 
   for eqn in jaxpr.eqns:
-    check_jaxpr_eqn(ctx, eqn)
+    check_jaxpr_eqn(env, eqn)
 
   for subjaxpr in subjaxprs(jaxpr):
-    check_jaxpr(subjaxpr)
+    _check_jaxpr(subjaxpr)
 
-  map(read, jaxpr.outvars)
+  map(env.read, jaxpr.outvars)
 
 def _valid_eqn_assignment(dst_aval, src_aval):
   # TODO(frostig): we'd rather this check simply be `typecompat` and not allow
@@ -1145,10 +1156,10 @@ def _valid_eqn_assignment(dst_aval, src_aval):
   # outvars as AbstractUnit if the outvars are unused.
   return dst_aval is abstract_unit or typecompat(dst_aval, src_aval)
 
-def check_jaxpr_eqn(ctx, eqn):
-  invars = map(ctx.read_env, eqn.invars)
+def check_jaxpr_eqn(env, eqn):
+  invars = map(env.read, eqn.invars)
   inferred_out_avals = type_transfer(eqn.primitive, invars, eqn.params)
-  outvars = map(ctx.write_env, eqn.outvars)
+  outvars = map(env.write, eqn.outvars)
 
   for outvar, inferred_out_aval in zip(outvars, inferred_out_avals):
     if not _valid_eqn_assignment(outvar.aval, inferred_out_aval):
