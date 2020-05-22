@@ -176,14 +176,27 @@ def id_tap(func: Callable, arg, *,
   Args:
     * arg: the argument passed to the tap function, can be a pytree of JAX
       types.
-    * result: if given, specifies the return value of ``id_tap``. By default,
-      the return type is ``arg``.
+    * result: if given, specifies the return value of ``id_tap``. This value is
+      not passed to the tap function, and in fact is not sent from the device
+      to the host. If the ``result`` parameter is not specified then the return
+      value of ``id_tap`` is ``arg``.
     * kwargs: will be passed directly to the tap function. Can be anything that
       is hashable, these are kept in the host Python process until outfeeds are
       received.
 
   Returns:
     * ``arg``, or ``result`` if given.
+
+  The order of execution is by data dependency: after all the arguments and
+  the value of ``result`` if present, are computed and before the returned
+  value is used. At least one of the returned values of ``id_tap`` must be
+  used in the rest of the computation, or else this operation has no effect.
+
+  If you want to tap a constant value, you should use the ``result`` parameter
+  to control when it is tapped, otherwise it will be tapped during tracing
+  of the function::
+
+    x = id_tap(42, result=x)
 
   Tapping works even for code executed on accelerators and even for code under
   JAX transformations. Code that uses taps must be run embedded in
@@ -474,6 +487,13 @@ def _jaxpr_var_defs(jaxpr: core.Jaxpr) -> Iterable[int]:
     for ov in eqn.outvars:
       yield ov.count
 
+
+# TODO: we should really get rid of TypedJaxpr
+def _mk_typed_jaxpr(jaxpr: core.Jaxpr, literals: Sequence) -> core.TypedJaxpr:
+  return core.TypedJaxpr(jaxpr, literals,
+                         tuple(map(lambda v: v.aval, jaxpr.invars)),
+                         tuple(map(lambda v: v.aval, jaxpr.outvars)))
+
 def _rewrite_typed_jaxpr(tjaxpr: core.TypedJaxpr,
                          has_input_token: bool,
                          has_output_token: bool) -> Tuple[core.TypedJaxpr, bool]:
@@ -482,10 +502,7 @@ def _rewrite_typed_jaxpr(tjaxpr: core.TypedJaxpr,
   Returns the rewritten Jaxpr, and whether it uses outfeed."""
   new_jaxpr, uses_outfeed = _rewrite_jaxpr(tjaxpr.jaxpr, has_input_token,
                                            has_output_token)
-  return (core.TypedJaxpr(new_jaxpr, tjaxpr.literals,
-                         tuple(map(lambda v: v.aval, new_jaxpr.invars)),
-                         tuple(map(lambda v: v.aval, new_jaxpr.outvars))),
-          uses_outfeed)
+  return _mk_typed_jaxpr(new_jaxpr, tjaxpr.literals), uses_outfeed
 
 
 def _rewrite_jaxpr(jaxpr: core.Jaxpr,
@@ -516,16 +533,18 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr,
       eqns.append(eqn)
     else:
       output_token_var = mk_new_var(core.abstract_token)
-      _rewrite_eqn(eqn, eqns, last_token_var, output_token_var)
+      _rewrite_eqn(eqn, eqns, last_token_var, output_token_var, mk_new_var)
       last_token_var = output_token_var
 
   outvars = jaxpr.outvars + ([last_token_var] if has_output_token else [])
-  return (core.Jaxpr(jaxpr.constvars, invars, outvars, eqns), True)
+  new_jaxpr = core.Jaxpr(jaxpr.constvars, invars, outvars, eqns)
+  return (new_jaxpr, True)
 
 def _rewrite_eqn(eqn: core.JaxprEqn,
                  eqns: List[core.JaxprEqn],
                  input_token_var: core.Var,
-                 output_token_var: core.Var):
+                 output_token_var: core.Var,
+                 mk_new_var: Callable[[core.AbstractValue], core.Var]):
   """Rewrite an `eqn` and append equations to `eqns`. Assume that the
   current token is in `input_token_var` and the resulting token must end in
   `output_token_var`."""
@@ -537,8 +556,9 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
     cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
       eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
     if xla.jaxpr_uses_outfeed(cond_jaxpr.jaxpr):
-      # TODO(necula): implement tapping from the conditional of a while
-      raise NotImplementedError("outfeed not supported in the conditional of a while")
+      _rewrite_while_outfeed_cond(eqn, eqns, input_token_var, output_token_var,
+                                  mk_new_var)
+      return
 
     eqns.append(core.new_jaxpr_eqn(
       eqn.invars + [input_token_var],
@@ -601,6 +621,84 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 
+def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn,
+                 eqns: List[core.JaxprEqn],
+                 input_token_var: core.Var,
+                 output_token_var: core.Var,
+                 mk_new_var: Callable):
+  """Rewrite a while whose cond has outfeed"""
+  cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
+    eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
+  transformed_cond_jaxpr, _ = _rewrite_typed_jaxpr(cond_jaxpr, True, True)
+  carry_invars = eqn.invars[cond_nconsts+body_nconsts:]
+  # pred1, token1 = rewrite(COND)(cond_consts, carry_invars, input_token)
+  pred1_and_token1 = [mk_new_var(ov.aval)
+                      for ov in transformed_cond_jaxpr.jaxpr.outvars]
+  eqns.append(core.new_jaxpr_eqn(
+    eqn.invars[0:cond_nconsts] + carry_invars + [input_token_var],
+    pred1_and_token1,
+    xla.xla_call_p,
+    dict(call_jaxpr=transformed_cond_jaxpr.jaxpr,
+         name="cond_before")))
+  # Make a new cond "lambda pred, carry, token: pred"
+  new_cond_pred_invar = mk_new_var(cond_jaxpr.out_avals[0])
+  new_cond_invars = (
+    [new_cond_pred_invar] +
+    [mk_new_var(cv.aval) for cv in carry_invars] +
+    [mk_new_var(core.abstract_token)])
+  new_cond_jaxpr = _mk_typed_jaxpr(core.Jaxpr([], new_cond_invars,
+                                              [new_cond_pred_invar], []),
+                                   [])
+  # Make a new body: "lambda cond_constvars, body_constvars, pred, carry, token:
+  #                      carry2, token2 = rewrite(BODY)(body_constvars, carry, token)
+  #                      pred2, token3 = rewrite(COND)(cond_constvars, carry2, token2)
+  #                      (pred2, carry2, token3)
+  transformed_body_jaxpr, _ = _rewrite_typed_jaxpr(body_jaxpr, True, True)
+  new_body_invars_cond_constvars = [mk_new_var(v.aval) for v in eqn.invars[0:cond_nconsts]]
+  new_body_invars_body_constvars = [mk_new_var(v.aval)
+                             for v in eqn.invars[cond_nconsts:cond_nconsts+body_nconsts]]
+  new_body_invars_pred = mk_new_var(cond_jaxpr.out_avals[0])
+  new_body_invars_carry = [mk_new_var(cv.aval) for cv in carry_invars]
+  new_body_invars_token = mk_new_var(core.abstract_token)
+
+  new_body_carry2 = [mk_new_var(cv.aval) for cv in carry_invars]
+  new_body_token2 = mk_new_var(core.abstract_token)
+  new_body_pred2 = mk_new_var(cond_jaxpr.out_avals[0])
+  new_body_token3 = mk_new_var(core.abstract_token)
+
+  new_body_eqns = [
+    core.new_jaxpr_eqn(
+      new_body_invars_body_constvars +
+      new_body_invars_carry + [new_body_invars_token],
+      new_body_carry2 + [new_body_token2],
+      xla.xla_call_p,
+      dict(call_jaxpr=transformed_body_jaxpr.jaxpr,
+           name="body")),
+    core.new_jaxpr_eqn(
+      new_body_invars_cond_constvars + new_body_carry2 + [new_body_token2],
+      [new_body_pred2, new_body_token3],
+      xla.xla_call_p,
+      dict(call_jaxpr=transformed_cond_jaxpr.jaxpr,
+           name="cond_body"))
+  ]
+  new_body_jaxpr = _mk_typed_jaxpr(
+    core.Jaxpr([],
+      (new_body_invars_cond_constvars + new_body_invars_body_constvars +
+       [new_body_invars_pred] + new_body_invars_carry +[new_body_invars_token]),
+      ([new_body_pred2] + new_body_carry2 + [new_body_token3]),
+      new_body_eqns), [])
+
+  pred_out = mk_new_var(cond_jaxpr.out_avals[0])
+  eqns.append(core.new_jaxpr_eqn(
+    (eqn.invars[0:cond_nconsts+body_nconsts] + [pred1_and_token1[0]] +
+     carry_invars + [pred1_and_token1[1]]),
+    ([pred_out] + eqn.outvars + [output_token_var]),
+    lax.while_p,
+    dict(cond_jaxpr=new_cond_jaxpr, cond_nconsts=0,
+         body_jaxpr=new_body_jaxpr, body_nconsts=cond_nconsts + body_nconsts))
+  )
+
+
 xla.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
 
 # The data on the outfeed follows a protocol that allows multiplexing the
@@ -634,10 +732,11 @@ _CODE_TO_DTYPE = {
   5: np.dtype(np.uint16),
   6: np.dtype(np.uint32),
   7: np.dtype(np.uint64),
-  8: np.dtype(np.float16),
-  9: np.dtype(np.float32),
-  10: np.dtype(np.float64),
-  11: np.dtype(dtypes.bfloat16),
+  8: np.dtype(np.bool),
+  9: np.dtype(np.float16),
+  10: np.dtype(np.float32),
+  11: np.dtype(np.float64),
+  12: np.dtype(dtypes.bfloat16),
 }
 _DTYPE_STR_TO_CODE = dict([(str(d), c) for c, d in _CODE_TO_DTYPE.items()])
 
