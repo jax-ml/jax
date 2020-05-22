@@ -106,7 +106,8 @@ class NdimageTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon,
                               check_dtypes=True)
     else:
-      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, check_dtypes=True)
+      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=0,
+                              check_dtypes=True)
 
   def testMapCoordinatesErrors(self):
     x = onp.arange(5.0)

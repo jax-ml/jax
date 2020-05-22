@@ -99,7 +99,9 @@ def _map_coordinates(input, coordinates, order, mode, cval):
       all_valid = functools.reduce(operator.and_, validities)
       contribution = jnp.where(all_valid, input[indices], cval)
     outputs.append(_nonempty_prod(weights) * contribution)
-  result = _nonempty_sum(outputs).astype(input.dtype)
+  result = _nonempty_sum(outputs)
+  if jnp.issubdtype(input.dtype, jnp.integer):
+    return jnp.around(result).astype(input.dtype)
   return result
 
 
