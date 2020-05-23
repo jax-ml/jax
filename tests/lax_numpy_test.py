@@ -1284,16 +1284,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        jtu.format_shape_dtype_string(shape2, dtype2)),
        "shape1": shape1, "dtype1": dtype1, "shape2": shape2, "dtype2": dtype2,
        "rng_factory": jtu.rand_default}
-      for dtype1 in [s for s in float_dtypes or int_dtypes if s != jnp.bfloat16]
-      for dtype2 in [s for s in float_dtypes or int_dtypes if s != jnp.bfloat16]
-      for shape1 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]
-      for shape2 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]))
+      for dtype1 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for dtype2 in [s for s in default_dtypes if s != jnp.bfloat16]
+      for shape1 in (array_shapes + [jtu.NUMPY_SCALAR_SHAPE])
+      for shape2 in (array_shapes + [jtu.NUMPY_SCALAR_SHAPE])))
   def testUnion1d(self, shape1, dtype1, shape2, dtype2, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
-    onp_fun = lambda ar1, ar2: onp.union1d(ar1, ar2)
-    jnp_fun = lambda ar1, ar2: jnp.union1d(ar1, ar2)
-    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(onp.union1d, jnp.union1d, args_maker, check_dtypes=True)
 
   def testIssue1233(self):
     '''
