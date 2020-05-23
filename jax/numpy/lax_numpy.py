@@ -3322,10 +3322,8 @@ def unique(ar, return_index=False, return_inverse=False,
 
 @_wraps(onp.union1d)
 def union1d(ar1, ar2):
-  if ar1.ndim == 0:
-    ar1 = array([ar1])
-  if ar2.ndim == 0:
-    ar2 = array([ar2])
+  ar1 = ravel(asarray(ar1))
+  ar2 = ravel(asarray(ar2))
   return unique(concatenate((ar1, ar2)))
 
 ### Indexing
