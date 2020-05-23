@@ -3451,16 +3451,14 @@ def setxor1d(ar1, ar2, assume_unique=False):
     ar1 = unique(ar1)
     ar2 = unique(ar2)
   else:
-    if ar1.ndim == 0:
-      ar1 = array([ar1])
-    if ar2.ndim == 0:
-      ar2 = array([ar2])
+    ar1 = asarray(ar1)
+    ar2 = asarray(ar2)
   
   aux = concatenate((ar1, ar2))
   if aux.size == 0:
       return aux
 
-  aux.sort()
+  aux = sort(aux)
   ar_true = array([True])
   flag = concatenate((ar_true, aux[1:] != aux[:-1], ar_true))
   return aux[flag[1:] & flag[:-1]]
