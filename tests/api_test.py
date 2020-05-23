@@ -1725,7 +1725,7 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(fun)(0.)
     self.assertMultiLineStrippedEqual("""
 { lambda b ; a.
-  let 
+  let
   in (a, 1.0, b) }
     """, str(jaxpr))
 

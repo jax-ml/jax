@@ -62,10 +62,13 @@ dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
 
+from functools import partial
 from typing import Any, Tuple
 import weakref
 
+from . import core
 from .util import curry
+from .tree_util import tree_map
 
 class StoreException(Exception): pass
 
@@ -163,7 +166,8 @@ class WrappedFun(object):
       i, (gen, args) = x
       return "{}   : {}   {}".format(i, fun_name(gen), fun_name(args))
     transformation_stack = map(transform_to_str, enumerate(self.transforms))
-    return "Wrapped function:\n" + '\n'.join(transformation_stack) + '\nCore: ' + fun_name(self.f) + '\n'
+    return ("Wrapped function:\n" + '\n'.join(transformation_stack) +
+            '\nCore: ' + fun_name(self.f) + '\n')
 
   def __hash__(self):
     return hash((self.f, self.transforms, self.params))
@@ -201,18 +205,30 @@ def wrap_init(f, params={}) -> WrappedFun:
 
 
 def cache(call):
-  """Cache decorator for WrappedFun calls.
+  """Memoization decorator for functions taking a WrappedFun as first argument.
+
   Args:
-    call: a function that takes a WrappedFun as a first argument
+    call: a Python callable that takes a WrappedFun as its first argument.
 
   Returns:
-     the memoized `call` function.
+     A memoized version of ``call``.
+
+  Compared to a generic memoization decorator, this one has a cache that only
+  holds a weak reference to ``call.f``, so that if all other references to the
+  callable underlying the ``call`` WrappedFun are dropped, the corresponding
+  entries in this memoization cache are dropped as well.
+
+  This memoization decorator is the mechanism underlying the ``jit`` compilation
+  cache; see its use in jax/interpreters/xla.py.
   """
   fun_caches = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
-    key = (fun.transforms, fun.params, args)
+    if core.check_leaks:
+      key = (_copy_master_traces(fun.transforms), fun.params, args)
+    else:
+      key = (fun.transforms, fun.params, args)
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
@@ -224,6 +240,13 @@ def cache(call):
 
   memoized_fun.cache_clear = fun_caches.clear
   return memoized_fun
+
+@partial(partial, tree_map)
+def _copy_master_traces(x):
+  if isinstance(x, core.MasterTrace):
+    return core.MasterTrace(x.level, x.trace_type)
+  else:
+    return x
 
 @transformation
 def hashable_partial(x, *args):

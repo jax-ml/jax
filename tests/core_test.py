@@ -340,6 +340,18 @@ class CoreTest(jtu.JaxTestCase):
         TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
                     "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
 
+  def test_leak_checker(self):
+    with core.checking_leaks(True):
+      lst = []
+
+      @jit
+      def f(x):
+        lst.append(x)
+        return x
+
+      with self.assertRaisesRegex(Exception, r"Leaked trace.*"):
+        f(3)
+
 
 if __name__ == '__main__':
   absltest.main()

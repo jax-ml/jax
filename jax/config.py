@@ -126,10 +126,3 @@ flags = config
 FLAGS = flags.FLAGS
 
 already_configured_with_absl = False
-
-flags.DEFINE_bool(
-    'jax_enable_checks',
-    bool_env('JAX_ENABLE_CHECKS', False),
-    help=
-    'Turn on invariant checking (core.skip_checks = False)'
-)

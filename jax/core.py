@@ -28,27 +28,45 @@ from typing import Any, Callable, ClassVar, Dict, List, Optional, Set
 import numpy as onp
 
 from . import dtypes
-from .config import FLAGS
+from .config import flags, FLAGS, bool_env
 from . import linear_util as lu
 
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, hcat, pp_kv_pairs, PrettyPrint
 
-# TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
-check_leaks = False
-
-"""Disables internal invariant checks."""
-skip_checks = not FLAGS.jax_enable_checks  # not __debug__  # google doesn't use -O
+# Disables internal invariant checks (no __debug__ b/c google doesn't use -O)
+flags.DEFINE_bool(
+    'jax_enable_checks',
+    bool_env('JAX_ENABLE_CHECKS', False),
+    help='Turn on invariant checking (set core.skip_checks = False).')
+skip_checks = not FLAGS.jax_enable_checks
 
 @contextmanager
-def skipping_checks():
-  """Context manager for temporarily disabling checks."""
+def skipping_checks(skip: bool = True):
+  """Context manager for temporarily enabling / disabling internal checks."""
   global skip_checks
-  old_value, skip_checks = skip_checks, True
+  old_value, skip_checks = skip_checks, skip
   try:
     yield
   finally:
     skip_checks = old_value
+
+flags.DEFINE_bool(
+    'jax_check_tracer_leaks',
+    bool_env('JAX_CHECK_TRACER_LEAKS', False),
+    help='Turn on checking for leaked tracers.')
+check_leaks = FLAGS.jax_check_tracer_leaks
+
+@contextmanager
+def checking_leaks(check: bool = False):
+  """Context manager for temporarily enabling / disabling tracer leak checks."""
+  global check_leaks
+  old_value, check_leaks = check_leaks, check
+  try:
+    yield
+  finally:
+    check_leaks = old_value
+
 
 zip = safe_zip
 map = safe_map
@@ -617,12 +635,6 @@ def new_sublevel() -> Generator[None, None, None]:
     yield
   finally:
     trace_state.substack.pop()
-
-  if check_leaks:
-    t = ref(sublevel)
-    del sublevel
-    if t() is not None:
-      raise Exception('Leaked sublevel {}'.format(t()))
 
 def full_lower(val):
   if isinstance(val, Tracer):
