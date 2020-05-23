@@ -1268,10 +1268,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        jtu.format_shape_dtype_string(shape2, dtype2)),
        "shape1": shape1, "dtype1": dtype1, "shape2": shape2,
        "dtype2": dtype2, "rng_factory": jtu.rand_default}
-      for dtype1 in float_dtypes or int_dtypes
-      for dtype2 in float_dtypes or int_dtypes
-      for shape1 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]
-      for shape2 in one_dim_array_shapes or [jtu.NUMPY_SCALAR_SHAPE]))
+      for dtype1 in default_dtypes
+      for dtype2 in default_dtypes
+      for shape1 in (one_dim_array_shapes + [jtu.NUMPY_SCALAR_SHAPE])
+      for shape2 in (one_dim_array_shapes + [jtu.NUMPY_SCALAR_SHAPE])))
   def testSetxor1d(self, shape1, dtype1, shape2, dtype2, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
