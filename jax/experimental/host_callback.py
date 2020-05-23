@@ -51,7 +51,7 @@ outfeed listening does not stop until the body of the
 At that point, a ``TapFunctionException`` is raised if there was an exception
 in one of the tap functions.
 
-**We intend to implement an alternative outfeed reception mechanism that will
+**We intend to implement an alternative outfeed receiving mechanism that will
 not require the user to start the `outfeed_receiver`.**
 
 The current implementation uses the outfeed mechanism provided by XLA. The
@@ -71,30 +71,34 @@ following function definition::
      _, y = id_print(x, y, what="x,x^2")
      return y * x
 
+During JAX transformations the special parameters ``transforms`` is extended
+with a dictionary, containing the key ``name`` holding the name of the
+transformation and additional keys holding transformation parameters, if
+applicable.
 
-For :func:`jax.vmap` the arguments are batched, ``vmap`` is appended
-to ``transforms``, and `batch_dims` is added to specify the tuple of
-batched dimensions::
+For :func:`jax.vmap` the arguments are batched, and ``transforms`` is extended
+with transformation name ``batch`` and ``batch_dims`` set to the the tuple of
+batched dimensions (one entry per argument, ``None`` denotes an argument that
+was broadcast)::
 
   jax.vmap(power3)(np.arange(3.))
-  # what=x,x^2 transforms=vmap batch_dims=(0, 0): ([0, 1, 2], [0, 1, 4])
+  # what=x,x^2 transforms=({name=batch, batch_dims=(0, 0)}): ([0, 1, 2], [0, 1, 4])
 
-
-For :func:`jax.jvp` there will be two callbacks, one with the values of the primals and
-one with the tangents::
+For :func:`jax.jvp` there will be two callbacks, one with the values of
+the primals and one with the tangents::
 
   jax.jvp(power3, (3.,), (0.1,))
   # what=x,x^2: (3., 9.)
-  # what=x,x^2 transforms=jvp: (0.1, 0.6)
+  # what=x,x^2 transforms={name=jvp}: (0.1, 0.6)
 
-For :func:`jax.vjp` or :func:`jax.grad` there will be one callback with the values of
-the adjoints for the arguments. You may also see a callback with the values of
-the primals from the forward pass, if those values are needed for the
-backward pass::
+For :func:`jax.vjp` or :func:`jax.grad` there will be one callback with the
+values of the adjoints for the arguments. You may also see a callback with
+the values of the primals from the forward pass, if those values are needed for
+the backward pass::
 
   jax.grad(power3)(3.)
   # what=x,x^2: (3., 9.)  # from forward pass, since y is needed in backward pass
-  # what=x,x^2 transforms=(jvp, transpose): (0., 3.)  # from backward pass, adjoints of _, y
+  # what=x,x^2 transforms=({name=jvp}, {name=transpose}): (0., 3.)  # from backward pass, adjoints of _, y
 
 See documentation for :func:`id_tap` and :func:`id_print`.
 For usage example, see tests/host_callback_test.py.
@@ -242,6 +246,23 @@ class _ConsumerCallable(NamedTuple):
   kwargs: Tuple[Tuple[str, Any], ...]
   arg_treedef: Any
 
+  def unpack_kwargs(self):
+    kwargs = dict(self.kwargs)
+    transforms = kwargs.get("transforms")
+    if transforms is None:
+      return kwargs
+    else:
+      def unpack_transform(name, *params):
+        if name == "batch":
+          return dict(name=name, batch_dims=params[0])
+        elif name == "mask":
+          return dict(name=name, logical_shapes=params[0])
+        else:
+          assert not params, f"{name}, {params}"
+          return dict(name=name)
+      return dict(kwargs,
+                  transforms=tuple([unpack_transform(*t) for t in transforms]))
+
 _consumer_registry: Dict[_ConsumerCallable, int] = dict()
 _consumer_registry_by_id: Dict[int, _ConsumerCallable] = dict()
 
@@ -307,21 +328,29 @@ positional arguments and parameters:
   * nr_untapped: how many positional arguments (from the tail) should not be
   passed to the tap function.
   * arg_treedef: the treedef of the tapped positional arguments.
-  * transforms: a tuple of the transformations that have been applied.
-  * batch_dims: a tuple of the dims that have been batched, for vmap.
-  * logical_shapes: a tuple of evaluated logical shapes, for mask.
+  * transforms: a tuple of the transformations that have been applied. Each 
+    element of the tuple is itself a tuple with the first element the name
+    of the transform. The remaining elements depend on the transform. For 
+    example, for `batch`, the parameters are the dimensions that have been 
+    batched, and for `mask` the logical shapes. These are unpacked by 
+    _ConsumerCallable before passing to the user function.
 
   * the remaining parameters are passed to the tap function.
 """
-# TODO(necula): handle nested vmap and mask
 id_tap_p = core.Primitive("id_tap")
 id_tap_p.multiple_results = True
 xla.outfeed_primitives.add(id_tap_p)
 
-def _add_transform_name(params: Dict, transform: str) -> Dict:
-  """Adds the `transform` to the params["transforms"]."""
-  return dict(params, transforms=params.get("transforms", ()) + (transform,))
+def _add_transform(params: Dict, name: str,
+                   *transform_params) -> Dict:
+  """Adds the `transform` to the params["transforms"].
 
+  Uses a tuple representation internally, will be unpacked before the
+  callback by _ConsumerCallable.
+  """
+  new_transform = (name, *transform_params)
+  return dict(params, transforms=(params.get("transforms", ())
+                                  + (new_transform,)))
 
 def _id_tap_impl(*arrays, **params):
   # We use the jitted-version of the primitive even for eager execution, both
@@ -365,7 +394,7 @@ def _id_tap_jvp_rule(primals, tangents, *, func, nr_untapped=0, **params):
   tangent_zeros = tuple(map(_instantiate_zeros, primals, tangents))
   out_tangents_extra = id_tap_p.bind(*tangent_zeros, out_primals[0],
                                      func=func, nr_untapped=nr_untapped + 1,
-                                     **_add_transform_name(params, "jvp"))
+                                     **_add_transform(params, "jvp"))
   return tuple(out_primals), tuple(out_tangents_extra[:-1])
 
 ad.primitive_jvps[id_tap_p] = _id_tap_jvp_rule
@@ -375,15 +404,14 @@ def _id_tap_transpose_rule(cts, *args, func=None, nr_untapped=0, **params):
   assert len(cts) == len(args)
   cts_zeros = tuple(map(_instantiate_zeros, args, cts))
   ct_args = id_tap_p.bind(*cts_zeros, func=func, nr_untapped=nr_untapped,
-                          **_add_transform_name(params, "transpose"))
+                          **_add_transform(params, "transpose"))
   return ct_args
 
 ad.primitive_transposes[id_tap_p] = _id_tap_transpose_rule
 
 
 def _id_tap_batching_rule(batched_args, batch_dims, **params):
-  new_params = _add_transform_name(params, "batch")
-  new_params["batch_dims"] = batch_dims
+  new_params = _add_transform(params, "batch", batch_dims)
   res = id_tap_p.bind(*batched_args, **new_params)
   return res, batch_dims
 
@@ -396,8 +424,8 @@ batching.primitive_batchers[id_tap_p] = _id_tap_batching_rule
 # masking.shape_rules[id_tap_p] = _id_tap_shape_rule  # type: ignore[module-attr]
 
 def _id_tap_masking_rule(operands, operands_logical_shapes, **params):
-  new_params = _add_transform_name(params, "mask")
-  new_params["logical_shapes"] = operands_logical_shapes
+  new_params = _add_transform(params, "mask",
+                              operands_logical_shapes)
   return id_tap_p.bind(*operands, **new_params)
 
 masking.masking_rules[id_tap_p] = _id_tap_masking_rule
@@ -752,7 +780,7 @@ def outfeed_receiver(*,
         continue  # We need to read the entire outfeed
       try:
         arg = api.tree_unflatten(consumer.arg_treedef, arrays)
-        consumer.func(arg, **dict(consumer.kwargs))  # type: ignore[attribute-error]
+        consumer.func(arg, **consumer.unpack_kwargs())  # type: ignore[attribute-error]
       except Exception as e:
         logging.error(f"Postponing exception raised in tap function: {str(e)}\n{traceback.format_exc()}")
         count_tap_exceptions += 1

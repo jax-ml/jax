@@ -25,6 +25,12 @@ jax 0.1.68 (May 21, 2020)
     to both branches
     `#2993 <https://github.com/google/jax/pull/2993>`_.
 
+* Notable changes:
+
+  * The format of the `transforms` keyword for the `lax.experimental.host_callback.id_tap`
+    primitive has changed `#3132 <https://github.com/google/jax/pull/3132>`_.
+
+
 jax 0.1.67 (May 12, 2020)
 ---------------------------
 
