@@ -849,8 +849,9 @@ def outfeed_receiver(*,
   """
   if not devices:
     backends = backends or xla_client._get_local_backends().keys()
-    devices = tuple(itertools.chain(*[api.local_devices(backend)
-                                      for backend in backends]))
+    devices = tuple(itertools.chain(
+        *[api.local_devices(api.host_id(backend), backend)
+          for backend in backends]))
   else:
     if backends:
       raise ValueError("At most one of `devices` or `backends` must be given.")
