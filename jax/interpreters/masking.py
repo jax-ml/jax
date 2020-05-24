@@ -164,13 +164,14 @@ class Poly(dict):
       def divided(count):
         q, r = divmod(count, divisor)
         if r != 0:
-          raise ValueError('shapecheck currently only supports strides '
-                          'that exactly divide the strided axis length.')
+          raise ValueError('shapecheck  and masking currently only support '
+                           'strides that exactly divide the strided axis '
+                           'length.')
         return q
 
       return Poly(
         {k: coeff // divisor if k.degree == 0 else divided(coeff)
-        for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
+         for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
 
   def __hash__(self):
     return hash(tuple(sorted(self.items())))
