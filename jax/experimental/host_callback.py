@@ -849,7 +849,7 @@ def outfeed_receiver(*,
   """
   if not devices:
     backends = backends or xla_client._get_local_backends().keys()
-    devices = tuple(itertools.chain(*[api.devices(backend)
+    devices = tuple(itertools.chain(*[api.local_devices(backend)
                                       for backend in backends]))
   else:
     if backends:
