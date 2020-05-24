@@ -1126,7 +1126,8 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
 
     def func(x):
       return lax.while_loop(lambda c: c[1] < jnp.sum(c[0] + ct_cond),
-                            lambda c: (ct_body, hcb.id_print(c[1]) + 1), (x, 1.))
+                            lambda c: (ct_body, hcb.id_print(c[1]) + 1.),
+                            (x, np.float32(1.)))
     # TODO: we should not need to start a receiver here!!! I believe this is
     # because of the partial evaluation of while, which calls impl, which
     # uses JIT.
