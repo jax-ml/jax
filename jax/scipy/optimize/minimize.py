@@ -30,6 +30,9 @@ def minimize(fun, x0, *, method=None, tol=None, options=None, _nojit=False):
             maxiter : int
                 Maximum number of iterations to perform. Depending on the
                 method each iteration may use several function evaluations.
+        _nojit: bool
+          Whether to use pythonic control flow so that func without XLA ops can be used. It is also very useful to
+          set _nojit=True in order to perform debugging.
 
     Returns: OptimizeResults
 
