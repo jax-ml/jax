@@ -13,6 +13,9 @@ jobs:
       env: JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
     - python: "3.7"
       env: JAX_ENABLE_X64=0 JAX_ONLY_DOCUMENTATION=true
+    - python: "3.7"
+      # TODO: enable x64 for JAX_TO_TF
+      env: JAX_ENABLE_X64=0 JAX_TO_TF=true
 
 before_install:
   - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
@@ -41,6 +44,10 @@ install:
       conda install --yes sphinx sphinx_rtd_theme nbsphinx sphinx-autodoc-typehints jupyter_client matplotlib;
       pip install sklearn;
     fi
+  - if [ "$JAX_TO_TF" = true ] ;then
+      # jax_to_tf needs some fixes that are not in tensorflow==2.2.0
+      pip install tf-nightly==2.3.0.dev20200525 ;
+    fi
 script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
@@ -49,6 +56,8 @@ script:
     elif [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       echo "===== Checking with mypy ====" &&
       time mypy --config-file=mypy.ini jax ;
+    elif [ "$JAX_TO_TF" = true ]; then
+      pytest jax/experimental/jax_to_tf/tests ;
     else
       pytest tests examples ;
     fi
