@@ -234,7 +234,7 @@ class TestBFGS(jtu.JaxTestCase):
       scipy_res = smin(func(onp), x0, method='BFGS')
       # print(jax_res)
       # print(scipy_res)
-      self.assertAllClose(scipy_res.x, jax_res.x_k, atol=1e-5, check_dtypes=False)
+      self.assertAllClose(scipy_res.x, jax_res.x_k, atol=2e-5, check_dtypes=False)
 
     def rosenbrock(np):
       def func(x):
