@@ -275,7 +275,7 @@ class CoreTest(jtu.JaxTestCase):
       gc.set_debug(debug)
 
   def test_comparing_var(self):
-    newsym = core.gensym('')
+    newsym = core.gensym()
     a = newsym(core.abstract_unit)
     b = newsym(core.abstract_unit)
     c = newsym(core.abstract_unit)
@@ -284,7 +284,7 @@ class CoreTest(jtu.JaxTestCase):
     assert a != b and b != c and a != c
 
   def test_var_ordering(self):
-    newsym = core.gensym('')
+    newsym = core.gensym()
     a = newsym(core.abstract_unit)
     b = newsym(core.abstract_unit)
     c = newsym(core.abstract_unit)
@@ -292,13 +292,13 @@ class CoreTest(jtu.JaxTestCase):
       assert sorted(list(ordering)) == [a, b, c]
 
   def test_var_compared_by_identity(self):
-    a1 = core.gensym('')(core.abstract_unit)
-    a2 = core.gensym('')(core.abstract_unit)
+    a1 = core.gensym()(core.abstract_unit)
+    a2 = core.gensym()(core.abstract_unit)
     assert str(a1) == str(a2)
     assert a1 != a2
 
   def test_var_tree_flatten(self):
-    newsym = core.gensym('')
+    newsym = core.gensym()
     a, b, c, d = (
         newsym(core.abstract_unit), newsym(core.abstract_unit),
         newsym(core.abstract_unit), newsym(core.abstract_unit))

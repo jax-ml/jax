@@ -493,7 +493,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
     The vars for the environment values have been prepended to the Jaxpr's
     `invars`.
   """
-  newvar = core.gensym('')
+  newvar = core.gensym()
   t_to_var = {}
   def getvar(t):
     var = t_to_var.get(id(t))

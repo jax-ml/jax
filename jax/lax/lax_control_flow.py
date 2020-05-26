@@ -87,7 +87,7 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
   jaxprs, all_out_pvals, all_consts, all_out_trees = unzip4([
       _initial_style_untyped_jaxpr(fun, in_tree, in_avals) for fun in funs])
 
-  newvar = core.gensym('_')     # TODO(frostig): safer gensym
+  newvar = core.gensym(jaxprs, suffix='_')
   all_const_avals = tuple(
       tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
       for consts in all_consts)
@@ -425,7 +425,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
       [body_nconsts, num_carry], [len(bconst_dot), len(init_dot)],
       [num_carry], [len(init_dot)])
 
-  newvar = core.gensym('')
+  newvar = core.gensym([cond_jaxpr.jaxpr])
   invars_aug = (
       cond_jaxpr.jaxpr.invars + [newvar(get_aval(x)) for x in init_dot])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
@@ -838,7 +838,7 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, res_avals_per_jaxpr):
   # for each one, it makes another that accepts *all* residuals, but still only
   # uses those that it needs (dropping the rest).
 
-  newvar = core.gensym('~')     # TODO(frostig): safer gensym
+  newvar = core.gensym([j.jaxpr for j in jaxprs], suffix='_')
   unused_res_vars = tuple(
       tuple(newvar(aval) for aval in res_avals)
       for res_avals in res_avals_per_jaxpr)
