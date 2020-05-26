@@ -310,6 +310,34 @@ class JetTest(jtu.JaxTestCase):
     assert g_out_primals == f_out_primals
     assert g_out_series == f_out_series
 
+def test_odeint_jet_softplus(self):
+    # check if this composition fails
+    from jax.experimental.ode import odeint
+    import jax.numpy as jnp
+
+    dims = (2, 3)
+    order = 3
+
+    # explicitly broadcast zeros since current max rule doesn't do that
+    softplus_prim = lambda x: jnp.logaddexp(x, jnp.zeros_like(x))
+
+    def dynamics_jet_expit(x, t):
+      primal_in = jnp.ones_like(x)
+      terms_in = [jnp.ones_like(x) for _ in range(order)]
+      primals = (primal_in, )
+      series = (terms_in, )
+      return jet(softplus_prim, primals, series)[1][-1]
+
+    x0 = jnp.zeros(dims)
+    ts = jnp.array([0., 1.])
+
+    # fails due to primitive.multiple_results = True
+    # odeint(dynamics_jet_expit, x0, ts)
+
+    # also need to take gradients!
+    # TODO: check that it's a) numerically correct and b) numerically stable over large ranges
+    y_dot, vjpfun = jax.vjp(lambda _x0: odeint(dynamics_jet_expit, _x0, ts), x0)
+    vjpfun(y_dot)
 
 if __name__ == '__main__':
   absltest.main()
