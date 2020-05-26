@@ -3842,8 +3842,8 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
 
 @partial(jit, static_argnums=(2, 3, 4))
 def _quantile(a, q, axis, interpolation, keepdims):
-  a = asarray(a, dtype=promote_types(_dtype(a), float_))
-  q = asarray(q, dtype=promote_types(_dtype(q), float_))
+  a = asarray(a, dtype=promote_types(_dtype(a), float32))
+  q = asarray(q, dtype=promote_types(_dtype(q), float32))
   if axis is None:
     a = ravel(a)
     axis = 0
