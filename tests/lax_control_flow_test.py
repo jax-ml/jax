@@ -334,6 +334,38 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = (np.array([4, 3]), np.array([1, 2]))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_issue_3204(self):
+    # Error during XLA code generation for vmap of nested loops
+    def test(a, b):
+      val = 0
+      i = 0
+      j = 0
+
+      condfun_1 = lambda inp: inp[1] < a + 1
+      condfun_2 = lambda inp: inp[2] < b + 1
+
+      def bodyfun_1(inp):
+        val, i, j = inp
+        j = 0
+
+        def bodyfun_2(inp):
+          val, i, j = inp
+          val += i + j
+          j += 1
+          return (val, i, j)
+
+        result = lax.while_loop(condfun_2, bodyfun_2, (val, i, j))
+        val = result[0]
+        i += 1
+        return (val, i, j)
+
+      result = lax.while_loop(condfun_1, bodyfun_1, (val, i, j))
+      return result[0]
+
+    arr = np.arange(5)
+    vmap_test = api.vmap(test, (0, 0))
+    vmap_test(arr, arr)
+
   def testForiLoopErrors(self):
     """Test typing error messages for while."""
     with self.assertRaisesRegex(
