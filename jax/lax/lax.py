@@ -2552,8 +2552,8 @@ def _conv_general_dilated_masking_rule(
   n, c, *padded_dimensions = dimension_numbers.lhs_spec
 
   return conv_general_dilated(
-    _masked(lhs, logical_lhs_shape, (n,) + dimension_numbers.lhs_spec),
-    _masked(rhs, logical_rhs_shape, (o, i)),
+    _masked(lhs, logical_lhs_shape, padded_dimensions),
+    _masked(rhs, logical_rhs_shape, (i,)),
     window_strides=window_strides, padding=padding,
     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
     dimension_numbers=dimension_numbers,
