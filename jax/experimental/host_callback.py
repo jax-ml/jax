@@ -477,15 +477,6 @@ xla.translations[id_tap_p] = _id_tap_translation_rule_outfeed
 ####
 #### Jaxpr rewriting logic to thread the tokens through stateful primitives.
 ####
-def _jaxpr_var_defs(jaxpr: core.Jaxpr) -> Iterable[int]:
-  """Iterates over all the vars defined at the top-level of a Jaxpr"""
-  for iv in jaxpr.invars:
-    yield iv.count
-  for cv in jaxpr.constvars:
-    yield cv.count
-  for eqn in jaxpr.eqns:
-    for ov in eqn.outvars:
-      yield ov.count
 
 
 # TODO: we should really get rid of TypedJaxpr
@@ -513,11 +504,8 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr,
 
   if not has_input_token and not xla.jaxpr_uses_outfeed(jaxpr):
     return (jaxpr, False)
-  max_var_count = max(_jaxpr_var_defs(jaxpr))
-  mk_new_id = itertools.count(start=max_var_count + 1)
 
-  def mk_new_var(aval: core.AbstractValue) -> core.Var:
-    return core.Var(next(mk_new_id), '', aval)
+  mk_new_var = core.gensym([jaxpr])
 
   eqns: List[core.JaxprEqn] = []
   last_token_var = mk_new_var(core.abstract_token)  # store the incoming token
