@@ -102,6 +102,23 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
 
+  @genNamedParametersNArgs(3, jtu.rand_default)
+  def testGeomLogPmf(self, rng_factory, shapes, dtypes):
+    rng = rng_factory(self.rng())
+    scipy_fun = osp_stats.geom.logpmf
+    lax_fun = lsp_stats.geom.logpmf
+
+    def args_maker():
+      x, logit, loc = map(rng, shapes, dtypes)
+      x = onp.floor(x)
+      p = expit(logit)
+      loc = onp.floor(loc)
+      return [x, p, loc]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(lax_fun, args_maker, check_dtypes=True)
+
   @genNamedParametersNArgs(5, jtu.rand_positive)
   def testBetaLogPdf(self, rng_factory, shapes, dtypes):
     rng = rng_factory(self.rng())

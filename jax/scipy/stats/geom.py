@@ -26,7 +26,7 @@ def logpmf(k, p, loc=0):
     one = jnp._constant_like(k, 1)
     x = lax.sub(k, loc)
     log_probs = xlog1py(lax.sub(x, one), -p) + lax.log(p)
-    return jnp.where(lax.lt(x, zero), -jnp.inf, log_probs)
+    return jnp.where(lax.le(x, zero), -jnp.inf, log_probs)
 
 @_wraps(osp_stats.geom.pmf, update_doc=False)
 def pmf(k, p, loc=0):
