@@ -46,7 +46,7 @@ are installed.
 
 Then you can install the necessary Python dependencies using ``pip``::
 
-    pip install -r requirements_testing.txt
+    pip install pip numpy scipy -r requirements_testing.txt
 
 
 To build ``jaxlib`` with CUDA support, you can run::
