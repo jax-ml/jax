@@ -168,6 +168,7 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(logical_outs, logical_outs_expected, check_dtypes=True,
                         atol=atol, rtol=rtol)
 
+    # Check that abstract evaluation works
     padded_outs_jit, _ = tree_flatten(jit(masked_fun)(padded_args, logical_env))
     self.assertAllClose(padded_outs_jit, padded_outs, check_dtypes=True,
                         atol=atol, rtol=rtol)
@@ -449,14 +450,13 @@ class MaskingTest(jtu.JaxTestCase):
                rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': "strides={}_padding={}_lhs_dilation={}_"
+      {'testcase_name': "padding={}_lhs_dilation={}_"
        "dimension_numbers={}_lhs_perm={}_rhs_perm={}_out_perm={}".format(
-           strides, padding, lhs_dilation, dimension_numbers, lhs_perm,
+           padding, lhs_dilation, dimension_numbers, lhs_perm,
            rhs_perm, out_perm),
-      'strides': strides, 'padding': padding, 'lhs_dilation': lhs_dilation,
+      'padding': padding, 'lhs_dilation': lhs_dilation,
       'dimension_numbers': dimension_numbers, 'lhs_perm': lhs_perm,
       'rhs_perm': rhs_perm, 'out_perm': out_perm}
-    for strides in [(1, 1), (2, 1)]
     for padding in ['SAME', 'VALID', ((0, 1), (2, 0))]
     for lhs_dilation in (None, (1, 2))
     for dimension_numbers, (lhs_perm, rhs_perm, out_perm) in (
@@ -466,29 +466,84 @@ class MaskingTest(jtu.JaxTestCase):
     )
     # String padding is not implemented for transposed convolution, see
     # conv_general_dilated implementation:
-    if (lhs_dilation is None or not isinstance(padding, str)) and
-    # only test strides with same padding:
-    (strides[0] == 1 or padding == 'SAME')))
-  def test_conv(self, strides, padding, lhs_dilation,
-                dimension_numbers, lhs_perm, rhs_perm, out_perm):
-    valid = padding == 'VALID'
-    is_strided = strides[0] != 1
-    lhs_shape = '({}, {}, {}, {})'.format(
-        *np.take(['n', 'i', '2*h' if is_strided else 'h', 'w'], lhs_perm))
-    rhs_shape = '({}, {}, {}, {})'.format(*np.take(['o', 'i', '2', '3'], rhs_perm))
-    out_shape = '({}, {}, {}, {})'.format(*np.take([
-      'n', 'o', 'h+-1' if valid and not is_strided else 'h',
-      ('w+-2' if valid else 'w') if lhs_dilation is None else '2*w+-1'], out_perm))
-
+    if (lhs_dilation is None or not isinstance(padding, str))))
+  def test_conv(
+          self, padding, lhs_dilation, dimension_numbers, lhs_perm,
+          rhs_perm, out_perm):
     def conv(lhs, rhs):
       return lax.conv_general_dilated(
-        lhs, rhs, strides, padding,
-        lhs_dilation=lhs_dilation, dimension_numbers=dimension_numbers)
+        lhs, rhs, (1, 1), padding, lhs_dilation=lhs_dilation,
+        dimension_numbers=dimension_numbers)
 
-    self.check(conv, [lhs_shape, rhs_shape],
-               dict(n=jnp.array([1, 1]), i=jnp.array([3, 3]), o=jnp.array([2, 2]),
-                    h=jnp.array([1, 2]), w=jnp.array([2, 3])),
-               out_shape, unpadded_vars=['n', 'i', 'o'])
+    template =  '({}, {}, {}, {})'
+    lhs_shape = template.format(*np.take(['n', 'c', 'h', 'w'], lhs_perm))
+    rhs_shape = template.format(*np.take(['o', 'c', '2', '3'], rhs_perm))
+    if padding == 'VALID':
+      out_shape = template.format(
+        *np.take(['n', 'o', 'h+-1', 'w+-2'], out_perm))
+    elif lhs_dilation:
+      out_shape = template.format(
+        *np.take(['n', 'o', 'h', '2*w+-1'], out_perm))
+    else:
+      out_shape = template.format(
+        *np.take(['n', 'o', 'h', 'w'], out_perm))
+
+    logical_env = dict(n=3, c=2, h=4, w=5, o=6)
+
+    self.check(conv, [lhs_shape, rhs_shape], out_shape,
+               logical_env, [tuple(np.take([4, 3, 6, 7], lhs_perm)),
+                             tuple(np.take([7, 3, 2, 3], rhs_perm))],
+               ['float_', 'float_'], rand_default(self.rng()), rtol=1e-4,
+               atol=1e-4)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {'testcase_name': "padding={}_lhs_dilation={}_"
+       "dimension_numbers={}_lhs_perm={}_rhs_perm={}_out_perm={}".format(
+           padding, lhs_dilation, dimension_numbers, lhs_perm,
+           rhs_perm, out_perm),
+      'padding': padding, 'lhs_dilation': lhs_dilation,
+      'dimension_numbers': dimension_numbers, 'lhs_perm': lhs_perm,
+      'rhs_perm': rhs_perm, 'out_perm': out_perm}
+    for padding in ['SAME', 'VALID', ((0, 1), (2, 0))]
+    for lhs_dilation in (None, (1, 2))
+    for dimension_numbers, (lhs_perm, rhs_perm, out_perm) in (
+            (("NCHW", "OIHW", "NCHW"), ((0, 1, 2, 3), (0, 1, 2, 3), (0, 1, 2, 3))),
+            (("NHWC", "HWIO", "NHWC"), ((0, 2, 3, 1), (2, 3, 1, 0), (0, 2, 3, 1))),
+            (("NCHW", "HWIO", "NHWC"), ((0, 1, 2, 3), (2, 3, 1, 0), (0, 2, 3, 1)))
+    )
+    # String padding is not implemented for transposed convolution, see
+    # conv_general_dilated implementation:
+    if (lhs_dilation is None or not isinstance(padding, str))))
+  def test_conv_strided(
+          self, padding, lhs_dilation, dimension_numbers, lhs_perm,
+          rhs_perm, out_perm):
+    def conv(lhs, rhs):
+      return lax.conv_general_dilated(
+        lhs, rhs, (2, 1), padding, lhs_dilation=lhs_dilation,
+        dimension_numbers=dimension_numbers)
+
+    template =  '({}, {}, {}, {})'
+    rhs_shape = template.format(*np.take(['o', 'c', '2', '3'], rhs_perm))
+    if padding == 'VALID':
+      lhs_shape = template.format(*np.take(['n', 'c', '2*h+1', 'w'], lhs_perm))
+      lhs_shape_padded = tuple(np.take([4, 3, 5, 7], lhs_perm))
+      out_shape = template.format(*np.take(['n', 'o', 'h', 'w+-2'], out_perm))
+    elif lhs_dilation:
+      lhs_shape = template.format(*np.take(['n', 'c', '2*h', 'w'], lhs_perm))
+      lhs_shape_padded = tuple(np.take([4, 3, 6, 7], lhs_perm))
+      out_shape = template.format(*np.take(['n', 'o', 'h', '2*w+-1'], out_perm))
+    else:
+      lhs_shape = template.format(*np.take(['n', 'c', '2*h', 'w'], lhs_perm))
+      lhs_shape_padded = tuple(np.take([4, 3, 6, 7], lhs_perm))
+      out_shape = template.format(*np.take(['n', 'o', 'h', 'w'], out_perm))
+
+    logical_env = dict(n=3, c=2, h=4, w=5, o=6)
+
+    self.check(conv, [lhs_shape, rhs_shape], out_shape,
+               logical_env, [lhs_shape_padded,
+                             tuple(np.take([7, 3, 2, 3], rhs_perm))],
+               ['float_', 'float_'], rand_default(self.rng()), rtol=1e-4,
+               atol=1e-4)
 
   def test_indexing(self):
     raise SkipTest

@@ -2542,15 +2542,18 @@ def _conv_general_dilated_masking_rule(
         rhs_dilation, dimension_numbers, feature_group_count, batch_group_count,
         lhs_shape, rhs_shape, precision):
   lhs, rhs = padded_vals
-  logical_lhs_shape, rhs_shape = logical_shapes
-  assert (masking.padded_shape_as_value(rhs_shape) ==
-          masking.shape_as_value(rhs_shape)), "Conv filter masking not yet " \
-              "implemented."
+  logical_lhs_shape, logical_rhs_shape = logical_shapes
+
+  o, i, *window_dimensions = dimension_numbers.rhs_spec
+  assert (onp.all(onp.take(rhs.shape, window_dimensions)
+                  == onp.take(logical_rhs_shape, window_dimensions))), \
+              "Conv filter masking not yet implemented."
 
   n, c, *padded_dimensions = dimension_numbers.lhs_spec
 
   return conv_general_dilated(
-    _masked(lhs, logical_lhs_shape, padded_dimensions), rhs,
+    _masked(lhs, logical_lhs_shape, (n,) + dimension_numbers.lhs_spec),
+    _masked(rhs, logical_rhs_shape, (o, i)),
     window_strides=window_strides, padding=padding,
     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
     dimension_numbers=dimension_numbers,
