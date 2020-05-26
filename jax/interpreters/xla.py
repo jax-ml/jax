@@ -34,7 +34,7 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
 from ..core import Literal, pp_eqn_compact
 from ..pprint_util import pp
 from ..util import (partial, partialmethod, cache, prod, unzip2, memoize,
-                    extend_name_stack, wrap_name)
+                    extend_name_stack, wrap_name, safe_zip)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
@@ -604,26 +604,49 @@ def _xla_callable_device(nreps, backend, device, arg_devices):
     else:
       assert False  # Unreachable given the error check in _xla_callable
 
-def _xla_callable_args(c, avals, tuple_args, replicated=None):
+# Used within _xla_callable_args and _xla_param to distinguish between None (no
+# sharding annotation set) and replicated.
+_replicated_param = object()
+
+def _xla_callable_args(
+    c, avals, tuple_args, replicated=None,
+    partitions: Optional[Sequence[Optional[Sequence[int]]]] = None):
+  assert partitions is None or len(partitions) == len(avals)
   if not tuple_args:
     if replicated is None:
       replicated = [None] * len(avals)
-    xla_args = [xb.parameter(c, i, aval_to_xla_shape(a), replicated=r)
-                if a is not abstract_token else xops.CreateToken(c)
-                for i, (a, r) in enumerate(zip(avals, replicated))]
-    return xla_args
+    if partitions is None:
+      parts: List[object] = [None] * len(avals)
+    else:
+      parts = [_replicated_param if part is None else part
+               for part in partitions]
+    return [_xla_param(c, i, aval_to_xla_shape(a), r, p)
+            if a is not abstract_token else xops.CreateToken(c)
+            for i, (a, r, p)
+            in enumerate(safe_zip(avals, replicated, parts))]
   else:
     if replicated is not None:
       replicated = [r for a, r in zip(avals, replicated)
                     if a is not abstract_token]
+    tuple_parts = tuple(partitions) if partitions is not None else None
     tuple_shape = xc.Shape.tuple_shape(
         [aval_to_xla_shape(a) for a in avals if a is not abstract_token])
-    tuple_param = xb.parameter(c, 0, tuple_shape, replicated=replicated)
+    tuple_param = _xla_param(c, 0, tuple_shape, replicated, tuple_parts)
     xla_inputs = iter(xla_destructure(c, tuple_param))
     xla_args = [next(xla_inputs) if a is not abstract_token else
                 xops.CreateToken(c) for a in avals]
     assert next(xla_inputs, None) is None
     return xla_args
+
+def _xla_param(builder, param_num, xla_shape, replicated, partitions):
+  make_param = partial(xb.parameter, builder, param_num, xla_shape,
+                       replicated=replicated)
+  if partitions is None:
+    return make_param()
+  elif partitions is _replicated_param:
+    return xb.with_sharding(builder, None, make_param)
+  else:
+    return xb.with_sharding(builder, partitions, make_param)
 
 def _pval_to_result_handler(device, pval):
   pv, const = pval

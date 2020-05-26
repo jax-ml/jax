@@ -74,8 +74,8 @@ def _pval_to_result_handler(npart, parts, pval):
 @lu.cache
 def _sharded_callable(
     fun: lu.WrappedFun, num_partitions: Optional[int],
-    in_parts: Tuple[Optional[Tuple[int, ...]], ...],
-    out_parts_thunk: Callable[[], Tuple[Optional[Tuple[int, ...]], ...]],
+    in_parts: Tuple[pxla.PartitionsOrReplicated, ...],
+    out_parts_thunk: Callable[[], Tuple[pxla.PartitionsOrReplicated, ...]],
     name: str, *abstract_args):
   nrep = 1
   in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
