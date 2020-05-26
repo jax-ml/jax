@@ -1742,11 +1742,11 @@ class JaxprTest(jtu.JaxTestCase):
   let b = ge a 0.0
       c = add a 1.0
       d = add a 2.0
-      e = cond[ false_jaxpr={ lambda  ; a_ c a b.
+      e = cond[ false_jaxpr={ lambda  ; e_ c a b.
                               let d = sub b c
                               in (d,) }
                 linear=(False, False, False, False)
-                true_jaxpr={ lambda  ; c b_ a b.
+                true_jaxpr={ lambda  ; c f_ a b.
                              let d = add a c
                              in (d,) } ] b a a c d
   in (e,) }
