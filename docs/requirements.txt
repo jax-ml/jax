@@ -4,7 +4,7 @@ jaxlib
 ipykernel
 nbsphinx
 sphinx-autodoc-typehints
-# For host_callback.py
+# For host_callback.py  (remove when not needed)
 msgpack
 # The next packages are for notebooks
 matplotlib

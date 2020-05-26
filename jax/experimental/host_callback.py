@@ -135,10 +135,7 @@ from jaxlib import xla_extension
 from jaxlib import version as jaxlib_version
 
 import logging
-try:  # Allow documentation building without msgpack. We'll remove this soon.
-  import msgpack  # type: ignore
-except:
-  pass
+import msgpack  # type: ignore
 import numpy as np
 import traceback
 from typing import Any, Callable, Dict, Iterable, List, Optional, NamedTuple, Sequence, Tuple
