@@ -329,7 +329,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
     body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
                                    _map(partial(xb.constant, body_c), cond_jaxpr.literals),
                                    extend_name_stack(name_stack, 'body_pred'), *(x + z))
-    new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z)
+    new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z, body_jaxpr.out_avals)
     assert _map(body_c.get_shape, new_z) == _map(body_c.get_shape, z) # no broadcast
   new_carry = xops.Tuple(body_c, list(itertools.chain(x, y, new_z)))
 
@@ -338,13 +338,14 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   _,  _, z = split_list(ans_elts, [cond_nconsts, body_nconsts])
   return xops.Tuple(c, z)
 
-def _pred_bcast_select(c, pred, x, y):
+def _pred_bcast_select(c, pred, x, y, x_y_aval: core.AbstractValue):
   pred_shape = c.get_shape(pred).dimensions()
   x_shape = c.get_shape(x).dimensions()
   y_shape = c.get_shape(y).dimensions()
   assert x_shape == y_shape
-  if not c.get_shape(x).is_array() and not c.get_shape(y).is_array():
-    # Two tokens
+  if x_y_aval is core.abstract_unit:
+    return x
+  elif x_y_aval is core.abstract_token:
     return xops.AfterAll(c, [x, y])
   else:
     assert pred_shape == x_shape[:len(pred_shape)] == y_shape[:len(pred_shape)]
