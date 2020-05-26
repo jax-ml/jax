@@ -21,9 +21,9 @@ from functools import total_ordering, reduce
 import itertools as it
 from weakref import ref
 import threading
-from typing import Dict, Generator, Iterator, Sequence, Type
 import types
-from typing import Any, Callable, ClassVar, Dict, List, Optional, Set
+from typing import (Any, Callable, ClassVar, Dict, Generator, Iterator, List,
+                    Optional, Sequence, Set, Type)
 
 import numpy as onp
 
@@ -156,8 +156,23 @@ class Var(object):
         break
     return s + self.suffix
 
-def gensym(suffix):
-  counter = it.count()
+def _jaxpr_vars(jaxpr):
+  return it.chain(
+      jaxpr.invars, jaxpr.constvars,
+      (v for eqn in jaxpr.eqns for v in eqn.outvars))
+
+def gensym(jaxprs: Optional[Sequence[Jaxpr]] = None, suffix: str = ''):
+  """Produce distinct variables, printed with the optional suffix.
+
+  If `jaxprs` is provided, the variables produced will be distinct from those in
+  any of the given jaxprs.
+  """
+  if jaxprs is None:
+    start = 0
+  else:
+    all_vars = it.chain.from_iterable(_jaxpr_vars(j) for j in jaxprs)
+    start = 1 + max((v.count for v in all_vars), default=-1)
+  counter = it.count(start=start)
   return lambda aval: Var(next(counter), suffix, aval)
 
 class Literal(object):
