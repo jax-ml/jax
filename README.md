@@ -431,11 +431,17 @@ grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different pa
 
 Note that some GPU functionality expects the CUDA installation to be at
 `/usr/local/cuda-X.X`, where X.X should be replaced with the CUDA version number
-(e.g. `cuda-10.2`). If CUDA is installed elsewhere on your system, you can
+(e.g. `cuda-10.2`). If CUDA is installed elsewhere on your system, you can either
 create a symlink:
 
 ```bash
 sudo ln -s /path/to/cuda /usr/local/cuda-X.X
+```
+
+Or set the following environment variable before importing JAX:
+
+```bash
+XLA_FLAGS=--xla_gpu_cuda_data_dir=/path/to/cuda
 ```
 
 The Python version must match your Python interpreter. There are prebuilt wheels
