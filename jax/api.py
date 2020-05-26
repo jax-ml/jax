@@ -1286,7 +1286,7 @@ def _parallelize(fun):
   return pfun
 
 
-def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
+def mask(fun: Callable, in_shapes, out_shape) -> Callable:
   _check_callable(fun)
   unique_ids = masking.UniqueIds()
 
@@ -1294,10 +1294,9 @@ def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
   in_specs = map(masking.parse_spec, in_specs)
   in_specs = map(partial(masking.remap_ids, unique_ids), in_specs)
 
-  if out_shape:
-    out_specs, out_spec_tree = tree_flatten(out_shape)
-    out_specs = map(masking.parse_spec, out_specs)
-    out_specs = map(partial(masking.remap_ids, unique_ids), out_specs)
+  out_specs, out_spec_tree = tree_flatten(out_shape)
+  out_specs = map(masking.parse_spec, out_specs)
+  out_specs = map(partial(masking.remap_ids, unique_ids), out_specs)
 
   def wrapped_fun(args, logical_env):
     args_flat, in_tree = tree_flatten(args)
@@ -1312,13 +1311,12 @@ def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
       flat_fun, logical_env, padded_env, args_flat, in_shapes)
     out_tree = out_tree_thunk()
 
-    if out_shape:
-      masking.check_shapes(out_specs, out_spec_tree, list(out_shapes), out_tree)
-      def padded_spec(shape_spec):
-        return tuple(dim if dim is masking._monomorphic_dim else
-                     masking.eval_poly(dim, padded_env) for dim in shape_spec)
-      masking.check_shapes(map(padded_spec, out_specs), out_spec_tree,
-                           map(onp.shape, outs), out_tree, "Padded output")
+    masking.check_shapes(out_specs, out_spec_tree, list(out_shapes), out_tree)
+    def padded_spec(shape_spec):
+      return tuple(dim if dim is masking._monomorphic_dim else
+                   masking.eval_poly(dim, padded_env) for dim in shape_spec)
+    masking.check_shapes(map(padded_spec, out_specs), out_spec_tree,
+                         map(onp.shape, outs), out_tree, "Padded output")
     return tree_unflatten(out_tree, outs)
   return wrapped_fun
 
