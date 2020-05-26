@@ -19,6 +19,7 @@ import numpy as np
 
 import jax
 from jax import core
+from jax import custom_derivatives
 from jax.util import unzip2
 from jax import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
@@ -112,7 +113,6 @@ class JetTrace(core.Trace):
     return JetTracer(self, val.primal, val.terms)
 
   def process_primitive(self, primitive, tracers, params):
-    assert not primitive.multiple_results  # TODO
     order = self.master.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     series_in = [[zero_term] * order if s is zero_series else s
@@ -123,7 +123,10 @@ class JetTrace(core.Trace):
                  for x, series in zip(primals_in, series_in)]
     rule = jet_rules[primitive]
     primal_out, terms_out = rule(primals_in, series_in, **params)
-    return JetTracer(self, primal_out, terms_out)
+    if not primitive.multiple_results:
+      return JetTracer(self, primal_out, terms_out)
+    else:
+      return [JetTracer(self, x, ts) for x, ts in zip(primal_out, terms_out)]
 
   def process_call(self, call_primitive, f, tracers, params):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
@@ -517,3 +520,10 @@ def _select_taylor_rule(primal_in, series_in, **params):
   series_out = [sel(*terms_in, **params) for terms_in in zip(*series_in)]
   return primal_out, series_out
 jet_rules[lax.select_p] = _select_taylor_rule
+
+
+def _custom_jvp_call_rule(primals_in, series_in, *, fun_jaxpr, jvp_jaxpr_thunk):
+  del jvp_jaxpr_thunk  # we ignore this and just differentiate the implementation
+  primals_out, series_out = jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
+  return primals_out, series_out
+jet_rules[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_rule
