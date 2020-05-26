@@ -229,6 +229,10 @@ class JetTest(jtu.JaxTestCase):
   def test_erf(self):        self.unary_check(lax.erf)
   @jtu.skip_on_devices("tpu")
   def test_erfc(self):       self.unary_check(lax.erfc)
+  @jtu.skip_on_devices("tpu")
+  def test_softplus2(self):   self.unary_check(lambda x: jax.numpy.logaddexp(x, jax.numpy.zeros_like(x)),
+                                               lims=[-500, 500],
+                                               order=5)
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
@@ -261,6 +265,10 @@ class JetTest(jtu.JaxTestCase):
   def test_pow(self):  self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
   @jtu.skip_on_devices("tpu")
   def test_atan2(self):      self.binary_check(lax.atan2, lims=[-40, 40])
+  @jtu.skip_on_devices("tpu")
+  def test_lax_max(self):    self.binary_check(lax.max)
+  @jtu.skip_on_devices("tpu")
+  def test_lax_min(self):    self.binary_check(lax.min)
 
   def test_process_call(self):
     def f(x):

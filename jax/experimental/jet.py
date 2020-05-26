@@ -174,6 +174,7 @@ defzero(lax.gt_p)
 defzero(lax.ge_p)
 defzero(lax.eq_p)
 defzero(lax.ne_p)
+defzero(lax.not_p)
 defzero(lax.and_p)
 defzero(lax.or_p)
 defzero(lax.xor_p)
@@ -211,6 +212,7 @@ deflinear(lax.reduce_window_sum_p)
 deflinear(lax.tie_in_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
+deflinear(lax.is_finite_p)
 
 def def_deriv(prim, deriv):
   """
@@ -457,6 +459,47 @@ def _gen_reduce_choose_taylor_rule(chooser_fun):
   return chooser_taylor_rule
 jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax.reduce_max_p.bind)
 jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax.reduce_min_p.bind)
+
+def _lax_max_taylor_rule(primal_in, series_in, **params):
+    # TODO: (Jesse) doesn't use params
+    # TODO: (Jesse) Could probably be done with a single pass
+    # TODO: (Jesse) shape promotion
+    x,y = primal_in
+    # x, y = lnp._promote_shapes("laxmax", *lnp._promote_dtypes_inexact(x, jax.numpy.array([y])))
+    # y = jax.numpy.full(x.shape, y)
+
+    xgy = x>y  # greater than mask
+    xey = x==y # equal to mask
+    primal_out = lax.select(xgy,x,y)
+
+    def select_max_and_avg_eq(x_i,y_i):
+        """Select x where x>y or average when x==y"""
+        # y_i = jax.numpy.full(x.shape, y_i)
+        max_i = lax.select(xgy,x_i,y_i)
+        max_i = lax.select(xey, (x_i + y_i)/2, max_i)
+        return max_i
+
+    series_out = [select_max_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
+    return primal_out, series_out
+jet_rules[lax.max_p] = _lax_max_taylor_rule
+
+def _lax_min_taylor_rule(primal_in, series_in, **params):
+    # TODO: (Jesse) doesn't use params
+    # TODO: (Jesse) could be 1 function with max
+    x,y = primal_in
+    xgy = x<y  # less than mask
+    xey = x==y # equal to mask
+    primal_out = lax.select(xgy,x,y)
+
+    def select_min_and_avg_eq(x_i,y_i):
+        """Select x where x>y or average when x==y"""
+        min_i = lax.select(xgy,x_i,y_i)
+        min_i = lax.select(xey, (x_i + y_i)/2, min_i)
+        return min_i
+
+    series_out = [select_min_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
+    return primal_out, series_out
+jet_rules[lax.min_p] = _lax_min_taylor_rule
 
 def _abs_taylor_rule(x, series_in, **params):
   x, = x
