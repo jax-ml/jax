@@ -30,7 +30,7 @@ from jax.lax.lax import _identity
 from jax.numpy.lax_numpy import _polymorphic_slice_indices
 from jax.random import uniform, PRNGKey
 from jax.scipy.special import expit
-from jax.test_util import rand_default
+from jax.test_util import rand_default, rand_int
 from operator import add, sub
 import scipy.stats
 
@@ -546,17 +546,19 @@ class MaskingTest(jtu.JaxTestCase):
                atol=1e-4)
 
   def test_indexing(self):
+    # Requires gather support
     raise SkipTest
-    self.check(lambda x: x[0], ['n'], dict(n=jnp.array([2, 3])), '')
-    self.check(lambda x: x[-1], ['n'], dict(n=jnp.array([2, 3])), '')
+    self.check(lambda x: x[0], ['n'], '', {'n': 2}, [(3,)], ['float_'],
+               rand_default(self.rng()))
+    self.check(lambda x: x[-1], ['n'], '', {'n': 2}, [(3,)], ['float_'],
+               rand_default(self.rng()))
 
   def test_slicing(self):
     raise SkipTest
-    self.check(lambda x: x[1:], ['n'], dict(n=jnp.array([2, 3])), 'n+-1')
-    self.check(lambda x: x[:-1], ['n'], dict(n=jnp.array([2, 3])), 'n+-1')
-    self.check(lambda x: x[..., -1], ['(n,3)'], dict(n=jnp.array([2, 3])), 'n')
-    self.check(lambda x: x[:x.shape[0] - 1], ['n'], dict(n=jnp.array([2, 3])), 'n+-1')
-    # TODO: self.check(lambda x: x[x.shape[0] - 1:], ['n'], dict(n=jnp.array([2, 3])), '1')
+    # Requires gather support
+    self.check(lambda x: x[1:], ['n'], 'n+-1', {'n': 2}, [(3,)], ['float_'])
+    self.check(lambda x: x[:-1], ['n'], 'n+-1', {'n': 2}, [(3,)], ['float_'])
+    self.check(lambda x: x[..., -1], ['(n,3)'], 'n', {'n': 2}, [(3, 4)], ['float_'])
 
   def test_rev(self):
     @shapecheck(['n'], 'n+-1')
@@ -572,45 +574,26 @@ class MaskingTest(jtu.JaxTestCase):
     # self.check(lambda x: x[-2::-1], ['n'], dict(n=jnp.array([2, 3])), 'n+-1')
 
   def test_lax_slice(self):
-    self.check(lambda x: lax.slice(x, (1,), (x.shape[0],)), ['n'],
-               dict(n=jnp.array([2, 3])), 'n+-1')
+    self.check(lambda x: lax.slice(x, (1,), (x.shape[0],)), ['n'], 'n+-1',
+               {'n': 2}, [(3,)], ['float_'], rand_default(self.rng()))
     # TODO: self.check(lambda x: lax.slice(x, (x.shape[0] // 2,), (x.shape[0],)), ['2*n'], dict(n=jnp.array([2, 3])), 'n')
 
   def test_reshape(self):
     raise SkipTest
 
   def test_transpose(self):
-    self.check(lambda x: jnp.transpose(x, (1, 0, 2)),
-               ['(a, b, c)'], dict(a=jnp.array([2, 3]), b=jnp.array([2, 3]), c=jnp.array([3, 2])), 'b, a, c')
-
-  def test_arange(self):
-    raise SkipTest
-    self.check(lambda x: -jnp.arange(x.shape[0]), ['n'],
-               dict(n=jnp.array([2, 3])), 'n')
-
-  def test_eye(self):
-    raise SkipTest
-    self.check(lambda x: -jnp.eye(x.shape[0], 2 * x.shape[0]), ['n'],
-               dict(n=jnp.array([2, 3])), 'n, 2*n')
-
-  def test_tri(self):
-    raise SkipTest
-    self.check(lambda x: -jnp.tri(x.shape[0], 2 * x.shape[0]), ['n'],
-               dict(n=jnp.array([2, 3])), 'n, 2*n')
-
-  def test_delta(self):
-    raise SkipTest
-    self.check(lambda x: -lax._delta(jnp.float32, (x.shape[0], 2 * x.shape[0], 3 * x.shape[0]), axes=(0, 1)), ['n'],
-               dict(n=jnp.array([2, 3])), 'n, 2*n, 3*n')
+    self.check(lambda x: lax.transpose(x, (1, 0, 2)),
+               ['(a, b, c)'], 'b, a, c', dict(a=2, b=3, c=4), [(3, 4, 5)],
+               ['float_'], rand_default(self.rng()))
 
   def test_sum_2d(self):
-    self.check(lambda x: jnp.sum(x), ['(m, n)'],
-               dict(m=jnp.array([2, 3]), n=jnp.array([2, 3])), '')
+    self.check(jnp.sum, ['(m, n)'], '', dict(m=2, n=3), [(3, 4)], ['float_'],
+               rand_default(self.rng()))
 
   def test_expit(self):
     raise SkipTest("custom_jvp doesn't work with masking yet")
-
-    self.check(lambda x: expit(x), ['n'], dict(n=jnp.array([2, 3])), 'n')
+    self.check(expit, ['n'], 'n', {n: 3}, [(4,)], ['float_'],
+               rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
@@ -619,87 +602,51 @@ class MaskingTest(jtu.JaxTestCase):
     raise SkipTest("not yet implemented")
     # TODO needs fix for https://github.com/google/jax/issues/2155
 
-  def test_zeros(self):
-    raise SkipTest
-    self.check(lambda x: -jnp.zeros(x.shape), ['n'],
-               dict(n=jnp.array([2, 3])), 'n')
-
-  def test_ones(self):
-    raise SkipTest
-    self.check(lambda x: -jnp.ones(x.shape), ['n'],
-               dict(n=jnp.array([2, 3])), 'n')
-
-  def test_broadcast_to(self):
-    raise SkipTest
-    self.check(lambda x: -jnp.broadcast_to(0, x.shape), ['n'],
-               dict(n=jnp.array([2, 3])), 'n')
-
   def test_broadcast_in_dim(self):
     raise SkipTest
-    self.check(lambda x: -lax.broadcast_in_dim(jnp.zeros((1, 1)), shape=(3, x.shape[0], 4), broadcast_dimensions=(1, 2)),
-               ['(n, 1)'], dict(n=jnp.array([2, 3])), '(3, n, 4)')
 
   def test_destructure(self):
     def d(key):
       key1, key2 = key
       return key1
 
-    self.check(d, ['2'], dict(), '')
+    self.check(d, ['2'], '', {}, [(2,)], ['int_'], rand_int(self.rng(), 0, 10))
 
   def test_where(self):
+    # Requires mask(jit)
     raise SkipTest
-    self.check(lambda x: jnp.where(x < 0, x, jnp.zeros_like(x)), ['n'],
-               dict(n=jnp.array([2, 3])), 'n')
-
-    message = (
-      "mask(jit(broadcast_in_dim))) is not supported yet. "
-      "Consider using jit(mask(broadcast_in_dim)) instead."
-      "If you are using jnp.where, consider disabling jit on jax.lax._where or "
-      "manually broadcasting arguments to the same shape.")
-
-    self.assertRaisesWithLiteralMatch(NotImplementedError, message,
-                                      lambda: self.check(lambda x: jnp.where(x < 0, x, 0.), ['n'], dict(n=jnp.array([2, 3])), 'n'))
-    self.assertRaisesWithLiteralMatch(NotImplementedError, message,
-                                      lambda: self.check(lambda x: jnp.where(x < 0, 0., x), ['n'], dict(n=jnp.array([2, 3])), 'n'))
-    self.assertRaisesWithLiteralMatch(NotImplementedError, message,
-                                      lambda: self.check(lambda x: jnp.where(x < 0, 0., 0.), ['n'], dict(n=jnp.array([2, 3])), 'n'))
+    self.check(lambda x: jnp.where(x < 0, x, 0. * x), ['n'], 'n',
+               {'n': 2}, [(3,)], ['float_'], rand_default(self.rng()))
 
   def test_split(self):
     raise SkipTest
-    self.check(lambda x: jnp.split(x, 2), ['2*n'],
-               dict(n=jnp.array([4, 4])), ['n', 'n'], unpadded_vars=['n'])
-    self.check(lambda x: jnp.split(x, [10]), ['n'],
-               dict(n=jnp.array([12, 12])), ['10', 'n+-10'], unpadded_vars=['n'])
 
   @parameterized.named_parameters(jtu.cases_from_list([{
     'testcase_name': "operator={}".format(operator.__name__), 'operator': operator}
     for operator in [jnp.sum, jnp.prod, jnp.max, jnp.min]]))
   def test_reduce(self, operator):
-    self.check(operator, ['(m, n)'],
-               dict(m=jnp.array([3, 3]), n=jnp.array([3, 3])), '', unpadded_vars=['m', 'n'])
+    self.check(operator, ['(m, n)'], '', {'m': 3, 'n': 4}, [(4, 5)], ['float_'],
+               rand_default(self.rng()))
 
   def test_output_shape_error(self):
     def thunk():
-      self.check(lambda x: x, ['n'], dict(n=jnp.array([3, 3])), 'n+-1')
+      shapecheck(['n'], 'n+-1')(lambda x: x)
 
     message = "Output shapes should be (n + -1,) but are (n,)."
     self.assertRaisesWithLiteralMatch(ShapeError, message, thunk)
-    self.assertRaisesWithLiteralMatch(ShapeError, message, partial(thunk))
 
     def thunk():
-      self.check(lambda x: (x, x),
-                 ['n'], dict(n=jnp.array([2, 2])), ['7*n', 'n'], unpadded_vars=['n'])
+      shapecheck(['n'], ['7*n', 'n'])(lambda x: (x, x))
 
     message = "Output shapes should be [(7 n,), (n,)] but are ((n,), (n,))."
     self.assertRaisesWithLiteralMatch(ShapeError, message, thunk)
-    self.assertRaisesWithLiteralMatch(ShapeError, message, partial(thunk))
 
   def test_output_tree_error(self):
     def thunk():
-      self.check(lambda x: [x, x], ['n'], dict(n=jnp.array([3, 3])), ('n', 'n'), unpadded_vars=['n'])
+      shapecheck(['n'], ('n', 'n'))(lambda x: [x, x])
+
     message = "Output shapes should be ((n,), (n,)) but are [(n,), (n,)]."
     self.assertRaisesWithLiteralMatch(ShapeError, message, thunk)
-    self.assertRaisesWithLiteralMatch(ShapeError, message, partial(thunk))
 
   def test_unsupported_op(self):
     p = jc.Primitive('unsupported_op')
@@ -707,7 +654,7 @@ class MaskingTest(jtu.JaxTestCase):
     p.def_impl(lambda x: x)
 
     def thunk():
-      self.check(lambda x: p.bind(x), ['n'], dict(n=jnp.array([2, 3])), 'n')
+      mask(p.bind, ['n'], 'n')([np.arange(3)], {'n': 2})
 
     message = "Masking rule for unsupported_op not implemented yet."
     self.assertRaisesWithLiteralMatch(NotImplementedError, message, thunk)
