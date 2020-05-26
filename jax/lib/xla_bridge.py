@@ -58,6 +58,10 @@ flags.DEFINE_string(
     'Platform name for XLA. The default is to attempt to use a GPU if '
     'available, but fall back to CPU otherwise. To set the platform manually, '
     'pass "cpu" for CPU or "gpu" for GPU.')
+flags.DEFINE_bool(
+    'jax_disable_most_optimizations', False,
+    'Try not to do much optimization work. This can be useful if the cost of '
+    'optimization is greater than that of running a less-optimized program.')
 
 
 def get_compile_options(num_replicas, num_partitions, device_assignment=None):
@@ -97,6 +101,13 @@ def get_compile_options(num_replicas, num_partitions, device_assignment=None):
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
+
+  if FLAGS.jax_disable_most_optimizations:
+    debug_options = compile_options.executable_build_options.debug_options
+    debug_options.xla_backend_optimization_level = 0
+    debug_options.xla_llvm_disable_expensive_passes = True
+    debug_options.xla_test_all_input_layouts = False
+
   return compile_options
 
 _backends = {}
