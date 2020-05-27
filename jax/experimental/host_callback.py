@@ -389,7 +389,7 @@ id_tap_p.def_abstract_eval(_id_tap_abstract_eval)
 # The AttributeError is for regular values, the KeyError is for ConcreteArray
 def _instantiate_zeros(arg, tan):
   """Turn special ad.zero tangents into arrays of 0s."""
-  if tan is not ad.zero:
+  if type(tan) is not ad.Zero:
     return tan
 
   try:
