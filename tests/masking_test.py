@@ -101,6 +101,7 @@ class ShapesTest(jtu.JaxTestCase):
     assert -1 - n == -n - 1
 
   def test_add_broadcast(self):
+    @shapecheck(['n', '(m, n)'], '(m, n)')
     @shapecheck(['(m, n)', 'n'], '(m, n)')
     @shapecheck(['n', ''], 'n')
     def add(a, b):

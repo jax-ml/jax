@@ -66,6 +66,15 @@ Array = Any
 DType = Any
 Shape = Sequence[int]
 
+def _try_broadcast_shapes(shapes):
+  # Replace 1 with 0 to avoid inconclusive comparisons for polymorphic dims:
+  out_shape = onp.max(onp.where(shapes == 1, 0, shapes), axis=0)
+  out_shape = onp.where(onp.all(shapes == 1, 0), 1, out_shape)
+  out_shape = onp.where(onp.any(shapes == 0, 0), 0, out_shape)
+  if not onp.all((shapes == out_shape) | (shapes == 1)):
+    return None
+  return canonicalize_shape(out_shape)
+
 @cache()
 def broadcast_shapes(*shapes):
   """Returns the shape that results from NumPy broadcasting of `shapes`."""
@@ -73,13 +82,11 @@ def broadcast_shapes(*shapes):
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
   shapes = onp.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
-  is_zero = onp.any(shapes == 0, axis=0)
-  max_shape = onp.max(shapes, axis=0)
-  result_shape = onp.where(is_zero, 0, max_shape)
-  if not onp.all((shapes == result_shape) | (shapes == 1)):
+  result_shape = _try_broadcast_shapes(shapes)
+  if result_shape is None:
     raise ValueError("Incompatible shapes for broadcasting: {}"
                      .format(tuple(map(tuple, shapes))))
-  return canonicalize_shape(result_shape)
+  return result_shape
 
 def _identity(x): return x
 
@@ -1781,13 +1788,11 @@ def _broadcasting_shape_rule(name, *avals):
   if len({len(shape) for shape in shapes}) != 1:
     msg = '{} got arrays of different rank: {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  is_zero = onp.any(shapes == 0, axis=0)
-  max_shape = onp.max(shapes, axis=0)
-  result_shape = onp.where(is_zero, 0, max_shape)
-  if not onp.all((shapes == result_shape) | (shapes == 1)):
+  result_shape = _try_broadcast_shapes(shapes)
+  if result_shape is None:
     msg = '{} got incompatible shapes for broadcasting: {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
-  return tuple(result_shape)
+  return result_shape
 
 
 def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
