@@ -1101,7 +1101,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if shape in scalar_shapes or len(shape) == 0:
       cond_shape = (0,)
     elif axis is None:
-      cond_shape = (max(shape),)
+      cond_shape = (np.prod(shape),)
     else:
       cond_shape = (shape[axis],)
 
