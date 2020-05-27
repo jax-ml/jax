@@ -415,6 +415,29 @@ class MaskingTest(jtu.JaxTestCase):
     expected = 8 / 3
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_arithmetic(self):
+    @partial(mask, in_shapes=['(n, m)', 'm'], out_shape='(n, m)')
+    def times(x, y):
+      return x * y
+
+    # TODO(shoyer): enable this check when broadcast_in_dim supports masking
+    with self.assertRaisesRegex(KeyError, 'broadcast_in_dim'):
+      ans = times([jnp.array([[1, 2], [3, 4], [5, 6]]), jnp.array([1, 2])],
+                  dict(n=4, m=5))
+      # expected = np.array([[1, 2, 3], [8, 10, 12]])
+      # self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_stack(self):
+    @partial(mask, in_shapes=['n','n'], out_shape='(2, n)')
+    def stack(x, y):
+      return jnp.stack([x, y], 0)
+
+    # TODO(shoyer): enable this check when broadcast_in_dim supports masking
+    with self.assertRaisesRegex(KeyError, 'broadcast_in_dim'):
+      ans = stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
+      # expected = np.array([[1, 2, 3], [4, 5, 6]])
+      # self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_monomorphic(self):
     @partial(mask, in_shapes=['(_, n)'], out_shape='')
     def padded_sum(x):

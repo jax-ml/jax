@@ -1811,8 +1811,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default}
       for arg_shape in [(), (3,), (3, 4)]
       for dtype in default_dtypes
-      for dim in range(-len(arg_shape)+1, len(arg_shape))))
+      for dim in (list(range(-len(arg_shape)+1, len(arg_shape)))
+                  + [(0,), (len(arg_shape), len(arg_shape) + 1)])))
   def testExpandDimsStaticDim(self, arg_shape, dtype, dim, rng_factory):
+    if isinstance(dim, tuple) and numpy_version < (1, 18, 0):
+      raise SkipTest("support for multiple axes added in NumPy 1.18.0")
     rng = rng_factory(self.rng())
     np_fun = lambda x: np.expand_dims(x, dim)
     jnp_fun = lambda x: jnp.expand_dims(x, dim)
