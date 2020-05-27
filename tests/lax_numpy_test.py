@@ -1099,7 +1099,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testCompress(self, shape, dtype, axis):
     rng = jtu.rand_some_zero(self.rng())
     if shape in scalar_shapes or len(shape) == 0:
-      cond_shape = ()
+      cond_shape = (0,)
     elif axis is None:
       cond_shape = (max(shape),)
     else:
