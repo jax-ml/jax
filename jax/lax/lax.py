@@ -69,8 +69,7 @@ Shape = Sequence[int]
 def _try_broadcast_shapes(shapes):
   # Replace 1 with 0 to avoid inconclusive comparisons for polymorphic dims:
   out_shape = onp.max(onp.where(shapes == 1, 0, shapes), axis=0)
-  out_shape = onp.where(onp.all(shapes == 1, 0), 1, out_shape)
-  out_shape = onp.where(onp.any(shapes == 0, 0), 0, out_shape)
+  out_shape = onp.where(onp.all(shapes == 1, axis=0), 1, out_shape)
   if not onp.all((shapes == out_shape) | (shapes == 1)):
     return None
   return canonicalize_shape(out_shape)
