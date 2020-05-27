@@ -1091,18 +1091,20 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
       return lax.cond(z > 0, (1, 2), lambda a: (a[0], jnp.zeros(5)),
                       z, lambda a: (hcb.id_print(a), y))
     self.assertRewrite("""
-{ lambda d e ; a b h.
+{ lambda e f ; a b i.
   let c = gt b 0
-      f g i = cond[ false_jaxpr={ lambda  ; f_ e a b c g.
-                                  let d h = id_tap[ arg_treedef=*
-                                                    func=_print
-                                                     ] c g
-                                  in (d, e, h) }
-                    linear=(False, False, False, False, False, False)
-                    true_jaxpr={ lambda  ; d g_ a b c h.
+      d = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] c
+      g h j = cond[ branches=( { lambda  ; f_ e a b c g.
+                                 let d h = id_tap[ arg_treedef=*
+                                                   func=_print
+                                                   ] c g
+                                 in (d, e, h) }
+                               { lambda  ; d g_ a b c h.
                                  let
-                                 in (a, d, h) } ] c d e 1 2 b h
-  in (f, g, i) }""", func, [y, 5])
+                                 in (a, d, h) } )
+                    linear=(False, False, False, False, False, False) ] d e f 1 2 b i
+  in (g, h, j) }""", func, [y, 5])
 
   def test_while(self):
     ct_body = jnp.ones(5, np.float32)     # captured const for the body

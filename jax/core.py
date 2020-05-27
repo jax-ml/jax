@@ -33,7 +33,7 @@ from .config import FLAGS
 from . import linear_util as lu
 
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
-from .pprint_util import pp, vcat, hcat, pp_kv_pairs, PrettyPrint
+from .pprint_util import pp, vcat, hcat, PrettyPrint
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
 check_leaks = False
@@ -85,16 +85,22 @@ class Jaxpr:
   __repr__ = __str__
 
 
+def jaxprs_in_params(params) -> Iterator[Jaxpr]:
+  for val in params.values():
+    vals = val if isinstance(val, tuple) else (val,)
+    for v in vals:
+      if isinstance(v, Jaxpr):
+        yield v
+      elif isinstance(v, TypedJaxpr):
+        yield v.jaxpr
+
+
 def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   """Generator for all subjaxprs found in the params of jaxpr.eqns.
   Does not descend recursively into the found subjaxprs.
   """
   for eqn in jaxpr.eqns:
-    for param in eqn.params.values():
-      if isinstance(param, Jaxpr):
-        yield param
-      elif isinstance(param, TypedJaxpr):
-        yield param.jaxpr
+    yield from jaxprs_in_params(eqn.params)
 
 
 class TypedJaxpr:
@@ -1200,11 +1206,9 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(read, jaxpr.outvars)
 
 def check_eqn(prim, in_avals, params):
-  for param in params.values():
-    if isinstance(param, Jaxpr):
-      check_jaxpr(param)
-    elif isinstance(param, TypedJaxpr):
-      check_jaxpr(param.jaxpr)
+  for jaxpr in jaxprs_in_params(params):
+    check_jaxpr(jaxpr)
+
   out_avals = prim.abstract_eval(*in_avals, **params)
   if not prim.multiple_results:
     out_avals = [out_avals]
@@ -1266,7 +1270,8 @@ def pp_vars(vs: Sequence[Any]) -> str:
 
 def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
   filtered_params = {k: v for k, v in params.items()
-                     if not isinstance(v, (Jaxpr, TypedJaxpr))}
+                     if (k != 'branches' and
+                         not isinstance(v, (Jaxpr, TypedJaxpr)))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
 def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
@@ -1276,7 +1281,6 @@ def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
           >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
 
-
 def pp_jaxpr(jaxpr: Jaxpr) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
@@ -1284,3 +1288,16 @@ def pp_jaxpr(jaxpr: Jaxpr) -> PrettyPrint:
           ((pp('let ') >>
             vcat(map(pp_eqn, jaxpr.eqns))) +
            pp('in {} }}'.format(pp_outvars))).indent(2))
+
+def pp_jaxprs(jaxprs) -> PrettyPrint:
+  jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]
+  return pp('( ') >> vcat(map(pp_jaxpr, jaxprs)) >> pp(' )')
+
+def pp_kv_pair(k, v):
+  return pp(f'{k}=') >> (pp_jaxprs(v) if k == 'branches' else pp(v))
+
+def pp_kv_pairs(kv_pairs):
+  if kv_pairs:
+    return pp('[ ') >> vcat([pp_kv_pair(k, v) for k, v in kv_pairs]) >> pp(' ]')
+  else:
+    return pp('')
