@@ -3047,13 +3047,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for bias in [True, False]
         for ddof in [None, 2, 3]
         for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("gpu")  # TODO(b/138003641): test fails on GPU.
   def testCov(self, shape, dtype, rowvar, ddof, bias, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     np_fun = partial(np.cov, rowvar=rowvar, ddof=ddof, bias=bias)
     jnp_fun = partial(jnp.cov, rowvar=rowvar, ddof=ddof, bias=bias)
-    tol = {np.float32: 1e-5, np.float64: 1e-13, np.complex128: 1e-13}
+    tol = {np.float32: 1e-5, np.complex64: 1e-5,
+           np.float64: 1e-13, np.complex128: 1e-13}
     tol = 7e-2 if jtu.device_under_test() == "tpu" else tol
     tol = jtu.join_tolerance(tol, jtu.tolerance(dtype))
     self._CheckAgainstNumpy(
