@@ -2662,11 +2662,8 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   dim_numbers = (((ndim(a) - 1,), (ndim(b) - 2,)), (batch_dims, batch_dims))
   result = lax.dot_general(a, b, dim_numbers,  precision)
 
-  if a_is_vec or b_is_vec:
-    squeeze_dims = ((-2,) if a_is_vec else ()) + ((-1,) if b_is_vec else ())
-    return squeeze(result, squeeze_dims)
-  else:
-    return result
+  squeeze_dims = ((-2,) if a_is_vec else ()) + ((-1,) if b_is_vec else ())
+  return squeeze(result, squeeze_dims)
 
 
 @_wraps(np.vdot, lax_description=_PRECISION_DOC)
