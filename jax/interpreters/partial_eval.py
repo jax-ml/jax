@@ -167,8 +167,6 @@ class JaxprTrace(Trace):
     if (self.master.trace_type is StagingJaxprTrace
         and call_primitive in staged_out_calls):
       tracers = map(self.instantiate_const_abstracted, tracers)
-    else:
-      name = wrap_name(name, 'pe')
     params = dict(params, name=name)
 
     if call_primitive in call_partial_eval_rules:
