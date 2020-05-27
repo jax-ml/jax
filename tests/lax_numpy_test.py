@@ -1100,7 +1100,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_some_zero(self.rng())
     cond_shape = [max(shape) if axis is None else shape[axis]]
 
-    args_maker = lambda: [rng(cond_shape, dtype), rng(shape, dtype)]
+    args_maker = lambda: [rng(cond_shape, jnp.float32), rng(shape, dtype)]
 
     np_fun = partial(np.compress, axis=axis)
     jnp_fun = partial(jnp.compress, axis=axis)
