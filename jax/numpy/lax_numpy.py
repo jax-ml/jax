@@ -2725,7 +2725,6 @@ def _removechars(s, chars):
 def _einsum(operands: Sequence,
             contractions: Sequence[Tuple[Tuple[int, ...], Set[str], str]],
             precision):
-  print(contractions)
   operands = list(_promote_dtypes(*operands))
   def sum(x, axes):
     return lax.reduce(x, np.array(0, x.dtype),
@@ -2810,8 +2809,8 @@ def _einsum(operands: Sequence,
       rhs, rhs_names = sum_repeats(rhs, rhs_names, rhs_counts,
                                    result_names + lhs_names)
 
-      contracted_names = [x for x in contracted_names
-                          if x in set(lhs_names) or x in set(rhs_names)]
+      lhs_and_rhs_names = set(lhs_names) | set(rhs_names)
+      contracted_names = [x for x in contracted_names if x in lhs_and_rhs_names]
       batch_names = sorted((set(lhs_names) & set(rhs_names))
                              - set(contracted_names))
 
