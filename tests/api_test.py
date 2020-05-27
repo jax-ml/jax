@@ -2457,7 +2457,6 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     grad(experiment)(1.)  # doesn't crash
 
-  # TODO(mattjj): allow custom_jvp on (multi)linear functions
   def test_linear_in_scan(self):
     @api.custom_jvp
     def f(x):
