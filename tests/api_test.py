@@ -1792,16 +1792,18 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual("""
 { lambda  ; a.
   let b = ge a 0.0
-      c = add a 1.0
-      d = add a 2.0
-      e = cond[ false_jaxpr={ lambda  ; e_ c a b.
-                              let d = sub b c
-                              in (d,) }
-                linear=(False, False, False, False)
-                true_jaxpr={ lambda  ; c f_ a b.
+      c = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] b
+      d = add a 1.0
+      e = add a 2.0
+      f = cond[ branches=( { lambda  ; e_ c a b.
+                             let d = sub b c
+                             in (d,) }
+                           { lambda  ; c f_ a b.
                              let d = add a c
-                             in (d,) } ] b a a c d
-  in (e,) }
+                             in (d,) } )
+                linear=(False, False, False, False) ] c a a d e
+  in (f,) }
         """, str(jaxpr))
 
   def test_make_jaxpr_static_argnums(self):

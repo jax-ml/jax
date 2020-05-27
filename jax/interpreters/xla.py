@@ -185,16 +185,24 @@ def jaxpr_uses_outfeed(jaxpr: core.Jaxpr) -> bool:
   return any(primitive_uses_outfeed(eqn.primitive, eqn.params)
              for eqn in jaxpr.eqns)
 
+def _param_uses_outfeed(param):
+  if type(param) is core.Jaxpr:
+    if jaxpr_uses_outfeed(param):
+      return True
+  elif type(param) is core.TypedJaxpr:
+    if jaxpr_uses_outfeed(param.jaxpr):
+      return True
+  return False
+
 def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
   if prim in outfeed_primitives:
     return True
   for param in params.values():
-    if type(param) is core.Jaxpr:
-      if jaxpr_uses_outfeed(param):
+    if isinstance(param, tuple):
+      if any(_map(_param_uses_outfeed, param)):
         return True
-    elif type(param) is core.TypedJaxpr:
-      if jaxpr_uses_outfeed(param.jaxpr):
-        return True
+    elif _param_uses_outfeed(param):
+      return True
   return False
 
 # TODO(necula): remove this when we start the outfeed receiver automatically.

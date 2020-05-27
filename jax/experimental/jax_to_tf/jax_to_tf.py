@@ -771,14 +771,14 @@ tf_impl[lax.scatter_mul_p] = functools.partial(_scatter, tf.math.multiply)
 tf_impl[lax.scatter_add_p] = functools.partial(_scatter, tf.math.add)
 
 
-def _cond(pred: TfVal, *operands: TfVal,
-          true_jaxpr: core.TypedJaxpr, false_jaxpr: core.TypedJaxpr,
+def _cond(index: TfVal, *operands: TfVal,
+          branches: Sequence[core.TypedJaxpr],
           linear: Sequence[bool]):
   del linear
   # tf.cond needs lambdas with no arguments.
-  true_tf_func = functools.partial(_interpret_jaxpr, true_jaxpr, *operands)
-  false_tf_func = functools.partial(_interpret_jaxpr, false_jaxpr, *operands)
-  return tf.cond(pred, true_tf_func, false_tf_func)
+  tf_branches = [functools.partial(_interpret_jaxpr, jaxpr, *operands)
+                 for jaxpr in branches]
+  return tf.switch_case(index, tf_branches)
 
 tf_impl[lax.cond_p] = _cond
 
