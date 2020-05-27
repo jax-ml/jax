@@ -1098,7 +1098,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in [None] + list(range(len(shape)))))
   def testCompress(self, shape, dtype, axis):
     rng = jtu.rand_some_zero(self.rng())
-    cond_shape = [max(shape) if axis is None else shape[axis]]
+    if shape in scalar_shapes or len(shape) == 0:
+      cond_shape = ()
+    elif axis is None:
+      cond_shape = (max(shape),)
+    else:
+      cond_shape = (shape[axis],)
 
     args_maker = lambda: [rng(cond_shape, jnp.float32), rng(shape, dtype)]
 
