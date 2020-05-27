@@ -349,9 +349,9 @@ def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk,
                                      avals):
   del jvp_jaxpr_thunk
   name = 'custom_jvp_call_jaxpr_linear'
+  avals = [core.get_aval(l) for l in fun_jaxpr.literals] + avals
   return ad.call_transpose(core.call_p, dict(name=name), fun_jaxpr.jaxpr,
-                           tuple(fun_jaxpr.literals) + args, cts,
-                           [core.get_aval(l) for l in literals] + avals)
+                           tuple(fun_jaxpr.literals) + args, cts, avals)
 ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 
