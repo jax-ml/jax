@@ -775,7 +775,6 @@ def frexp(x):
   int_type = _INT_DTYPES[info.bits]
 
   x1, x2 = _normalize_float(x)
-  print(x1, x2)
   x1 = lax.bitcast_convert_type(x1, int_type)
   x2 += ((x1 >> info.nmant) & mask) - bias + 1
   x1 &= ~(mask << info.nmant)
