@@ -44,6 +44,9 @@ from . import xla_client
 
 xops = xla_client.ops
 
+# TODO(skye): expose in xla_client
+LocalClient = xla_client._xla.LocalClient
+
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
@@ -113,7 +116,7 @@ def get_compile_options(num_replicas, num_partitions, device_assignment=None):
 
 _backend_factories = {}
 
-def register_backend(name: str, factory: Callable[[Optional[str]], xla_client.LocalBackend]):
+def register_backend(name: str, factory: Callable[[Optional[str]], LocalClient]):
   _backend_factories[name] = factory
 
 
@@ -144,7 +147,7 @@ _backends = None
 _backend_lock = threading.Lock()
 
 @util.memoize
-def get_backend(platform: Optional[str] = None) -> xla_client.LocalBackend:
+def get_backend(platform: Optional[str] = None) -> LocalClient:
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
   if not isinstance(platform, (type(None), str)):
@@ -157,6 +160,9 @@ def get_backend(platform: Optional[str] = None) -> xla_client.LocalBackend:
 
   if platform is None:
     return list(_backends.values())[-1]
+
+  if platform not in _backends:
+    raise ValueError(f"Unknown backend '{platform}'")
 
   return _backends[platform]
 
