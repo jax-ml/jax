@@ -24,7 +24,6 @@ transformations for NumPy primitives can be derived from the transformation
 rules for the underlying :code:`lax` primitives.
 """
 
-
 import builtins
 import collections
 from collections.abc import Sequence
@@ -34,7 +33,7 @@ import os
 import re
 import string
 import types
-from typing import Tuple, Union
+from typing import Sequence, Set, Tuple, Union
 import warnings
 
 import numpy as np
@@ -2723,7 +2722,10 @@ def _removechars(s, chars):
   return s.translate(str.maketrans(dict.fromkeys(chars)))
 
 @partial(jit, static_argnums=(1, 2))
-def _einsum(operands, contractions, precision):
+def _einsum(operands: Sequence,
+            contractions: Sequence[Tuple[Tuple[int, ...], Set[str], str]],
+            precision):
+  print(contractions)
   operands = list(_promote_dtypes(*operands))
   def sum(x, axes):
     return lax.reduce(x, np.array(0, x.dtype),
@@ -2760,7 +2762,8 @@ def _einsum(operands, contractions, precision):
         new_names.append(d)
     return reshape(operand, tuple(new_shape)), "".join(new_names)
 
-  for operand_indices, contracted_names, einstr in contractions:
+  for operand_indices, contracted_names_set, einstr in contractions:
+    contracted_names = sorted(contracted_names_set)
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
 
@@ -2807,8 +2810,10 @@ def _einsum(operands, contractions, precision):
       rhs, rhs_names = sum_repeats(rhs, rhs_names, rhs_counts,
                                    result_names + lhs_names)
 
-      contracted_names = contracted_names & (set(lhs_names) | set(rhs_names))
-      batch_names = (set(lhs_names) & set(rhs_names)) - contracted_names
+      contracted_names = [x for x in contracted_names
+                          if x in set(lhs_names) or x in set(rhs_names)]
+      batch_names = sorted((set(lhs_names) & set(rhs_names))
+                             - set(contracted_names))
 
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
@@ -2827,20 +2832,20 @@ def _einsum(operands, contractions, precision):
         lhs_names = _movechars(lhs_names, lhs_batch, batch_dims)
         rhs = moveaxis(rhs, rhs_batch, batch_dims)
         rhs_names = _movechars(rhs_names, rhs_batch, batch_dims)
-        batch_names = ''.join(batch_names)
+        batch_names_str = ''.join(batch_names)
       else:
         batch_dims = tuple(lhs_batch)
-        batch_names = ''.join(lhs_names[i] for i in range(len(lhs_names))
+        batch_names_str = ''.join(lhs_names[i] for i in range(len(lhs_names))
                               if i in batch_dims)
 
       # contract using lax.dot_general
       lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
                                   for n in contracted_names)
       bdims = tuple(range(len(batch_dims)))
-      dimension_numbers = [(lhs_cont, rhs_cont), (bdims, bdims)]
+      dimension_numbers = ((lhs_cont, rhs_cont), (bdims, bdims))
       operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
-      deleted_names = batch_names + ''.join(contracted_names)
-      names = (batch_names + _removechars(lhs_names, deleted_names)
+      deleted_names = batch_names_str + ''.join(contracted_names)
+      names = (batch_names_str + _removechars(lhs_names, deleted_names)
                + _removechars(rhs_names, deleted_names))
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
