@@ -343,15 +343,11 @@ xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_jvp_call_jaxpr_impl)
 
 # If a (multi)linear function is defined with a custom jvp, then
-# custom_jvp_call_jaxpr can appear in jaxprs to be transposed. We transpose it
-# like a core.call.
-def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk,
-                                     avals):
+# custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
+# already been linearized, we can drop the jvp rule.
+def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk):
   del jvp_jaxpr_thunk
-  name = 'custom_jvp_call_jaxpr_linear'
-  avals = [core.get_aval(l) for l in fun_jaxpr.literals] + avals
-  return ad.call_transpose(core.call_p, dict(name=name), fun_jaxpr.jaxpr,
-                           tuple(fun_jaxpr.literals) + args, cts, avals)
+  return ad.backward_pass(fun_jaxpr.jaxpr, fun_jaxpr.literals, args, cts)
 ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 
