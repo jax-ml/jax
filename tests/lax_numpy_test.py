@@ -704,7 +704,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       message="Calling nonzero on 0d arrays.*")(np.argwhere)
     jnp_fun = jnp.argwhere
     args_maker = lambda: [rng(shape, dtype)]
-    if shape in (scalar_shapes + empty_array_shapes) and np.__version__ < "1.18":
+    if shape in (scalar_shapes + [()]) and np.__version__ < "1.18":
       self.skipTest("np.argwhere() result for scalar input changed in numpy 1.18.")
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
