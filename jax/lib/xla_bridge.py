@@ -160,19 +160,17 @@ def get_backend(platform: Optional[str] = None) -> LocalClient:
 
   if platform is None:
     return list(_backends.values())[-1]
-
   if platform not in _backends:
     raise ValueError(f"Unknown backend '{platform}'")
-
   return _backends[platform]
 
 
 def _initialize_backends():
   global _backends
-  assert _backends is None, "_initialize_backends() should only called once!"
+  assert _backends is None, "_initialize_backends() should only be called once!"
   _backends = OrderedDict()
   for name, factory in _backend_factories.items():
-    logging.vlog(2, f"Initializing backend '{name}'")
+    logging.vlog(1, f"Initializing backend '{name}'")
     try:
       # TODO(skye): remove name parameter once all backend factories create a
       # single platform.
