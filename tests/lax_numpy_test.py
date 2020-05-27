@@ -679,6 +679,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in all_shapes for dtype in all_dtypes))
+  def testFlatNonzero(self, shape, dtype):
+    rng = jtu.rand_some_zero(self.rng())
+    np_fun = jtu.ignore_warning(
+      category=DeprecationWarning,
+      message="Calling nonzero on 0d arrays.*")(np.flatnonzero)
+    jnp_fun = jnp.flatnonzero
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in all_shapes for dtype in all_dtypes))
+  def testArgWhere(self, shape, dtype):
+    rng = jtu.rand_some_zero(self.rng())
+    np_fun = jtu.ignore_warning(
+      category=DeprecationWarning,
+      message="Calling nonzero on 0d arrays.*")(np.argwhere)
+    jnp_fun = jnp.argwhere
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "{}_inshape={}_axis={}".format(
           rec.test_name.capitalize(),
           jtu.format_shape_dtype_string(shape, dtype), axis),
