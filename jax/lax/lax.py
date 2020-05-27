@@ -36,6 +36,7 @@ from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
 from ..interpreters import ad
+from ..interpreters import invertible_ad as iad
 from ..interpreters import batching
 from ..interpreters import masking
 from ..util import cache, safe_zip, partial, prod, safe_map
@@ -1901,9 +1902,14 @@ ad.defjvp_zero(is_finite_p)
 
 exp_p = standard_unop(_float | _complex, 'exp')
 ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
+iad.definverse(exp_p, lambda r, x: log(r))
+# For exp_p it is more efficient to use the reconstructed output for the vjp
+# rule instead of computing it again from the input.
+iad.primitive_ivjps[exp_p] = lambda x, y, ct: [[log(y[0])], [ct[0] * y[0]]]
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
+iad.definverse(log_p, lambda r, x: exp(r))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
@@ -2131,7 +2137,11 @@ def _add_transpose(t, x, y):
 add_p = standard_naryop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
-
+def _add_inverse(r, x, y):
+  xr = r - y
+  yr = r - x
+  return xr, yr
+iad.definverse(add_p, _add_inverse)
 
 def _sub_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases
@@ -2147,7 +2157,11 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
-
+def _mul_inverse(r, x, y):
+  xr = r / y
+  yr = r / x
+  return xr, yr
+iad.definverse(mul_p, _mul_inverse)
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
