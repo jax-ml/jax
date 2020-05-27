@@ -24,7 +24,7 @@ from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
 from .util import safe_zip, safe_map, unzip2, split_list, curry
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
-from .ad_util import zero, stop_gradient_p
+from .ad_util import Zero, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
@@ -80,7 +80,7 @@ def sum_tangents(x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
 def zeros_like_pytree(x):
-  return tree_map(lambda _: zero, x)
+  return tree_map(Zero.from_value, x)
 
 def stop_gradient(x):
   return tree_map(_stop_gradient, x)

@@ -394,7 +394,7 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
 
 def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
                     body_jaxpr):
-  nonzeros = [t is not ad_util.zero for t in tangents]
+  nonzeros = [type(t) is not ad_util.Zero for t in tangents]
   cconst_nz, bconst_nz, init_nz = split_list(nonzeros, [cond_nconsts, body_nconsts])
 
   carry_nz = init_nz
@@ -409,7 +409,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
     assert False, "Fixpoint not reached"
 
   nonzeros = cconst_nz + body_nonzeros
-  tangents = [ad.instantiate_zeros(x, t) if t is ad_util.zero and nz else t
+  tangents = [ad.instantiate_zeros(x, t) if type(t) is ad_util.Zero and nz else t
               for x, t, nz in zip(primals, tangents, nonzeros)]
 
   cconst, bconst, init = split_list(primals, [cond_nconsts, body_nconsts])
@@ -447,8 +447,8 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   out_carry, out_carry_dot = split_list(out, [num_carry])
   out_tangents_iter = iter(out_carry_dot)
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.zero
-                  for nz in nonzeros_out]
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
+                  for p, nz in zip(out_carry, nonzeros_out)]
   return out_carry, out_tangents
 
 def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts: int,
@@ -776,7 +776,7 @@ def _cond_batching_rule(args, dims, branches, linear):
     return out, out_dims
 
 def _cond_jvp(primals, tangents, branches, linear):
-  nonzeros = [t is not ad_util.zero for t in tangents]
+  nonzeros = [type(t) is not ad_util.zero for t in tangents]
 
   index_nz, *ops_nz = nonzeros
   assert index_nz is False
@@ -798,8 +798,8 @@ def _cond_jvp(primals, tangents, branches, linear):
       index, *ops, *ops_dot, branches=branches_jvp, linear=linear_jvp)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
-  out_tangents = [
-      next(out_tangents_iter) if nz else ad_util.zero for nz in out_nz]
+  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
+		  for p, nz in zip(out_primals, out_nz)]
   return out_primals, out_tangents
 
 def _cond_partial_eval(trace, *tracers, branches, linear):
@@ -1204,7 +1204,7 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
               linear):
   num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
-  nonzeros = [t is not ad_util.zero for t in tangents]
+  nonzeros = [type(t) is not ad_util.Zero for t in tangents]
   const_nz, init_nz, xs_nz = split_list(nonzeros, [num_consts, num_carry])
 
   # Fixpoint computation of which carry are not ad.zero: either
@@ -1225,7 +1225,7 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
   else:
     assert False, "Fixpoint not reached"
 
-  tangents = [ad.instantiate_zeros(x, t) if t is ad_util.zero and nz else t
+  tangents = [ad.instantiate_zeros(x, t) if type(t) is ad_util.Zero and nz else t
               for x, t, nz in zip(primals, tangents, nonzeros)]
 
   consts, init, xs = split_list(primals, [num_consts, num_carry])
@@ -1251,12 +1251,12 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
   carry, carry_dot, ys, ys_dot = split_list(out_flat, [num_carry, len(init_dot), num_ys])
   primals_out = carry + ys
   tangents_out_iter = iter(carry_dot + ys_dot)
-  tangents_out = [next(tangents_out_iter) if nz else ad_util.zero
-                  for nz in nonzeros_out]
+  tangents_out = [next(tangents_out_iter) if nz else ad_util.Zero.from_value(p)
+                  for p, nz in zip(primals_out, nonzeros_out)]
   return primals_out, tangents_out
 
 def _prune_zeros(ts):
-  return [t for t in ts if t is not ad_util.zero]
+  return [t for t in ts if type(t) is not ad_util.Zero]
 
 def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                        jaxpr, linear):
@@ -1873,8 +1873,8 @@ def _tangent_linear_map(func, params, params_dot, *x):
   Assuming ``func(*params, *x)`` is linear in ``x`` and computes ``A @ x``,
   this function computes ``∂A @ x``.
   """
-  assert any(p is not ad_util.zero for p in params_dot)
-  zeros = [ad_util.zero] * len(x)
+  assert any(type(p) is not ad_util.Zero for p in params_dot)
+  zeros = _map(ad_util.Zero.from_value, x)
   _, out_tangent = ad.jvp(lu.wrap_init(func)).call_wrapped(
       params + list(x), params_dot + zeros)
   return out_tangent
@@ -1891,7 +1891,7 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
   params, _ = _split_linear_solve_args(primals, const_lengths)
   params_dot, b_dot = _split_linear_solve_args(tangents, const_lengths)
 
-  if all(p is ad_util.zero for p in params_dot.matvec):
+  if all(type(p) is ad_util.Zero for p in params_dot.matvec):
     # no need to evaluate matvec_tangents
     rhs = b_dot
   else:
