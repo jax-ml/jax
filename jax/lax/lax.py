@@ -2936,7 +2936,7 @@ batching.primitive_batchers[pad_p] = _pad_batch_rule
 # JAXpr is that we are reshaping from (1, 1) to (1,).
 # In constrast, squeeze[ dimensions=(0,) ] is unambiguous.
 
-def squeeze(array, dimensions: Tuple[int, ...]):
+def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Squeeze any number of size 1 dimensions from an array."""
   ndim = onp.ndim(array)
   dimensions = tuple(sorted(_canonicalize_axis(i, ndim) for i in dimensions))
@@ -2983,7 +2983,7 @@ ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 
 
-def expand_dims(array, dimensions: Tuple[int, ...]):
+def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Insert any number of size 1 dimensions into an array."""
   ndim_out = onp.ndim(array) + len(dimensions)
   dims_set = frozenset(_canonicalize_axis(i, ndim_out) for i in dimensions)
