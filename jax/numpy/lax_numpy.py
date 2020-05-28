@@ -205,6 +205,8 @@ load = np.load
 
 ### utility functions
 
+_canonicalize_axis = lax._canonicalize_axis
+
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
@@ -290,17 +292,6 @@ def _promote_args_inexact(fun_name, *args):
 
 def _constant_like(x, const):
   return np.array(const, dtype=_dtype(x))
-
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = operator.index(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
 
 ### implementations of numpy functions in terms of lax
 
@@ -1153,12 +1144,11 @@ def unravel_index(indices, shape):
 
 @_wraps(np.squeeze)
 def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
-  shape_a = shape(a)
   if axis is None:
-    axis = tuple(i for i, d in enumerate(shape_a) if d == 1)
+    a_shape = shape(a)
+    axis = tuple(i for i, d in enumerate(a_shape) if d == 1)
   elif isinstance(axis, int):
     axis = (axis,)
-  axis = tuple(_canonicalize_axis(i, ndim(a)) for i in axis)
   return lax.squeeze(a, axis)
 
 

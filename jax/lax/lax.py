@@ -682,6 +682,10 @@ def reshape(operand: Array, new_sizes: Shape,
   """Wraps XLA's `Reshape
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
+
+  For inserting/removing dimensions of size 1, prefer using ``lax.squeeze`` /
+  ``lax.expand_dims``. These preserve information about axis identity that may
+  be useful for advanced transformation rules.
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
@@ -2922,13 +2926,20 @@ ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 
-# the squeeze primitive exists for the benefit of batching and other rules that
-# need to keep track of axis identity
+# The squeeze primitive exists for the benefit of masking and other
+# transformations that need to keep track of axis identity.
+# For example, consider reshaping a 2D array with shape (1, N) into a 1D array
+# with shape (N,). This results in the following JAXpr:
+#   reshape[ dimension=None new_sizes=(N,) ]
+# For N > 1, we can match up the output array axis with the second axis of the
+# input. But for N = 1, it is not clear how axes match up: all we know from the
+# JAXpr is that we are reshaping from (1, 1) to (1,).
+# In constrast, squeeze[ dimensions=(0,) ] is unambiguous.
 
 def squeeze(array, dimensions: Tuple[int, ...]):
   """Squeeze any number of size 1 dimensions from an array."""
-  ndim_out = onp.ndim(array) + len(dimensions)
-  dimensions = tuple(_canonicalize_axis(i, ndim_out) for i in dimensions)
+  ndim = onp.ndim(array)
+  dimensions = tuple(sorted(_canonicalize_axis(i, ndim) for i in dimensions))
   if not dimensions:
     return array
   return squeeze_p.bind(array, dimensions=dimensions)
@@ -2957,11 +2968,7 @@ def _squeeze_translation_rule(c, arg, *, dimensions):
 
 def _squeeze_transpose_rule(t, operand, *, dimensions):
   assert ad.is_undefined_primal(operand)
-  shape = list(t.shape)
-  for d in sorted(dimensions):
-    shape.insert(d, 1)
-  kept_dims = tuple(i for i in range(len(shape)) if i not in dimensions)
-  return [broadcast_in_dim(t, tuple(shape), kept_dims)]
+  return [expand_dims(t, dimensions)]
 
 def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
   operand, = batched_args
@@ -5455,12 +5462,12 @@ def _check_user_dtype_supported(dtype, fun_name=None):
 
 
 def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
+  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
+  if not -num_dims <= axis < num_dims:
       raise ValueError(
           "axis {} is out of bounds for array of dimension {}".format(
               axis, num_dims))
+  if axis < 0:
+    axis = axis + num_dims
   return axis

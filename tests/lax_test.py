@@ -897,8 +897,8 @@ class LaxTest(jtu.JaxTestCase):
       "err_msg": err_msg}
     for inshape, dimensions, error_type, err_msg in [
       ((1, 2, 3), (0, 0), ValueError, 'dimensions are not unique'),
-      ((1, 2, 3), (3,), ValueError, 'dimensions outside range'),
-      ((1, 2, 3), (-1,), ValueError, 'dimensions outside range'),
+      ((1, 2, 3), (3,), ValueError, 'axis 3 is out of bounds'),
+      ((1, 2, 3), (-4,), ValueError, 'axis -4 is out of bounds'),
       ((1, 2, 3), (1,), ValueError, 'cannot select an axis to squeeze out'),
       ((1, 2, 3), (None,), TypeError, 'cannot be interpreted as an integer'),
     ]))
@@ -915,6 +915,7 @@ class LaxTest(jtu.JaxTestCase):
        "rng_factory": rng_factory}
       for arg_shape, dimensions in [
           [(1,), (0,)],
+          [(1,), (-1,)],
           [(2, 1, 4), (1,)],
           [(2, 1, 3, 1), (1,)],
           [(2, 1, 3, 1), (1, 3)],
@@ -3058,10 +3059,13 @@ class LaxVmapTest(jtu.JaxTestCase):
        "rng_factory": rng_factory}
       for arg_shape, dimensions in [
           [(1,), (0,)],
+          [(1,), (-1,)],
           [(2, 1, 4), (1,)],
+          [(2, 1, 4), (-2,)],
           [(2, 1, 3, 1), (1,)],
           [(2, 1, 3, 1), (1, 3)],
           [(2, 1, 3, 1), (3,)],
+          [(2, 1, 3, 1), (1, -1)],
       ]
       for bdims in all_bdims(arg_shape)
       for rng_factory in [jtu.rand_default]))

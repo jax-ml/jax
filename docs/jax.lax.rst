@@ -69,6 +69,7 @@ Operators
     erfc
     erf_inv
     exp
+    expand_dims
     expm1
     fft
     floor
