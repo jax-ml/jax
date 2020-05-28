@@ -581,8 +581,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(jtu.format_shape_dtype_string(shape, dtype),
-       "None" if end_dtype is None else onp.dtype(end_dtype).name,
-       "None" if begin_dtype is None else onp.dtype(begin_dtype).name,),
+       "None" if end_dtype is None else np.dtype(end_dtype).name,
+       "None" if begin_dtype is Nonef else np.dtype(begin_dtype).name,),
        "shape": shape, "dtype": dtype, "end_dtype": end_dtype,
        "begin_dtype": begin_dtype, "rng": jtu.rand_default()}
       for dtype in number_dtypes
@@ -591,9 +591,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in all_shapes))
   def testEDiff1d(self, shape, dtype, end_dtype, begin_dtype, rng):
     args_maker = lambda: [rng(shape, dtype), (None if end_dtype is None else rng(shape, end_dtype)), (None if begin_dtype is None else rng(shape, begin_dtype))]
-    onp_fun = lambda x, to_end, to_begin: onp.ediff1d(x, to_end, to_begin)
+    np_fun = lambda x, to_end, to_begin: np.ediff1d(x, to_end, to_begin)
     jnp_fun = lambda x, to_end, to_begin: jnp.ediff1d(x, to_end, to_begin)
-    self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
@@ -1291,7 +1291,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testUnion1d(self, shape1, dtype1, shape2, dtype2, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
-    self._CheckAgainstNumpy(onp.union1d, jnp.union1d, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np.union1d, jnp.union1d, args_maker, check_dtypes=True)
 
   def testIssue1233(self):
     '''
