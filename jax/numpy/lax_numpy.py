@@ -293,7 +293,7 @@ def _constant_like(x, const):
 
 def _canonicalize_axis(axis, num_dims):
   """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = int(axis)
+  axis = operator.index(axis)
   if axis < 0:
     axis = axis + num_dims
   if axis < 0 or axis >= num_dims:
@@ -1164,16 +1164,9 @@ def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
 
 @_wraps(np.expand_dims)
 def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
-  shape = _shape(a)
   if isinstance(axis, int):
     axis = (axis,)
-  ndim_out = ndim(a) + len(axis)
-  axis_set = frozenset(_canonicalize_axis(i, ndim_out) for i in axis)
-  result_shape = list(shape)
-  for i in sorted(axis_set):
-    result_shape.insert(i, 1)
-  broadcast_dims = [i for i in range(ndim_out) if i not in axis_set]
-  return lax.broadcast_in_dim(a, result_shape, broadcast_dims)
+  return lax.expand_dims(a, axis)
 
 
 @_wraps(np.swapaxes)

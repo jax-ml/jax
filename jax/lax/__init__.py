@@ -120,6 +120,7 @@ from .lax import (
   erfc_p,
   exp,
   exp_p,
+  expand_dims,
   expm1,
   expm1_p,
   floor,

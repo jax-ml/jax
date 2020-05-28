@@ -103,8 +103,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None or return_sign:
     raise NotImplementedError("Only implemented for b=None, return_sign=False")
   dims = _reduction_dims(a, axis)
-  shape = util.subvals(np.shape(a), zip(dims, (1,) * len(dims)))
-  dimadd = lambda x: lax.reshape(x, shape)
+  dimadd = lambda x: lax.expand_dims(x, dims)
   amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
   amax = lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0))
   amax_singletons = dimadd(amax)
