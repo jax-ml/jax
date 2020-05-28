@@ -172,20 +172,20 @@ class JaxprTrace(Trace):
     if call_primitive in call_partial_eval_rules:
       return call_partial_eval_rules[call_primitive](self, call_primitive, f, tracers, params)
 
-    jaxpr, out_pvs, consts, env_tracers = self.partial_eval(
+    jaxpr, out_pvals, consts, env_tracers = self.partial_eval(
         f, [t.pval for t in tracers], partial(call_primitive.bind, **params))
     if not jaxpr.eqns:
       env = {core.unitvar: core.unit}
       map(env.setdefault, jaxpr.invars, (*env_tracers, *tracers))
       map(env.setdefault, jaxpr.constvars, consts)
       return [v.val if type(v) is Literal
-              else pv.get_known() if pv.is_known()
+              else pval.get_known() if pval.is_known()
               else env[v]
-              for v, pv in zip(jaxpr.outvars, out_pvs)]
+              for v, pval in zip(jaxpr.outvars, out_pvals)]
 
     const_tracers = map(self.new_instantiated_const, consts)
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
-    out_tracers = [JaxprTracer(self, pv, None) for pv in out_pvs]
+    out_tracers = [JaxprTracer(self, pval, None) for pval in out_pvals]
     new_params = dict(params, call_jaxpr=lifted_jaxpr)
     # The `jaxpr` already contains the env_vars at start of invars
     eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, tracers)),
@@ -227,21 +227,22 @@ class JaxprTrace(Trace):
     params = dict(params, name=name)
 
     @curry
-    def modify_aval(mod, args):
+    def modify_aval(modify, args):
       pval, is_mapped = args
       if pval.is_known() or not is_mapped:
         return pval
-      return PartialVal((mod(params['axis_size'], pval[0]), pval[1]))
+      return PartialVal((modify(params['axis_size'], pval[0]), pval[1]))
 
-    reduced_in_pvs = map(modify_aval(core.mapped_aval),
-                         zip([t.pval for t in tracers], params['mapped_invars']))
-    jaxpr, reduced_out_pvs, consts, env_tracers = self.partial_eval(
-        f, reduced_in_pvs, partial(map_primitive.bind, **params))
-    out_pvs = map(modify_aval(core.unmapped_aval), [(pv, True) for pv in reduced_out_pvs])
+    reduced_in_pvals = map(modify_aval(core.mapped_aval),
+                           zip([t.pval for t in tracers], params['mapped_invars']))
+    jaxpr, reduced_out_pvals, consts, env_tracers = self.partial_eval(
+        f, reduced_in_pvals, partial(map_primitive.bind, **params))
+    out_pvals = map(modify_aval(core.unmapped_aval),
+                    [(pval, True) for pval in reduced_out_pvals])
 
     const_tracers = map(self.new_instantiated_const, consts)
     lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
-    out_tracers = [JaxprTracer(self, pv, None) for pv in out_pvs]
+    out_tracers = [JaxprTracer(self, pval, None) for pval in out_pvals]
     # The `jaxpr` already contains the env_vars at start of invars
     new_params = dict(params,
                       mapped_invars=((True,) * len(const_tracers) +
@@ -668,19 +669,19 @@ def _remat_partial_eval(trace, _, f, tracers, params):
     instantiated_tracers = map(trace.instantiate_const_abstracted, tracers)
 
   # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
-  in_pvs = [t.pval for t in instantiated_tracers]
+  in_pvals = [t.pval for t in instantiated_tracers]
   jaxpr, out_pvals1, consts, env_tracers = trace.partial_eval(
-    f, in_pvs, partial(remat_call_p.bind, **params))
+    f, in_pvals, partial(remat_call_p.bind, **params))
 
   # Since we traced with everything marked as unknown, but we need to know which
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
 
   in_avals = ([raise_to_shaped(t.pval.get_aval()) for t in env_tracers]
-              + [raise_to_shaped(pv.get_aval()) for pv in in_pvs])
+              + [raise_to_shaped(pval.get_aval()) for pval in in_pvals])
   out_avals = [raise_to_shaped(abstract_unit if var is unitvar
                                else get_aval(var.val) if type(var) is Literal
-                               else pv.get_aval())
-               for var, pv in zip(jaxpr.outvars, out_pvals1)]
+                               else pval.get_aval())
+               for var, pval in zip(jaxpr.outvars, out_pvals1)]
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   in_unknowns = [t.pval[0] is not None for t in it.chain(env_tracers, tracers)]
   jaxpr_1, jaxpr_2, out_unknowns = partial_eval_jaxpr(typed_jaxpr, in_unknowns,
@@ -698,8 +699,8 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   # produced concrete avals at the output, simply by using those as computed
   # values. For the use case of reverse-mode ad in op-by-op ("eager mode")
   # evaluation, all the primal outputs should be concrete (thus not recomputed).
-  to_compute = [not uk and type(pv[0]) is not ConcreteArray
-                for uk, pv in zip(out_unknowns, out_pvals1)]
+  to_compute = [not uk and type(pval[0]) is not ConcreteArray
+                for uk, pval in zip(out_unknowns, out_pvals1)]
   jaxpr_1_primals = _dce_jaxpr(jaxpr_1, to_compute + [False] * num_res)
   _, in_consts = unzip2(t.pval for t in it.chain(env_tracers, tracers))
   out_pval_consts2 = core.jaxpr_as_fun(jaxpr_1_primals)(*in_consts)[:-num_res or None]
