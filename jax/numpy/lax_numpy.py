@@ -2153,7 +2153,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
   if ndmin > ndim(out):
-    out = broadcast_to(out, (1,) * (ndmin - ndim(out)) + shape(out))
+    out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
   return out
 
 @_wraps(np.asarray)
@@ -2396,7 +2396,7 @@ def ix_(*args):
       # Numpy uses an integer index type for empty arrays.
       output.append(lax.full(shape, np.zeros((), np.intp)))
     else:
-      output.append(lax.broadcast_in_dim(a, shape, [i]))
+      output.append(lax.broadcast_in_dim(a, shape, (i,)))
   return tuple(output)
 
 

@@ -1814,14 +1814,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for dim in (list(range(-len(arg_shape)+1, len(arg_shape)))
                   + [(0,), (len(arg_shape), len(arg_shape) + 1)])))
   def testExpandDimsStaticDim(self, arg_shape, dtype, dim, rng_factory):
-    if isinstance(dim, tuple) and numpy_version < (1, 18, 0):
-      raise SkipTest("support for multiple axes added in NumPy 1.18.0")
     rng = rng_factory(self.rng())
     np_fun = lambda x: np.expand_dims(x, dim)
     jnp_fun = lambda x: jnp.expand_dims(x, dim)
     args_maker = lambda: [rng(arg_shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+    if isinstance(dim, tuple) and numpy_version < (1, 18, 0):
+      raise SkipTest("support for multiple axes added in NumPy 1.18.0")
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axes=({},{})".format(
