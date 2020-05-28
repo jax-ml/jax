@@ -23,7 +23,7 @@ XLA. There are also a handful of related casting utilities.
 from collections import OrderedDict
 from functools import partial
 import os
-from typing import Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 import warnings
 
 from absl import logging
@@ -44,8 +44,7 @@ from . import xla_client
 
 xops = xla_client.ops
 
-# TODO(skye): expose in xla_client
-LocalClient = xla_client._xla.LocalClient
+LocalClient = Any # TODO(skye): should be xla_client._xla.LocalClient
 
 FLAGS = flags.FLAGS
 
