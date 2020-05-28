@@ -1347,7 +1347,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testSetxor1d(self, shape1, dtype1, shape2, dtype2, rng_factory):
     rng = rng_factory()
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
-    onp_fun = lambda ar1, ar2: onp.setxor1d(ar1, ar2)
+    onp_fun = lambda ar1, ar2: np.setxor1d(ar1, ar2)
     jnp_fun = lambda ar1, ar2: jnp.setxor1d(ar1, ar2)
     self._CheckAgainstNumpy(onp_fun, jnp_fun, args_maker, check_dtypes=True)
 
