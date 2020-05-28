@@ -4,16 +4,16 @@ import jax.numpy as jnp
 
 
 class OptimizeResults(NamedTuple):
-    x: jnp.ndarray  # Final variable
-    success: bool  # Wheter optimization converged (and there were no other failures, e.g. line search failures)
-    status: int  # Solver specific return code. 0 means nominal
-    message: str  # Soler specific message
-    fun: jnp.ndarray  # Final function value
-    jac: jnp.ndarray  # Final jacobian array
-    hess_inv: jnp.ndarray  # Final inverse Hessian estimate
-    nfev: int  # Number of funcation calls used
-    njev: int  # Number of gradient evaluations
-    nit: int  # Number of iterations of the optimization algorithm
+  x: jnp.ndarray  # Final variable
+  success: bool  # Wheter optimization converged (and there were no other failures, e.g. line search failures)
+  status: int  # Solver specific return code. 0 means nominal
+  message: str  # Soler specific message
+  fun: jnp.ndarray  # Final function value
+  jac: jnp.ndarray  # Final jacobian array
+  hess_inv: jnp.ndarray  # Final inverse Hessian estimate
+  nfev: int  # Number of funcation calls used
+  njev: int  # Number of gradient evaluations
+  nit: int  # Number of iterations of the optimization algorithm
 
 
 def minimize(fun, x0, *, method=None, tol=None, options=None):
@@ -34,16 +34,17 @@ def minimize(fun, x0, *, method=None, tol=None, options=None):
   Returns: OptimizeResults
 
   """
-    if method.lower() == 'bfgs':
-      results = bfgs_minimize(fun, x0, options=options)
-        return OptimizeResults(x=results.x_k,
-                               success=(results.converged) & (~results.failed),
-                               status=results.failed,
-                               message="",
-                               fun=results.f_k,
-                               jac=results.g_k,
-                               hess_inv=results.H_k,
-                               nfev=results.nfev,
-                               njev=results.ngev,
-                               nit=results.k)
-    raise ValueError("Method {} not recognised".format(method))
+  if method.lower() == 'bfgs':
+    results = bfgs_minimize(fun, x0, options=options)
+    return OptimizeResults(x=results.x_k,
+                           success=(results.converged) & (~results.failed),
+                           status=results.failed,
+                           message="",
+                           fun=results.f_k,
+                           jac=results.g_k,
+                           hess_inv=results.H_k,
+                           nfev=results.nfev,
+                           njev=results.ngev,
+                           nit=results.k)
+
+  raise ValueError("Method {} not recognised".format(method))
