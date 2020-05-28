@@ -118,7 +118,7 @@ class custom_jvp:
       x, y = primals
       x_dot, y_dot = tangents
       primal_out = f(x, y)
-      tangent_out = jnp.cos(x) * x_dot * y - jnp.sin(x) * y_dot
+      tangent_out = jnp.cos(x) * x_dot * y + jnp.sin(x) * y_dot
       return primal_out, tangent_out
 
   For a more detailed introduction, see the tutorial_.
@@ -161,7 +161,7 @@ class custom_jvp:
         x, y = primals
         x_dot, y_dot = tangents
         primal_out = f(x, y)
-        tangent_out = jnp.cos(x) * x_dot * y - jnp.sin(x) * y_dot
+        tangent_out = jnp.cos(x) * x_dot * y + jnp.sin(x) * y_dot
         return primal_out, tangent_out
     """
     self.jvp = jvp
@@ -187,7 +187,7 @@ class custom_jvp:
         return jnp.sin(x) * y
 
       f.defjvps(lambda x_dot, primal_out, x, y: jnp.cos(x) * x_dot * y,
-                lambda y_dot, primal_out, x, y: -jnp.sin(x) * y_dot)
+                lambda y_dot, primal_out, x, y: jnp.sin(x) * y_dot)
     """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
@@ -379,7 +379,7 @@ class custom_vjp:
 
     def f_bwd(res, g):
       cos_x, sin_x, y = res
-      return (cos_x * g * y, -sin_x * g)
+      return (cos_x * g * y, sin_x * g)
 
     f.defvjp(f_fwd, f_bwd)
 
@@ -433,7 +433,7 @@ class custom_vjp:
 
       def f_bwd(res, g):
         cos_x, sin_x, y = res
-        return (cos_x * g * y, -sin_x * g)
+        return (cos_x * g * y, sin_x * g)
 
       f.defvjp(f_fwd, f_bwd)
     """
