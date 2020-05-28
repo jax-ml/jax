@@ -254,6 +254,8 @@ from .lax import (
   sqrt,
   sqrt_p,
   square,
+  squeeze,
+  squeeze_p,
   standard_abstract_eval,
   standard_naryop,
   standard_primitive,

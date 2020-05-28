@@ -1155,21 +1155,11 @@ def unravel_index(indices, shape):
 def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
   shape_a = shape(a)
   if axis is None:
-    if 1 not in shape_a:
-      return a
-    indices = tuple(0 if d == 1 else slice(None) for d in shape_a)
-  else:
-    if isinstance(axis, int):
-      axis = (axis,)
-    axis_set = frozenset(_canonicalize_axis(i, ndim(a)) for i in axis)
-    if not axis_set:
-      return a
-    if _any(shape_a[a] != 1 for a in axis_set):
-      raise ValueError("cannot select an axis to squeeze out which has size "
-                       "not equal to one")
-    indices = tuple(0 if i in axis_set else slice(None) for i in range(len(shape_a)))
-  # TODO: consider using lax.slice instead here?
-  return a[indices]
+    axis = tuple(i for i, d in enumerate(shape_a) if d == 1)
+  elif isinstance(axis, int):
+    axis = (axis,)
+  axis = tuple(_canonicalize_axis(i, ndim(a)) for i in axis)
+  return lax.squeeze(a, axis)
 
 
 @_wraps(np.expand_dims)

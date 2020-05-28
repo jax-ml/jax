@@ -891,6 +891,46 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_inshape={}_dimensions={}".format(
+      jtu.format_shape_dtype_string(inshape, onp.float32), dimensions),
+      "inshape": inshape, "dimensions": dimensions, "error_type": error_type,
+      "err_msg": err_msg}
+    for inshape, dimensions, error_type, err_msg in [
+      ((1, 2, 3), (0, 0), ValueError, 'dimensions are not unique'),
+      ((1, 2, 3), (3,), ValueError, 'dimensions outside range'),
+      ((1, 2, 3), (-1,), ValueError, 'dimensions outside range'),
+      ((1, 2, 3), (1,), ValueError, 'cannot select an axis to squeeze out'),
+      ((1, 2, 3), (None,), TypeError, 'cannot be interpreted as an integer'),
+    ]))
+  def testSqueezeShapeCheck(self, inshape, dimensions, error_type, err_msg):
+    rng = jtu.rand_default(self.rng())
+    x = rng(inshape, onp.float32)
+    with self.assertRaisesRegex(error_type, err_msg):
+      lax.squeeze(x, dimensions=dimensions)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_dimensions={}".format(
+          jtu.format_shape_dtype_string(arg_shape, onp.float32), dimensions),
+       "arg_shape": arg_shape, "dimensions": dimensions,
+       "rng_factory": rng_factory}
+      for arg_shape, dimensions in [
+          [(1,), (0,)],
+          [(2, 1, 4), (1,)],
+          [(2, 1, 3, 1), (1,)],
+          [(2, 1, 3, 1), (1, 3)],
+          [(2, 1, 3, 1), (3,)],
+      ]
+      for rng_factory in [jtu.rand_default]))
+  def testSqueeze(self, arg_shape, dimensions, rng_factory):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(arg_shape, onp.float32)]
+    op = lambda x: lax.squeeze(x, dimensions)
+    numpy_op = lambda x: lax_reference.squeeze(x, dimensions)
+    self._CompileAndCheck(op, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(op, numpy_op, args_maker)
+    check_grads(op, args_maker(), 2, ["fwd", "rev"], eps=1.)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
           jtu.format_shape_dtype_string(out_shape, dtype)),
@@ -3009,6 +3049,27 @@ class LaxVmapTest(jtu.JaxTestCase):
     raise SkipTest("this test has failures in some cases")  # TODO(mattjj)
     op = lambda x: lax.broadcast_in_dim(x, outshape, dimensions)
     self._CheckBatching(op, 5, bdims, (inshape,), (dtype,), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_dimensions={}_bdims={}".format(
+          jtu.format_shape_dtype_string(arg_shape, onp.float32),
+          dimensions, bdims),
+       "arg_shape": arg_shape, "dimensions": dimensions, "bdims": bdims,
+       "rng_factory": rng_factory}
+      for arg_shape, dimensions in [
+          [(1,), (0,)],
+          [(2, 1, 4), (1,)],
+          [(2, 1, 3, 1), (1,)],
+          [(2, 1, 3, 1), (1, 3)],
+          [(2, 1, 3, 1), (3,)],
+      ]
+      for bdims in all_bdims(arg_shape)
+      for rng_factory in [jtu.rand_default]))
+  def testSqueeze(self, arg_shape, dimensions, bdims, rng_factory):
+    dtype = onp.float32
+    rng = rng_factory(self.rng())
+    op = lambda x: lax.squeeze(x, dimensions)
+    self._CheckBatching(op, 10, bdims, (arg_shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_dims={}_bdims={}".format(

@@ -1073,6 +1073,8 @@ def _get_min_identity(dtype: DType) -> Array:
     return onp.array(True, onp.bool_)
 
 def _reduce_sum(operand: Array, axes: Sequence[int]) -> Array:
+  if all(operand.shape[i] == 1 for i in axes):
+    return squeeze(operand, axes)
   return reduce_sum_p.bind(operand, axes=tuple(axes))
 
 def _reduce_prod(operand: Array, axes: Sequence[int]) -> Array:
@@ -2920,6 +2922,59 @@ pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad',
 ad.deflinear(pad_p, _pad_transpose)
 ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
+
+
+# the squeeze primitive exists for the benefit of batching and other rules that
+# need to keep track of axis identity
+
+def squeeze(array, dimensions: Tuple[int, ...]):
+  """Squeeze any number of size 1 dimensions from an array."""
+  dimensions = tuple(map(operator.index, dimensions))
+  if not dimensions:
+    return array
+  return squeeze_p.bind(array, dimensions=dimensions)
+
+def _squeeze_dtype_rule(operand, *, dimensions):
+  return operand.dtype
+
+def _squeeze_shape_rule(operand, *, dimensions):
+  return _compute_squeeze_shape(onp.shape(operand), dimensions)
+
+def _compute_squeeze_shape(shape, dimensions):
+  dims_set = set(dimensions)
+  if len(dims_set) != len(dimensions):
+    raise ValueError(f"dimensions are not unique: {dimensions}")
+  if not all(0 <= d < len(shape) for d in dims_set):
+    raise ValueError(f"dimensions outside range [0, ndim): {dimensions}")
+  if any(shape[d] != 1 for d in dimensions):
+    raise ValueError(
+        "cannot select an axis to squeeze out which has size not equal to "
+        f"one, got shape={shape} and dimensions={dimensions}")
+  return tuple(s for i, s in enumerate(shape) if i not in dims_set)
+
+def _squeeze_translation_rule(c, arg, *, dimensions):
+  new_shape = _compute_squeeze_shape(c.get_shape(arg).dimensions(), dimensions)
+  return xops.Reshape(arg, new_shape)
+
+def _squeeze_transpose_rule(t, operand, *, dimensions):
+  assert ad.is_undefined_primal(operand)
+  shape = list(t.shape)
+  for d in sorted(dimensions):
+    shape.insert(d, 1)
+  kept_dims = tuple(i for i in range(len(shape)) if i not in dimensions)
+  return [broadcast_in_dim(t, tuple(shape), kept_dims)]
+
+def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
+  operand, = batched_args
+  bdim, = batch_dims
+  operand = batching.moveaxis(operand, bdim, 0)
+  dimensions = tuple(onp.add(1, dimensions))
+  return squeeze(operand, dimensions=dimensions), 0
+
+squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
+                               'squeeze', _squeeze_translation_rule)
+ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
+batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 
 
 # We have a nonstandard reshape impl so that we can be lazy about data movement.

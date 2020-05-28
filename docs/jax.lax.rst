@@ -121,6 +121,7 @@ Operators
     sort_key_val
     sqrt
     square
+    squeeze
     sub
     tan
     tie_in
