@@ -579,22 +579,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=jtu.PYTHON_SCALAR_SHAPE not in shapes)
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_{}_{}".format(jtu.format_shape_dtype_string(shape, dtype),
-       "None" if end_dtype is None else np.dtype(end_dtype).name,
-       "None" if begin_dtype is Nonef else np.dtype(begin_dtype).name,),
-       "shape": shape, "dtype": dtype, "end_dtype": end_dtype,
-       "begin_dtype": begin_dtype, "rng": jtu.rand_default()}
-      for dtype in number_dtypes
-      for end_dtype in [None] + number_dtypes
-      for begin_dtype in [None] + number_dtypes
-      for shape in all_shapes))
-  def testEDiff1d(self, shape, dtype, end_dtype, begin_dtype, rng):
-    args_maker = lambda: [rng(shape, dtype), (None if end_dtype is None else rng(shape, end_dtype)), (None if begin_dtype is None else rng(shape, begin_dtype))]
-    np_fun = lambda x, to_end, to_begin: np.ediff1d(x, to_end, to_begin)
-    jnp_fun = lambda x, to_end, to_begin: jnp.ediff1d(x, to_end, to_begin)
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
-
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
         {"testcase_name": "{}_inshape={}_axis={}_dtype={}_keepdims={}".format(
@@ -1282,14 +1266,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_{}_{}".format(
        jtu.format_shape_dtype_string(shape1, dtype1),
        jtu.format_shape_dtype_string(shape2, dtype2)),
-       "shape1": shape1, "dtype1": dtype1, "shape2": shape2, "dtype2": dtype2,
-       "rng_factory": jtu.rand_default}
+       "shape1": shape1, "dtype1": dtype1, "shape2": shape2, "dtype2": dtype2}
       for dtype1 in [s for s in default_dtypes if s != jnp.bfloat16]
       for dtype2 in [s for s in default_dtypes if s != jnp.bfloat16]
       for shape1 in (array_shapes + [jtu.NUMPY_SCALAR_SHAPE])
       for shape2 in (array_shapes + [jtu.NUMPY_SCALAR_SHAPE])))
-  def testUnion1d(self, shape1, dtype1, shape2, dtype2, rng_factory):
-    rng = rng_factory()
+  def testUnion1d(self, shape1, dtype1, shape2, dtype2):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
     self._CheckAgainstNumpy(np.union1d, jnp.union1d, args_maker, check_dtypes=True)
 
