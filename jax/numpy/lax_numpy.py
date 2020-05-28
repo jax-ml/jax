@@ -3320,7 +3320,7 @@ def unique(ar, return_index=False, return_inverse=False,
   raise NotImplementedError(
         "np.unique is not implemented for the axis argument")
 
-@_wraps(onp.union1d)
+@_wraps(np.union1d)
 def union1d(ar1, ar2):
   ar1 = ravel(asarray(ar1))
   ar2 = ravel(asarray(ar2))
