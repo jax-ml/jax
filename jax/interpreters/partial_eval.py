@@ -670,8 +670,9 @@ def _remat_partial_eval(trace, _, f, tracers, params):
 
   # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
   in_pvals = [t.pval for t in instantiated_tracers]
-  jaxpr, out_pvals1, consts, env_tracers = trace.partial_eval(
-    f, in_pvals, partial(remat_call_p.bind, **params))
+  with core.initial_style_staging():
+    jaxpr, out_pvals1, consts, env_tracers = trace.partial_eval(
+      f, in_pvals, partial(remat_call_p.bind, **params))
 
   # Since we traced with everything marked as unknown, but we need to know which
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
