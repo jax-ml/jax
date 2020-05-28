@@ -409,8 +409,8 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
     assert False, "Fixpoint not reached"
 
   nonzeros = cconst_nz + body_nonzeros
-  tangents = [ad.instantiate_zeros(x, t) if type(t) is ad_util.Zero and nz else t
-              for x, t, nz in zip(primals, tangents, nonzeros)]
+  tangents = [ad.instantiate_zeros(t) if nz else t
+              for t, nz in zip(tangents, nonzeros)]
 
   cconst, bconst, init = split_list(primals, [cond_nconsts, body_nconsts])
   _, bconst_dot, init_dot = split_list(tangents, [cond_nconsts, body_nconsts])
@@ -1225,8 +1225,8 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
   else:
     assert False, "Fixpoint not reached"
 
-  tangents = [ad.instantiate_zeros(x, t) if type(t) is ad_util.Zero and nz else t
-              for x, t, nz in zip(primals, tangents, nonzeros)]
+  tangents = [ad.instantiate_zeros(t) if nz else t
+              for t, nz in zip(tangents, nonzeros)]
 
   consts, init, xs = split_list(primals, [num_consts, num_carry])
   all_tangents = split_list(tangents, [num_consts, num_carry])

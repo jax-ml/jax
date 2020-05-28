@@ -49,8 +49,8 @@ def jvpfun(instantiate, primals, tangents):
     del master
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_tangents)
-  out_tangents = [instantiate_zeros(x, t) if inst else t for x, t, inst
-                  in zip(out_primals, out_tangents, instantiate)]
+  out_tangents = [instantiate_zeros(t) if inst else t for t, inst
+                  in zip(out_tangents, instantiate)]
   yield out_primals, out_tangents
 
 @lu.transformation
@@ -112,7 +112,7 @@ def vjp(traceable, primals, has_aux=False):
     cts = tuple(map(ignore_consts, cts, pvals))
     dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
     arg_cts = backward_pass(jaxpr, consts, dummy_args, cts)
-    return map(instantiate_zeros, primals, arg_cts)
+    return map(instantiate_zeros, arg_cts)
 
   if not has_aux:
     return out_primals, vjp_
@@ -305,14 +305,14 @@ class JVPTrace(Trace):
   def process_custom_jvp_call(self, _, __, f_jvp, tracers):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)
-    tangents_in = map(instantiate_zeros, primals_in, tangents_in)
+    tangents_in = map(instantiate_zeros, tangents_in)
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
-    tangents_in = map(instantiate_zeros, primals_in, tangents_in)
+    tangents_in = map(instantiate_zeros, tangents_in)
     res_and_primals_out = fwd.call_wrapped(*map(core.full_lower, primals_in))
     out_tree, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
@@ -378,7 +378,7 @@ def linear_jvp(primitive, primals, tangents, **params):
   if all(type(tangent) is Zero for tangent in tangents):
     return val_out, Zero.from_value(val_out)
   else:
-    tangents = map(instantiate_zeros, primals, tangents)
+    tangents = map(instantiate_zeros, tangents)
     return val_out, primitive.bind(*tangents, **params)
 
 def linear_transpose(transpose_rule, cotangent, *args, **kwargs):
@@ -459,14 +459,17 @@ deflinear(zeros_like_p, lambda t: [Zero.from_value(t)])
 deflinear(core.identity_p, lambda t: (t,))
 deflinear(add_jaxvals_p, lambda t: (t, t))
 
-def instantiate_zeros(example, tangent):
+def instantiate_zeros(tangent):
   if type(tangent) is Zero:
-    return zeros_like_jaxval(example)
+    return zeros_like_aval(tangent.aval)
   else:
     return tangent
 
+# This function seems similar to instantaite_zeros, but it is sometimes used
+# to instantiate zero abstract units with a different aval
 def instantiate_zeros_aval(aval, tangent):
   if type(tangent) is Zero:
+    assert type(tangent.aval) is core.AbstractUnit or tangent.aval == aval
     return zeros_like_aval(aval)
   else:
     return tangent
@@ -625,7 +628,7 @@ def defvjp_all(prim, custom_vjp):
   name = prim.name
 
   def fun_jvp(xs, ts, **params):
-    ts = map(instantiate_zeros, xs, ts)
+    ts = map(instantiate_zeros, ts)
     primals_and_tangents = fun_jvp_p.bind(*it.chain(xs, ts), **params)
     primals, tangents = split_list(primals_and_tangents, [len(primals_and_tangents) // 2])
     if prim.multiple_results:

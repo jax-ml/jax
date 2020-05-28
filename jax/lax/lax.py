@@ -3521,8 +3521,8 @@ def _dynamic_update_slice_jvp(primals, tangents):
   if type(g_operand) is ad_util.Zero and type(g_update) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
-    g_operand = ad.instantiate_zeros(operand, g_operand)
-    g_update = ad.instantiate_zeros(update, g_update)
+    g_operand = ad.instantiate_zeros(g_operand)
+    g_update = ad.instantiate_zeros(g_update)
     tangent_out = dynamic_update_slice(g_operand, g_update, start_indices)
   return val_out, tangent_out
 
@@ -3727,8 +3727,8 @@ def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
-    g_operand = ad.instantiate_zeros(operand, g_operand)
-    g_updates = ad.instantiate_zeros(updates, g_updates)
+    g_operand = ad.instantiate_zeros(g_operand)
+    g_updates = ad.instantiate_zeros(g_updates)
     tangent_out = scatter_add_p.bind(
         g_operand, scatter_indices, g_updates, update_jaxpr=update_jaxpr,
         update_consts=update_consts, dimension_numbers=dimension_numbers)
@@ -3884,8 +3884,8 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
-    g_operand = ad.instantiate_zeros(operand, g_operand)
-    g_updates = ad.instantiate_zeros(updates, g_updates)
+    g_operand = ad.instantiate_zeros(g_operand)
+    g_updates = ad.instantiate_zeros(g_updates)
 
     # gather_dnums and slice_sizes define the gather op that is the inverse of
     # the scatter op specified by scatter_dnums
@@ -3989,8 +3989,8 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
       update_consts=update_consts, dimension_numbers=dnums)
     return val_out, ad_util.Zero.from_value(val_out)
 
-  g_operand = ad.instantiate_zeros(operand, g_operand)
-  g_updates = ad.instantiate_zeros(updates, g_updates)
+  g_operand = ad.instantiate_zeros(g_operand)
+  g_updates = ad.instantiate_zeros(g_updates)
 
   # If there are overlapping indices in the scatter, it is unspecified which
   # update "wins". So we use the following perhaps surprising scheme:

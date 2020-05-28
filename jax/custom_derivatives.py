@@ -306,7 +306,7 @@ custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 
 def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk):
   jvp_jaxpr = jvp_jaxpr_thunk()
-  tangents = map(ad.instantiate_zeros, primals, tangents)
+  tangents = map(ad.instantiate_zeros, tangents)
   outs = core.jaxpr_as_fun(jvp_jaxpr)(*primals, *tangents)
   return split_list(outs, [len(outs) // 2])
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
@@ -550,7 +550,7 @@ custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
 
 def _custom_vjp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, fwd_jaxpr_thunk,
                                bwd, out_trees):
-  tangents = map(ad.instantiate_zeros, primals, tangents)
+  tangents = map(ad.instantiate_zeros, tangents)
   fwd_jaxpr = fwd_jaxpr_thunk()
   out_tree, res_tree = out_trees()
   res_and_primals_out = core.jaxpr_as_fun(fwd_jaxpr)(*primals)
