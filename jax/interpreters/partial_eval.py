@@ -116,7 +116,11 @@ class JaxprTrace(Trace):
     return JaxprTracer(self, PartialVal.unknown(get_aval(val)), ConstVar(val))
 
   def new_arg(self, pval: PartialVal) -> 'JaxprTracer':
-    return JaxprTracer(self, pval, LambdaBinding())
+    const = pval.get_known()
+    if const is None:
+      return JaxprTracer(self, pval, LambdaBinding())
+    else:
+      return self.new_const(const)
 
   def instantiate_const(self, tracer) -> Tracer:
     const = tracer.pval.get_known()
