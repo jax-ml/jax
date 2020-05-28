@@ -3775,6 +3775,11 @@ def lcm(x1, x2):
                lax.div(lax.abs(multiply(x1, x2)), d))
 
 
+@_wraps(np.extract)
+def extract(condition, arr):
+  return compress(ravel(condition), ravel(arr))
+
+
 @_wraps(np.compress)
 def compress(condition, a, axis=None, out=None):
   if out is not None:

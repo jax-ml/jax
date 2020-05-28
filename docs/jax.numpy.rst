@@ -113,6 +113,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     exp2
     expand_dims
     expm1
+    extract
     eye
     fabs
     fix
