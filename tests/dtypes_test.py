@@ -173,5 +173,11 @@ class DtypesTest(jtu.JaxTestCase):
     np.testing.assert_equal(np.int32(101), np.int32(AnEnum.B))
     np.testing.assert_equal(jnp.int32(101), jnp.int32(AnEnum.B))
 
+  def testScalarCastInsideJitWorks(self):
+    # jnp.int32(tracer) should work.
+    self.assertEqual(jnp.int32(101),
+                     jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
+
+
 if __name__ == "__main__":
   absltest.main()
