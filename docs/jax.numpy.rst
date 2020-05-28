@@ -77,6 +77,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     ceil
     clip
     column_stack
+    compress
     concatenate
     conj
     conjugate

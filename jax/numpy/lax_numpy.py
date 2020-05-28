@@ -3770,6 +3770,27 @@ def lcm(x1, x2):
   return where(d == 0, lax._const(d, 0),
                lax.div(lax.abs(multiply(x1, x2)), d))
 
+
+@_wraps(np.compress)
+def compress(condition, a, axis=None, out=None):
+  if out is not None:
+    raise NotImplementedError("out argument is not supported.")
+  if ndim(condition) != 1:
+    raise ValueError("condition must be a 1D array")
+  condition = array(condition).astype(bool)
+  a = array(a)
+  if axis is None:
+    axis = 0
+    a = ravel(a)
+  else:
+    a = moveaxis(a, axis, 0)
+  condition, extra = condition[:a.shape[0]], condition[a.shape[0]:]
+  if any(extra):
+    raise ValueError("condition contains entries that are out of bounds")
+  a = a[:condition.shape[0]]
+  return moveaxis(a[condition], 0, axis)
+
+
 @_wraps(np.cov)
 def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
         aweights=None):
@@ -4122,7 +4143,6 @@ _diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
 # _not_implemented implementations of them here rather than in __init__.py.
 # TODO(phawkins): implement these.
 argpartition = _not_implemented(np.argpartition)
-compress = _not_implemented(np.compress)
 
 # Set up operator, method, and property forwarding on Tracer instances containing
 # ShapedArray avals by following the forwarding conventions for Tracer.

@@ -1120,6 +1120,44 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "shape": shape, "dtype": dtype, "axis": axis}
+      for shape in all_shapes
+      for dtype in all_dtypes
+      for axis in [None] + list(range(len(shape)))))
+  def testCompress(self, shape, dtype, axis):
+    rng = jtu.rand_some_zero(self.rng())
+    if shape in scalar_shapes or len(shape) == 0:
+      cond_shape = (0,)
+    elif axis is None:
+      cond_shape = (np.prod(shape),)
+    else:
+      cond_shape = (shape[axis],)
+
+    args_maker = lambda: [rng(cond_shape, jnp.float32), rng(shape, dtype)]
+
+    np_fun = partial(np.compress, axis=axis)
+    jnp_fun = partial(jnp.compress, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_condition=array[{}]_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), len(condition), axis),
+       "shape": shape, "dtype": dtype, "condition": condition, "axis": axis}
+      for shape in [(2, 3)]
+      for dtype in int_dtypes
+      # condition entries beyond axis size must be zero.
+      for condition in [[1], [1, 0, 0, 0, 0, 0, 0]]
+      for axis in [None, 0, 1]))
+  def testCompressMismatchedShapes(self, shape, dtype, condition, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [np.array(condition), rng(shape, dtype)]
+    np_fun = partial(np.compress, axis=axis)
+    jnp_fun = partial(jnp.compress, axis=axis)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(
           axis, ",".join(str(d) for d in base_shape),
           ",".join(np.dtype(dtype).name for dtype in arg_dtypes)),
