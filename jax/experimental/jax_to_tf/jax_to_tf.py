@@ -782,6 +782,68 @@ def _cond(pred: TfVal, *operands: TfVal,
 
 tf_impl[lax.cond_p] = _cond
 
+
+def _while(*args, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
+           body_nconsts: int, body_jaxpr: core.TypedJaxpr):
+  cond_consts, body_consts, init_carry = util.split_list(args, [cond_nconsts,
+                                                                body_nconsts])
+  if cond_jaxpr.out_avals[0].shape:  # type: ignore[attr-defined]
+    # The conditional is not a scalar, this must be a batched while
+    return _batched_while(*args,
+                          cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr,
+                          body_nconsts=body_nconsts, body_jaxpr=body_jaxpr)
+
+  # The conditional must return a single value to TF
+  def cond_tf_func(*args):
+    pred, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *args)
+    return pred
+  body_tf_func = functools.partial(_interpret_jaxpr, body_jaxpr, *body_consts)
+  return tf.while_loop(cond_tf_func, body_tf_func, init_carry)
+
+
+def _batched_while(*args, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
+                   body_nconsts: int, body_jaxpr: core.TypedJaxpr):
+  """Interprets a batched while.
+
+  A batched while has a conditional that returns a tensor of booleans, and
+  a body that returns a list of tensors whose leading dimensions match those
+  of the conditional tensor.
+
+  We need to turn it into a while with scalar boolean conditional. We will
+  expand the loop carry to include a prefix with the current tensor boolean
+  condition. We prepend to the loop the first calculation of the tensor boolean
+  condition. The loop condition will use a "reduce_any" to calculate a scalar
+  boolean from the tensor boolean condition. The end of the loop body will
+  compute the new carry using a "tf.where", and we compute the new tensor
+  boolean condition.
+  """
+  cond_consts, body_consts, init_carry = util.split_list(args, [cond_nconsts,
+                                                                body_nconsts])
+  # Initial computation of batched condition
+  init_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *init_carry)
+
+  def new_cond_tf_func(pred_b: TfVal, *carry: TfVal) -> TfVal:
+    pred = tf.reduce_any(pred_b, axis=list(range(len(pred_b.shape))))
+    return pred
+
+  def new_body_tf_func(pred_b: TfVal, *carry: TfVal) -> Sequence[TfVal]:
+    new_carry = _interpret_jaxpr(body_jaxpr, *body_consts, *carry)
+
+    def select_one_carry(new_c, c):
+      pred_b_bcast = _broadcast_in_dim(pred_b, new_c.shape,
+                                       list(range(len(pred_b.shape))))
+      return tf.where(pred_b_bcast, new_c, c)
+
+    selected_carry = list(util.safe_map(select_one_carry, new_carry, carry))
+    next_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *selected_carry)
+    return (next_pred_b, *selected_carry)
+
+  _, *res_carry = tf.while_loop(new_cond_tf_func, new_body_tf_func,
+                                (init_pred_b, *init_carry))
+  return res_carry
+
+tf_impl[lax.while_p] = _while
+
 # TODO: add_any
 # TODO: after_all
 # TODO: all_to_all
@@ -817,7 +879,6 @@ tf_impl[lax.cond_p] = _cond
 # TODO: svd
 # TODO: top_k
 # TODO: triangular_solve
-# TODO: while
 
 
 def _register_checkpoint_pytrees():
