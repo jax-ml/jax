@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl.testing import absltest
-
+from absl.testing import absltest, parameterized
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -217,7 +216,14 @@ class TestLineSearch(jtu.JaxTestCase):
 
 
 class TestBFGS(jtu.JaxTestCase):
-  def test_minimize(self):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_maxiter={}".format(maxiter), "maxiter": maxiter}
+    for maxiter in [None]))
+  def test_minimize(self, maxiter):
+    # TODO: Test this on maxiter=1,3,etc. up to inf (None), but this requires implementing DCSRCH to exactly replicate
+    # BFGS line search
+
     from scipy.optimize import minimize as smin
     import numpy as onp
 
@@ -225,15 +231,13 @@ class TestBFGS(jtu.JaxTestCase):
       # @jax.jit
       def min_op(x0):
         result = bfgs_minimize(func(jnp), x0,
-                               options=dict(ls_maxiter=10, maxiter=10, analytic_initial_hessian=False,
-                                            g_tol=1e-6))
+                               options=dict(ls_maxiter=100, maxiter=maxiter, g_tol=1e-6))
         return result
 
       jax_res = min_op(x0)
 
       scipy_res = smin(func(onp), x0, method='BFGS')
-      # print(jax_res)
-      # print(scipy_res)
+
       self.assertAllClose(scipy_res.x, jax_res.x_k, atol=2e-5, check_dtypes=False)
 
     def rosenbrock(np):

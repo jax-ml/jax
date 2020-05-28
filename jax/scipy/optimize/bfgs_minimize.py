@@ -27,39 +27,38 @@ class BFGSResults(NamedTuple):
   H_k: jnp.ndarray  # A tensor containing the inverse of the estimated Hessian.
 
 
-def bfgs_minimize(func, x0, options=None, _nojit=False):
-  """
-  The BFGS algorithm from
-      Algorithm 6.1 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 136-143
+def bfgs_minimize(func, x0, options=None):
+    """
+    The BFGS algorithm from
+        Algorithm 6.1 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 136-143
 
-      Notes:
-          We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
-          A side effect is that we perform more gradient evaluations than scipy's BFGS
-      func: callable
-          Function of the form f(x) where x is a flat ndarray and returns a real scalar. The function should be
-          composed of operations with vjp defined. If func is jittable then bfgs_minimize is jittable. If func is
-          not jittable, then _nojit should be set to True.
+        Notes:
+            We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
+            A side effect is that we perform more gradient evaluations than scipy's BFGS
+        func: callable
+            Function of the form f(x) where x is a flat ndarray and returns a real scalar. The function should be
+            composed of operations with vjp defined. If func is jittable then bfgs_minimize is jittable. If func is
+            not jittable, then _nojit should be set to True.
 
-      x0: ndarray
-          initial variable
-      options: Optional dict of parameters
-          maxiter: int
-              Maximum number of evaluations
-          g_tol: flat
-              Terminates minimization when |grad|_2 < g_tol
-          ls_maxiter: int
-              Maximum number of linesearch iterations
-      _nojit: bool
-          Whether to use pythonic control flow so that func without XLA ops can be used. It is also very useful to
-          set _nojit=True in order to perform debugging.
+        x0: ndarray
+            initial variable
+        options: Optional dict of parameters
+            maxiter: int
+                Maximum number of evaluations
+            g_tol: flat
+                Terminates minimization when |grad|_2 < g_tol
+            ls_maxiter: int
+                Maximum number of linesearch iterations
+        _nojit: bool
+            Whether to use pythonic control flow so that func without XLA ops can be used. It is also very useful to
+            set _nojit=True in order to perform debugging.
 
-  Returns: BFGSResults
+    Returns: BFGSResults
 
-  """
+    """
   if options is None:
     options = dict()
   maxiter: Optional[int] = options.get('maxiter', None)
-  analytic_initial_hessian: bool = options.get('analytic_initial_hessian', False)
   g_tol: float = options.get('g_tol', 1e-5)
   ls_maxiter: int = options.get('ls_maxiter', 10)
 
@@ -79,16 +78,6 @@ def bfgs_minimize(func, x0, options=None, _nojit=False):
 
   D = x0.shape[0]
 
-  if analytic_initial_hessian:
-    hess = jax.hessian(func, argnums=0)
-    initial_B = hess(x0)
-    initial_H = jnp.linalg.pinv(initial_B)
-    # TODO: experimental, should remove
-    if jnp.any(jnp.linalg.eigvals(initial_B) <= 0):
-      initial_H = jnp.eye(D)
-    state = state._replace(nhev=state.nhev + 1)
-
-  else:
     initial_H = jnp.eye(D)
 
   value_and_grad = jax.value_and_grad(func)
@@ -100,7 +89,7 @@ def bfgs_minimize(func, x0, options=None, _nojit=False):
   def body(state):
     p_k = -jnp.dot(state.H_k, state.g_k)
     line_search_results = line_search(value_and_grad, state.x_k, p_k, f_0=state.f_k, g_0=state.g_k,
-                                      max_iterations=ls_maxiter, _nojit=_nojit)
+                                      max_iterations=ls_maxiter)
     state = state._replace(nfev=state.nfev + line_search_results.nfev,
                            ngev=state.ngev + line_search_results.ngev,
                            failed=line_search_results.failed)
@@ -128,13 +117,9 @@ def bfgs_minimize(func, x0, options=None, _nojit=False):
 
     return state
 
-  if _nojit:
-    while (~ state.converged) & (~state.failed) & (state.k < maxiter):
-      state = body(state)
-  else:
     state = while_loop(
-      lambda state: (~ state.converged) & (~state.failed) & (state.k < maxiter),
-      body,
-      state)
+        lambda state: (~ state.converged) & (~state.failed) & (state.k < maxiter),
+        body,
+        state)
 
-  return state
+    return state
