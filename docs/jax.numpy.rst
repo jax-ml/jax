@@ -54,6 +54,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     argmax
     argmin
     argsort
+    argwhere
     around
     array
     array_repr
@@ -114,6 +115,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     eye
     fabs
     fix
+    flatnonzero
     flip
     fliplr
     flipud

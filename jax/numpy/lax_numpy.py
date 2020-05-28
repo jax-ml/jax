@@ -1747,6 +1747,11 @@ def nonzero(a):
   return tuple(indexes[..., i] for i in range(ndims))
 
 
+@_wraps(np.flatnonzero)
+def flatnonzero(a):
+  return nonzero(ravel(a))[0]
+
+
 def _make_nan_reduction(np_reduction, jnp_reduction, init_val, nan_if_all_nan):
   @_wraps(np_reduction)
   def nan_reduction(a, axis=None, out=None, keepdims=False, **kwargs):
@@ -2939,6 +2944,14 @@ def vander(x, N=None, increasing=False):
 
 
 ### Misc
+
+
+@_wraps(np.argwhere)
+def argwhere(a):
+  result = transpose(vstack(nonzero(a)))
+  if ndim(a) == 0:
+    return result[:0].reshape(result.shape[0], 0)
+  return result.reshape(result.shape[0], ndim(a))
 
 
 @_wraps(np.argmax)
