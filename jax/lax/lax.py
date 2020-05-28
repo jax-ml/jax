@@ -1073,8 +1073,6 @@ def _get_min_identity(dtype: DType) -> Array:
     return onp.array(True, onp.bool_)
 
 def _reduce_sum(operand: Array, axes: Sequence[int]) -> Array:
-  if all(operand.shape[i] == 1 for i in axes):
-    return squeeze(operand, axes)
   return reduce_sum_p.bind(operand, axes=tuple(axes))
 
 def _reduce_prod(operand: Array, axes: Sequence[int]) -> Array:
