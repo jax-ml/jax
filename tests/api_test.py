@@ -2457,6 +2457,25 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     grad(experiment)(1.)  # doesn't crash
 
+  def test_linear_in_scan(self):
+    @api.custom_jvp
+    def f(x):
+      return -x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      return f(x), f(x_dot)
+
+    def foo(x):
+      out, _  = lax.scan(lambda c, _: (f(c), None), x, None, length=1)
+      return out
+
+    ans = api.grad(foo)(3.)
+    expected = -1.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
