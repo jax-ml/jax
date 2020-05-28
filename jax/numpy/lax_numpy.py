@@ -3319,7 +3319,7 @@ def unique(ar, return_index=False, return_inverse=False,
   raise NotImplementedError(
         "np.unique is not implemented for the axis argument")
 
-  @_wraps(onp.setxor1d)
+@_wraps(np.setxor1d)
 def setxor1d(ar1, ar2, assume_unique=False):
   if not assume_unique:
     ar1 = unique(ar1)
