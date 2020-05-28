@@ -22,11 +22,9 @@ import functools
 import itertools
 import operator as op
 
-import numpy as onp
-
 from jax import lax
 from jax import random
-import jax.numpy as np
+import jax.numpy as jnp
 
 from jax.nn import (relu, log_softmax, softmax, softplus, sigmoid, elu,
                     leaky_relu, selu, gelu, normalize)
@@ -56,7 +54,7 @@ def Dense(out_dim, W_init=glorot_normal(), b_init=normal()):
     return output_shape, (W, b)
   def apply_fun(params, inputs, **kwargs):
     W, b = params
-    return np.dot(inputs, W) + b
+    return jnp.dot(inputs, W) + b
   return init_fun, apply_fun
 
 
@@ -123,7 +121,7 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
   """Layer construction function for a batch normalization layer."""
   _beta_init = lambda rng, shape: beta_init(rng, shape) if center else ()
   _gamma_init = lambda rng, shape: gamma_init(rng, shape) if scale else ()
-  axis = (axis,) if np.isscalar(axis) else axis
+  axis = (axis,) if jnp.isscalar(axis) else axis
   def init_fun(rng, input_shape):
     shape = tuple(d for i, d in enumerate(input_shape) if i not in axis)
     k1, k2 = random.split(rng)
@@ -131,9 +129,9 @@ def BatchNorm(axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
     return input_shape, (beta, gamma)
   def apply_fun(params, x, **kwargs):
     beta, gamma = params
-    # TODO(phawkins): np.expand_dims should accept an axis tuple.
+    # TODO(phawkins): jnp.expand_dims should accept an axis tuple.
     # (https://github.com/numpy/numpy/issues/12290)
-    ed = tuple(None if i in axis else slice(None) for i in range(np.ndim(x)))
+    ed = tuple(None if i in axis else slice(None) for i in range(jnp.ndim(x)))
     z = normalize(x, axis, epsilon=epsilon)
     if center and scale: return gamma[ed] * z + beta[ed]
     if center: return z + beta[ed]
@@ -147,9 +145,9 @@ def elementwise(fun, **fun_kwargs):
   init_fun = lambda rng, input_shape: (input_shape, ())
   apply_fun = lambda params, inputs, **kwargs: fun(inputs, **fun_kwargs)
   return init_fun, apply_fun
-Tanh = elementwise(np.tanh)
+Tanh = elementwise(jnp.tanh)
 Relu = elementwise(relu)
-Exp = elementwise(np.exp)
+Exp = elementwise(jnp.exp)
 LogSoftmax = elementwise(log_softmax, axis=-1)
 Softmax = elementwise(softmax, axis=-1)
 Softplus = elementwise(softplus)
@@ -185,7 +183,7 @@ def _pooling_layer(reducer, init_val, rescaler=None):
       return rescale(out, inputs, spec) if rescale else out
     return init_fun, apply_fun
   return PoolingLayer
-MaxPool = _pooling_layer(lax.max, -np.inf)
+MaxPool = _pooling_layer(lax.max, -jnp.inf)
 SumPool = _pooling_layer(lax.add, 0.)
 
 
@@ -199,10 +197,10 @@ def _normalize_by_window_size(dims, strides, padding):
     spatial_shape = tuple(inputs.shape[i]
                           for i in range(inputs.ndim)
                           if i not in non_spatial_axes)
-    one = np.ones(spatial_shape, dtype=inputs.dtype)
+    one = jnp.ones(spatial_shape, dtype=inputs.dtype)
     window_sizes = lax.reduce_window(one, 0., lax.add, dims, strides, padding)
     for i in sorted(non_spatial_axes):
-      window_sizes = np.expand_dims(window_sizes, i)
+      window_sizes = jnp.expand_dims(window_sizes, i)
 
     return outputs / window_sizes
   return rescale
@@ -215,7 +213,7 @@ def Flatten():
     output_shape = input_shape[0], functools.reduce(op.mul, input_shape[1:], 1)
     return output_shape, ()
   def apply_fun(params, inputs, **kwargs):
-    return np.reshape(inputs, (inputs.shape[0], -1))
+    return jnp.reshape(inputs, (inputs.shape[0], -1))
   return init_fun, apply_fun
 Flatten = Flatten()
 
@@ -251,7 +249,7 @@ def FanInConcat(axis=-1):
     out_shape = input_shape[0][:ax] + (concat_size,) + input_shape[0][ax+1:]
     return out_shape, ()
   def apply_fun(params, inputs, **kwargs):
-    return np.concatenate(inputs, axis)
+    return jnp.concatenate(inputs, axis)
   return init_fun, apply_fun
 
 
@@ -269,7 +267,7 @@ def Dropout(rate, mode='train'):
       raise ValueError(msg)
     if mode == 'train':
       keep = random.bernoulli(rng, rate, inputs.shape)
-      return np.where(keep, inputs / rate, 0)
+      return jnp.where(keep, inputs / rate, 0)
     else:
       return inputs
   return init_fun, apply_fun

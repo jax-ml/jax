@@ -67,7 +67,7 @@ class Config(object):
 
   def check_exists(self, name):
     if name not in self.values:
-      raise Exception("Unrecognized config option: {}".format(name))
+      raise AttributeError("Unrecognized config option: {}".format(name))
 
   def DEFINE_bool(self, name, default, *args, **kwargs):
     self.add_option(name, default, bool, args, kwargs)
@@ -123,4 +123,13 @@ class NameSpace(object):
 
 config = Config()
 flags = config
+FLAGS = flags.FLAGS
+
 already_configured_with_absl = False
+
+flags.DEFINE_bool(
+    'jax_enable_checks',
+    bool_env('JAX_ENABLE_CHECKS', False),
+    help=
+    'Turn on invariant checking (core.skip_checks = False)'
+)

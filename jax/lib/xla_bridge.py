@@ -22,10 +22,11 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
-from typing import Callable, Dict
+from typing import Callable, Dict, Sequence, Tuple, Union
 import warnings
 
 from absl import logging
+import numpy as np
 
 from ..config import flags
 from .. import util
@@ -39,6 +40,8 @@ except ImportError:
   tpu_client = None
 from . import version
 from . import xla_client
+
+xops = xla_client.ops
 
 FLAGS = flags.FLAGS
 
@@ -55,6 +58,10 @@ flags.DEFINE_string(
     'Platform name for XLA. The default is to attempt to use a GPU if '
     'available, but fall back to CPU otherwise. To set the platform manually, '
     'pass "cpu" for CPU or "gpu" for GPU.')
+flags.DEFINE_bool(
+    'jax_disable_most_optimizations', False,
+    'Try not to do much optimization work. This can be useful if the cost of '
+    'optimization is greater than that of running a less-optimized program.')
 
 
 def get_compile_options(num_replicas, num_partitions, device_assignment=None):
@@ -94,6 +101,13 @@ def get_compile_options(num_replicas, num_partitions, device_assignment=None):
     assert device_assignment.replica_count() == num_replicas
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
+
+  if FLAGS.jax_disable_most_optimizations:
+    debug_options = compile_options.executable_build_options.debug_options
+    debug_options.xla_backend_optimization_level = 0
+    debug_options.xla_llvm_disable_expensive_passes = True
+    debug_options.xla_test_all_input_layouts = False
+
   return compile_options
 
 _backends = {}
@@ -103,23 +117,13 @@ def register_backend(name, factory):
 
 def _get_local_backend(platform=None):
   if not platform:
-    platform = FLAGS.jax_platform_name
-
-  # Canonicalize platform names.
-  cpu = 'cpu'
-  gpu = 'gpu'
-  if platform == 'Host':
-    platform = cpu
-  elif platform == 'CUDA':
-    platform = gpu
-  elif platform == '':
-    platform = None
+    platform = FLAGS.jax_platform_name or None
 
   backend = xla_client.get_local_backend(platform)
   if backend is None:
     raise RuntimeError("No local XLA backends found.")
 
-  if backend.platform == cpu and platform != cpu:
+  if backend.platform == 'cpu' and platform != 'cpu':
     warnings.warn('No GPU/TPU found, falling back to CPU.')
 
   return backend
@@ -152,7 +156,7 @@ _backend_lock = threading.Lock()
 def get_backend(platform=None):
   # TODO(mattjj,skyewm): remove this input polymorphism after we clean up how
   # 'backend' values are handled
-  if isinstance(platform, xla_client.Backend):
+  if not isinstance(platform, (type(None), str)):
     return platform
 
   with _backend_lock:
@@ -169,7 +173,7 @@ def get_device_backend(device=None):
   return get_backend(platform)
 
 
-def device_count(backend=None):
+def device_count(backend: str = None):
   """Returns the total number of devices.
 
   On most platforms, this is the same as ``local_device_count()``. However, on
@@ -186,18 +190,21 @@ def device_count(backend=None):
   return int(get_backend(backend).device_count())
 
 
-def local_device_count(backend=None):
+def local_device_count(backend: str =None):
   """Returns the number of devices on this host."""
   return int(get_backend(backend).local_device_count())
 
 
-def devices(backend=None):
-  """Returns a list of all devices.
+def devices(backend: str = None):
+  """Returns a list of all devices for a given backend.
 
-  Each device is represented by a subclass of Device (e.g. CpuDevice,
-  GpuDevice). The length of the returned list is equal to
-  ``device_count()``. Local devices can be identified by comparing
+  Each device is represented by a subclass of ``Device`` (e.g. ``CpuDevice``,
+  ``GpuDevice``). The length of the returned list is equal to
+  ``device_count(backend)``. Local devices can be identified by comparing
   ``Device.host_id`` to ``host_id()``.
+
+  If ``backend`` is ``None``, returns all the devices from the default backend.
+  The default backend is generally 'gpu' or 'tpu' if available, otherwise 'cpu'.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
@@ -209,14 +216,28 @@ def devices(backend=None):
   return get_backend(backend).devices()
 
 
-def local_devices(host_id=None, backend=None):
-  """Returns a list of devices local to a given host (this host by default)."""
+def local_devices(host_id: int = None, backend: str = None):
+  """Like ``devices``, but only returns devices local to a given host.
+
+  If ``host_id`` is ``None``, returns devices local to this host.
+
+  Args:
+    host_id: the integer ID of the host. Host IDs can be retrieved via
+      ``host_ids()``.
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+
+  Returns:
+    List of Device subclasses.
+  """
   if host_id is None:
     host_id = get_backend(backend).host_id()
+  if host_id not in host_ids():
+    raise ValueError(f"Unknown host_id {host_id}")
   return [d for d in devices(backend) if d.host_id == host_id]
 
 
-def host_id(backend=None):
+def host_id(backend: str = None):
   """Returns the integer host ID of this host.
 
   On most platforms, this will always be 0. This will vary on multi-host
@@ -232,12 +253,12 @@ def host_id(backend=None):
   return get_backend(backend).host_id()
 
 
-def host_ids(backend=None):
+def host_ids(backend: str = None):
   """Returns a sorted list of all host IDs."""
   return sorted(list(set(d.host_id for d in devices(backend))))
 
 
-def host_count(backend=None):
+def host_count(backend: str = None):
   """Returns the number of hosts."""
   return len(host_ids(backend))
 
@@ -266,66 +287,92 @@ def normalize_to_xla_dtypes(val):
     return tuple(normalize_to_xla_dtypes(x) for x in val)
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
 
+def _numpy_array_constant(builder, value, canonicalize_types=True):
+  if canonicalize_types:
+    value = normalize_to_xla_dtypes(value)
+  return xops.ConstantLiteral(builder, value)
 
-class _JaxComputationBuilder(xla_client.ComputationBuilder):
-  """Base class implementing all of JaxComputationBuilder.
+def parameter(builder, num, shape, name=None, replicated=None):
+  if name is None:
+    name = ''
+  if replicated is None:
+    replicated = []
+  elif isinstance(replicated, bool):
+    replicated = [replicated] * shape.leaf_count()
 
-  This class is intended to override and augment the interface of an XLA
-  ComputationBuilder to form JaxComputationBuilder
+  return xops.Parameter(builder, num,
+                        shape.with_major_to_minor_layout_if_absent(), name,
+                        replicated)
+
+
+def constant(builder, py_val, canonicalize_types=True):
+  """Translate constant `py_val` to a constant, canonicalizing its dtype.
+
+  Args:
+    py_val: a Python value to be translated to a constant.
+
+  Returns:
+    A representation of the constant, either a ComputationDataHandle or None
   """
+  py_type = type(py_val)
+  if py_type in _constant_handlers:
+    return _constant_handlers[py_type](builder, py_val, canonicalize_types)
+  else:
+    raise TypeError("No constant handler for type: {}".format(py_type))
 
-  # Method name case follows that of the XLA ComputationBuilder
-  # pylint: disable=invalid-name
+# HLO instructions optionally can be annotated to say how the output should be
+# spatially partitioned (represented in XLA as OpSharding protos, see
+# _sharding_to_proto). For array outputs, the annotation is either an int per
+# dimension specifying the number of ways that dimension divided (i.e. the total
+# number of shards is the product), or None to indicate the array should be
+# replicated. Tuple outputs are represented as tuples thereof. XLA supports
+# arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
+# checkers don't support recursive types), so we only represent one level of
+# nesting in this type definition.
+SpatialSharding = Union[Tuple[int, ...],
+                        None,
+                        Tuple[Union[Tuple[int, ...], None], ...]]
 
-  def Build(self, *args, **kwargs):
-    return super(_JaxComputationBuilder, self).Build(
-        *args, **kwargs)
+def _sharding_to_proto(sharding: SpatialSharding):
+  """Converts a SpatialSharding to an OpSharding.
 
-  def NumpyArrayConstant(self, value, canonicalize_types=True):
-    if canonicalize_types:
-      value = normalize_to_xla_dtypes(value)
-    return super(_JaxComputationBuilder, self).Constant(value)
+  See
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
+  for details on the OpSharding proto.
+  """
+  proto = xla_client.OpSharding()
+  if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
+      assert all(s is None or isinstance(s, tuple) for s in sharding)
+      sub_protos = [_sharding_to_proto(s) for s in sharding]  # type: ignore
+      proto.type = xla_client.OpSharding.Type.TUPLE
+      proto.tuple_shardings = sub_protos
+      return proto
 
-  def ConstantLike(self, example_value, value, canonicalize_types=True):
-    example_value = onp.asarray(example_value)
-    return self.Constant(onp.array(value, dtype=example_value.dtype))
+  if sharding is None:
+    proto.type = xla_client.OpSharding.Type.REPLICATED
+  else:
+    proto.type = xla_client.OpSharding.Type.OTHER
+    proto.tile_assignment_dimensions = list(sharding)
+    proto.tile_assignment_devices = list(range(onp.product(sharding)))
+  return proto
 
-  def Constant(self, py_val, canonicalize_types=True):
-    """Translate constant `py_val` to a constant for this ComputationBuilder.
+def set_sharding(builder, op, sharding: SpatialSharding):
+  """Uses CustomCall to annotate a value as sharded."""
+  # "Sharding" is a built-in custom call target that acts like an identity
+  # function, and is used to attach an OpSharding to.
+  return with_sharding(builder, sharding, xops.CustomCall,
+                       builder, b"Sharding", [op], builder.get_shape(op))
 
-    Args:
-      py_val: a Python value to be translated to a constant.
-
-    Returns:
-      A representation of the constant, either a ComputationDataHandle or None
-    """
-    py_type = type(py_val)
-    if py_type in _constant_handlers:
-      return _constant_handlers[py_type](self, py_val, canonicalize_types)
-    else:
-      raise TypeError("No constant handler for type: {}".format(py_type))
-
-  # TODO(mattjj): remove when CrossReplicaSum is added to XLA:CPU
-  def CrossReplicaSum(self, operand, replica_groups):
-    """Workaround for CrossReplicaSum not being implemented on some backends."""
-    if len(replica_groups[0]) == 1:
-      return operand
-    else:
-      return super(_JaxComputationBuilder, self).CrossReplicaSum(
-          operand, replica_groups)
-
-  # TODO(mattjj): remove when AllToAll is added to XLA:CPU
-  def AllToAll(self, operand, split_axis, concat_axis, replica_groups):
-    """Workaround for AllToAll not being implemented on some backends."""
-    if len(replica_groups[0]) == 1:
-      return operand
-    else:
-      return super(_JaxComputationBuilder, self).AllToAll(
-          operand, split_axis, concat_axis, replica_groups)
-
+def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
+  """Builds op_fn(*args, **kwargs) with sharding annotation."""
+  builder.set_sharding(_sharding_to_proto(sharding))
+  try:
+    return op_fn(*args, **kwargs)
+  finally:
+    builder.clear_sharding()
 
 def make_computation_builder(name):
-  return _JaxComputationBuilder(name)
+  return xla_client.XlaBuilder(name)
 
 
 def register_constant_handler(type_, handler_fun):
@@ -336,7 +383,7 @@ _constant_handlers: Dict[type, Callable] = {}
 def _ndarray_constant_handler(c, val, canonicalize_types=True):
   """Constant handler for ndarray literals, handling zero-size strides.
 
-  This function essentially calls c.NumpyArrayConstant(val) except it has
+  This function essentially calls _numpy_array_constant(val) except it has
   special handling of arrays with any strides of size zero: for those, it
   generates appropriate calls to NumpyArrayConstant, Broadcast, and Transpose
   to avoid staging in large literals that might arise from np.zeros or np.ones
@@ -344,31 +391,31 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
   uses size-zero strides).
 
   Args:
-    c: XLA client ComputationBuilder.
+    c: an XlaBuilder
     val: an ndarray.
 
   Returns:
     An XLA ComputationDataHandle / XlaOp representing the constant ndarray
     staged into the XLA Computation.
   """
-  # TODO(mattjj): revise this to use c.BroadcastInDim rather than Transpose
+  # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
   if onp.any(onp.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = onp.where(onp.equal(0, val.strides))
     other_axes, = onp.where(onp.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
-    xla_val = c.Broadcast(
-        c.NumpyArrayConstant(collapsed_val, canonicalize_types),
+    xla_val = xops.Broadcast(
+        _numpy_array_constant(c, collapsed_val, canonicalize_types),
         onp.take(val.shape, zero_stride_axes))
     permutation = onp.argsort(tuple(zero_stride_axes) + tuple(other_axes))
-    return c.Transpose(xla_val, permutation)
+    return xops.Transpose(xla_val, permutation)
   else:
-    return c.NumpyArrayConstant(val, canonicalize_types)
+    return _numpy_array_constant(c, val, canonicalize_types)
 register_constant_handler(onp.ndarray, _ndarray_constant_handler)
 
 
 def _scalar_constant_handler(c, val, canonicalize_types=True):
-  return c.NumpyArrayConstant(val, canonicalize_types)
+  return _numpy_array_constant(c, val, canonicalize_types)
 
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
@@ -377,7 +424,7 @@ for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
-  return c.NumpyArrayConstant(dtype.type(val))
+  return _numpy_array_constant(c, dtype.type(val))
 
 for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))

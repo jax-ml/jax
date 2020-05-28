@@ -15,12 +15,14 @@
 
 from functools import partial
 
-import numpy as onp
+import numpy as np
 
+import jax
 from jax import core
 from jax.util import unzip2
+from jax import ad_util
 from jax.tree_util import (register_pytree_node, tree_structure,
-                           treedef_is_leaf, tree_flatten, tree_unflatten)
+                           treedef_is_leaf, tree_flatten, tree_unflatten, tree_map)
 import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.lax import lax
@@ -49,14 +51,17 @@ def jet(fun, primals, series):
     yield tree_flatten(ans)
 
   f, out_tree = flatten_fun_output(lu.wrap_init(fun))
-  out_primals, out_terms = jet_fun(jet_subtrace(f)).call_wrapped(primals, series)
+  out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
 @lu.transformation
-def jet_fun(primals, series):
+def jet_fun(order, primals, series):
   with core.new_master(JetTrace) as master:
+    master.order = order
     out_primals, out_terms = yield (master, primals, series), {}
     del master
+  out_terms = [[np.zeros_like(p)] * order if s is zero_series else s
+               for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms
 
 @lu.transformation
@@ -108,12 +113,12 @@ class JetTrace(core.Trace):
 
   def process_primitive(self, primitive, tracers, params):
     assert not primitive.multiple_results  # TODO
+    order = self.master.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
-    order, = {len(terms) for terms in series_in if terms is not zero_series}
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
     # TODO(mattjj): avoid always instantiating zeros
-    series_in = [[onp.zeros(onp.shape(x), dtype=onp.result_type(x))
+    series_in = [[np.zeros(np.shape(x), dtype=np.result_type(x))
                   if t is zero_term else t for t in series]
                  for x, series in zip(primals_in, series_in)]
     rule = jet_rules[primitive]
@@ -176,7 +181,7 @@ defzero(lax.floor_p)
 defzero(lax.ceil_p)
 defzero(lax.round_p)
 defzero(lax.sign_p)
-defzero(lax.stop_gradient_p)
+defzero(ad_util.stop_gradient_p)
 
 
 def deflinear(prim):
@@ -207,7 +212,36 @@ deflinear(lax.tie_in_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
+def def_deriv(prim, deriv):
+  """
+  Define the jet rule for a primitive in terms of its first derivative.
+  """
+  jet_rules[prim] = partial(deriv_prop, prim, deriv)
 
+def deriv_prop(prim, deriv, primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  primal_out = prim.bind(x)
+  c0, cs = jet(deriv, primals_in, series_in)
+  c = [c0] + cs
+  u = [x] + series
+  v = [primal_out] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+  primal_out, *series_out = v
+  return primal_out, series_out
+
+
+def_deriv(lax.erf_p, lambda x: lax.mul(lax._const(x, 2. / np.sqrt(np.pi)), lax.exp(lax.neg(lax.square(x)))))
+
+def def_comp(prim, comp):
+  """
+  Define the jet rule for a primitive in terms of a composition of simpler primitives.
+  """
+  jet_rules[prim] = partial(jet, comp)
+
+
+def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
 
 ### More complicated rules
 
@@ -216,6 +250,9 @@ def fact(n):
 
 def _scale(k, j):
   return 1. / (fact(k - j) * fact(j - 1))
+
+def _scale2(k, j):
+  return 1. / (fact(k - j) * fact(j))
 
 def _exp_taylor(primals_in, series_in):
   x, = primals_in
@@ -239,6 +276,52 @@ def _expm1_taylor(primals_in, series_in):
   return lax.expm1(x), series_out
 jet_rules[lax.expm1_p] = _expm1_taylor
 
+def _pow_taylor(primals_in, series_in):
+  u_, r_ = primals_in
+
+  x, series = jet(lambda x, y: lax.mul(y, lax.log(x)), primals_in, series_in)
+
+  u = [x] + series
+  v = [u_ ** r_] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum([_scale(k, j)* v[k-j] * u[j] for j in range(1, k+1)])
+  primal_out, *series_out = v
+
+  return primal_out, series_out
+jet_rules[lax.pow_p] = _pow_taylor
+
+def _integer_pow_taylor(primals_in, series_in, *, y):
+  if y == 2:
+    fn = lambda x: x * x
+  else:
+    fn = lambda x: lax.pow(x, np.array(y, dtype=x.dtype))
+  return jet(fn, primals_in, series_in)
+jet_rules[lax.integer_pow_p] = _integer_pow_taylor
+
+
+def _expit_taylor(primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  v = [jax.scipy.special.expit(x)] + [None] * len(series)
+  e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum([_scale(k, j) * e[k-j] * u[j] for j in range(1, k+1)])
+    e[k] = (1 - v[0]) * v[k] - fact(k) * sum([_scale2(k, j)* v[j] * v[k-j] for j in range(1, k+1)])
+
+  primal_out, *series_out = v
+  return primal_out, series_out
+
+def _tanh_taylor(primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [2*x] + [2 * series_ for series_ in series]
+  primals_in, *series_in = u
+  primal_out, series_out = _expit_taylor((primals_in, ), (series_in, ))
+  series_out = [2 * series_ for series_ in series_out]
+  return 2 * primal_out - 1, series_out
+jet_rules[lax.tanh_p] = _tanh_taylor
+
 def _log_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
@@ -250,6 +333,41 @@ def _log_taylor(primals_in, series_in):
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.log_p] = _log_taylor
+
+def _sqrt_taylor(primals_in, series_in):
+  return jet(lambda x: x ** 0.5, primals_in, series_in)
+jet_rules[lax.sqrt_p] = _sqrt_taylor
+
+def _rsqrt_taylor(primals_in, series_in):
+  return jet(lambda x: x ** -0.5, primals_in, series_in)
+jet_rules[lax.rsqrt_p] = _rsqrt_taylor
+
+def _asinh_taylor(primals_in, series_in):
+  return jet(lambda x: lax.log(x + lax.sqrt(lax.square(x) + 1)), primals_in, series_in)
+jet_rules[lax.asinh_p] = _asinh_taylor
+
+def _acosh_taylor(primals_in, series_in):
+  return jet(lambda x: lax.log(x + lax.sqrt(lax.square(x) - 1)), primals_in, series_in)
+jet_rules[lax.acosh_p] = _acosh_taylor
+
+def _atanh_taylor(primals_in, series_in):
+  return jet(lambda x: 0.5 * lax.log(lax.div(1 + x, 1 - x)), primals_in, series_in)
+jet_rules[lax.atanh_p] = _atanh_taylor
+
+def _atan2_taylor(primals_in, series_in):
+  x, y = primals_in
+  primal_out = lax.atan2(x, y)
+
+  x, series = jet(lax.div, primals_in, series_in)
+  c0, cs = jet(lambda x: lax.div(1, 1 + lax.square(x)), (x, ), (series, ))
+  c = [c0] + cs
+  u = [x] + series
+  v = [primal_out] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+  primal_out, *series_out = v
+  return primal_out, series_out
+jet_rules[lax.atan2_p] = _atan2_taylor
 
 def _log1p_taylor(primals_in, series_in):
   x, = primals_in
@@ -276,6 +394,26 @@ def _div_taylor_rule(primals_in, series_in, **params):
   primal_out, *series_out = v
   return primal_out, series_out
 jet_rules[lax.div_p] = _div_taylor_rule
+
+def _sinusoidal_rule(sign, prims, primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  s, c = prims
+  s = [s(x)] + [None] * len(series)
+  c = [c(x)] + [None] * len(series)
+  for k in range(1, len(s)):
+    s[k] = fact(k-1) * sum(_scale(k, j) * u[j] * c[k-j] for j in range(1, k + 1))
+    c[k] = fact(k-1) * sum(_scale(k, j) * u[j] * s[k-j] for j in range(1, k + 1)) * sign
+  return (s[0], s[1:]), (c[0], c[1:])
+
+def _get_ind(f, ind):
+  return lambda *args: f(*args)[ind]
+
+jet_rules[lax.sin_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 0)
+jet_rules[lax.cos_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 1)
+jet_rules[lax.sinh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 0)
+jet_rules[lax.cosh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 1)
 
 def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in
@@ -336,4 +474,3 @@ def _select_taylor_rule(primal_in, series_in, **params):
   series_out = [sel(*terms_in, **params) for terms_in in zip(*series_in)]
   return primal_out, series_out
 jet_rules[lax.select_p] = _select_taylor_rule
-

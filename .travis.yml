@@ -12,7 +12,7 @@ jobs:
     - python: "3.6"
       env: JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25
     - python: "3.7"
-      env: JAX_ENABLE_X64=1 JAX_ONLY_DOCUMENTATION=true
+      env: JAX_ENABLE_X64=0 JAX_ONLY_DOCUMENTATION=true
 
 before_install:
   - wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
@@ -25,14 +25,15 @@ before_install:
   - conda config --add channels conda-forge
   - conda update -q conda
 install:
-  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy
+  - conda install --yes python=$TRAVIS_PYTHON_VERSION pip absl-py opt_einsum numpy scipy pytest-xdist pytest-benchmark mypy=0.770
+  - pip install msgpack
   - if [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       pip install pytype ;
     fi
   # The jaxlib version should match the minimum jaxlib version in
   # jax/lib/__init__.py. This tests JAX PRs against the oldest permitted
   # jaxlib.
-  - pip install jaxlib==0.1.43
+  - pip install jaxlib==0.1.47
   - pip install -v .
   # The following are needed to test the Colab notebooks and the documentation building
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
@@ -43,9 +44,11 @@ install:
 script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
       sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
+      pytest docs ;
+      pytest --doctest-modules jax/api.py ;
     elif [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       echo "===== Checking with mypy ====" &&
       time mypy --config-file=mypy.ini jax ;
     else
-      pytest tests examples -W ignore ;
+      pytest tests examples ;
     fi

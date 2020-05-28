@@ -128,8 +128,8 @@ To rebuild the documentation, install several packages::
   pip install -r docs/requirements.txt
 
 You must also install ``pandoc`` in order to regenerate the notebooks.
-See `Install Pandoc<https://pandoc.org/installing.html>`_,
-or using `Miniconda<https://docs.conda.io/en/latest/miniconda.html>`_ which
+See `Install Pandoc <https://pandoc.org/installing.html>`_,
+or using `Miniconda <https://docs.conda.io/en/latest/miniconda.html>`_ which
 I have used successfully on the Mac: ``conda install -c conda-forge pandoc``.
 If you do not want to install ``pandoc`` then you should regenerate the documentation
 without the notebooks.
@@ -151,14 +151,14 @@ local repo), update it as needed, ``Run all cells`` then
 explained above.
 
 Some of the notebooks are built automatically as part of the Travis pre-submit checks and
-as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
+as part of the `Read the docs <https://jax.readthedocs.io/en/latest>`_ build.
 The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
-or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/google/jax/pull/2402/files)).
+or tag the cell with `raises-exceptions` metadata (`example PR <https://github.com/google/jax/pull/2402/files>`_).
 You have to add this metadata by hand in the `.ipynb` file. It will be preserved when somebody else
 re-saves the notebook.
 
 We exclude some notebooks from the build, e.g., because they contain long computations.
-See `exclude_patterns` in [conf.py](https://github.com/google/jax/blob/master/docs/conf.py).
+See `exclude_patterns` in `conf.py <https://github.com/google/jax/blob/master/docs/conf.py>`_.
 
 Documentation building on readthedocs.io
 ----------------------------------------
@@ -188,10 +188,11 @@ I saw in the Readthedocs logs::
     cd jax
     git checkout --force origin/test-docs
     git clean -d -f -f
-    
+    workon jax-docs
+
     python -m pip install --upgrade --no-cache-dir pip
     python -m pip install --upgrade --no-cache-dir -I Pygments==2.3.1 setuptools==41.0.1 docutils==0.14 mock==1.0.1 pillow==5.4.1 alabaster>=0.7,<0.8,!=0.7.5 commonmark==0.8.1 recommonmark==0.5.0 'sphinx<2' 'sphinx-rtd-theme<0.5' 'readthedocs-sphinx-ext<1.1'
     python -m pip install --exists-action=w --no-cache-dir -r docs/requirements.txt
-    
+    cd docs
     python `which sphinx-build` -T -E -b html -d _build/doctrees-readthedocs -D language=en . _build/html
 

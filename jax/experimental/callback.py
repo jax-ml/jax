@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as onp
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
-import jax.numpy as np
+import jax.numpy as jnp
 
 from jax import core
 from jax.core import Trace, Tracer, new_master
@@ -74,16 +73,16 @@ class FoundValue(Exception):
 
 def _contains_query(vals, query):
   if isinstance(query, tuple):
-    return map(partial(contains_query, vals), query)
+    return map(partial(_contains_query, vals), query)
 
-  if np.isnan(query):
-    if np.any(np.isnan(vals)):
+  if jnp.isnan(query):
+    if jnp.any(jnp.isnan(vals)):
       raise FoundValue('NaN')
-  elif np.isinf(query):
-    if np.any(np.isinf(vals)):
+  elif jnp.isinf(query):
+    if jnp.any(jnp.isinf(vals)):
       raise FoundValue('Found Inf')
-  elif np.isscalar(query):
-    if np.any(vals == query):
+  elif jnp.isscalar(query):
+    if jnp.any(vals == query):
       raise FoundValue(str(query))
   else:
     raise ValueError('Malformed Query: {}'.format(query))
@@ -147,7 +146,7 @@ class CallbackTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in = [t.val for t in tracers]
-    vals_out = self.master.callback(primitive, vals_in, params)
+    vals_out = self.master.callback(primitive, vals_in, params)  # type: ignore
     if primitive.multiple_results:
       return [CallbackTracer(self, val) for val in vals_out]
     return CallbackTracer(self, vals_out)

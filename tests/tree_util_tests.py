@@ -14,10 +14,12 @@
 
 
 import collections
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax.lib
 from jax import test_util as jtu
 from jax import tree_util
 

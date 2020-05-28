@@ -17,7 +17,7 @@ import builtins
 import collections
 import itertools
 
-import numpy as onp
+import numpy as np
 import opt_einsum
 import scipy.special
 
@@ -28,37 +28,37 @@ _max = builtins.max
 _min = builtins.min
 _map = builtins.map
 
-neg = onp.negative
-sign = onp.sign
-floor = onp.floor
-ceil = onp.ceil
-round = onp.round
-nextafter = onp.nextafter
+neg = np.negative
+sign = np.sign
+floor = np.floor
+ceil = np.ceil
+round = lambda x: np.trunc(x + np.copysign(.5, x))
+nextafter = np.nextafter
 
-is_finite = onp.isfinite
+is_finite = np.isfinite
 
-exp = onp.exp
-expm1 = onp.expm1
-log = onp.log
-log1p = onp.log1p
-tanh = onp.tanh
-sin = onp.sin
-cos = onp.cos
-atan2 = onp.arctan2
+exp = np.exp
+expm1 = np.expm1
+log = np.log
+log1p = np.log1p
+tanh = np.tanh
+sin = np.sin
+cos = np.cos
+atan2 = np.arctan2
 
-sqrt = onp.sqrt
-rsqrt = lambda x: 1. / onp.sqrt(x)
-square = onp.square
-reciprocal = onp.reciprocal
-tan = onp.tan
-asin = onp.arcsin
-acos = onp.arccos
-atan = onp.arctan
-sinh = onp.sinh
-cosh = onp.cosh
-asinh = onp.arcsinh
-acosh = onp.arccosh
-atanh = onp.arctanh
+sqrt = np.sqrt
+rsqrt = lambda x: 1. / np.sqrt(x)
+square = np.square
+reciprocal = np.reciprocal
+tan = np.tan
+asin = np.arcsin
+acos = np.arccos
+atan = np.arctan
+sinh = np.sinh
+cosh = np.cosh
+asinh = np.arcsinh
+acosh = np.arccosh
+atanh = np.arctanh
 
 betainc = scipy.special.betainc
 lgamma = scipy.special.gammaln
@@ -71,64 +71,89 @@ erf_inv = scipy.special.erfinv
 bessel_i0e = scipy.special.i0e
 bessel_i1e = scipy.special.i1e
 
-real = onp.real
-imag = onp.imag
+real = np.real
+imag = np.imag
 
 def conj(x):
-  return onp.conj(x) + onp.complex64(0)
+  return np.conj(x) + np.complex64(0)
 
 def complex(x, y):
-  return x + onp.complex64(1j) * y
+  return x + np.complex64(1j) * y
 
-abs = onp.absolute
-pow = onp.power
+abs = np.absolute
+pow = np.power
 
-bitwise_not = onp.bitwise_not
-bitwise_and = onp.bitwise_and
-bitwise_or = onp.bitwise_or
-bitwise_xor = onp.bitwise_xor
+bitwise_not = np.bitwise_not
+bitwise_and = np.bitwise_and
+bitwise_or = np.bitwise_or
+bitwise_xor = np.bitwise_xor
 
-add = onp.add
-sub = onp.subtract
-mul = onp.multiply
+add = np.add
+sub = np.subtract
+mul = np.multiply
 
 def div(lhs, rhs):
-  if dtypes.issubdtype(dtypes.result_type(lhs), onp.integer):
-    quotient = onp.floor_divide(lhs, rhs)
-    select = onp.logical_and(onp.sign(lhs) != onp.sign(rhs),
-                             onp.remainder(lhs, rhs) != 0)
-    return onp.where(select, quotient + 1, quotient)
+  if dtypes.issubdtype(dtypes.result_type(lhs), np.integer):
+    quotient = np.floor_divide(lhs, rhs)
+    select = np.logical_and(np.sign(lhs) != np.sign(rhs),
+                             np.remainder(lhs, rhs) != 0)
+    return np.where(select, quotient + 1, quotient)
   else:
-    return onp.divide(lhs, rhs)
+    return np.divide(lhs, rhs)
 
 def rem(lhs, rhs):
-  return onp.sign(lhs) * onp.remainder(onp.abs(lhs), onp.abs(rhs))
+  return np.sign(lhs) * np.remainder(np.abs(lhs), np.abs(rhs))
 
-max = onp.maximum
-min = onp.minimum
+max = np.maximum
+min = np.minimum
 
-shift_left = onp.left_shift
-shift_right_arithmetic = onp.right_shift
+shift_left = np.left_shift
+shift_right_arithmetic = np.right_shift
 # TODO shift_right_logical
 
-eq = onp.equal
-ne = onp.not_equal
-ge = onp.greater_equal
-gt = onp.greater
-le = onp.less_equal
-lt = onp.less
+def population_count(x):
+  assert x.dtype in (np.uint32, np.uint64)
+  m = [
+      0x5555555555555555,  # binary: 0101...
+      0x3333333333333333,  # binary: 00110011..
+      0x0f0f0f0f0f0f0f0f,  # binary:  4 zeros,  4 ones ...
+      0x00ff00ff00ff00ff,  # binary:  8 zeros,  8 ones ...
+      0x0000ffff0000ffff,  # binary: 16 zeros, 16 ones ...
+      0x00000000ffffffff,  # binary: 32 zeros, 32 ones
+  ]
+
+  if x.dtype == np.uint32:
+    m = list(map(np.uint32, m[:-1]))
+  else:
+    m = list(map(np.uint64, m))
+
+  x = (x & m[0]) + ((x >>  1) & m[0])  # put count of each  2 bits into those  2 bits
+  x = (x & m[1]) + ((x >>  2) & m[1])  # put count of each  4 bits into those  4 bits
+  x = (x & m[2]) + ((x >>  4) & m[2])  # put count of each  8 bits into those  8 bits
+  x = (x & m[3]) + ((x >>  8) & m[3])  # put count of each 16 bits into those 16 bits
+  x = (x & m[4]) + ((x >> 16) & m[4])  # put count of each 32 bits into those 32 bits
+  if x.dtype == np.uint64:
+    x = (x & m[5]) + ((x >> 32) & m[5])  # put count of each 64 bits into those 64 bits
+  return x
+
+eq = np.equal
+ne = np.not_equal
+ge = np.greater_equal
+gt = np.greater
+le = np.less_equal
+lt = np.less
 
 def convert_element_type(operand, dtype):
-  return onp.asarray(operand, dtype=dtype)
+  return np.asarray(operand, dtype=dtype)
 
 def bitcast_convert_type(operand, dtype):
-  return onp.asarray(operand).view(dtype)
+  return np.asarray(operand).view(dtype)
 
 def clamp(min, operand, max):
-  return onp.clip(operand, onp.clip(min, None, max), max)
+  return np.clip(operand, np.clip(min, None, max), max)
 
 def concatenate(operands, dimension):
-  return onp.concatenate(operands, axis=dimension)
+  return np.concatenate(operands, axis=dimension)
 
 def conv(lhs, rhs, window_strides, padding):
   pads = padtype_to_pads(lhs.shape[2:], rhs.shape[2:], window_strides, padding)
@@ -143,16 +168,16 @@ def conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
                          rhs_dilation, dimension_numbers):
   lhs_perm, rhs_perm, out_perm = _conv_general_permutations(dimension_numbers)
   if isinstance(padding, str):
-    padding = padtype_to_pads(onp.take(lhs.shape, lhs_perm)[2:],
-                              onp.take(rhs.shape, rhs_perm)[2:],
+    padding = padtype_to_pads(np.take(lhs.shape, lhs_perm)[2:],
+                              np.take(rhs.shape, rhs_perm)[2:],
                               window_strides, padding)
   trans_lhs = transpose(lhs, lhs_perm)
   trans_rhs = transpose(rhs, rhs_perm)
   out = conv_with_general_padding(trans_lhs, trans_rhs, window_strides, padding,
                                   lhs_dilation, rhs_dilation)
-  return transpose(out, onp.argsort(out_perm))
+  return transpose(out, np.argsort(out_perm))
 
-dot = onp.dot
+dot = np.dot
 
 def dot_general(lhs, rhs, dimension_numbers):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
@@ -182,34 +207,34 @@ def dot_general(lhs, rhs, dimension_numbers):
   out_axis_ids = filter(not_none,
                         batch_ids + lhs_out_axis_ids + rhs_out_axis_ids)
   assert lhs.dtype == rhs.dtype
-  dtype = onp.float32 if lhs.dtype == dtypes.bfloat16 else None
-  out = onp.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids,
+  dtype = np.float32 if lhs.dtype == dtypes.bfloat16 else None
+  out = np.einsum(lhs, lhs_axis_ids, rhs, rhs_axis_ids, out_axis_ids,
                    dtype=dtype)
   return out.astype(dtypes.bfloat16) if lhs.dtype == dtypes.bfloat16 else out
 
 def broadcast(operand, sizes):
-  return onp.broadcast_to(operand, sizes + onp.shape(operand))
+  return np.broadcast_to(operand, sizes + np.shape(operand))
 
 def broadcast_in_dim(operand, shape, broadcast_dimensions):
-  in_reshape = onp.ones(len(shape), dtype=onp.int32)
+  in_reshape = np.ones(len(shape), dtype=np.int32)
   for i, bd in enumerate(broadcast_dimensions):
     in_reshape[bd] = operand.shape[i]
-  return onp.broadcast_to(onp.reshape(operand, in_reshape), shape)
+  return np.broadcast_to(np.reshape(operand, in_reshape), shape)
 
-sum = onp.sum
+sum = np.sum
 
 def reshape(operand, new_sizes, dimensions=None):
   if dimensions is None:
-    dimensions = range(len(onp.shape(operand)))
-  return onp.reshape(onp.transpose(operand, dimensions), new_sizes)
+    dimensions = range(len(np.shape(operand)))
+  return np.reshape(np.transpose(operand, dimensions), new_sizes)
 
 def pad(operand, padding_value, padding_config):
   lo, hi, interior = zip(*padding_config)
-  outshape = onp.add(onp.add(onp.add(lo, hi), operand.shape),
-                     onp.multiply(interior, onp.subtract(operand.shape, 1)))
-  out = onp.full(outshape, padding_value, operand.dtype)
+  outshape = np.add(np.add(np.add(lo, hi), operand.shape),
+                     np.multiply(interior, np.subtract(operand.shape, 1)))
+  out = np.full(outshape, padding_value, operand.dtype)
   lhs_slices = tuple(_slice(l if l > 0 else 0, -h if h > 0 else None, step)
-                     for l, h, step in zip(lo, hi, onp.add(1, interior)))
+                     for l, h, step in zip(lo, hi, np.add(1, interior)))
   rhs_slices = tuple(_slice(l if l < 0 else 0, -h if h < 0 else None)
                      for l, h in zip(lo, hi))
   out[lhs_slices] = operand[rhs_slices]
@@ -218,19 +243,19 @@ def pad(operand, padding_value, padding_config):
 def rev(operand, dimensions):
   dimensions = frozenset(dimensions)
   indexer = (_slice(None, None, -1) if d in dimensions else _slice(None)
-             for d in range(onp.ndim(operand)))
+             for d in range(np.ndim(operand)))
   return operand[tuple(indexer)]
 
-select = onp.where
+select = np.where
 
 def slice(operand, start_indices, limit_indices, strides=None):  # pylint: disable=redefined-builtin
   if strides is None:
-    strides = onp.ones(len(start_indices)).astype(int)
+    strides = np.ones(len(start_indices)).astype(int)
   slices = tuple(_map(_slice, start_indices, limit_indices, strides))
   return operand[slices]
 
 def dynamic_slice(operand, start_indices, slice_sizes):
-  out = onp.zeros(slice_sizes, dtype=operand.dtype)
+  out = np.zeros(slice_sizes, dtype=operand.dtype)
   idx = tuple(_slice(start, start+size)
               for start, size in zip(start_indices, slice_sizes))
   section = operand[idx]
@@ -238,16 +263,16 @@ def dynamic_slice(operand, start_indices, slice_sizes):
   return out
 
 def dynamic_update_slice(operand, update, start_indices):
-  slices = tuple(_map(_slice, start_indices, onp.add(start_indices, update.shape)))
-  updated_operand = onp.copy(operand)
+  slices = tuple(_map(_slice, start_indices, np.add(start_indices, update.shape)))
+  updated_operand = np.copy(operand)
   updated_operand[slices] = update
   return updated_operand
 
-transpose = onp.transpose
+transpose = np.transpose
 
 def reduce(operand, init_value, computation, dimensions):  # pylint: disable=redefined-builtin
   reducer = _make_reducer(computation, init_value)
-  return reducer(operand, tuple(dimensions)).astype(onp.asarray(operand).dtype)
+  return reducer(operand, tuple(dimensions)).astype(np.asarray(operand).dtype)
 
 def reduce_window(operand, init_value, computation, window_dimensions,
                   window_strides, padding):
@@ -261,12 +286,12 @@ def reduce_window(operand, init_value, computation, window_dimensions,
 
 # TODO(mattjj): select_and_scatter
 
-sort = onp.sort
+sort = np.sort
 
 def sort_key_val(keys, values, dimension=-1):
-  idxs = list(onp.ix_(*[onp.arange(d) for d in keys.shape]))
-  idxs[dimension] = onp.argsort(keys, axis=dimension)
-  return keys[idxs], values[idxs]
+  idxs = list(np.ix_(*[np.arange(d) for d in keys.shape]))
+  idxs[dimension] = np.argsort(keys, axis=dimension)
+  return keys[tuple(idxs)], values[tuple(idxs)]
 
 # TODO untake
 
@@ -280,7 +305,7 @@ def _conv(lhs, rhs, window_strides, pads):
 
 def padtype_to_pads(in_shape, filter_shape, window_strides, padding):
   if padding.upper() == 'SAME':
-    out_shape = onp.ceil(onp.true_divide(in_shape, window_strides)).astype(int)
+    out_shape = np.ceil(np.true_divide(in_shape, window_strides)).astype(int)
     pad_sizes = [_max((out_size - 1) * stride + filter_size - in_size, 0)
                  for out_size, stride, filter_size, in_size
                  in zip(out_shape, window_strides, filter_shape, in_shape)]
@@ -303,14 +328,14 @@ def _conv_view(lhs, rhs_shape, window_strides, pads, pad_value):
   filter_shape = rhs_shape[2:]
   dim = len(filter_shape)  # number of 'spatial' dimensions in convolution
 
-  out_strides = onp.multiply(window_strides, lhs.strides[2:])
+  out_strides = np.multiply(window_strides, lhs.strides[2:])
   view_strides = lhs.strides[:1] + tuple(out_strides) + lhs.strides[1:]
 
-  out_shape = onp.floor_divide(
-      onp.subtract(in_shape, filter_shape), window_strides) + 1
+  out_shape = np.floor_divide(
+      np.subtract(in_shape, filter_shape), window_strides) + 1
   view_shape = lhs.shape[:1] + tuple(out_shape) + rhs_shape[1:]
 
-  view = onp.lib.stride_tricks.as_strided(lhs, view_shape, view_strides)
+  view = np.lib.stride_tricks.as_strided(lhs, view_shape, view_strides)
 
   view_axes = list(range(view.ndim))
   sum_axes = view_axes[-dim-1:]
@@ -320,19 +345,19 @@ def _conv_view(lhs, rhs_shape, window_strides, pads, pad_value):
   return view, view_axes, rhs_axes, out_axes
 
 def _pad(arr, pads, pad_value):
-  out = onp.pad(arr, onp.maximum(0, pads), mode='constant',
+  out = np.pad(arr, np.maximum(0, pads), mode='constant',
                 constant_values=pad_value).astype(arr.dtype)
   slices = tuple(_slice(abs(lo) if lo < 0 else 0, hi % dim if hi < 0 else None)
-                 for (lo, hi), dim in zip(pads, onp.shape(arr)))
+                 for (lo, hi), dim in zip(pads, np.shape(arr)))
   return out[slices]
 
 def _dilate(operand, factors):
   # this logic is like lax.pad, but with two leading dimensions, no edge
   # padding, and factors are at least 1 (interior padding is at least 0)
-  outspace = onp.add(operand.shape[2:],
-                     onp.multiply(onp.subtract(factors, 1),
-                                  onp.subtract(operand.shape[2:], 1)))
-  out = onp.zeros(operand.shape[:2] + tuple(outspace), operand.dtype)
+  outspace = np.add(operand.shape[2:],
+                     np.multiply(np.subtract(factors, 1),
+                                  np.subtract(operand.shape[2:], 1)))
+  out = np.zeros(operand.shape[:2] + tuple(outspace), operand.dtype)
   lhs_slices = tuple(_slice(None, None, step) for step in factors)
   out[(_slice(None),) * 2 + lhs_slices] = operand
   return out
@@ -355,8 +380,8 @@ def _conv_general_permutations(dimension_numbers):
 
 def _make_reducer(py_binop, init_val):
   """Make a reducer function given a Python binop and an initial value."""
-  # It's tempting to use onp.ufunc.reduce (even with a ufunc generated by
-  # onp.frompyfunc(py_binop)), but this may not agree with custom init_val.
+  # It's tempting to use np.ufunc.reduce (even with a ufunc generated by
+  # np.frompyfunc(py_binop)), but this may not agree with custom init_val.
   # We make an attempt to uncover an underlying numpy ufunc (which might be
   # wrapped by autograd or lax) and check its identity against init_val.
   monoid_record = _monoids.get(getattr(py_binop, '__name__'))
@@ -367,35 +392,35 @@ def _make_reducer(py_binop, init_val):
   return _reducer_from_pyfunc(py_binop, init_val)
 
 def _get_max_identity(dt):
-  return -onp.inf if dtypes.issubdtype(dt, onp.floating) else onp.iinfo(dt).min
+  return -np.inf if dtypes.issubdtype(dt, np.floating) else np.iinfo(dt).min
 
 def _get_min_identity(dt):
-  return onp.inf if dtypes.issubdtype(dt, onp.floating) else onp.iinfo(dt).max
+  return np.inf if dtypes.issubdtype(dt, np.floating) else np.iinfo(dt).max
 
 def _identity_getter(op):
-  return lambda dtype: onp.asarray(op.identity, dtype=dtype)
+  return lambda dtype: np.asarray(op.identity, dtype=dtype)
 
 MonoidRecord = collections.namedtuple('MonoidRecord', ['reducer', 'identity'])
 _monoids = {
-    'max': MonoidRecord(onp.maximum.reduce, _get_max_identity),
-    'min': MonoidRecord(onp.minimum.reduce, _get_min_identity),
-    'add': MonoidRecord(onp.add.reduce, _identity_getter(onp.add)),
-    'mul': MonoidRecord(onp.multiply.reduce, _identity_getter(onp.multiply)),
-    'multiply': MonoidRecord(onp.multiply.reduce,
-                             _identity_getter(onp.multiply)),
-    'logical_and': MonoidRecord(onp.logical_and.reduce,
-                                _identity_getter(onp.logical_and)),
-    'logical_or': MonoidRecord(onp.logical_or.reduce,
-                               _identity_getter(onp.logical_or)),
+    'max': MonoidRecord(np.maximum.reduce, _get_max_identity),
+    'min': MonoidRecord(np.minimum.reduce, _get_min_identity),
+    'add': MonoidRecord(np.add.reduce, _identity_getter(np.add)),
+    'mul': MonoidRecord(np.multiply.reduce, _identity_getter(np.multiply)),
+    'multiply': MonoidRecord(np.multiply.reduce,
+                             _identity_getter(np.multiply)),
+    'logical_and': MonoidRecord(np.logical_and.reduce,
+                                _identity_getter(np.logical_and)),
+    'logical_or': MonoidRecord(np.logical_or.reduce,
+                               _identity_getter(np.logical_or)),
 }
 
 def _reducer_from_pyfunc(py_binop, init_val):
   def reducer(operand, axis=0):
-    axis = range(onp.ndim(operand)) if axis is None else axis
-    result = onp.full(onp.delete(onp.shape(operand), axis), init_val,
-                      dtype=onp.asarray(operand).dtype)
-    for idx, _ in onp.ndenumerate(operand):
-      out_idx = tuple(onp.delete(idx, axis))
+    axis = range(np.ndim(operand)) if axis is None else axis
+    result = np.full(np.delete(np.shape(operand), axis), init_val,
+                      dtype=np.asarray(operand).dtype)
+    for idx, _ in np.ndenumerate(operand):
+      out_idx = tuple(np.delete(idx, axis))
       result[out_idx] = py_binop(result[out_idx], operand[idx])
     return result
   return reducer

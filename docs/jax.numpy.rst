@@ -54,6 +54,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     argmax
     argmin
     argsort
+    argwhere
     around
     array
     array_repr
@@ -63,6 +64,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     atleast_2d
     atleast_3d
     bartlett
+    bincount
     bitwise_and
     bitwise_not
     bitwise_or
@@ -75,10 +77,14 @@ Not every function in NumPy is implemented; contributions are welcome!
     ceil
     clip
     column_stack
+    compress
     concatenate
     conj
     conjugate
+    convolve
+    copysign
     corrcoef
+    correlate
     cos
     cosh
     count_nonzero
@@ -92,11 +98,13 @@ Not every function in NumPy is implemented; contributions are welcome!
     diag
     diag_indices
     diagonal
+    digitize
     divide
     divmod
     dot
     dsplit
     dstack
+    ediff1d
     einsum
     equal
     empty
@@ -105,15 +113,19 @@ Not every function in NumPy is implemented; contributions are welcome!
     exp2
     expand_dims
     expm1
+    extract
     eye
     fabs
     fix
+    flatnonzero
     flip
     fliplr
     flipud
     float_power
     floor
     floor_divide
+    fmax
+    fmin
     fmod
     frexp
     full
@@ -125,15 +137,20 @@ Not every function in NumPy is implemented; contributions are welcome!
     hamming
     hanning
     heaviside
+    histogram
+    histogram_bin_edges
     hsplit
     hstack
     hypot
     identity
     imag
+    in1d
+    indices
     inner
     isclose
     iscomplex
     isfinite
+    isin
     isinf
     isnan
     isneginf
@@ -175,6 +192,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     msort
     multiply
     nan_to_num
+    nanargmax
+    nanargmin
     nancumprod
     nancumsum
     nanmax
@@ -188,6 +207,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     ones
     ones_like
     outer
+    packbits
     pad
     percentile
     polyval
@@ -208,11 +228,14 @@ Not every function in NumPy is implemented; contributions are welcome!
     reshape
     result_type
     right_shift
+    rint
     roll
+    rollaxis
     roots
     rot90
     round
     row_stack
+    searchsorted
     select
     sign
     signbit
@@ -244,6 +267,10 @@ Not every function in NumPy is implemented; contributions are welcome!
     triu
     triu_indices
     true_divide
+    trunc
+    unique
+    unpackbits
+    unravel_index
     vander
     var
     vdot
@@ -287,17 +314,22 @@ jax.numpy.linalg
   :toctree: _autosummary
 
   cholesky
+  cond
   det
   eig
   eigh
   eigvals
   eigvalsh
   inv
+  lstsq
   matrix_power
   matrix_rank
+  multi_dot
   norm
   pinv
   qr
   slogdet
   solve
   svd
+  tensorinv
+  tensorsolve

@@ -23,10 +23,23 @@ from jax import lax, device_put
 from jax.tree_util import tree_leaves, tree_map, tree_multimap
 
 
+def _vdot_real_part(x, y):
+  """Vector dot-product guaranteed to have a real valued result."""
+  # all our uses of vdot() in CG are for computing an operator of the form
+  # `z^T M z` where `M` is positive definite and Hermitian, so the result is
+  # real valued:
+  # https://en.wikipedia.org/wiki/Definiteness_of_a_matrix#Definitions_for_complex_matrices
+  vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
+  result = vdot(x.real, y.real)
+  if jnp.iscomplexobj(x) or jnp.iscomplexobj(y):
+    result += vdot(x.imag, y.imag)
+  return result
+
+
 # aliases for working with pytrees
-def _vdot(x, y):
-  f = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
-  return sum(tree_leaves(tree_multimap(f, x, y)))
+
+def _vdot_tree(x, y):
+  return sum(tree_leaves(tree_multimap(_vdot_real_part, x, y)))
 
 def _mul(scalar, tree):
   return tree_map(partial(operator.mul, scalar), tree)
@@ -42,31 +55,31 @@ def _identity(x):
 def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
-  bs = _vdot(b, b)
-  atol2 = jnp.maximum(tol ** 2 * bs, atol ** 2)
+  bs = _vdot_tree(b, b)
+  atol2 = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
 
   # https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_preconditioned_conjugate_gradient_method
 
   def cond_fun(value):
     x, r, gamma, p, k = value
-    rs = gamma if M is _identity else _vdot(r, r)
+    rs = gamma if M is _identity else _vdot_tree(r, r)
     return (rs > atol2) & (k < maxiter)
 
   def body_fun(value):
     x, r, gamma, p, k = value
     Ap = A(p)
-    alpha = gamma / _vdot(p, Ap)
+    alpha = gamma / _vdot_tree(p, Ap)
     x_ = _add(x, _mul(alpha, p))
     r_ = _sub(r, _mul(alpha, Ap))
     z_ = M(r_)
-    gamma_ = _vdot(r_, z_)
+    gamma_ = _vdot_tree(r_, z_)
     beta_ = gamma_ / gamma
     p_ = _add(z_, _mul(beta_, p))
     return x_, r_, gamma_, p_, k + 1
 
   r0 = _sub(b, A(x0))
   p0 = z0 = M(r0)
-  gamma0 = _vdot(r0, z0)
+  gamma0 = _vdot_tree(r0, z0)
   initial_value = (x0, r0, gamma0, p0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
