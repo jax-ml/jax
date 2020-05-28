@@ -238,7 +238,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for shape in [100, (10, 10), (10, 5, 2)]))
   def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
-    x = jnp.arange(jnp.prod(shape)).reshape(shape).astype(dtype)
+    x = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
     rand = lambda key: random.permutation(key, x)
     crand = api.jit(rand)
 
@@ -249,7 +249,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertFalse(np.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(np.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
     self.assertArraysAllClose(
-      x, jnp.arange(jnp.prod(shape)).reshape(shape).astype(dtype),
+      x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype),
       check_dtypes=True)
 
   def testPermutationInteger(self):
