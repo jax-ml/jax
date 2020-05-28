@@ -3199,7 +3199,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         tol=1e-2 if jtu.device_under_test() == "tpu" else None)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
-<<<<<<< HEAD
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_{}_{}".format(jtu.format_shape_dtype_string(shape, dtype),
        "None" if end_dtype is None else jtu.format_shape_dtype_string(end_shape, end_dtype),
@@ -3240,8 +3239,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
-=======
->>>>>>> reverse unwanted changes
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": "_shapes={}_dtype={}_indexing={}_sparse={}".format(
