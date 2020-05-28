@@ -168,16 +168,16 @@ def _binary_replace(replace_bit, original_dict, new_dict, keys):
 
 def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo, dphi_lo, a_hi, phi_hi, dphi_hi, g_0,
           pass_through):
-    """
-    Implementation of zoom. Algorithm 3.6 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 59-61.
-    Tries cubic, quadratic, and bisection methods of zooming.
-    """
-    ZoomState = NamedTuple('ZoomState',
-                           [('done', bool),
-                            ('failed', bool),
-                            ('j', int),
-                            ('a_lo', float),
-                            ('phi_lo', float),
+  """
+  Implementation of zoom. Algorithm 3.6 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 59-61.
+  Tries cubic, quadratic, and bisection methods of zooming.
+  """
+  ZoomState = NamedTuple('ZoomState',
+                         [('done', bool),
+                          ('failed', bool),
+                          ('j', int),
+                          ('a_lo', float),
+                          ('phi_lo', float),
                           ('dphi_lo', float),
                           ('a_hi', float),
                           ('phi_hi', float),
@@ -190,7 +190,6 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo, dphi_lo,
                           ('g_star', float),
                           ('nfev', int),
                           ('ngev', int)])
-
   state = ZoomState(done=False,
                     failed=False,
                     j=0,
@@ -289,37 +288,38 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo, dphi_lo,
     state = state._replace(j=state.j + 1)
     return state
 
-    state = while_loop(lambda state: (~state.done) & (~pass_through) & (~state.failed),
-                       body,
-                       state)
+  state = while_loop(lambda state: (~state.done) & (~pass_through) & (~state.failed),
+                     body,
+                     state)
+
   return state
 
 
 def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max_iterations=50, c1=1e-4,
                 c2=0.9):
-    """
-    Inexact line search that satisfies strong Wolfe conditions.
-    Algorithm 3.5 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 59-61
+  """
+  Inexact line search that satisfies strong Wolfe conditions.
+  Algorithm 3.5 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 59-61
 
-    Notes:
-        We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
-    Args:
-        value_and_gradient: callable
-            function of form f(x) that returns a tuple of real scalar and gradient of same dtype and shape as x.
-            x is a flat ndarray.
-        position: ndarray
-            variable value to start search from.
-        direction: ndarray
-            direction to search in. Assumes the direction is a descent direction.
-        f_0, g_0: ndarray, optional
-            initial value of value_and_gradient as position.
-        max_iterations: int
-            maximum number of iterations to search
-        c1, c2: Wolfe criteria constant, see ref.
+  Notes:
+      We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
+  Args:
+      value_and_gradient: callable
+          function of form f(x) that returns a tuple of real scalar and gradient of same dtype and shape as x.
+          x is a flat ndarray.
+      position: ndarray
+          variable value to start search from.
+      direction: ndarray
+          direction to search in. Assumes the direction is a descent direction.
+      f_0, g_0: ndarray, optional
+          initial value of value_and_gradient as position.
+      max_iterations: int
+          maximum number of iterations to search
+      c1, c2: Wolfe criteria constant, see ref.
 
-    Returns: LineSearchResults
+  Returns: LineSearchResults
 
-    """
+  """
 
   def restricted_func_and_grad(t):
     phi, g = value_and_gradient(position + t * direction)
@@ -438,9 +438,9 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
     state = state._replace(i=state.i + 1, a_i1=a_i, phi_i1=phi_i, dphi_i1=dphi_i)
     return state
 
-    state = while_loop(lambda state: (~state.done) & (state.i <= max_iterations) & (~state.failed),
-                       body,
-                       state)
+  state = while_loop(lambda state: (~state.done) & (state.i <= max_iterations) & (~state.failed),
+                     body,
+                     state)
 
   results = LineSearchResults(failed=state.failed | (~state.done),
                               nit=state.i - 1,  # because iterations started at 1

@@ -28,34 +28,35 @@ class BFGSResults(NamedTuple):
 
 
 def bfgs_minimize(func, x0, options=None):
-    """
-    The BFGS algorithm from
-        Algorithm 6.1 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 136-143
+  """
+  The BFGS algorithm from
+      Algorithm 6.1 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 136-143
 
-        Notes:
-            We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
-            A side effect is that we perform more gradient evaluations than scipy's BFGS
-        func: callable
-            Function of the form f(x) where x is a flat ndarray and returns a real scalar. The function should be
-            composed of operations with vjp defined. If func is jittable then bfgs_minimize is jittable. If func is
-            not jittable, then _nojit should be set to True.
+      Notes:
+          We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
+          A side effect is that we perform more gradient evaluations than scipy's BFGS
+      func: callable
+          Function of the form f(x) where x is a flat ndarray and returns a real scalar. The function should be
+          composed of operations with vjp defined. If func is jittable then bfgs_minimize is jittable. If func is
+          not jittable, then _nojit should be set to True.
 
-        x0: ndarray
-            initial variable
-        options: Optional dict of parameters
-            maxiter: int
-                Maximum number of evaluations
-            g_tol: flat
-                Terminates minimization when |grad|_2 < g_tol
-            ls_maxiter: int
-                Maximum number of linesearch iterations
-        _nojit: bool
-            Whether to use pythonic control flow so that func without XLA ops can be used. It is also very useful to
-            set _nojit=True in order to perform debugging.
+      x0: ndarray
+          initial variable
+      options: Optional dict of parameters
+          maxiter: int
+              Maximum number of evaluations
+          g_tol: flat
+              Terminates minimization when |grad|_2 < g_tol
+          ls_maxiter: int
+              Maximum number of linesearch iterations
+      _nojit: bool
+          Whether to use pythonic control flow so that func without XLA ops can be used. It is also very useful to
+          set _nojit=True in order to perform debugging.
 
-    Returns: BFGSResults
+  Returns: BFGSResults
 
-    """
+  """
+
   if options is None:
     options = dict()
   maxiter: Optional[int] = options.get('maxiter', None)
@@ -78,13 +79,14 @@ def bfgs_minimize(func, x0, options=None):
 
   D = x0.shape[0]
 
-    initial_H = jnp.eye(D)
+  initial_H = jnp.eye(D)
 
   value_and_grad = jax.value_and_grad(func)
 
   f_0, g_0 = value_and_grad(x0)
   state = state._replace(f_k=f_0, g_k=g_0, H_k=initial_H, nfev=state.nfev + 1, ngev=state.ngev + 1,
                          converged=jnp.linalg.norm(g_0) < g_tol)
+
 
   def body(state):
     p_k = -jnp.dot(state.H_k, state.g_k)
@@ -117,9 +119,9 @@ def bfgs_minimize(func, x0, options=None):
 
     return state
 
-    state = while_loop(
-        lambda state: (~ state.converged) & (~state.failed) & (state.k < maxiter),
-        body,
-        state)
+  state = while_loop(
+    lambda state: (~ state.converged) & (~state.failed) & (state.k < maxiter),
+    body,
+    state)
 
-    return state
+  return state

@@ -16,29 +16,26 @@ class OptimizeResults(NamedTuple):
     nit: int  # Number of iterations of the optimization algorithm
 
 
-def minimize(fun, x0, *, method=None, tol=None, options=None, _nojit=False):
-    """
-    Interface to scalar function minimisation.
+def minimize(fun, x0, *, method=None, tol=None, options=None):
+  """
+  Interface to scalar function minimisation.
 
-    This implementation is jittable so long as `fun` is.
-    Args:
-        fun: jax function
-        x0: initial guess, currently only single flat arrays supported.
-        method: Available methods: ['BFGS']
-        tol: Tolerance for termination. For detailed control, use solver-specific options.
-        options: A dictionary of solver options. All methods accept the following generic options:
-            maxiter : int
-                Maximum number of iterations to perform. Depending on the
-                method each iteration may use several function evaluations.
-        _nojit: bool
-          Whether to use pythonic control flow so that func without XLA ops can be used. It is also very useful to
-          set _nojit=True in order to perform debugging.
+  This implementation is jittable so long as `fun` is.
+  Args:
+      fun: jax function
+      x0: initial guess, currently only single flat arrays supported.
+      method: Available methods: ['BFGS']
+      tol: Tolerance for termination. For detailed control, use solver-specific options.
+      options: A dictionary of solver options. All methods accept the following generic options:
+          maxiter : int
+              Maximum number of iterations to perform. Depending on the
+              method each iteration may use several function evaluations.
 
-    Returns: OptimizeResults
+  Returns: OptimizeResults
 
-    """
+  """
     if method.lower() == 'bfgs':
-        results = bfgs_minimize(fun, x0, options=options, _nojit=_nojit)
+      results = bfgs_minimize(fun, x0, options=options)
         return OptimizeResults(x=results.x_k,
                                success=(results.converged) & (~results.failed),
                                status=results.failed,
