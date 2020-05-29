@@ -20,7 +20,7 @@ import numpy as np
 
 from .. import core
 from .. import linear_util as lu
-from ..util import prod, safe_map as map, safe_zip as zip
+from ..util import prod, safe_map as map, unzip3
 from ..tree_util import tree_structure, tree_flatten, tree_unflatten
 
 
@@ -50,7 +50,7 @@ def undo_tree_subtrace(master, trees):
 
 
 def is_trivial_axis(
-    treedef: TreeDef, leafshape: List[Tuple[int, ...]],
+    treedef: TreeDef, leafshapes: List[Tuple[int, ...]],
 ) -> bool:
   return (treedef is TRIVIAL_TREEDEF
           and len(leafshapes) == 1
@@ -74,6 +74,10 @@ def _leafshape(
   return _concat_tuples([leafshapes[i][j] for i, j in enumerate(coords)])
 
 
+def _axis_length(shapes: Iterable[Tuple[int, ...]]) -> int:
+  return sum(map(prod, shapes))
+
+
 class TreeTracer(core.Tracer):
   __slots__ = ["treedefs", "leafshapes", "leaves"]
 
@@ -95,8 +99,8 @@ class TreeTracer(core.Tracer):
 
   @property
   def aval(self):
-    shape = tuple(sum(map(prod, shapes)) for shapes in self.leafshapes)
-    dtype = next(iter(self.leaves.values())).dtype
+    shape = tuple(map(_axis_length, self.leafshapes))
+    dtype = core.concrete_aval(next(iter(self.leaves.values()))).dtype
     return core.ShapedArray(shape, dtype)
 
   def full_lower(self):
@@ -125,7 +129,10 @@ class TreeTrace(core.Trace):
   def process_primitive(self, primitive, tracers, params):
     assert not primitive.multiple_results  # TODO
     rule = tree_rules[primitive]
-    treedefs, leafshapes, leaves = rule(tracers, **params)
+    treedefs_in, leafshapes_in, leaves_in = unzip3(
+        (t.treedefs, t.leafshapes, t.leaves) for t in tracers)
+    treedefs, leafshapes, leaves = rule(
+        treedefs_in, leafshapes_in, leaves_in, **params)
     return TreeTracer(self, treedefs, leafshapes, leaves)
 
 
@@ -144,10 +151,11 @@ def convert_leaf_array(trace: TreeTrace, leaf) -> TreeTracer:
   if treedef != TRIVIAL_TREEDEF:
     raise ValueError(
         f"argument to from_array must be a leaf already, got {treedef}")
-  leaf = jnp.asarray(leaf)
-  shape = [[(s,)] for s in leaf.shape]
-  leaves = {(0,) * leaf.ndim: leaf}
-  return TreeTracer(trace, [TRIVIAL_TREEDEF] * leaf.ndim, shape, leaves)
+  ndim = np.ndim(leaf)
+  treedefs = [TRIVIAL_TREEDEF] * ndim
+  leafshapes = [[(s,)] for s in np.shape(leaf)]
+  leaves = {(0,) * ndim: leaf}
+  return TreeTracer(trace, treedefs, leafshapes, leaves)
 
 
 def restore_tree(
@@ -169,27 +177,53 @@ tree_rules = {}
 def defvectorized(prim):
   tree_rules[prim] = partial(vectorized_tree_rule, prim)
 
-def vectorized_tree_rule(prim, args, **params):
-  arg, = args
-  leaves = {coords: prim.bind(arg.leaves[coords], **params)
-            for coords in _iter_leaf_coords(arg.treedefs)}
-  return arg.treedefs, arg.leafshapes, leaves
+def vectorized_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
+  treedefs, = treedefs_in
+  leafshapes, = leafshapes_in
+  leaves, = leaves_in
+  out_leaves = {coords: prim.bind(leaves[coords], **params)
+                for coords in _iter_leaf_coords(treedefs)}
+  return treedefs, leafshapes, out_leaves
 
 
 def defnaryop(prim):
   tree_rules[prim] = partial(naryop_tree_rule, prim)
 
-def naryop_tree_rule(prim, args, **params):
-  # TODO: needs broadcasting
-  ndim, = {t.ndim for t in args}
+
+def _filter_scalar_leaves(treedefs_in, leafshapes_in, leaves_in):
+  treedefs_out = []
+  leafshapes_out = []
+  leaves_out = []
+  scalars = []
+  for i, (treedefs, leafshapes, leaves) in enumerate(
+      zip(treedefs_in, leafshapes_in, leaves_in)):
+    if treedefs:
+      treedefs_out.append(treedefs)
+      leafshapes_out.append(leafshapes)
+      leaves_out.append(leaves)
+    else:
+      scalars.append((i, leaves[()]))
+  return treedefs_out, leafshapes_out, leaves_out, scalars
+
+
+def naryop_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
+
+  treedefs_in, leafshapes_in, leaves_in, scalars = _filter_scalar_leaves(
+      treedefs_in, leafshapes_in, leaves_in)
+
+  if not treedefs_in:
+    args = [scalar for _, scalar in scalars]
+    return [], [], {(): prim.bind(*args, **params)}
+
+  ndim, = {len(treedefs) for treedefs in treedefs_in}
 
   out_treedefs = []
   out_leafshapes = []
 
   for axis in range(ndim):
     # check treedefs
-    non_trivial_treedefs = {arg.treedefs[axis] for arg in args
-                            if arg.treedefs[axis] != TRIVIAL_TREEDEF}
+    non_trivial_treedefs = {treedefs[axis] for treedefs in treedefs_in
+                            if treedefs[axis] != TRIVIAL_TREEDEF}
     if len(non_trivial_treedefs) > 1:
       raise ValueError(
           f"conflicting treedefs along axis={axis}: {non_trivial_treedefs}"
@@ -201,8 +235,8 @@ def naryop_tree_rule(prim, args, **params):
       out_treedefs.append(TRIVIAL_TREEDEF)
 
     # check shapes
-    non_trivial_shapes = {tuple(arg.leafshapes[axis]) for arg in args
-                          if arg.leafshapes[axis] != [(arg.shape[axis],)]}
+    non_trivial_shapes = {tuple(leafshapes[axis]) for leafshapes in leafshapes_in
+                          if leafshapes[axis] != [(len(leafshapes),)]}
     if len(non_trivial_shapes) > 1:
       raise ValueError(
           f"conflicting shapes along axis={axis}: {non_trivial_shapes}"
@@ -211,56 +245,69 @@ def naryop_tree_rule(prim, args, **params):
       leafshapes, = non_trivial_shapes
       out_leafshapes.append(leafshapes)
     else:
-      axis_size = max(arg.shape[axis] for arg in args)
+      axis_size = max(len(treedefs) for treedefs in treedefs_in)
       out_leafshapes.append([(axis_size,)])
 
   out_leaves = {}
   for coords in _iter_leaf_coords(out_treedefs):
-    leaves = []
-    for arg in args:
-      # TODO(shoyer): use lax.expand_dims for inserting dimensions rather
-      # than reshape!
-      in_coords = tuple(k if arg.shape[i] != 1 else 0
-                        for i, k in enumerate(coords))
-      leaf = arg.leaves[in_coords]
-      shape_pieces = [
-          arg.leafshapes[i][j]
-          if arg.shape[i] != 1
-          else (1,) * len(out_leafshapes[i][j])  # broadcasting
-          for i, j in enumerate(coords)
-      ]
-      shape = _concat_tuples(shape_pieces)
-      leaves.append(leaf.reshape(shape))
+    args = []
+    for leafshapes, leaves in zip(leafshapes_in, leaves_in):
+      in_coords = tuple(coord if len(leafshapes[axis]) != 1 else 0
+                        for axis, coord in enumerate(coords))
+      args.append(leaves[in_coords])
+    #   leaf = arg.leaves[in_coords]
+    #   shape_pieces = [
+    #       arg.leafshapes[i][j]
+    #       if arg.shape[i] != 1
+    #       else (1,) * len(out_leafshapes[i][j])  # broadcasting
+    #       for i, j in enumerate(coords)
+    #   ]
+    #   shape = _concat_tuples(shape_pieces)
+    #   leaves.append(leaf.reshape(shape))
+    for i, scalar in scalars:
+      args.insert(i, scalar)
 
-    out_leaves[coords] = prim.bind(*leaves, **params)
+    out_leaves[coords] = prim.bind(*args, **params)
 
   return out_treedefs, out_leafshapes, out_leaves
 
 
-def broadcast_in_dim_tree_rule(prim, arg, *, shape, broadcast_dimensions):
-  treedefs = [flattree.TRIVIAL_TREEDEF] * len(shape)
-  leafshapes = [[(s,)] for s in shape]
+def broadcast_in_dim_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in,
+                               *, shape, broadcast_dimensions):
+  treedefs, = treedefs_in
+  leafshapes, = leafshapes_in
+  leaves, = leaves_in
+
+  out_treedefs = [TRIVIAL_TREEDEF] * len(shape)
+  out_leafshapes = [[(s,)] for s in shape]
 
   for input_dim, output_dim in enumerate(broadcast_dimensions):
-    treedef = treedefs[output_dim] = arg.treedefs[input_dim]
-    leafshape = arg.leafshapes[input_dim]
-    if not flattree.is_trivial_axis(treedef, leafshape):
-      if shape[input_dim] != shape[output_dim]:
+    treedef = out_treedefs[output_dim] = treedefs[input_dim]
+    leafshape = leafshapes[input_dim]
+    if not is_trivial_axis(treedef, leafshape):
+      if _axis_length(leafshape) != shape[output_dim]:
         raise ValueError(f"cannot resize dimension {input_dim} because it "
                          f"corresponds to a non-trivial pytree: {treedef}")
-      leafshapes[output_dim] = leafshape
-
-  new_dims = sorted(set(range(len(shape))) - set(broadcast_dimensions))
+      out_leafshapes[output_dim] = leafshape
 
   out_leaves = {}
-  for in_coords in _iter_leaf_coords(treedefs):
-    leaf = arg.leaves[in_coords]
+  for in_coords, out_coords in zip(
+      _iter_leaf_coords(treedefs), _iter_leaf_coords(out_treedefs)):
 
-    out_coords = list(coords)
-    for i in new_dims:
-      out_coords.insert(i, 0)
+    leaf = leaves[in_coords]
 
-    leaf_shape = ...
-    leaf_bdims = ...
+    out_shape = _concat_tuples(
+        [out_leafshapes[i][j] for i, j in enumerate(out_coords)])
 
-    out_leaves[out_coords] = prim.bind(arg.leaves, leaf_shape, leaf_bdims)
+    out_bdims = []
+    bdim_delta = 0
+    for shapes, coord, bdim in zip(
+        leafshapes, in_coords, broadcast_dimensions,
+    ):
+      out_bdims.append(bdim + bdim_delta)
+      bdim_delta += len(shapes[coord]) - 1
+
+    out_leaves[out_coords] = prim.bind(
+        leaf, shape=out_shape, broadcast_dimensions=tuple(out_bdims))
+
+  return out_treedefs, out_leafshapes, out_leaves
