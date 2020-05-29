@@ -50,12 +50,12 @@ from .lax_numpy import (
     pi, polyval, positive, power, prod, product, promote_types, ptp, quantile,
     rad2deg, radians, ravel, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
-    save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
-    signedinteger, sin, sinc, single, sinh, size, sometrue, sort, split, sqrt,
-    square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
-    tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices,
-    triu, triu_indices, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
-    unpackbits, unravel_index, unsignedinteger, vander, var, vdot, vsplit,
+    save, savez, searchsorted, select, setxor1d, set_printoptions, shape, sign,
+    signbit, signedinteger, sin, sinc, single, sinh, size, sometrue, sort, split,
+    sqrt, square, squeeze, stack, std, subtract, sum, swapaxes, take,
+    take_along_axis, tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril,
+    tril_indices, triu, triu_indices, true_divide, trunc, uint16, uint32, uint64, uint8,
+    unique, unpackbits, unravel_index, unsignedinteger, vander, var, vdot, vsplit,
     vstack, where, zeros, zeros_like)
 
 from .polynomial import roots
