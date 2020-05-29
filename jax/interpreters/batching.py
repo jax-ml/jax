@@ -63,7 +63,6 @@ def _batch_fun(sum_match, in_dims, out_dims_thunk, out_dim_dests, *in_vals, **pa
     if od is not None and not isinstance(od_dest, int) and not od_dest is last and not sum_match:
       msg = f"vmap has mapped output but out_axes is {od_dest}"
       raise ValueError(msg)
-  print(out_vals, out_dims, out_dim_dests, size, sum_match)
   out_vals = map(partial(matchaxis, size, sum_match=sum_match), out_dims, out_dim_dests, out_vals)
   yield out_vals
 
@@ -127,7 +126,6 @@ class BatchTrace(Trace):
     return BatchTracer(self, val.val, val.batch_dim)
 
   def process_primitive(self, primitive, tracers, params):
-    print(primitive)
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
@@ -331,7 +329,6 @@ def moveaxis(x, src, dst):
   return x.transpose(perm)
 
 def matchaxis(sz, src, dst, x, sum_match=False):
-  print('>', src, dst)
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
   if src == dst:
