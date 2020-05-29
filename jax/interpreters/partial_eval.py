@@ -356,10 +356,14 @@ def abstract_eval_fun(fun, *avals, **params):
   return avals_out
 
 
+Recipe = Union['JaxprEqnRecipe', 'LambdaBinding', 'FreeVar', 'ConstVar',
+               Literal, core.Unit]
+
 class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
 
-  def __init__(self, trace: JaxprTrace, pval: PartialVal, recipe):
+  def __init__(self, trace: JaxprTrace, pval: PartialVal,
+               recipe: Optional[Recipe]):
     assert isinstance(pval, PartialVal)
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
@@ -513,9 +517,6 @@ def recipe_to_eqn(unused_var: Callable[[], core.Var],
   invars  = [getvar(t) for t in in_tracers]
   outvars = [unused_var() if t is None else getvar(t) for t in out_tracers]
   return new_jaxpr_eqn(invars, outvars, primitive, params)
-
-Recipe = Union[JaxprEqnRecipe, LambdaBinding, FreeVar, ConstVar, Literal,
-               core.Unit]
 
 def tracers_to_jaxpr(in_tracers: List[JaxprTracer],
                      out_tracers: List[JaxprTracer]) -> Tuple[Jaxpr, Any, Any]:
