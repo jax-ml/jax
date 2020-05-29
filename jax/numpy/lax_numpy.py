@@ -3322,8 +3322,8 @@ def unique(ar, return_index=False, return_inverse=False,
 
 @_wraps(np.union1d)
 def union1d(ar1, ar2):
-  ar1 = ravel(asarray(ar1))
-  ar2 = ravel(asarray(ar2))
+  ar1 = ravel(ar1)
+  ar2 = ravel(ar2)
   return unique(concatenate((ar1, ar2)))
 
 ### Indexing
