@@ -612,7 +612,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
-  inner_pmap = len(_thread_local_state.dynamic_axis_env) == 0
+  inner_pmap = len(_thread_local_state.dynamic_axis_env) > 0
 
   # Determine global_axis_size for use in AxisEnv.
   must_run_on_all_devices = True
@@ -704,6 +704,12 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
         f"number of local devices. Got num_replicas={num_local_replicas}, "
         f"num_partitions={num_partitions}, and "
         f"num_local_devices={xb.local_device_count()}")
+
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              f"Compiling {fun.__name__} for {num_global_shards} devices with "
+              f"args {avals}. (num_replicas={num_global_replicas} "
+              f"num_partitions={num_partitions}")
 
   axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
 
