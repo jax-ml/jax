@@ -5273,7 +5273,7 @@ def _dynamic_slice_indices(operand, start_indices):
                   add(start_indices, _const(start_indices, operand.shape)),
                   start_indices)
   else:
-    return [onp.asarray(i + d if i < 0 else i)
+    return [onp.asarray(i + d if i < 0 else i, getattr(i, 'dtype', dtypes.int_))
             if isinstance(i, (int, onp.integer))
             else select(lt(i, _const(i, 0)), add(i, _const(i, d)), i)
             for i, d in zip(start_indices, operand.shape)]
