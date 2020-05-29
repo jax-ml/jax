@@ -560,7 +560,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
       eqn.params, ["true_jaxpr", "false_jaxpr", "linear"])
     nr_operands = len(true_jaxpr.jaxpr.invars)
     pred, *operands = eqn.invars
-    new_invars = (pred, *operands, input_token_var)
+    new_invars = [pred, *operands, input_token_var]
     eqns.append(core.new_jaxpr_eqn(
       new_invars, eqn.outvars + [output_token_var],
       eqn.primitive,
