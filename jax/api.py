@@ -1098,6 +1098,9 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   else:
     static_broadcasted_tuple = tuple(static_broadcasted_argnums)
 
+  if any(axis != 0 for axis in tree_leaves(in_axes)):
+    raise ValueError(f"pmap in_axes leaves must be 0 or None, got {in_axes}")
+
   # axis_size is an optional integer representing the global axis size.
   # The aggregate size (across all hosts) size of the mapped axis must match
   # the given value. This argument is mutually exclusive with ``devices``.
@@ -1126,8 +1129,6 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
       dyn_args, dyn_in_axes = args, in_axes
     args, in_tree = tree_flatten((dyn_args, kwargs))
     in_axes_flat = flatten_axes(in_tree, (dyn_in_axes, 0))
-    assert all(axis in (0, None) for axis in in_axes_flat), \
-        "pmap currently only supports mapping over the leading axis"
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
@@ -1164,13 +1165,14 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
 
+  if any(axis != 0 for axis in tree_leaves(in_axes)):
+    raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")
+
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_axes_flat = flatten_axes(in_tree, (in_axes, 0))
-    assert all(axis in (0, None) for axis in in_axes_flat), \
-        "soft_pmap currently only supports mapping over the leading axis"
     mapped_invars = tuple(axis is not None for axis in in_axes_flat)
     axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     for arg in args_flat: _check_arg(arg)
