@@ -3051,7 +3051,7 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
     return None
 
   # TODO(skye): handle replicated buffers
-  if array.sharding_spec.replication_factor != 1:
+  if array.sharding_spec.replication_factors:
     return None
 
   # ShardedDevicesArrays require all buffers to have the same shape
@@ -3065,7 +3065,7 @@ def _reshape_sharded_device_array(array, new_sizes, old_sizes):
     sharding_spec = pxla.ShardingSpec(
         shards_per_axis=(num_chunks,) + (1,) * (len(new_sizes) - 1),
         is_axis_materialized=(True,) * len(new_sizes),
-        replication_factor=1)
+        replication_factors=[])
     return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
 
   if _is_axis_split(old_sizes, new_sizes):
