@@ -1884,14 +1884,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_expanddim={}".format(
+      {"testcase_name": "_inshape={}_expanddim={!r}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), dim),
        "arg_shape": arg_shape, "dtype": dtype, "dim": dim,
        "rng_factory": jtu.rand_default}
       for arg_shape in [(), (3,), (3, 4)]
       for dtype in default_dtypes
       for dim in (list(range(-len(arg_shape)+1, len(arg_shape)))
-                  + [(0,), (len(arg_shape), len(arg_shape) + 1)])))
+                  + [np.array(0), np.array(-1), (0,), (np.array(0),),
+                     (len(arg_shape), len(arg_shape) + 1)])))
   def testExpandDimsStaticDim(self, arg_shape, dtype, dim, rng_factory):
     rng = rng_factory(self.rng())
     np_fun = lambda x: np.expand_dims(x, dim)
@@ -1921,15 +1922,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_axis={}".format(
+      {"testcase_name": "_inshape={}_axis={!r}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype), ax),
        "arg_shape": arg_shape, "dtype": dtype, "ax": ax,
        "rng_factory": jtu.rand_default}
       for arg_shape, ax in [
           ((3, 1), None),
           ((3, 1), 1),
+          ((3, 1), -1),
+          ((3, 1), np.array(1)),
           ((1, 3, 1), (0, 2)),
-          ((1, 4, 1), (0,))]
+          ((1, 3, 1), (0,)),
+          ((1, 4, 1), (np.array(0),))]
       for dtype in default_dtypes))
   def testSqueeze(self, arg_shape, dtype, ax, rng_factory):
     rng = rng_factory(self.rng())

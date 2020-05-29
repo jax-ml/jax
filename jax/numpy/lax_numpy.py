@@ -1145,19 +1145,16 @@ def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
   if axis is None:
     a_shape = shape(a)
     axis = tuple(i for i, d in enumerate(a_shape) if d == 1)
-  elif isinstance(axis, int):
+  elif not isinstance(axis, tuple):
     axis = (axis,)
   return lax.squeeze(a, axis)
 
 
 @_wraps(np.expand_dims)
 def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
-  # TODO(https://github.com/google/jax/issues/3243)
-  try:
-    axis = (int(axis),)  # type: ignore[arg-type]
-  except TypeError:
-    pass
-  return lax.expand_dims(a, axis)  # type: ignore[arg-type]
+  if not isinstance(axis, tuple):
+    axis = (axis,)
+  return lax.expand_dims(a, axis)
 
 
 @_wraps(np.swapaxes)
