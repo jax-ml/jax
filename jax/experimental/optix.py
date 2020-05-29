@@ -96,7 +96,7 @@ def clip(max_delta) -> InitUpdate:
 
 def global_norm(updates: Updates) -> Updates:
   return jnp.sqrt(
-      jnp.sum([jnp.sum(jnp.square(x)) for x in tree_leaves(updates)]))
+      sum([jnp.sum(jnp.square(x)) for x in tree_leaves(updates)]))
 
 
 class ClipByGlobalNormState(OptState):
