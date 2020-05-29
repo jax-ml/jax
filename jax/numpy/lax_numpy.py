@@ -1538,7 +1538,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
 
 def _reduction_dims(a, axis):
   if axis is None:
-    return np.arange(ndim(a))
+    return tuple(range(ndim(a)))
   elif isinstance(axis, (np.ndarray, tuple, list)):
     return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
