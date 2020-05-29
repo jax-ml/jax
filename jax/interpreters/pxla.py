@@ -612,20 +612,27 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
+  inner_pmap = len(_thread_local_state.dynamic_axis_env) == 0
+
   # Determine global_axis_size for use in AxisEnv.
   must_run_on_all_devices = True
   if devices:
     assert global_axis_size is None  # Checked in api.py
     global_axis_size = len(devices)
     must_run_on_all_devices = False
+  elif xb.host_count() > 1:
+    if global_axis_size is None:
+      if inner_pmap:
+        raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
+      global_axis_size = axis_size * xb.host_count()
   else:
-    expected = axis_size * xb.host_count()
-    if global_axis_size is not None and global_axis_size != expected:
-      raise ValueError(
-          f"Specified axis_size {global_axis_size} doesn't match expected "
-          f"global axis size {expected} (i.e. local_axis_size * host_count, "
-          f"got local_axis_size={axis_size} host_count={xb.host_count()})")
-    global_axis_size = expected
+    if global_axis_size is not None:
+      if global_axis_size != axis_size:
+        raise ValueError(
+            "Specified axis_size {} doesn't match received axis_size {}.".format(
+                global_axis_size, axis_size))
+    else:
+      global_axis_size = axis_size
 
   if devices:
     local_devices = [d for d in devices if d.host_id == xb.host_id()]
@@ -682,9 +689,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   num_local_shards = num_local_replicas * num_partitions
   num_global_shards = num_global_replicas * num_partitions
 
-  if (xb.host_count() > 1 and
-      must_run_on_all_devices and
-      num_local_shards != xb.local_device_count()):
+  if (xb.host_count() > 1 and not inner_pmap and
+      must_run_on_all_devices and num_local_shards != xb.local_device_count()):
     if num_local_shards == axis_size:
       raise ValueError(
          f"On multi-host platforms, the input to pmapped functions must have "
