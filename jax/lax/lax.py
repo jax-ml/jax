@@ -46,7 +46,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..util import curry, cache, safe_zip, unzip2, prod
+from ..util import curry, cache, safe_zip, unzip2, prod, safe_map
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree
 from ..lib import xla_bridge
@@ -5264,7 +5264,7 @@ def _dynamic_slice_indices(operand, start_indices):
           "vs {})")
     raise ValueError(msg.format(len(start_indices), operand.shape))
   # map int over operand.shape to raise any dynamic-shape errors
-  map(int, operand.shape)
+  safe_map(int, operand.shape)
   if not isinstance(start_indices, (tuple, list)):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
