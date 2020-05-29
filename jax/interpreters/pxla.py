@@ -612,23 +612,19 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
+  inner_pmap = len(_thread_local_state.dynamic_axis_env) > 0
+
   # Determine global_axis_size for use in AxisEnv.
+  must_run_on_all_devices = True
   if devices:
     assert global_axis_size is None  # Checked in api.py
     global_axis_size = len(devices)
+    must_run_on_all_devices = False
   elif xb.host_count() > 1:
     if global_axis_size is None:
-      # TODO(skye): relax this constraint or provide functionality for
-      # automatically passing appropriate `devices`.
-      # TODO(trevorcai): This check forces us to provide global_axis_size for
-      # all pmaps on pmap-on-pod. Can we do it after tracing?
-      if axis_size != xb.local_device_count():
-        raise ValueError(
-            "On multi-host platforms, the input to pmapped functions must have "
-            "leading axis size equal to the number of local devices if no "
-            "`devices` argument is specified. Got axis_size=%d, "
-            "num_local_devices=%d" % (axis_size, xb.local_device_count()))
-      global_axis_size = xb.device_count()
+      if inner_pmap:
+        raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
+      global_axis_size = axis_size * xb.host_count()
   else:
     if global_axis_size is not None:
       if global_axis_size != axis_size:
@@ -637,11 +633,6 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
                 global_axis_size, axis_size))
     else:
       global_axis_size = axis_size
-
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority,
-              "Compiling {} for {} devices with args {}.".format(
-                  fun.__name__, global_axis_size, avals))
 
   if devices:
     local_devices = [d for d in devices if d.host_id == xb.host_id()]
@@ -697,6 +688,28 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   num_local_shards = num_local_replicas * num_partitions
   num_global_shards = num_global_replicas * num_partitions
+
+  if (xb.host_count() > 1 and not inner_pmap and
+      must_run_on_all_devices and num_local_shards != xb.local_device_count()):
+    if num_local_shards == axis_size:
+      raise ValueError(
+         f"On multi-host platforms, the input to pmapped functions must have "
+         f"leading axis size equal to the number of local devices if no "
+         f"`devices` argument is specified. Got axis_size={axis_size}, "
+         f"num_local_devices={xb.local_device_count()}")
+    else:
+      raise ValueError(
+        f"On multi-host platforms, pmapped functions must run across all "
+        f"devices, i.e. num_replicas * num_partitions should equal the "
+        f"number of local devices. Got num_replicas={num_local_replicas}, "
+        f"num_partitions={num_partitions}, and "
+        f"num_local_devices={xb.local_device_count()}")
+
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              f"Compiling {fun.__name__} for {num_global_shards} devices with "
+              f"args {avals}. (num_replicas={num_global_replicas} "
+              f"num_partitions={num_partitions}")
 
   axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
 
@@ -754,6 +767,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   # get_default_device_assignment() returns 2D assignment, caller may have
   # provided 1D list of devices).
   device_assignment = tree_map(lambda d: d.id, devices)
+  # Convert to 2D in case it's 1D and we have > 1 partitions.
+  device_assignment = onp.array(device_assignment).reshape(
+      (num_global_replicas, num_partitions))
   compile_options = xb.get_compile_options(
           num_replicas=num_global_replicas,
           num_partitions=num_partitions,
