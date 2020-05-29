@@ -1890,14 +1890,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_default}
       for arg_shape in [(), (3,), (3, 4)]
       for dtype in default_dtypes
-      for dim in range(-len(arg_shape)+1, len(arg_shape))))
+      for dim in (list(range(-len(arg_shape)+1, len(arg_shape)))
+                  + [(0,), (len(arg_shape), len(arg_shape) + 1)])))
   def testExpandDimsStaticDim(self, arg_shape, dtype, dim, rng_factory):
     rng = rng_factory(self.rng())
     np_fun = lambda x: np.expand_dims(x, dim)
     jnp_fun = lambda x: jnp.expand_dims(x, dim)
     args_maker = lambda: [rng(arg_shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+    if isinstance(dim, tuple) and numpy_version < (1, 18, 0):
+      raise SkipTest("support for multiple axes added in NumPy 1.18.0")
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_axes=({},{})".format(
@@ -1934,23 +1938,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_axis={}".format(
-          jtu.format_shape_dtype_string(arg_shape, dtype), ax),
-       "arg_shape": arg_shape, "dtype": dtype, "ax": ax,
-       "rng_factory": jtu.rand_default}
-      for arg_shape, ax in [
-          ((3,), 0),
-          ((1, 3), 1),
-          ((1, 3, 1), (0, 1))]
-      for dtype in default_dtypes))
-  def testSqueezeFailsOnNonsingletonAxis(self, arg_shape, dtype, ax,
-                                         rng_factory):
-    rng = rng_factory(self.rng())
-    x = jnp.zeros(arg_shape, dtype=dtype)
-    fun = lambda: jnp.squeeze(x, ax)
-    self.assertRaisesRegex(ValueError, "cannot select an axis to squeeze", fun)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_weights={}_returned={}".format(

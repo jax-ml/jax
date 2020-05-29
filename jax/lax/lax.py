@@ -627,14 +627,15 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
                     lhs_batch_dims + lhs_noncontract_dims + lhs_contract_dims)
     rhs = transpose(rhs,
                     rhs_batch_dims + rhs_noncontract_dims + rhs_contract_dims)
-    new_lhs_shape = onp.insert(onp.array(onp.shape(lhs), dtype=onp.int64),
-                               len(lhs_batch_dims) + len(lhs_noncontract_dims),
-                               (1,) * len(rhs_noncontract_dims))
-    new_rhs_shape = onp.insert(onp.array(onp.shape(rhs), dtype=onp.int64),
-                               len(lhs_batch_dims),
-                               (1,) * len(lhs_noncontract_dims))
-    lhs = reshape(lhs, new_lhs_shape)
-    rhs = reshape(rhs, new_rhs_shape)
+
+    lhs_start_expand = len(lhs_batch_dims) + len(lhs_noncontract_dims)
+    lhs_end_expand = lhs_start_expand + len(rhs_noncontract_dims)
+    lhs = expand_dims(lhs, tuple(range(lhs_start_expand, lhs_end_expand)))
+
+    rhs_start_expand = len(lhs_batch_dims)
+    rhs_end_expand = rhs_start_expand + len(lhs_noncontract_dims)
+    rhs = expand_dims(rhs, tuple(range(rhs_start_expand, rhs_end_expand)))
+
     out_ndim = (len(lhs_batch_dims) + len(lhs_noncontract_dims) +
                 len(rhs_noncontract_dims))
     op_product = bitwise_and if lhs.dtype == onp.bool_ else mul
@@ -687,6 +688,10 @@ def reshape(operand: Array, new_sizes: Shape,
   """Wraps XLA's `Reshape
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
+
+  For inserting/removing dimensions of size 1, prefer using ``lax.squeeze`` /
+  ``lax.expand_dims``. These preserve information about axis identity that may
+  be useful for advanced transformation rules.
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
@@ -999,7 +1004,7 @@ def scatter(operand: Array, scatter_indices:Array, updates: Array,
       update_consts=consts, dimension_numbers=dimension_numbers)
 
 def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
-  indices = concatenate([reshape(i, [i.shape[0], 1]) for i in idxs], 1)
+  indices = concatenate([expand_dims(i, (1,)) for i in idxs], 1)
   indices = indices % onp.array([src.shape[ax] for ax in axes])
   slice_sizes = list(src.shape)
   for ax in axes:
@@ -1559,7 +1564,7 @@ def index_in_dim(operand: Array, index: int, axis: int = 0,
   if keepdims:
     return result
   else:
-    return reshape(result, onp.delete(operand.shape, axis))
+    return squeeze(result, (axis,))
 
 
 def dynamic_slice_in_dim(operand: Array, start_index: Array,
@@ -1581,7 +1586,7 @@ def dynamic_index_in_dim(operand: Array, index: Array, axis: int = 0,
   if keepdims:
     return result
   else:
-    return reshape(result, onp.delete(operand.shape, axis))
+    return squeeze(result, (axis,))
 
 
 def dynamic_update_slice_in_dim(operand: Array, update: Array,
@@ -1597,8 +1602,7 @@ def dynamic_update_index_in_dim(operand: Array, update: Array, index: Array,
   axis = int(axis)
   if _ndim(update) != _ndim(operand):
     assert _ndim(update) + 1 == _ndim(operand)
-    ax = axis % _ndim(operand)
-    update = reshape(update, operand.shape[:ax] + (1,) + operand.shape[ax+1:])
+    update = expand_dims(update, (axis,))
   return dynamic_update_slice_in_dim(operand, update, index, axis)
 
 
@@ -1849,8 +1853,8 @@ def _brcast_to(x, shape):
     assert len(x_shape) == len(shape)
     broadcast_dimensions, = onp.where(onp.equal(x_shape, shape))
     squeezed_dimensions, = onp.where(onp.not_equal(x_shape, shape))
-    inshape = onp.delete(x_shape, squeezed_dimensions)
-    return broadcast_in_dim(reshape(x, inshape), shape, broadcast_dimensions)
+    squeezed = squeeze(x, squeezed_dimensions)
+    return broadcast_in_dim(squeezed, shape, broadcast_dimensions)
   else:
     return broadcast(x, shape)
 
@@ -2926,6 +2930,74 @@ ad.primitive_transposes[pad_p] = _pad_transpose
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 
+# The squeeze primitive exists for the benefit of masking and other
+# transformations that need to keep track of axis identity.
+# For example, consider reshaping a 2D array with shape (1, N) into a 1D array
+# with shape (N,). This results in the following JAXpr:
+#   reshape[ dimension=None new_sizes=(N,) ]
+# For N > 1, we can match up the output array axis with the second axis of the
+# input. But for N = 1, it is not clear how axes match up: all we know from the
+# JAXpr is that we are reshaping from (1, 1) to (1,).
+# In constrast, squeeze[ dimensions=(0,) ] is unambiguous.
+
+def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
+  """Squeeze any number of size 1 dimensions from an array."""
+  ndim = onp.ndim(array)
+  dimensions = tuple(sorted(_canonicalize_axis(i, ndim) for i in dimensions))
+  if not dimensions:
+    return array
+  return squeeze_p.bind(array, dimensions=dimensions)
+
+def _squeeze_dtype_rule(operand, *, dimensions):
+  return operand.dtype
+
+def _squeeze_shape_rule(operand, *, dimensions):
+  return _compute_squeeze_shape(onp.shape(operand), dimensions)
+
+def _compute_squeeze_shape(shape, dimensions):
+  dims_set = set(dimensions)
+  if len(dims_set) != len(dimensions):
+    raise ValueError(f"dimensions are not unique: {dimensions}")
+  if not all(0 <= d < len(shape) for d in dims_set):
+    raise ValueError(f"dimensions outside range [0, ndim): {dimensions}")
+  if any(shape[d] != 1 for d in dimensions):
+    raise ValueError(
+        "cannot select an axis to squeeze out which has size not equal to "
+        f"one, got shape={shape} and dimensions={dimensions}")
+  return tuple(s for i, s in enumerate(shape) if i not in dims_set)
+
+def _squeeze_translation_rule(c, arg, *, dimensions):
+  new_shape = _compute_squeeze_shape(c.get_shape(arg).dimensions(), dimensions)
+  return xops.Reshape(arg, new_shape)
+
+def _squeeze_transpose_rule(t, operand, *, dimensions):
+  assert ad.is_undefined_primal(operand)
+  return [expand_dims(t, dimensions)]
+
+def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
+  operand, = batched_args
+  bdim, = batch_dims
+  operand = batching.moveaxis(operand, bdim, 0)
+  dimensions = tuple(onp.add(1, dimensions))
+  return squeeze(operand, dimensions=dimensions), 0
+
+squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
+                               'squeeze', _squeeze_translation_rule)
+ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
+batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
+
+
+def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
+  """Insert any number of size 1 dimensions into an array."""
+  ndim_out = onp.ndim(array) + len(dimensions)
+  dims_set = frozenset(_canonicalize_axis(i, ndim_out) for i in dimensions)
+  result_shape = list(onp.shape(array))
+  for i in sorted(dims_set):
+    result_shape.insert(i, 1)
+  broadcast_dims = [i for i in range(ndim_out) if i not in dims_set]
+  return broadcast_in_dim(array, result_shape, broadcast_dims)
+
+
 # We have a nonstandard reshape impl so that we can be lazy about data movement.
 def _reshape_impl(operand, *, new_sizes, dimensions):
   old_sizes = onp.shape(operand)
@@ -3324,7 +3396,7 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
 def _batch_dynamic_slice_indices(indices, bdims):
   size = next((x.shape[i] for x, i in zip(indices, bdims) if i is not None), -1)
   if size < 0:
-    return concatenate([reshape(i, [1]) for i in indices], 0), None
+    return concatenate([broadcast(i, (1,)) for i in indices], 0), None
   indices = concatenate(
     [broadcast_in_dim(x, (size, 1),
                       broadcast_dimensions=((0,) if i is not None else ()))
@@ -4389,7 +4461,7 @@ def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
     operand = batching.moveaxis(operand, o_bdims, 0)
     outputs = [
         _select_and_scatter_add(s, o, **kwargs) for s, o in zip(source, operand)]
-    outputs = [reshape(out, (1,) + out.shape) for out in outputs]
+    outputs = [broadcast(out, (1,)) for out in outputs]
     outputs = concatenate(outputs, 0)
     return outputs, 0
   elif s_bdims is not None:
@@ -4397,7 +4469,7 @@ def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
     source = batching.moveaxis(source, s_bdims, 0)
     outputs = [
         _select_and_scatter_add(s, operand, **kwargs) for s in source]
-    outputs = [reshape(out, (1,) + out.shape) for out in outputs]
+    outputs = [broadcast(out, (1,)) for out in outputs]
     outputs = concatenate(outputs, 0)
     return outputs, 0
   elif o_bdims is not None:
@@ -4405,7 +4477,7 @@ def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
     operand = batching.moveaxis(operand, o_bdims, 0)
     outputs = [
         _select_and_scatter_add(source, o, **kwargs) for o in operand]
-    outputs = [reshape(out, (1,) + out.shape) for out in outputs]
+    outputs = [broadcast(out, (1,)) for out in outputs]
     outputs = concatenate(outputs, 0)
     return outputs, 0
 
@@ -5191,7 +5263,7 @@ def _dynamic_slice_indices(operand, start_indices):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))
-    start_indices = [reshape(slice(start_indices, [i], [i+1]), ())
+    start_indices = [squeeze(slice(start_indices, [i], [i+1]), dimensions=(0,))
                      for i in range(operand.ndim)]
   else:
     start_indices = [onp.asarray(i, dtype=dtypes.int_) if isinstance(i, int)
@@ -5395,12 +5467,12 @@ def _check_user_dtype_supported(dtype, fun_name=None):
 
 
 def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = int(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
+  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
+  axis = operator.index(axis)
+  if not -num_dims <= axis < num_dims:
       raise ValueError(
           "axis {} is out of bounds for array of dimension {}".format(
               axis, num_dims))
+  if axis < 0:
+    axis = axis + num_dims
   return axis

@@ -204,6 +204,8 @@ load = np.load
 
 ### utility functions
 
+_canonicalize_axis = lax._canonicalize_axis
+
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
@@ -217,8 +219,7 @@ def _promote_shapes(fun_name, *args):
       if FLAGS.jax_numpy_rank_promotion != "allow":
         _rank_promotion_warning_or_error(fun_name, shapes)
       result_rank = len(lax.broadcast_shapes(*shapes))
-      return [lax.reshape(arg, (1,) * (result_rank - len(shp)) + shp)
-              if shp and len(shp) != result_rank else arg
+      return [broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
               for arg, shp in zip(args, shapes)]
 
 def _rank_promotion_warning_or_error(fun_name, shapes):
@@ -290,17 +291,6 @@ def _promote_args_inexact(fun_name, *args):
 
 def _constant_like(x, const):
   return np.array(const, dtype=_dtype(x))
-
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in (-num_dims, num_dims) to [0, num_dims)."""
-  axis = int(axis)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  return axis
 
 ### implementations of numpy functions in terms of lax
 
@@ -1151,29 +1141,20 @@ def unravel_index(indices, shape):
 
 
 @_wraps(np.squeeze)
-def squeeze(a, axis=None):
-  shape_a = shape(a)
+def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
   if axis is None:
-    if 1 not in shape_a:
-      return a
-    newshape = [d for d in shape_a if d != 1]
-  else:
-    if isinstance(axis, int):
-      axis = (axis,)
-    axis = frozenset(_canonicalize_axis(i, ndim(a)) for i in axis)
-    if _any(shape_a[a] != 1 for a in axis):
-      raise ValueError("cannot select an axis to squeeze out which has size "
-                       "not equal to one")
-    newshape = [d for i, d in enumerate(shape_a)
-                if d != 1 or i not in axis]
-  return lax.reshape(a, newshape)
+    a_shape = shape(a)
+    axis = tuple(i for i, d in enumerate(a_shape) if d == 1)
+  elif isinstance(axis, int):
+    axis = (axis,)
+  return lax.squeeze(a, axis)
 
 
 @_wraps(np.expand_dims)
-def expand_dims(a, axis):
-  shape = _shape(a)
-  axis = _canonicalize_axis(axis, ndim(a) + 1)
-  return lax.reshape(a, shape[:axis] + (1,) + shape[axis:])
+def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
+  if isinstance(axis, int):
+    axis = (axis,)
+  return lax.expand_dims(a, axis)
 
 
 @_wraps(np.swapaxes)
@@ -1370,7 +1351,7 @@ def broadcast_to(arr, shape):
     diff, = np.where(np.not_equal(shape[nlead:], arr_shape))
     new_dims = tuple(range(nlead)) + tuple(nlead + diff)
     kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
-    return lax.broadcast_in_dim(squeeze(arr, diff), shape, kept_dims)
+    return lax.broadcast_in_dim(squeeze(arr, tuple(diff)), shape, kept_dims)
 
 
 @_wraps(np.split)
@@ -1550,8 +1531,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     result = lax.reduce(a, _reduction_init_val(a, init_val),
                         op if computation_dtype != np.bool_ else bool_op, dims)
     if keepdims:
-      shape_with_singletons = subvals(shape(a), zip(dims, (1,) * len(dims)))
-      result = lax.reshape(result, shape_with_singletons)
+      result = expand_dims(result, dims)
     return lax.convert_element_type(result, dtype or result_dtype)
 
   return reduction
@@ -1992,13 +1972,11 @@ def stack(arrays, axis=0):
     raise ValueError("Need at least one array to stack.")
   shape0 = shape(arrays[0])
   axis = _canonicalize_axis(axis, len(shape0) + 1)
-  new_shape = list(shape0)
-  new_shape.insert(axis, 1)
   new_arrays = []
   for a in arrays:
     if shape(a) != shape0:
       raise ValueError("All input arrays must have the same shape.")
-    new_arrays.append(reshape(a, new_shape))
+    new_arrays.append(expand_dims(a, axis))
   return concatenate(new_arrays, axis=axis)
 
 @_wraps(np.tile)
@@ -2057,7 +2035,7 @@ def column_stack(tup):
   for v in tup:
     arr = array(v)
     if arr.ndim < 2:
-      arr = arr.reshape((-1, 1))
+      arr = expand_dims(arr, axis=0)
     arrays.append(arr)
   return concatenate(arrays, 1)
 
@@ -2102,7 +2080,12 @@ def atleast_1d(*arys):
 def atleast_2d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    return arr if ndim(arr) >= 2 else reshape(arr, (1, -1))
+    if ndim(arr) >= 2:
+      return arr
+    elif ndim(arr) == 1:
+      return expand_dims(arr, axis=0)
+    else:
+      return expand_dims(arr, axis=(0, 1))
   else:
     return [atleast_2d(arr) for arr in arys]
 
@@ -2111,10 +2094,12 @@ def atleast_2d(*arys):
 def atleast_3d(*arys):
   if len(arys) == 1:
     arr = array(arys[0])
-    if ndim(arr) <= 1:
-      arr = reshape(arr, (1, -1, 1))
+    if ndim(arr) == 0:
+      arr = expand_dims(arr, axis=(0, 1, 2))
+    elif ndim(arr) == 1:
+      arr = expand_dims(arr, axis=(0, 2))
     elif ndim(arr) == 2:
-      arr = reshape(arr, shape(arr) + (1,))
+      arr = expand_dims(arr, axis=2)
     return arr
   else:
     return [atleast_3d(arr) for arr in arys]
@@ -2154,7 +2139,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
   if ndmin > ndim(out):
-    out = lax.reshape(out, (1,) * (ndmin - ndim(out)) + shape(out))
+    out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
   return out
 
 @_wraps(np.asarray)
@@ -2397,7 +2382,7 @@ def ix_(*args):
       # Numpy uses an integer index type for empty arrays.
       output.append(lax.full(shape, np.zeros((), np.intp)))
     else:
-      output.append(lax.reshape(a, shape))
+      output.append(lax.broadcast_in_dim(a, shape, (i,)))
   return tuple(output)
 
 
@@ -2642,8 +2627,8 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
 def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
-  a = lax.reshape(a, (1,) + shape(a)) if a_is_vec else a
-  b = lax.reshape(b, shape(b) + (1,)) if b_is_vec else b
+  a = expand_dims(a, axis=0) if a_is_vec else a
+  b = expand_dims(b, axis=-1) if b_is_vec else b
 
   a, b = _promote_dtypes(a, b)
   batch_shape = lax.broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
@@ -2653,13 +2638,8 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   dim_numbers = (((ndim(a) - 1,), (ndim(b) - 2,)), (batch_dims, batch_dims))
   result = lax.dot_general(a, b, dim_numbers,  precision)
 
-  if a_is_vec or b_is_vec:
-    m, n = shape(result)[-2:]
-    new_m = () if a_is_vec else (m,)
-    new_n = () if b_is_vec else (n,)
-    return lax.reshape(result, batch_shape + new_m + new_n)
-  else:
-    return result
+  squeeze_dims = ((-2,) if a_is_vec else ()) + ((-1,) if b_is_vec else ())
+  return squeeze(result, squeeze_dims)
 
 
 @_wraps(np.vdot, lax_description=_PRECISION_DOC)
@@ -3325,7 +3305,7 @@ def unique(ar, return_index=False, return_inverse=False,
 def _rewriting_take(arr, idx):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
-  # followed by an optional reverse and a reshape.
+  # followed by an optional reverse and broadcast_in_dim.
   arr = asarray(arr)
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
   return _gather(arr, treedef, static_idx, dynamic_idx)
@@ -3353,7 +3333,7 @@ def _gather(arr, treedef, static_idx, dynamic_idx):
     y = lax.rev(y, indexer.reversed_y_dims)
 
   # This adds np.newaxis/None dimensions.
-  return lax.reshape(y, indexer.slice_shape)
+  return expand_dims(y, indexer.newaxis_dims)
 
 _Indexer = collections.namedtuple("_Indexer", [
   # The expected shape of the slice output.
@@ -3372,9 +3352,8 @@ _Indexer = collections.namedtuple("_Indexer", [
   # the gather.
   "reversed_y_dims",
 
-  # For scatters, we must eliminate any axes created by `newaxis`, which
-  # are the following dimensions, which must be of size 1. For gathers, we
-  # simply reshape to `slice_shape` to introduce the new axes.
+  # Keep track of any axes created by `newaxis`. These must be inserted for
+  # gathers and eliminated for scatters.
   "newaxis_dims",
 ])
 

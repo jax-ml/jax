@@ -223,6 +223,8 @@ def broadcast_in_dim(operand, shape, broadcast_dimensions):
 
 sum = np.sum
 
+squeeze = np.squeeze
+
 def reshape(operand, new_sizes, dimensions=None):
   if dimensions is None:
     dimensions = range(len(np.shape(operand)))
