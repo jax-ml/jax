@@ -3324,13 +3324,10 @@ def setxor1d(ar1, ar2, assume_unique=False):
   if not assume_unique:
     ar1 = unique(ar1)
     ar2 = unique(ar2)
-  else:
-    ar1 = asarray(ar1)
-    ar2 = asarray(ar2)
   
   aux = concatenate((ar1, ar2))
   if aux.size == 0:
-      return aux
+    return aux
 
   aux = sort(aux)
   ar_true = array([True])
