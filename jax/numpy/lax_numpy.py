@@ -147,7 +147,7 @@ class _ScalarMeta(type):
     return not (self == other)
 
   def __call__(self, x):
-    return array(self.dtype.type(x), dtype=self.dtype)
+    return array(x, dtype=self.dtype)
 
 def _make_scalar_type(np_scalar_type):
   return _ScalarMeta(np_scalar_type.__name__, (object,),
