@@ -238,6 +238,15 @@ class TfOpsTest(jtu.JaxTestCase):
     np.testing.assert_allclose(r_jax[np.isfinite(r_jax)],
                                r_tf[np.isfinite(r_tf)], atol=1e-4)
 
+  # TODO(necula): replace these tests with LAX reference tests
+  def test_squeeze(self):
+    shape = (2, 1, 3, 1)
+    values = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    for squeeze_dims in ((1,), (3,), (1, 3,)):
+      f_jax = jax.jit(lambda v: jnp.squeeze(v, axis=squeeze_dims))  # pylint: disable=cell-var-from-loop
+      f_tf = tf.function(jax_to_tf.convert(f_jax))
+      np.testing.assert_allclose(f_jax(values), f_tf(values))
+
   def test_gather(self):
     values = np.array([[1, 2], [3, 4], [5, 6]], dtype=np.float32)
     indices = np.array([0, 1], dtype=np.int32)

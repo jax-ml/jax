@@ -496,6 +496,13 @@ def _reshape(operand, new_sizes, dimensions):
 tf_impl[lax.reshape_p] = _reshape
 
 
+def _squeeze(operand, dimensions):
+  op_shape = _get_shape_from_tensor_or_array(operand)
+  new_shape = tuple(d for i, d in enumerate(op_shape) if i not in dimensions)
+  return tf.reshape(operand, new_shape)
+tf_impl[lax.squeeze_p] = _squeeze
+
+
 def _pad_shape(operand, padding_value, padding_config):
   out, = _infer_shape_jax(
       lax.pad, operand, padding_value, padding_config=padding_config)
