@@ -16,10 +16,10 @@
 
 Example usage:
 
-  rng = jax.random.PRNGKey(seed)
-  for i in range(num_steps):
-    rng, rng_input = jax.random.split(rng)
-    params = compiled_update(rng_input, params, next(batches))
+>>> rng = jax.random.PRNGKey(seed)
+>>> for i in range(num_steps):
+...   rng, rng_input = jax.random.split(rng)
+>>> params = compiled_update(rng_input, params, next(batches))
 
 Context:
 
