@@ -1154,10 +1154,10 @@ def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
 def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
   # TODO(https://github.com/google/jax/issues/3243)
   try:
-    axis = (int(axis),)
+    axis = (int(axis),)  # type: ignore[arg-type]
   except TypeError:
     pass
-  return lax.expand_dims(a, axis)
+  return lax.expand_dims(a, axis)  # type: ignore[arg-type]
 
 
 @_wraps(np.swapaxes)
