@@ -1274,7 +1274,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testUnion1d(self, shape1, dtype1, shape2, dtype2):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
-    self._CheckAgainstNumpy(np.union1d, jnp.union1d, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np.union1d, jnp.union1d, args_maker, check_dtypes=False)
 
   def testIssue1233(self):
     '''
