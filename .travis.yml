@@ -44,8 +44,8 @@ install:
       conda install --yes sphinx sphinx_rtd_theme nbsphinx sphinx-autodoc-typehints jupyter_client matplotlib;
       pip install sklearn;
     fi
+  # jax_to_tf needs some fixes that are not in tensorflow==2.2.0
   - if [ "$JAX_TO_TF" = true ] ;then
-      # jax_to_tf needs some fixes that are not in tensorflow==2.2.0
       pip install tf-nightly==2.3.0.dev20200525 ;
     fi
 script:
