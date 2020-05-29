@@ -566,15 +566,23 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
         "extra data movement anyway, so maybe you don't want it after all).")
 
-  tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
-
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
-  xla_consts = _map(partial(xb.constant, c), consts)
+
+  if nreps == 1:
+    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    abstract_args = _map(abstractify, consts) + abstract_args
+    xla_consts = ()
+  else:
+    xla_consts = _map(partial(xb.constant, c), consts)
+    consts = ()
+
+  tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   built = c.build(xops.Tuple(c, out_nodes))
+  print(built.GetHloText())
 
   options = xb.get_compile_options(
       num_replicas=nreps,
@@ -584,7 +592,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   backend = xb.get_backend(backend)
   compiled = backend.compile(built, compile_options=options)
   if nreps == 1:
-    return partial(_execute_compiled, compiled, uses_outfeed, result_handlers)
+    return partial(_execute_compiled, compiled, uses_outfeed, result_handlers, consts)
   else:
     return partial(_execute_replicated, compiled, uses_outfeed, result_handlers)
 
@@ -657,11 +665,12 @@ def _pval_to_result_handler(device, pval):
     return aval_to_result_handler(device, pv)
 
 def _execute_compiled(compiled: XlaExecutable, uses_outfeed: bool,
-                      handlers, *args):
+                      handlers, consts, *args):
   check_before_outfeed_execution(uses_outfeed)
   device, = compiled.local_devices()
+  const_bufs = [device_put(x, device) for x in consts]
   input_bufs = [device_put(x, device) for x in args if x is not token]
-  out_bufs = compiled.execute(input_bufs)
+  out_bufs = compiled.execute(const_bufs + input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
