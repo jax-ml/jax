@@ -264,7 +264,7 @@ contains a constant ``jnp.ones(1)`` that is hoisted as a `constvar`
                               let d = add c b
                               in (d,) }
                 linear=(False, False, False)
-                true_jaxpr={ lambda  ; a_ a b.
+                true_jaxpr={ lambda  ; e_ a b.
                              let 
                              in (a,) } ] d e b c
   in (f,) }
