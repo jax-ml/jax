@@ -46,6 +46,7 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
+from ..interpreters import flattree
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree
@@ -1766,6 +1767,7 @@ def unop(result_dtype, accepted_dtypes, name, translation_rule=None):
                             translation_rule=translation_rule)
   batching.defvectorized(prim)
   masking.defvectorized(prim)
+  flattree.defvectorized(prim)
   return prim
 standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1805,6 +1807,7 @@ def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
   masking.defnaryop(prim)
+  flattree.defnaryop(prim)
   return prim
 standard_naryop = partial(naryop, _input_dtype)
 
@@ -2108,6 +2111,7 @@ integer_pow_p = standard_primitive(
   translation_rule=_integer_pow_translation_rule)
 batching.defvectorized(integer_pow_p)
 masking.defvectorized(integer_pow_p)
+flattree.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
@@ -2257,6 +2261,7 @@ convert_element_type_p = standard_primitive(
 ad.deflinear(convert_element_type_p, _convert_element_type_transpose_rule)
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
+flattree.defvectorized(convert_element_type_p)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -2275,6 +2280,7 @@ bitcast_convert_type_p = standard_primitive(
 ad.defjvp_zero(bitcast_convert_type_p)
 batching.defvectorized(bitcast_convert_type_p)
 masking.defvectorized(bitcast_convert_type_p)
+flattree.defvectorized(bitcast_convert_type_p)
 
 
 def _conv_general_dilated_shape_rule(
@@ -2784,6 +2790,8 @@ broadcast_in_dim_p = standard_primitive(
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+flattree.tree_rules[broadcast_in_dim_p] = partial(
+    flattree.broadcast_in_dim_tree_rule, broadcast_in_dim_p)
 
 
 def _clamp_shape_rule(min, operand, max):

@@ -66,6 +66,7 @@ from .api import (
   tree_structure,
   tree_transpose,
   tree_unflatten,
+  undo_tree,
   value_and_grad,
   vjp,
   vmap,

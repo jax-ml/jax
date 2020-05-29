@@ -61,6 +61,7 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
+from .interpreters import flattree
 from .custom_derivatives import custom_jvp, custom_vjp
 from .config import flags, config, bool_env
 
@@ -1326,6 +1327,21 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
   if not all(map(masking._shape_spec_consistent, out_shapes, out_shapes_)):
     raise masking.ShapeError
   return fun
+
+
+def undo_tree(fun):
+  _check_callable(fun)
+  @wraps(fun)
+  def f_undone(*args):
+    @lu.transformation_with_aux
+    def flatten_fun_output(*args):
+      ans = yield args, {}
+      yield tree_flatten(ans)
+    f, out_tree = flatten_fun_output(lu.wrap_init(fun))
+    outputs = flattree.undo_tree_fun(flattree.undo_tree_subtrace(f)).call_wrapped(args)
+    return tree_unflatten(out_tree(), outputs)
+  return f_undone
+
 
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
   """Computes a (forward-mode) Jacobian-vector product of ``fun``.
