@@ -200,7 +200,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertTrue(np.all(samples < hi))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in [np.float16, np.float32, np.float64]))
   def testNormal(self, dtype):
     if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
@@ -352,7 +352,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in [np.float16, np.float32, np.float64]))
   def testCauchy(self, dtype):
     if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
@@ -389,7 +389,7 @@ class LaxRandomTest(jtu.JaxTestCase):
         self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testExponential(self, dtype):
     if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
@@ -454,7 +454,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lam={}_{}".format(lam, dtype),
-       "lam": lam, "dtype": np.dtype(dtype).name}
+       "lam": lam, "dtype": np.dtype(dtype)}
       for lam in [0.5, 3, 9, 11, 50, 500]
       for dtype in [np.int16, np.int32, np.int64]))
   def testPoisson(self, lam, dtype):
@@ -501,7 +501,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testLaplace(self, dtype):
     if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
@@ -517,7 +517,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testLogistic(self, dtype):
     if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
@@ -555,7 +555,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_df={}_{}".format(df, dtype),
-       "df": df, "dtype": np.dtype(dtype).name}
+       "df": df, "dtype": np.dtype(dtype)}
       for df in [0.1, 1., 10.]
       for dtype in float_dtypes))
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
@@ -573,7 +573,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}D_{}".format(dim, np.dtype(dtype).name),
+      {"testcase_name": "_{}D_{}".format(dim, np.dtype(dtype)),
        "dim": dim, "dtype": dtype}
       for dim in [1, 3, 5]
       for dtype in float_dtypes))
