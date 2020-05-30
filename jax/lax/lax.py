@@ -2993,6 +2993,7 @@ squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
                                'squeeze', _squeeze_translation_rule)
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
+flattree.tree_rules[squeeze_p] = partial(flattree.squeeze_tree_rule, squeeze_p)
 
 
 def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:

@@ -121,6 +121,13 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = undo_tree(lambda x: jnp.expand_dims(x, 1))(tree)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+  def test_squeeze(self):
+    tree = {'x': jnp.array(0.0),
+            'y': jnp.array([1.0]),
+            'z': jnp.array([[2.0, 3.0]])}
+    actual = undo_tree(lambda x: jnp.expand_dims(x, 1).squeeze())(tree)
+    self.assertTreeEqual(actual, tree, check_dtypes=True)
+
   def test_unary_arithmetic(self):
     tree = {'a': 0, 'b': jnp.array([1, 2])}
     expected = {'a': 1, 'b': jnp.array([2, 3])}
@@ -144,6 +151,12 @@ class FlatTreeTest(jtu.JaxTestCase):
     add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0)
     actual = undo_tree(add_outer)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+    # def add_outer_2(x, y):
+    #   x, y = jnp.broadcast_arrays(jnp.expand_dims(x, 1), jnp.expand_dims(y, 0))
+    #   return x + y
+    # actual = undo_tree(add_outer_2)(tree1, tree2)
+    # self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_reduce(self):
     tree = {'x': jnp.array(1.0),

@@ -357,6 +357,37 @@ def broadcast_in_dim_tree_rule(
   return out_treedefs, out_leafshapes, out_leaves
 
 
+def squeeze_tree_rule(
+    prim: core.Primitive,
+    treedefs_in: Tuple[List[TreeDef]],
+    leafshapes_in: Tuple[LeafShapes],
+    leaves_in: Tuple[Leaves],
+    *,
+    dimensions: Tuple[int, ...],
+) -> TreeState:
+  treedefs, = treedefs_in
+  leafshapes, = leafshapes_in
+  leaves, = leaves_in
+
+  for axis, treedef in enumerate(treedefs):
+    if axis in dimensions:
+      if treedef != TRIVIAL_TREEDEF:
+        raise ValueError(f"cannot squeeze dimension {axis} because it "
+                         f"corresponds to a non-trivial pytree: {treedef}")
+
+  out_treedefs = [treedef for i, treedef in enumerate(treedefs) if i not in dimensions]
+  out_leafshapes = [leafshape for i, leafshape in enumerate(leafshapes) if i not in dimensions]
+
+  out_leaves = {}
+  for in_coords, out_coords in zip(
+      _iter_leaf_coords(treedefs), _iter_leaf_coords(out_treedefs)):
+    leaf = leaves[in_coords]
+    leaf_dims = _remap_axes_for_leaf(leafshapes, in_coords, dimensions)
+    out_leaves[out_coords] = prim.bind(leaf, dimensions=leaf_dims)
+
+  return out_treedefs, out_leafshapes, out_leaves
+
+
 def defreducer(prim: core.Primitive, binop_prim: core.Primitive) -> None:
   tree_rules[prim] = partial(reducer_tree_rule, prim, binop_prim.bind)
 
