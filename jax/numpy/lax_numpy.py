@@ -1510,7 +1510,7 @@ def nan_to_num(x, copy=True):
 
 def _asarray_no_coercion(a):
   if isinstance(a, (list, tuple)):
-      raise TypeError("Reductions don't work on list, pass a ndarray, tuple or scalar instead")
+      raise TypeError("Reductions don't work on list or tuples, pass a ndarray or scalar instead")
   return asarray(a)
 
 def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
