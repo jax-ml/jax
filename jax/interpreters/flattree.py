@@ -284,8 +284,9 @@ def naryop_tree_rule(
           f"conflicting shapes along axis={axis}: {non_trivial_shapes}"
       )
     elif len(non_trivial_shapes) == 1:
-      shapes, = non_trivial_shapes
-      shapes = [(1,) if shape == () and using_broadcasting else shape for shape in shapes]
+      shapes_tuple, = non_trivial_shapes
+      shapes = [(1,) if shape == () and using_broadcasting else shape
+                for shape in shapes_tuple]
       out_leafshapes.append(shapes)
     else:
       out_leafshapes.append([(1,)])
@@ -300,7 +301,7 @@ def naryop_tree_rule(
                         for axis, coord in enumerate(coords))
       leaf = leaves[in_coords]
 
-      insert_dims = []
+      insert_dims: List[int] = []
       dim = 0
       for axis, coord in enumerate(in_coords):
         shape = leafshapes[axis][coord]
