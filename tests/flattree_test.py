@@ -111,6 +111,16 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = undo_tree(lambda x: jnp.broadcast_to(x, (1, 4)))(tree)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+  def test_expand_dims(self):
+    tree = {'x': jnp.array(0.0),
+            'y': jnp.array([1.0]),
+            'z': jnp.array([[2.0, 3.0]])}
+    expected = {'x': jnp.array([0.0]),
+                'y': jnp.array([[1.0]]),
+                'z': jnp.array([[[2.0], [3.0]]])}
+    actual = undo_tree(lambda x: jnp.expand_dims(x, 1))(tree)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
   def test_unary_arithmetic(self):
     tree = {'a': 0, 'b': jnp.array([1, 2])}
     expected = {'a': 1, 'b': jnp.array([2, 3])}
@@ -124,12 +134,27 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = undo_tree(lambda x, y: x + y)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
-  # def test_arithmetic_broadcasting(self):
-  #   tree1 = {'a': 1, 'b': jnp.array([2, 3])}
-  #   tree2 = {'c': 10, 'd': jnp.array([20, 30])}
-  #   expected = {'a': {'c': 11, 'd': jnp.array([21, 31])},
-  #               'b': {'c': jnp.array([12, 13]),
-  #                     'd': jnp.array([[22, 32], [23, 33]])}}
-  #   add_outer = lambda x, y: jnp.expand_dims(x, 0) + jnp.expand_dims(y, 1)
-  #   actual = undo_tree(add_outer)(tree1, tree2)
-  #   self.assertTreeEqual(actual, expected, check_dtypes=True)
+  def test_arithmetic_broadcasting(self):
+    tree1 = {'a': 1, 'b': jnp.array([2, 3])}
+    tree2 = {'c': 10, 'd': jnp.array([20, 30])}
+    expected = {'a': {'c': jnp.array([[11]]),
+                      'd': jnp.array([[21, 31]])},
+                'b': {'c': jnp.array([[12], [13]]),
+                      'd': jnp.array([[22, 32], [23, 33]])}}
+    add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0)
+    actual = undo_tree(add_outer)(tree1, tree2)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+  def test_reduce(self):
+    tree = {'x': jnp.array(1.0),
+            'y': jnp.array([2.0]),
+            'z': jnp.array([[3.0, 4.0]])}
+    self.assertEqual(undo_tree(jnp.sum)(tree), 10.0)
+    self.assertEqual(undo_tree(jnp.prod)(tree), 24.0)
+    self.assertEqual(undo_tree(jnp.min)(tree), 1.0)
+    self.assertEqual(undo_tree(jnp.max)(tree), 4.0)
+
+  # TODO(shoyer): needs process_call
+  # def test_norm(self):
+  #   tree = [3.0, jnp.array([[4.0]])]
+  #   self.assertEqual(undo_tree(jnp.linalg.norm)(tree), 5.0)

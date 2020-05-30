@@ -4107,6 +4107,7 @@ ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
 _masking_defreducer(reduce_sum_p,
                     lambda shape, dtype: onp.broadcast_to(onp.array(0, dtype), shape))
+flattree.defreducer(reduce_sum_p, add_p)
 
 
 def _reduce_op_shape_rule(operand, *, axes):
@@ -4157,6 +4158,7 @@ reduce_prod_p = standard_primitive(
   'reduce_prod', _reduce_prod_translation_rule)
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p)
+flattree.defreducer(reduce_prod_p, mul_p)
 
 
 def _reduce_chooser_shape_rule(operand, *, axes):
@@ -4184,6 +4186,7 @@ reduce_max_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_max', _reduce_max_translation_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p)
+flattree.defreducer(reduce_max_p, max_p)
 
 
 _reduce_min_translation_rule = partial(
@@ -4192,6 +4195,7 @@ reduce_min_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_min', _reduce_min_translation_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
+flattree.defreducer(reduce_min_p, min_p)
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -4210,6 +4214,7 @@ _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
 reduce_or_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(onp.bool_),
                                  'reduce_or', _reduce_or_translation_rule)
 batching.defreducer(reduce_or_p)
+flattree.defreducer(reduce_or_p, or_p)
 
 
 _reduce_and_translation_rule = partial(_reduce_logical_translation_rule,
@@ -4217,6 +4222,8 @@ _reduce_and_translation_rule = partial(_reduce_logical_translation_rule,
 reduce_and_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(onp.bool_),
                                  'reduce_and', _reduce_and_translation_rule)
 batching.defreducer(reduce_and_p)
+flattree.defreducer(reduce_and_p, and_p)
+
 
 def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
                               window_dimensions, window_strides, padding):

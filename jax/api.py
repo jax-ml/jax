@@ -1338,7 +1338,7 @@ def undo_tree(fun):
       ans = yield args, {}
       yield tree_flatten(ans)
     f, out_tree = flatten_fun_output(lu.wrap_init(fun))
-    outputs = flattree.undo_tree_fun(flattree.undo_tree_subtrace(f)).call_wrapped(args)
+    outputs = flattree.tree_fun(flattree.tree_subtrace(f)).call_wrapped(args)
     return tree_unflatten(out_tree(), outputs)
   return f_undone
 
