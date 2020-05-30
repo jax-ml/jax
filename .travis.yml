@@ -50,8 +50,8 @@ install:
     fi
 script:
   - if [ "$JAX_ONLY_DOCUMENTATION" = true ]; then
-      sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html ;
-      pytest docs ;
+      sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html &&
+      pytest docs &&
       pytest --doctest-modules jax/api.py ;
     elif [ "$JAX_ONLY_CHECK_TYPES" = true ]; then
       echo "===== Checking with mypy ====" &&
