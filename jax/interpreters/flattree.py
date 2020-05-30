@@ -27,7 +27,7 @@ from ..tree_util import tree_structure, tree_flatten, tree_unflatten
 TRIVIAL_TREEDEF = tree_structure(1)
 
 TreeDef = Any
-Array = Any
+ArrayLike = Any
 PyTree = Any
 
 
@@ -42,7 +42,8 @@ def undo_tree_fun(trees):
 @lu.transformation
 def undo_tree_subtrace(master, trees):
   trace = TreeTrace(master, core.cur_sublevel())
-  in_tracers = map(partial(convert_vectorized_tree, trace), trees)
+  # in_tracers = map(partial(convert_vectorized_tree, trace), trees)
+  in_tracers = [TreeTracer(trace, *convert_vectorized_tree(t)) for t in trees]
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
   out_trees = tuple(restore_tree(t.treedefs, t.leaves) for t in out_tracers)
@@ -83,7 +84,7 @@ class TreeTracer(core.Tracer):
 
   treedefs: List[TreeDef]
   leafshapes: List[List[Tuple[int, ...]]]
-  leaves: Dict[Tuple[int, ...], Array]
+  leaves: Dict[Tuple[int, ...], ArrayLike]
 
   def __init__(self, trace, treedefs, leafshapes, leaves):
     assert len(treedefs) == len(leafshapes)
@@ -115,11 +116,11 @@ class TreeTrace(core.Trace):
 
   def pure(self, val):
     # constant array/scalar, no tracers
-    return convert_leaf_array(self, val)
+    return TreeTracer(self, *convert_leaf_array(val))
 
   def lift(self, tracer):
     # called for tracers of a lower priority
-    return convert_leaf_array(self, tracer)
+    return TreeTracer(self, *convert_leaf_array(val))
 
   def sublift(self, tracer):
     # specifically called for transformations of functions that involve
@@ -136,16 +137,23 @@ class TreeTrace(core.Trace):
     return TreeTracer(self, treedefs, leafshapes, leaves)
 
 
-def convert_vectorized_tree(trace: TreeTrace, tree: PyTree) -> TreeTracer:
+TreeState = Tuple[
+    List[TreeDef],
+    List[List[Tuple[int, ...]]],
+    Dict[Tuple[int, ...], ArrayLike],
+]
+
+
+def convert_vectorized_tree(tree: PyTree) -> TreeState:
   import jax.numpy as jnp
   xs, treedef = tree_flatten(tree)
   leafshape = [np.shape(x) for x in xs]
   dtype = jnp.result_type(*xs)
   leaves = {(i,): jnp.asarray(leaf, dtype) for i, leaf in enumerate(xs)}
-  return TreeTracer(trace, [treedef], [leafshape], leaves)
+  return [treedef], [leafshape], leaves
 
 
-def convert_leaf_array(trace: TreeTrace, leaf) -> TreeTracer:
+def convert_leaf_array(leaf: ArrayLike) -> TreeState:
   import jax.numpy as jnp
   treedef = tree_structure(leaf)
   if treedef != TRIVIAL_TREEDEF:
@@ -155,11 +163,11 @@ def convert_leaf_array(trace: TreeTrace, leaf) -> TreeTracer:
   treedefs = [TRIVIAL_TREEDEF] * ndim
   leafshapes = [[(s,)] for s in np.shape(leaf)]
   leaves = {(0,) * ndim: leaf}
-  return TreeTracer(trace, treedefs, leafshapes, leaves)
+  return treedefs, leafshapes, leaves
 
 
 def restore_tree(
-    treedefs: List[TreeDef], leaves: Dict[Tuple[int, ...], Array]) -> PyTree:
+    treedefs: List[TreeDef], leaves: Dict[Tuple[int, ...], ArrayLike]) -> PyTree:
   while treedefs:
     flattened_leaves = {}
     for coords in _iter_leaf_coords(treedefs[:-1]):
