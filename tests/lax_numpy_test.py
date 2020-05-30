@@ -1129,6 +1129,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, jnp.float32), rng(shape, dtype)]
     self._CheckAgainstNumpy(np.extract, jnp.extract, args_maker)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "dtype": dtype, "shape": shape}
+      for dtype in default_dtypes
+      for shape in one_dim_array_shapes))
+  def testPolyAdd(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda arg1, arg2: np.polyadd(arg1, arg2)
+    jnp_fun = lambda arg1, arg2: jnp.polyadd(arg1, arg2)
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),

@@ -2609,6 +2609,19 @@ def polyval(p, x):
     y = y * x + p[i]
   return y
 
+@_wraps(np.polyadd)
+def polyadd(a, b):
+  a = asarray(a)
+  b = asarray(b)
+
+  shape_diff = a.shape[0] - b.shape[0]
+  if shape_diff > 0:
+    b = concatenate((np.zeros(shape_diff, dtype=b.dtype), b))
+  else:
+    a = concatenate((np.zeros(shape_diff, dtype=b.dtype), a))
+
+  return lax.add(a,b)
+
 
 @_wraps(np.append)
 def append(arr, values, axis=None):
