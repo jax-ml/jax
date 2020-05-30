@@ -56,7 +56,7 @@ from .lax_numpy import (
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices,
     triu, triu_indices, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
     unpackbits, unravel_index, unsignedinteger, vander, var, vdot, vsplit,
-    vstack, where, zeros, zeros_like)
+    vstack, where, zeros, zeros_like, diagflat)
 
 from .polynomial import roots
 from .vectorize import vectorize

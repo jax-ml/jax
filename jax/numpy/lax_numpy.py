@@ -2580,6 +2580,22 @@ def diag(v, k=0):
   else:
     raise ValueError("diag input must be 1d or 2d")
 
+@_wraps(np.diagflat)
+def diagflat(v, k=0):
+  v = ravel(v)
+  s = len(v)
+  n = s + _abs(k)
+  res = zeros((n,n), dtype=v.dtype)
+  if (k >= 0):
+    i = arange(0, n-k)
+    fi = i+k+i*n
+  else:
+    i = arange(0,n+k)
+    fi = i+(i-k)*n
+  res = ops.index_update(res.flatten(), ops.index[fi], v)
+  res = res.reshape(n,n)
+  return res
+
 
 @_wraps(np.polyval)
 def polyval(p, x):
