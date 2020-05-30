@@ -723,7 +723,7 @@ class JaxTestCase(parameterized.TestCase):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
-    np.testing.assert_equal(x, y)
+    np.testing.assert_equal(np.asarray(x), np.asarray(y))
 
   def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""

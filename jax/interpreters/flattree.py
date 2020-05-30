@@ -244,7 +244,7 @@ def naryop_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
 
     # check shapes
     non_trivial_shapes = {tuple(leafshapes[axis]) for leafshapes in leafshapes_in
-                          if leafshapes[axis] != [(len(leafshapes),)]}
+                          if len(leafshapes[axis]) != 1 or leafshapes[axis][0] != (1,)}
     if len(non_trivial_shapes) > 1:
       raise ValueError(
           f"conflicting shapes along axis={axis}: {non_trivial_shapes}"
@@ -263,15 +263,16 @@ def naryop_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
       in_coords = tuple(coord if len(leafshapes[axis]) != 1 else 0
                         for axis, coord in enumerate(coords))
       args.append(leaves[in_coords])
-    #   leaf = arg.leaves[in_coords]
-    #   shape_pieces = [
-    #       arg.leafshapes[i][j]
-    #       if arg.shape[i] != 1
-    #       else (1,) * len(out_leafshapes[i][j])  # broadcasting
-    #       for i, j in enumerate(coords)
-    #   ]
-    #   shape = _concat_tuples(shape_pieces)
-    #   leaves.append(leaf.reshape(shape))
+      # TODO: needs some form of broadcasting, ideally without reshape!
+      #   leaf = arg.leaves[in_coords]
+      #   shape_pieces = [
+      #       arg.leafshapes[i][j]
+      #       if arg.shape[i] != 1
+      #       else (1,) * len(out_leafshapes[i][j])  # broadcasting
+      #       for i, j in enumerate(coords)
+      #   ]
+      #   shape = _concat_tuples(shape_pieces)
+      #   leaves.append(leaf.reshape(shape))
     for i, scalar in scalars:
       args.insert(i, scalar)
 
@@ -312,8 +313,9 @@ def broadcast_in_dim_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in,
     for shapes, coord, bdim in zip(
         leafshapes, in_coords, broadcast_dimensions,
     ):
-      out_bdims.append(bdim + bdim_delta)
-      bdim_delta += len(shapes[coord]) - 1
+      leaf_ndim = len(shapes[coord])
+      out_bdims.extend(range(bdim + bdim_delta, bdim + bdim_delta + leaf_ndim))
+      bdim_delta += leaf_ndim - 1
 
     out_leaves[out_coords] = prim.bind(
         leaf, shape=out_shape, broadcast_dimensions=tuple(out_bdims))
