@@ -20,7 +20,7 @@ import numpy as np
 import os
 import sys
 
-from jax.experimental import jax_to_tf
+from jax.experimental.jax_to_tf.tests import tf_test_util
 
 # Import ../../../../examples/resnet50.py
 def from_examples_import_resnet50():
@@ -30,7 +30,7 @@ def from_examples_import_resnet50():
   assert os.path.isfile(os.path.join(examples_dir, "resnet50.py"))
   try:
     sys.path.append(examples_dir)
-    import resnet50  # type: ignore[import-error]
+    import resnet50  # type: ignore
     return resnet50
   finally:
     sys.path.pop()
@@ -44,7 +44,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-class StaxTest(jtu.JaxTestCase):
+class StaxTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_res_net(self):
@@ -54,8 +54,7 @@ class StaxTest(jtu.JaxTestCase):
     _, params = init_fn(key, shape)
     infer = functools.partial(apply_fn, params)
     images = np.array(jax.random.normal(key, shape))
-    np.testing.assert_allclose(infer(images), jax_to_tf.convert(infer)(images),
-                               rtol=0.5)
+    self.ConvertAndCompare(infer, images, rtol=0.5)
 
 
 if __name__ == "__main__":
