@@ -29,6 +29,8 @@ TRIVIAL_TREEDEF = tree_structure(1)
 TreeDef = Any
 ArrayLike = Any
 PyTree = Any
+LeafShapes = List[List[Tuple[int, ...]]]
+Leaves = Dict[Tuple[int, ...], ArrayLike]
 
 
 @lu.transformation
@@ -72,7 +74,7 @@ def _concat_tuples(tuples: Iterable[Tuple[T, ...]]) -> Tuple[T, ...]:
 
 
 def _leafshape(
-    leafshapes: List[List[Tuple[int, ...]]],
+    leafshapes: LeafShapes,
     coords: Tuple[int, ...],
 ) -> Tuple[int, ...]:
   return _concat_tuples([leafshapes[i][j] for i, j in enumerate(coords)])
@@ -80,10 +82,6 @@ def _leafshape(
 
 def _axis_length(shapes: Iterable[Tuple[int, ...]]) -> int:
   return sum(map(prod, shapes))
-
-
-LeafShapes = List[List[Tuple[int, ...]]]
-Leaves = Dict[Tuple[int, ...], ArrayLike]
 
 
 class TreeTracer(core.Tracer):
@@ -349,8 +347,7 @@ def broadcast_in_dim_tree_rule(
   for in_coords, out_coords in zip(
       _iter_leaf_coords(treedefs), _iter_leaf_coords(out_treedefs)):
     leaf = leaves[in_coords]
-    leaf_shape = _concat_tuples(
-        [out_leafshapes[i][j] for i, j in enumerate(out_coords)])
+    leaf_shape = _leafshape(out_leafshapes, out_coords)
     leaf_bdims = _remap_axes_for_leaf(
         out_leafshapes, out_coords, broadcast_dimensions)
     out_leaves[out_coords] = prim.bind(
