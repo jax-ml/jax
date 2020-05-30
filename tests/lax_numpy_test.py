@@ -1459,12 +1459,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_k={}".format(
           jtu.format_shape_dtype_string(shape, dtype), k),
-       "dtype": dtype, "shape": shape, "k": k, "rng_factory": jtu.rand_default}
+       "dtype": dtype, "shape": shape, "k": k}
       for dtype in default_dtypes
       for shape in all_shapes
-      for k in list(range(-4, 4))))
-  def testDiagFlat(self, shape, dtype, k, rng_factory):
-    rng = rng_factory(self.rng())
+      for k in range(-4, 4)))
+  def testDiagFlat(self, shape, dtype, k):
+    rng = jtu.rand_default(self.rng())
     np_fun = lambda arg: np.diagflat(arg, k)
     jnp_fun = lambda arg: jnp.diagflat(arg, k)
     args_maker = lambda: [rng(shape, dtype)]

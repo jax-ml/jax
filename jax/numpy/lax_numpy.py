@@ -2583,17 +2583,16 @@ def diag(v, k=0):
 @_wraps(np.diagflat)
 def diagflat(v, k=0):
   v = ravel(v)
-  s = len(v)
-  n = s + _abs(k)
-  res = zeros((n,n), dtype=v.dtype)
+  v_length = len(v)
+  adj_length = v_length + _abs(k)
+  res = zeros(adj_length*adj_length, dtype=v.dtype)
+  i = arange(0, adj_length-_abs(k))
   if (k >= 0):
-    i = arange(0, n-k)
-    fi = i+k+i*n
+    fi = i+k+i*adj_length
   else:
-    i = arange(0,n+k)
-    fi = i+(i-k)*n
-  res = ops.index_update(res.flatten(), ops.index[fi], v)
-  res = res.reshape(n,n)
+    fi = i+(i-k)*adj_length
+  res = ops.index_update(res, ops.index[fi], v)
+  res = res.reshape(adj_length,adj_length)
   return res
 
 

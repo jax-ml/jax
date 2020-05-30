@@ -28,7 +28,7 @@ from .lax_numpy import (
     complex128, complex64, complex_, complexfloating, compress, concatenate,
     conj, conjugate, convolve, copysign, corrcoef, correlate, cos, cosh,
     count_nonzero, cov, cross, csingle, cumprod, cumproduct, cumsum, deg2rad,
-    degrees, diag, diag_indices, diagonal, diff, digitize, divide, divmod, dot,
+    degrees, diag, diagflat, diag_indices, diagonal, diff, digitize, divide, divmod, dot,
     double, dsplit, dstack, dtype, e, ediff1d, einsum, einsum_path, empty,
     empty_like, equal, euler_gamma, exp, exp2, expand_dims, expm1, extract, eye,
     fabs, finfo, fix, flatnonzero, flexible, flip, fliplr, flipud, float16, float32,
@@ -56,7 +56,7 @@ from .lax_numpy import (
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices,
     triu, triu_indices, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
     unpackbits, unravel_index, unsignedinteger, vander, var, vdot, vsplit,
-    vstack, where, zeros, zeros_like, diagflat)
+    vstack, where, zeros, zeros_like)
 
 from .polynomial import roots
 from .vectorize import vectorize
