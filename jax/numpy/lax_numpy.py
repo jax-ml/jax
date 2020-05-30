@@ -1508,6 +1508,10 @@ def nan_to_num(x, copy=True):
 ### Reducers
 
 
+def _asarray_no_coercion(a):
+  if isinstance(a, (list, tuple)):
+      raise TypeError("Reductions don't work on list, pass a ndarray, tuple or scalar instead")
+  return asarray(a)
 
 def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
                     upcast_f16_for_computation=False):
@@ -1520,10 +1524,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
 
-
-    if isinstance(a, list):
-      raise TypeError(f"Reductions don't work on list, pass a ndarray, tuple or scalar instead")
-    a = asarray(a)
+    a = _asarray_no_coercion(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
     result_dtype = dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a))))
