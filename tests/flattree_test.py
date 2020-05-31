@@ -144,14 +144,40 @@ class FlatTreeTest(jtu.JaxTestCase):
   def test_arithmetic_broadcasting(self):
     tree1 = {'a': 1, 'b': jnp.array([2, 3])}
     tree2 = {'c': 10, 'd': jnp.array([20, 30])}
-    expected = {'a': {'c': jnp.array([[11]]),
-                      'd': jnp.array([[21, 31]])},
-                'b': {'c': jnp.array([[12], [13]]),
+    expected = {'a': {'c': jnp.array(11),
+                      'd': jnp.array([21, 31])},
+                'b': {'c': jnp.array([12, 13]),
                       'd': jnp.array([[22, 32], [23, 33]])}}
-    add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0)
+    add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0) 
     actual = undo_tree(add_outer)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+    add_outer2 = lambda x, y: jnp.expand_dims(x, 1) + y
+    actual = undo_tree(add_outer2)(tree1, tree2)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+    tree1 = {'a': 1, 'b': jnp.array([[2, 3]])}
+    tree2 = {'c': 10, 'd': jnp.array([[20], [30]])}
+    expected = {'a': {'c': jnp.array(11),
+                      'd': jnp.array([[21], [31]])},
+                'b': {'c': jnp.array([[12, 13]]),
+                      'd': jnp.array([[[[22], [32]], [[23], [33]]]])}}
+    add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0) 
+    actual = undo_tree(add_outer)(tree1, tree2)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+    tree1 = {'a': 1, 'b': 2 * jnp.ones((2, 3), int)}
+    tree2 = {'c': 10 * jnp.ones((1,), int), 'd': 20 * jnp.ones((4, 5), int)}
+    expected = {'a': {'c': 11 * jnp.ones((1,), int),
+                      'd': 21 * jnp.ones(((4, 5)), int)},
+                'b': {'c': 12 * jnp.ones((2, 3, 1), int),
+                      'd': 22 * jnp.ones(((2, 3, 4, 5)), int)}}
+    add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0) 
+    actual = undo_tree(add_outer)(tree1, tree2)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+    # TODO(shoyer): should this work? It would require "splitting up" a trivial
+    # axis to match the given leafshape.
     # def add_outer_2(x, y):
     #   x, y = jnp.broadcast_arrays(jnp.expand_dims(x, 1), jnp.expand_dims(y, 0))
     #   return x + y

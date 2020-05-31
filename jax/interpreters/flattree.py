@@ -246,7 +246,7 @@ def naryop_tree_rule(
     leaves_in: Tuple[Leaves, ...],
     **params,
 ) -> TreeState:
-  from jax import lax
+  from .. import lax
 
   treedefs_in, leafshapes_in, leaves_in, scalars = _filter_scalar_leaves(
       treedefs_in, leafshapes_in, leaves_in)
@@ -277,44 +277,37 @@ def naryop_tree_rule(
     # check shapes
     non_trivial_shapes = {tuple(leafshapes[axis]) for leafshapes in leafshapes_in
                           if leafshapes[axis] != [(1,)]}
-    using_broadcasting = any(
-        leafshapes[axis] == [(1,)] for leafshapes in leafshapes_in)
     if len(non_trivial_shapes) > 1:
       raise ValueError(
           f"conflicting shapes along axis={axis}: {non_trivial_shapes}"
       )
     elif len(non_trivial_shapes) == 1:
       shapes_tuple, = non_trivial_shapes
-      shapes = [(1,) if shape == () and using_broadcasting else shape
-                for shape in shapes_tuple]
-      out_leafshapes.append(shapes)
+      out_leafshapes.append(list(shapes_tuple))
     else:
       out_leafshapes.append([(1,)])
 
   out_leaves = {}
-  for coords in _iter_leaf_coords(out_treedefs):
-    rank_per_axis = [len(out_leafshapes[i][j]) for i, j in enumerate(coords)]
+  for out_coords in _iter_leaf_coords(out_treedefs):
 
     args = []
     for leafshapes, leaves in zip(leafshapes_in, leaves_in):
       in_coords = tuple(coord if len(leafshapes[axis]) != 1 else 0
-                        for axis, coord in enumerate(coords))
+                        for axis, coord in enumerate(out_coords))
       leaf = leaves[in_coords]
 
-      insert_dims: List[int] = []
-      dim = 0
-      for axis, coord in enumerate(in_coords):
-        shape = leafshapes[axis][coord]
-        insert_dims.extend(
-            range(dim, dim + rank_per_axis[axis] - len(shape)))
-        dim += rank_per_axis[axis]
+      broadcasting_dims = [axis for axis, shapes in enumerate(leafshapes)
+                           if shapes == [(1,)]]
+      remove_dims = _remap_axes_for_leaf(leafshapes, in_coords, tuple(broadcasting_dims))
+      insert_dims = _remap_axes_for_leaf(out_leafshapes, out_coords, tuple(broadcasting_dims))
+      leaf = lax.expand_dims(lax.squeeze(leaf, remove_dims), insert_dims)
 
-      args.append(lax.expand_dims(leaf, tuple(insert_dims)))
+      args.append(leaf)
 
     for i, scalar in scalars:
       args.insert(i, scalar)
 
-    out_leaves[coords] = prim.bind(*args, **params)
+    out_leaves[out_coords] = prim.bind(*args, **params)
 
   return out_treedefs, out_leafshapes, out_leaves
 
