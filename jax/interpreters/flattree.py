@@ -214,6 +214,19 @@ def tree_callable(fun):
   return partial(tree_call_p.bind, fun=fun)
 
 
+def tie_in_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in) -> TreeState:
+  x_treedefs, y_treedefs = treedefs_in
+  x_leafshapes, y_leafshapes = leafshapes_in
+  x_leaves, y_leaves = leaves_in
+  # TODO(shoyer): should we try somehow to add a data depedency on everything,
+  # not just the first value?
+  x_example = next(iter(x_leaves.values()))
+  out_leaves = {}
+  for coords in _iter_leaf_coords(y_treedefs):
+    out_leaves[coords] = prim.bind(x_example, y_leaves[coords])
+  return y_treedefs, y_leafshapes, out_leaves
+
+
 def defvectorized(prim):
   tree_rules[prim] = partial(vectorized_tree_rule, prim)
 

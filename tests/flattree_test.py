@@ -22,7 +22,7 @@ from jax.interpreters.flattree import (
     TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
     restore_tree,
 )
-from jax import disable_jit, shapecheck, tree_vectorize
+from jax import disable_jit, make_jaxpr, shapecheck, tree_vectorize
 from jax import lax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_structure
@@ -226,11 +226,21 @@ class FlatTreeTest(jtu.JaxTestCase):
 
   def test_tree_call(self):
     tree = {'x': 1, 'y': 2}
+
     def f(x):
       self.assertEqual(x, tree)
       return x
-    actual = tree_vectorize(lambda f, x: f(x))(f, tree)
+
+    @tree_vectorize
+    def g(f, x):
+      return f(x)
+
+    actual = g(f, tree)
     self.assertTreeEqual(actual, tree, check_dtypes=True)
+
+    # TODO(shoyer): fix this
+    # TypeError: No abstraction handler for type: <class 'function'>
+    # self.assertIn('tree_call', str(make_jaxpr(g)(f, tree)))
 
   def test_tree_call_impl(self):
     tree = {'x': 1, 'y': 2}
@@ -240,7 +250,22 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(lambda f, x: f(x.sum()))(f, tree)
     self.assertTreeEqual(actual, 3, check_dtypes=True)
 
+  def test_tie_in(self):
+    x = jnp.array(1)
+    tree = {'x': 1, 'y': 2}
+    actual = tree_vectorize(lax.tie_in)(x, tree)
+    self.assertTreeEqual(actual, tree, check_dtypes=True)
+    self.assertIn('tie_in', str(make_jaxpr(tree_vectorize(lax.tie_in))(x, tree)))
+
   # integration tests
+
+  # TODO(shoyer): not clear how we could make this work -- need to somehow pass
+  # on the tree structure as part of the shape.
+  # def test_zeros(self):
+  #   tree = {'x': 1, 'y': 2}
+  #   actual = tree_vectorize(jnp.zeros_like)(tree)
+  #   expected = {'x': 0, 'y': 0}
+  #   self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_transposing_arithmetic(self):
     tree = {'x': 1, 'y': 2}

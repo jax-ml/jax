@@ -4985,6 +4985,7 @@ xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
+flattree.tree_rules[tie_in_p] = partial(flattree.tie_in_tree_rule, tie_in_p)
 
 
 def _stop_gradient_jvp_rule(primals, tangents):
