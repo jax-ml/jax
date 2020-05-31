@@ -716,6 +716,10 @@ def valid_jaxtype(x):
   else:
     return True
 
+def check_valid_jaxtype(x):
+  if not valid_jaxtype(x):
+    raise TypeError(f"{x} of type {type(x)} is not a valid JAX type")
+
 
 def concrete_aval(x):
   for typ in type(x).mro():
