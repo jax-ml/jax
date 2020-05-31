@@ -1765,11 +1765,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       g(jnp.ones((1, 1)), b=1)
 
-  def test_primitive_jaxtype_error(self):
-    with self.assertRaisesRegex(
-        TypeError, "Argument .* of type .* is not a valid JAX type"):
-      lax.add(1, 'hi')
-
 
 class JaxprTest(jtu.JaxTestCase):
 
