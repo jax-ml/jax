@@ -1329,6 +1329,22 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
   return fun
 
 
+def _apply_callable_args(fun, args, callable_transform):
+  callables = []
+  out_args = []
+  for i, arg in enumerate(args):
+    if callable(arg):
+      callables.append((i, callable_transform(arg)))
+    else:
+      out_args.append(arg)
+  def transformed(*args):
+    args = list(args)
+    for i, arg in callables:
+      args.insert(i, arg)
+    return fun(*args)
+  return transformed, tuple(out_args)
+
+
 def undo_tree(fun):
   _check_callable(fun)
   @wraps(fun)
@@ -1337,7 +1353,8 @@ def undo_tree(fun):
     def flatten_fun_output(*args):
       ans = yield args, {}
       yield tree_flatten(ans)
-    f, out_tree = flatten_fun_output(lu.wrap_init(fun))
+    fun2, args = _apply_callable_args(fun, args, flattree.tree_callable)
+    f, out_tree = flatten_fun_output(lu.wrap_init(fun2))
     outputs = flattree.tree_fun(flattree.tree_subtrace(f)).call_wrapped(args)
     return tree_unflatten(out_tree(), outputs)
   return f_undone

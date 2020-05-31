@@ -193,6 +193,24 @@ def restore_tree(treedefs: List[TreeDef], leaves: Leaves) -> PyTree:
 
 tree_rules = {}
 
+
+def tree_call_impl(*args, fun):
+  return fun(*args)
+
+def tree_call_tree_rule(treedefs_in, leafshapes_in, leaves_in, *, fun):
+  # TODO(shoyer): some way to handle multiple outputs?
+  args = tuple(map(restore_tree, treedefs_in, leaves_in))
+  result = fun(*args)
+  return convert_vectorized_tree(result)
+
+tree_call_p = core.Primitive('tree_call')
+tree_call_p.def_impl(tree_call_impl)
+tree_rules[tree_call_p] = tree_call_tree_rule
+
+def tree_callable(fun):
+  return partial(tree_call_p.bind, fun=fun)
+
+
 def defvectorized(prim):
   tree_rules[prim] = partial(vectorized_tree_rule, prim)
 

@@ -197,3 +197,19 @@ class FlatTreeTest(jtu.JaxTestCase):
   # def test_norm(self):
   #   tree = [3.0, jnp.array([[4.0]])]
   #   self.assertEqual(undo_tree(jnp.linalg.norm)(tree), 5.0)
+
+  def test_tree_call(self):
+    tree = {'x': 1, 'y': 2}
+    def f(x):
+      self.assertEqual(x, tree)
+      return x
+    actual = undo_tree(lambda f, x: f(x))(f, tree)
+    self.assertTreeEqual(actual, tree, check_dtypes=True)
+
+  def test_tree_call_impl(self):
+    tree = {'x': 1, 'y': 2}
+    def f(x):
+      self.assertEqual(x, 3)
+      return x
+    actual = undo_tree(lambda f, x: f(x.sum()))(f, tree)
+    self.assertTreeEqual(actual, 3, check_dtypes=True)
