@@ -23,7 +23,7 @@ from jax.interpreters.flattree import (
     TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
     restore_tree,
 )
-from jax import undo_tree
+from jax import tree_vectorize
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_structure
 from jax.config import config
@@ -98,7 +98,7 @@ class FlatTreeTest(jtu.JaxTestCase):
     tree = {'x': jnp.array(0.0),
             'y': jnp.array([1.0]),
             'z': jnp.array([[2.0, 3.0]])}
-    actual = undo_tree(lambda x: x)(tree)
+    actual = tree_vectorize(lambda x: x)(tree)
     self.assertTreeEqual(actual, tree, check_dtypes=True)
 
   def test_broadcast(self):
@@ -108,7 +108,7 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = {'x': jnp.array([0.0]),
                 'y': jnp.array([[1.0]]),
                 'z': jnp.array([[[2.0, 3.0]]])}
-    actual = undo_tree(lambda x: jnp.broadcast_to(x, (1, 4)))(tree)
+    actual = tree_vectorize(lambda x: jnp.broadcast_to(x, (1, 4)))(tree)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_expand_dims(self):
@@ -118,27 +118,27 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = {'x': jnp.array([0.0]),
                 'y': jnp.array([[1.0]]),
                 'z': jnp.array([[[2.0], [3.0]]])}
-    actual = undo_tree(lambda x: jnp.expand_dims(x, 1))(tree)
+    actual = tree_vectorize(lambda x: jnp.expand_dims(x, 1))(tree)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_squeeze(self):
     tree = {'x': jnp.array(0.0),
             'y': jnp.array([1.0]),
             'z': jnp.array([[2.0, 3.0]])}
-    actual = undo_tree(lambda x: jnp.expand_dims(x, 1).squeeze())(tree)
+    actual = tree_vectorize(lambda x: jnp.expand_dims(x, 1).squeeze())(tree)
     self.assertTreeEqual(actual, tree, check_dtypes=True)
 
   def test_unary_arithmetic(self):
     tree = {'a': 0, 'b': jnp.array([1, 2])}
     expected = {'a': 1, 'b': jnp.array([2, 3])}
-    actual = undo_tree(lambda x: x + 1)(tree)
+    actual = tree_vectorize(lambda x: x + 1)(tree)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_binary_arithmetic(self):
     tree1 = {'a': 0, 'b': jnp.array([1, 2])}
     tree2 = {'a': 10, 'b': jnp.array([20, 30])}
     expected = {'a': 10, 'b': jnp.array([21, 32])}
-    actual = undo_tree(lambda x, y: x + y)(tree1, tree2)
+    actual = tree_vectorize(lambda x, y: x + y)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_arithmetic_broadcasting(self):
@@ -149,11 +149,11 @@ class FlatTreeTest(jtu.JaxTestCase):
                 'b': {'c': jnp.array([12, 13]),
                       'd': jnp.array([[22, 32], [23, 33]])}}
     add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0) 
-    actual = undo_tree(add_outer)(tree1, tree2)
+    actual = tree_vectorize(add_outer)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
     add_outer2 = lambda x, y: jnp.expand_dims(x, 1) + y
-    actual = undo_tree(add_outer2)(tree1, tree2)
+    actual = tree_vectorize(add_outer2)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
     tree1 = {'a': 1, 'b': jnp.array([[2, 3]])}
@@ -163,7 +163,7 @@ class FlatTreeTest(jtu.JaxTestCase):
                 'b': {'c': jnp.array([[12, 13]]),
                       'd': jnp.array([[[[22], [32]], [[23], [33]]]])}}
     add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0) 
-    actual = undo_tree(add_outer)(tree1, tree2)
+    actual = tree_vectorize(add_outer)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
     tree1 = {'a': 1, 'b': 2 * jnp.ones((2, 3), int)}
@@ -173,7 +173,7 @@ class FlatTreeTest(jtu.JaxTestCase):
                 'b': {'c': 12 * jnp.ones((2, 3, 1), int),
                       'd': 22 * jnp.ones(((2, 3, 4, 5)), int)}}
     add_outer = lambda x, y: jnp.expand_dims(x, 1) + jnp.expand_dims(y, 0) 
-    actual = undo_tree(add_outer)(tree1, tree2)
+    actual = tree_vectorize(add_outer)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
     # TODO(shoyer): should this work? It would require "splitting up" a trivial
@@ -181,29 +181,29 @@ class FlatTreeTest(jtu.JaxTestCase):
     # def add_outer_2(x, y):
     #   x, y = jnp.broadcast_arrays(jnp.expand_dims(x, 1), jnp.expand_dims(y, 0))
     #   return x + y
-    # actual = undo_tree(add_outer_2)(tree1, tree2)
+    # actual = tree_vectorize(add_outer_2)(tree1, tree2)
     # self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_reduce(self):
     tree = {'x': jnp.array(1.0),
             'y': jnp.array([2.0]),
             'z': jnp.array([[3.0, 4.0]])}
-    self.assertEqual(undo_tree(jnp.sum)(tree), 10.0)
-    self.assertEqual(undo_tree(jnp.prod)(tree), 24.0)
-    self.assertEqual(undo_tree(jnp.min)(tree), 1.0)
-    self.assertEqual(undo_tree(jnp.max)(tree), 4.0)
+    self.assertEqual(tree_vectorize(jnp.sum)(tree), 10.0)
+    self.assertEqual(tree_vectorize(jnp.prod)(tree), 24.0)
+    self.assertEqual(tree_vectorize(jnp.min)(tree), 1.0)
+    self.assertEqual(tree_vectorize(jnp.max)(tree), 4.0)
 
   # TODO(shoyer): needs process_call
   # def test_norm(self):
   #   tree = [3.0, jnp.array([[4.0]])]
-  #   self.assertEqual(undo_tree(jnp.linalg.norm)(tree), 5.0)
+  #   self.assertEqual(tree_vectorize(jnp.linalg.norm)(tree), 5.0)
 
   def test_tree_call(self):
     tree = {'x': 1, 'y': 2}
     def f(x):
       self.assertEqual(x, tree)
       return x
-    actual = undo_tree(lambda f, x: f(x))(f, tree)
+    actual = tree_vectorize(lambda f, x: f(x))(f, tree)
     self.assertTreeEqual(actual, tree, check_dtypes=True)
 
   def test_tree_call_impl(self):
@@ -211,5 +211,5 @@ class FlatTreeTest(jtu.JaxTestCase):
     def f(x):
       self.assertEqual(x, 3)
       return x
-    actual = undo_tree(lambda f, x: f(x.sum()))(f, tree)
+    actual = tree_vectorize(lambda f, x: f(x.sum()))(f, tree)
     self.assertTreeEqual(actual, 3, check_dtypes=True)

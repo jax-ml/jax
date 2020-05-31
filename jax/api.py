@@ -1345,7 +1345,7 @@ def _apply_callable_args(fun, args, callable_transform):
   return transformed, tuple(out_args)
 
 
-def undo_tree(fun):
+def tree_vectorize(fun):
   _check_callable(fun)
   @wraps(fun)
   def f_undone(*args):
