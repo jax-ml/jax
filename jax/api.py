@@ -41,7 +41,8 @@ from . import ad_util
 from . import dtypes
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, argnums_partial, flatten_axes)
+                       flatten_fun_nokwargs2, argnums_partial, flatten_axes,
+                       donation_vector, rebase_donate_argnums)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf)
@@ -88,7 +89,8 @@ class _ThreadLocalState(threading.local):
 _thread_local_state = _ThreadLocalState()
 
 def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
-        device=None, backend: Optional[str] = None) -> Callable:
+        device=None, backend: Optional[str] = None,
+        donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -112,6 +114,13 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
       XLA's DeviceAssignment logic and is usually to use ``jax.devices()[0]``.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu','gpu', or 'tpu'.
+    donate_argnums: Specify which arguments are "donated" to the computation.
+      It is safe to donate arguments if you no longer need them once the
+      computation has finished. In some cases XLA can make use of donated
+      buffers to reduce the amount of memory needed to perfom a computation, for
+      example recycling one of your input buffers to store a result. You should
+      not re-use buffers that you donate to a computation, JAX will raise an
+      error if you try to.
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.
@@ -132,17 +141,18 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
   _check_callable(fun)
-  if isinstance(static_argnums, int):
-    static_argnums = (static_argnums,)
+  static_argnums = _ensure_tuple(static_argnums)
+  donate_argnums = _ensure_tuple(donate_argnums)
+  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     if _jit_is_disabled():
       return fun(*args, **kwargs)
-    if static_argnums and max(static_argnums) >= len(args):
-      msg = ("jitted function has static_argnums={} but was called with only {}"
-             " positional arguments.")
-      raise ValueError(msg.format(static_argnums, len(args)))
+    if max(static_argnums + donate_argnums, default=-1) >= len(args):
+      msg = ("jitted function has static_argnums={}, donate_argnums={} but "
+             "was called with only {} positional arguments.")
+      raise ValueError(msg.format(static_argnums, donate_argnums, len(args)))
     f = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
@@ -150,10 +160,11 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
+    donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
     for arg in args_flat: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
-                       name=flat_fun.__name__)
+                       name=flat_fun.__name__, donated_invars=donated_invars)
     return tree_unflatten(out_tree(), out)
 
   jitted_name = "jit({}, static_argnums={})"
@@ -905,7 +916,8 @@ def _mapped_axis_size(tree, vals, dims, name):
 def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
-         axis_size: Optional[int] = None) -> Callable:
+         axis_size: Optional[int] = None,
+         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """Parallel map with support for collectives.
 
   The purpose of ``pmap`` is to express single-program multiple-data (SPMD)
@@ -967,6 +979,13 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
       are not yet supported.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+    donate_argnums: Specify which arguments are "donated" to the computation.
+      It is safe to donate arguments if you no longer need them once the
+      computation has finished. In some cases XLA can make use of donated
+      buffers to reduce the amount of memory needed to perfom a computation, for
+      example recycling one of your input buffers to store a result. You should
+      not re-use buffers that you donate to a computation, JAX will raise an
+      error if you try to.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -1093,10 +1112,9 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   """
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
-  if isinstance(static_broadcasted_argnums, int):
-    static_broadcasted_tuple: Tuple[int, ...] = (static_broadcasted_argnums,)
-  else:
-    static_broadcasted_tuple = tuple(static_broadcasted_argnums)
+  static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums)
+  donate_tuple = rebase_donate_argnums(_ensure_tuple(donate_argnums),
+                                       static_broadcasted_tuple)
 
   # axis_size is an optional integer representing the global axis size.
   # The aggregate size (across all hosts) size of the mapped axis must match
@@ -1125,6 +1143,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
     else:
       dyn_args, dyn_in_axes = args, in_axes
     args, in_tree = tree_flatten((dyn_args, kwargs))
+    donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
     in_axes_flat = flatten_axes(in_tree, (dyn_in_axes, 0))
     assert all(axis in (0, None) for axis in in_axes_flat), \
         "pmap currently only supports mapping over the leading axis"
@@ -1140,7 +1159,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
         global_axis_size=axis_size,
         devices=tuple(devices) if devices is not None else devices,
         name=flat_fun.__name__,
-        mapped_invars=tuple(axis is not None for axis in in_axes_flat))
+        mapped_invars=tuple(axis is not None for axis in in_axes_flat),
+        donated_invars=tuple(donated_invars))
     return tree_unflatten(out_tree(), out)
 
   namestr = "pmap({}, axis_name={})".format
@@ -1188,11 +1208,14 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
 
     reshaped_args = [_reshape_split(num_chunks, x) for x in args_flat]
     soft_mapped_fun = pxla.split_axis(flat_fun, axis_name, chunk_size)
+    # TODO(tomhennigan): soft_pmap should support buffer donation.
+    donated_invars = (False,) * len(reshaped_args)
     reshaped_outs = pxla.xla_pmap(soft_mapped_fun, *reshaped_args, backend=backend,
                                   axis_name=axis_name, axis_size=num_chunks,
                                   global_axis_size=None, devices=None,
                                   name=soft_mapped_fun.__name__,
-                                  mapped_invars=mapped_invars)
+                                  mapped_invars=mapped_invars,
+                                  donated_invars=donated_invars)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
 
@@ -1957,3 +1980,6 @@ def custom_gradient(fun):
   primal_fun = custom_transforms(primal_fun)
   defvjp_all(primal_fun, fun)
   return primal_fun
+
+def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
+  return (x,) if isinstance(x, int) else tuple(x)

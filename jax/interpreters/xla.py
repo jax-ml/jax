@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from functools import reduce
 import itertools as it
 import operator as op
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tuple
+from warnings import warn
 
 from absl import logging
 import numpy as onp
@@ -221,13 +222,15 @@ def apply_primitive(prim, *args, **params):
 def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
                                                    Optional[Device]], **params):
   avals, arg_devices = unzip2(arg_specs)
+  donated_invars = (False,) * len(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
   if primitive_uses_outfeed(prim, params):
     # We use the _xla_callable path, where we pre-process the primitives
     def prim_fun(*args):
       return prim.bind(*args, **params)
-    return _xla_callable(lu.wrap_init(prim_fun), device, None, "prim", *arg_specs)
+    return _xla_callable(lu.wrap_init(prim_fun), device, None, "prim", donated_invars,
+                         *arg_specs)
   aval_out = prim.abstract_eval(*avals, **params)
   if not prim.multiple_results:
     handle_result = aval_to_result_handler(device, aval_out)
@@ -520,8 +523,8 @@ def jaxpr_collectives(jaxpr):
 
 ### xla_call underlying jit
 
-def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name):
-  compiled_fun = _xla_callable(fun, device, backend, name, *map(arg_spec, args))
+def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_invars):
+  compiled_fun = _xla_callable(fun, device, backend, name, donated_invars, *map(arg_spec, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -529,8 +532,51 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name):
           "Calling the de-optimized version.")
     return fun.call_wrapped(*args)  # probably won't return
 
+def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
+  """Expands a given shape tree into a flat list of indices to arrays.
+
+  Given the following computation:
+
+  >>> c = xc.XlaBuilder("example")
+  >>> p0 = xb.parameter(c, 1, xc.shape_from_pyval(jnp.ones([1])))
+  >>> p1 = xb.parameter(c, 2, xc.shape_from_pyval(jnp.ones([2])))
+  >>> p2 = xb.parameter(c, 3, xc.shape_from_pyval(jnp.ones([3])))
+  >>> o = xops.Tuple(c, [p0, p1, p2])
+
+  We can query the arrays in the output tuple:
+
+  >>> flatten_shape(c.GetShape(o))
+  (((0,), f32[1]{0}),
+   ((1,), f32[2]{0}),
+   ((2,), f32[3]{0}))
+
+  Or the arrays in one of the parameters (which is itself an array):
+
+  >>> flatten_shape(c.GetShape(p0))
+  (((), f32[1]{0}),)
+
+  Args
+    s: The input shape.
+
+  Returns:
+    An iterable of pairs of indices and shapes for each array within the shape
+    tree.
+  """
+  def _flatten_shape(s, index):
+    if s.is_array():
+      yield index, s
+    else:
+      assert s.is_tuple()
+      for i, sub in enumerate(s.tuple_shapes()):
+        subindex = index + (i,)
+        if sub.is_tuple():
+          yield from _flatten_shape(sub, subindex)
+        else:
+          yield subindex, sub
+  return tuple(_flatten_shape(s, index=()))
+
 @lu.cache
-def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
+def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
@@ -574,19 +620,55 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, *arg_specs):
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
-  built = c.build(xops.Tuple(c, out_nodes))
+  out_tuple = xops.Tuple(c, out_nodes)
+  backend = xb.get_backend(backend)
+  if backend.platform == "tpu":
+    donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+  if any(donated_invars):
+    # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+    unused_donations = [str(c.GetShape(a))
+                        for a, d in zip(xla_args, donated_invars) if d]
+    warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
+  built = c.build(out_tuple)
 
   options = xb.get_compile_options(
       num_replicas=nreps,
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
   options.parameter_is_tupled_arguments = tuple_args
-  backend = xb.get_backend(backend)
   compiled = backend.compile(built, compile_options=options)
   if nreps == 1:
     return partial(_execute_compiled, compiled, uses_outfeed, result_handlers)
   else:
     return partial(_execute_replicated, compiled, uses_outfeed, result_handlers)
+
+def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
+  """Configures input/output "must" aliasing based on `donated_args`."""
+  # First for every input array add it to `donations` iff it is a member of
+  # `donated_args`.
+  donations = defaultdict(deque)
+  for arg_index, arg in enumerate(xla_args):
+    if donated_args[arg_index]:
+      for param_index, element in flatten_shape(c.GetShape(arg)):
+        key = (element.dimensions(), element.numpy_dtype())
+        if tuple_args:
+          param_number = 0
+          param_index = (arg_index,) + tuple(param_index)
+          donations[key].append((param_number, param_index, arg_index))
+        else:
+          param_number = arg_index
+          donations[key].append((param_number, param_index, arg_index))
+
+  # Consume donations for outputs.
+  out_donated_args = list(donated_args)
+  for output_index, element in flatten_shape(c.GetShape(out_tuple)):
+    key = (element.dimensions(), element.numpy_dtype())
+    if donations.get(key, ()):
+      param_number, param_index, arg_index = donations[key].popleft()
+      out_donated_args[arg_index] = False
+      c.setup_alias(output_index, param_number, param_index)
+
+  return tuple(out_donated_args)
 
 def _xla_callable_device(nreps, backend, device, arg_devices):
   if nreps > 1:
@@ -708,8 +790,14 @@ pe.staged_out_calls.add(xla_call_p)
 
 def _xla_call_translation_rule(c, axis_env,
                                in_nodes, name_stack, backend, name,
-                               call_jaxpr, device=None):
+                               call_jaxpr, device=None, donated_invars=None):
   del device  # Ignored.
+  if donated_invars is None:
+    donated_invars = (False,) * len(in_nodes)
+  elif any(donated_invars):
+    raise ValueError("Donating buffers passed to a jit nested inside a jit or "
+                     "pmap is not supported.")
+
   subc = xb.make_computation_builder(f"jit_{name}")
   args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),

@@ -1203,6 +1203,9 @@ def type_transfer(prim, invars, params):
       if "mapped_invars" not in params:
         raise TypeError(
             f"Map primitive {prim} missing 'mapped_invars' parameter")
+      if "donated_invars" not in params:
+        raise TypeError(
+            f"Map primitive {prim} missing 'donated_invars' parameter")
 
     call_jaxpr = params["call_jaxpr"]
     if len(invars) != len(call_jaxpr.invars):

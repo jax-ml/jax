@@ -599,16 +599,16 @@ xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
 def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size, global_axis_size,
-                  devices, name, mapped_invars):
+                  devices, name, mapped_invars, donated_invars):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
                                    global_axis_size, devices, name, mapped_invars,
-                                   *abstract_args)
+                                   donated_invars, *abstract_args)
   return compiled_fun(*args)
 
 @lu.cache
 def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
-                      devices, name, mapped_invars, *avals):
+                      devices, name, mapped_invars, donated_invars, *avals):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
@@ -727,6 +727,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
   else:
     out_tuple = build_out_tuple()
+  backend = xb.get_backend(backend)
+  if backend.platform == "tpu":
+    donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   built = c.Build(out_tuple)
 
   if devices is None:
@@ -775,7 +778,6 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
           num_partitions=num_partitions,
           device_assignment=device_assignment)
   compile_options.parameter_is_tupled_arguments = tuple_args
-  backend = xb.get_backend(backend)
   compiled = backend.compile(built, compile_options=compile_options)
 
   input_sharding_specs = [
@@ -1037,7 +1039,11 @@ xla_pmap_p.def_impl(xla_pmap_impl)
 def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name,
-                           call_jaxpr, *, backend=None, mapped_invars):
+                           call_jaxpr, *, backend=None, mapped_invars,
+                           donated_invars):
+  if any(donated_invars):
+    raise ValueError("Donating buffers passed to a a pmap nested inside a jit "
+                     "or another pmap is not supported.")
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):
