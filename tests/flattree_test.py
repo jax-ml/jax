@@ -213,3 +213,40 @@ class FlatTreeTest(jtu.JaxTestCase):
       return x
     actual = tree_vectorize(lambda f, x: f(x.sum()))(f, tree)
     self.assertTreeEqual(actual, 3, check_dtypes=True)
+
+  def test_cg(self):
+
+    @tree_vectorize
+    def cg(A, b, x0, maxiter, tol, atol, M):
+
+      # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
+      bs = b @ b
+      atol2 = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
+
+      # https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_preconditioned_conjugate_gradient_method
+
+      def cond_fun(value):
+        x, r, gamma, p, k = value
+        rs = r @ r
+        return (rs > atol2) & (k < maxiter)
+
+      def body_fun(value):
+        x, r, gamma, p, k = value
+        Ap = A(p)
+        alpha = gamma / (p.conj() @ Ap)
+        x_ = x + alpha * p
+        r_ = r - alpha * Ap
+        z_ = M(r_)
+        gamma_ = r_.conj() @ z_
+        beta_ = gamma_ / gamma
+        p_ = z_ + beta_ * p
+        return x_, r_, gamma_, p_, k + 1
+
+      r0 = b - A(x0)
+      p0 = z0 = M(r0)
+      gamma0 = r0 @ z0
+      initial_value = (x0, r0, gamma0, p0, 0)
+      x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
+      return x_final
+
+    # TODO: add an assertion, once we've added dot_general
