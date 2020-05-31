@@ -23,7 +23,8 @@ from jax.interpreters.flattree import (
     TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
     restore_tree,
 )
-from jax import tree_vectorize
+from jax import disable_jit, tree_vectorize
+from jax import lax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_structure
 from jax.config import config
@@ -42,14 +43,14 @@ class FlatTreeTest(jtu.JaxTestCase):
     self.assertEqual(actual_leaves.keys(), expected_leaves.keys())
     for key in actual_leaves:
       self.assertArraysEqual(actual_leaves[key], expected_leaves[key],
-                             check_dtypes=True)
+                             check_dtypes=check_dtypes)
 
   def assertTreeEqual(self, expected, actual, check_dtypes):
     expected_leaves, expected_treedef = tree_flatten(expected)
     actual_leaves, actual_treedef = tree_flatten(actual)
     self.assertEqual(actual_treedef, expected_treedef)
     for actual_leaf, expected_leaf in zip(actual_leaves, expected_leaves):
-      self.assertArraysEqual(actual_leaf, expected_leaf, check_dtypes=True)
+      self.assertArraysEqual(actual_leaf, expected_leaf, check_dtypes=check_dtypes)
 
   @parameterized.parameters([
       (1.0, ([], [], {(): 1.0})),
@@ -128,6 +129,13 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(lambda x: jnp.expand_dims(x, 1).squeeze())(tree)
     self.assertTreeEqual(actual, tree, check_dtypes=True)
 
+  def test_transpose(self):
+    tree = {'x': jnp.array(0.0),
+            'y': jnp.array([1.0]),
+            'z': jnp.array([[2.0, 3.0]])}
+    actual = tree_vectorize(jnp.transpose)(tree)
+    self.assertTreeEqual(actual, tree, check_dtypes=True)
+
   def test_unary_arithmetic(self):
     tree = {'a': 0, 'b': jnp.array([1, 2])}
     expected = {'a': 1, 'b': jnp.array([2, 3])}
@@ -192,8 +200,24 @@ class FlatTreeTest(jtu.JaxTestCase):
     self.assertEqual(tree_vectorize(jnp.prod)(tree), 24.0)
     self.assertEqual(tree_vectorize(jnp.min)(tree), 1.0)
     self.assertEqual(tree_vectorize(jnp.max)(tree), 4.0)
+    self.assertEqual(tree_vectorize(lambda x: jnp.all(x > 2))(tree), False)
+    self.assertEqual(tree_vectorize(lambda x: jnp.any(x > 2))(tree), True)
 
-  # TODO(shoyer): needs process_call
+  def test_dot(self):
+    tree = {'x': jnp.array(1.0),
+            'y': jnp.array([2.0]),
+            'z': jnp.array([[3.0, 4.0]])}
+    self.assertEqual(tree_vectorize(jnp.dot)(tree, tree), 1.0 + 4 + 9 + 16)
+
+    tree2 = {'a': 1.0, 'b': -1.0}
+    expected = {'x': {'a': tree['x'], 'b': -tree['x']},
+                'y': {'a': tree['y'], 'b': -tree['y']},
+                'z': {'a': tree['z'], 'b': -tree['z']}}
+    f = lambda x, y: x[:, None] @ y[None, :]
+    actual = tree_vectorize(f)(tree, tree2)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+  # TODO(shoyer): needs jit/process_call
   # def test_norm(self):
   #   tree = [3.0, jnp.array([[4.0]])]
   #   self.assertEqual(tree_vectorize(jnp.linalg.norm)(tree), 5.0)
@@ -214,10 +238,19 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(lambda f, x: f(x.sum()))(f, tree)
     self.assertTreeEqual(actual, 3, check_dtypes=True)
 
+  def test_transposing_arithmetic(self):
+    tree = {'x': 1, 'y': 2}
+    def f(x):
+      y = x[:, None, None]
+      return y + 10 * y.T
+    expected = {'x': {'x': jnp.array([11]), 'y': jnp.array([21])},
+                'y': {'x': jnp.array([12]), 'y': jnp.array([22])}}
+    actual = tree_vectorize(f)(tree)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
   def test_cg(self):
 
-    @tree_vectorize
-    def cg(A, b, x0, maxiter, tol, atol, M):
+    def cg(A, b, x0, M, maxiter=5, tol=1e-5, atol=0.0):
 
       # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
       bs = b @ b
@@ -246,7 +279,19 @@ class FlatTreeTest(jtu.JaxTestCase):
       p0 = z0 = M(r0)
       gamma0 = r0 @ z0
       initial_value = (x0, r0, gamma0, p0, 0)
+
       x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
+
       return x_final
 
-    # TODO: add an assertion, once we've added dot_general
+    A = lambda x: {'a': x['a'] + 0.5 * x['b'], 'b': 0.5 * x['a'] + x['b']}
+    b = {'a': 1.0, 'b': -1.0}
+    x0 = {'a': 0.0, 'b': 0.0}
+    M = lambda x: x
+
+    # TODO(shoyer): remove disable_jit, once while_loop and jit work
+    with disable_jit():
+      actual = tree_vectorize(cg)(A, b, x0, M)
+
+    expected = {'a': 2.0, 'b': -2.0}
+    self.assertAllClose(actual, expected, check_dtypes=True)

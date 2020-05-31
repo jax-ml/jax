@@ -2711,6 +2711,8 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
+flattree.tree_rules[dot_general_p] = partial(
+    flattree.dot_general_tree_rule, dot_general_p)
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -3196,6 +3198,8 @@ transpose_p.def_impl(_transpose_impl)
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
+flattree.tree_rules[transpose_p] = partial(
+    flattree.transpose_tree_rule, transpose_p)
 
 
 def _select_shape_rule(pred, on_true, on_false):
