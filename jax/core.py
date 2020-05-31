@@ -644,13 +644,9 @@ def full_lower(val):
     return val
 
 def find_top_trace(xs):
- try:
-   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
-                   key=attrgetter('level'))
- except ValueError:
-   return None
- else:
-   return type(top_trace)(top_trace.master, cur_sublevel())
+  top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
+                  key=attrgetter('level'), default=None)
+  return top_trace and type(top_trace)(top_trace.master, cur_sublevel())
 
 @contextmanager
 def initial_style_staging():
