@@ -290,6 +290,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
       self.assertTrue(isinstance(r, pxla.ShardedDeviceArray))
       self.assertEqual(len(r.device_buffers), num_shards)
 
+
   @parameterized.named_parameters({
       "testcase_name":
           "_in_parts={}_out_parts={}".format(in_partitions,
@@ -444,6 +445,27 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     self.assertAllClose(result, expected, check_dtypes=False)
     self.assertIsInstance(result, pxla.ShardedDeviceArray)
     self.assertLen(result.device_buffers, 4)
+
+  def testInAxesNone(self):
+    shape = (4, 4)
+    replicas = 2
+    in_partitions = (P(2, 1), None, None)
+    out_partitions = P(2, 1)
+    in_axes = (None, None, 0)
+    x = y = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    dummy = np.arange(replicas, dtype=np.float32) + 1
+    num_shards = replicas * np.prod(in_partitions[0])
+    if num_shards > jax.local_device_count():
+      raise SkipTest("requires %d devices" % num_shards)
+
+    def f(x, y, _):
+      return x @ y
+
+    result = pmap(
+        sharded_jit(f, in_parts=in_partitions, out_parts=out_partitions),
+        in_axes=in_axes)(x, y, dummy)
+    expected = pmap(f, in_axes=in_axes)(x, y, dummy)
+    self.assertAllClose(result, expected, check_dtypes=True)
 
 
 if __name__ == "__main__":
