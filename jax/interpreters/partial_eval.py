@@ -19,7 +19,7 @@ from collections import namedtuple
 import contextlib
 import threading
 from typing import (Callable, Dict, Iterable, NamedTuple, Optional, Sequence,
-                    Set, Tuple, Type, Union)
+                    Set, Tuple, Type, Union, cast)
 from weakref import ref
 
 import numpy as onp
@@ -356,14 +356,14 @@ def abstract_eval_fun(fun, *avals, **params):
   return avals_out
 
 
-Recipe = Union['JaxprEqnRecipe', 'LambdaBinding', 'FreeVar', 'ConstVar',
-               Literal, core.Unit]
+JaxprTracerRecipe = Union['JaxprEqnRecipe', 'LambdaBinding', 'FreeVar',
+                          'ConstVar', Literal, core.Unit]
 
 class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
 
   def __init__(self, trace: JaxprTrace, pval: PartialVal,
-               recipe: Optional[Recipe]):
+               recipe: Optional[JaxprTracerRecipe]):
     assert isinstance(pval, PartialVal)
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
@@ -510,16 +510,18 @@ def new_eqn_recipe(invars: Iterable[JaxprTracer],
 
 
 def recipe_to_eqn(unused_var: Callable[[], core.Var],
-                  getvar: Callable[[JaxprTracer], core.Var],
+                  getvar: Callable[[JaxprTracer], core.Atom],
                   recipe: JaxprEqnRecipe) -> core.JaxprEqn:
   _, in_tracers, out_tracer_refs, primitive, params = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
-  outvars = [unused_var() if t is None else getvar(t) for t in out_tracers]
+  outvars = [unused_var() if t is None else cast(core.Var, getvar(t))
+             for t in out_tracers]
   return new_jaxpr_eqn(invars, outvars, primitive, params)
 
-def tracers_to_jaxpr(in_tracers: List[JaxprTracer],
-                     out_tracers: List[JaxprTracer]) -> Tuple[Jaxpr, Any, Any]:
+def tracers_to_jaxpr(
+  in_tracers: List[JaxprTracer],
+  out_tracers: List[JaxprTracer]) -> Tuple[Jaxpr, Sequence[Any], Sequence[Any]]:
   """Constructs Jaxpr given tracers for inputs and outputs.
 
   Params:
@@ -532,8 +534,8 @@ def tracers_to_jaxpr(in_tracers: List[JaxprTracer],
     `invars`.
   """
   newvar = core.gensym()
-  t_to_var: Dict[int, Any] = {}
-  def getvar(t: JaxprTracer) -> core.Var:
+  t_to_var: Dict[int, core.Atom] = {}
+  def getvar(t: JaxprTracer) -> core.Atom:
     var = t_to_var.get(id(t))
     if var is None:
       aval = t.pval.get_aval() if not t.pval.is_known() else abstract_unit
@@ -563,7 +565,7 @@ def tracers_to_jaxpr(in_tracers: List[JaxprTracer],
             "Tracer not among input tracers {}".format(t))
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
-      env[getvar(t)] = recipe.val
+      env[cast(core.Var, getvar(t))] = recipe.val
     elif isinstance(recipe, ConstVar):
       v = t_to_var[id(t)] = getconstvar(recipe.val)
       consts[v] = recipe.val

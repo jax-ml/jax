@@ -23,7 +23,8 @@ from weakref import ref
 import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator, Iterator, List,
-                    NamedTuple, Optional, Sequence, Set, Tuple, Type, cast)
+                    NamedTuple, Optional, Sequence, Set, Tuple, Type, Union,
+                    cast)
 
 import numpy as onp
 
@@ -136,7 +137,7 @@ def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
 
 
 class JaxprEqn(NamedTuple):
-  invars: List['Var']
+  invars: List[Atom]
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
@@ -229,6 +230,8 @@ class Literal(object):
       return '{}'.format(self.val)
 
 literalable_types: Set[type] = set()
+
+Atom = Union[Var, Literal]
 
 class Primitive(object):
   name: str
@@ -1266,7 +1269,7 @@ def type_transfer(prim: Primitive, invars: Sequence[Var],
 
 # ------------------- Jaxpr printed representation -------------------
 
-def pp_vars(vs: Sequence[Var]) -> str:
+def pp_vars(vs: Sequence[Atom]) -> str:
   return ' '.join(map(str, vs))
 
 def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
