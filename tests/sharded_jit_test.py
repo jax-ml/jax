@@ -181,6 +181,38 @@ class ShardedJitTest(jtu.JaxTestCase):
     expected = expected_f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
 
+  @parameterized.named_parameters({
+      "testcase_name": f"_partition_input={partition_input}",
+      "partition_input": partition_input
+  } for partition_input in [True, False])
+  def testInfeed(self, partition_input):
+    if jax.local_device_count() % 2 != 0:
+      raise SkipTest
+
+    shape = (jax.local_device_count() * 2, 4)
+    # Run computation across all devices so we know which devices to feed.
+    parts = P(jax.local_device_count(), 1)
+    infeed_shape = jax.ShapedArray(shape, np.float32)
+    in_parts = parts if partition_input else None
+
+    @partial(sharded_jit, in_parts=in_parts, out_parts=None)
+    def f(x):
+      token = lax.create_token(x)
+      (y,), token = lax.infeed(token, (infeed_shape,), partitions=parts)
+      return x @ y.T
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    y = x + 1
+    shard_size = shape[0] // jax.local_device_count()
+    y_shards = [y[i:i+shard_size] for i in range(0, shape[0], shard_size)]
+
+    result = f(x)
+    for device, shard in zip(jax.local_devices(), y_shards):
+      device.transfer_to_infeed((shard,))
+
+    expected = x @ y.T
+    self.assertAllClose(result, expected, check_dtypes=False)
+
 
 # TODO(skye): add more error tests
 class ShardedJitErrorsTest(jtu.JaxTestCase):

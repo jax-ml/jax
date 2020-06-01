@@ -5020,30 +5020,41 @@ after_all_p.def_abstract_eval(_after_all_abstract_eval)
 xla.translations[after_all_p] = _after_all_translation_rule
 
 
-def infeed(token, shape=None):
+def infeed(token, shape=None, partitions=None):
   """Consumes an infeed value of `shape` from the host. Experimental.
 
   `token` is used to sequence infeed and outfeed effects.
+  `partitions` may be specifed inside a `sharded_jit` function.
   """
   flat_shapes, treedef = pytree.flatten(shape)
   for shape in flat_shapes:
     if not isinstance(shape, ShapedArray):
       raise TypeError("shape argument to infeed must be a pytree of "
                       "ShapedArray values, got {}".format(shape))
-  xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes))
+  if partitions is not None:
+    # Always replicate token.
+    partitions = (partitions, None)
+  xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes),
+                               partitions=partitions)
   return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
 
-def _infeed_abstract_eval(token, *, shapes):
+def _infeed_abstract_eval(token, *, shapes, partitions):
   if token is not abstract_token:
     raise TypeError("First argument to infeed must be a token")
   return shapes + (abstract_token,)
 
 
-def _infeed_translation_rule(c, token, *, shapes):
+def _infeed_translation_rule(c, token, *, shapes, partitions):
   shape = tuple(xla.aval_to_xla_shape(x).with_major_to_minor_layout_if_absent()
                 for x in shapes)
-  xs_and_token = xops.InfeedWithToken(token,
-                                      xla_client.Shape.tuple_shape(shape))
+  build_infeed = partial(xops.InfeedWithToken, token,
+                         xla_client.Shape.tuple_shape(shape))
+  if partitions:
+    xs_and_token = xb.with_sharding(c, partitions, build_infeed)
+  else:
+    # Note that infeed will default to replication if inside a sharded
+    # computation and no sharding is specified.
+    xs_and_token = build_infeed()
   xs = xops.GetTupleElement(xs_and_token, 0)
   token = xops.GetTupleElement(xs_and_token, 1)
   outs = [xops.GetTupleElement(xs, i) for i in range(len(shapes))] + [token]
