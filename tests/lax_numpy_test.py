@@ -1980,30 +1980,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                           rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_arg{}_ndmin={}".format(i, ndmin),
+      {"testcase_name": 
+       f"_arg{i}_ndmin={ndmin}_dtype={np.dtype(dtype) if dtype else None}",
        "arg": arg, "ndmin": ndmin, "dtype": dtype}
-      for i, (arg, dtype) in enumerate([
-          ([True, False, True], jnp.bool_),
-          (3., jnp.float_),
-          ([1, 2, 3], jnp.int_),
-          ([1., 2., 3.], jnp.float_),
-          ([[1, 2], [3, 4], [5, 6]], jnp.int_),
-          ([[1, 2.], [3, 4], [5, 6]], jnp.float_),
-          ([[1., 2j], [3., 4.], [5., 6.]], jnp.complex_),
+      for i, (arg, dtypes) in enumerate([
+          ([True, False, True], all_dtypes),
+          (3., all_dtypes),
+          ([1, 2, 3], all_dtypes),
+          (np.array([1, 2, 3], dtype=np.int64), all_dtypes),
+          ([1., 2., 3.], all_dtypes),
+          ([[1, 2], [3, 4], [5, 6]], all_dtypes),
+          ([[1, 2.], [3, 4], [5, 6]], all_dtypes),
+          ([[1., 2j], [3., 4.], [5., 6.]], complex_dtypes),
           ([[3, np.array(2, dtype=jnp.float_), 1],
-           np.arange(3., dtype=jnp.float_)], jnp.float_),
+           np.arange(3., dtype=jnp.float_)], all_dtypes),
       ])
+      for dtype in [None] + dtypes
       for ndmin in [None, np.ndim(arg), np.ndim(arg) + 1, np.ndim(arg) + 2]))
   def testArray(self, arg, ndmin, dtype):
     args_maker = lambda: [arg]
-    dtype = dtypes.canonicalize_dtype(dtype)
+    canonical_dtype = dtypes.canonicalize_dtype(dtype or np.array(arg).dtype)
     if ndmin is not None:
-      np_fun = partial(np.array, ndmin=ndmin, dtype=dtype)
-      jnp_fun = partial(jnp.array, ndmin=ndmin)
+      np_fun = partial(np.array, ndmin=ndmin, dtype=canonical_dtype)
+      jnp_fun = partial(jnp.array, ndmin=ndmin, dtype=dtype)
     else:
-      np_fun = partial(np.array, dtype=dtype)
-      jnp_fun = jnp.array
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+      np_fun = partial(np.array, dtype=canonical_dtype)
+      jnp_fun = partial(jnp.array, dtype=dtype)
+
+    # We are testing correct canonicalization behavior here, so we turn off the
+    # permissive canonicalization logic in the test harness.
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            canonicalize_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testArrayUnsupportedDtypeError(self):

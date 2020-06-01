@@ -2111,13 +2111,8 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     raise NotImplementedError("Only implemented for order='K'")
   lax._check_user_dtype_supported(dtype, "array")
 
-  if isinstance(object, ndarray):
-    if dtype and _dtype(object) != dtypes.canonicalize_dtype(dtype):
-      out = lax.convert_element_type(object, dtype)
-    else:
-      out = device_put(object)
-  elif isscalar(object):
-    out = lax.reshape(object, ())
+  if isinstance(object, ndarray) or isscalar(object):
+    out = device_put(object)
     if dtype and _dtype(out) != dtypes.canonicalize_dtype(dtype):
       out = lax.convert_element_type(out, dtype)
   elif hasattr(object, '__array__'):

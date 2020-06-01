@@ -737,28 +737,32 @@ class JaxTestCase(parameterized.TestCase):
     if check_dtypes:
       self.assertDtypesMatch(x, y)
 
-  def assertDtypesMatch(self, x, y):
-    if FLAGS.jax_enable_x64:
+  def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
+    if not FLAGS.jax_enable_x64 and canonicalize_dtypes:
+      self.assertEqual(dtypes.canonicalize_dtype(_dtype(x)),
+                       dtypes.canonicalize_dtype(_dtype(y)))
+    else:
       self.assertEqual(_dtype(x), _dtype(y))
 
-  def assertAllClose(self, x, y, *, check_dtypes=True, atol=None, rtol=None):
+  def assertAllClose(self, x, y, *, check_dtypes=True, atol=None, rtol=None,
+                     canonicalize_dtypes=True):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
     if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
         self.assertAllClose(x[k], y[k], check_dtypes=check_dtypes, atol=atol,
-                            rtol=rtol)
+                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes)
     elif is_sequence(x) and not hasattr(x, '__array__'):
       self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):
         self.assertAllClose(x_elt, y_elt, check_dtypes=check_dtypes, atol=atol,
-                            rtol=rtol)
+                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes)
     elif hasattr(x, '__array__') or np.isscalar(x):
       self.assertTrue(hasattr(y, '__array__') or np.isscalar(y))
       if check_dtypes:
-        self.assertDtypesMatch(x, y)
+        self.assertDtypesMatch(x, y, canonicalize_dtypes=canonicalize_dtypes)
       x = np.asarray(x)
       y = np.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol)
@@ -822,12 +826,14 @@ class JaxTestCase(parameterized.TestCase):
                         atol=atol, rtol=rtol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
-                         check_dtypes=True, tol=None):
+                         check_dtypes=True, tol=None,
+                         canonicalize_dtypes=True):
     args = args_maker()
     lax_ans = lax_op(*args)
     numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
-                        atol=tol, rtol=tol)
+                        atol=tol, rtol=tol,
+                        canonicalize_dtypes=canonicalize_dtypes)
 
 
 @contextmanager
