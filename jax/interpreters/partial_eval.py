@@ -120,7 +120,7 @@ class JaxprTrace(Trace):
   def new_arg(self, pval: PartialVal) -> 'JaxprTracer':
     return JaxprTracer(self, pval, LambdaBinding())
 
-  def instantiate_const(self, tracer) -> Tracer:
+  def instantiate_const(self, tracer) -> 'JaxprTracer':
     const = tracer.pval.get_known()
     if const is None:
       return tracer
@@ -294,7 +294,7 @@ class JaxprTrace(Trace):
                         mapped_invars=tuple(new_mapped_invars),
                         call_jaxpr=lifted_jaxpr)
       env_tracers = map(trace.full_raise, env)
-      eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
+      eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers)),
                            out_tracers, map_primitive, new_params)
       for t in out_tracers:
         t.recipe = eqn
@@ -487,8 +487,8 @@ class JaxprEqnRecipe(NamedTuple):
   primitive: core.Primitive
   params: Dict[str, Any]
 
-def new_eqn_recipe(invars: Iterable[JaxprTracer],
-                   outvars: Iterable[JaxprTracer],
+def new_eqn_recipe(invars: Sequence[JaxprTracer],
+                   outvars: Sequence[JaxprTracer],
                    primitive: core.Primitive,
                    params: Dict[str, Any]) -> JaxprEqnRecipe:
   """Constructs a new JaxEqnRecipe.

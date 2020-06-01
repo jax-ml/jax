@@ -22,9 +22,9 @@ import itertools as it
 from weakref import ref
 import threading
 import types
-from typing import (Any, Callable, ClassVar, Dict, Generator, Iterator, List,
-                    NamedTuple, Optional, Sequence, Set, Tuple, Type, Union,
-                    cast)
+from typing import (Any, Callable, ClassVar, Dict, Generator, Hashable,
+                    Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
+                    Type, Union, cast)
 
 import numpy as onp
 
@@ -60,11 +60,11 @@ map = safe_map
 class Jaxpr(object):
   constvars: List['Var']
   invars: List['Var']
-  outvars: List['Var']
+  outvars: List['Atom']
   eqns: List['JaxprEqn']
 
   def __init__(self, constvars: Sequence['Var'], invars: Sequence['Var'],
-               outvars: Sequence['Var'], eqns: Sequence['JaxprEqn']):
+               outvars: Sequence['Atom'], eqns: Sequence['JaxprEqn']):
     """
     Params:
       constvars: list of variables introduced for constants (either literals
@@ -91,15 +91,15 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   """
   for eqn in jaxpr.eqns:
     for param in eqn.params.values():
-      if type(param) is Jaxpr:
+      if isinstance(param, Jaxpr):
         yield param
-      elif type(param) is TypedJaxpr:
+      elif isinstance(param, TypedJaxpr):
         yield param.jaxpr
 
 
 class TypedJaxpr(object):
   jaxpr: Jaxpr
-  literals: List['Literal']
+  literals: List['Any']
   in_avals: List['AbstractValue']
   out_avals: List['AbstractValue']
 
@@ -140,7 +140,7 @@ class JaxprEqn(NamedTuple):
   invars: List['Atom']
   outvars: List['Var']
   primitive: 'Primitive'
-  params: Dict[str, Any]
+  params: Dict[str, Hashable]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
