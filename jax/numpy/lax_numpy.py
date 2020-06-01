@@ -1919,7 +1919,7 @@ def _pad_edge(array, pad_width):
   nd = ndim(array)
   for i in range(nd):
     if array.shape[i] == 0:
-      _check_no_padding(pad_width[i], mode)
+      _check_no_padding(pad_width[i], "edge")
       continue
 
     n = array.shape[i]
