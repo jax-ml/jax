@@ -665,23 +665,6 @@ what: x3
     with self.assertRaisesRegex(ValueError, "outfeed_receiver is not started"):
       api.jit(lambda x: hcb.id_print(x))(0)
 
-  # On CPU and GPU the device code blocks
-  # On GPU it seems that there is a 5 min timeout?
-  # On TPU the client does not block, but messes up the rest somehow
-  @jtu.skip_on_devices("cpu", "gpu", "tpu")
-  def test_jit_receiver_ends_prematurely(self):
-    # Simulate an unknown tap function
-    def func(x):
-      x1 = hcb.id_print(x + 1, what="x1", output_stream=testing_stream)
-      x2 = hcb.id_tap(hcb._end_consumer, result=x1 + 1)  # Will end the consumer loop
-      x3 = hcb.id_print(x2 + 1, what="x3", output_stream=testing_stream)
-      return x3
-
-    with hcb.outfeed_receiver(receiver_name=self._testMethodName):
-      res = api.jit(func)(0)
-
-    assert False  # It seems that the previous jit blocks above
-
   def test_jit_nested_cond_no_print(self):
     """A nested conditional, without any prints"""
     raise SkipTest("skip this")
