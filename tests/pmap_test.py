@@ -217,7 +217,7 @@ class PmapTest(jtu.JaxTestCase):
 
     f_expected = np.broadcast_to(x, mesh_shape)
     f_ans = f(x, y)
-    self.assertAllClose(f_ans, f_expected, check_dtypes=True)
+    self.assertAllClose(f_ans, f_expected)
     self.assertIsInstance(f_ans, pxla.ShardedDeviceArray)
     # the output is actually replicated (has the same values in each device buffer)
     # but out_axes is implicitly 0, so we shouldn't have replication in the
@@ -226,7 +226,7 @@ class PmapTest(jtu.JaxTestCase):
 
     g_expected = np.broadcast_to(x - np.sum(y, 0, keepdims=True), shape)
     g_ans = g(x, y)
-    self.assertAllClose(g_ans, g_expected, check_dtypes=True)
+    self.assertAllClose(g_ans, g_expected)
     self.assertIsInstance(g_ans, pxla.ShardedDeviceArray)
     self.assertEqual(g_ans.sharding_spec.replication_factor, 1)
 
@@ -302,7 +302,7 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = grad(lambda x: jnp.sum(splitjvp(x)))(x)
     expected = grad(fun)(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testTwoArgsGrad(self):
     def f(x, y):
@@ -352,7 +352,7 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = grad(lambda x: jnp.sum(test_fun(x)))(x)
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
-    self.assertAllClose(ans, expected, check_dtypes=True, atol=1e-3)
+    self.assertAllClose(ans, expected, atol=1e-3)
 
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
@@ -466,11 +466,11 @@ class PmapTest(jtu.JaxTestCase):
     expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 1)
     expected = x - expected_psum
     ans = f1(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     expected = x - expected_psum + 1.
     ans = f2(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     shape = (replicas // 2, 2, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -482,7 +482,7 @@ class PmapTest(jtu.JaxTestCase):
     expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
     expected = x - expected_psum
     ans = f3(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testAxisGroups(self):
     axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
@@ -568,7 +568,7 @@ class PmapTest(jtu.JaxTestCase):
       lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
     result = f(jnp.arange(num_devices, dtype=jnp.float32))
     expected = jnp.asarray(perm, dtype=jnp.float32)
-    self.assertAllClose(result, expected, check_dtypes=True)
+    self.assertAllClose(result, expected)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
@@ -911,7 +911,7 @@ class PmapTest(jtu.JaxTestCase):
     arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
 
     r = pmap(lambda x: x + 1)(arr)
-    self.assertAllClose(r, arr + 1, check_dtypes=True)
+    self.assertAllClose(r, arr + 1)
     self.assertEqual(len(r.device_buffers), 6)
 
   @ignore_soft_pmap_warning()
@@ -1114,8 +1114,7 @@ class PmapTest(jtu.JaxTestCase):
     vals = list(range(500))
     ndevices = xla_bridge.device_count()
     self.assertAllClose(f(jnp.array([vals] * ndevices)),
-                        jnp.array([sum(vals)] * ndevices),
-                        check_dtypes=True)
+                        jnp.array([sum(vals)] * ndevices))
 
   def testPostProcessMap(self):
     # code from https://github.com/google/jax/issues/2787
@@ -1221,7 +1220,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.sum(x, 0)
     ans = f(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testOneDevice(self):
     if xla_bridge.device_count() == 1:
@@ -1236,8 +1235,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     r0 = f0(x)
     r1 = f1(x)
     expected = np.expand_dims(np.dot(x.squeeze(), x.squeeze().T), 0)
-    self.assertAllClose(r0, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
-    self.assertAllClose(r1, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
+    self.assertAllClose(r0, expected, atol=1e-6, rtol=1e-3)
+    self.assertAllClose(r1, expected, atol=1e-6, rtol=1e-3)
 
   def testNoDevicesError(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
@@ -1303,7 +1302,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     ndevices = xla_bridge.device_count()
     ans = foo(jnp.ones((ndevices, 1)))
     expected = np.ones((ndevices, 1), dtype=jnp.float_) * ndevices * 2
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testPmapInJit(self):
     @jit
@@ -1316,7 +1315,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     ndevices = xla_bridge.device_count()
     ans = foo(jnp.ones((ndevices, 1)))
     expected = np.ones((ndevices, 1), dtype=jnp.float_) * ndevices
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testGradBasic(self):
     @partial(pmap, axis_name='i', devices=xla_bridge.devices())

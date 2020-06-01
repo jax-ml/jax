@@ -109,7 +109,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
     if dtype in (float_dtypes if real and not inverse else inexact_dtypes):
       # TODO(skye): can we be more precise?
@@ -169,7 +169,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}".format(inverse, real),
@@ -228,7 +228,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}".format(inverse, real),
@@ -279,7 +279,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
@@ -323,7 +323,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
@@ -362,7 +362,7 @@ class FftTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda arg: jnp.fft.fftshift(arg, axes=axes)
     np_fn = lambda arg: np.fft.fftshift(arg, axes=axes)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "dtype={}_axes={}".format(
@@ -377,7 +377,7 @@ class FftTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda arg: jnp.fft.ifftshift(arg, axes=axes)
     np_fn = lambda arg: np.fft.ifftshift(arg, axes=axes)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker)
 
 if __name__ == "__main__":
   absltest.main()

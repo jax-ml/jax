@@ -148,7 +148,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertEqual("", testing_stream.output)
 
     with hcb.outfeed_receiver():
-      self.assertAllClose((5. * 2.) ** 2, fun1(5.), check_dtypes=True)
+      self.assertAllClose((5. * 2.) ** 2, fun1(5.))
     assertMultiLineStrippedEqual(self, """
 what: a * 2
 10.00
@@ -232,7 +232,7 @@ what: x3
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(5.)
 
-    self.assertAllClose(6. * 5., res, check_dtypes=True)
+    self.assertAllClose(6. * 5., res)
     assertMultiLineStrippedEqual(self, """
 what: here
 10.00""", testing_stream.output)
@@ -258,7 +258,7 @@ what: here
     self.assertEqual("", testing_stream.output)
 
     with hcb.outfeed_receiver():
-      self.assertAllClose(5, api.jit(func)(5), check_dtypes=True)
+      self.assertAllClose(5, api.jit(func)(5))
     assertMultiLineStrippedEqual(self, """
 42""", testing_stream.output)
     testing_stream.reset()
@@ -512,7 +512,7 @@ where: 3
       if with_jit:
         func = api.jit(func)
       res = func(1)
-      self.assertAllClose(jnp.array([1, 2, 3]), res, check_dtypes=True)
+      self.assertAllClose(jnp.array([1, 2, 3]), res)
     assertMultiLineStrippedEqual(self, """
 where: 1
 1
@@ -564,7 +564,7 @@ where: 10
         testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
       res = jit_fun1(args)
-    # self.assertAllClose(args, res, check_dtypes=True)
+    # self.assertAllClose(args, res)
 
   def test_jit_large(self):
     arg = jnp.arange(10000, dtype=jnp.int32).reshape((10, 10, 5, -1))

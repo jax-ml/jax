@@ -195,7 +195,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     ans = vmap(lambda x: x > 1.0)(x)
     expected_ans = x > 1.0
-    self.assertAllClose(ans, expected_ans, check_dtypes=True)
+    self.assertAllClose(ans, expected_ans)
 
   def testNpMaximumPerExampleGrad(self):
     R = np.random.RandomState(0).randn
@@ -226,35 +226,35 @@ class BatchingTest(jtu.JaxTestCase):
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     ans = vmap(fun)(x, y)
     expected = lax.dot_general(x, y, [((3,), (2,)), ((0, 1), (0, 1))])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     x = R(3, 4, 10, 5)
     y = R(3, 10, 5, 6)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     ans = vmap(fun, in_axes=(2, 1))(x, y)
     expected = np.stack([fun(x[..., i, :], y[:, i, ...]) for i in range(10)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     x = R(3, 4, 5, 10)
     y = R(3, 5, 6)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     ans = vmap(fun, in_axes=(3, None))(x, y)
     expected = np.stack([fun(x[..., i], y) for i in range(10)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     x = R(3, 4, 5)
     y = R(3, 5, 10, 6)
     fun = lambda x, y: lax.dot_general(x, y, [((2,), (1,)), ((0,), (0,))])
     ans = vmap(fun, in_axes=(None, 2))(x, y)
     expected = np.stack([fun(x, y[..., i, :]) for i in range(10)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     x = R(4)
     y = R(4, 10)
     fun = lambda x, y: lax.dot_general(x, y, [((0,), (0,)), ((), ())])
     ans = vmap(fun, in_axes=(None, 1))(x, y)
     expected = np.stack([fun(x, y[..., i]) for i in range(10)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testDot(self):
     # these tests are based on @shoyer's notebook studying gufuncs
@@ -348,7 +348,7 @@ class BatchingTest(jtu.JaxTestCase):
 
     ans = vmap(jnp.any)(jnp.array([[True, False], [False, False]]))
     expected = jnp.array([True, False])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   @jtu.skip_on_devices("tpu")
   def testHessian(self):
@@ -417,46 +417,44 @@ class BatchingTest(jtu.JaxTestCase):
     v = np.arange(12)[::-1].reshape(3, 4)
 
     sv = vmap(partial(lax.sort, dimension=0), (0,))(v)
-    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sv, v[:, ::-1])
 
     sv = vmap(partial(lax.sort, dimension=-1), (0,))(v)
-    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sv, v[:, ::-1])
 
     sv = vmap(partial(lax.sort, dimension=0), (1,))(v)
-    self.assertAllClose(sv, v[::-1, :].T, check_dtypes=True)
+    self.assertAllClose(sv, v[::-1, :].T)
 
     sv = vmap(partial(lax.sort, dimension=0), (1,), 1)(v)
-    self.assertAllClose(sv, v[::-1, :], check_dtypes=True)
+    self.assertAllClose(sv, v[::-1, :])
 
   def testSortKeyVal(self):
     k = np.arange(12)[::-1].reshape(3, 4)
     v = np.random.RandomState(0).permutation(12).reshape(3, 4)
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (0, 0))(k, v)
-    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
-    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sk, k[:, ::-1])
+    self.assertAllClose(sv, v[:, ::-1])
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (1, 1), 1)(k, v)
-    self.assertAllClose(sk, k[::-1, :], check_dtypes=True)
-    self.assertAllClose(sv, v[::-1, :], check_dtypes=True)
+    self.assertAllClose(sk, k[::-1, :])
+    self.assertAllClose(sv, v[::-1, :])
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (0, 1))(k, v.T)
-    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
-    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sk, k[:, ::-1])
+    self.assertAllClose(sv, v[:, ::-1])
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (1, 0))(k.T, v)
-    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
-    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sk, k[:, ::-1])
+    self.assertAllClose(sv, v[:, ::-1])
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (None, 0))(k[0], v)
-    self.assertAllClose(sk, np.broadcast_to(k[0, ::-1], (3, 4)),
-                        check_dtypes=True)
-    self.assertAllClose(sv, v[:, ::-1], check_dtypes=True)
+    self.assertAllClose(sk, np.broadcast_to(k[0, ::-1], (3, 4)))
+    self.assertAllClose(sv, v[:, ::-1])
 
     sk, sv = vmap(partial(lax.sort_key_val, dimension=0), (1, None))(k.T, v[0])
-    self.assertAllClose(sk, k[:, ::-1], check_dtypes=True)
-    self.assertAllClose(sv, np.broadcast_to(v[0, ::-1], (3, 4)),
-                        check_dtypes=True)
+    self.assertAllClose(sk, k[:, ::-1])
+    self.assertAllClose(sv, np.broadcast_to(v[0, ::-1], (3, 4)))
 
   def testConvGeneralDilated(self):
     W = jnp.array(np.random.randn(3, 3, 1, 5), dtype=np.float32)
@@ -474,7 +472,7 @@ class BatchingTest(jtu.JaxTestCase):
     per_example = vmap(partial(f, W))(jnp.reshape(X, (10, 1, 5, 5, 1)))
     per_example = jnp.reshape(per_example, (10, 5, 5, 5))
     per_example_direct = f(W, X)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+    self.assertAllClose(per_example, per_example_direct)
 
     # Test gradients.
     per_example = vmap(partial(grad_loss, W))(jnp.reshape(X, (10, 1, 5, 5, 1)))
@@ -484,7 +482,7 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True,
+    self.assertAllClose(per_example, per_example_direct,
                         rtol=2e-2)
 
   def testConvGeneralDilatedBatchNotMajor(self):
@@ -503,7 +501,7 @@ class BatchingTest(jtu.JaxTestCase):
                              (5, 5, 21, 4))
     per_example_direct = f(W, jnp.reshape(jnp.transpose(x, (1, 0, 2, 3, 4)),
                                          (5, 21, 5, 1)))
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+    self.assertAllClose(per_example, per_example_direct)
 
   @parameterized.named_parameters(
     {"testcase_name": "_op={}".format(name), "op": op, "unit": unit}
@@ -526,7 +524,7 @@ class BatchingTest(jtu.JaxTestCase):
     per_example = vmap(partial(f, W))(jnp.reshape(X, (10, 1, 5, 5, 1)))
     per_example = jnp.reshape(per_example, (10, 5, 5, 5))
     per_example_direct = f(W, X)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+    self.assertAllClose(per_example, per_example_direct)
 
     # Test gradients.
     per_example = vmap(partial(grad_loss, W))(jnp.reshape(X, (10, 1, 5, 5, 1)))
@@ -536,7 +534,7 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True,
+    self.assertAllClose(per_example, per_example_direct,
                         rtol=5e-2)
 
   def testSumPool(self):
@@ -557,7 +555,7 @@ class BatchingTest(jtu.JaxTestCase):
     per_example = vmap(partial(f, W))(jnp.reshape(X, (10, 1, 5, 5, 1)))
     per_example = jnp.reshape(per_example, (10, 5, 5, 5))
     per_example_direct = f(W, X)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True)
+    self.assertAllClose(per_example, per_example_direct)
 
     # Test gradients.
     per_example = vmap(partial(grad_loss, W))(jnp.reshape(X, (10, 1, 5, 5, 1)))
@@ -567,14 +565,13 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct, check_dtypes=True,
+    self.assertAllClose(per_example, per_example_direct,
                         rtol=3e-2)
 
   def testCumProd(self):
    x = jnp.arange(9).reshape(3, 3) + 1
    y = vmap(lambda x: jnp.cumprod(x, axis=-1))(x)
-   self.assertAllClose(np.cumprod(x, axis=1, dtype=jnp.int_), y,
-                       check_dtypes=True)
+   self.assertAllClose(np.cumprod(x, axis=1, dtype=jnp.int_), y)
 
   def testSelect(self):
     pred = np.array([True, False])
@@ -582,7 +579,7 @@ class BatchingTest(jtu.JaxTestCase):
     on_false = np.array([2, 3])
     ans = vmap(lax.select)(pred, on_true, on_false)
     expected = np.array([0, 3])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     pred = np.array([False, True])
     on_true = np.array([0, 1])
@@ -590,28 +587,28 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(lax.select, (0, None, None))(pred, on_true, on_false)
     expected = np.array([[2, 3],
                           [0, 1]])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     pred = True
     on_true = np.array([0, 1], np.float32)
     on_false = np.array(3, np.float32)
     ans = vmap(lax.select, (None, 0, None))(pred, on_true, on_false)
     expected = np.array([0, 1], np.float32)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     pred = np.array([False, True])
     on_true = np.array([0, 1], np.float32)
     on_false = np.array(3, np.float32)
     ans = vmap(lax.select, (0, 0, None))(pred, on_true, on_false)
     expected = np.array([3, 1], np.float32)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     pred = np.array([False, True])
     on_true = np.array([2], np.float32)
     on_false = np.array([[3, 4]], np.float32)
     ans = vmap(lax.select, (0, None, 1), 1)(pred, on_true, on_false)
     expected = np.array([[3, 2]], np.float32)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testLaxLinalgCholesky(self):
     a = np.random.RandomState(0).randn(10, 5, 5).astype(np.float32)
@@ -637,17 +634,17 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(lax_linalg.triangular_solve, in_axes=(1, 2))(a, b)
     expected = np.stack(
       [lax_linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     ans = vmap(lax_linalg.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
     expected = np.stack(
       [lax_linalg.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     ans = vmap(lax_linalg.triangular_solve, in_axes=(1, None))(a, b[..., 0])
     expected = np.stack(
       [lax_linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_axis={}_idxs={}_dnums={}_slice_sizes={}".format(
@@ -987,7 +984,7 @@ class BatchingTest(jtu.JaxTestCase):
     g = jax.jit(jax.pmap(f))
     ans = g(index1=np.asarray([1]), index2=np.asarray([2]))
     expected = g(np.asarray([1]), np.asarray([2]))
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
 
 if __name__ == '__main__':

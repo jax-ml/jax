@@ -141,8 +141,8 @@ class VectorizeTest(jtu.JaxTestCase):
       return y
 
     x = jnp.arange(3)
-    self.assertAllClose(x, f('foo', x), check_dtypes=True)
-    self.assertAllClose(x, jax.jit(f, 0)('foo', x), check_dtypes=True)
+    self.assertAllClose(x, f('foo', x))
+    self.assertAllClose(x, jax.jit(f, 0)('foo', x))
 
   def test_exclude_second(self):
 
@@ -153,8 +153,8 @@ class VectorizeTest(jtu.JaxTestCase):
       return x
 
     x = jnp.arange(3)
-    self.assertAllClose(x, f(x, 'foo'), check_dtypes=True)
-    self.assertAllClose(x, jax.jit(f, 1)(x, 'foo'), check_dtypes=True)
+    self.assertAllClose(x, f(x, 'foo'))
+    self.assertAllClose(x, jax.jit(f, 1)(x, 'foo'))
 
   def test_exclude_errors(self):
     with self.assertRaisesRegex(

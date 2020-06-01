@@ -719,13 +719,14 @@ class JaxTestCase(parameterized.TestCase):
   def rng(self):
     return self._rng
 
-  def assertArraysEqual(self, x, y, check_dtypes):
+  def assertArraysEqual(self, x, y, *, check_dtypes=True):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
       self.assertDtypesMatch(x, y)
     np.testing.assert_equal(x, y)
 
-  def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
+  def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
+                           rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
     atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
@@ -740,18 +741,20 @@ class JaxTestCase(parameterized.TestCase):
     if FLAGS.jax_enable_x64:
       self.assertEqual(_dtype(x), _dtype(y))
 
-  def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
+  def assertAllClose(self, x, y, *, check_dtypes=True, atol=None, rtol=None):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
     if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
-        self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
+        self.assertAllClose(x[k], y[k], check_dtypes=check_dtypes, atol=atol,
+                            rtol=rtol)
     elif is_sequence(x) and not hasattr(x, '__array__'):
       self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
+        self.assertAllClose(x_elt, y_elt, check_dtypes=check_dtypes, atol=atol,
+                            rtol=rtol)
     elif hasattr(x, '__array__') or np.isscalar(x):
       self.assertTrue(hasattr(y, '__array__') or np.isscalar(y))
       if check_dtypes:
@@ -772,7 +775,7 @@ class JaxTestCase(parameterized.TestCase):
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
-  def _CompileAndCheck(self, fun, args_maker, check_dtypes,
+  def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True,
                        rtol=None, atol=None):
     """Helper method for running JAX compilation and allclose assertions."""
     args = args_maker()
@@ -802,8 +805,10 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, monitored_ans, check_dtypes, atol, rtol)
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
+    self.assertAllClose(python_ans, monitored_ans, check_dtypes=check_dtypes,
+                        atol=atol, rtol=rtol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+                        atol=atol, rtol=rtol)
 
     args = args_maker()
 
@@ -813,10 +818,11 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+                        atol=atol, rtol=rtol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
-                         check_dtypes=False, tol=None):
+                         check_dtypes=True, tol=None):
     args = args_maker()
     lax_ans = lax_op(*args)
     numpy_ans = numpy_reference_op(*args)

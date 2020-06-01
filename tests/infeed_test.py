@@ -44,7 +44,7 @@ class InfeedTest(jax.test_util.JaxTestCase):
     device = jax.local_devices()[0]
     device.transfer_to_infeed((y,))
     device.transfer_to_infeed((z,))
-    self.assertAllClose(f(x), x + y + z, check_dtypes=True)
+    self.assertAllClose(f(x), x + y + z)
 
   def testInfeedThenOutfeed(self):
     @jax.jit
@@ -64,7 +64,7 @@ class InfeedTest(jax.test_util.JaxTestCase):
     out, = device.transfer_from_outfeed(
       xla_client.shape_from_pyval((y,)).with_major_to_minor_layout_if_absent())
     execution.join()
-    self.assertAllClose(out, y + onp.float32(1), check_dtypes=True)
+    self.assertAllClose(out, y + onp.float32(1))
 
   def testInfeedThenOutfeedInALoop(self):
     def doubler(_, token):
@@ -87,7 +87,7 @@ class InfeedTest(jax.test_util.JaxTestCase):
       device.transfer_to_infeed((x,))
       y, = device.transfer_from_outfeed(xla_client.shape_from_pyval((x,))
                                         .with_major_to_minor_layout_if_absent())
-      self.assertAllClose(y, x * onp.float32(2), check_dtypes=True)
+      self.assertAllClose(y, x * onp.float32(2))
     execution.join()
 
 

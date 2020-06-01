@@ -64,7 +64,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
     tol = {onp.float16: 1e-2, onp.float32: 1e-2, onp.float64: 1e-8}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_xshape=[{}]_yshape=[{}]_mode={}".format(
@@ -87,7 +87,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
     tol = {onp.float16: 1e-2, onp.float32: 1e-2, onp.float64: 1e-14}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
 
 if __name__ == "__main__":

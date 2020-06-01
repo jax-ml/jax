@@ -404,7 +404,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(count(3), 3)
     self.assertEqual(count(4), 6)
     for args_maker in [lambda: [2], lambda: [3], lambda: [4]]:
-      self._CompileAndCheck(count, args_maker, True)
+      self._CompileAndCheck(count, args_maker)
 
   def testForiLoopClosure(self):
     def count(num):
@@ -1356,13 +1356,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     xs = jnp.arange(10)
     expected = xs ** 2
     actual = lax.map(f, xs)
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
   def testMapEmpty(self):
     # https://github.com/google/jax/issues/2412
     ans = lax.map(lambda x: x * x, jnp.array([]))
     expected = jnp.array([])
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testCaching(self):
     def cond(x):
@@ -1598,7 +1598,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     actual = api.jit(linear_solve)(a, b)
     expected = jnp.linalg.solve(a, b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
   def test_custom_root_with_custom_linear_solve(self):
 
@@ -1620,11 +1620,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     actual = linear_solve(jnp.dot(a, a.T), b)
     expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     actual = api.jit(linear_solve)(jnp.dot(a, a.T), b)
     expected = jnp.linalg.solve(jnp.dot(a, a.T), b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     jtu.check_grads(lambda x, y: linear_solve(jnp.dot(x, x.T), y),
                     (a, b), order=2, rtol={jnp.float32: 1e-2})
@@ -1670,12 +1670,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     expected = jnp.linalg.solve(a, b)
     actual = api.jit(linear_solve)(a, b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     c = rng.randn(3, 2)
     expected = jnp.linalg.solve(a, c)
     actual = api.vmap(linear_solve, (None, 1), 1)(a, c)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_custom_linear_solve_zeros(self):
@@ -1723,7 +1723,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     b = rng.randn(2)
     expected = jnp.linalg.solve(jnp.exp(a), jnp.cos(b))
     actual = build_and_solve(a, b)
-    self.assertAllClose(expected, actual, atol=1e-5, check_dtypes=True)
+    self.assertAllClose(expected, actual, atol=1e-5)
     jtu.check_grads(build_and_solve, (a, b), atol=1e-5, order=2,
                     rtol={jnp.float32: 6e-2, jnp.float64: 2e-3})
 
@@ -1749,10 +1749,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     expected = jnp.linalg.solve(np.asarray(posify(a)), b)
     actual = positive_definite_solve(posify(a), b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     actual = api.jit(positive_definite_solve)(posify(a), b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
@@ -1798,7 +1798,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     expected = jnp.linalg.solve(a, b)
     actual = linear_solve(a, b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     jtu.check_grads(linear_solve, (a, b), order=2, rtol=2e-3)
 

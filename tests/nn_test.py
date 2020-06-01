@@ -55,7 +55,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftplusGradInf(self):
     self.assertAllClose(
-        1., jax.grad(nn.softplus)(float('inf')), check_dtypes=True)
+        1., jax.grad(nn.softplus)(float('inf')))
 
   def testSoftplusGradNegInf(self):
     check_grads(nn.softplus, (-float('inf'),), order=1,
@@ -91,7 +91,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     
   def testGluValue(self):
     val = nn.glu(jnp.array([1.0, 0.0]))
-    self.assertAllClose(val, jnp.array([0.5]), check_dtypes=True)
+    self.assertAllClose(val, jnp.array([0.5]))
 
   @parameterized.parameters(*itertools.product(
       (jnp.float32, jnp.bfloat16, jnp.float16),
@@ -120,33 +120,33 @@ class NNFunctionsTest(jtu.JaxTestCase):
     expected = jnp.array([[1., 0., 0.],
                          [0., 1., 0.],
                          [0., 0., 1.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
     actual = nn.one_hot(jnp.array([1, 2, 0]), 3)
     expected = jnp.array([[0., 1., 0.],
                          [0., 0., 1.],
                          [1., 0., 0.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
   def testOneHotOutOfBound(self):
     actual = nn.one_hot(jnp.array([-1, 3]), 3)
     expected = jnp.array([[0., 0., 0.],
                          [0., 0., 0.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
   def testOneHotNonArrayInput(self):
     actual = nn.one_hot([0, 1, 2], 3)
     expected = jnp.array([[1., 0., 0.],
                          [0., 1., 0.],
                          [0., 0., 1.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
   def testOneHotCustomDtype(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3, dtype=jnp.bool_)
     expected = jnp.array([[True, False, False],
                          [False, True, False],
                          [False, False, True]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
