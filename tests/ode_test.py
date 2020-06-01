@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-import unittest
 
 from absl.testing import absltest
 import numpy as np
