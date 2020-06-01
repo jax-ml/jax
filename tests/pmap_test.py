@@ -1116,7 +1116,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(f(jnp.array([vals] * ndevices)),
                         jnp.array([sum(vals)] * ndevices))
 
-  def testPostProcessMap(self):
+  def testPostProcessMap2(self):
     # code from https://github.com/google/jax/issues/2787
     def vv(x, y):
       """Vector-vector multiply"""
