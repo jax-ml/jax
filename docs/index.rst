@@ -39,6 +39,7 @@ For an introduction to JAX, start at the
    concurrency
    gpu_memory_allocation
    profiling
+   pytree_arguments
    rank_promotion_warning
    type_promotion
 
