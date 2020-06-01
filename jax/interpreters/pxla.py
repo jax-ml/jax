@@ -78,12 +78,16 @@ class ShardingSpec:
   ShardingSpec to the specific logical ordering expected throughout the system.
 
   Sharding includes "replication", where the same data is present on multiple
-  devices. When replication is present, it's associated with a virtual axis in
-  the "grid" of logical devices; unlike in other kinds of sharding, this axis
-  doesn't correspond to a logical array axis. However, it does have a position
-  relative to the logical array axes, where the extra axis would be inserted if
-  the value weren't replicated. This is needed to resolve ambiguity in the
-  buffer order computed in `spec_to_indices`.
+  devices. Replication is always applied to the entire logical array, i.e. the
+  whole array is copied N times, although each copy may still be sharded
+  according to the rest of the ShardingSpec. This means that unlike other kinds
+  of sharding, replication isn't associated with a particular logical array
+  axis. However, it does have a position relative to the logical array axes,
+  which is necessary to specify how replication is mapped to devices in
+  `spec_to_indices`. One to think about this is if you added an extra length-N
+  logical axis containing the N copies of the original array, where would that
+  new axis go? This would affect the final buffer order computed in
+  `spec_to_indices`.
 
   Attributes:
     shards_per_axis: a tuple the same length as the array shape. Indicates how
@@ -140,16 +144,19 @@ def spec_to_indices(shape: Tuple[int, ...],
   """
   assert len(shape) == len(sharding_spec.shards_per_axis)
   if not shape:
+    # special case: scalars can only be indexed by `()`
     total_replication_factor = int(prod(factor for factor, index in
                                         sharding_spec.replication_factors))
     return ((),) * total_replication_factor
+
   replication_factors = sorted(sharding_spec.replication_factors,
                                key=op.itemgetter(1))
-
   logical_index = 0
   indices_per_mesh_axis = []
   for mesh_index in range(len(shape) + len(sharding_spec.replication_factors)):
     if replication_factors and replication_factors[0][1] == logical_index:
+      # Insert a placeholder `None` to represent a replication factor. These
+      # will all be removed later, since they don't correspond to logical axes.
       factor, _ = replication_factors.pop(0)
       indices_per_mesh_axis.append([None] * factor)
     else:
@@ -159,10 +166,11 @@ def spec_to_indices(shape: Tuple[int, ...],
           sharding_spec.is_axis_materialized[logical_index])
       indices_per_mesh_axis.append(indices)
       logical_index += 1
+  assert logical_index == len(shape) and not replication_factors
 
   indices = list(product(*indices_per_mesh_axis))
 
-  # remove placeholder nones and trailing colons, then de-tuplify
+  # remove placeholder `None`s and trailing colons, then unwrap
   # single-element tuples
   def canonicalize(index):
     index = [i for i in index if i is not None]
@@ -171,8 +179,7 @@ def spec_to_indices(shape: Tuple[int, ...],
     assert index
     if len(index) == 1:
       return index[0]
-    else:
-      return tuple(index)
+    return tuple(index)
   return tuple(canonicalize(index) for index in indices)
 
 
@@ -544,15 +551,16 @@ class ShardedDeviceArray(xla.DeviceArray):
 
   @property
   def one_replica_buffer_indices(self):
+    """Indices of buffers containing one complete copy of the array data."""
     if self._one_replica_buffer_indices is None:
-      seen_buffer_indices = []
+      one_replica_indices = []
       seen_index_hashes = set()
       for i, index in enumerate(self.indices):
         hashed_index = _hashable_index(index)
         if hashed_index not in seen_index_hashes:
-          seen_buffer_indices.append(i)
+          one_replica_indices.append(i)
           seen_index_hashes.add(hashed_index)
-      self._one_replica_buffer_indices = seen_buffer_indices
+      self._one_replica_buffer_indices = one_replica_indices
     return self._one_replica_buffer_indices
 
   def copy_to_host_async(self):
@@ -1053,7 +1061,7 @@ def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, mapped):
     return ShardingSpec(
         shards_per_axis=shard_spec.shards_per_axis,
         is_axis_materialized=shard_spec.is_axis_materialized,
-        replication_factors=[(replication_factor * axis_size, 0)] + \
+        replication_factors=[(replication_factor * axis_size, 0)] +
             shard_spec.replication_factors)
 
 
