@@ -137,7 +137,7 @@ def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
 
 
 class JaxprEqn(NamedTuple):
-  invars: List[Atom]
+  invars: List['Atom']
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
