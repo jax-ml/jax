@@ -1765,6 +1765,7 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       g(jnp.ones((1, 1)), b=1)
 
+
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):

@@ -17,7 +17,7 @@ import operator
 from operator import attrgetter
 from contextlib import contextmanager
 from collections import namedtuple
-from functools import total_ordering, reduce
+from functools import total_ordering
 import itertools as it
 from weakref import ref
 import threading
@@ -219,6 +219,8 @@ class Primitive(object):
     return '{}'.format(self.name)
 
   def bind(self, *args, **kwargs):
+    assert skip_checks or all(isinstance(arg, Tracer)
+                              or valid_jaxtype(arg) for arg in args), args
     top_trace = find_top_trace(args)
     if top_trace is None:
       return self.impl(*args, **kwargs)
@@ -643,22 +645,10 @@ def full_lower(val):
   else:
     return val
 
-def find_top_trace(args) -> Optional[Tracer]:
-  """Find the tracer with the highest-level, or None. """
-  def check_arg(top_so_far: Optional[Tracer], arg) -> Optional[Tracer]:
-    if isinstance(arg, Tracer):
-      return (top_so_far
-              if top_so_far and top_so_far.level >= arg._trace.level else arg._trace)
-    # Raises error here for bind on LAX primitives
-    if not valid_jaxtype(arg):
-      raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid JAX type")
-    return top_so_far
-
-  top_trace = reduce(check_arg, args, None)  # type: ignore[wrong-arg-types]
-  if top_trace is not None:
-    return type(top_trace)(top_trace.master, cur_sublevel())  # type: ignore[call-arg]
-  else:
-    return None
+def find_top_trace(xs):
+  top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
+                  key=attrgetter('level'), default=None)
+  return top_trace and type(top_trace)(top_trace.master, cur_sublevel())
 
 @contextmanager
 def initial_style_staging():
@@ -724,12 +714,16 @@ def valid_jaxtype(x):
   else:
     return True
 
+def check_valid_jaxtype(x):
+  if not valid_jaxtype(x):
+    raise TypeError(f"{x} of type {type(x)} is not a valid JAX type")
+
 
 def concrete_aval(x):
   for typ in type(x).mro():
     handler = pytype_aval_mappings.get(typ)
     if handler: return handler(x)
-  raise TypeError(f"{type(x)} is not a valid Jax type")
+  raise TypeError(f"{type(x)} is not a valid JAX type")
 
 
 def get_aval(x):

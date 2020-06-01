@@ -157,7 +157,7 @@ def abstractify(x) -> core.AbstractValue:
   for typ in typ.mro():
     aval_fn = pytype_aval_mappings.get(typ)
     if aval_fn: return aval_fn(x)
-  raise TypeError(f"No abstraction handler for type: {type(x)}")
+  raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
 
 def _make_abstract_python_scalar(typ, _):
   return ShapedArray((), dtypes.python_scalar_dtypes[typ], weak_type=True)

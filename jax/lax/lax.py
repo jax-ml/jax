@@ -4958,8 +4958,13 @@ def _tie_in_batch_rule(batched_args, batch_dims):
   _, bdim_y = batch_dims
   return y, bdim_y
 
+def _tie_in_impl(x, y):
+  core.check_valid_jaxtype(x)
+  core.check_valid_jaxtype(y)
+  return y
+
 tie_in_p = Primitive('tie_in')
-tie_in_p.def_impl(lambda x, y: y)
+tie_in_p.def_impl(_tie_in_impl)
 tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
 xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)

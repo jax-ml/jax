@@ -1697,6 +1697,18 @@ class LaxTest(jtu.JaxTestCase):
                                        onp.zeros((2, 2), dtype=onp.float32),
                                        (onp.int32(1), onp.int16(2))))
 
+  def test_tie_in_error(self):
+    with core.skipping_checks():
+      with self.assertRaisesRegex(
+          TypeError, ".* of type .*tuple.* is not a valid JAX type"):
+        api.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
+
+  def test_primitive_jaxtype_error(self):
+    with core.skipping_checks():
+      with self.assertRaisesRegex(
+          TypeError, "Argument .* of type .* is not a valid JAX type"):
+        lax.add(1, 'hi')
+
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
     # check casting to ndarray works
@@ -2746,8 +2758,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     expected = onp.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    with self.assertRaises(TypeError):
-      lax.stop_gradient(lambda x: x)
+    with core.skipping_checks():
+      with self.assertRaises(TypeError):
+        lax.stop_gradient(lambda x: x)
 
   # TODO(mattjj): make this a more systematic test
   def testRemainder(self):
@@ -3417,10 +3430,6 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO Collapse
   # TODO Scatter
 
-  def test_tie_in_error(self):
-    with self.assertRaisesRegex(TypeError,
-                                ".*tuple.* is not a valid JAX type"):
-      api.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
 
 if __name__ == '__main__':
   absltest.main()
