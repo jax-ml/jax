@@ -1119,7 +1119,7 @@ class PmapTest(jtu.JaxTestCase):
                         jnp.array([sum(vals)] * ndevices),
                         check_dtypes=True)
 
-  def testPostProcessMap(self):
+  def testPostProcessMap2(self):
     # code from https://github.com/google/jax/issues/2787
     def vv(x, y):
       """Vector-vector multiply"""
