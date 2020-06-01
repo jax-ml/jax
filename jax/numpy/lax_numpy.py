@@ -2113,7 +2113,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
   if isinstance(object, ndarray) or isscalar(object):
     out = device_put(object)
-    if dtype and _dtype(object) != dtypes.canonicalize_dtype(dtype):
+    if dtype and _dtype(out) != dtypes.canonicalize_dtype(dtype):
       out = lax.convert_element_type(out, dtype)
   elif hasattr(object, '__array__'):
     # this case is for duck-typed handling of objects that implement `__array__`
