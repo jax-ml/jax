@@ -23,6 +23,7 @@ from jax import dtypes
 from jax import test_util as jtu
 import jax.numpy as jnp
 from jax.experimental.ode import odeint
+from jax.tree_util import tree_map
 
 import scipy.integrate as osp_integrate
 
@@ -64,6 +65,19 @@ class ODETest(jtu.JaxTestCase):
     self.check_against_scipy(pend, y0, ts, *args, tol=tol)
 
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
+                    atol=tol, rtol=tol)
+
+  @jtu.skip_on_devices("tpu")
+  def test_pytree_state(self):
+    """Test calling odeint with y(t) values that are pytrees."""
+    def dynamics(y, _t):
+      return tree_map(jnp.negative, y)
+
+    y0 = (jnp.array(-0.1), jnp.array([[[0.1]]]))
+    integrate = partial(odeint, dynamics)
+    ts = jnp.linspace(0., 1., 11)
+    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
                     atol=tol, rtol=tol)
 
   @jtu.skip_on_devices("tpu")
