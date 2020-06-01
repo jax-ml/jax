@@ -1327,7 +1327,7 @@ class LaxTest(jtu.JaxTestCase):
   def testCumulativeReduce(self, op, onp_op, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
     fun = partial(op, axis=axis)
-    onp_fun = partial(onp_op, axis=axis)
+    onp_fun = partial(onp_op, axis=axis, dtype=dtype)
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
     self._CheckAgainstNumpy(fun, onp_fun, args_maker)
@@ -1445,7 +1445,7 @@ class LaxTest(jtu.JaxTestCase):
       values = self.rng().permutation(flat_values).reshape(shape)
       return [values]
     def reference_top_k(x):
-      bcast_idxs = onp.broadcast_to(onp.arange(shape[-1]), shape)
+      bcast_idxs = onp.broadcast_to(onp.arange(shape[-1], dtype=onp.int32), shape)
       sorted_vals, sorted_idxs = lax_reference.sort_key_val(x, bcast_idxs)
       return sorted_vals[..., :-k-1:-1], sorted_idxs[..., :-k-1:-1]
     op = lambda vs: lax.top_k(vs, k=k)
