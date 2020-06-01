@@ -19,7 +19,6 @@ from absl.testing import parameterized
 
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax import random
 from jax.experimental.vectorize import vectorize
 
 from jax.config import config

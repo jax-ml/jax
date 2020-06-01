@@ -15,7 +15,6 @@
 import unittest
 
 from absl.testing import absltest, parameterized
-import numpy as np
 
 import jax
 from jax.config import config

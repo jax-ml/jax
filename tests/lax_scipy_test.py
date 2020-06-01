@@ -17,20 +17,16 @@ import collections
 import functools
 from functools import partial
 import itertools
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as onp
 import scipy.special as osp_special
-import scipy.stats as osp_stats
 
 from jax import api
-from jax import lib
 from jax import test_util as jtu
 from jax.scipy import special as lsp_special
-from jax.scipy import stats as lsp_stats
 
 from jax.config import config
 config.parse_flags_with_absl()

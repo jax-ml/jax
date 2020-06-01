@@ -16,7 +16,6 @@
 import enum
 import itertools
 import operator
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -24,7 +23,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import core
 from jax import dtypes
 from jax import numpy as jnp
 from jax import test_util as jtu

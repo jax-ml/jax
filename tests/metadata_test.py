@@ -16,8 +16,6 @@ from unittest import SkipTest
 
 from absl.testing import absltest
 from jax import test_util as jtu
-from jax.interpreters import xla
-from jax.lib import xla_bridge as xb
 
 import jax
 from jax import numpy as jnp

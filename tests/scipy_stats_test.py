@@ -13,15 +13,12 @@
 # limitations under the License.
 
 
-import collections
 import itertools
-import unittest
 
 from absl.testing import absltest, parameterized
 
 import numpy as onp
 import scipy.stats as osp_stats
-from scipy.stats import random_correlation
 
 from jax import test_util as jtu
 from jax.scipy import stats as lsp_stats

@@ -25,7 +25,6 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import lax
 from jax.api import _papply, _parallelize, soft_pmap, jit, make_jaxpr
-from jax.linear_util import wrap_init
 from jax.util import prod
 
 from jax.config import config

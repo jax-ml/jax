@@ -14,30 +14,24 @@
 
 
 import collections
-import functools
 from functools import partial
 import itertools
 from typing import Optional, cast
-import unittest
-from unittest import skip, SkipTest
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as onp
-import numpy.random as npr
 
 import jax
 from jax import api
-from jax import core
 from jax import dtypes
 from jax import lax
-from jax import lib
 from jax import test_util as jtu
 from jax import lax_reference
 from jax import dtypes
 from jax.test_util import check_grads
-from jax.interpreters import xla
 from jax.lib import xla_client
 import jax.util
 

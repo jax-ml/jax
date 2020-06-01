@@ -15,9 +15,7 @@
 """Tests for the LAPAX linear algebra module."""
 
 from functools import partial
-import itertools
 import unittest
-import sys
 
 import numpy as np
 import scipy as osp
@@ -33,8 +31,6 @@ from jax import lax_linalg
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax import test_util as jtu
-from jax.lib import xla_bridge
-from jax.lib import lapack
 
 from jax.config import config
 config.parse_flags_with_absl()
