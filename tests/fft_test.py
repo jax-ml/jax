@@ -168,7 +168,7 @@ class FftTest(jtu.JaxTestCase):
     jnp_fn = lambda a: jnp_op(a, axis=axis)
     np_fn = lambda a: np_op(a, axis=axis)
     # Numpy promotes to complex128 aggressively.
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
 
