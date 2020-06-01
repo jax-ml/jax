@@ -195,6 +195,10 @@ def igamma_grad_a(a: Array, x: Array) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
   return igamma_grad_a_p.bind(a, x)
 
+def random_gamma_grad(a: Array, x: Array) -> Array:
+  r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
+  return random_gamma_grad_p.bind(a, x)
+
 def bessel_i0e(x: Array) -> Array:
   r"""Exponentially scaled modified Bessel function of order 0:
   :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
@@ -1986,6 +1990,10 @@ def igammac_grada(g, a, x):
   return -igamma_grada(g, a, x)
 
 ad.defjvp(igammac_p, igammac_grada, igammac_gradx)
+
+random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad',
+  translation_rule=_broadcast_translate(partial(standard_translate,
+                                               'random_gamma_grad')))
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
