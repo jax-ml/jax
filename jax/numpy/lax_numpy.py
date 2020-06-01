@@ -2582,6 +2582,11 @@ def diag(v, k=0):
 
 @_wraps(np.diagflat)
 def diagflat(v, k=0):
+  if np.isscalar(v):
+    if k == 0:
+      return v
+    else:
+      return v.dtype.type(0)
   v = ravel(v)
   v_length = len(v)
   adj_length = v_length + _abs(k)
