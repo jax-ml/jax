@@ -391,7 +391,7 @@ def axis_index(axis_name):
 
   Args:
     axis_name: hashable Python object used to name the pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
 
   Returns:
     An integer representing the index.
