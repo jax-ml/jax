@@ -26,6 +26,7 @@ import numpy as onp
 
 import jax
 from jax import api
+from jax import core
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
