@@ -22,10 +22,9 @@ import numpy as np
 import jax.numpy as jnp
 import jax.test_util as jtu
 from jax import jit, grad, jacfwd, jacrev
-from jax import core, tree_util
+from jax import tree_util
 from jax import lax
 from jax.experimental import optimizers
-from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()

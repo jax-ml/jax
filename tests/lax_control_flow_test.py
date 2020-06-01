@@ -18,7 +18,6 @@ from functools import partial
 import itertools
 import operator
 import re
-from typing import Callable
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -28,7 +27,6 @@ import numpy as np
 import numpy.random as npr
 
 from jax import api
-from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu

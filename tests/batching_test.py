@@ -25,7 +25,7 @@ from jax import lax_linalg
 from jax import random
 from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
-from jax.util import partial, curry
+from jax.util import partial
 import jax.ops
 
 from jax.config import config

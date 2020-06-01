@@ -25,7 +25,6 @@ from jax import random
 from jax import jacfwd, jit
 from jax.experimental import stax
 from jax.experimental.jet import jet, fact, zero_series
-from jax.tree_util import tree_map
 from jax import lax
 
 from jax.config import config

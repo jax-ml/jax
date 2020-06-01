@@ -20,7 +20,6 @@ import numpy as np
 import re
 
 from jax import api, lax, ops
-from jax import core
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental import loops

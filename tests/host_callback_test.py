@@ -21,7 +21,7 @@ import logging
 import numpy as np
 import os
 import re
-from typing import Any, Callable, List, Sequence, Tuple
+from typing import Callable, Sequence
 from unittest import SkipTest
 
 from absl.testing import absltest

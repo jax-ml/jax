@@ -17,7 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import os
 from random import shuffle
-import threading
 from unittest import SkipTest
 
 import numpy as np
@@ -28,7 +27,6 @@ import jax
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import tree_util
-from jax import core
 from jax import lax
 from jax import random
 from jax.abstract_arrays import ShapedArray

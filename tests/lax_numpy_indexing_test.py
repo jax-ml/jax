@@ -17,7 +17,6 @@ import collections
 import enum
 from functools import partial
 import itertools
-import unittest
 import warnings
 
 from absl.testing import absltest
@@ -26,7 +25,6 @@ from absl.testing import parameterized
 import numpy as onp
 
 from jax import api
-from jax import lax
 from jax import numpy as jnp
 from jax import ops
 from jax import test_util as jtu

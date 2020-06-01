@@ -15,7 +15,6 @@
 """Tests for --debug_nans."""
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 from jax import test_util as jtu
@@ -49,3 +48,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     A = jnp.array(0.)
     with self.assertRaises(FloatingPointError):
       B = 0. / A
+
+
+if __name__ == '__main__':
+  absltest.main()
