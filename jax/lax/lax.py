@@ -1320,10 +1320,10 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
 def stop_gradient(x):
   """Stops gradient computation.
 
-  Operationally `stop_gradient` is the identity function, that is, it returns
-  argument `x` unchanged. However, `stop_gradient` prevents the flow of
+  Operationally ``stop_gradient`` is the identity function, that is, it returns
+  argument `x` unchanged. However, ``stop_gradient`` prevents the flow of
   gradients during forward or reverse-mode automatic differentiation. If there
-  are multiple nested gradient computations, `stop_gradient` stops gradients
+  are multiple nested gradient computations, ``stop_gradient`` stops gradients
   for all of them.
 
   For example:

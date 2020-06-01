@@ -147,7 +147,7 @@ def _fori_scan_body_fun(body_fun):
   return scanned_fun
 
 def fori_loop(lower, upper, body_fun, init_val):
-  """Loop from ``lower`` to ``upper`` by reduction to ``while_loop``.
+  """Loop from ``lower`` to ``upper`` by reduction to :func:`jax.lax.while_loop`.
 
   The type signature in brief is
 
@@ -164,7 +164,8 @@ def fori_loop(lower, upper, body_fun, init_val):
       return val
 
   Unlike that Python version, ``fori_loop`` is implemented in terms of a call to
-  ``while_loop``. See the docstring for ``while_loop`` for more information.
+  :func:`jax.lax.while_loop`. See the :func:`jax.lax.while_loop` documentation
+  for more information.
 
   Also unlike the Python analogue, the loop-carried value ``val`` must hold a
   fixed shape and dtype across all iterations (and not just be consistent up to
