@@ -1381,9 +1381,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in [None] + list(range(-len(shape), len(shape)))))
   def testNanCumSumProd(self, axis, shape, dtype, out_dtype, np_op, jnp_op):
     rng = jtu.rand_some_nan(self.rng())
-    np_fun = lambda arg: np_op(arg, axis=axis, dtype=out_dtype)
+    np_fun = partial(np_op, axis=axis, dtype=out_dtype)
     np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
-    jnp_fun = lambda arg: jnp_op(arg, axis=axis, dtype=out_dtype)
+    jnp_fun = partial(jnp_op, axis=axis, dtype=out_dtype)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
 
     args_maker = lambda: [rng(shape, dtype)]
