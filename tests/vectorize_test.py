@@ -127,18 +127,18 @@ class VectorizeTest(jtu.JaxTestCase):
     b, a = center(jnp.arange(3))
     self.assertEqual(a.shape, (3,))
     self.assertEqual(b.shape, ())
-    self.assertAllClose(1.0, b, False)
+    self.assertAllClose(1.0, b, check_dtypes=False)
 
     X = jnp.arange(12).reshape((3, 4))
     b, a = center(X, axis=1)
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (3,))
-    self.assertAllClose(jnp.mean(X, axis=1), b, True)
+    self.assertAllClose(jnp.mean(X, axis=1), b)
     
     b, a = center(X, axis=0)
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (4,))
-    self.assertAllClose(jnp.mean(X, axis=0), b, True)
+    self.assertAllClose(jnp.mean(X, axis=0), b)
     
 
 if __name__ == "__main__":

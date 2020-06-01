@@ -69,7 +69,7 @@ class DLPackTest(jtu.JaxTestCase):
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
-    self.assertAllClose(np.astype(x.dtype), y, check_dtypes=True)
+    self.assertAllClose(np.astype(x.dtype), y)
 
     self.assertRaisesRegex(RuntimeError,
                            "DLPack tensor may be consumed at most once",
@@ -89,7 +89,7 @@ class DLPackTest(jtu.JaxTestCase):
     x = x.cuda() if jtu.device_under_test() == "gpu" else x
     dlpack = torch.utils.dlpack.to_dlpack(x)
     y = jax.dlpack.from_dlpack(dlpack)
-    self.assertAllClose(np, y, check_dtypes=True)
+    self.assertAllClose(np, y)
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name": "_{}".format(
@@ -104,7 +104,7 @@ class DLPackTest(jtu.JaxTestCase):
     x = jnp.array(np)
     dlpack = jax.dlpack.to_dlpack(x)
     y = torch.utils.dlpack.from_dlpack(dlpack)
-    self.assertAllClose(np, y.numpy(), check_dtypes=True)
+    self.assertAllClose(np, y.numpy())
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
@@ -128,7 +128,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     z = cupy.asarray(y)
     self.assertEqual(y.__cuda_array_interface__["data"][0],
                      z.__cuda_array_interface__["data"][0])
-    self.assertAllClose(x, cupy.asnumpy(z), check_dtypes=True)
+    self.assertAllClose(x, cupy.asnumpy(z))
 
 
 if __name__ == "__main__":

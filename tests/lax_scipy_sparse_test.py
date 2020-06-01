@@ -92,7 +92,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         partial(scipy_cg, M=M, maxiter=1),
         partial(lax_cg, M=M, maxiter=1),
         args_maker,
-        check_dtypes=True,
         tol=1e-3)
 
     # TODO(shoyer,mattjj): I had to loosen the tolerance for complex64[7,7]
@@ -101,14 +100,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         partial(scipy_cg, M=M, maxiter=3),
         partial(lax_cg, M=M, maxiter=3),
         args_maker,
-        check_dtypes=True,
         tol=3e-3)
 
     self._CheckAgainstNumpy(
         np.linalg.solve,
         partial(lax_cg, M=M, atol=1e-6),
         args_maker,
-        check_dtypes=True,
         tol=2e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -125,10 +122,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     expected = np.linalg.solve(posify(a), b)
     actual = lax_cg(posify(a), b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     actual = jit(lax_cg)(posify(a), b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
     # numerical gradients are only well defined if ``a`` is guaranteed to be
     # positive definite.
@@ -141,7 +138,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     b = jnp.arange(9.0).reshape((3, 3))
     expected = b / 2
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
-    self.assertAllClose(expected, actual, check_dtypes=True)
+    self.assertAllClose(expected, actual)
 
   def test_cg_pytree(self):
     A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}

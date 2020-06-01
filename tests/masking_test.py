@@ -601,8 +601,8 @@ class MaskingTest(jtu.JaxTestCase):
 
   def test_slice_oob_indexing(self):
     # https://github.com/google/jax/issues/2245
-    self.assertAllClose(jnp.ones(5), jnp.ones(5)[:10], check_dtypes=True)
-    self.assertAllClose(jnp.ones(5), jnp.ones(5)[-10:], check_dtypes=True)
+    self.assertAllClose(jnp.ones(5), jnp.ones(5)[:10])
+    self.assertAllClose(jnp.ones(5), jnp.ones(5)[-10:])
 
 if __name__ == '__main__':
   absltest.main()

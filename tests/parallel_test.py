@@ -87,7 +87,7 @@ class PapplyTest(jtu.JaxTestCase):
     t = np.ones((5, 3))
     ans = soft_pmap(*_papply(fun))(t)
     expected = fun(t)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testLogSoftmax(self):
     raise SkipTest("test doesn't pass yet")  # TODO(frostig)
@@ -113,7 +113,7 @@ class PapplyTest(jtu.JaxTestCase):
 
     pfun, axis_name = _papply(jnp.add)
     ans = soft_pmap(pfun, axis_name)(x, x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testAddBroadcasting(self):
     raise SkipTest("test doesn't pass yet")  # TODO(frostig)
@@ -126,7 +126,7 @@ class PapplyTest(jtu.JaxTestCase):
 
     pfun, axis_name = _papply(fun)
     ans = soft_pmap(pfun, axis_name)(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testMakeJaxprPapplyComposition(self):
     raise SkipTest(             # TODO(mattjj)
@@ -142,7 +142,7 @@ class ParallelizeTest(jtu.JaxTestCase):
   def dedup(self, arr, expected_rank):
     if arr.ndim == expected_rank + 1:
       for i in range(arr.shape[0] - 1):
-        self.assertAllClose(arr[i], arr[i + 1], check_dtypes=True)
+        self.assertAllClose(arr[i], arr[i + 1])
       return arr[0]
     else:
       assert arr.ndim == expected_rank

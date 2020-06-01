@@ -39,7 +39,7 @@ class OptimizerTests(jtu.JaxTestCase):
   def _CheckFuns(self, optimizer, loss, x0, *args):
     init_fun, update_fun, get_params = optimizer(*args)
     opt_state = init_fun(x0)
-    self.assertAllClose(x0, get_params(opt_state), check_dtypes=True)
+    self.assertAllClose(x0, get_params(opt_state))
     opt_state2 = update_fun(0, grad(loss)(x0), opt_state)  # doesn't crash
     self.assertEqual(tree_util.tree_structure(opt_state),
                      tree_util.tree_structure(opt_state2))
@@ -294,7 +294,7 @@ class OptimizerTests(jtu.JaxTestCase):
 
     J1 = jacrev(loss, argnums=(0,))(initial_params)
     J2 = jacfwd(loss, argnums=(0,))(initial_params)
-    self.assertAllClose(J1, J2, check_dtypes=True, rtol=1e-6)
+    self.assertAllClose(J1, J2, rtol=1e-6)
 
   def testUnpackPackRoundTrip(self):
     opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)

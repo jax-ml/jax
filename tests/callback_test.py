@@ -69,11 +69,11 @@ class CallbackTest(jtu.JaxTestCase):
       return x * 2
 
     x = jnp.array([2.0, 4.0])
-    self.assertAllClose(f(x), jnp.array([4.0, 8.0]), True)
+    self.assertAllClose(f(x), jnp.array([4.0, 8.0]))
 
     self.assertAllClose(
         rewrite(f, {lax.mul_p: lambda x, y: x + y})(x),
-        jnp.array([4.0, 6.0]), True)
+        jnp.array([4.0, 6.0]))
 
   def testRewriteJIT(self):
     def f(x):
@@ -83,11 +83,11 @@ class CallbackTest(jtu.JaxTestCase):
       return g(x)
 
     x = jnp.array([2.0, 4.0])
-    self.assertAllClose(f(x), jnp.array([4.0, 8.0]), True)
+    self.assertAllClose(f(x), jnp.array([4.0, 8.0]))
 
     self.assertAllClose(
         rewrite(f, {lax.mul_p: lambda x, y: x + y})(x),
-        jnp.array([4.0, 6.0]), True)
+        jnp.array([4.0, 6.0]))
 
 if __name__ == "__main__":
   absltest.main()
