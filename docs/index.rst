@@ -23,7 +23,6 @@ For an introduction to JAX, start at the
 
    notebooks/Common_Gotchas_in_JAX
    notebooks/Custom_derivative_rules_for_Python_code
-   notebooks/JAX_pytrees
    notebooks/XLA_in_Python
    notebooks/How_JAX_primitives_work
    notebooks/Writing_custom_interpreters_in_Jax.ipynb
@@ -39,7 +38,7 @@ For an introduction to JAX, start at the
    concurrency
    gpu_memory_allocation
    profiling
-   pytree_arguments
+   pytrees
    rank_promotion_warning
    type_promotion
 
