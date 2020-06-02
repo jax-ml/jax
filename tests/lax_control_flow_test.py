@@ -2035,6 +2035,20 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(result.second, np.array([0., 10., 30.]),
                         check_dtypes=False)
 
+  def test_zero_trip_count_fori_loop(self):
+    # https://github.com/google/jax/issues/3285
+    def loop_cumsum(vals):
+      def body_fun(i, state):
+        return state + vals[i]
+      init = vals.dtype.type(0)
+      return lax.fori_loop(0, len(vals), body_fun, init)
+
+    with api.disable_jit():
+      expected = loop_cumsum(jnp.arange(0))
+
+    ans = loop_cumsum(jnp.arange(0))  # doesn't crash
+    self.assertAllClose(expected, ans, check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main()
