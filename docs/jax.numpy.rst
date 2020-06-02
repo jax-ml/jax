@@ -97,6 +97,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     degrees
     diag
     diag_indices
+    diagflat
     diagonal
     digitize
     divide
