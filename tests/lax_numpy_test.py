@@ -1465,7 +1465,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for k in range(-4, 4)))
   def testDiagFlat(self, shape, dtype, k):
     rng = jtu.rand_default(self.rng())
-    np_fun = lambda arg: np.diagflat(arg, k)
+    np_fun = lambda arg: np.diagflat(np.atleast_1d(arg), k)
     jnp_fun = lambda arg: jnp.diagflat(arg, k)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)

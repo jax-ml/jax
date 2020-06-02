@@ -2580,13 +2580,13 @@ def diag(v, k=0):
   else:
     raise ValueError("diag input must be 1d or 2d")
 
-@_wraps(np.diagflat)
+_SCALAR_VALUE_DOC="""\
+Unlike numpy's implementation of diagflat, this does not
+handle scalar values differently
+"""
+
+@_wraps(np.diagflat, lax_description=_SCALAR_VALUE_DOC)
 def diagflat(v, k=0):
-  if np.isscalar(v):
-    if k == 0:
-      return v
-    else:
-      return v.dtype.type(0)
   v = ravel(v)
   v_length = len(v)
   adj_length = v_length + _abs(k)
