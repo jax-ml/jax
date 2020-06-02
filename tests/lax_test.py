@@ -16,7 +16,7 @@
 import collections
 from functools import partial
 import itertools
-from typing import Optional, cast
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Sequence, cast
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -32,6 +32,7 @@ from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
 from jax.test_util import check_grads
+from jax._test_utils import primitive_harness
 from jax.lib import xla_client
 import jax.util
 
@@ -64,6 +65,7 @@ default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
+
 
 
 OpRecord = collections.namedtuple(
@@ -901,28 +903,15 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(error_type, err_msg):
       lax.squeeze(x, dimensions=dimensions)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_dimensions={}".format(
-          jtu.format_shape_dtype_string(arg_shape, onp.float32), dimensions),
-       "arg_shape": arg_shape, "dimensions": dimensions,
-       "rng_factory": rng_factory}
-      for arg_shape, dimensions in [
-          [(1,), (0,)],
-          [(1,), (-1,)],
-          [(2, 1, 4), (1,)],
-          [(2, 1, 3, 1), (1,)],
-          [(2, 1, 3, 1), (1, 3)],
-          [(2, 1, 3, 1), (3,)],
-      ]
-      for rng_factory in [jtu.rand_default]))
-  def testSqueeze(self, arg_shape, dimensions, rng_factory):
-    rng = rng_factory(self.rng())
-    args_maker = lambda: [rng(arg_shape, onp.float32)]
-    op = lambda x: lax.squeeze(x, dimensions)
-    numpy_op = lambda x: lax_reference.squeeze(x, dimensions)
-    self._CompileAndCheck(op, args_maker)
-    self._CheckAgainstNumpy(op, numpy_op, args_maker)
-    check_grads(op, args_maker(), 2, ["fwd", "rev"], eps=1.)
+
+  @primitive_harness.parameterized(primitive_harness.lax_squeeze)
+  def testSqueeze(self, harness: primitive_harness.Harness = primitive_harness.lax_squeeze[0]):
+    self._CompileAndCheck(harness.dyn_fun,
+                          lambda: harness.dyn_args_maker(self.rng()))
+    self._CheckAgainstNumpy(harness.fun, lax_reference.squeeze,
+                            lambda: harness.args_maker(self.rng()))
+    check_grads(harness.dyn_fun, harness.dyn_args_maker(self.rng()),
+                2, ["fwd", "rev"], eps=1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}".format(
@@ -959,32 +948,14 @@ class LaxTest(jtu.JaxTestCase):
     numpy_op = lambda x: lax_reference.reshape(x, out_shape)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_pads={}"
-       .format(jtu.format_shape_dtype_string(shape, dtype), pads),
-       "shape": shape, "dtype": dtype, "pads": pads, "rng_factory": jtu.rand_small}
-      for shape in [(2, 3)]
-      for dtype in default_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)]]))
-  def testPad(self, shape, dtype, pads, rng_factory):
-    rng = rng_factory(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-    fun = lambda operand: lax.pad(operand, onp.array(0, dtype), pads)
-    self._CompileAndCheck(fun, args_maker)
+  @primitive_harness.parameterized(primitive_harness.lax_pad)
+  def testPad(self, harness: primitive_harness.Harness):
+    self._CompileAndCheck(harness.dyn_fun, harness.dyn_args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_pads={}"
-       .format(jtu.format_shape_dtype_string(shape, dtype), pads),
-       "shape": shape, "dtype": dtype, "pads": pads, "rng_factory": jtu.rand_small}
-      for shape in [(2, 3)]
-      for dtype in default_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)]]))
-  def testPadAgainstNumpy(self, shape, dtype, pads, rng_factory):
-    rng = rng_factory(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-    op = lambda x: lax.pad(x, onp.array(0, dtype), pads)
-    numpy_op = lambda x: lax_reference.pad(x, onp.array(0, dtype), pads)
-    self._CheckAgainstNumpy(op, numpy_op, args_maker)
+  @primitive_harness.parameterized(primitive_harness.lax_pad)
+  def testPadAgainstNumpy(self,  harness: primitive_harness.Harness):
+    self._CheckAgainstNumpy(lax_reference.pad,
+                            harness.fun, harness.args_maker)
 
   def testReverse(self):
     rev = api.jit(lambda operand: lax.rev(operand, dimensions))
@@ -3054,28 +3025,15 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (inshape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_dimensions={}_bdims={}".format(
-          jtu.format_shape_dtype_string(arg_shape, onp.float32),
-          dimensions, bdims),
-       "arg_shape": arg_shape, "dimensions": dimensions, "bdims": bdims,
-       "rng_factory": rng_factory}
-      for arg_shape, dimensions in [
-          [(1,), (0,)],
-          [(1,), (-1,)],
-          [(2, 1, 4), (1,)],
-          [(2, 1, 4), (-2,)],
-          [(2, 1, 3, 1), (1,)],
-          [(2, 1, 3, 1), (1, 3)],
-          [(2, 1, 3, 1), (3,)],
-          [(2, 1, 3, 1), (1, -1)],
-      ]
-      for bdims in all_bdims(arg_shape)
-      for rng_factory in [jtu.rand_default]))
-  def testSqueeze(self, arg_shape, dimensions, bdims, rng_factory):
-    dtype = onp.float32
-    rng = rng_factory(self.rng())
-    op = lambda x: lax.squeeze(x, dimensions)
-    self._CheckBatching(op, 10, bdims, (arg_shape,), (dtype,), rng)
+      {"testcase_name": f"{harness.name}_bdims={bdims}",
+       "bdims": bdims, "harness": harness}
+      for harness in primitive_harness.lax_squeeze
+      for bdims in all_bdims(harness.params["arg_shape"])))
+  def testSqueeze2(self, bdims, harness):
+    self._CheckBatching(harness.dyn_fun, 10, bdims,
+                        (harness.params["arg_shape"],),
+                        (harness.params["dtype"],),
+                        harness.rng_factory(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}_dims={}_bdims={}".format(

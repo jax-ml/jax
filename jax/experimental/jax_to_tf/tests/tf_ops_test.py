@@ -21,6 +21,7 @@ import jax
 import jax.lax as lax
 import jax.numpy as jnp
 from jax import test_util as jtu
+from jax._test_utils import primitive_harness
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -29,7 +30,6 @@ from jax.experimental.jax_to_tf.tests import tf_test_util
 
 from jax.config import config
 config.parse_flags_with_absl()
-
 
 # TODO(tomhennigan) Increase coverage here.
 LAX_ELEMENTWISE_UNARY = (
@@ -171,10 +171,10 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
     f_jax = jax.jit(lambda x: jnp.concatenate(x, axis=0))
     self.ConvertAndCompare(f_jax, values, with_function=True)
 
-  def test_pad(self):
-    values = np.array([1, 2], dtype=np.float32)
-    f_jax = jax.jit(lambda x: jax.lax.pad(x, 0.0, [(3, 1, 2)]))
-    self.ConvertAndCompare(f_jax, values, with_function=True)
+  @primitive_harness.parameterized(primitive_harness.lax_pad)
+  def test_pad(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
@@ -253,13 +253,10 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
                         r_tf[np.isfinite(r_tf)], atol=1e-4)
 
-  # TODO(necula): replace these tests with LAX reference tests
-  def test_squeeze(self):
-    shape = (2, 1, 3, 1)
-    values = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    for squeeze_dims in ((1,), (3,), (1, 3,)):
-      f_jax = jax.jit(lambda v: jnp.squeeze(v, axis=squeeze_dims))  # pylint: disable=cell-var-from-loop
-      self.ConvertAndCompare(f_jax, values, with_function=True)
+  @primitive_harness.parameterized(primitive_harness.lax_squeeze)
+  def test_squeeze(self, harness: primitive_harness.Harness = primitive_harness.lax_squeeze[2]):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
 
   def test_gather(self):
     values = np.array([[1, 2], [3, 4], [5, 6]], dtype=np.float32)
