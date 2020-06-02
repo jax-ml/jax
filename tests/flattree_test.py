@@ -52,10 +52,10 @@ class FlatTreeTest(jtu.JaxTestCase):
       self.assertArraysEqual(actual_leaf, expected_leaf, check_dtypes=check_dtypes)
 
   @parameterized.parameters([
-      (1.0, ([], [], {(): 1.0})),
-      (np.arange(3.0), ([TRIVIAL_TREEDEF], [[(3,)]], {(0,): np.arange(3.0)})),
+      (1.0, ((), (), {(): 1.0})),
+      (np.arange(3.0), ((TRIVIAL_TREEDEF,), (((3,),),), {(0,): np.arange(3.0)})),
       (np.array([[1, 2, 3], [4, 5, 6]]),
-       ([TRIVIAL_TREEDEF, TRIVIAL_TREEDEF], [[(2,)], [(3,)]],
+       ((TRIVIAL_TREEDEF, TRIVIAL_TREEDEF), (((2,),), ((3,),)),
         {(0, 0): np.array([[1, 2, 3], [4, 5, 6]])})),
   ])
   def test_convert_leaf_array(self, leaf, expected):
@@ -66,10 +66,10 @@ class FlatTreeTest(jtu.JaxTestCase):
     self.assertArraysEqual(roundtripped, leaf, check_dtypes=True)
 
   @parameterized.parameters([
-      (1.0, ([TRIVIAL_TREEDEF], [[()]], {(0,): np.array(1.0)})),
+      (1.0, ((TRIVIAL_TREEDEF,), (((),),), {(0,): np.array(1.0)})),
       ({'a': 0, 'b': np.array([1.0]), 'c': np.array([2, 3])},
-        ([tree_structure({'a': 0, 'b': 0, 'c': 0})],
-          [[(), (1,), (2,)]],
+        ((tree_structure({'a': 0, 'b': 0, 'c': 0}),),
+          (((), (1,), (2,)),),
           {(0,): np.array(0.0),
            (1,): np.array([1.0]),
            (2,): np.array([2.0, 3.0])})),
@@ -82,8 +82,8 @@ class FlatTreeTest(jtu.JaxTestCase):
     self.assertTreeEqual(roundtripped, tree, check_dtypes=False)
 
   @parameterized.parameters([
-      ([TRIVIAL_TREEDEF], {(0,): 1.0}, 1.0),
-      ([TRIVIAL_TREEDEF, TRIVIAL_TREEDEF], {(0, 0): 2.0}, 2.0),
+      ((TRIVIAL_TREEDEF,), {(0,): 1.0}, 1.0),
+      ((TRIVIAL_TREEDEF, TRIVIAL_TREEDEF), {(0, 0): 2.0}, 2.0),
       ([tree_structure({'a': 0, 'b': 0})], {(0,): 1.0, (1,): 2.0},
         {'a': 1.0, 'b': 2.0}),
       ([tree_structure({'a': 0, 'b': 0}), tree_structure({'c': 0, 'd': 0})],
@@ -221,22 +221,19 @@ class FlatTreeTest(jtu.JaxTestCase):
 
   def test_jit_identity(self):
     tree = {'x': 0, 'y': 1}
-    result = jit(tree_vectorize(lambda x: x))(tree)
+    result = tree_vectorize(jit(lambda x: x))(tree)
     self.assertTreeEqual(result, tree, check_dtypes=True)
 
-  # TODO(shoyer): fix me
-  # Fails with:
-  # TypeError: <class 'jax.interpreters.partial_eval.JaxprTracer'> is not a valid Jax type
-  # def test_jit_plus1(self):
-  #   tree = {'x': 0, 'y': 1}
-  #   expected = {'x': 1, 'y': 1}
-  #   result = jit(tree_vectorize(lambda x: x + 1))(tree)
-  #   self.assertTreeEqual(result, expected, check_dtypes=True)
+  def test_jit_plus1(self):
+    tree = {'x': 0, 'y': 1}
+    expected = {'x': 1, 'y': 2}
+    result = tree_vectorize(jit(lambda x: x + 1))(tree)
+    self.assertTreeEqual(result, expected, check_dtypes=True)
 
-  # # TODO(shoyer): needs jit/process_call
-  # def test_norm(self):
-  #   tree = [3.0, jnp.array([[4.0]])]
-  #   self.assertEqual(tree_vectorize(jnp.linalg.norm)(tree), 5.0)
+  # TODO(shoyer): needs jit/process_call
+  def test_norm(self):
+    tree = [3.0, jnp.array([[4.0]])]
+    self.assertEqual(tree_vectorize(jnp.linalg.norm)(tree), 5.0)
 
   def test_tree_call(self):
     tree = {'x': 1, 'y': 2}
