@@ -25,7 +25,9 @@ from .. import core
 from .. import dtypes
 from .. import linear_util as lu
 from ..util import prod, safe_map as map, split_list, unzip2, unzip3
-from ..tree_util import tree_structure, tree_flatten, tree_unflatten
+from ..tree_util import (
+    tree_structure, tree_flatten, tree_unflatten, register_pytree_node,
+)
 
 
 TRIVIAL_TREEDEF = tree_structure(1)
@@ -114,9 +116,24 @@ class TreeTracer(core.Tracer):
       return self
 
 
-# TODO(shoyer): consider making TreeTracer a pytree instead? That seems like
-# asking for trouble, but might be convenient? E.g., we might get control flow
-# ops for free?
+def _flatten_tracer(tracer):
+  xs = tuple(tracer.leaves.values())
+  tracer_treedef = (
+      tracer._trace, tracer.treedefs, tracer.leafshapes, tracer.leaves)
+  return xs, tracer_treedef
+
+def _unflatten_tracer(tracer_treedef, xs):
+  trace, treedefs, leafshapes, leaf_keys = tracer_treedef
+  leaves = dict(zip(leaf_keys, xs))
+  return TreeTracer(trace, treedefs, leafshapes, leaves)
+
+# TODO(shoyer): consider making TreeTracer a pytree instead? This could be a
+# very convenient simplification, but currently causes everything to break. We
+# need something like a trace level for tree_flatten/unflatten, so we don't
+# unflatten at the wrong level of abstraction.
+
+# register_pytree_node(TreeTracer, _flatten_tracer, _unflatten_tracer)
+
 def _rebuild_leaves(keys_list, flat_values):
   ns = map(len, keys_list)
   values_list = split_list(flat_values, ns)
