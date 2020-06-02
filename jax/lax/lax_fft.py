@@ -44,7 +44,7 @@ def _promote_to_complex(arg):
   return lax.convert_element_type(arg, dtype)
 
 def _promote_to_real(arg):
-  dtype = dtypes.result_type(arg, onp.float64)
+  dtype = dtypes.result_type(arg, onp.float32)
   # XLA's FFT op only supports F32.
   # TODO(phawkins): remove when minimum jaxlib version is 0.1.48 or newer.
   if lib.version <= (0, 1, 47) and dtype == onp.float64:
