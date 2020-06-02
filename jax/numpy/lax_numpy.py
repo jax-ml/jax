@@ -1795,7 +1795,7 @@ def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
-def _make_cumulative_reduction(np_reduction, reduction, squash_nan=False, identity=0):
+def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_value=0):
   # We want to allow XLA to fuse the pad and reduce-window operators to
   # avoid materializing the padded output.
   # Consider removing `jit` once again if reduce-window is generalized to
@@ -1816,8 +1816,8 @@ def _make_cumulative_reduction(np_reduction, reduction, squash_nan=False, identi
           "axis {} is out of bounds for array of dimension {}".format(
               axis, num_dims))
 
-    if squash_nan:
-      a = where(isnan(a), _constant_like(a, identity), a)
+    if fill_nan:
+      a = where(isnan(a), _constant_like(a, fill_value), a)
 
     if not dtype and _dtype(a) == bool_:
       dtype = int_
@@ -1833,13 +1833,13 @@ def _make_cumulative_reduction(np_reduction, reduction, squash_nan=False, identi
   return cumulative_reduction
 
 
-cumsum = _make_cumulative_reduction(np.cumsum, lax.cumsum, squash_nan=False)
-cumprod = _make_cumulative_reduction(np.cumprod, lax.cumprod, squash_nan=False)
+cumsum = _make_cumulative_reduction(np.cumsum, lax.cumsum, fill_nan=False)
+cumprod = _make_cumulative_reduction(np.cumprod, lax.cumprod, fill_nan=False)
 cumproduct = cumprod
 nancumsum = _make_cumulative_reduction(np.nancumsum, lax.cumsum,
-                                       squash_nan=True, identity=0)
+                                       fill_nan=True, fill_value=0)
 nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
-                                        squash_nan=True, identity=1)
+                                        fill_nan=True, fill_value=1)
 
 
 ### Array-creation functions

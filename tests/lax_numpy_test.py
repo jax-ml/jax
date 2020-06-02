@@ -1380,6 +1380,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape in all_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))))
   def testNanCumSumProd(self, axis, shape, dtype, out_dtype, np_op, jnp_op):
+    if dtype == jnp.bfloat16:
+      self.skipTest("")
     rng = jtu.rand_some_nan(self.rng())
     np_fun = partial(np_op, axis=axis, dtype=out_dtype)
     np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
@@ -1391,8 +1393,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     tol_thresholds = {dtypes.bfloat16: 4e-2}
     tol = max(jtu.tolerance(dtype, tol_thresholds),
               jtu.tolerance(out_dtype, tol_thresholds))
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True,
-                            tol=tol)
+    if dtype != jnp.bfloat16:
+      # numpy functions do not properly handle bfloat16
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True,
+                              tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
 
