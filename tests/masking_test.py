@@ -18,21 +18,17 @@ from unittest import SkipTest
 
 import numpy as np
 from absl.testing import absltest, parameterized
-
-import jax
-from jax.interpreters.masking import (shape_as_value, parse_spec, ShapeError,
-  Poly, Mon, eval_polymorphic_shape, remap_ids, UniqueIds, finalize_spec)
-from jax import (numpy as jnp, test_util as jtu, mask, vmap, jit, grad, lax,
-  core as jc, shapecheck, tree_flatten, tree_unflatten, tree_map)
-from jax.util import safe_map, safe_zip, unzip2
+from jax.interpreters.masking import shape_as_value, ShapeError, \
+  parse_spec, Poly, Mon, finalize_spec, eval_polymorphic_shape, remap_ids, \
+  UniqueIds
+from jax import numpy as jnp, test_util as jtu, mask, vmap, jit, grad, lax, \
+  shapecheck, api, core
 from jax.config import config
-from jax.lax.lax import _identity
 from jax.numpy.lax_numpy import _polymorphic_slice_indices
-from jax.random import uniform, PRNGKey
 from jax.scipy.special import expit
+from jax.util import safe_map, safe_zip
 from jax.test_util import rand_default, rand_int
-from operator import add, sub
-import scipy.stats
+from jax.tree_util import tree_flatten
 
 config.parse_flags_with_absl()
 
@@ -175,9 +171,9 @@ class MaskingTest(jtu.JaxTestCase):
 
 
   def test_add(self):
-    self.check(add, ['n', ''], 'n', {'n': 3}, [(4,), ()], ['float_', 'float_'],
+    self.check(lax.add, ['n', ''], 'n', {'n': 3}, [(4,), ()], ['float_', 'float_'],
                rand_default(self.rng()))
-    addvecs = mask(add, in_shapes=['n', 'n'], out_shape='n')
+    addvecs = mask(lax.add, in_shapes=['n', 'n'], out_shape='n')
 
     x = jnp.array([3, 1, 4, 1, 5, 9])
     y = jnp.array([2, 6, 5, 3, 5, 8])
@@ -649,8 +645,8 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertRaisesWithLiteralMatch(ShapeError, message, thunk)
 
   def test_unsupported_op(self):
-    p = jc.Primitive('unsupported_op')
-    p.def_abstract_eval(_identity)
+    p = core.Primitive('unsupported_op')
+    p.def_abstract_eval(lambda x: x)
     p.def_impl(lambda x: x)
 
     def thunk():
