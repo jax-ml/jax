@@ -6,11 +6,12 @@ What is a pytree?
 
 In JAX, a pytree is **a container of leaf elements and/or more pytrees**.
 Containers include lists, tuples, and dicts (JAX can be extended to consider
-other container types as pytrees, see the "JAX pytrees" notebook under "Advanced
-JAX Tutorials"). A leaf element is anything that's not a pytree, e.g. an
-array. In other words, a pytree is just **a possibly-nested standard Python
-container**.  If nested, note that the container types do not need to match. A
-single "leaf", i.e. a non-container object, is also considered a pytree.
+other container types as pytrees, see the :doc:`notebooks/JAX_pytrees`
+notebook). A leaf element is anything that's not a pytree, e.g. an array. In
+other words, a pytree is just **a possibly-nested standard or user-registered
+Python container**.  If nested, note that the container types do not need to
+match. A single "leaf", i.e. a non-container object, is also considered a
+pytree.
 
 Example pytrees::
 
@@ -36,14 +37,14 @@ Applying optional parameters to pytrees
 Some JAX function transformations take optional parameters that specify how
 certain input or output values should be treated (e.g. the ``in_axes`` and
 ``out_axes`` arguments to ``vmap``). These parameters are also pytrees, and the
-leaf values are "matched up" with the corresponding input and output leaf
-arrays. For example, if we pass the following input to vmap::
+leaf values are "matched up" with the corresponding input or output leaf arrays.
+For example, if we pass the following input to vmap (note that the input
+arguments to a function are considered a tuple)::
 
   (a1, {"k1": a2, "k2": a3})
 
-Note that the input arguments to a function are considered a tuple. We can use
-the following ``in_axes`` pytree to specify that only the "k2" argument is
-mapped (axis=0) and the rest aren't mapped over (axis=None)::
+We can use the following ``in_axes`` pytree to specify that only the "k2"
+argument is mapped (axis=0) and the rest aren't mapped over (axis=None)::
 
   (None, {"k1": None, "k2": 0})
 
@@ -53,15 +54,15 @@ input pytree. However, the optional parameters can optionally be specified as a
 sub-pytree. For example, if we have the same ``vmap`` input as above, but wish
 to only map over the dictionary argument, we can use::
 
-  (None, 0)
+  (None, 0)  # equivalent to (None, {"k1": 0, "k2": 0})
 
 Or, if want every argument to be mapped, we can simply write a single leaf value
 that is applied over the entire argument tuple pytree::
 
   0
 
-This happens to the default ``in_axes`` value!
+This happens to be the default ``in_axes`` value!
 
 The same logic applies to other optional parameters that refer to specific input
 or output values of a transformed function, e.g. ``vmap``'s ``out_axes`` and
-``jit``'s ``static_argnums``.
+``pmaps``'s ``in_axes``.
