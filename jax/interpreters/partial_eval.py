@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, List
 
 import itertools as it
 from collections import namedtuple
 import contextlib
 import threading
-from typing import Callable, Dict, Optional, Sequence, Set, Tuple, Type, Union
+from typing import (Callable, Dict, Iterable, NamedTuple, Optional, Sequence,
+                    Set, Tuple, Type, Union, cast)
 from weakref import ref
 
 import numpy as onp
@@ -64,7 +66,7 @@ class PartialVal(tuple):
   def unknown(cls, aval: AbstractValue) -> 'PartialVal':
     return PartialVal((aval, core.unit))
 
-  def is_known(self):
+  def is_known(self) -> bool:
     return self[0] is None
 
   def get_known(self) -> Optional[core.Value]:
@@ -95,30 +97,30 @@ class PartialVal(tuple):
 #     transformations (e.g. in "initial-style" higher-order primitives, like
 #     for control flow). In this case we use the `JaxprTrace` class.
 class JaxprTrace(Trace):
-  def pure(self, val):
+  def pure(self, val) -> 'JaxprTracer':
     return self.new_const(val)
 
-  def lift(self, val):
+  def lift(self, val) -> 'JaxprTracer':
     return self.new_const(val)
 
-  def sublift(self, val):
+  def sublift(self, val) -> 'JaxprTracer':
     return JaxprTracer(self, val.pval, FreeVar(val))
 
-  def new_const(self, val):
+  def new_const(self, val) -> 'JaxprTracer':
     if isinstance(val, Tracer) and val._trace.level == self.level:
       raise Exception
     return JaxprTracer(self, PartialVal.known(val), unit)
 
-  def new_instantiated_literal(self, val):
+  def new_instantiated_literal(self, val) -> 'JaxprTracer':
     return JaxprTracer(self, PartialVal.unknown(get_aval(val)), Literal(val))
 
-  def new_instantiated_const(self, val):
+  def new_instantiated_const(self, val) -> 'JaxprTracer':
     return JaxprTracer(self, PartialVal.unknown(get_aval(val)), ConstVar(val))
 
-  def new_arg(self, pval: PartialVal):
+  def new_arg(self, pval: PartialVal) -> 'JaxprTracer':
     return JaxprTracer(self, pval, LambdaBinding())
 
-  def instantiate_const(self, tracer):
+  def instantiate_const(self, tracer) -> 'JaxprTracer':
     const = tracer.pval.get_known()
     if const is None:
       return tracer
@@ -128,7 +130,7 @@ class JaxprTrace(Trace):
       else:
         return self.new_instantiated_const(const)
 
-  def instantiate_const_abstracted(self, tracer):
+  def instantiate_const_abstracted(self, tracer) -> 'JaxprTracer':
     const = tracer.pval.get_known()
     if const is None:
       return tracer
@@ -292,7 +294,7 @@ class JaxprTrace(Trace):
                         mapped_invars=tuple(new_mapped_invars),
                         call_jaxpr=lifted_jaxpr)
       env_tracers = map(trace.full_raise, env)
-      eqn = new_eqn_recipe(it.chain(const_tracers, env_tracers),
+      eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers)),
                            out_tracers, map_primitive, new_params)
       for t in out_tracers:
         t.recipe = eqn
@@ -354,10 +356,14 @@ def abstract_eval_fun(fun, *avals, **params):
   return avals_out
 
 
+JaxprTracerRecipe = Union['JaxprEqnRecipe', 'LambdaBinding', 'FreeVar',
+                          'ConstVar', Literal, core.Unit]
+
 class JaxprTracer(Tracer):
   __slots__ = ['pval', 'recipe']
 
-  def __init__(self, trace, pval: PartialVal, recipe):
+  def __init__(self, trace: JaxprTrace, pval: PartialVal,
+               recipe: Optional[JaxprTracerRecipe]):
     assert isinstance(pval, PartialVal)
     pv, const = pval
     if isinstance(const, Tracer) and const._trace.level >= trace.level:
@@ -371,11 +377,11 @@ class JaxprTracer(Tracer):
     return 'Traced<{}:{}>'.format(self.aval, self._trace)
 
   @property
-  def aval(self):
+  def aval(self) -> AbstractValue:
     return self.pval.get_aval()
 
   @property
-  def parents(self):
+  def parents(self) -> Sequence['JaxprTracer']:
     if isinstance(self.recipe, JaxprEqnRecipe):
       return self.recipe.invars
     else:
@@ -464,7 +470,7 @@ def trace_to_subjaxpr(master: core.MasterTrace, instantiate: Union[bool, Sequenc
   del trace, in_tracers, out_tracers
   yield jaxpr, (out_pvals, consts, env)
 
-def instantiate_const_at(trace, instantiate: bool, tracer):
+def instantiate_const_at(trace: JaxprTrace, instantiate: bool, tracer):
   if instantiate:
     return trace.instantiate_const(trace.full_raise(tracer))
   else:
@@ -474,10 +480,17 @@ def instantiate_const_at(trace, instantiate: bool, tracer):
 FreeVar = namedtuple('FreeVar', ['val'])
 ConstVar = namedtuple('ConstVar', ['val'])
 LambdaBinding = namedtuple('LambdaBinding', [])
-JaxprEqnRecipe = namedtuple('JaxprEqnRecipe',
-                            ['eqn_id', 'invars', 'outvars', 'primitive', 'params'])
+class JaxprEqnRecipe(NamedTuple):
+  eqn_id: object
+  invars: Sequence[JaxprTracer]
+  outvars: 'Sequence[ref[JaxprTracer]]'
+  primitive: core.Primitive
+  params: Dict[str, Any]
 
-def new_eqn_recipe(invars, outvars, primitive, params):
+def new_eqn_recipe(invars: Sequence[JaxprTracer],
+                   outvars: Sequence[JaxprTracer],
+                   primitive: core.Primitive,
+                   params: Dict[str, Any]) -> JaxprEqnRecipe:
   """Constructs a new JaxEqnRecipe.
 
   Params:
@@ -496,14 +509,19 @@ def new_eqn_recipe(invars, outvars, primitive, params):
                         params)
 
 
-def recipe_to_eqn(unused_var, getvar, recipe):
+def recipe_to_eqn(unused_var: Callable[[], core.Var],
+                  getvar: Callable[[JaxprTracer], core.Atom],
+                  recipe: JaxprEqnRecipe) -> core.JaxprEqn:
   _, in_tracers, out_tracer_refs, primitive, params = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
-  outvars = [unused_var() if t is None else getvar(t) for t in out_tracers]
+  outvars = [unused_var() if t is None else cast(core.Var, getvar(t))
+             for t in out_tracers]
   return new_jaxpr_eqn(invars, outvars, primitive, params)
 
-def tracers_to_jaxpr(in_tracers, out_tracers):
+def tracers_to_jaxpr(
+  in_tracers: List[JaxprTracer],
+  out_tracers: List[JaxprTracer]) -> Tuple[Jaxpr, Sequence[Any], Sequence[Any]]:
   """Constructs Jaxpr given tracers for inputs and outputs.
 
   Params:
@@ -516,8 +534,8 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
     `invars`.
   """
   newvar = core.gensym()
-  t_to_var = {}
-  def getvar(t):
+  t_to_var: Dict[int, core.Atom] = {}
+  def getvar(t: JaxprTracer) -> core.Atom:
     var = t_to_var.get(id(t))
     if var is None:
       aval = t.pval.get_aval() if not t.pval.is_known() else abstract_unit
@@ -525,10 +543,10 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
     return var
   sorted_tracers = toposort(out_tracers)
   invars = map(getvar, in_tracers)
-  eqns = []
-  env = {}
-  consts = {}
-  const_to_var = {}
+  eqns: List[core.JaxprEqn] = []
+  env: Dict[core.Var, Any] = {}
+  consts: Dict[core.Var, Any] = {}
+  const_to_var: Dict[int, core.Var] = {}
   def getconstvar(c):
     var = const_to_var.get(id(c))
     if var is None:
@@ -547,7 +565,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
             "Tracer not among input tracers {}".format(t))
       assert in_tracers, "Lambda binding with no args"
     elif isinstance(recipe, FreeVar):
-      env[getvar(t)] = recipe.val
+      env[cast(core.Var, getvar(t))] = recipe.val
     elif isinstance(recipe, ConstVar):
       v = t_to_var[id(t)] = getconstvar(recipe.val)
       consts[v] = recipe.val
@@ -566,7 +584,7 @@ def tracers_to_jaxpr(in_tracers, out_tracers):
   return jaxpr, const_vals, env_vals
 
 @cache()
-def convert_constvars_jaxpr(jaxpr):
+def convert_constvars_jaxpr(jaxpr: Jaxpr):
   """Moves the constvars to the start of invars."""
   core.skip_checks or core.check_jaxpr(jaxpr)
   lifted_jaxpr = Jaxpr(constvars=(),
@@ -653,7 +671,7 @@ def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
   typed_jaxpr_2 = TypedJaxpr(jaxpr_2, (), in_avals_2, out_avals_2)
   return typed_jaxpr_1, typed_jaxpr_2, uk_out
 
-def _split_aval(unknown, aval):
+def _split_aval(unknown: bool, aval: AbstractValue) -> Tuple[AbstractValue, AbstractValue]:
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
 
@@ -732,7 +750,8 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   return out_tracers
 call_partial_eval_rules[remat_call_p] = _remat_partial_eval
 
-def _dce_jaxpr(typed_jaxpr, outputs):
+def _dce_jaxpr(typed_jaxpr: core.TypedJaxpr,
+               outputs: Sequence[bool]) -> core.TypedJaxpr:
   # This dead-code elimination is pretty rudimentary, and in particular doesn't
   # nontrivially DCE through scan, call, or other higher-order primitives.
   # TODO(mattjj): better DCE

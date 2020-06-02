@@ -138,7 +138,8 @@ import logging
 import msgpack  # type: ignore
 import numpy as np
 import traceback
-from typing import Any, Callable, Dict, Iterable, List, Optional, NamedTuple, Sequence, Tuple
+from typing import (Any, Callable, Dict, Iterable, List, Optional, NamedTuple,
+                    Sequence, Tuple, cast)
 
 xops = xla_client._xla.ops
 
@@ -560,7 +561,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
       eqn.params, ["true_jaxpr", "false_jaxpr", "linear"])
     nr_operands = len(true_jaxpr.jaxpr.invars)
     pred, *operands = eqn.invars
-    new_invars = (pred, *operands, input_token_var)
+    new_invars = [pred, *operands, input_token_var]
     eqns.append(core.new_jaxpr_eqn(
       new_invars, eqn.outvars + [output_token_var],
       eqn.primitive,
@@ -600,7 +601,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
            num_carry=num_carry + 1,
            linear=linear + (False,))))
   elif eqn.primitive is xla.xla_call_p:
-    call_jaxpr = eqn.params["call_jaxpr"]
+    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
     eqns.append(core.new_jaxpr_eqn(
       eqn.invars + [input_token_var],
       eqn.outvars + [output_token_var],
