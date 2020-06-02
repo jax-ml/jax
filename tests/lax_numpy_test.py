@@ -493,13 +493,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # jnp arrays.
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
     fun = lambda *xs: getattr(operator, name.strip('_'))(*xs)
-    scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
-                  jtu.NUMPY_SCALAR_SHAPE in shapes or
-                  () in shapes)
-    empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
-    self._CompileAndCheck(
-      fun, args_maker, #not scalar_arg and not empty_shape,
-      atol=tol, rtol=tol)
+    self._CompileAndCheck(fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
@@ -521,13 +515,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
     fun = lambda fst, snd: getattr(snd, name)(fst)
     tol = max(jtu.tolerance(dtype, op_tolerance) for dtype in dtypes)
-    scalar_arg = (jtu.PYTHON_SCALAR_SHAPE in shapes or
-                  jtu.NUMPY_SCALAR_SHAPE in shapes or
-                  () in shapes)
-    empty_shape = any(isinstance(s, tuple) and 0 in s for s in shapes)
-    self._CompileAndCheck(
-      fun, args_maker, # not scalar_arg and not empty_shape,
-      atol=tol, rtol=tol)
+    self._CompileAndCheck( fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": rec.test_name + "_{}".format(dtype),
@@ -1400,13 +1388,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_m={}_n={}_k={}".format(
           np.dtype(dtype).name, m, n, k),
-       "m": m, "n": n, "k": k, "dtype": dtype, "rng_factory": jtu.rand_default}
+       "m": m, "n": n, "k": k, "dtype": dtype}
       for dtype in default_dtypes
       for n in [0, 4]
       for m in [None, 0, 1, 3, 4]
       for k in list(range(-4, 4))))
-  def testTri(self, m, n, k, dtype, rng_factory):
-    rng = rng_factory(self.rng())
+  def testTri(self, m, n, k, dtype):
     np_fun = lambda: np.tri(n, M=m, k=k, dtype=dtype)
     jnp_fun = lambda: jnp.tri(n, M=m, k=k, dtype=dtype)
     args_maker = lambda: []
@@ -1697,8 +1684,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                     np.array(4, dtype=np.int32)]
       for dtype in all_dtypes))
   def testZerosOnes(self, np_op, jnp_op, shape, dtype):
-    rng = jtu.rand_default(self.rng())
-    def args_maker(): return []
+    args_maker = lambda: []
     np_op = partial(np_op, shape, dtype)
     jnp_op = partial(jnp_op, shape, dtype)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
@@ -1998,7 +1984,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                           rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": 
+      {"testcase_name":
        f"_arg{i}_ndmin={ndmin}_dtype={np.dtype(dtype) if dtype else None}",
        "arg": arg, "ndmin": ndmin, "dtype": dtype}
       for i, (arg, dtypes) in enumerate([
@@ -2759,7 +2745,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                          CombosWithReplacement(all_shapes, 3))
     for dtypes in CombosWithReplacement(all_dtypes, 3)))
   def testWhereThreeArgument(self, rng_factory, shapes, dtypes):
-    rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng_factory(self.rng()), shapes, dtypes)
     def np_fun(cond, x, y):
       return _promote_like_jnp(partial(np.where, cond))(x, y)
@@ -3041,8 +3026,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     x = jnp.ones((10, 10))
     v = jnp.array([1, 2, 3])
-    first_call = f(x, v)
-    second_call = f(x, v)  # doesn't crash
+    _ = f(x, v)
+    _ = f(x, v)  # doesn't crash
 
   def testReductionOfOutOfBoundsAxis(self):  # Issue 888
     x = jnp.ones((3, 4))
@@ -3204,7 +3189,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape = jtu.NUMPY_SCALAR_SHAPE
     dtype = jnp.float32
     end_dtype = jnp.int32
-    x = rng(shape, dtype)
     args_maker = lambda: [rng(shape, dtype), rng(shape, end_dtype), rng(shape, dtype)]
     np_fun = lambda x, to_end, to_begin: np.ediff1d(x, to_end, to_begin)
     jnp_fun = lambda x, to_end, to_begin: jnp.ediff1d(x, to_end, to_begin)
@@ -3228,6 +3212,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                     [dtype] * len(shapes))
     np_fun = partial(np.meshgrid, indexing=indexing, sparse=sparse)
     jnp_fun = partial(jnp.meshgrid, indexing=indexing, sparse=sparse)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(

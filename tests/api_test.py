@@ -656,7 +656,7 @@ class APITest(jtu.JaxTestCase):
       return 0. if pt.is_zero() else jnp.sqrt(pt.x ** 2 + pt.y ** 2)
 
     f(pt)  # doesn't crash
-    g = api.grad(f)(pt)
+    _ = api.grad(f)(pt)
     self.assertIsInstance(pt, ZeroPoint)
 
   @parameterized.parameters(1, 2, 3)
@@ -966,7 +966,7 @@ class APITest(jtu.JaxTestCase):
       return pmapped_multi_step(state)
 
     u = jnp.ones((device_count, 100))
-    u_final = multi_step_pmap(u)  # doesn't crash
+    _ = multi_step_pmap(u)  # doesn't crash
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -1455,8 +1455,6 @@ class APITest(jtu.JaxTestCase):
 
   def test_remat_symbolic_zeros(self):
     # code from https://github.com/google/jax/issues/1907
-    test_remat = True
-    test_scan = True
 
     key = jax.random.PRNGKey(0)
     key, split = jax.random.split(key)
@@ -2206,8 +2204,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       def g(y):
         return x + y
       def g_jvp(primals, tangents):
-        (y,), (t,) = primals, tangents
-        return g(x), 2 * y
+        return g(x), 2 * primals[0]
       g.defjvp(g_jvp)
       return g(1.)
 

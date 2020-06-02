@@ -264,7 +264,6 @@ class OptimizerTests(jtu.JaxTestCase):
     opt_init, opt_update, get_params = optimizers.sgd(5e-2)
 
     x0 = np.array([0.5], dtype=np.float64)
-    params = np.array([0.3], dtype=np.float64)
 
     def minimize_structure(test_params):
       energy_fn = functools.partial(harmonic_bond, params=test_params)

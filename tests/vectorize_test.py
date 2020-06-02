@@ -134,12 +134,12 @@ class VectorizeTest(jtu.JaxTestCase):
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (3,))
     self.assertAllClose(jnp.mean(X, axis=1), b)
-    
+
     b, a = center(X, axis=0)
     self.assertEqual(a.shape, (3, 4))
     self.assertEqual(b.shape, (4,))
     self.assertAllClose(jnp.mean(X, axis=0), b)
-    
+
 
 if __name__ == "__main__":
   absltest.main()

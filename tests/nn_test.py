@@ -88,7 +88,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testEluValue(self):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
-    
+
   def testGluValue(self):
     val = nn.glu(jnp.array([1.0, 0.0]))
     self.assertAllClose(val, jnp.array([0.5]))

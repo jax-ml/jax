@@ -31,7 +31,6 @@ from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
-from jax import dtypes
 from jax.test_util import check_grads
 from jax.lib import xla_client
 import jax.util
@@ -1440,7 +1439,6 @@ class LaxTest(jtu.JaxTestCase):
       for k in [1, 3]
       for rng_factory in [jtu.rand_default]))
   def testTopK(self, shape, dtype, k, rng_factory):
-    rng = rng_factory(self.rng())
     def args_maker():
       flat_values = onp.arange(onp.prod(shape, dtype=int), dtype=dtype)
       values = self.rng().permutation(flat_values).reshape(shape)
@@ -2544,7 +2542,6 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for k in [1, 3]
       for rng_factory in [jtu.rand_default]))
   def testTopKGrad(self, shape, dtype, k, rng_factory):
-    rng = rng_factory(self.rng())
     flat_values = onp.arange(onp.prod(shape, dtype=int), dtype=dtype)
     values = self.rng().permutation(flat_values).reshape(shape)
     fun = lambda vs: lax.top_k(vs, k=k)[0]
