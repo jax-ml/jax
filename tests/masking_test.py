@@ -160,7 +160,8 @@ class MaskingTest(jtu.JaxTestCase):
                          for s in in_specs]
     logical_in_slices = [tuple(map(slice, s)) for s in logical_in_shapes]
     logical_args = [a[s] for a, s in zip(padded_args, logical_in_slices)]
-    logical_outs_expected, _ = tree_flatten(fun(*logical_args))
+    logical_outs_expected, logical_outs_tree = tree_flatten(fun(*logical_args))
+    assert outs_tree == logical_outs_tree
     self.assertAllClose(logical_outs, logical_outs_expected, check_dtypes=True,
                         atol=atol, rtol=rtol)
 
