@@ -2575,6 +2575,27 @@ def diag(v, k=0):
   else:
     raise ValueError("diag input must be 1d or 2d")
 
+_SCALAR_VALUE_DOC="""\
+This differs from np.diagflat for some scalar values of v,
+jax always returns a two-dimensional array, whereas numpy may
+return a scalar depending on the type of v.
+"""
+
+@_wraps(np.diagflat, lax_description=_SCALAR_VALUE_DOC)
+def diagflat(v, k=0):
+  v = ravel(v)
+  v_length = len(v)
+  adj_length = v_length + _abs(k)
+  res = zeros(adj_length*adj_length, dtype=v.dtype)
+  i = arange(0, adj_length-_abs(k))
+  if (k >= 0):
+    fi = i+k+i*adj_length
+  else:
+    fi = i+(i-k)*adj_length
+  res = ops.index_update(res, ops.index[fi], v)
+  res = res.reshape(adj_length,adj_length)
+  return res
+
 
 @_wraps(np.polyval)
 def polyval(p, x):

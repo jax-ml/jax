@@ -1456,6 +1456,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_k={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), k),
+       "dtype": dtype, "shape": shape, "k": k}
+      for dtype in default_dtypes
+      for shape in all_shapes
+      for k in range(-4, 4)))
+  def testDiagFlat(self, shape, dtype, k):
+    rng = jtu.rand_default(self.rng())
+    # numpy has inconsistencies for scalar values
+    # https://github.com/numpy/numpy/issues/16477
+    # jax differs in that it treats scalars values as length-1 arrays
+    np_fun = lambda arg: np.diagflat(np.atleast_1d(arg), k)
+    jnp_fun = lambda arg: jnp.diagflat(arg, k)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_offset={}_axis1={}_axis2={}".format(
           jtu.format_shape_dtype_string(shape, dtype), offset, axis1, axis2),
        "dtype": dtype, "shape": shape, "offset": offset, "axis1": axis1,
