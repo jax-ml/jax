@@ -29,7 +29,6 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax import util
 from jax.api_util import flatten_fun
-from jax.lax import lax_control_flow
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 
@@ -45,6 +44,27 @@ from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 # A value suitable in a TF tracing context: tf.Tensor, tf.Var, or
 # Python scalar or numpy.ndarray.
 TfVal = Any
+
+
+# TODO(necula): used for tests, until we handle all control-flow primitives
+class _JitState(threading.local):
+
+  def __init__(self):
+    super().__init__()
+    self.disable_jit = True
+
+_jit_state = _JitState()
+
+
+@contextlib.contextmanager
+def enable_jit():
+  """Temporarily allow JAX jit."""
+  old_state = _jit_state.disable_jit
+  _jit_state.disable_jit = False
+  try:
+    yield
+  finally:
+    _jit_state.disable_jit = old_state
 
 
 def disable_gradient(fun):
@@ -91,11 +111,21 @@ def convert(fun):
   """
   @disable_gradient
   def wrapped_fun(*args):
-    f = lu.wrap_init(fun)
-    args_flat, in_tree = tree_util.tree_flatten((args, {}))
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    out_flat = _interpret_fun(flat_fun, args_flat)
-    return tree_util.tree_unflatten(out_tree(), out_flat)
+    # TODO(necula): remove the jit disabling once we handle all control-flow.
+    # Disabling the jit helps to avoid some unsupported jax primitives.
+    # E.g. scan will be statically unrolled.
+    def doit():
+      f = lu.wrap_init(fun)
+      args_flat, in_tree = tree_util.tree_flatten((args, {}))
+      flat_fun, out_tree = flatten_fun(f, in_tree)
+      out_flat = _interpret_fun(flat_fun, args_flat)
+      return tree_util.tree_unflatten(out_tree(), out_flat)
+
+    if _jit_state.disable_jit:
+      with jax.disable_jit():
+        return doit()
+    else:
+      return doit()
 
   return wrapped_fun
 
@@ -814,17 +844,6 @@ def _batched_while(*args, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
 
 tf_impl[lax.while_p] = _while
 
-
-def _scan(*tf_args : TfVal, **kwargs):
-  # We use the scan impl rule to rewrite in terms of while. We wrap it under
-  # _interpret_fun to abstract the TF values from scan_impl.
-  def func1(*jax_args):
-    return lax_control_flow._scan_impl(*jax_args, **kwargs)
-
-  return _interpret_fun(lu.wrap_init(func1), tf_args)
-
-tf_impl[lax.scan_p] = _scan
-
 # TODO: add_any
 # TODO: after_all
 # TODO: all_to_all
@@ -851,6 +870,7 @@ tf_impl[lax.scan_p] = _scan
 # TODO: reduce
 # TODO: reduce_window
 # TODO: rng_uniform
+# TODO: scan
 # TODO: select_and_gather_add
 # TODO: select_and_scatter
 # TODO: sort
