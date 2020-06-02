@@ -298,6 +298,7 @@ from .lax_control_flow import (
   scan,
   scan_bind,
   scan_p,
+  switch,
   while_loop,
   while_p,
   associative_scan,
