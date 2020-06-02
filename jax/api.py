@@ -1355,7 +1355,7 @@ def tree_vectorize(fun):
       yield tree_flatten(ans)
     fun2, args = _apply_callable_args(fun, args, flattree.tree_callable)
     f, out_tree = flatten_fun_output(lu.wrap_init(fun2))
-    outputs = flattree.tree_fun(flattree.tree_subtrace(f)).call_wrapped(args)
+    outputs = flattree.tree_fun(flattree.tree_trace(f)).call_wrapped(args)
     return tree_unflatten(out_tree(), outputs)
   return f_undone
 

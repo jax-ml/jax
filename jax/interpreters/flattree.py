@@ -23,7 +23,7 @@ import numpy as np
 
 from .. import core
 from .. import linear_util as lu
-from ..util import prod, safe_map as map, unzip3
+from ..util import prod, safe_map as map, unzip3, unzip4
 from ..tree_util import tree_structure, tree_flatten, tree_unflatten
 
 
@@ -44,20 +44,13 @@ def tree_fun(trees):
   yield out_trees
 
 @lu.transformation
-def tree_subtrace(master, trees):
+def tree_trace(master, trees):
   trace = TreeTrace(master, core.cur_sublevel())
   in_tracers = [TreeTracer(trace, *convert_vectorized_tree(t)) for t in trees]
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
   out_trees = tuple(restore_tree(t.treedefs, t.leaves) for t in out_tracers)
   yield out_trees
-
-@lu.transformation_with_aux
-def traceable(in_tree_def, *states):
-  state_in = tree_unflatten(in_tree_def, states)
-  state_out = yield state_in, {}
-  out_flat, out_tree_def = tree_flatten(state_out)
-  yield out_flat, out_tree_def
 
 
 def is_trivial_axis(
@@ -120,6 +113,19 @@ class TreeTracer(core.Tracer):
       return self
 
 
+@lu.transformation
+def tree_subtrace(master, treedefs_in, leafshapes_in, leaves_in):
+  trace = TreeTrace(master, core.cur_sublevel())
+  in_tracers = map(partial(TreeTracer, trace),
+                   treedefs_in, leafshapes_in, leaves_in)
+  ans = yield in_tracers, {}
+  out_tracers = map(trace.full_raise, ans)
+  treedefs_out, leafshapes_out, leaf_keys_out, leaf_values_out = unzip4(
+      (t.treedefs, t.leafshapes, t.leaves.keys(), t.leaves.values())
+      for t in tracers)
+  yield leaf_values_out, (treedefs_out, leafshapes_out, leaf_keys_out)
+
+
 class TreeTrace(core.Trace):
 
   def pure(self, val):
@@ -147,13 +153,14 @@ class TreeTrace(core.Trace):
   def process_call(self, call_primitive, f, tracers, params):
     treedefs_in, leafshapes_in, leaves_in = unzip3(
         (t.treedefs, t.leafshapes, t.leaves) for t in tracers)
-    state_in, in_tree_def = tree_flatten((treedefs_in, leafshapes_in, leaves_in))
-    f_tree, out_tree_def = traceable(tree_subtrace(f, self.master), in_tree_def)
-    # This breaks, because state_in contains a treedef which isn't a value JAX
-    # value.
-    result = call_primitive.bind(f_tree, *state_in, **params)
-    state_out = tree_unflatten(out_tree_def(), result)
-    return [TreeTracer(self, *args) for args in zip(state_out)]
+    f_tree, (treedefs_out, leafshapes_out, leaf_keys_out) = tree_subtrace(
+        f, self.master, treedefs_in, leafshapes_in, leaves_in)
+    leaf_values_out = call_primitive.bind(f_tree, *leaf_values_in, **params)
+    leaves_out = []
+    for keys, values in zip(leaf_keys_out, leaf_values_out):
+      leaves_out.append(dict(zip(keys, values)))
+    return map(partial(TreeTracer, trace),
+               treedefs_out, leafshapes_out, leaves_out)
 
 
 TreeState = Tuple[List[TreeDef], LeafShapes, Leaves]

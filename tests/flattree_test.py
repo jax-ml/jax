@@ -22,7 +22,7 @@ from jax.interpreters.flattree import (
     TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
     restore_tree,
 )
-from jax import disable_jit, make_jaxpr, shapecheck, tree_vectorize
+from jax import disable_jit, jit, make_jaxpr, shapecheck, tree_vectorize
 from jax import lax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_structure
@@ -219,7 +219,21 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(f)(tree, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
-  # TODO(shoyer): needs jit/process_call
+  def test_jit_identity(self):
+    tree = {'x': 0, 'y': 1}
+    result = jit(tree_vectorize(lambda x: x))(tree)
+    self.assertTreeEqual(result, tree, check_dtypes=True)
+
+  # TODO(shoyer): fix me
+  # Fails with:
+  # TypeError: <class 'jax.interpreters.partial_eval.JaxprTracer'> is not a valid Jax type
+  # def test_jit_plus1(self):
+  #   tree = {'x': 0, 'y': 1}
+  #   expected = {'x': 1, 'y': 1}
+  #   result = jit(tree_vectorize(lambda x: x + 1))(tree)
+  #   self.assertTreeEqual(result, expected, check_dtypes=True)
+
+  # # TODO(shoyer): needs jit/process_call
   # def test_norm(self):
   #   tree = [3.0, jnp.array([[4.0]])]
   #   self.assertEqual(tree_vectorize(jnp.linalg.norm)(tree), 5.0)
