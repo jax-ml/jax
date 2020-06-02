@@ -22,7 +22,7 @@ import itertools as it
 from weakref import ref
 import threading
 import types
-from typing import (Any, Callable, ClassVar, Dict, Generator, Hashable,
+from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
                     Type, Union, cast)
 
@@ -140,7 +140,7 @@ class JaxprEqn(NamedTuple):
   invars: List['Atom']
   outvars: List['Var']
   primitive: 'Primitive'
-  params: Dict[str, Hashable]
+  params: Dict[str, Any]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
@@ -1269,7 +1269,7 @@ def type_transfer(prim: Primitive, invars: Sequence[Var],
 
 # ------------------- Jaxpr printed representation -------------------
 
-def pp_vars(vs: Sequence[Atom]) -> str:
+def pp_vars(vs: Sequence[Any]) -> str:
   return ' '.join(map(str, vs))
 
 def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:

@@ -120,7 +120,7 @@ class JaxprTrace(Trace):
   def new_arg(self, pval: PartialVal) -> 'JaxprTracer':
     return JaxprTracer(self, pval, LambdaBinding())
 
-  def instantiate_const(self, tracer) -> 'JaxprTracer':
+  def instantiate_const(self, tracer) -> Tracer:
     const = tracer.pval.get_known()
     if const is None:
       return tracer
@@ -521,7 +521,8 @@ def recipe_to_eqn(unused_var: Callable[[], core.Var],
 
 def tracers_to_jaxpr(
   in_tracers: List[JaxprTracer],
-  out_tracers: List[JaxprTracer]) -> Tuple[Jaxpr, Sequence[Any], Sequence[Any]]:
+  out_tracers: List[JaxprTracer]
+  ) -> Tuple[Jaxpr, Tuple[Any, ...], Tuple[Any, ...]]:
   """Constructs Jaxpr given tracers for inputs and outputs.
 
   Params:
