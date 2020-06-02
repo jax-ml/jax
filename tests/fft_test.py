@@ -20,6 +20,7 @@ import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -29,9 +30,7 @@ config.parse_flags_with_absl()
 
 
 float_dtypes = [np.float32, np.float64]
-# TODO(b/144573940): np.complex128 isn't supported by XLA, and the JAX
-# implementation casts to complex64.
-complex_dtypes = [np.complex64]
+complex_dtypes = [np.complex64, np.complex128]
 inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = [np.int32, np.int64]
 bool_dtypes = [np.bool_]

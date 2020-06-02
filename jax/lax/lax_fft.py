@@ -23,6 +23,7 @@ from jax.core import Primitive
 from jax.interpreters import xla
 from jax.util import prod
 from . import dtypes, lax
+from .. import lib
 from ..lib import xla_client
 from ..interpreters import ad
 from ..interpreters import batching
@@ -35,16 +36,18 @@ __all__ = [
 ]
 
 def _promote_to_complex(arg):
-  dtype = onp.result_type(arg, onp.complex64)
-  # XLA's FFT op only supports C64.
-  if dtype == onp.complex128:
+  dtype = dtypes.result_type(arg, onp.complex64)
+  # XLA's FFT op only supports C64 in jaxlib versions 0.1.47 and earlier.
+  # TODO(phawkins): remove when minimum jaxlib version is 0.1.48 or newer.
+  if lib.version <= (0, 1, 47) and dtype == onp.complex128:
     dtype = onp.complex64
   return lax.convert_element_type(arg, dtype)
 
 def _promote_to_real(arg):
-  dtype = onp.result_type(arg, onp.float64)
+  dtype = dtypes.result_type(arg, onp.float64)
   # XLA's FFT op only supports F32.
-  if dtype == onp.float64:
+  # TODO(phawkins): remove when minimum jaxlib version is 0.1.48 or newer.
+  if lib.version <= (0, 1, 47) and dtype == onp.float64:
     dtype = onp.float32
   return lax.convert_element_type(arg, dtype)
 
