@@ -2841,6 +2841,7 @@ ad.defjvp(clamp_p,
                  g, _zeros(operand)),
           lambda g, min, operand, max:
           select(lt(max, operand), _brcast(g, operand), _zeros(operand)))
+batching.defbroadcasting(clamp_p)
 
 
 def _concatenate_shape_rule(*operands, **kwargs):
