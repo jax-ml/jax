@@ -52,7 +52,7 @@ def _parse_gufunc_signature(
         'not a valid gufunc signature: {}'.format(signature))
   args, retvals = ([tuple(re.findall(_DIMENSION_NAME, arg))
                    for arg in re.findall(_ARGUMENT, arg_list)]
-                   for arg_list in signature.split('->')) 
+                   for arg_list in signature.split('->'))
   return args, retvals
 
 

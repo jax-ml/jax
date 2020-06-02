@@ -103,7 +103,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testDetOfSingularMatrix(self):
     x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
     self.assertAllClose(np.float32(0), jsp.linalg.det(x))
-    
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -174,10 +174,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     result = jnp.linalg.tensorsolve(*args_maker())
     self.assertEqual(result.shape, Q)
 
-    self._CheckAgainstNumpy(np.linalg.tensorsolve, 
+    self._CheckAgainstNumpy(np.linalg.tensorsolve,
                             jnp.linalg.tensorsolve, args_maker,
                             tol={np.float32: 1e-2, np.float64: 1e-3})
-    self._CompileAndCheck(jnp.linalg.tensorsolve, 
+    self._CompileAndCheck(jnp.linalg.tensorsolve,
                           args_maker,
                           rtol={np.float64: 1e-13})
 

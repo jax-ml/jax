@@ -26,7 +26,7 @@ Context:
 Among other requirements, the JAX PRNG aims to:
 (a) ensure reproducibility,
 (b) parallelize well, both in terms of vectorization (generating array values)
-and multi-replica, multi-core computation. In particular it should not use 
+and multi-replica, multi-core computation. In particular it should not use
 sequencing constraints between random function calls.
 
 The approach is based on:

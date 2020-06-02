@@ -23,7 +23,7 @@ from .. import api
 from ..numpy import lax_numpy as jnp
 from ..numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
-from ..numpy._util import _wraps                        
+from ..numpy._util import _wraps
 
 
 @_wraps(osp_special.gammaln)

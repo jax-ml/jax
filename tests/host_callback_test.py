@@ -774,7 +774,7 @@ transforms: ({'name': 'jvp'},) what: y * 3
 transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 3
 2.00""", testing_stream.output)
     testing_stream.reset()
-    
+
     with hcb.outfeed_receiver():
       res_grad = grad_func(jnp.float32(5.))
 
@@ -843,7 +843,7 @@ transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
     with hcb.outfeed_receiver():
       assertMultiLineStrippedEqual(self, """
 { lambda  ; a.
-  let 
+  let
   in (12.00,) }""", str(api.make_jaxpr(grad_func)(5.)))
       # Just making the Jaxpr invokes the id_print twiceonce
       assertMultiLineStrippedEqual(self, """
@@ -1100,7 +1100,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                   in (d, e, h) }
                     linear=(False, False, False, False, False, False)
                     true_jaxpr={ lambda  ; d g_ a b c h.
-                                 let 
+                                 let
                                  in (a, d, h) } ] c d e 1 2 b h
   in (f, g, i) }""", func, [y, 5])
 
@@ -1176,7 +1176,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                     in (w, t, u, x) }
                        body_nconsts=2
                        cond_jaxpr={ lambda  ; j k l m.
-                                    let 
+                                    let
                                     in (j,) }
                        cond_nconsts=0 ] b c h a 1 i
   in (d, 5, g) }""", func, [ct_body])

@@ -342,11 +342,11 @@ positional arguments and parameters:
   * nr_untapped: how many positional arguments (from the tail) should not be
   passed to the tap function.
   * arg_treedef: the treedef of the tapped positional arguments.
-  * transforms: a tuple of the transformations that have been applied. Each 
+  * transforms: a tuple of the transformations that have been applied. Each
     element of the tuple is itself a tuple with the first element the name
-    of the transform. The remaining elements depend on the transform. For 
-    example, for `batch`, the parameters are the dimensions that have been 
-    batched, and for `mask` the logical shapes. These are unpacked by 
+    of the transform. The remaining elements depend on the transform. For
+    example, for `batch`, the parameters are the dimensions that have been
+    batched, and for `mask` the logical shapes. These are unpacked by
     _ConsumerCallable before passing to the user function.
 
   * the remaining parameters are passed to the tap function.
