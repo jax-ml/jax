@@ -15,7 +15,7 @@
 from functools import partial
 
 from absl.testing import absltest
-import numpy as np
+import numpy as onp
 
 import jax
 from jax import dtypes
@@ -37,12 +37,12 @@ def num_float_bits(dtype):
 class ODETest(jtu.JaxTestCase):
 
   def check_against_scipy(self, fun, y0, tspace, *args, tol=1e-1):
-    y0, tspace = np.array(y0), np.array(tspace)
-    np_fun = partial(fun, np)
+    y0, tspace = onp.array(y0), onp.array(tspace)
+    np_fun = partial(fun, onp)
     scipy_result = jnp.asarray(osp_integrate.odeint(np_fun, y0, tspace, args))
 
     y0, tspace = jnp.array(y0), jnp.array(tspace)
-    jax_fun = partial(fun, np)
+    jax_fun = partial(fun, jnp)
     jax_result = odeint(jax_fun, y0, tspace, *args)
 
     self.assertAllClose(jax_result, scipy_result, check_dtypes=False, atol=tol, rtol=tol)
@@ -53,13 +53,13 @@ class ODETest(jtu.JaxTestCase):
       theta, omega = y
       return [omega, -m * omega - g * jnp.sin(theta)]
 
-    integrate = partial(odeint, partial(pend, np))
+    integrate = partial(odeint, partial(pend, onp))
 
     y0 = [jnp.pi - 0.1, 0.0]
     ts = jnp.linspace(0., 1., 11)
     args = (0.25, 9.8)
 
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
 
     self.check_against_scipy(pend, y0, ts, *args, tol=tol)
 
@@ -75,7 +75,7 @@ class ODETest(jtu.JaxTestCase):
     y0 = (jnp.array(-0.1), jnp.array([[[0.1]]]))
     integrate = partial(odeint, dynamics)
     ts = jnp.linspace(0., 1., 11)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
     jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
                     atol=tol, rtol=tol)
 
@@ -85,12 +85,12 @@ class ODETest(jtu.JaxTestCase):
     def dynamics(_np, y, t):
       return jnp.array([y[1] * -t, -1 * y[1] - 9.8 * jnp.sin(y[0])])
 
-    integrate = partial(odeint, partial(dynamics, np))
+    integrate = partial(odeint, partial(dynamics, onp))
 
     y0 = [jnp.pi - 0.1, 0.0]
     ts = jnp.linspace(0., 1., 11)
 
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
 
     self.check_against_scipy(dynamics, y0, ts, tol=tol)
 
@@ -102,15 +102,15 @@ class ODETest(jtu.JaxTestCase):
     def decay(_np, y, t, arg1, arg2):
         return -jnp.sqrt(t) - y + arg1 - jnp.mean((y + arg2)**2)
 
-    integrate = partial(odeint, partial(decay, np))
+    integrate = partial(odeint, partial(decay, onp))
 
-    rng = np.random.RandomState(0)
+    rng = onp.random.RandomState(0)
     args = (rng.randn(3), rng.randn(3))
 
     y0 = rng.randn(3)
     ts = jnp.linspace(0.1, 0.2, 4)
 
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
 
     self.check_against_scipy(decay, y0, ts, *args, tol=tol)
 
@@ -122,10 +122,10 @@ class ODETest(jtu.JaxTestCase):
     def swoop(_np, y, t, arg1, arg2):
       return jnp.array(y - jnp.sin(t) - jnp.cos(t) * arg1 + arg2)
 
-    integrate = partial(odeint, partial(swoop, np))
+    integrate = partial(odeint, partial(swoop, onp))
 
     ts = jnp.array([0.1, 0.2])
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
 
     y0 = jnp.linspace(0.1, 0.9, 10)
     args = (0.1, 0.2)
@@ -164,8 +164,8 @@ class ODETest(jtu.JaxTestCase):
     ans = jax.grad(g)(2.)  # don't crash
     expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
 
-    atol = {np.float64: 5e-15}
-    rtol = {np.float64: 2e-15}
+    atol = {onp.float64: 5e-15}
+    rtol = {onp.float64: 2e-15}
     self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
 
   def test_disable_jit_odeint_with_vmap(self):
