@@ -2581,8 +2581,9 @@ def diag(v, k=0):
     raise ValueError("diag input must be 1d or 2d")
 
 _SCALAR_VALUE_DOC="""\
-Unlike numpy's implementation of diagflat, this does not
-handle scalar values differently
+This differs from np.diagflat for some scalar values of v,
+jax always returns a two-dimensional array, whereas numpy may
+return a scalar depending on the type of v.
 """
 
 @_wraps(np.diagflat, lax_description=_SCALAR_VALUE_DOC)

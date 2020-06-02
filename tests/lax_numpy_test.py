@@ -1465,6 +1465,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for k in range(-4, 4)))
   def testDiagFlat(self, shape, dtype, k):
     rng = jtu.rand_default(self.rng())
+    # numpy has inconsistencies for scalar values
+    # https://github.com/numpy/numpy/issues/16477
+    # jax differs in that it treats scalars values as length-1 arrays
     np_fun = lambda arg: np.diagflat(np.atleast_1d(arg), k)
     jnp_fun = lambda arg: jnp.diagflat(arg, k)
     args_maker = lambda: [rng(shape, dtype)]
