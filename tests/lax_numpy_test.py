@@ -1368,6 +1368,35 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "op={}_shape=[{}]_axis={}_out_dtype={}".format(
+          op, jtu.format_shape_dtype_string(shape, dtype), axis,
+          out_dtype.__name__),
+       "axis": axis, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
+       "jnp_op": getattr(jnp, op), "np_op": getattr(np, op)}
+      for op in ["nancumsum", "nancumprod"]
+      for dtype in all_dtypes
+      for out_dtype in default_dtypes
+      for shape in all_shapes
+      for axis in [None] + list(range(-len(shape), len(shape)))))
+  def testNanCumSumProd(self, axis, shape, dtype, out_dtype, np_op, jnp_op):
+    rng = jtu.rand_some_nan(self.rng())
+    np_fun = partial(np_op, axis=axis, dtype=out_dtype)
+    np_fun = jtu.ignore_warning(category=np.ComplexWarning)(np_fun)
+    jnp_fun = partial(jnp_op, axis=axis, dtype=out_dtype)
+    jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
+
+    args_maker = lambda: [rng(shape, dtype)]
+
+    tol_thresholds = {dtypes.bfloat16: 4e-2}
+    tol = max(jtu.tolerance(dtype, tol_thresholds),
+              jtu.tolerance(out_dtype, tol_thresholds))
+    if dtype != jnp.bfloat16:
+      # numpy functions do not properly handle bfloat16
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True,
+                              tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_yshape={}_xshape={}_dx={}_axis={}".format(
