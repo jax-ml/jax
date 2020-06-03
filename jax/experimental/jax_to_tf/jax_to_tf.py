@@ -29,6 +29,7 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax import util
 from jax.api_util import flatten_fun
+from jax.lax import lax_control_flow
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 
@@ -844,6 +845,17 @@ def _batched_while(*args, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
 
 tf_impl[lax.while_p] = _while
 
+
+def _scan(*tf_args : TfVal, **kwargs):
+  # We use the scan impl rule to rewrite in terms of while. We wrap it under
+  # _interpret_fun to abstract the TF values from scan_impl.
+  def func1(*jax_args):
+    return lax_control_flow._scan_impl(*jax_args, **kwargs)
+
+  return _interpret_fun(lu.wrap_init(func1), tf_args)
+
+tf_impl[lax.scan_p] = _scan
+
 # TODO: add_any
 # TODO: after_all
 # TODO: all_to_all
@@ -870,7 +882,6 @@ tf_impl[lax.while_p] = _while
 # TODO: reduce
 # TODO: reduce_window
 # TODO: rng_uniform
-# TODO: scan
 # TODO: select_and_gather_add
 # TODO: select_and_scatter
 # TODO: sort
