@@ -32,7 +32,7 @@ neg = np.negative
 sign = np.sign
 floor = np.floor
 ceil = np.ceil
-round = lambda x: np.trunc(x + np.copysign(.5, x)).astype(x.dtype)
+round = lambda x: np.trunc(x + np.copysign(np.nextafter(.5, .0, dtype=x.dtype), x)).astype(x.dtype)
 nextafter = np.nextafter
 
 is_finite = np.isfinite
