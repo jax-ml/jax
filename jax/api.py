@@ -54,7 +54,6 @@ from .lib import xla_client as xc
 from .lib.xla_bridge import (device_count, local_device_count, devices, local_devices,
                              host_id, host_ids, host_count)
 from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
-from .interpreters.masking import eval_polymorphic_shape, Poly, Mon
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla
@@ -1289,67 +1288,50 @@ def _parallelize(fun):
 
 def mask(fun: Callable, in_shapes, out_shape) -> Callable:
   _check_callable(fun)
+  unique_ids = masking.UniqueIds()
+
   in_specs, in_shapes_tree = tree_flatten(in_shapes)
-  out_specs, out_shapes_tree = tree_flatten(out_shape)
-
   in_specs = map(masking.parse_spec, in_specs)
-  out_specs = map(masking.parse_spec, out_specs)
+  in_specs = map(partial(masking.remap_ids, unique_ids), in_specs)
 
-  unique_ids: Dict[Any, Any] = collections.defaultdict(object)
-  in_specs  = map(partial(_remap_ids, unique_ids), in_specs)
-  out_specs = map(partial(_remap_ids, unique_ids), out_specs)
+  out_specs, out_spec_tree = tree_flatten(out_shape)
+  out_specs = map(masking.parse_spec, out_specs)
+  out_specs = map(partial(masking.remap_ids, unique_ids), out_specs)
 
   def wrapped_fun(args, logical_env):
     args_flat, in_tree = tree_flatten(args)
-    if in_tree != in_shapes_tree: raise TypeError("pytree mismatch")
+    if in_tree != in_shapes_tree:
+      raise TypeError(f"Tree mismatch: Input {in_tree} and shape spec {in_shapes_tree}.")
     logical_env = {unique_ids[name] : val for name, val in logical_env.items()}
     in_shapes = map(masking.finalize_spec, in_specs, map(onp.shape, args_flat))
-    padded_env = _bind_shapes(in_shapes, [x.shape for x in args_flat])
+    padded_env = masking.bind_shapes(in_shapes, [x.shape for x in args_flat])
     f = lu.wrap_init(fun)
-    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    outs, out_shapes_ = masking.mask_fun(
-        flat_fun, logical_env, padded_env, args_flat, in_shapes)
-    if not out_tree() == out_shapes_tree: raise TypeError("pytree mismatch")
-    out_shapes = map(masking.finalize_spec, out_specs, map(onp.shape, outs))
-    if not out_shapes == list(out_shapes_):
-      raise masking.ShapeError
-    if not all(onp.shape(out) == eval_polymorphic_shape(shape, padded_env)
-               for out, shape in zip(outs, out_shapes)):
-      raise masking.ShapeError
-    return tree_unflatten(out_tree(), outs)
+    flat_fun, out_tree_thunk = flatten_fun_nokwargs(f, in_tree)
+    outs, out_shapes = masking.mask_fun(
+      flat_fun, logical_env, padded_env, args_flat, in_shapes)
+    out_tree = out_tree_thunk()
+
+    masking.check_shapes(out_specs, out_spec_tree, list(out_shapes), out_tree)
+    def padded_spec(shape_spec):
+      return tuple(dim if dim is masking._monomorphic_dim else
+                   masking.eval_poly(dim, padded_env) for dim in shape_spec)
+    masking.check_shapes(map(padded_spec, out_specs), out_spec_tree,
+                         map(onp.shape, outs), out_tree, "Padded output")
+    return tree_unflatten(out_tree, outs)
   return wrapped_fun
-
-def _remap_ids(names, shape_spec):
-  return masking.ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
-                          : coeff for mon, coeff in poly.items()})
-                   if poly is not masking._monomorphic_dim else
-                   masking._monomorphic_dim for poly in shape_spec)
-
-def _bind_shapes(shape_exprs, shapes):
-  env = {}
-  for shape_expr, shape in zip(shape_exprs, shapes):
-    for poly, d in zip(shape_expr, shape):
-      if type(poly) is not Poly or poly.is_constant:
-        continue
-      else:
-        (binder,), = poly  # TODO generalize to handle striding
-        if env.setdefault(binder, d) != d: raise masking.ShapeError
-  return env
-
 
 @curry
 def shapecheck(in_shapes, out_shape, fun: Callable):
   _check_callable(fun)
   in_shapes, in_tree = tree_flatten(in_shapes)
   in_shapes = map(masking.parse_spec, in_shapes)
-  out_shapes, out_tree = tree_flatten(out_shape)
-  out_shapes = map(masking.parse_spec, out_shapes)
-  flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  out_specs, out_spec_tree = tree_flatten(out_shape)
+  out_specs = map(masking.parse_spec, out_specs)
+  flat_fun, out_tree_thunk = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   avals = map(partial(ShapedArray, dtype=onp.float32), in_shapes)
-  out_shapes_ = [o.shape for o in pe.abstract_eval_fun(flat_fun.call_wrapped, *avals)]
-  if out_tree != out_tree_(): raise TypeError("pytree mismatch")
-  if not all(map(masking._shape_spec_consistent, out_shapes, out_shapes_)):
-    raise masking.ShapeError
+  out_shapes = [o.shape for o in pe.abstract_eval_fun(flat_fun.call_wrapped, *avals)]
+  masking.check_shapes(map(tuple, out_specs), out_spec_tree,
+                       map(tuple, out_shapes), out_tree_thunk())
   return fun
 
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
