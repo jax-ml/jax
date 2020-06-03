@@ -211,6 +211,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     packbits
     pad
     percentile
+    polyadd
     polyval
     power
     positive
