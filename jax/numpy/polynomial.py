@@ -54,13 +54,13 @@ def _nonzero_range(arr):
 
 @_wraps(np.roots, lax_description="""\
 If the input polynomial coefficients of length n do not start with zero,
-the polynomial is of degree n - 1 leading to n - 1 roots. 
+the polynomial is of degree n - 1 leading to n - 1 roots.
 If the coefficients do have leading zeros, the polynomial they define
-has a smaller degree and the number of roots (and thus the output shape) 
+has a smaller degree and the number of roots (and thus the output shape)
 is value dependent.
 
 The general implementation can therefore not be transformed with jit.
-If the coefficients are guaranteed to have no leading zeros, use the 
+If the coefficients are guaranteed to have no leading zeros, use the
 keyword argument `strip_zeros=False` to get a jit-compatible variant::
 
     >>> roots_unsafe = jax.jit(functools.partial(jnp.roots, strip_zeros=False))

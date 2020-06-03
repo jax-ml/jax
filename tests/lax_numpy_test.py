@@ -2027,7 +2027,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                           rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": 
+      {"testcase_name":
        f"_arg{i}_ndmin={ndmin}_dtype={np.dtype(dtype) if dtype else None}",
        "arg": arg, "ndmin": ndmin, "dtype": dtype}
       for i, (arg, dtypes) in enumerate([

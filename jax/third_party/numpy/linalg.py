@@ -89,7 +89,7 @@ def tensorsolve(a, b, axes=None):
       allaxes.insert(an, k)
 
     a = a.transpose(allaxes)
-  
+
   Q = a.shape[-(an - b.ndim):]
 
   prod = 1
@@ -98,10 +98,10 @@ def tensorsolve(a, b, axes=None):
 
   a = a.reshape(-1, prod)
   b = b.ravel()
-  
+
   res = jnp.asarray(la.solve(a, b))
   res = res.reshape(Q)
-  
+
   return res
 
 
