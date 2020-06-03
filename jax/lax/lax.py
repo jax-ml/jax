@@ -5041,7 +5041,11 @@ def infeed(token, shape=None, partitions=None):
                       "ShapedArray values, got {}".format(shape))
   if partitions is not None:
     # Always replicate token.
-    partitions = (partitions, None)
+    # We specifically use type() to raise an error for PartitionSpecs.
+    if type(partitions) != tuple:  # pylint: disable=unidiomatic-typecheck
+      raise ValueError(f"'partitions' argument to infeed should be a tuple, "
+                       f"got {partitions}")
+    partitions = partitions + (None,)
   xs_and_token = infeed_p.bind(token, shapes=tuple(flat_shapes),
                                partitions=partitions)
   return (treedef.unflatten(xs_and_token[:-1]), xs_and_token[-1])
