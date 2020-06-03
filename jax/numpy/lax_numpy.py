@@ -26,12 +26,8 @@ rules for the underlying :code:`lax` primitives.
 
 import builtins
 import collections
-from collections.abc import Sequence
-import itertools
 import operator
 import os
-import re
-import string
 import types
 from typing import Sequence, Set, Tuple, Union
 import warnings
@@ -50,10 +46,9 @@ from ..interpreters.xla import DeviceArray
 from ..interpreters.masking import Poly
 from .. import lax
 from .. import ops
-from ..util import (partial, get_module_functions, unzip2, prod as _prod,
+from ..util import (partial, unzip2, prod as _prod,
                     subvals, safe_zip)
 from ..lib import pytree
-from ..lib import xla_client
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
