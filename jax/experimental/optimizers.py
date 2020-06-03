@@ -88,12 +88,11 @@ zip = safe_zip
 # Since pytrees can be flattened, that structure is isomorphic to a list of
 # lists (with no further nesting).
 
-pack = tuple
 OptimizerState = namedtuple("OptimizerState",
-                            ["packed_state", "tree_def", "subtree_defs"])
+                            ["states_flat", "tree_def", "subtree_defs"])
 register_pytree_node(
     OptimizerState,
-    lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
+    lambda xs: ((xs.states_flat,), (xs.tree_def, xs.subtree_defs)),
     lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 def optimizer(opt_maker):
@@ -138,19 +137,18 @@ def optimizer(opt_maker):
       x0_flat, tree = tree_flatten(x0_tree)
       initial_states = [init(x0) for x0 in x0_flat]
       states_flat, subtrees = unzip2(map(tree_flatten, initial_states))
-      packed_state = pack(map(pack, states_flat))
-      return OptimizerState(packed_state, tree, subtrees)
+      return OptimizerState(states_flat, tree, subtrees)
 
     @functools.wraps(update)
     def tree_update(i, grad_tree, opt_state):
-      packed_state, tree, subtrees = opt_state
+      states_flat, tree, subtrees = opt_state
       grad_flat, tree2 = tree_flatten(grad_tree)
       if tree2 != tree:
         msg = ("optimizer update function was passed a gradient tree that did "
                "not match the parameter tree structure with which it was "
                "initialized: parameter tree {} and grad tree {}.")
         raise TypeError(msg.format(tree, tree2))
-      states = map(tree_unflatten, subtrees, packed_state)
+      states = map(tree_unflatten, subtrees, states_flat)
       new_states = map(partial(update, i), grad_flat, states)
       new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
       for subtree, subtree2 in zip(subtrees, subtrees2):
@@ -158,13 +156,12 @@ def optimizer(opt_maker):
           msg = ("optimizer update function produced an output structure that "
                  "did not match its input structure: input {} and output {}.")
           raise TypeError(msg.format(subtree, subtree2))
-      new_packed_state = pack(map(pack, new_states_flat))
-      return OptimizerState(new_packed_state, tree, subtrees)
+      return OptimizerState(new_states_flat, tree, subtrees)
 
     @functools.wraps(get_params)
     def tree_get_params(opt_state):
-      packed_state, tree, subtrees = opt_state
-      states = map(tree_unflatten, subtrees, packed_state)
+      states_flat, tree, subtrees = opt_state
+      states = map(tree_unflatten, subtrees, states_flat)
       params = map(get_params, states)
       return tree_unflatten(tree, params)
 
@@ -551,8 +548,8 @@ def unpack_optimizer_state(opt_state):
   Returns:
     A pytree with JoinPoint leaves that contain a second level of pytrees.
   """
-  packed_state, tree_def, subtree_defs = opt_state
-  subtrees = map(tree_unflatten, subtree_defs, packed_state)
+  states_flat, tree_def, subtree_defs = opt_state
+  subtrees = map(tree_unflatten, subtree_defs, states_flat)
   sentinels = [JoinPoint(subtree) for subtree in subtrees]
   return tree_util.tree_unflatten(tree_def, sentinels)
 
@@ -573,5 +570,4 @@ def pack_optimizer_state(marked_pytree):
   assert all(isinstance(s, JoinPoint) for s in sentinels)
   subtrees = [s.subtree for s in sentinels]
   states_flat, subtree_defs = unzip2(map(tree_flatten, subtrees))
-  packed_state = pack(map(pack, states_flat))
-  return OptimizerState(packed_state, tree_def, subtree_defs)
+  return OptimizerState(states_flat, tree_def, subtree_defs)
