@@ -57,7 +57,7 @@ map = safe_map
 
 # -------------------- jaxprs --------------------
 
-class Jaxpr(object):
+class Jaxpr:
   constvars: List['Var']
   invars: List['Var']
   outvars: List['Atom']
@@ -97,7 +97,7 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
         yield param.jaxpr
 
 
-class TypedJaxpr(object):
+class TypedJaxpr:
   jaxpr: Jaxpr
   literals: List['Any']
   in_avals: List['AbstractValue']
@@ -148,7 +148,7 @@ new_jaxpr_eqn = JaxprEqn
 
 
 @total_ordering
-class Var(object):
+class Var:
   # TODO(frostig,mattjj): We don't override __eq__ or __hash__, so comparison is
   # by object id, but pretty printing might collide.
   count: int
@@ -196,7 +196,7 @@ def gensym(jaxprs: Optional[Sequence[Jaxpr]] = None,
   counter = it.count(start=start)
   return lambda aval: Var(next(counter), suffix, aval)
 
-class Literal(object):
+class Literal:
   __slots__ = ["val", "hash"]
 
   val: Any
@@ -233,7 +233,7 @@ literalable_types: Set[type] = set()
 
 Atom = Union[Var, Literal]
 
-class Primitive(object):
+class Primitive:
   name: str
   multiple_results = False  # set for multi-output primitives
   call_primitive = False    # set for call primitives processed in final style
@@ -410,7 +410,7 @@ def escaped_tracer_error(detail):
 class UnexpectedTracerError(Exception): pass
 
 
-class Tracer(object):
+class Tracer:
   __array_priority__ = 1000
   __slots__ = ['_trace', '__weakref__']
 
@@ -691,7 +691,7 @@ def initial_style_staging():
 # -------------------- abstract values --------------------
 
 
-class AbstractValue(object):
+class AbstractValue:
   __slots__: List[str] = []
 
   def at_least_vspace(self):
@@ -707,6 +707,9 @@ class AbstractValue(object):
   def strip_weak_type(self) -> 'AbstractValue':
     return self
 
+  def join(self, other):
+    raise NotImplementedError("must override")
+
 class Bot(AbstractValue): pass
 
 bot = Bot()
@@ -720,12 +723,12 @@ class AbstractUnit(AbstractValue):
 
 abstract_unit = AbstractUnit()
 
-def lattice_join(x: Optional['UnshapedArray'],
-                 y: Optional['UnshapedArray']) -> 'UnshapedArray':
+def lattice_join(x: Optional[AbstractValue],
+                 y: Optional[AbstractValue]) -> AbstractValue:
   if x is None:
-    return cast(UnshapedArray, y)
+    return cast(AbstractValue, y)
   elif y is None:
-    return cast(UnshapedArray, x)
+    return cast(AbstractValue, x)
   elif isinstance(x, type(y)):
     return y.join(x)
   elif isinstance(y, type(x)):
@@ -766,7 +769,7 @@ def get_aval(x):
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
 
-class Unit(object):
+class Unit:
   def __repr__(self): return '*'
 unit = Unit()
 literalable_types.add(Unit)
@@ -1116,10 +1119,10 @@ def unmapped_aval(size: int, aval: AbstractValue) -> AbstractValue:
   else:
     raise TypeError(f"Mapped output {aval}")
 
-def typecheck(aval: UnshapedArray, x) -> bool:
-  return typecompat(aval, cast(UnshapedArray, get_aval(x)))
+def typecheck(aval: AbstractValue, x) -> bool:
+  return typecompat(aval, get_aval(x))
 
-def typecompat(aval_ref: UnshapedArray, aval: UnshapedArray) -> bool:
+def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
   """Determine whether `aval` conforms to `aval_ref`"""
   aval_ref = raise_to_shaped(aval_ref).strip_weak_type()
   try:
@@ -1214,8 +1217,9 @@ def check_call(prim, in_avals, params):
 
   # These checks also happen in recursive call, but give better errors here.
   if len(in_avals) != len(call_jaxpr.invars):
-    raise TypeError(f"Call primitive {prim} with {len(invars)} operands "
-                    f"cannot call jaxpr with {len(call_jaxpr.invars)} inputs")
+    raise TypeError(f"Call primitive {prim} with {len(call_jaxpr.invars)} "
+                    f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
+                    f"inputs")
   binder_avals = [v.aval for v in call_jaxpr.invars]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
     if not typecompat(binder_aval, in_aval):
