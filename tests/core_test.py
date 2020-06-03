@@ -330,15 +330,15 @@ class CoreTest(jtu.JaxTestCase):
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(2)   # int, not float!
     jtu.check_raises_regexp(
         lambda: core.check_jaxpr(jaxpr),
-        TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
-                    "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
+        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
+                    r"bound as ShapedArray(.*) in '. = sin .'"))
 
     jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(np.ones((2, 3)))
     jtu.check_raises_regexp(
         lambda: core.check_jaxpr(jaxpr),
-        TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
-                    "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
+        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
+                    r"bound as ShapedArray(.*) in '. = sin .'"))
 
 
 if __name__ == '__main__':
