@@ -30,7 +30,7 @@ from ._util import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as jnp
 from ..util import get_module_functions
-from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve
+from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve # noqa: F401
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 _H = lambda x: jnp.conj(jnp.swapaxes(x, -1, -2))
@@ -196,7 +196,6 @@ def _cofactor_solve(a, b):
   a_shape = jnp.shape(a)
   b_shape = jnp.shape(b)
   a_ndims = len(a_shape)
-  b_ndims = len(b_shape)
   if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2]
     and b_shape[-2:] == a_shape[-2:]):
     msg = ("The arguments to _cofactor_solve must have shapes "
