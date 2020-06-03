@@ -101,6 +101,12 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(lambda x: x)(tree)
     self.assertTreeEqual(actual, tree, check_dtypes=True)
 
+  def test_tree_output(self):
+    tree = (1, 2)
+    actual = tree_vectorize(lambda x: {'a': x, 'b': x})(tree)
+    expected = {'a': (1, 2), 'b': (1, 2)}
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
   def test_broadcast(self):
     tree = {'x': jnp.array(0.0),
             'y': jnp.array([1.0]),

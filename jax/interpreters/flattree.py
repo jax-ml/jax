@@ -38,7 +38,6 @@ PyTree = Any
 LeafShapes = Sequence[Sequence[Tuple[int, ...]]]
 Leaves = Dict[Tuple[int, ...], ArrayLike]
 
-
 @lu.transformation
 def tree_fun(trees):
   with core.new_master(TreeTrace) as master:
@@ -51,9 +50,11 @@ def tree_trace(master, trees):
   trace = TreeTrace(master, core.cur_sublevel())
   in_tracers = [TreeTracer(trace, *convert_vectorized_tree(t)) for t in trees]
   ans = yield in_tracers, {}
-  out_tracers = map(trace.full_raise, ans)
+  flat, treedef_out = tree_flatten(ans)
+  out_tracers = map(trace.full_raise, flat)
   out_trees = tuple(restore_tree(t.treedefs, t.leaves) for t in out_tracers)
-  yield out_trees
+  out = tree_unflatten(treedef_out, out_trees)
+  yield out
 
 
 def is_trivial_axis(

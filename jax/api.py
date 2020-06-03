@@ -1329,6 +1329,12 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
   return fun
 
 
+# def tree_vectorize(fun):
+#   eval_shape
+#   return wraps(fun)(flattree.tree_vectorize(fun))
+
+
+# TODO(shoyer): use linear_util for this transformation
 def _apply_callable_args(fun, args, callable_transform):
   callables = []
   out_args = []
@@ -1349,14 +1355,10 @@ def tree_vectorize(fun):
   _check_callable(fun)
   @wraps(fun)
   def f_undone(*args):
-    @lu.transformation_with_aux
-    def flatten_fun_output(*args):
-      ans = yield args, {}
-      yield tree_flatten(ans)
     fun2, args = _apply_callable_args(fun, args, flattree.tree_callable)
-    f, out_tree = flatten_fun_output(lu.wrap_init(fun2))
+    f = lu.wrap_init(fun2)
     outputs = flattree.tree_fun(flattree.tree_trace(f)).call_wrapped(args)
-    return tree_unflatten(out_tree(), outputs)
+    return outputs
   return f_undone
 
 
