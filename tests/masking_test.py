@@ -22,7 +22,7 @@ from jax.interpreters.masking import shape_as_value, ShapeError, \
   parse_spec, Poly, Mon, finalize_spec, eval_polymorphic_shape, remap_ids, \
   UniqueIds
 from jax import numpy as jnp, test_util as jtu, mask, vmap, jit, grad, lax, \
-  shapecheck, api, core
+  shapecheck, core
 from jax.config import config
 from jax.numpy.lax_numpy import _polymorphic_slice_indices
 from jax.scipy.special import expit
@@ -43,7 +43,7 @@ zip = safe_zip
 def constant_poly(c):
   return Poly({Mon(): c})
 
-class MaskingTest(jtu.JaxTestCase):
+class PolyTest(jtu.JaxTestCase):
 
   @parameterized.parameters([
       ['(m, n)', 'ShapeSpec(m, n)'],
@@ -247,8 +247,8 @@ class MaskingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         NotImplementedError,
         'Masking rule for broadcast_in_dim not implemented yet.'):
-      ans = times([jnp.array([[1, 2], [3, 4], [5, 6]]), jnp.array([1, 2])],
-                  dict(n=4, m=5))
+      times([jnp.array([[1, 2], [3, 4], [5, 6]]), jnp.array([1, 2])],
+            dict(n=4, m=5))
       # expected = np.array([[1, 2, 3], [8, 10, 12]])
       # self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -261,7 +261,7 @@ class MaskingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         NotImplementedError,
         'Masking rule for broadcast_in_dim not implemented yet.'):
-      ans = stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
+      stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
       # expected = np.array([[1, 2, 3], [4, 5, 6]])
       # self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -563,7 +563,7 @@ class MaskingTest(jtu.JaxTestCase):
       return x[:0:-1]
 
     @shapecheck(['n'], 'n+-1')
-    def rev(x):
+    def rev2(x):
       return x[-2::-1]
 
     # TODO implement masking for rev_p:
@@ -589,7 +589,7 @@ class MaskingTest(jtu.JaxTestCase):
 
   def test_expit(self):
     raise SkipTest("custom_jvp doesn't work with masking yet")
-    self.check(expit, ['n'], 'n', {n: 3}, [(4,)], ['float_'],
+    self.check(expit, ['n'], 'n', dict(n=3), [(4,)], ['float_'],
                rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list(
