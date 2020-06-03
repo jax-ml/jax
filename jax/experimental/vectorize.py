@@ -23,9 +23,9 @@ What is a gufunc?
 ("gufuncs") are one of my favorite abstractions from NumPy. They generalize
 NumPy's `broadcasting rules
 <https://docs.scipy.org/doc/numpy-1.15.0/user/basics.broadcasting.html>`_ to
-handle non-scalar operations. When a gufuncs is applied to arrays, there are: 
+handle non-scalar operations. When a gufuncs is applied to arrays, there are:
 
-* "core dimensions" over which an operation is defined.  
+* "core dimensions" over which an operation is defined.
 * "broadcast dimensions" over which operations can be automatically vectorized.
 
 A string `signature <https://docs.scipy.org/doc/numpy-1.15.0/reference/c-api.generalized-ufuncs.html#details-of-signature>`_
@@ -199,7 +199,7 @@ def _calculate_shapes(broadcast_shape, dim_sizes, list_of_core_dims):
     return [broadcast_shape + tuple(dim_sizes[dim] for dim in core_dims)
             for core_dims in list_of_core_dims]
 
-  
+
 # adapted from np.vectorize (again authored by shoyer@)
 def broadcast_with_core_dims(args, input_core_dims, output_core_dims):
   if len(args) != len(input_core_dims):
@@ -245,7 +245,7 @@ def vectorize(signature):
   """Vectorize a function using JAX.
 
   Turns an arbitrary function into a numpy style "gufunc". Once
-  you specify the behavior of the core axis, the rest will be 
+  you specify the behavior of the core axis, the rest will be
   broadcast naturally.
 
   Args:
@@ -258,7 +258,7 @@ def vectorize(signature):
 	which axis should be treated as the core one.
   """
   input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
-  
+
   def decorator(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):

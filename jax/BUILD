@@ -27,16 +27,14 @@ pytype_library(
     srcs = glob(
         [
             "*.py",
-            "lib/*.py",
-            "interpreters/*.py",
-            "lax/*.py",
-            "numpy/*.py",
-            "ops/*.py",
-            "scipy/*.py",
-            "scipy/stats/*.py",
-            "third_party/*.py",
-            "third_party/numpy/*.py",
-            "nn/*.py",
+            "lib/**/*.py",
+            "interpreters/**/*.py",
+            "lax/**/*.py",
+            "numpy/**/*.py",
+            "ops/**/*.py",
+            "scipy/**/*.py",
+            "third_party/**/*.py",
+            "nn/**/*.py",
         ],
         exclude = [
             "*_test.py",
@@ -87,4 +85,28 @@ pytype_library(
     srcs = ["experimental/loops.py"],
     srcs_version = "PY3",
     deps = [":jax"],
+)
+
+pytype_library(
+    name = "callback",
+    srcs = ["experimental/callback.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
+    name = "jet",
+    srcs = ["experimental/jet.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
+    name = "experimental_host_callback",
+    srcs = ["experimental/host_callback.py"],
+    srcs_version = "PY3",
+    deps = [
+        ":jax",
+        "//third_party/py/msgpack",
+    ],
 )

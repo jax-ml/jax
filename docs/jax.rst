@@ -18,18 +18,66 @@ Subpackages
     jax.random
     jax.tree_util
     jax.dlpack
+    jax.profiler
 
 Just-in-time compilation (:code:`jit`)
 --------------------------------------
+
+.. autosummary::
+
+    jit
+    disable_jit
+    xla_computation
+    make_jaxpr
+    eval_shape
+    device_put
+
+Automatic differentiation
+-------------------------
+
+.. autosummary::
+
+    grad
+    value_and_grad
+    jacfwd
+    jacrev
+    hessian
+    jvp
+    linearize
+    vjp
+    custom_jvp
+    custom_vjp
+
+
+Vectorization (:code:`vmap`)
+----------------------------
+
+.. autosummary::
+
+    vmap
+    jax.numpy.vectorize
+
+Parallelization (:code:`pmap`)
+------------------------------
+
+.. autosummary::
+
+    pmap
+    devices
+    local_devices
+    host_id
+    host_ids
+    device_count
+    local_device_count
+    host_count
+
 
 .. autofunction:: jit
 .. autofunction:: disable_jit
 .. autofunction:: xla_computation
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
-
-Automatic differentiation
--------------------------
+.. autofunction:: device_put
 
 .. autofunction:: grad
 .. autofunction:: value_and_grad
@@ -39,22 +87,11 @@ Automatic differentiation
 .. autofunction:: jvp
 .. autofunction:: linearize
 .. autofunction:: vjp
-.. autofunction:: custom_transforms
-.. autofunction:: defjvp
-.. autofunction:: defjvp_all
-.. autofunction:: defvjp
-.. autofunction:: defvjp_all
-.. autofunction:: custom_gradient
-
-
-Vectorization (:code:`vmap`)
-----------------------------
+.. autofunction:: custom_jvp
+.. autofunction:: custom_vjp
 
 .. autofunction:: vmap
-.. autofunction:: numpy.vectorize
-
-Parallelization (:code:`pmap`)
-------------------------------
+.. autofunction:: jax.numpy.vectorize
 
 .. autofunction:: pmap
 .. autofunction:: devices

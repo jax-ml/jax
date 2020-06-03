@@ -24,8 +24,8 @@ Solve the wave equation with `pmap`, and make cool movies! The spatial domain is
 
 ![](https://raw.githubusercontent.com/google/jax/master/cloud_tpu_colabs/images/wave_movie.gif)
 
-### [JAX Demo](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/NeurIPS_2019_JAX_demo.ipynb)
-An overview of JAX presented at the [Program Transformations for ML workshop at NeurIPS 2019](https://program-transformations.github.io/). Covers basic numpy usage, `grad`, `jit`, `vmap`, and `pmap`.
+### [JAX Demo](https://colab.research.google.com/github/google/jax/blob/master/cloud_tpu_colabs/JAX_demo.ipynb)
+An overview of JAX presented at the [Program Transformations for ML workshop at NeurIPS 2019](https://program-transformations.github.io/) and the [Compilers for ML workshop at CGO 2020](https://www.c4ml.org/). Covers basic numpy usage, `grad`, `jit`, `vmap`, and `pmap`.
 
 ## Performance notes
 
@@ -46,7 +46,7 @@ By default\*, matrix multiplication in JAX on TPUs [uses bfloat16](https://cloud
 
 JAX also adds the `bfloat16` dtype, which you can use to explicitly cast arrays to bfloat16, e.g., `jax.numpy.array(x, dtype=jax.numpy.bfloat16)`.
 
-\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/google/jax/issues/1856) if it affects you!
+\* We might change the default precision in the future, since it is arguably surprising. Please comment/vote on [this issue](https://github.com/google/jax/issues/2161) if it affects you!
 
 ## Running JAX on a Cloud TPU from a GCE VM
 

@@ -38,6 +38,7 @@ for examples.
 
 import functools
 import collections
+import operator as op
 
 from .lib import pytree
 
@@ -86,6 +87,25 @@ def treedef_children(treedef):
 def treedef_is_leaf(treedef):
   return treedef.num_nodes == 1
 
+def all_leaves(iterable):
+  """Tests whether all elements in the given iterable are all leaves.
+
+  >>> tree = {"a": [1, 2, 3]}
+  >>> assert all_leaves(jax.tree_leaves(tree))
+  >>> assert not all_leaves([tree])
+
+  This function is useful in advanced cases, for example if a library allows
+  arbitrary map operations on a flat list of leaves it may want to check if
+  the result is still a flat list of leaves.
+
+  Args:
+    iterable: Iterable of leaves.
+
+  Returns:
+    True if all elements in the input are leaves false if not.
+  """
+  return pytree.all_leaves(iterable)
+
 def register_pytree_node(nodetype, flatten_func, unflatten_func):
   """Extends the set of types that are considered internal nodes in pytrees.
 
@@ -104,6 +124,26 @@ def register_pytree_node(nodetype, flatten_func, unflatten_func):
   """
   pytree.register_node(nodetype, flatten_func, unflatten_func)
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+
+def register_pytree_node_class(cls):
+  """Extends the set of types that are considered internal nodes in pytrees.
+
+  This function is a thin wrapper around ``register_pytree_node``, and provides
+  a class-oriented interface:
+
+    @register_pytree_node_class
+    class Special:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+      def tree_flatten(self):
+        return ((self.x, self.y), None)
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+  """
+  register_pytree_node(cls, op.methodcaller('tree_flatten'), cls.tree_unflatten)
+  return cls
 
 def tree_map(f, tree):
   """Maps a function over a pytree to produce a new pytree.
@@ -191,8 +231,12 @@ def _replace_nones(sentinel, tree):
     else:
       return tree
 
-def tree_reduce(f, tree):
-  return functools.reduce(f, tree_leaves(tree))
+no_initializer = object()
+def tree_reduce(function, tree, initializer=no_initializer):
+  if initializer is no_initializer:
+    return functools.reduce(function, tree_leaves(tree))
+  else:
+    return functools.reduce(function, tree_leaves(tree), initializer)
 
 def tree_all(tree):
   return all(tree_leaves(tree))

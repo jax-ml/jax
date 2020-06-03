@@ -18,20 +18,20 @@ from functools import partial
 import scipy.linalg
 import textwrap
 
-from jax import jit
+from jax import jit, vmap
 from .. import lax
 from .. import lax_linalg
-from ..numpy.lax_numpy import _wraps
-from ..numpy import lax_numpy as np
+from ..numpy._util import _wraps
+from ..numpy import lax_numpy as jnp
 from ..numpy import linalg as np_linalg
 
-_T = lambda x: np.swapaxes(x, -1, -2)
+_T = lambda x: jnp.swapaxes(x, -1, -2)
 
 @partial(jit, static_argnums=(1,))
 def _cholesky(a, lower):
-  a = np_linalg._promote_arg_dtypes(np.asarray(a))
-  l = lax_linalg.cholesky(a if lower else np.conj(_T(a)), symmetrize_input=False)
-  return l if lower else np.conj(_T(l))
+  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
+  return l if lower else jnp.conj(_T(l))
 
 @_wraps(scipy.linalg.cholesky)
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
@@ -44,25 +44,13 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 
 @partial(jit, static_argnums=(2,))
 def _cho_solve(c, b, lower):
-  c, b = np_linalg._promote_arg_dtypes(np.asarray(c), np.asarray(b))
-  c_shape = np.shape(c)
-  b_shape = np.shape(b)
-  c_ndims = len(c_shape)
-  b_ndims = len(b_shape)
-  if not (c_ndims >= 2 and c_shape[-1] == c_shape[-2] and
-          (c_ndims == b_ndims or c_ndims == b_ndims + 1)):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(c_shape, b_shape))
-
-  # TODO(phawkins): triangular_solve only supports matrices on the RHS, so we
-  # add a dummy dimension. Extend it to support vectors and simplify this.
-  b = b if c_ndims == b_ndims else b[..., None]
+  c, b = np_linalg._promote_arg_dtypes(jnp.asarray(c), jnp.asarray(b))
+  np_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=lower, conjugate_a=lower)
-  return b[..., 0] if c_ndims != b_ndims else b
+  return b
 
 @_wraps(scipy.linalg.cho_solve, update_doc=False)
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
@@ -74,7 +62,7 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
 def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
         check_finite=True, lapack_driver='gesdd'):
   del overwrite_a, check_finite, lapack_driver
-  a = np_linalg._promote_arg_dtypes(np.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices, compute_uv)
 
 
@@ -97,7 +85,7 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
-  a = np_linalg._promote_arg_dtypes(np.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
 
   if eigvals_only:
@@ -115,7 +103,7 @@ def inv(a, overwrite_a=False, check_finite=True):
 @_wraps(scipy.linalg.lu_factor)
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
-  a = np_linalg._promote_arg_dtypes(np.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   return lax_linalg.lu(a)
 
 
@@ -128,17 +116,17 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnums=(1,))
 def _lu(a, permute_l):
-  a = np_linalg._promote_arg_dtypes(np.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   lu, pivots = lax_linalg.lu(a)
   dtype = lax.dtype(a)
-  m, n = np.shape(a)
+  m, n = jnp.shape(a)
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
-  p = np.real(np.array(permutation == np.arange(m)[:, None], dtype=dtype))
+  p = jnp.real(jnp.array(permutation == jnp.arange(m)[:, None], dtype=dtype))
   k = min(m, n)
-  l = np.tril(lu, -1)[:, :k] + np.eye(m, k, dtype=dtype)
-  u = np.triu(lu)[:k, :]
+  l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
+  u = jnp.triu(lu)[:k, :]
   if permute_l:
-    return np.matmul(p, l), u
+    return jnp.matmul(p, l), u
   else:
     return p, l, u
 
@@ -158,7 +146,7 @@ def _qr(a, mode, pivoting):
     full_matrices = False
   else:
     raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
-  a = np_linalg._promote_arg_dtypes(np.asarray(a))
+  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices)
   if mode == "r":
     return r
@@ -170,13 +158,30 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
   del overwrite_a, lwork, check_finite
   return _qr(a, mode, pivoting)
 
+
 @partial(jit, static_argnums=(2, 3))
 def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
 
-  a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
-  return cho_solve(cho_factor(a, lower=lower), b)
+  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  np_linalg._check_solve_shapes(a, b)
+
+  # With custom_linear_solve, we can reuse the same factorization when
+  # computing sensitivities. This is considerably faster.
+  factors = cho_factor(lax.stop_gradient(a), lower=lower)
+  custom_solve = partial(
+      lax.custom_linear_solve,
+      lambda x: np_linalg._matvec_multiply(a, x),
+      solve=lambda _, x: cho_solve(factors, x),
+      symmetric=True)
+  if a.ndim == b.ndim + 1:
+    # b.shape == [..., m]
+    return custom_solve(b)
+  else:
+    # b.shape == [..., m, k]
+    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
+
 
 @_wraps(scipy.linalg.solve)
 def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
@@ -195,10 +200,10 @@ def _solve_triangular(a, b, trans, lower, unit_diagonal):
   else:
     raise ValueError("Invalid 'trans' value {}".format(trans))
 
-  a, b = np_linalg._promote_arg_dtypes(np.asarray(a), np.asarray(b))
+  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
 
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
-  b_is_vector = np.ndim(a) == np.ndim(b) + 1
+  b_is_vector = jnp.ndim(a) == jnp.ndim(b) + 1
   if b_is_vector:
     b = b[..., None]
   out = lax_linalg.triangular_solve(a, b, left_side=True, lower=lower,
@@ -220,12 +225,12 @@ def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
 
 @_wraps(scipy.linalg.tril)
 def tril(m, k=0):
-  return np.tril(m, k)
+  return jnp.tril(m, k)
 
 
 @_wraps(scipy.linalg.triu)
 def triu(m, k=0):
-  return np.triu(m, k)
+  return jnp.triu(m, k)
 
 @_wraps(scipy.linalg.expm, lax_description=textwrap.dedent("""\
     In addition to the original NumPy argument(s) listed below,
@@ -243,7 +248,7 @@ def _expm(A, upper_triangular=False):
 
 @jit
 def _calc_P_Q(A):
-    A = np.asarray(A)
+    A = jnp.asarray(A)
     if A.ndim != 2 or A.shape[0] != A.shape[1]:
         raise ValueError('expected A to be a square matrix')
     A_L1 = np_linalg.norm(A,1)
@@ -254,22 +259,22 @@ def _calc_P_Q(A):
        U7,V7 = _pade7(A)
        U9,V9 = _pade9(A)
        maxnorm = 5.371920351148152
-       n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
+       n_squarings = jnp.maximum(0, jnp.floor(jnp.log2(A_L1 / maxnorm)))
        A = A / 2**n_squarings
        U13,V13 = _pade13(A)
-       conds=np.array([1.495585217958292e-002, 2.539398330063230e-001, 9.504178996162932e-001, 2.097847961257068e+000])
-       U = np.select((maxnorm<conds),(U3,U5,U7,U9),U13)
-       V = np.select((maxnorm<conds),(V3,V5,V7,V9),V13)
+       conds=jnp.array([1.495585217958292e-002, 2.539398330063230e-001, 9.504178996162932e-001, 2.097847961257068e+000])
+       U = jnp.select((maxnorm<conds),(U3,U5,U7,U9),U13)
+       V = jnp.select((maxnorm<conds),(V3,V5,V7,V9),V13)
     elif A.dtype == 'float32' or A.dtype == 'complex64':
         U3,V3 = _pade3(A)
         U5,V5 = _pade5(A)
         maxnorm = 3.925724783138660
-        n_squarings = np.maximum(0, np.floor(np.log2(A_L1 / maxnorm)))
+        n_squarings = jnp.maximum(0, jnp.floor(jnp.log2(A_L1 / maxnorm)))
         A = A / 2**n_squarings
         U7,V7 = _pade7(A)
-        conds=np.array([4.258730016922831e-001, 1.880152677804762e+000])
-        U = np.select((maxnorm<conds),(U3,U5),U7)
-        V = np.select((maxnorm<conds),(V3,V5),V7)
+        conds=jnp.array([4.258730016922831e-001, 1.880152677804762e+000])
+        U = jnp.select((maxnorm<conds),(U3,U5),U7)
+        V = jnp.select((maxnorm<conds),(V3,V5),V7)
     else:
         raise TypeError("A.dtype={} is not supported.".format(A.dtype))
     P = U + V  # p_m(A) : numerator
@@ -286,47 +291,47 @@ def _solve_P_Q(P, Q, upper_triangular=False):
 def _squaring(R, n_squarings):
     # squaring step to undo scaling
     def my_body_fun(i,R):
-      return np.dot(R,R)
-    lower = np.zeros(1, dtype=n_squarings.dtype)
+      return jnp.dot(R,R)
+    lower = jnp.zeros(1, dtype=n_squarings.dtype)
     R = lax.fori_loop(lower[0],n_squarings,my_body_fun,R)
     return R
 
 def _pade3(A):
     b = (120., 60., 12., 1.)
-    ident = np.eye(*A.shape, dtype=A.dtype)
-    A2 = np.dot(A,A)
-    U = np.dot(A , (b[3]*A2 + b[1]*ident))
+    ident = jnp.eye(*A.shape, dtype=A.dtype)
+    A2 = jnp.dot(A,A)
+    U = jnp.dot(A , (b[3]*A2 + b[1]*ident))
     V = b[2]*A2 + b[0]*ident
     return U,V
 
 def _pade5(A):
     b = (30240., 15120., 3360., 420., 30., 1.)
-    ident = np.eye(*A.shape, dtype=A.dtype)
-    A2 = np.dot(A,A)
-    A4 = np.dot(A2,A2)
-    U = np.dot(A, b[5]*A4 + b[3]*A2 + b[1]*ident)
+    ident = jnp.eye(*A.shape, dtype=A.dtype)
+    A2 = jnp.dot(A,A)
+    A4 = jnp.dot(A2,A2)
+    U = jnp.dot(A, b[5]*A4 + b[3]*A2 + b[1]*ident)
     V = b[4]*A4 + b[2]*A2 + b[0]*ident
     return U,V
 
 def _pade7(A):
     b = (17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.)
-    ident = np.eye(*A.shape, dtype=A.dtype)
-    A2 = np.dot(A,A)
-    A4 = np.dot(A2,A2)
-    A6 = np.dot(A4,A2)
-    U = np.dot(A, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+    ident = jnp.eye(*A.shape, dtype=A.dtype)
+    A2 = jnp.dot(A,A)
+    A4 = jnp.dot(A2,A2)
+    A6 = jnp.dot(A4,A2)
+    U = jnp.dot(A, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
     V = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
     return U,V
 
 def _pade9(A):
     b = (17643225600., 8821612800., 2075673600., 302702400., 30270240.,
                 2162160., 110880., 3960., 90., 1.)
-    ident = np.eye(*A.shape, dtype=A.dtype)
-    A2 = np.dot(A,A)
-    A4 = np.dot(A2,A2)
-    A6 = np.dot(A4,A2)
-    A8 = np.dot(A6,A2)
-    U = np.dot(A, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+    ident = jnp.eye(*A.shape, dtype=A.dtype)
+    A2 = jnp.dot(A,A)
+    A4 = jnp.dot(A2,A2)
+    A6 = jnp.dot(A4,A2)
+    A8 = jnp.dot(A6,A2)
+    U = jnp.dot(A, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
     V = b[8]*A8 + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
     return U,V
 
@@ -334,12 +339,12 @@ def _pade13(A):
     b = (64764752532480000., 32382376266240000., 7771770303897600.,
     1187353796428800., 129060195264000., 10559470521600., 670442572800.,
     33522128640., 1323241920., 40840800., 960960., 16380., 182., 1.)
-    ident = np.eye(*A.shape, dtype=A.dtype)
-    A2 = np.dot(A,A)
-    A4 = np.dot(A2,A2)
-    A6 = np.dot(A4,A2)
-    U = np.dot(A,np.dot(A6, b[13]*A6 + b[11]*A4 + b[9]*A2) + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
-    V = np.dot(A6, b[12]*A6 + b[10]*A4 + b[8]*A2) + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
+    ident = jnp.eye(*A.shape, dtype=A.dtype)
+    A2 = jnp.dot(A,A)
+    A4 = jnp.dot(A2,A2)
+    A6 = jnp.dot(A4,A2)
+    U = jnp.dot(A,jnp.dot(A6, b[13]*A6 + b[11]*A4 + b[9]*A2) + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+    V = jnp.dot(A6, b[12]*A6 + b[10]*A4 + b[8]*A2) + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
     return U,V
 
 
@@ -347,14 +352,14 @@ def _pade13(A):
 @jit
 def block_diag(*arrs):
   if len(arrs) == 0:
-    arrs = [np.zeros((1, 0))]
-  arrs = np._promote_dtypes(*arrs)
-  bad_shapes = [i for i, a in enumerate(arrs) if np.ndim(a) > 2]
+    arrs = [jnp.zeros((1, 0))]
+  arrs = jnp._promote_dtypes(*arrs)
+  bad_shapes = [i for i, a in enumerate(arrs) if jnp.ndim(a) > 2]
   if bad_shapes:
     raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
                      "most 2 dimensions, got {} at argument {}."
                      .format(arrs[bad_shapes[0]], bad_shapes[0]))
-  arrs = [np.atleast_2d(a) for a in arrs]
+  arrs = [jnp.atleast_2d(a) for a in arrs]
   acc = arrs[0]
   dtype = lax.dtype(acc)
   for a in arrs[1:]:

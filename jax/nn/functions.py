@@ -15,17 +15,17 @@
 """Shared neural network activations and other functions."""
 
 
-import numpy as onp
+import numpy as np
 
+from jax import custom_jvp
 from jax import dtypes
 from jax import lax
-from jax import random
 from jax.scipy.special import expit
-import jax.numpy as np
-from jax import jarrett
+import jax.numpy as jnp
 
 # activations
 
+@custom_jvp
 def relu(x):
   r"""Rectified linear unit activation function.
 
@@ -34,7 +34,8 @@ def relu(x):
   .. math::
     \mathrm{relu}(x) = \max(x, 0)
   """
-  return np.maximum(x, 0)
+  return jnp.maximum(x, 0)
+relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
 def softplus(x):
   r"""Softplus activation function.
@@ -44,7 +45,7 @@ def softplus(x):
   .. math::
     \mathrm{softplus}(x) = \log(1 + e^x)
   """
-  return np.logaddexp(x, 0)
+  return jnp.logaddexp(x, 0)
 
 def soft_sign(x):
   r"""Soft-sign activation function.
@@ -54,7 +55,7 @@ def soft_sign(x):
   .. math::
     \mathrm{soft\_sign}(x) = \frac{x}{|x| + 1}
   """
-  return x / (np.abs(x) + 1)
+  return x / (jnp.abs(x) + 1)
 
 def sigmoid(x):
   r"""Sigmoid activation function.
@@ -94,11 +95,11 @@ def elu(x, alpha=1.0):
   .. math::
     \mathrm{elu}(x) = \begin{cases}
       x, & x > 0\\
-      \alpha \exp(x - 1), & x \le 0
+      \alpha \left(\exp(x) - 1\right), & x \le 0
     \end{cases}
   """
-  safe_x = np.where(x > 0, 0., x)
-  return np.where(x > 0, x, alpha * np.expm1(safe_x))
+  safe_x = jnp.where(x > 0, 0., x)
+  return jnp.where(x > 0, x, alpha * jnp.expm1(safe_x))
 
 def leaky_relu(x, negative_slope=1e-2):
   r"""Leaky rectified linear unit activation function.
@@ -113,7 +114,7 @@ def leaky_relu(x, negative_slope=1e-2):
 
   where :math:`\alpha` = :code:`negative_slope`.
   """
-  return np.where(x >= 0, x, negative_slope * x)
+  return jnp.where(x >= 0, x, negative_slope * x)
 
 def hard_tanh(x):
   r"""Hard :math:`\mathrm{tanh}` activation function.
@@ -127,7 +128,7 @@ def hard_tanh(x):
       1, & 1 < x
     \end{cases}
   """
-  return np.where(x > 1, 1, np.where(x < -1, -1, x))
+  return jnp.where(x > 1, 1, jnp.where(x < -1, -1, x))
 
 def celu(x, alpha=1.0):
   r"""Continuously-differentiable exponential linear unit activation.
@@ -137,13 +138,13 @@ def celu(x, alpha=1.0):
   .. math::
     \mathrm{celu}(x) = \begin{cases}
       x, & x > 0\\
-      \alpha \exp(\frac{x}{\alpha} - 1), & x \le 0
+      \alpha \left(\exp(\frac{x}{\alpha}) - 1\right), & x \le 0
     \end{cases}
 
   For more information, see
   `Continuously Differentiable Exponential Linear Units
   <https://arxiv.org/pdf/1704.07483.pdf>`_."""
-  return np.where(x > 0, x, alpha * np.expm1(x / alpha))
+  return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
 
 def selu(x):
   r"""Scaled exponential linear unit activation.
@@ -180,14 +181,16 @@ def gelu(x):
   speed. For more information, see `Gaussian Error Linear Units (GELUs)
   <https://arxiv.org/abs/1606.08415>`_, section 2.
   """
-  cdf = 0.5 * (1.0 + np.tanh((np.sqrt(2 / np.pi) * (x + 0.044715 * x**3))))
+  sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
+  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
   return x * cdf
 
 def glu(x, axis=-1):
   """Gated linear unit activation function."""
   size = x.shape[axis]
   assert size % 2 == 0, "axis size must be divisible by 2"
-  return x[..., :size] * sigmoid(x[..., size:])
+  x1, x2 = jnp.split(x, 2, axis)
+  return x1 * sigmoid(x2)
 
 # other functions
 
@@ -206,7 +209,7 @@ def log_softmax(x, axis=-1):
       computed. Either an integer or a tuple of integers.
   """
   shifted = x - lax.stop_gradient(x.max(axis, keepdims=True))
-  return shifted - np.log(np.sum(np.exp(shifted), axis, keepdims=True))
+  return shifted - jnp.log(jnp.sum(jnp.exp(shifted), axis, keepdims=True))
 
 def softmax(x, axis=-1):
   r"""Softmax function.
@@ -222,35 +225,35 @@ def softmax(x, axis=-1):
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
   """
-  unnormalized = np.exp(x - lax.stop_gradient(x.max(axis, keepdims=True)))
+  unnormalized = jnp.exp(x - lax.stop_gradient(x.max(axis, keepdims=True)))
   return unnormalized / unnormalized.sum(axis, keepdims=True)
 
 def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):
   """Normalizes an array by subtracting mean and dividing by sqrt(var)."""
   if mean is None:
-    mean = np.mean(x, axis, keepdims=True)
+    mean = jnp.mean(x, axis, keepdims=True)
   if variance is None:
-    # this definition is traditionally seen as less accurate than np.var's
+    # this definition is traditionally seen as less accurate than jnp.var's
     # mean((x - mean(x))**2) but may be faster and even, given typical
     # activation distributions and low-precision arithmetic, more accurate
     # when used in neural network normalization layers
-    variance = np.mean(x**2, axis, keepdims=True) - mean**2
+    variance = jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
-def one_hot(x, num_classes, *, dtype=np.float64):
+def one_hot(x, num_classes, *, dtype=jnp.float64):
   """One-hot encodes the given indicies.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
   ``num_classes`` with the element at ``index`` set to one::
 
-  >>> jax.nn.one_hot(np.array([0, 1, 2]), 3)
+  >>> jax.nn.one_hot(jnp.array([0, 1, 2]), 3)
   DeviceArray([[1., 0., 0.],
                [0., 1., 0.],
                [0., 0., 1.]], dtype=float32)
 
   Indicies outside the range [0, num_classes) will be encoded as zeros::
 
-  >>> jax.nn.one_hot(np.array([-1, 3]), 3)
+  >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
   DeviceArray([[0., 0., 0.],
                [0., 0., 0.]], dtype=float32)
 
@@ -261,6 +264,37 @@ def one_hot(x, num_classes, *, dtype=np.float64):
       jax_enable_x64 is true, otherwise float32).
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  x = np.asarray(x)
-  return np.array(x[..., np.newaxis] == np.arange(num_classes, dtype=x.dtype),
-                  dtype=dtype)
+  x = jnp.asarray(x)
+  lhs = x[..., jnp.newaxis]
+  rhs = lax.broadcast_to_rank(jnp.arange(num_classes, dtype=x.dtype), lhs.ndim)
+  return jnp.array(lhs == rhs, dtype=dtype)
+
+def relu6(x):
+  r"""Rectified Linear Unit 6 activation function.
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{relu6}(x) = \min(\max(x, 0), 6)
+  """
+  return jnp.minimum(jnp.maximum(x, 0), 6.)
+
+def hard_sigmoid(x):
+  r"""Hard Sigmoid activation function.
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{hard\_sigmoid}(x) = \frac{\mathrm{relu6}(x + 3)}{6}
+  """
+  return relu6(x + 3.) / 6.
+
+def hard_swish(x):
+  r"""Hard Swish activation function
+
+  Computes the element-wise function
+
+  .. math::
+    \mathrm{hard\_swish}(x) = x \cdot \mathrm{hard\_sigmoid}(x)
+  """
+  return x * hard_sigmoid(x)

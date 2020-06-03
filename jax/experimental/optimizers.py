@@ -71,7 +71,7 @@ from collections import namedtuple
 import functools
 import operator
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.util import partial, safe_zip, safe_map, unzip2
 from jax import tree_util
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
@@ -88,7 +88,6 @@ zip = safe_zip
 # Since pytrees can be flattened, that structure is isomorphic to a list of
 # lists (with no further nesting).
 
-pack = tuple
 OptimizerState = namedtuple("OptimizerState",
                             ["packed_state", "tree_def", "subtree_defs"])
 register_pytree_node(
@@ -138,19 +137,18 @@ def optimizer(opt_maker):
       x0_flat, tree = tree_flatten(x0_tree)
       initial_states = [init(x0) for x0 in x0_flat]
       states_flat, subtrees = unzip2(map(tree_flatten, initial_states))
-      packed_state = pack(map(pack, states_flat))
-      return OptimizerState(packed_state, tree, subtrees)
+      return OptimizerState(states_flat, tree, subtrees)
 
     @functools.wraps(update)
     def tree_update(i, grad_tree, opt_state):
-      packed_state, tree, subtrees = opt_state
+      states_flat, tree, subtrees = opt_state
       grad_flat, tree2 = tree_flatten(grad_tree)
       if tree2 != tree:
         msg = ("optimizer update function was passed a gradient tree that did "
                "not match the parameter tree structure with which it was "
                "initialized: parameter tree {} and grad tree {}.")
         raise TypeError(msg.format(tree, tree2))
-      states = map(tree_unflatten, subtrees, packed_state)
+      states = map(tree_unflatten, subtrees, states_flat)
       new_states = map(partial(update, i), grad_flat, states)
       new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
       for subtree, subtree2 in zip(subtrees, subtrees2):
@@ -158,13 +156,12 @@ def optimizer(opt_maker):
           msg = ("optimizer update function produced an output structure that "
                  "did not match its input structure: input {} and output {}.")
           raise TypeError(msg.format(subtree, subtree2))
-      new_packed_state = pack(map(pack, new_states_flat))
-      return OptimizerState(new_packed_state, tree, subtrees)
+      return OptimizerState(new_states_flat, tree, subtrees)
 
     @functools.wraps(get_params)
     def tree_get_params(opt_state):
-      packed_state, tree, subtrees = opt_state
-      states = map(tree_unflatten, subtrees, packed_state)
+      states_flat, tree, subtrees = opt_state
+      states = map(tree_unflatten, subtrees, states_flat)
       params = map(get_params, states)
       return tree_unflatten(tree, params)
 
@@ -208,7 +205,7 @@ def momentum(step_size, mass):
   """
   step_size = make_schedule(step_size)
   def init(x0):
-    v0 = np.zeros_like(x0)
+    v0 = jnp.zeros_like(x0)
     return x0, v0
   def update(i, g, state):
     x, velocity = state
@@ -235,7 +232,7 @@ def nesterov(step_size, mass):
   """
   step_size = make_schedule(step_size)
   def init(x0):
-    v0 = np.zeros_like(x0)
+    v0 = jnp.zeros_like(x0)
     return x0, v0
   def update(i, g, state):
     x, velocity = state
@@ -266,14 +263,14 @@ def adagrad(step_size, momentum=0.9):
   step_size = make_schedule(step_size)
 
   def init(x0):
-    g_sq = np.zeros_like(x0)
-    m = np.zeros_like(x0)
+    g_sq = jnp.zeros_like(x0)
+    m = jnp.zeros_like(x0)
     return x0, g_sq, m
 
   def update(i, g, state):
     x, g_sq, m = state
-    g_sq += g**2
-    g_sq_inv_sqrt = np.where(g_sq > 0, 1. / np.sqrt(g_sq), 0.0)
+    g_sq += jnp.square(g)
+    g_sq_inv_sqrt = jnp.where(g_sq > 0, 1. / jnp.sqrt(g_sq), 0.0)
     m = (1. - momentum) * (g * g_sq_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
     return x, g_sq, m
@@ -300,12 +297,12 @@ def rmsprop(step_size, gamma=0.9, eps=1e-8):
   """
   step_size = make_schedule(step_size)
   def init(x0):
-    avg_sq_grad = np.zeros_like(x0)
+    avg_sq_grad = jnp.zeros_like(x0)
     return x0, avg_sq_grad
   def update(i, g, state):
     x, avg_sq_grad = state
-    avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
-    x = x - step_size(i) * g / np.sqrt(avg_sq_grad + eps)
+    avg_sq_grad = avg_sq_grad * gamma + jnp.square(g) * (1. - gamma)
+    x = x - step_size(i) * g / jnp.sqrt(avg_sq_grad + eps)
     return x, avg_sq_grad
   def get_params(state):
     x, _ = state
@@ -332,13 +329,13 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
   """
   step_size = make_schedule(step_size)
   def init(x0):
-    avg_sq_grad = np.zeros_like(x0)
-    mom = np.zeros_like(x0)
+    avg_sq_grad = jnp.zeros_like(x0)
+    mom = jnp.zeros_like(x0)
     return x0, avg_sq_grad, mom
   def update(i, g, state):
     x, avg_sq_grad, mom = state
-    avg_sq_grad = avg_sq_grad * gamma + g**2 * (1. - gamma)
-    mom = momentum * mom + step_size(i) * g / np.sqrt(avg_sq_grad + eps)
+    avg_sq_grad = avg_sq_grad * gamma + jnp.square(g) * (1. - gamma)
+    mom = momentum * mom + step_size(i) * g / jnp.sqrt(avg_sq_grad + eps)
     x = x - mom
     return x, avg_sq_grad, mom
   def get_params(state):
@@ -366,21 +363,56 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
   """
   step_size = make_schedule(step_size)
   def init(x0):
-    m0 = np.zeros_like(x0)
-    v0 = np.zeros_like(x0)
+    m0 = jnp.zeros_like(x0)
+    v0 = jnp.zeros_like(x0)
     return x0, m0, v0
   def update(i, g, state):
     x, m, v = state
     m = (1 - b1) * g + b1 * m  # First  moment estimate.
-    v = (1 - b2) * (g ** 2) + b2 * v  # Second moment estimate.
+    v = (1 - b2) * jnp.square(g) + b2 * v  # Second moment estimate.
     mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
     vhat = v / (1 - b2 ** (i + 1))
-    x = x - step_size(i) * mhat / (np.sqrt(vhat) + eps)
+    x = x - step_size(i) * mhat / (jnp.sqrt(vhat) + eps)
     return x, m, v
   def get_params(state):
     x, m, v = state
     return x
   return init, update, get_params
+
+
+@optimizer
+def adamax(step_size, b1=0.9, b2=0.999, eps=1e-8):
+  """Construct optimizer triple for AdaMax (a variant of Adam based on infinity norm).
+
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to positive scalar.
+    b1: optional, a positive scalar value for beta_1, the exponential decay rate
+      for the first moment estimates (default 0.9).
+    b2: optional, a positive scalar value for beta_2, the exponential decay rate
+      for the second moment estimates (default 0.999).
+    eps: optional, a positive scalar value for epsilon, a small constant for
+      numerical stability (default 1e-8).
+
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+  def init(x0):
+    m0 = jnp.zeros_like(x0)
+    u0 = jnp.zeros_like(x0)
+    return x0, m0, u0
+  def update(i, g, state):
+    x, m, u = state
+    m = (1 - b1) * g + b1 * m  # First  moment estimate.
+    u = jnp.maximum(b2 * u, jnp.abs(g))  # Update exponentially weighted infinity norm.
+    x = x - (step_size(i) / (1 - b1 ** (i + 1))) * m / (u + eps)
+    return x, m, u
+  def get_params(state):
+    x, m, u = state
+    return x
+  return init, update, get_params
+
 
 @optimizer
 def sm3(step_size, momentum=0.9):
@@ -409,14 +441,14 @@ def sm3(step_size, momentum=0.9):
     return x[tuple(idx)]
 
   def init(x0):
-    vs = [np.zeros(sz, dtype=x0.dtype) for sz in x0.shape]
-    return x0, np.zeros_like(x0), vs
+    vs = [jnp.zeros(sz, dtype=x0.dtype) for sz in x0.shape]
+    return x0, jnp.zeros_like(x0), vs
 
   def update(i, g, state):
     x, m, vs = state
     vs = [broadcast_into(g.ndim, v, i) for i, v in enumerate(vs)]
-    accum = functools.reduce(np.minimum, vs) + g ** 2
-    accum_inv_sqrt = np.where(accum > 0, 1. / np.sqrt(accum), 0)
+    accum = functools.reduce(jnp.minimum, vs) + jnp.square(g)
+    accum_inv_sqrt = jnp.where(accum > 0, 1. / jnp.sqrt(accum), 0)
     m = (1. - momentum) * (g * accum_inv_sqrt) + momentum * m
     x = x - step_size(i) * m
     vs = [accum.max(splice(range(x.ndim), j, [])) for j in range(x.ndim)]
@@ -444,7 +476,7 @@ def exponential_decay(step_size, decay_steps, decay_rate):
 def inverse_time_decay(step_size, decay_steps, decay_rate, staircase=False):
   if staircase:
     def schedule(i):
-      return step_size / (1 + decay_rate * np.floor(i / decay_steps))
+      return step_size / (1 + decay_rate * jnp.floor(i / decay_steps))
   else:
     def schedule(i):
       return step_size / (1 + decay_rate * i / decay_steps)
@@ -452,28 +484,28 @@ def inverse_time_decay(step_size, decay_steps, decay_rate, staircase=False):
 
 def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
   def schedule(step_num):
-    step_num = np.minimum(step_num, decay_steps)
+    step_num = jnp.minimum(step_num, decay_steps)
     step_mult = (1 - step_num / decay_steps) ** power
     return step_mult * (step_size - final_step_size) + final_step_size
 
   return schedule
 
 def piecewise_constant(boundaries, values):
-  boundaries = np.array(boundaries)
-  values = np.array(values)
+  boundaries = jnp.array(boundaries)
+  values = jnp.array(values)
   if not boundaries.ndim == values.ndim == 1:
     raise ValueError("boundaries and values must be sequences")
   if not boundaries.shape[0] == values.shape[0] - 1:
-    raise ValueError("boundaries length must be one longer than values length")
+    raise ValueError("boundaries length must be one shorter than values length")
 
   def schedule(i):
-    return values[np.sum(i > boundaries)]
+    return values[jnp.sum(i > boundaries)]
   return schedule
 
 def make_schedule(scalar_or_schedule):
   if callable(scalar_or_schedule):
     return scalar_or_schedule
-  elif np.ndim(scalar_or_schedule) == 0:
+  elif jnp.ndim(scalar_or_schedule) == 0:
     return constant(scalar_or_schedule)
   else:
     raise TypeError(type(scalar_or_schedule))
@@ -484,12 +516,12 @@ def make_schedule(scalar_or_schedule):
 def l2_norm(tree):
   """Compute the l2 norm of a pytree of arrays. Useful for weight decay."""
   leaves, _ = tree_flatten(tree)
-  return np.sqrt(sum(np.vdot(x, x) for x in leaves))
+  return jnp.sqrt(sum(jnp.vdot(x, x) for x in leaves))
 
 def clip_grads(grad_tree, max_norm):
   """Clip gradients stored as a pytree of arrays to maximum norm `max_norm`."""
   norm = l2_norm(grad_tree)
-  normalize = lambda g: np.where(norm < max_norm, g, g * (max_norm / norm))
+  normalize = lambda g: jnp.where(norm < max_norm, g, g * (max_norm / norm))
   return tree_map(normalize, grad_tree)
 
 
@@ -516,8 +548,8 @@ def unpack_optimizer_state(opt_state):
   Returns:
     A pytree with JoinPoint leaves that contain a second level of pytrees.
   """
-  packed_state, tree_def, subtree_defs = opt_state
-  subtrees = map(tree_unflatten, subtree_defs, packed_state)
+  states_flat, tree_def, subtree_defs = opt_state
+  subtrees = map(tree_unflatten, subtree_defs, states_flat)
   sentinels = [JoinPoint(subtree) for subtree in subtrees]
   return tree_util.tree_unflatten(tree_def, sentinels)
 
@@ -538,5 +570,4 @@ def pack_optimizer_state(marked_pytree):
   assert all(isinstance(s, JoinPoint) for s in sentinels)
   subtrees = [s.subtree for s in sentinels]
   states_flat, subtree_defs = unzip2(map(tree_flatten, subtrees))
-  packed_state = pack(map(pack, states_flat))
-  return OptimizerState(packed_state, tree_def, subtree_defs)
+  return OptimizerState(states_flat, tree_def, subtree_defs)

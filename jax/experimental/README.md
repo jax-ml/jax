@@ -2,8 +2,18 @@
 
 JAX provides some small, experimental libraries for machine learning. These
 libraries are in part about providing tools and in part about serving as
-examples for how to build such libraries using JAX. Each one is only a few
-hundred lines of code, so take a look inside and adapt them as you need!
+examples for how to build such libraries using JAX. Each one is only <300 source
+lines of code, so take a look inside and adapt them as you need!
+
+#### 👉 **Note**: each mini-library is meant to be an _inspiration_, but not a prescription.
+
+To serve that purpose, it is best to keep their code samples minimal; so we
+generally **will not merge PRs** adding new features. Instead, please send your
+lovely pull requests and design ideas to more fully-featured libraries like
+[Haiku](https://github.com/deepmind/dm-haiku),
+[Flax](https://github.com/google/flax), or
+[Trax](https://github.com/google/trax).
+
 
 ### Neural-net building with Stax
 

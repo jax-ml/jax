@@ -13,10 +13,12 @@
 # limitations under the License.
 
 
-from collections import namedtuple, defaultdict
+from collections import defaultdict, deque
+from functools import reduce
 import itertools as it
 import operator as op
-import os
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tuple
+from warnings import warn
 
 from absl import logging
 import numpy as onp
@@ -24,22 +26,34 @@ import numpy as onp
 from ..config import flags, bool_env
 from .. import core
 from .. import ad_util
-from .. import tree_util
 from .. import dtypes
 from .. import lazy
 from .. import linear_util as lu
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
                                abstract_token)
-from ..core import valid_jaxtype, Literal, pp_eqn_compact
+from ..core import Literal, pp_eqn_compact
 from ..pprint_util import pp
-from ..util import (partial, partialmethod, cache, safe_map, prod, unzip2,
-                    memoize, extend_name_stack, wrap_name)
+from ..util import (partial, partialmethod, cache, prod, unzip2, memoize,
+                    extend_name_stack, wrap_name, safe_zip)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
 from . import masking
+
+xe = xc._xla
+xops = xc._xla.ops
+
+# Types
+Backend = Any  # xc.LocalBackend (why does mypy not like this?)
+Device = Any  # xc.Device
+PyLocalBuffer = Any
+
+XlaOp = Any  # xla_extension.XlaOp
+XlaShape = Any # xla_client.Shape
+XlaComputationBuilder = Any  # xla_bridge._JaxComputationBuilder
+XlaExecutable = Any # xla_extension.LocalExecutable
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('jax_debug_nans',
@@ -52,54 +66,66 @@ flags.DEFINE_bool('jax_log_compiles',
 def _map(f, *xs): return tuple(map(f, *xs))
 def identity(x): return x
 
+_scalar_types = dtypes.python_scalar_dtypes.keys()
+
+# unit representation
+def _make_unit(c): return xb.constant(c, onp.zeros((), dtype=onp.dtype('bool')))
+def _make_abstract_unit(_): return xc.Shape.array_shape(onp.dtype('bool'), ())
+def _device_put_unit(_, device):
+  backend = xb.get_device_backend(device)
+  return backend.buffer_from_pyval(onp.zeros((), dtype=onp.dtype('bool')),
+                                   device)
+def _make_array_shape(a):
+  return xc.Shape.array_shape(a.dtype, a.shape)
 
 ### handlers
 
-xb.register_constant_handler(core.Unit, lambda c, *_: c.Tuple())
+xb.register_constant_handler(core.Unit, lambda c, *_: _make_unit(c))
 
 def aval_to_xla_shape(aval):
   try:
     return xla_shape_handlers[type(aval)](aval)
-  except KeyError:
-    raise TypeError("No xla_shape_handler for type: {}".format(type(aval)))
-xla_shape_handlers = {}
-xla_shape_handlers[core.AbstractUnit] = lambda _: xc.Shape.tuple_shape(())
-xla_shape_handlers[ShapedArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
-xla_shape_handlers[ConcreteArray] = lambda a: xc.Shape.array_shape(a.dtype, a.shape)
+  except KeyError as err:
+    raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
 
-def aval_to_result_handler(device, aval):
+xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {
+    core.AbstractUnit: _make_abstract_unit,
+    ShapedArray: _make_array_shape,
+    ConcreteArray: _make_array_shape,
+}
+
+def aval_to_result_handler(device: Optional[Device], aval: core.ShapedArray):
   try:
     return xla_result_handlers[type(aval)](device, aval)
-  except KeyError:
-    raise TypeError("No xla_result_handler for type: {}".format(type(aval)))
-xla_result_handlers = {}
-xla_result_handlers[core.AbstractUnit] = lambda _, __: lambda _: core.unit
-def array_result_handler(device, aval):
-  return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
-xla_result_handlers[ShapedArray] = array_result_handler
-xla_result_handlers[ConcreteArray] = array_result_handler
+  except KeyError as err:
+    raise TypeError(f"No xla_result_handler for type: {type(aval)}") from err
 
-def device_put(x, device=None):
+def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
+  return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
+
+xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
+    core.AbstractUnit: lambda _, __: lambda _: core.unit,
+    ShapedArray: array_result_handler,
+    ConcreteArray: array_result_handler,
+}
+
+def device_put(x, device: Optional[Device] = None):
   x = canonicalize_dtype(x)
   try:
     return device_put_handlers[type(x)](x, device)
-  except KeyError:
-    raise TypeError("No device_put handler for type: {}".format(type(x)))
+  except KeyError as err:
+    raise TypeError(f"No device_put handler for type: {type(x)}") from err
 
-device_put_handlers = {}
-device_put_handlers[core.Unit] = \
-    lambda _, device: xc.Buffer.make_tuple(
-        (), device, backend=xb.get_device_backend(device))
-def _device_put_array(x, device):
-  return xc.Buffer.from_pyval(x, device, backend=xb.get_device_backend(device))
-for _t in array_types:
-  device_put_handlers[_t] = _device_put_array
+def _device_put_array(x, device: Optional[Device]):
+  backend = xb.get_device_backend(device)
+  return backend.buffer_from_pyval(x, device)
 
 def _device_put_scalar(x, device):
-  return xc.Buffer.from_pyval(dtypes.coerce_to_array(x), device,
-                              backend=xb.get_device_backend(device))
-for _t in dtypes.python_scalar_dtypes.keys():
-  device_put_handlers[_t] = _device_put_array
+  return _device_put_array(dtypes.coerce_to_array(x), device)
+
+device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]], Any]] = {core.Unit: _device_put_unit}
+device_put_handlers.update((t, _device_put_array) for t in array_types)
+device_put_handlers.update((t, _device_put_scalar) for t in _scalar_types)
 
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
@@ -109,40 +135,74 @@ def canonicalize_dtype(x):
   for typ in typ.mro():
     handler = canonicalize_dtype_handlers.get(typ)
     if handler: return handler(x)
-  raise TypeError("No canonicalize_dtype handler for type: {}".format(type(x)))
+  raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
 
-canonicalize_dtype_handlers = {}
-canonicalize_dtype_handlers[core.Unit] = identity
 def _canonicalize_ndarray_dtype(x):
   return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
-for _t in array_types:
-  canonicalize_dtype_handlers[_t] = _canonicalize_ndarray_dtype
+
 def _canonicalize_python_scalar_dtype(typ, x):
   return onp.asarray(
-    x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
-for _t in dtypes.python_scalar_dtypes.keys():
-  canonicalize_dtype_handlers[_t] = partial(_canonicalize_python_scalar_dtype, _t)
+      x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
 
-def abstractify(x):
+canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
+canonicalize_dtype_handlers.update(
+    (t, _canonicalize_ndarray_dtype) for t in array_types)
+canonicalize_dtype_handlers.update(
+    (t, partial(_canonicalize_python_scalar_dtype, t)) for t in _scalar_types)
+
+def abstractify(x) -> core.AbstractValue:
   typ = type(x)
   aval_fn = pytype_aval_mappings.get(typ)
   if aval_fn: return aval_fn(x)
   for typ in typ.mro():
     aval_fn = pytype_aval_mappings.get(typ)
     if aval_fn: return aval_fn(x)
-  raise TypeError("No abstraction handler for type: {}".format(type(x)))
-
-pytype_aval_mappings = {}
-pytype_aval_mappings[core.Unit] = lambda _: core.abstract_unit
-for _t in array_types:
-  pytype_aval_mappings[_t] = make_shaped_array
+  raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
 
 def _make_abstract_python_scalar(typ, _):
   return ShapedArray((), dtypes.python_scalar_dtypes[typ], weak_type=True)
 
-for _t in dtypes.python_scalar_dtypes.keys():
-  pytype_aval_mappings[_t] = partial(_make_abstract_python_scalar, _t)
+pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {
+    core.Unit: lambda _: core.abstract_unit,
+}
+pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
+pytype_aval_mappings.update(
+    (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 
+# We can optionally set a Jaxpr rewriter that can be applied just before
+# compilation. This mechanism is used for compiling id_tap, we can
+# remove it once we bring the id_tap implementation into the core.
+outfeed_rewriter: Optional[Callable[[core.Jaxpr], Tuple[core.Jaxpr, bool]]] = None
+def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, bool]:
+  if outfeed_rewriter is not None:
+    return outfeed_rewriter(jaxpr)
+  else:
+    return jaxpr, False
+
+outfeed_primitives: Set[core.Primitive] = set()
+def jaxpr_uses_outfeed(jaxpr: core.Jaxpr) -> bool:
+  """Finds if there are outfeed primitives anywhere inside a Jaxpr."""
+  return any(primitive_uses_outfeed(eqn.primitive, eqn.params)
+             for eqn in jaxpr.eqns)
+
+def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
+  if prim in outfeed_primitives:
+    return True
+  for param in params.values():
+    if type(param) is core.Jaxpr:
+      if jaxpr_uses_outfeed(param):
+        return True
+    elif type(param) is core.TypedJaxpr:
+      if jaxpr_uses_outfeed(param.jaxpr):
+        return True
+  return False
+
+# TODO(necula): remove this when we start the outfeed receiver automatically.
+can_execute_outfeed_computations: bool = False  # Set by outfeed_receiver
+def check_before_outfeed_execution(uses_outfeed: bool):
+  if uses_outfeed and not can_execute_outfeed_computations:
+    raise ValueError("Attempting to execute compiled code using outfeed, "
+                     "but outfeed_receiver is not started.")
 
 ### op-by-op execution
 
@@ -159,36 +219,48 @@ def apply_primitive(prim, *args, **params):
   return compiled_fun(*args)
 
 @cache()
-def xla_primitive_callable(prim, *arg_specs, **params):
+def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
+                                                   Optional[Device]], **params):
   avals, arg_devices = unzip2(arg_specs)
+  donated_invars = (False,) * len(arg_specs)
   device = _device_from_arg_devices(arg_devices)
   backend = xb.get_device_backend(device)
+  if primitive_uses_outfeed(prim, params):
+    # We use the _xla_callable path, where we pre-process the primitives
+    def prim_fun(*args):
+      return prim.bind(*args, **params)
+    return _xla_callable(lu.wrap_init(prim_fun), device, None, "prim", donated_invars,
+                         *arg_specs)
   aval_out = prim.abstract_eval(*avals, **params)
   if not prim.multiple_results:
     handle_result = aval_to_result_handler(device, aval_out)
   else:
     handlers = tuple(map(partial(aval_to_result_handler, device), aval_out))
-    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs.destructure()))
+    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs))
   tuple_args = len(avals) > 100
   if prim in initial_style_translations:
     nreps = initial_style_primitive_replicas(params)
   else:
     nreps = 1
+  if nreps > xb.device_count(backend):
+    raise ValueError(
+        f"compiling a primitive computation `{prim}` that requires {nreps} "
+        f"replicas, but only {xb.device_count(backend)} XLA devices are "
+        f"available on backend {backend.platform}.")
   built_c = primitive_computation(prim, AxisEnv(nreps), backend, tuple_args,
                                   *avals, **params)
   options = xb.get_compile_options(
-      num_replicas=1,
+      num_replicas=nreps,
       num_partitions=1,
       device_assignment=device and (device.id,))
-  compiled = built_c.Compile(compile_options=options, backend=backend)
+  options.parameter_is_tupled_arguments = tuple_args
+  compiled = backend.compile(built_c, compile_options=options)
   if nreps == 1:
-    return partial(_execute_compiled_primitive, prim, compiled, backend,
-                  tuple_args, handle_result)
+    return partial(_execute_compiled_primitive, prim, compiled, handle_result)
   else:
-    return partial(_execute_replicated_primitive, prim, compiled, backend,
-                   tuple_args, handle_result)
+    return partial(_execute_replicated_primitive, prim, compiled, handle_result)
 
-def _device_from_arg_devices(devices):
+def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[Device]:
   """Given devices of inputs, determine where to perform a computation.
 
   Args:
@@ -201,14 +273,14 @@ def _device_from_arg_devices(devices):
   try:
     device, = set(d for d in devices if d is not None) or (None,)
     return device
-  except ValueError:
+  except ValueError as err:
     msg = "primitive arguments must be colocated on the same device, got {}"
-    raise ValueError(msg.format(", ".join(map(str, devices))))
+    raise ValueError(msg.format(", ".join(map(str, devices)))) from err
 
 @cache()
 def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params):
-  c = xb.make_computation_builder("primitive_computation_{}".format(prim.name))
-  c.SetOpMetadata(xc.OpMetadata(
+  c = xb.make_computation_builder(f"primitive_computation_{prim.name}")
+  c.set_op_metadata(xc.OpMetadata(
       op_type=prim.name,
       op_name=str(pp_eqn_compact(prim.name, params))))
   platform = xb.get_backend(backend).platform
@@ -216,64 +288,56 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
   # return val always set as a side-effect on c
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
-    rule(c, *xla_args, **params)
+    ans = rule(c, *xla_args, **params)
   elif prim in translations:
     rule = translations[prim]
-    rule(c, *xla_args, **params)
+    ans = rule(c, *xla_args, **params)
   elif prim in initial_style_translations:
     rule = initial_style_translations[prim]
-    rule(c, axis_env, extend_name_stack(prim.name), *xla_args, backend=backend, **params)
+    ans = rule(c, axis_env, extend_name_stack(prim.name), avals, backend,
+         *xla_args, **params)
   else:
-    raise NotImplementedError("XLA translation rule for {} not found".format(prim))
-  c.ClearOpMetadata()
+    raise NotImplementedError(f"XLA translation rule for {prim} not found")
+  assert isinstance(ans, xe.XlaOp)
+  c.clear_op_metadata()
   try:
-    return c.Build()
+    return c.build()
   except RuntimeError as e:
     msg = (" ".join(map(str, e.args)) + "\n"
            "This is a bug in JAX's shape-checking rules; please report it!\n"
            "https://github.com/google/jax/issues\n")
-    raise RuntimeError(msg)
+    raise RuntimeError(msg) from e
 
 def primitive_subcomputation(prim, *avals, **params):
   return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
+  return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
 
-def _execute_compiled_primitive(prim, compiled, backend, tuple_args,
-                                result_handler, *args):
+def _execute_compiled_primitive(prim, compiled, result_handler, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
-  if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, backend)]
-  out_buf = compiled.Execute(input_bufs)
+  out_bufs = compiled.execute(input_bufs)
   if FLAGS.jax_debug_nans:
-    check_nans(prim, out_buf.destructure() if prim.multiple_results else out_buf)
-  return result_handler(out_buf)
+    check_nans(prim, out_bufs)
+  return result_handler(out_bufs if prim.multiple_results else out_bufs[0])
 
-def _execute_replicated_primitive(prim, compiled, backend, tuple_args,
-                                  result_handler, *args):
+def _execute_replicated_primitive(prim, compiled, result_handler, *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
-  if tuple_args:
-    input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
-                  zip(input_bufs, compiled.local_devices())]
-  out_buf = compiled.ExecutePerReplica(input_bufs)[0]
+  out_buf = compiled.execute_on_local_devices(input_bufs)[0]
+  if not prim.multiple_results:
+    out_buf, = out_buf
   return result_handler(out_buf)
 
 def check_nans(prim, bufs):
-  if prim.multiple_results:
-    for buf in bufs:
-      _check_nans(prim.name, buf.shape(), buf)
-  else:
-    _check_nans(prim.name, bufs.shape(), bufs)
+  for buf in bufs:
+    _check_nans(prim.name, buf.shape(), buf)
 
 def _check_nans(name, xla_shape, buf):
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
-  else:
-    if dtypes.issubdtype(xla_shape.element_type(), onp.floating):
-      if onp.any(onp.isnan(buf.to_py())):
-        msg = "invalid value (nan) encountered in {}"
-        raise FloatingPointError(msg.format(name))
+  assert not xla_shape.is_tuple()
+  if dtypes.issubdtype(xla_shape.element_type(), onp.inexact):
+    if onp.any(onp.isnan(buf.to_py())):
+      raise FloatingPointError(f"invalid value (nan) encountered in {name}")
 
 ### compiling jaxprs
 
@@ -297,20 +361,26 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
 
   def read(v):
     if type(v) is Literal:
-      return c.Constant(canonicalize_dtype(v.val))
+      return xb.constant(c, canonicalize_dtype(v.val))
     else:
       return env[v]
+
+  def aval(v):
+    if type(v) is Literal:
+      return abstractify(v.val)
+    else:
+      return v.aval
 
   def write(v, node):
     assert node is not None
     env[v] = node
 
   env = {}
-  write(core.unitvar, c.Tuple())
+  write(core.unitvar, _make_unit(c))
   _map(write, jaxpr.constvars, consts)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
-    c.SetOpMetadata(xc.OpMetadata(
+    c.set_op_metadata(xc.OpMetadata(
         op_type=eqn.primitive.name,
         op_name=str(pp(name_stack) >> pp_eqn_compact(
             eqn.primitive.name, eqn.params))))
@@ -324,44 +394,51 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
       new_params = check_backend_params(eqn.params, backend)
       rule = initial_style_translations[eqn.primitive]
       ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
-                 *in_nodes, backend=backend, **new_params)
+                 map(aval, eqn.invars), backend, *in_nodes, **new_params)
     elif eqn.primitive in parallel_translations:
       replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      new_params = {k: v for k, v in eqn.params.items() if k != 'axis_name'}
+      axis_index_groups = eqn.params.get('axis_index_groups', None)
+      if axis_index_groups is not None:
+        replica_groups = [[axis_group[i] for i in axis_index_group]
+                          for axis_group in replica_groups
+                          for axis_index_group in axis_index_groups]
+      new_params = {k: v for k, v in eqn.params.items()
+                    if k not in ('axis_name', 'axis_index_groups')}
       rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, replica_groups=replica_groups, **new_params)
+      ans = rule(c, *in_nodes, replica_groups=replica_groups, platform=platform,
+                 **new_params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = call_translations[eqn.primitive]
       ans = rule(c, axis_env, in_nodes,
                  name_stack, backend=backend, **new_params)
     else:
-      msg = "XLA translation rule for primitive '{}' not found"
-      raise NotImplementedError(msg.format(eqn.primitive.name))
+      raise NotImplementedError(
+          f"XLA translation rule for primitive '{eqn.primitive.name}' not found")
 
-    c.GetShape(ans)  # force xla to do shape error checking
+    assert isinstance(ans, xe.XlaOp)
+    c.get_shape(ans)  # force xla to do shape error checking
     out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
-    c.ClearOpMetadata()
+    c.clear_op_metadata()
     _map(write, eqn.outvars, out_nodes)
   return _map(read, jaxpr.outvars)
 
 def xla_destructure(c, ans):
-  num_elements = len(c.GetShape(ans).tuple_shapes())
-  return [c.GetTupleElement(ans, i) for i in range(num_elements)]
+  num_elements = len(c.get_shape(ans).tuple_shapes())
+  return [xops.GetTupleElement(ans, i) for i in range(num_elements)]
 
 def check_backend_params(params, outer_backend):
   # For nested calls, the outermost call sets the backend for all inner calls;
   # it's an error if the inner call has a conflicting explicit backend spec.
   inner_backend = params.get('backend', None)
   if inner_backend and inner_backend != outer_backend:
-    msg = (
-      "Outer-jit backend specification {} must match explicit inner-jit "
-      "backend specification {}.")
-    raise ValueError(msg.format(outer_backend, inner_backend))
+    raise ValueError(
+        f"Outer-jit backend specification {outer_backend} must match explicit "
+        f"inner-jit backend specification {inner_backend}.")
   return {k: params[k] for k in params if k != 'backend'}
 
 
-class AxisEnv(object):
+class AxisEnv:
   def __init__(self, nreps, names=(), sizes=(), devices=None):
     assert isinstance(names, tuple)
     assert isinstance(sizes, tuple)
@@ -374,7 +451,10 @@ def extend_axis_env(env, name, size):
   return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,), env.devices)
 
 def axis_read(axis_env, axis_name):
-  return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
+  try:
+    return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
+  except ValueError:
+    raise NameError("unbound axis name: {}".format(axis_name))
 
 def axis_groups(axis_env, name):
   if isinstance(name, (list, tuple)):
@@ -443,8 +523,8 @@ def jaxpr_collectives(jaxpr):
 
 ### xla_call underlying jit
 
-def _xla_call_impl(fun, *args, device, backend, name):
-  compiled_fun = _xla_callable(fun, device, backend, name, *map(arg_spec, args))
+def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_invars):
+  compiled_fun = _xla_callable(fun, device, backend, name, donated_invars, *map(arg_spec, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -452,39 +532,81 @@ def _xla_call_impl(fun, *args, device, backend, name):
           "Calling the de-optimized version.")
     return fun.call_wrapped(*args)  # probably won't return
 
+def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
+  """Expands a given shape tree into a flat list of indices to arrays.
+
+  Given the following computation:
+
+  >>> c = xc.XlaBuilder("example")
+  >>> p0 = xb.parameter(c, 1, xc.shape_from_pyval(jnp.ones([1])))
+  >>> p1 = xb.parameter(c, 2, xc.shape_from_pyval(jnp.ones([2])))
+  >>> p2 = xb.parameter(c, 3, xc.shape_from_pyval(jnp.ones([3])))
+  >>> o = xops.Tuple(c, [p0, p1, p2])
+
+  We can query the arrays in the output tuple:
+
+  >>> flatten_shape(c.GetShape(o))
+  (((0,), f32[1]{0}),
+   ((1,), f32[2]{0}),
+   ((2,), f32[3]{0}))
+
+  Or the arrays in one of the parameters (which is itself an array):
+
+  >>> flatten_shape(c.GetShape(p0))
+  (((), f32[1]{0}),)
+
+  Args
+    s: The input shape.
+
+  Returns:
+    An iterable of pairs of indices and shapes for each array within the shape
+    tree.
+  """
+  def _flatten_shape(s, index):
+    if s.is_array():
+      yield index, s
+    else:
+      assert s.is_tuple()
+      for i, sub in enumerate(s.tuple_shapes()):
+        subindex = index + (i,)
+        if sub.is_tuple():
+          yield from _flatten_shape(sub, subindex)
+        else:
+          yield subindex, sub
+  return tuple(_flatten_shape(s, index=()))
+
 @lu.cache
-def _xla_callable(fun, device, backend, name, *arg_specs):
+def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = unzip2(arg_specs)
-  pvals = [pe.PartialVal((aval, core.unit)) for aval in abstract_args]
-  with core.new_master(pe.StagingJaxprTrace, True) as master:
-    jaxpr, (pvals, consts, env) = pe.trace_to_subjaxpr(fun, master, False).call_wrapped(pvals)
-    assert not env  # no subtraces here
-    del master, env
+  pvals: Sequence[pe.PartialVal] = [pe.PartialVal.unknown(aval) for aval in abstract_args]
+  jaxpr, pvals, consts = pe.trace_to_jaxpr(
+      fun, pvals, instantiate=False, stage_out=True, bottom=True)
+  jaxpr, uses_outfeed = apply_outfeed_rewriter(jaxpr)
   _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
+  backend = device.platform if device else backend
   result_handlers = tuple(map(partial(_pval_to_result_handler, device), pvals))
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to force their (potentially lazy) arguments.
   if not jaxpr.eqns:
-    device = device or xb.get_backend(None).get_default_device_assignment(1)[0]
     return partial(_execute_trivial, jaxpr, device, consts, result_handlers)
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority,
-              "Compiling {} for args {}.".format(fun.__name__, abstract_args))
+  logging.log(log_priority, "Compiling %s for args %s.", fun.__name__, abstract_args)
 
   if nreps > xb.device_count(backend):
-    msg = ("compiling computation that requires {} replicas, but only {} XLA "
-            "devices are available")
-    raise ValueError(msg.format(nreps, xb.device_count(backend)))
+    raise ValueError(
+        f"compiling computation that requires {nreps} replicas, but only "
+        f"{xb.device_count(backend)} XLA devices are available")
+
   if xb.host_count() > 1 and (nreps > 1 or jaxpr_has_pmap(jaxpr)):
     raise NotImplementedError(
         "jit of multi-host pmap not implemented (and jit-of-pmap can cause "
@@ -493,29 +615,66 @@ def _xla_callable(fun, device, backend, name, *arg_specs):
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
-  xla_consts = _map(c.Constant, consts)
+  xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
-  built = c.Build(c.Tuple(*out_nodes))
+  out_tuple = xops.Tuple(c, out_nodes)
+  backend = xb.get_backend(backend)
+  if backend.platform == "tpu":
+    donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
+  if any(donated_invars):
+    # TODO(tomhennigan): At call time we should mark these buffers as deleted.
+    unused_donations = [str(c.GetShape(a))
+                        for a, d in zip(xla_args, donated_invars) if d]
+    warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
+  built = c.build(out_tuple)
 
   options = xb.get_compile_options(
       num_replicas=nreps,
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
-  compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
-
+  options.parameter_is_tupled_arguments = tuple_args
+  compiled = backend.compile(built, compile_options=options)
   if nreps == 1:
-    return partial(_execute_compiled, compiled, backend, result_handlers, tuple_args)
+    return partial(_execute_compiled, compiled, uses_outfeed, result_handlers)
   else:
-    return partial(_execute_replicated, compiled, backend, result_handlers, tuple_args)
+    return partial(_execute_replicated, compiled, uses_outfeed, result_handlers)
+
+def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
+  """Configures input/output "must" aliasing based on `donated_args`."""
+  # First for every input array add it to `donations` iff it is a member of
+  # `donated_args`.
+  donations = defaultdict(deque)
+  for arg_index, arg in enumerate(xla_args):
+    if donated_args[arg_index]:
+      for param_index, element in flatten_shape(c.GetShape(arg)):
+        key = (element.dimensions(), element.numpy_dtype())
+        if tuple_args:
+          param_number = 0
+          param_index = (arg_index,) + tuple(param_index)
+          donations[key].append((param_number, param_index, arg_index))
+        else:
+          param_number = arg_index
+          donations[key].append((param_number, param_index, arg_index))
+
+  # Consume donations for outputs.
+  out_donated_args = list(donated_args)
+  for output_index, element in flatten_shape(c.GetShape(out_tuple)):
+    key = (element.dimensions(), element.numpy_dtype())
+    if donations.get(key, ()):
+      param_number, param_index, arg_index = donations[key].popleft()
+      out_donated_args[arg_index] = False
+      c.setup_alias(output_index, param_number, param_index)
+
+  return tuple(out_donated_args)
 
 def _xla_callable_device(nreps, backend, device, arg_devices):
   if nreps > 1:
     if device is not None or backend is not None:
-      raise ValueError("can't specify device or backend for jit-of-pmap, "
-                       "got device={} and backend={}".format(device, backend))
+      raise ValueError(f"can't specify device or backend for jit-of-pmap, "
+                       f"got device={device} and backend={backend}")
     return None
   else:
     if device is None and backend is None:
@@ -527,19 +686,49 @@ def _xla_callable_device(nreps, backend, device, arg_devices):
     else:
       assert False  # Unreachable given the error check in _xla_callable
 
-def _xla_callable_args(c, avals, tuple_args):
+# Used within _xla_callable_args and _xla_param to distinguish between None (no
+# sharding annotation set) and replicated.
+_replicated_param = object()
+
+def _xla_callable_args(
+    c, avals, tuple_args, replicated=None,
+    partitions: Optional[Sequence[Optional[Sequence[int]]]] = None):
+  assert partitions is None or len(partitions) == len(avals)
   if not tuple_args:
-    xla_args = [c.ParameterWithShape(aval_to_xla_shape(a))
-                if a is not abstract_token else c.CreateToken() for a in avals]
-    return xla_args
+    if replicated is None:
+      replicated = [None] * len(avals)
+    if partitions is None:
+      parts: List[object] = [None] * len(avals)
+    else:
+      parts = [_replicated_param if part is None else part
+               for part in partitions]
+    return [_xla_param(c, i, aval_to_xla_shape(a), r, p)
+            if a is not abstract_token else xops.CreateToken(c)
+            for i, (a, r, p)
+            in enumerate(safe_zip(avals, replicated, parts))]
   else:
-    tuple_param = c.ParameterWithShape(xc.Shape.tuple_shape(
-        [aval_to_xla_shape(a) for a in avals if a is not abstract_token]))
+    if replicated is not None:
+      replicated = [r for a, r in zip(avals, replicated)
+                    if a is not abstract_token]
+    tuple_parts = tuple(partitions) if partitions is not None else None
+    tuple_shape = xc.Shape.tuple_shape(
+        [aval_to_xla_shape(a) for a in avals if a is not abstract_token])
+    tuple_param = _xla_param(c, 0, tuple_shape, replicated, tuple_parts)
     xla_inputs = iter(xla_destructure(c, tuple_param))
-    xla_args = [next(xla_inputs) if a is not abstract_token else c.CreateToken()
-                for a in avals]
+    xla_args = [next(xla_inputs) if a is not abstract_token else
+                xops.CreateToken(c) for a in avals]
     assert next(xla_inputs, None) is None
     return xla_args
+
+def _xla_param(builder, param_num, xla_shape, replicated, partitions):
+  make_param = partial(xb.parameter, builder, param_num, xla_shape,
+                       replicated=replicated)
+  if partitions is None:
+    return make_param()
+  elif partitions is _replicated_param:
+    return xb.with_sharding(builder, None, make_param)
+  else:
+    return xb.with_sharding(builder, partitions, make_param)
 
 def _pval_to_result_handler(device, pval):
   pv, const = pval
@@ -549,28 +738,27 @@ def _pval_to_result_handler(device, pval):
   else:
     return aval_to_result_handler(device, pv)
 
-def _execute_compiled(compiled, backend, handlers, tuple_args, *args):
+def _execute_compiled(compiled: XlaExecutable, uses_outfeed: bool,
+                      handlers, *args):
+  check_before_outfeed_execution(uses_outfeed)
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
-  if tuple_args:
-    input_bufs = [make_tuple(input_bufs, device, backend)]
-  out_bufs = compiled.Execute(input_bufs).destructure()
+  out_bufs = compiled.execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled, backend, handlers, tuple_args, *args):
+def _execute_replicated(compiled: XlaExecutable, uses_outfeed: bool,
+                        handlers, *args):
+  check_before_outfeed_execution(uses_outfeed)
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
-  if tuple_args:
-    input_bufs = [[make_tuple(bufs, device, backend)] for bufs, device in
-                  zip(input_bufs, compiled.local_devices())]
-  out_bufs = compiled.ExecutePerReplica(input_bufs)[0].destructure()
+  out_bufs = compiled.execute_on_local_devices(input_bufs)[0]
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_trivial(jaxpr, device, consts, handlers, *args):
-  env = {core.unitvar : core.unit}
+def _execute_trivial(jaxpr, device: Optional[Device], consts, handlers, *args):
+  env = {core.unitvar: core.unit}
   _map(env.setdefault, jaxpr.invars, args)
   _map(env.setdefault, jaxpr.constvars, consts)
   outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
@@ -578,19 +766,17 @@ def _execute_trivial(jaxpr, device, consts, handlers, *args):
   return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
           else h(device_put(x, device)) for h, x in zip(handlers, outs)]
 
-def make_tuple(bufs, device, backend):
-  return xb.get_backend(backend).make_tuple(bufs, device)
-
 @memoize
 def _get_device(device, backend):
   # TODO(mattjj): after jaxlib update, avoid compile here, just to get device
   c = xb.make_computation_builder("get_device")
-  built = c.Build(c.Tuple())
+  built = c.build(_make_unit(c))
   options = xb.get_compile_options(
       num_replicas=1,
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
-  compiled = built.Compile(compile_options=options, backend=xb.get_backend(backend))
+  backend = xb.get_backend(backend)
+  compiled = backend.compile(built, compile_options=options)
   out, = compiled.local_devices()
   return out
 
@@ -600,75 +786,100 @@ xla_call_p.multiple_results = True
 xla_call = partial(core.call_bind, xla_call_p)
 xla_call_p.def_custom_bind(xla_call)
 xla_call_p.def_impl(_xla_call_impl)
+pe.staged_out_calls.add(xla_call_p)
 
 def _xla_call_translation_rule(c, axis_env,
                                in_nodes, name_stack, backend, name,
-                               call_jaxpr, device=None):
+                               call_jaxpr, device=None, donated_invars=None):
   del device  # Ignored.
-  subc = xb.make_computation_builder("jit_{}".format(name))
-  args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
+  if donated_invars is None:
+    donated_invars = (False,) * len(in_nodes)
+  elif any(donated_invars):
+    raise ValueError("Donating buffers passed to a jit nested inside a jit or "
+                     "pmap is not supported.")
+
+  subc = xb.make_computation_builder(f"jit_{name}")
+  args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
                             extend_name_stack(name_stack, wrap_name(name, 'jit')), *args)
-  subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(in_nodes))
+  subc = subc.build(xops.Tuple(subc, out_nodes))
+  return xops.Call(c, subc, list(in_nodes))
 ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
 
 
 ### translation tables
 
-translations = {}
-parallel_translations = {}
-initial_style_translations = {}
-call_translations = {}
-backend_specific_translations = defaultdict(dict)
+translations: Dict[core.Primitive, Callable] = {}
+parallel_translations: Dict[core.Primitive, Callable] = {}
+initial_style_translations: Dict[core.Primitive, Callable] = {}
+call_translations: Dict[core.Primitive, Callable] = {}
+backend_specific_translations: Dict[str, Dict[core.Primitive, Callable]] = defaultdict(dict)
 
 translations[core.identity_p] = lambda c, x: x
 call_translations[xla_call_p] = _xla_call_translation_rule
 
 def zeros_like_translation_rule(c, x):
-  shape = c.GetShape(x)
-  if shape.is_tuple():
-    assert not shape.tuple_shapes()
-    return c.Tuple()
-  else:
-    zero = c.Constant(onp.array(0, shape.element_type()))
-    return c.Broadcast(zero, shape.dimensions())
+  shape = c.get_shape(x)
+  assert not shape.is_tuple()
+  zero = xb.constant(c, onp.array(0, shape.element_type()))
+  return xops.Broadcast(zero, shape.dimensions())
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
 
 def add_jaxvals_translation_rule(c, x, y):
-  shape = c.GetShape(x)
-  if shape.is_tuple():
-    assert not shape.tuple_shapes()
-    return x
-  else:
-    return c.Add(x, y)
+  shape = c.get_shape(x)
+  assert not shape.is_tuple()
+  return xops.Add(x, y)
 translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 
-def lower_fun(fun, instantiate=False, initial_style=False):
-  """Build a translation rule for a traceable function."""
-  def f(c, *args, **params):
-    backend = params.pop('backend', None)
+@lu.transformation
+def _tuple_output(*args, **kwargs):
+  ans = yield args, kwargs
+  yield (ans,)
+
+
+def lower_fun(fun, multiple_results=True):
+  # This function can only be used to lower functions that take JAX array types
+  # as arguments (and e.g. don't accept unit values), because it assumes it can
+  # map from XLA types to JAX types. In general that mapping is not possible (as
+  # the mapping from JAX types to XLA types is not invertible), but for now at
+  # least we assume that the mapping from JAX *array* types to XLA array types
+  # is invertible. This assumption is unchecked!
+  # TODO(mattjj): remove assumption can map XLA array types to JAX array types
+  def f(c, *xla_args, **params):
     # TODO(mattjj): revise this 'calling convention'
-    if initial_style:
-      axis_env, name_stack, xla_args = args[0], args[1], args[2:]
+    avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
+    pvals = [pe.PartialVal.unknown(a) for a in avals]
+    wrapped_fun = lu.wrap_init(fun, params)
+    if not multiple_results:
+      wrapped_fun = _tuple_output(wrapped_fun)
+    jaxpr, _, consts = pe.trace_to_jaxpr(wrapped_fun, pvals, instantiate=True,
+                                         stage_out=True)
+    consts = _map(partial(xb.constant, c), consts)
+    outs = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1), consts, '', *xla_args)
+    if multiple_results:
+      return xops.Tuple(c, outs)
     else:
-      axis_env, name_stack, xla_args = AxisEnv(1), '', args
-    xla_shapes = tuple(map(c.GetShape, xla_args))
-    avals = map(_aval_from_xla_shape, xla_shapes)
-    pvals = [pe.PartialVal((a, core.unit)) for a in avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(
-        lu.wrap_init(fun, params), pvals, instantiate=True)
-    consts = _map(c.Constant, consts)
-    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts,
-                         name_stack, *xla_args)
-    return c.Tuple(*outs)
+      assert len(outs) == 1, outs
+      return outs[0]
   return f
 
-def _aval_from_xla_shape(xla_shape):
-  if xla_shape.is_tuple() and not xla_shape.tuple_shapes():
-    return core.abstract_unit
-  else:
-    return ShapedArray(xla_shape.dimensions(), xla_shape.element_type())
+def _array_aval_from_xla_shape(xla_shape):
+  # This function instantiates the assumption that we can map fro XLA array
+  # types to JAX array types.
+  # TODO(mattjj): remove assumption can map XLA array types to JAX array types
+  assert not xla_shape.is_tuple()
+  return ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
+
+def lower_fun_initial_style(fun):
+  def f(c, axis_env, name_stack, avals, backend, *xla_args, **params):
+    pvals = [pe.PartialVal.unknown(a) for a in avals]
+    jaxpr, _, consts = pe.trace_to_jaxpr(
+        lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
+    consts = _map(partial(xb.constant, c), consts)
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack,
+                         *xla_args)
+    return xops.Tuple(c, outs)
+  return f
 
 
 ### device-persistent data
@@ -719,7 +930,12 @@ class DeviceArray(DeviceValue):
   __slots__ = ["_npy_value", "_device", "_lazy_expr"]
   __array_priority__ = 100
 
-  def __init__(self, aval, device, lazy_expr, device_buffer):
+  # DeviceArray has methods that are dynamically populated in lax_numpy.py,
+  # and this annotation is needed to make pytype happy.
+  _HAS_DYNAMIC_ATTRIBUTES = True
+
+  def __init__(self, aval: core.ShapedArray, device: Optional[Device],
+               lazy_expr: lazy.LazyExpr, device_buffer: PyLocalBuffer):
     self.aval = aval
     self.device_buffer = device_buffer
     self._device = device
@@ -730,6 +946,7 @@ class DeviceArray(DeviceValue):
       assert type(aval) is ShapedArray
       npy_value = self._value
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
+      assert (device is None) or device is device_buffer.device()
 
   @property
   def _value(self):
@@ -810,8 +1027,8 @@ class DeviceArray(DeviceValue):
   def __len__(self):
     try:
       return self.aval.shape[0]
-    except IndexError:
-      raise TypeError("len() of unsized object")  # same as numpy error
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err # same as numpy error
 
   def __iter__(self):
     if self.ndim == 0:
@@ -881,45 +1098,56 @@ def _device_array_constant_handler(c, val, canonicalize_types=True):
   if is_device_constant(val):
     return lazy.stage_lexpr(c, val._lazy_expr, None)
   else:
-    base_val = c.Constant(val.device_buffer.to_py())
+    base_val = xb.constant(c, val.device_buffer.to_py())
     return lazy.stage_lexpr(c, val._lazy_expr, base_val)
 xb.register_constant_handler(DeviceArray, _device_array_constant_handler)
 
-def _device_put_device_array(x, device):
+def _device_put_device_array(x: DeviceArray, device: Optional[Device]):
   x = _copy_device_array_to_device(x, device)
   return _force(x).device_buffer
 device_put_handlers[DeviceArray] = _device_put_device_array
 
-def _copy_device_array_to_device(x, device):
-  if is_device_constant(x):
+def _copy_device_array_to_device(x: DeviceArray, device: Optional[xc.Device]) -> DeviceArray:
+  if device is None:
+    # no copying to be done because there's no target specified
+    return x
+  elif is_device_constant(x):
+    # create a new DeviceArray with the same lazy expr, no copying
     return DeviceArray(x.aval, device, x._lazy_expr, DeviceConstant(device))
   elif xb.get_device_backend(device).platform == x.device_buffer.platform():
-    if device is None or x.device_buffer.device() == device:
-      return x
+    # source and target platforms are the same
+    if x.device_buffer.device() == device:
+      # no copying to be done because source equals target
+      if x._device == device:
+        return x
+      else:
+        moved_buf = x.device_buffer  # We need to change stickyness
     else:
+      # move the buffer with a device-to-device copy
       moved_buf = x.device_buffer.copy_to_device(device)
   else:
-    # Buffers from different XLA backends are passed through the host.
-    moved_buf = xc.Buffer.from_pyval(x.device_buffer.to_py(), device,
-                                     backend=xb.get_device_backend(device))
+    # buffers from different XLA backends are passed through the host.
+    backend = xb.get_device_backend(device)
+    moved_buf = backend.buffer_from_pyval(x.device_buffer.to_py(), device)
   return DeviceArray(x.aval, device, x._lazy_expr, moved_buf)
 
-def _force(x):
+def _force(x: DeviceArray) -> DeviceArray:
   if lazy.is_trivial(x._lazy_expr):
     return x
   else:
     # force x on the device where it lives, but preserve stickiness on result
     if x._device:
       device = x._device
-      sticky = True
     else:
       device = x.device_buffer.device()
-      sticky = False
-    force_fun = _lazy_force_computation(sticky, x.aval, device, x._lazy_expr)
-    return force_fun(x)
+    force_fun = _lazy_force_computation(x.aval, device, x._lazy_expr)
+    result = force_fun(x)
+    return DeviceArray(x.aval, x._device, lazy.array(x.aval.shape), result)
 
 @cache()
-def _lazy_force_computation(sticky, aval, device, lexpr):
+def _lazy_force_computation(aval: core.ShapedArray,
+                            device: Device, lexpr: lazy.LazyExpr
+                            ) -> Callable[[DeviceArray], PyLocalBuffer]:
   c = xb.make_computation_builder("lazy_force")
   if lazy.is_constant(lexpr):
     param = None
@@ -928,9 +1156,9 @@ def _lazy_force_computation(sticky, aval, device, lexpr):
     param_shape = [None] * len(idxs)
     for src, dst in idxs:
       param_shape[src] = aval.shape[dst]
-    param = c.ParameterWithShape(xc.Shape.array_shape(aval.dtype, param_shape))
+    param = xb.parameter(c, 0, xc.Shape.array_shape(aval.dtype, param_shape))
   xla_out = lazy.stage_lexpr(c, lexpr, param)
-  built_c = c.Build(xla_out)
+  built_c = c.build(xla_out)
 
   device = _device_from_arg_devices([device])
   options = xb.get_compile_options(
@@ -938,62 +1166,72 @@ def _lazy_force_computation(sticky, aval, device, lexpr):
       num_partitions=1,
       device_assignment=device and (device.id,))
   backend = xb.get_device_backend(device)
-  compiled = built_c.Compile(compile_options=options, backend=backend)
+  compiled = backend.compile(built_c, compile_options=options)
 
-  result_device = device if sticky else None
-  handler = partial(DeviceArray, aval, result_device, lazy.array(aval.shape))
+  force_fun: Callable[[DeviceValue], DeviceArray]
   if lazy.is_constant(lexpr):
-    force_fun = lambda _: handler(compiled.Execute([]))
+    def force_fun(_):
+      return compiled.execute([])[0]
   else:
-    force_fun = lambda x: handler(compiled.Execute([x.device_buffer]))
+    def force_fun(x):
+      return compiled.execute([x.device_buffer])[0]
   return force_fun
 
 
-def _device_put_impl(x, device=None):
+def _device_put_impl(x, device: Optional[Device] = None):
   if type(x) is DeviceArray:
     return _copy_device_array_to_device(x, device)
 
   try:
     a = abstractify(x)
-  except TypeError:
-    raise TypeError("Argument '{}' of type {} is not a valid JAX type"
-                    .format(x, type(x)))
-  handler = aval_to_result_handler(device, a)
+  except TypeError as err:
+    raise TypeError(
+        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+  handler = aval_to_result_handler(device, a)  # type: ignore[arg-type]
   return handler(device_put(x, device))
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
 pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
-masking.shape_rules[device_put_p] = lambda x, **_: x.shape
 masking.defvectorized(device_put_p)
 
 
 def _remat_translation_rule(c, axis_env, in_nodes,
                             name_stack, backend, name, call_jaxpr,
                             device=None, concrete=None):
-  # This looks a lot like _xla_call_translation_rule, except for a widget we use
-  # to foil CSE.
+  """Lower remat to a Conditional which always returns true. This:
+    1. Circumvents common subexpression elimination.
+    2. In common case of `jax.grad(jax.remat(f))`, ensures the remat blocks
+       occur after the primal blocks, because cotangent is an input to the
+       Conditional."""
   del device, concrete  # Unused.
-  subc = xb.make_computation_builder("remat_call_subcomputation")
-  args = [subc.ParameterWithShape(c.GetShape(n)) for n in in_nodes]
-  args = [_foil_cse(subc, x) for x in args]
-  out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, wrap_name(name, 'remat')), *args)
-  subc = subc.Build(subc.Tuple(*out_nodes))
-  return c.Call(subc, list(in_nodes))
-call_translations[pe.remat_call_p] = _remat_translation_rule
+  # Fake condition which always selects True branch.
+  rng = xops.RngUniform(xb.constant(c, onp.array(0, dtype=onp.float32)),
+                        xb.constant(c, onp.array(1, dtype=onp.float32)),
+                        xc.Shape.array_shape(xc.PrimitiveType.F32, []))
+  pred = xops.Lt(rng, xb.constant(c, onp.array(2, dtype=onp.float32)))
 
-def _foil_cse(c, x):
-  xla_shape = c.GetShape(x)
-  if xla_shape.is_tuple():
-    assert not xla_shape.tuple_shapes()
-    return x
-  else:
-    rng = c.RngUniform(c.Constant(onp.array(0, dtype=onp.float32)),
-                       c.Constant(onp.array(1, dtype=onp.float32)),
-                       [])
-    pred = c.Lt(rng, c.Constant(onp.array(2, dtype=onp.float32)))
+  true_op = xops.Tuple(c, in_nodes)
+  remat_subc = xb.make_computation_builder("remat_call_subcomputation")
+  input_op = xb.parameter(remat_subc, 0, c.get_shape(true_op), replicated=[])
+  args = [xops.GetTupleElement(input_op, i) for i in range(len(in_nodes))]
+  out_nodes = jaxpr_subcomp(remat_subc, call_jaxpr, backend, axis_env, (),
+                            extend_name_stack(name_stack, wrap_name(name, 'remat')),
+                            *args)
+  out_node_shapes = [remat_subc.get_shape(o) for o in out_nodes]
+  remat_subc = remat_subc.build(xops.Tuple(remat_subc, out_nodes))
+
+  false_op = true_op
+  dummy_subc = xb.make_computation_builder("remat_call_dummy_subcomputation")
+  xb.parameter(dummy_subc, 0, c.get_shape(false_op), replicated=[])
+
+  def zeros(xla_shape):
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-    zero = c.Broadcast(c.Constant(onp.array(0, dtype=dtype)), shape)
-    return c.Select(pred, x, zero)
+    zero = xb.constant(dummy_subc, onp.array(0, dtype=dtype))
+    return xops.Broadcast(zero, shape)
+  out_nodes = [zeros(s) for s in out_node_shapes]
+  dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))
+
+  return xops.Conditional(pred, true_op, remat_subc, false_op, dummy_subc)
+call_translations[pe.remat_call_p] = _remat_translation_rule

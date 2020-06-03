@@ -23,22 +23,31 @@ from jax.core import Primitive
 from jax.interpreters import xla
 from jax.util import prod
 from . import dtypes, lax
-from ..lib.xla_bridge import xla_client
+from .. import lib
+from ..lib import xla_client
 from ..interpreters import ad
 from ..interpreters import batching
 
+xops = xla_client.ops
+
+__all__ = [
+  "fft",
+  "fft_p",
+]
 
 def _promote_to_complex(arg):
-  dtype = onp.result_type(arg, onp.complex64)
-  # XLA's FFT op only supports C64.
-  if dtype == onp.complex128:
+  dtype = dtypes.result_type(arg, onp.complex64)
+  # XLA's FFT op only supports C64 in jaxlib versions 0.1.47 and earlier.
+  # TODO(phawkins): remove when minimum jaxlib version is 0.1.48 or newer.
+  if lib.version <= (0, 1, 47) and dtype == onp.complex128:
     dtype = onp.complex64
   return lax.convert_element_type(arg, dtype)
 
 def _promote_to_real(arg):
-  dtype = onp.result_type(arg, onp.float64)
+  dtype = dtypes.result_type(arg, onp.float32)
   # XLA's FFT op only supports F32.
-  if dtype == onp.float64:
+  # TODO(phawkins): remove when minimum jaxlib version is 0.1.48 or newer.
+  if lib.version <= (0, 1, 47) and dtype == onp.float64:
     dtype = onp.float32
   return lax.convert_element_type(arg, dtype)
 
@@ -76,7 +85,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
   return ShapedArray(shape, dtype)
 
 def fft_translation_rule(c, x, fft_type, fft_lengths):
-  return c.Fft(x, fft_type, fft_lengths)
+  return xops.Fft(x, fft_type, fft_lengths)
 
 def _naive_rfft(x, fft_lengths):
   y = fft(x, xla_client.FftType.FFT, fft_lengths)
@@ -90,9 +99,10 @@ def _rfft_transpose(t, fft_lengths):
   # asymptotic complexity and is also rather complicated), we rely JAX to
   # transpose a naive RFFT implementation.
   dummy_shape = t.shape[:-len(fft_lengths)] + fft_lengths
-  dummy_primals = lax.full_like(t, 0.0, onp.float64, dummy_shape)
+  dummy_primals = lax.full_like(t, 0.0, _real_dtype(t.dtype), dummy_shape)
   _, jvpfun = vjp(partial(_naive_rfft, fft_lengths=fft_lengths), dummy_primals)
   result, = jvpfun(t)
+  assert result.dtype == _real_dtype(t.dtype), (result.dtype, t.dtype)
   return result
 
 def _irfft_transpose(t, fft_lengths):
@@ -103,14 +113,16 @@ def _irfft_transpose(t, fft_lengths):
   x = fft(t, xla_client.FftType.RFFT, fft_lengths)
   n = x.shape[-1]
   is_odd = fft_lengths[-1] % 2
-  full = partial(lax.full_like, t, dtype=onp.float64)
+  full = partial(lax.full_like, t, dtype=t.dtype)
   mask = lax.concatenate(
       [full(1.0, shape=(1,)),
        full(2.0, shape=(n - 2 + is_odd,)),
        full(1.0, shape=(1 - is_odd,))],
       dimension=0)
   scale = 1 / prod(fft_lengths)
-  return scale * mask * x
+  out = scale * mask * x
+  assert out.dtype == _complex_dtype(t.dtype), (out.dtype, t.dtype)
+  return out
 
 def fft_transpose_rule(t, fft_type, fft_lengths):
   if fft_type == xla_client.FftType.RFFT:
@@ -133,3 +145,4 @@ fft_p.def_abstract_eval(fft_abstract_eval)
 xla.translations[fft_p] = fft_translation_rule
 ad.deflinear(fft_p, fft_transpose_rule)
 batching.primitive_batchers[fft_p] = fft_batching_rule
+

@@ -16,12 +16,15 @@
 from collections import namedtuple
 import functools
 import operator as op
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Sequence, Tuple
 
-import numpy as onp
+import numpy as np
 
 from .util import safe_map, safe_zip, unzip2, subvals
 from .lib import xla_bridge as xb
+from .lib import xla_client as xc
+
+xops = xc.ops
 
 map = safe_map
 zip = safe_zip
@@ -38,7 +41,7 @@ def taggedtuple(name, fields) -> Callable[..., Any]:
     return '{}{}'.format(name, tuple.__str__(self[1:]))
   class_namespace = {'__new__' : __new__, '__str__': __str__}
   for i, f in enumerate(fields):
-    class_namespace[f] = property(op.itemgetter(i+1))
+    class_namespace[f] = property(op.itemgetter(i+1))  # type: ignore
   return type(name, (tuple,), class_namespace)
 
 
@@ -129,15 +132,15 @@ def broadcast(lexpr, shape, broadcast_dimensions):
     new_dims[d] = lexpr.dims[i]
   return LazyExpr(lexpr.input, shape, tuple(new_dims))
 
-def transpose(lexpr, perm):
+def transpose(lexpr: LazyExpr, perm: Sequence[int]):
   new_shape = tuple(lexpr.shape[i] for i in perm)
   new_dims = tuple(lexpr.dims[i] for i in perm)
   return LazyExpr(lexpr.input, new_shape, new_dims)
 
-def is_constant(lexpr):
+def is_constant(lexpr: Optional[LazyExpr]):
   return lexpr is not None and type(lexpr.input) is not ArrayVar
 
-def is_trivial(lexpr):
+def is_trivial(lexpr: LazyExpr) -> bool:
   return (type(lexpr.input) is ArrayVar and
           lexpr.dims == tuple(range(len(lexpr.shape))))
 
@@ -158,39 +161,39 @@ def eval_lexpr(lexpr, x):
   # first create a starting ndarray from input_
   t = type(input_)
   if t is ArrayVar:
-    assert x is not None and type(x) is onp.ndarray
+    assert x is not None and type(x) is np.ndarray
   elif t is Iota:
     assert x is None
-    x = onp.arange(input_.size, dtype=input_.dtype)
+    x = np.arange(input_.size, dtype=input_.dtype)
   elif t is Eye:
     assert x is None
     N, M = input_.shape
-    x = onp.eye(N, M, dtype=input_.dtype, k=input_.offset)
+    x = np.eye(N, M, dtype=input_.dtype, k=input_.offset)
   elif t is Tri:
     assert x is None
     N, M = input_.shape
-    x = onp.tri(N, M, dtype=input_.dtype, k=input_.offset)
+    x = np.tri(N, M, dtype=input_.dtype, k=input_.offset)
   elif t is Delta:
     ones = [1] * len(input_.shape)
-    iotas = [onp.arange(d).reshape(subvals(ones, [(i, -1)]))
+    iotas = [np.arange(d).reshape(subvals(ones, [(i, -1)]))
              for i, d in enumerate(input_.shape)]
     eyes = [i1 == i2 for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    x = onp.asarray(functools.reduce(op.and_, eyes), input_.dtype)
+    x = np.asarray(functools.reduce(op.and_, eyes), input_.dtype)
   else:
     assert False
 
   # then apply the reindexing operation
   perm = [d for d in dims if d is not None]
   if perm != list(range(len(perm))):
-    x = onp.transpose(x, perm)
+    x = np.transpose(x, perm)
   if shape != x.shape:
     in_shape = [1 if d is None else s for d, s in zip(dims, shape)]
-    x = onp.broadcast_to(onp.reshape(x, in_shape), shape)
+    x = np.broadcast_to(np.reshape(x, in_shape), shape)
 
   return x
 
 
-def stage_lexpr(c, lexpr, x):
+def stage_lexpr(c, lexpr: Optional[LazyExpr], x):
   """Stage a lazy expression into an XLA computation.
   Args:
     c: XLA ComputationBuilder into which to stage the expression.
@@ -210,35 +213,39 @@ def stage_lexpr(c, lexpr, x):
     assert x is not None
   elif t is Iota:
     assert x is None
-    x = c.Iota(input_.dtype, input_.size)
+    x = xops.Iota(c, xb.dtype_to_etype(input_.dtype), input_.size)
   elif t is Eye:
     assert x is None
     N, M = input_.shape
-    bool_eye = c.Eq(c.Add(c.BroadcastedIota(onp.int32, (N, M), 0),
-                          c.Constant(onp.array(input_.offset, onp.int32))),
-                    c.BroadcastedIota(onp.int32, (N, M), 1))
-    x = c.ConvertElementType(bool_eye, xb.dtype_to_etype(input_.dtype))
+    xla_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, (N, M))
+    bool_eye = xops.Eq(
+      xops.Add(xops.Iota(c, xla_shape, 0),
+               xb.constant(c, np.array(input_.offset, np.int32))),
+      xops.Iota(c, xla_shape, 1))
+    x = xops.ConvertElementType(bool_eye, xb.dtype_to_etype(input_.dtype))
   elif t is Tri:
     assert x is None
     N, M = input_.shape
-    bool_tri = c.Ge(c.Add(c.BroadcastedIota(onp.int32, (N, M), 0),
-                          c.Constant(onp.array(input_.offset, onp.int32))),
-                    c.BroadcastedIota(onp.int32, (N, M), 1))
-    x = c.ConvertElementType(bool_tri, xb.dtype_to_etype(input_.dtype))
+    xla_shape = xc.Shape.array_shape(xc.PrimitiveType.S32, (N, M))
+    bool_tri = xops.Ge(
+      xops.Add(xops.Iota(c, xla_shape, 0),
+               xb.constant(c, np.array(input_.offset, np.int32))),
+      xops.Iota(c, xla_shape, 1))
+    x = xops.ConvertElementType(bool_tri, xb.dtype_to_etype(input_.dtype))
   elif t is Delta:
     etype = xb.dtype_to_etype(input_.dtype)
-    iotas = [c.BroadcastedIota(onp.uint32, input_.shape, i)
+    iotas = [xops.Iota(c, xc.Shape.array_shape(xc.PrimitiveType.U32, input_.shape), i)
              for i in range(len(input_.shape))]
-    eyes = [c.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    x = c.ConvertElementType(functools.reduce(c.And, eyes), etype)
+    eyes = [xops.Eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
+    x = xops.ConvertElementType(functools.reduce(xops.And, eyes), etype)
   else:
     assert False
 
   # then apply the operations encoded in reindex
   bcast_dims, perm = unzip2((i, d) for i, d in enumerate(dims) if d is not None)
   if tuple(perm) != tuple(range(len(perm))):
-    x = c.Transpose(x, perm)
-  if shape != c.GetShape(x).dimensions():
-    x = c.BroadcastInDim(x, shape, bcast_dims)
+    x = xops.Transpose(x, perm)
+  if shape != c.get_shape(x).dimensions():
+    x = xops.BroadcastInDim(x, shape, bcast_dims)
 
   return x
