@@ -17,7 +17,6 @@ from functools import partial
 import numpy as np
 import scipy.special as osp_special
 
-from .. import util
 from .. import lax
 from .. import api
 from ..numpy import lax_numpy as jnp
@@ -289,7 +288,6 @@ def ndtri(p):
   Raises:
     TypeError: if `p` is not floating-type.
   """
-  x = jnp.asarray(p)
   dtype = lax.dtype(p)
   if dtype not in (jnp.float32, jnp.float64):
     raise TypeError(

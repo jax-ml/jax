@@ -14,9 +14,7 @@
 
 from functools import partial
 import operator
-import textwrap
 
-import scipy.sparse.linalg
 import numpy as np
 import jax.numpy as jnp
 from jax import lax, device_put
