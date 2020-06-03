@@ -215,7 +215,7 @@ what: y * 3
 
     with self.assertRaises(hcb.TapFunctionException):
       with hcb.outfeed_receiver():
-        res = func(0)
+        _ = func(0)
 
     # We should have received everything before the error
     assertMultiLineStrippedEqual(self, """
@@ -563,7 +563,7 @@ where: 10
         a_new_test="************",
         testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
-      res = jit_fun1(args)
+      _ = jit_fun1(args)
     # self.assertAllClose(args, res)
 
   def test_jit_large(self):
@@ -656,7 +656,7 @@ what: x3
       return x3
 
     with hcb.outfeed_receiver(receiver_name=self._testMethodName):
-      res = api.jit(func)(0)
+      _ = api.jit(func)(0)
 
     assert False  # It seems that the previous jit blocks above
 
@@ -885,7 +885,7 @@ transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
       g = integer_pow[ y=2 ] f
   in (g,) }""", str(api.make_jaxpr(vmap_fun1)(vargs)))
     with hcb.outfeed_receiver():
-      res_vmap = vmap_fun1(vargs)
+      _ = vmap_fun1(vargs)
     assertMultiLineStrippedEqual(self, """
 transforms: ({'name': 'batch', 'batch_dims': (0,)},) what: a * 2
 [ 8.00 10.00]
@@ -910,7 +910,7 @@ transforms: ({'name': 'batch', 'batch_dims': (0, 0)},) what: y * 3
       d = add c 3.00
   in (d,) }""", str(api.make_jaxpr(vmap_func)(vargs)))
     with hcb.outfeed_receiver():
-      res_vmap = vmap_func(vargs)
+      _ = vmap_func(vargs)
     assertMultiLineStrippedEqual(self, """
 transforms: ({'name': 'batch', 'batch_dims': (None, 0)},)
 [ 3.00
@@ -940,7 +940,7 @@ transforms: ({'name': 'batch', 'batch_dims': (None, 0)},)
                   transforms=(('batch', (0,)), ('batch', (0,))) ] e
   in (f,) }""", str(api.make_jaxpr(sum_all)(xv, yv)))
     with hcb.outfeed_receiver():
-      res_vmap = sum_all(xv, yv)
+      _ = sum_all(xv, yv)
     assertMultiLineStrippedEqual(self, """
 transforms: ({'name': 'batch', 'batch_dims': (0,)}, {'name': 'batch', 'batch_dims': (0,)})
 [[0 1 2 3 4]
@@ -1044,7 +1044,7 @@ transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 3
       h = reduce_sum[ axes=(0,) ] g
   in (h,) }""", str(api.make_jaxpr(padded_sum)(*args)))
 
-    res = padded_sum(*args)
+    _ = padded_sum(*args)
     self.assertMultiLineStrippedEqual("""
 logical_shapes: [(2,)] transforms: ('mask',) what: x
 [0 1 2 3]

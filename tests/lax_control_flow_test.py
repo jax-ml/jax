@@ -1164,7 +1164,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     def minimize_structure(test_params):
       energy_fn = partial(harmonic_bond, params=test_params)
-      grad_fn = api.grad(energy_fn)
 
       def apply_carry(carry, _):
         i, x = carry
@@ -1950,7 +1949,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def body(i, x):
       result = api.pmap(lambda z: lax.psum(jnp.sin(z), 'i'), axis_name='i')(x)
       return result + x
-    f_loop = lambda x: lax.fori_loop(0, 3, body, x)
+    f_loop = lambda x: lax.fori_loop(0, 3, body, x)  # noqa: F821
     ans = f_loop(jnp.ones(api.device_count()))
     del body, f_loop
 
@@ -1999,7 +1998,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     fn = api.vmap(fn)
 
     with api.disable_jit():
-      outputs = fn(jnp.array([1]))  # doesn't crash
+      _ = fn(jnp.array([1]))  # doesn't crash
 
   def test_disable_jit_while_loop_with_vmap(self):
     # https://github.com/google/jax/issues/2823

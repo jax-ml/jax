@@ -655,7 +655,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
     try:
-      out = random.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
+      _ = random.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
       xla.apply_primitive = apply_primitive
 
@@ -663,7 +663,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test to ensure consistent random values between JAX versions
     k = random.PRNGKey(0)
 
-    randints = random.randint(k, (3, 3), 0, 8)
     if FLAGS.jax_enable_x64:
         self.assertAllClose(
             random.randint(k, (3, 3), 0, 8),

@@ -262,7 +262,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigvals(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
-    n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
     w1, _ = jnp.linalg.eig(a)
@@ -792,7 +791,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testMatrixRank(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
-    n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
     self._CheckAgainstNumpy(np.linalg.matrix_rank, jnp.linalg.matrix_rank,
@@ -884,10 +882,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     b = jnp.array(rng.randn(100, 3), dtype=jnp.float32)
     x = jnp.linalg.solve(A, b)
     self.assertAllClose(vmap(jnp.dot)(A, x), b, atol=2e-3, rtol=1e-2)
-    jac0 = jax.jacobian(jnp.linalg.solve, argnums=0)(A, b)
-    jac1 = jax.jacobian(jnp.linalg.solve, argnums=1)(A, b)
-    jac0 = jax.jacobian(jnp.linalg.solve, argnums=0)(A[0], b[0])
-    jac1 = jax.jacobian(jnp.linalg.solve, argnums=1)(A[0], b[0])
+
+    _ = jax.jacobian(jnp.linalg.solve, argnums=0)(A, b)
+    _ = jax.jacobian(jnp.linalg.solve, argnums=1)(A, b)
+
+    _ = jax.jacobian(jnp.linalg.solve, argnums=0)(A[0], b[0])
+    _ = jax.jacobian(jnp.linalg.solve, argnums=1)(A[0], b[0])
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testIssue1383(self):

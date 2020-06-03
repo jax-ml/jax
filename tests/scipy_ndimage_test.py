@@ -55,7 +55,6 @@ def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
     padded = onp.pad(input, padding, mode=pad_mode, constant_values=cval)
   else:
     padded = onp.pad(input, padding, mode=pad_mode)
-  dtype = onp.result_type(padded, *shifted_coords)
   result = osp_ndimage.map_coordinates(
       padded, shifted_coords, order=order, mode=mode, cval=cval)
   return result

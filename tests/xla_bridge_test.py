@@ -38,13 +38,13 @@ class XlaBridgeTest(absltest.TestCase):
 
   def test_parameter_replication_default(self):
     c = xb.make_computation_builder("test")
-    param = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
+    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
     built_c = c.Build()
     assert "replication" not in built_c.as_hlo_text()
 
   def test_parameter_replication(self):
     c = xb.make_computation_builder("test")
-    param = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "", False)
+    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "", False)
     built_c = c.Build()
     assert "parameter_replication={false}" in built_c.as_hlo_text()
 

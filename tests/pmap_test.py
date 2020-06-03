@@ -843,7 +843,7 @@ class PmapTest(jtu.JaxTestCase):
 
     @pmap
     def g(key):
-      params = random.normal(key, ())
+      _ = random.normal(key, ())
       return 0.
 
     @vmap

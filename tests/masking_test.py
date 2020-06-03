@@ -160,15 +160,13 @@ class ShapesTest(jtu.JaxTestCase):
       return api.device_put(x)
 
   def test_broadcast_in_dim(self):
-    x = jnp.zeros(7)
 
     @shapecheck(['(n,)'], '(3, n, 4)')
     def broadcast_in_dim(x):
       return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4), broadcast_dimensions=(1,))
-    x = jnp.zeros((7, 1))
 
     @shapecheck(['(n, 1)'], '(3, n, 4, 1)')
-    def broadcast_in_dim(x):
+    def broadcast_in_dim2(x):
       return lax.broadcast_in_dim(x, shape=(3, x.shape[0], 4, x.shape[1]), broadcast_dimensions=(1, 3))
 
   def test_jit(self):
@@ -251,7 +249,7 @@ class ShapesTest(jtu.JaxTestCase):
       return x[1:]
 
     @shapecheck(['n'], 'n+-1')
-    def slice(x):
+    def slice2(x):
       return x[:-1]
 
     @shapecheck(['n'], 'n+-1')
@@ -259,7 +257,7 @@ class ShapesTest(jtu.JaxTestCase):
       return x[:0:-1]
 
     @shapecheck(['n'], 'n+-1')
-    def inverse(x):
+    def inverse2(x):
       return x[-2::-1]
 
   def test_poly_slicing(self):
@@ -423,8 +421,8 @@ class MaskingTest(jtu.JaxTestCase):
 
     # TODO(shoyer): enable this check when broadcast_in_dim supports masking
     with self.assertRaisesRegex(KeyError, 'broadcast_in_dim'):
-      ans = times([jnp.array([[1, 2], [3, 4], [5, 6]]), jnp.array([1, 2])],
-                  dict(n=4, m=5))
+      _ = times([jnp.array([[1, 2], [3, 4], [5, 6]]), jnp.array([1, 2])],
+                dict(n=4, m=5))
       # expected = np.array([[1, 2, 3], [8, 10, 12]])
       # self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -435,7 +433,7 @@ class MaskingTest(jtu.JaxTestCase):
 
     # TODO(shoyer): enable this check when broadcast_in_dim supports masking
     with self.assertRaisesRegex(KeyError, 'broadcast_in_dim'):
-      ans = stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
+      _ = stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
       # expected = np.array([[1, 2, 3], [4, 5, 6]])
       # self.assertAllClose(ans, expected, check_dtypes=False)
 
