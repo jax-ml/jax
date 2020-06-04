@@ -122,6 +122,11 @@ class TfOpsTest(jtu.JaxTestCase):
     f_tf = jax_to_tf.convert(f_jax)
     np.testing.assert_allclose(f_jax(0.7), f_tf(0.7))
 
+  def test_nested_jit(self):
+    f_jax = jax.jit(lambda x: jnp.sin(jax.jit(jnp.cos)(x)))
+    f_tf = jax_to_tf.convert(f_jax)
+    np.testing.assert_allclose(f_jax(0.7), f_tf(0.7))
+
   def test_converts_jax_arrays(self):
     f_tf = tf.function(lambda x: x)
     self.assertEqual(f_tf(jnp.zeros([])).numpy(), 0.)
@@ -473,23 +478,21 @@ class ControlFlowOpsTest(parameterized.TestCase):
   @parameterized.parameters(False, True)
   def test_scan(self, with_function=False):
     def f_jax(xs, ys):
-      # Equivalent to:
-      #    res = 0.
-      #    for x, y in zip(xs, ys):
-      #      res += x * y
-      def body(carry, inputs):
+      body_const = np.ones((2, ), dtype=np.float32)  # Test constant capture
+      def body(res0, inputs):
         x, y = inputs
-        return carry + x * y, carry
+        return res0 + x * y, body_const
       return lax.scan(body, 0., (xs, ys))
 
-    f_tf = jax_to_tf.convert(f_jax)
-    if with_function:
-      f_tf = tf.function(f_tf)
-    arg = np.arange(10, dtype=np.float32)
-    res_jax = f_jax(arg, arg)
-    res_tf = f_tf(arg, arg)
-    for r_jax, r_tf in zip(res_jax, res_tf):
-      np.testing.assert_allclose(r_tf, r_jax)
+    with jax_to_tf.enable_jit():
+      f_tf = jax_to_tf.convert(f_jax)
+      if with_function:
+        f_tf = tf.function(f_tf)
+      arg = np.arange(10, dtype=np.float32)
+      res_jax = f_jax(arg, arg)
+      res_tf = f_tf(arg, arg)
+      for r_jax, r_tf in zip(res_jax, res_tf):
+        np.testing.assert_allclose(r_tf, r_jax)
 
 
 if __name__ == "__main__":
