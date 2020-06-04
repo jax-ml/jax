@@ -437,8 +437,6 @@ class MaskingTest(jtu.JaxTestCase):
 
 
   def test_numpy_pad(self):
-    # TODO (j-towns) requires mask(jit)
-    raise SkipTest
     def numpy_pad(x):
       return jnp.pad(x, (0, 1), constant_values=5.)
 
@@ -609,8 +607,6 @@ class MaskingTest(jtu.JaxTestCase):
     self.check(d, ['2'], '', {}, [(2,)], ['int_'], rand_int(self.rng(), 0, 10))
 
   def test_where(self):
-    # Requires mask(jit)
-    raise SkipTest
     self.check(lambda x: jnp.where(x < 0, x, 0. * x), ['n'], 'n',
                {'n': 2}, [(3,)], ['float_'], rand_default(self.rng()))
 
