@@ -30,7 +30,7 @@ def _convolve_nd(in1, in2, mode, *, precision):
   if in1.ndim != in2.ndim:
     raise ValueError("in1 and in2 must have the same number of dimensions")
   if in1.size == 0 or in2.size == 0:
-    raise ValueError("zero-size arrays not supported in convolutions.")
+    raise ValueError(f"zero-size arrays not supported in convolutions, got shapes {in1.shape} and {in2.shape}.")
   in1, in2 = _promote_dtypes_inexact(in1, in2)
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
