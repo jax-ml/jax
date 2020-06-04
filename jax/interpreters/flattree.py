@@ -66,6 +66,12 @@ def is_trivial_axis(
 def _iter_leaf_coords(treedefs: Sequence[TreeDef]) -> Iterator[Tuple[int, ...]]:
   return itertools.product(*[range(treedef.num_leaves) for treedef in treedefs])
 
+def _iter_leaf_coords2(leafshapes: LeafShapes) -> Iterator[Tuple[int, ...]]:
+  return itertools.product(*[range(len(shapes)) for shapes in leafshapes])
+
+def _axis_length(shapes: Iterable[Tuple[int, ...]]) -> int:
+  return sum(map(prod, shapes))
+
 
 T = TypeVar("T")
 
@@ -80,10 +86,6 @@ def _leafshape(
   return _concat_tuple([leafshapes[i][j] for i, j in enumerate(coords)])
 
 
-def _axis_length(shapes: Iterable[Tuple[int, ...]]) -> int:
-  return sum(map(prod, shapes))
-
-
 class TreeTracer(core.Tracer):
   __slots__ = ["treedefs", "leafshapes", "leaves"]
 
@@ -93,11 +95,13 @@ class TreeTracer(core.Tracer):
 
   def __init__(self, trace, treedefs, leafshapes, leaves):
     assert len(treedefs) == len(leafshapes)
+    for treedef, shapes in zip(treedefs, leafshapes):
+      assert treedef.num_leaves == len(shapes)
     assert leaves
     for coords in _iter_leaf_coords(treedefs):
       expected_shape = _leafshape(leafshapes, coords)
       actual_shape = np.shape(leaves[coords])
-      assert actual_shape == expected_shape, (coords, actual_shape, expected_shape)
+      assert actual_shape == expected_shape
     self._trace = trace
     self.treedefs = tuple(treedefs)
     self.leafshapes = tuple(map(tuple, leafshapes))
@@ -305,8 +309,39 @@ def _filter_scalar_leaves(treedefs_in, leafshapes_in, leaves_in):
       scalars.append((i, leaves[()]))
   return treedefs_out, leafshapes_out, leaves_out, scalars
 
-def _is_broadcasting_axis(shapes: List[Tuple[int, ...]]) -> bool:
-  return _axis_length(shapes) == 1
+def _split_leaf(
+    array: ArrayLike,
+    axis: int,
+    shapes: Sequence[Tuple[int, ...]],
+) -> List[ArrayLike]:
+  import jax.numpy as jnp
+  if _axis_length(shapes) != array.shape[axis]:
+    raise ValueError("mismatched axis shape")
+  indices = np.cumsum([prod(shape) for shape in shapes[:-1]])
+  pieces = jnp.split(array, indices, axis)
+  outputs = []
+  for piece, axis_shape in zip(pieces, shapes):
+    shape = array.shape[:axis] + axis_shape + array.shape[axis+1:]
+    outputs.append(piece.reshape(shape))
+  return outputs
+
+def _split_leaves(
+    leafshapes: LeafShapes,
+    leaves: Leaves,
+    axis: int,
+    shapes: Sequence[Tuple[int, ...]],
+) -> Leaves:
+  if len(leafshapes[axis]) != 1 or len(leafshapes[axis][0]) != 1:
+    raise ValueError(f"invalid leafshapes {leafshapes[axis]} along axis={axis}")
+  leaves_out = {}
+  for in_coords in _iter_leaf_coords2(leafshapes):
+    leaf = leaves[in_coords]
+    leaf_axis, = _axes_for_leaf(leafshapes, in_coords, (axis,))
+    new_leaves = _split_leaf(leaf, leaf_axis, shapes)
+    for i, new_leaf in enumerate(new_leaves):
+      out_coords = in_coords[:axis] + (i,) + in_coords[axis+1:]
+      leaves_out[out_coords] = new_leaf
+  return leaves_out
 
 def _axes_for_leaf(
     leafshapes: LeafShapes, coords: Tuple[int, ...], axes: Tuple[int, ...],
@@ -361,7 +396,7 @@ def naryop_tree_rule(
 
     # check shapes
     non_trivial_shapes = {leafshapes[axis] for leafshapes in leafshapes_in
-                          if leafshapes[axis] != ((1,),)}
+                          if len(leafshapes[axis]) != 1}
     if len(non_trivial_shapes) > 1:
       raise ValueError(
           f"conflicting shapes along axis={axis}: {non_trivial_shapes}"
@@ -370,13 +405,27 @@ def naryop_tree_rule(
       shapes, = non_trivial_shapes
       out_leafshapes.append(shapes)
     else:
-      out_leafshapes.append(((1,),))
+      size = max(_axis_length(leafshapes[axis]) for leafshapes in leafshapes_in)
+      out_leafshapes.append(((size,),))
 
+  # split "trivial" axes to match the output leafshape
+  leafshapes_fixed = []
+  leaves_fixed: List[Leaves] = []
+  for leafshapes, leaves in zip(leafshapes_in, leaves_in):
+    leafshapes_ = list(leafshapes)
+    for axis in range(ndim):
+      if leafshapes[axis] != out_leafshapes[axis] and leafshapes[axis] != ((1,),):
+        leaves = _split_leaves(leafshapes, leaves, axis, out_leafshapes[axis])
+        leafshapes_[axis] = out_leafshapes[axis]
+    leafshapes_fixed.append(leafshapes_)
+    leaves_fixed.append(leaves)
+
+  # compute leaves
   out_leaves = {}
   for out_coords in _iter_leaf_coords(out_treedefs):
 
     args = []
-    for leafshapes, leaves in zip(leafshapes_in, leaves_in):
+    for leafshapes, leaves in zip(leafshapes_fixed, leaves_fixed):
       in_coords = tuple(coord if len(leafshapes[axis]) != 1 else 0
                         for axis, coord in enumerate(out_coords))
       leaf = leaves[in_coords]

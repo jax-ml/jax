@@ -154,6 +154,12 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(lambda x, y: x + y)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+  def test_arithmetic_with_non_tree(self):
+    tree = {'x': 0.0, 'y': jnp.array([1.0]), 'z': jnp.array([[2.0, 3.0]])}
+    expected = {'x': 1.0, 'y': jnp.array([2.0]), 'z': jnp.array([[3.0, 4.0]])}
+    actual = tree_vectorize(lambda x: x + jnp.ones_like(x))(tree)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
   def test_arithmetic_broadcasting(self):
 
     @tree_vectorize
@@ -192,13 +198,11 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = add_outer(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
-    # TODO(shoyer): should this work? It would require "splitting up" a trivial
-    # axis to match the given leafshape.
-    # def add_outer3(x, y):
-    #   x, y = jnp.broadcast_arrays(jnp.expand_dims(x, 1), jnp.expand_dims(y, 0))
-    #   return x + y
-    # actual = tree_vectorize(add_outer3)(tree1, tree2)
-    # self.assertTreeEqual(actual, expected, check_dtypes=True)
+    def add_outer3(x, y):
+      x, y = jnp.broadcast_arrays(jnp.expand_dims(x, 1), jnp.expand_dims(y, 0))
+      return x + y
+    actual = tree_vectorize(add_outer3)(tree1, tree2)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   def test_reduce(self):
     tree = {'x': jnp.array(1.0),
