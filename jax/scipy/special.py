@@ -105,7 +105,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   dims = _reduction_dims(a, axis)
   dimadd = lambda x: lax.expand_dims(x, dims)
   amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
-  amax = lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0))
+  amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
   amax_singletons = dimadd(amax)
   out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
                                    _constant_like(a, 0), lax.add, dims)), amax)
