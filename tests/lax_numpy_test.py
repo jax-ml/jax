@@ -1506,8 +1506,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape1={}_shape2={}_{}".format(
-          a1_shape, a2_shape, dtype),
+      {"testcase_name": "_a1_shape={}_a2_shape2={}".format(
+          jtu.format_shape_dtype_string(a1_shape, dtype),
+          jtu.format_shape_dtype_string(a2_shape, dtype)),
        "dtype": dtype, "a1_shape": a1_shape, "a2_shape": a2_shape}
       for dtype in default_dtypes
       for a1_shape in one_dim_array_shapes
