@@ -16,9 +16,7 @@ from typing import Any, List
 
 import itertools as it
 from collections import namedtuple
-import contextlib
-import threading
-from typing import (Callable, Dict, Iterable, NamedTuple, Optional, Sequence,
+from typing import (Callable, Dict, NamedTuple, Optional, Sequence,
                     Set, Tuple, Type, Union, cast)
 from weakref import ref
 
@@ -26,7 +24,7 @@ import numpy as onp
 
 from .. import core
 from .. import linear_util as lu
-from ..abstract_arrays import ShapedArray, ConcreteArray, raise_to_shaped
+from ..abstract_arrays import ConcreteArray, raise_to_shaped
 from ..ad_util import zero
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
                     wrap_name, cache, curry)

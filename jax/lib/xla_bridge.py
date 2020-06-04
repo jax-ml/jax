@@ -22,11 +22,10 @@ XLA. There are also a handful of related casting utilities.
 
 from functools import partial
 import os
-from typing import Callable, Dict, Sequence, Tuple, Union
+from typing import Callable, Dict, Tuple, Union
 import warnings
 
 from absl import logging
-import numpy as np
 
 from ..config import flags
 from .. import util
@@ -38,7 +37,6 @@ try:
   from . import tpu_client
 except ImportError:
   tpu_client = None
-from . import version
 from . import xla_client
 
 xops = xla_client.ops
