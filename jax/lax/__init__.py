@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# flake8: noqa: F401
 from .lax import (
   ConvDimensionNumbers,
   DotDimensionNumbers,
