@@ -2030,7 +2030,7 @@ def column_stack(tup):
   for v in tup:
     arr = array(v)
     if arr.ndim < 2:
-      arr = expand_dims(arr, axis=0)
+      arr = atleast_2d(arr).T
     arrays.append(arr)
   return concatenate(arrays, 1)
 
