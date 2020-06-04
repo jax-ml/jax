@@ -2617,6 +2617,30 @@ def polyadd(a, b):
 
   return lax.add(a,b)
 
+def _trim_zeros(a):
+  first = 0
+  for i in a:
+    if i != 0:
+      break
+    first = first + 1
+  return a[first:]
+
+_LEADING_ZEROS_DOC="""\
+Setting trim_leading_zeros=True makes the output match that of numpy.
+But prevents the function from being able to be used in compiled code.
+"""
+
+@_wraps(np.polymul, lax_description=_LEADING_ZEROS_DOC)
+def polymul(a1, a2, *, trim_leading_zeros=False):
+  if isinstance(a1, np.poly1d):
+    a1 = asarray(a1)
+  if isinstance(a2, np.poly1d):
+    a2 = asarray(a2)
+  if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
+    a1, a2 = _trim_zeros(a1), _trim_zeros(a2)
+
+  val = convolve(a1, a2, mode='full')
+  return val
 
 @_wraps(np.append)
 def append(arr, values, axis=None):

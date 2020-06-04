@@ -212,6 +212,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     pad
     percentile
     polyadd
+    polymul
     polyval
     power
     positive
