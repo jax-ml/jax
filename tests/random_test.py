@@ -687,6 +687,10 @@ class LaxRandomTest(jtu.JaxTestCase):
         random.fold_in(k, 4),
         np.array([2285895361,  433833334], dtype='uint32'))
 
+  def testDtypeErrorMessage(self):
+    with self.assertRaisesRegex(ValueError, r"dtype argument to.*"):
+      random.normal(random.PRNGKey(0), (), dtype=jnp.int32)
+
 
 if __name__ == "__main__":
   absltest.main()
