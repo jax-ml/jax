@@ -393,7 +393,6 @@ class MaskingTest(jtu.JaxTestCase):
                ['float_', 'float_'], rand_default(self.rng()))
 
   def test_jit(self):
-    raise SkipTest
     @partial(mask, in_shapes=['n'], out_shape='2*n')
     @jit
     def duplicate(x):
