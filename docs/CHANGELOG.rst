@@ -14,6 +14,13 @@ jax 0.1.70 (Unreleased)
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.69...master>`_.
 
+* New features:
+
+  * ``lax.switch`` introduces indexed conditionals with multiple
+    branches, together with a generalization of the ``cond``
+    primitive
+    `#3318 <https://github.com/google/jax/pull/3318>`_.
+
 jax 0.1.69 (June 3, 2020)
 ---------------------------
 
