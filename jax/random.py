@@ -359,6 +359,9 @@ def uniform(key: jnp.ndarray,
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
+                     f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _uniform(key, shape, dtype, minval, maxval)
@@ -543,6 +546,9 @@ def normal(key: jnp.ndarray,
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `normal` must be a float dtype, "
+                     f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _normal(key, shape, dtype)
@@ -581,6 +587,9 @@ def multivariate_normal(key: jnp.ndarray,
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -634,6 +643,9 @@ def truncated_normal(key: jnp.ndarray,
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `truncated_normal` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -714,6 +726,9 @@ def beta(key: jnp.ndarray,
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `beta` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -748,6 +763,9 @@ def cauchy(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `cauchy` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _cauchy(key, shape, dtype)
@@ -780,6 +798,9 @@ def dirichlet(key, alpha, shape=None, dtype=np.float64):
     ``shape + (alpha.shape[-1],)`` if ``shape`` is not None, or else
     ``alpha.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `dirichlet` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -814,6 +835,9 @@ def exponential(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `exponential` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _exponential(key, shape, dtype)
@@ -1039,6 +1063,9 @@ def gamma(key, a, shape=None, dtype=np.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``a.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `gamma` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -1178,6 +1205,9 @@ def gumbel(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `gumbel` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _gumbel(key, shape, dtype)
@@ -1232,6 +1262,9 @@ def laplace(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `laplace` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _laplace(key, shape, dtype)
@@ -1257,6 +1290,9 @@ def logistic(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `logistic` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _logistic(key, shape, dtype)
@@ -1297,6 +1333,9 @@ def pareto(key, b, shape=None, dtype=np.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``b.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `pareto` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -1331,6 +1370,9 @@ def t(key, df, shape=(), dtype=np.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``df.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `t` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _t(key, df, shape, dtype)
