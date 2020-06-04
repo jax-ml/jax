@@ -1662,7 +1662,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(
           jtu.format_test_name_suffix("", [shape] * len(dtypes), dtypes)),
-       "shape": shape, "dtypes": dtypes, "rng_factory": rng_factory}
+       "shape": shape, "dtypes": dtypes}
       for dtypes in [
         [np.float32],
         [np.float32, np.float32],
@@ -1670,10 +1670,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         [np.float32, np.int64, np.float32],
         [np.float32, np.int32, np.float64],
       ]
-      for shape in [(), (2,), (3, 4), (1, 5)]
-      for rng_factory in [jtu.rand_default]))
-  def testColumnStack(self, shape, dtypes, rng_factory):
-    rng = rng_factory(self.rng())
+      for shape in [(), (2,), (3, 4), (1, 5)]))
+  def testColumnStack(self, shape, dtypes):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
     np_fun = _promote_like_jnp(np.column_stack)
     jnp_fun = jnp.column_stack
