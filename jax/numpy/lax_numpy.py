@@ -2645,6 +2645,17 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   val = convolve(a1, a2, mode='full')
   return val
 
+@_wraps(np.polysub)
+def polysub(a, b):
+  a = asarray(a)
+  b = asarray(b)
+
+  if b.shape[0] <= a.shape[0]:
+    return a.at[-b.shape[0]:].add(-b)
+  else:
+    return -b.at[-a.shape[0]:].add(-a)
+
+
 @_wraps(np.append)
 def append(arr, values, axis=None):
   if axis is None:

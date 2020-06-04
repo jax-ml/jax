@@ -213,6 +213,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     percentile
     polyadd
     polymul
+    polysub
     polyval
     power
     positive
