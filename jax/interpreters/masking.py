@@ -410,7 +410,12 @@ class MaskTrace(Trace):
       return [MaskTracer(self, v, s) for v, s in zip(vals_out, shapes_out())]
 
   def post_process_call(self, call_primitive, out_tracers, params):
-    raise NotImplementedError
+    vals, shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
+    master = self.master
+    def todo(vals):
+      trace = MaskTrace(master, core.cur_sublevel())
+      return map(partial(MaskTracer, trace), vals, shapes)
+    return vals, todo
 
 class UniqueId:
   def __init__(self, name):

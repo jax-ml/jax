@@ -407,6 +407,17 @@ class MaskingTest(jtu.JaxTestCase):
     out = duplicate([jnp.arange(3)], dict(n=2))
     assert np.all(np.array([0, 1, 0, 1]) == out[:4])
 
+  def test_jit2(self):
+    # Trigger MaskTrace.post_process_call
+    def fun(x):
+      @jit
+      def concat(y):
+        return lax.concatenate([x, y], 0)
+      return concat(jnp.array([1., 2., 3.]))
+
+    self.check(fun, ['n'], '(n+3,)', {'n': 2}, [(3,)], ['float_'],
+               rand_default(self.rng()))
+
   @parameterized.named_parameters({
       'testcase_name': "padding_config={}_shapes={}".format(padding_config,
                                                             shape),
