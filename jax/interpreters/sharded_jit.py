@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 

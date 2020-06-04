@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import numpy as onp
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 from .. import core
 from .. import dtypes
@@ -162,7 +162,6 @@ class BatchTrace(Trace):
       return map_primitive.bind(f, *vals, **params)
     else:
       size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-      is_batched = tuple(d is not not_mapped for d in dims)
       vals = [moveaxis(x, d, 1) if d is not not_mapped and d != 1 else x
               for x, d in zip(vals, dims)]
       dims = tuple(not_mapped if d is not_mapped else 0 for d in dims)

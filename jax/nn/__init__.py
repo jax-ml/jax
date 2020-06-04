@@ -14,5 +14,27 @@
 
 """Common functions for neural network libraries."""
 
+# flake8: noqa: F401
 from . import initializers
-from .functions import *
+from .functions import (
+  celu,
+  elu,
+  gelu,
+  glu,
+  hard_sigmoid,
+  hard_swish,
+  hard_tanh,
+  leaky_relu,
+  log_sigmoid,
+  log_softmax,
+  normalize,
+  one_hot,
+  relu,
+  relu6,
+  selu,
+  sigmoid,
+  soft_sign,
+  softmax,
+  softplus,
+  swish,
+)

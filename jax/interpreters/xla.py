@@ -14,7 +14,6 @@
 
 
 from collections import defaultdict, deque
-from functools import reduce
 import itertools as it
 import operator as op
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tuple
