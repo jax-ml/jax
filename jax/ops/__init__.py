@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+__all__ = [
+  'index', 'index_add', 'index_mul', 'index_update', 'index_min', 'index_max', 'segment_sum'
+]
 
 from .scatter import (
   index, index_add, index_mul, index_update, index_min, index_max, segment_sum

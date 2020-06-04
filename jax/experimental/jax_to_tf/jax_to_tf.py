@@ -17,7 +17,7 @@ import contextlib
 import functools
 import string
 import threading
-from typing import Any, Sequence
+from typing import Any, Callable, Dict, Sequence
 
 import jax
 from jax import abstract_arrays
@@ -35,7 +35,6 @@ from jax.interpreters import xla
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
-from typing import Any, Callable, Dict, Sequence
 
 # These don't have public equivalents.
 # pylint: disable=g-direct-tensorflow-import

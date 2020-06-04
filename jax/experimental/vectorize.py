@@ -93,7 +93,7 @@ See the difference?
 
 """
 
-from jax import grad, jit, vmap
+from jax import vmap
 import jax.numpy as jnp
 import numpy as np
 import re
@@ -120,8 +120,8 @@ def _parse_gufunc_signature(signature):
 
     Args:
       signature : string
-	  Generalized universal function signature, e.g., ``(m,n),(n,p)->(m,p)``
-	  for ``np.matmul``.
+    Generalized universal function signature, e.g., ``(m,n),(n,p)->(m,p)``
+    for ``np.matmul``.
 
     Returns:
       Tuple of input and output core dimensions parsed from the signature, each
@@ -141,11 +141,11 @@ def _update_dim_sizes(dim_sizes, arg, core_dims):
 
     Args:
       dim_sizes : Dict[str, int]
-	  Sizes of existing core dimensions. Will be updated in-place.
+    Sizes of existing core dimensions. Will be updated in-place.
       arg : ndarray
-	  Argument to examine.
+    Argument to examine.
       core_dims : Tuple[str, ...]
-	  Core dimensions for this argument.
+    Core dimensions for this argument.
     """
     if not core_dims:
         return
@@ -173,15 +173,15 @@ def _parse_input_dimensions(args, input_core_dims):
 
     Args:
       args : Tuple[ndarray, ...]
-	  Tuple of input arguments to examine.
+    Tuple of input arguments to examine.
       input_core_dims : List[Tuple[str, ...]]
-	  List of core dimensions corresponding to each input.
+    List of core dimensions corresponding to each input.
 
     Returns:
       broadcast_shape : Tuple[int, ...]
-	  Common shape to broadcast all non-core dimensions to.
+    Common shape to broadcast all non-core dimensions to.
       dim_sizes : Dict[str, int]
-	  Common sizes for named core dimensions.
+    Common sizes for named core dimensions.
     """
     broadcast_args = []
     dim_sizes = {}
@@ -252,10 +252,10 @@ def vectorize(signature):
     signature: an einsum style signature that defines how the core dimensions are mapped between inputs and outputs.
 
   Returns:
-	The vectorized 'gufunc' that will automatically broadcast
-	while maintaining the specified core logic, the returned
-	function also has a new ``axis`` parameter for specifying
-	which axis should be treated as the core one.
+  The vectorized 'gufunc' that will automatically broadcast
+  while maintaining the specified core logic, the returned
+  function also has a new ``axis`` parameter for specifying
+  which axis should be treated as the core one.
   """
   input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
 
