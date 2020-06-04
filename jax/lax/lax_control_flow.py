@@ -22,7 +22,6 @@ import functools
 import inspect
 import itertools
 import operator
-import threading
 from typing import Callable, Sequence
 
 import numpy as onp
@@ -34,7 +33,7 @@ from jax import util
 from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
-from jax.api_util import flatten_fun_nokwargs, apply_flat_fun_nokwargs
+from jax.api_util import flatten_fun_nokwargs
 from jax.core import get_aval, typecheck, typematch
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
@@ -46,8 +45,7 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, unzip4, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, treedef_tuple, tree_leaves,
-                           tree_map, tree_multimap)
+                           treedef_children, treedef_tuple, tree_multimap)
 from jax import ad_util
 
 xops = xla_client.ops
@@ -951,7 +949,6 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, res_avals_per_jaxpr):
   return tuple(pad_jaxpr_res_avals(i, jaxpr) for i, jaxpr in enumerate(jaxprs))
 
 def _transpose_cond_jaxpr(jaxpr, num_res):
-  num_non_res = len(jaxpr.in_avals) - num_res
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
   primal_avals = _map(raise_to_shaped, primal_avals)
 
@@ -1220,7 +1217,7 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
     nonzeros = const_nz + carry_nz + xs_nz
     jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(
         jaxpr, nonzeros, instantiate=carry_nz + [False] * num_ys)
-    carry_nz_out, ys_nz = nonzeros_out[:num_carry], nonzeros_out[num_carry:]
+    carry_nz_out, _ = nonzeros_out[:num_carry], nonzeros_out[num_carry:]
     if carry_nz_out == carry_nz:
       break
     else:
@@ -1268,7 +1265,6 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
               "num_carry": num_carry, "jaxpr": jaxpr, "linear": linear}
     return trace.default_process_primitive(scan_p, tracers, params)
 
-  num_xs = len(jaxpr.in_avals) - num_carry - num_consts
   num_ys = len(jaxpr.out_avals) - num_carry
 
   unknowns = [t.pval[0] is not None for t in tracers]
@@ -1285,7 +1281,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
     jaxpr_1, jaxpr_2, out_uk = pe.partial_eval_jaxpr(
         jaxpr, unknowns, instantiate=carry_uk + [False] * num_ys,
         trace_type=trace.master.trace_type)
-    carry_uk_out, ys_uk = out_uk[:num_carry], out_uk[num_carry:]
+    carry_uk_out = out_uk[:num_carry]
     if carry_uk_out == carry_uk:
       break
     else:
@@ -1523,7 +1519,7 @@ def scan_bind(*args, reverse, length, num_consts, num_carry, jaxpr, linear):
     assert len(linear) == len(args)
     consts, init, xs = split_list(args, [num_consts, num_carry])
     consts_avals, init_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
-    xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
+    # xs_avals = _map(partial(_promote_aval_rank, length), x_avals)
     assert all(_map(typecheck, consts_avals, consts)), (consts, consts_avals)
     assert all(_map(typecheck, init_avals, init))
     # assert all(_map(typecheck, xs_avals, xs))
@@ -1776,8 +1772,6 @@ def _check_shapes(func_name, expected_name, actual, expected, tree):
   actual_shapes = _map(onp.shape, actual)
   expected_shapes = _map(onp.shape, expected)
   if actual_shapes != expected_shapes:
-    actual_shape_tree = tree_unflatten(tree, actual_shapes)
-    act_shape_tree = tree_unflatten(tree, actual_shapes)
     raise ValueError('{}() output shapes must match {}, got {} and {}'
                      .format(func_name, expected_name,
                              tree_unflatten(tree, actual_shapes),
