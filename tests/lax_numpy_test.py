@@ -1519,7 +1519,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun_np = lambda arg1, arg2: jnp.polymul(arg1, arg2, trim_leading_zeros=True)
     jnp_fun_co = lambda arg1, arg2: jnp.polymul(arg1, arg2)
     args_maker = lambda: [rng(a1_shape, dtype), rng(a2_shape, dtype)]
-    tol = {np.float16: 2e-1, np.float32: 1e-2, np.float64: 1e-14}
+    tol = {np.float16: 2e-1, np.float32: 5e-2, np.float64: 1e-14}
     self._CheckAgainstNumpy(np_fun, jnp_fun_np, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun_co, args_maker, check_dtypes=False)
 
