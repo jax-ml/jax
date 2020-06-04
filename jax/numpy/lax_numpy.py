@@ -2636,13 +2636,12 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
     a1 = asarray(a1)
   if isinstance(a2, np.poly1d):
     a2 = asarray(a2)
+  if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
+    a1, a2 = _trim_zeros(a1), _trim_zeros(a2)
   if len(a1) == 0:
     a1 = asarray([0.])
   if len(a2) == 0:
     a2 = asarray([0.])
-  if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
-    a1, a2 = _trim_zeros(a1), _trim_zeros(a2)
-
   val = convolve(a1, a2, mode='full')
   return val
 
