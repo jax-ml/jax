@@ -17,7 +17,6 @@ from jax.scipy.special import expit, logit
 
 from ... import lax
 from ...numpy._util import _wraps
-from ...numpy.lax_numpy import _promote_args_inexact
 
 
 @_wraps(osp_stats.logistic.logpdf, update_doc=False)

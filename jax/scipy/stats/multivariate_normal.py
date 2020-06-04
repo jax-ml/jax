@@ -20,7 +20,7 @@ from ... import lax
 from ...lax_linalg import cholesky, triangular_solve
 from ... import numpy as jnp
 from ...numpy._util import _wraps
-from ...numpy.lax_numpy import _promote_dtypes_inexact, _constant_like
+from ...numpy.lax_numpy import _promote_dtypes_inexact
 
 
 @_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False)

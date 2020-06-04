@@ -17,7 +17,7 @@ import scipy.stats as osp_stats
 from ... import lax
 from ...numpy import lax_numpy as jnp
 from ...numpy._util import _wraps
-from ..special import xlogy, xlog1py
+from ..special import xlog1py
 
 @_wraps(osp_stats.geom.logpmf, update_doc=False)
 def logpmf(k, p, loc=0):
