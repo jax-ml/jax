@@ -413,9 +413,9 @@ class MaskingTest(jtu.JaxTestCase):
       @jit
       def concat(y):
         return lax.concatenate([x, y], 0)
-      return concat(jnp.array([1., 2., 3.]))
+      return concat(jnp.array([1., 2., 3.], dtype='float32'))
 
-    self.check(fun, ['n'], '(n+3,)', {'n': 2}, [(3,)], ['float_'],
+    self.check(fun, ['n'], '(n+3,)', {'n': 2}, [(3,)], ['float32'],
                rand_default(self.rng()))
 
   @parameterized.named_parameters({
