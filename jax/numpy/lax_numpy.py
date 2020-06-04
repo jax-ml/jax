@@ -2618,12 +2618,10 @@ def polyadd(a, b):
   return lax.add(a,b)
 
 def _trim_zeros(a):
-  first = 0
-  for i in a:
-    if i != 0:
-      break
-    first = first + 1
-  return a[first:]
+  for i, v in enumerate(a):
+    if v != 0:
+      return a[i:]
+  return a[:0]
 
 _LEADING_ZEROS_DOC="""\
 Setting trim_leading_zeros=True makes the output match that of numpy.
