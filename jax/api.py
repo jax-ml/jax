@@ -1329,11 +1329,6 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
   return fun
 
 
-# def tree_vectorize(fun):
-#   eval_shape
-#   return wraps(fun)(flattree.tree_vectorize(fun))
-
-
 # TODO(shoyer): use linear_util for this transformation
 def _apply_callable_args(fun, args, callable_transform):
   callables = []
