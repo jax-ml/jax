@@ -125,8 +125,8 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertLen(result.device_buffers, 1)
 
   def testShardingConstraint(self):
-    if jax.local_device_count() < 4:
-      raise SkipTest("requires 4 devices")
+    if jax.local_device_count() < 2:
+      raise SkipTest("requires 2 devices")
 
     def f(x):
       y = x + 1
@@ -160,6 +160,24 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertAllClose(actual.device_buffers[0].to_py(),
                         actual.device_buffers[1].to_py(),
                         check_dtypes=False)
+
+  def testNestedShardingConstraint(self):
+    if jax.local_device_count() < 2:
+      raise SkipTest("requires 2 devices")
+
+    shape = (8, 8)
+
+    @jit
+    def f(x):
+      return lax.while_loop(lambda i: i[0,0] < 10.,
+                            lambda i: with_sharding_constraint(i + 1., P(2, 1)),
+                            x)
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x + 10.
+    actual = sharded_jit(f, in_parts=None, out_parts=None)(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertLen(actual.device_buffers, 2)
 
   def testGradOfShardingConstraint(self):
     if jax.local_device_count() < 4:
