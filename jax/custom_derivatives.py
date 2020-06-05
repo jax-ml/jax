@@ -15,13 +15,12 @@
 
 from functools import partial, update_wrapper, reduce
 import inspect
-import itertools as it
 import operator as op
 
 from . import core
 from . import linear_util as lu
 from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
-from .util import safe_zip, safe_map, unzip2, split_list, curry
+from .util import safe_zip, safe_map, unzip2, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
 from .ad_util import zero, stop_gradient_p
@@ -266,8 +265,6 @@ def _flatten_jvp(in_tree, *args):
 def _custom_jvp_call_bind(prim, fun, jvp, *args):
   args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
-  level = (core.trace_state.trace_stack.next_level(True)
-           if top_trace is None else top_trace.level)
   if top_trace is None:
     with core.new_sublevel():
       outs = prim.impl(fun, jvp, *args)
@@ -507,8 +504,6 @@ def _flatten_bwd(in_tree, out_trees, *args):
 def _custom_vjp_call_bind(prim, fun, fwd, bwd, *args, out_trees):
   args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
-  level = (core.trace_state.trace_stack.next_level(True)
-           if top_trace is None else top_trace.level)
   if top_trace is None:
     with core.new_sublevel():
       outs = prim.impl(fun, fwd, bwd, *args, out_trees=out_trees)

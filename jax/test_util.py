@@ -16,26 +16,21 @@
 from contextlib import contextmanager
 import functools
 import re
-import itertools as it
 import os
 from typing import Dict, Sequence, Union
-import sys
 import unittest
 import warnings
 import zlib
 
-from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
 import numpy.random as npr
-import scipy
 
 from . import api
 from . import core
 from . import dtypes
 from . import lax
-from . import lib
 from .config import flags, bool_env
 from .util import partial
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
