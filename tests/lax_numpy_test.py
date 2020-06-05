@@ -1506,6 +1506,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_a1_shape={}_a2_shape2={}".format(
+          jtu.format_shape_dtype_string(a1_shape, dtype),
+          jtu.format_shape_dtype_string(a2_shape, dtype)),
+       "dtype": dtype, "a1_shape": a1_shape, "a2_shape": a2_shape}
+      for dtype in default_dtypes
+      for a1_shape in one_dim_array_shapes
+      for a2_shape in one_dim_array_shapes))
+  def testPolyMul(self, a1_shape, a2_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda arg1, arg2: np.polymul(arg1, arg2)
+    jnp_fun_np = lambda arg1, arg2: jnp.polymul(arg1, arg2, trim_leading_zeros=True)
+    jnp_fun_co = lambda arg1, arg2: jnp.polymul(arg1, arg2)
+    args_maker = lambda: [rng(a1_shape, dtype), rng(a2_shape, dtype)]
+    tol = {np.float16: 2e-1, np.float32: 5e-2, np.float64: 1e-14}
+    self._CheckAgainstNumpy(np_fun, jnp_fun_np, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jnp_fun_co, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_offset={}_axis1={}_axis2={}".format(
           jtu.format_shape_dtype_string(shape, dtype), offset, axis1, axis2),
        "dtype": dtype, "shape": shape, "offset": offset, "axis1": axis1,

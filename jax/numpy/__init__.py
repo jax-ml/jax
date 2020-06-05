@@ -48,7 +48,7 @@ from .lax_numpy import (
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
     negative, newaxis, nextafter, nonzero, not_equal, number, numpy_version,
     object_, ones, ones_like, operator_name, outer, packbits, pad, percentile,
-    pi, polyadd, polyval, positive, power, prod, product, promote_types, ptp, quantile,
+    pi, polyadd, polymul, polyval, positive, power, prod, product, promote_types, ptp, quantile,
     rad2deg, radians, ravel, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
     save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
