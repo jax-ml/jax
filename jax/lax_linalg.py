@@ -854,8 +854,16 @@ def svd_impl(operand, full_matrices, compute_uv):
   return s, u, vt
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
-  raise NotImplementedError(
-    "Singular value decomposition is only implemented on the CPU and GPU backends")
+  shape = c.get_shape(operand).dimensions()
+  m, n = shape[-2:]
+  u, s, v = xops.SVD(operand)
+  permutation = list(range(len(shape)))
+  permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
+  vt = xops.Transpose(v, permutation)
+  if not full_matrices and m != n:
+    u = xops.SliceInDim(u, 0, min(m, n), stride=1, dimno=len(shape) - 1)
+    vt = xops.SliceInDim(vt, 0, min(m, n), stride=1, dimno=len(shape) - 2)
+  return xops.Tuple(c, [s, u, vt])
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
