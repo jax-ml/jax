@@ -1099,6 +1099,7 @@ xla_pmap_p.multiple_results = True
 xla_pmap = partial(core.map_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
+pe.staged_out_calls.add(xla_pmap_p)
 
 def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
