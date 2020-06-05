@@ -24,7 +24,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import pmap, vjp
+from jax import jit, pmap, vjp
 from jax import lax
 from jax import test_util as jtu
 from jax import tree_util
