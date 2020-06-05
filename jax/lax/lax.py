@@ -1020,20 +1020,34 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   else:
     return transpose_p.bind(operand, permutation=permutation)
 
-def reduce(operand: Array, init_value: Array,
+def reduce(operand: Union[Array, Tuple[Array]], init_value: Union[Array, Tuple[Array]],
            computation: Callable, dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
   """
-  monoid_reducer = _get_monoid_reducer(computation, init_value)
-  if monoid_reducer:
-    return monoid_reducer(operand, dimensions)
+  return_tuple = isinstance(operand, tuple)
+  if return_tuple != isinstance(init_value, tuple):
+    raise TypeError("reduce: inputs must both be tuples of arrays or both be arrays; got "
+                    f"type(operand)={type(operand)}, type(init_value)={type(init_value)}.")
+  if not return_tuple:
+    operand = (operand,)
+    init_value = (init_value,)
+  if len(operand) != len(init_value):
+    raise TypeError("reduce: length of operand must match length of init_value; got "
+                    f"len(operand)={len(operand)}, len(init_value)={len(init_value)}.")
+  
+  if len(operand) == 1:
+    monoid_reducer = _get_monoid_reducer(computation, init_value[0])
+    if monoid_reducer:
+      out = (monoid_reducer(operand[0], dimensions),)
+    else:
+      jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value[0]))
+      out = reduce_p.bind(operand[0], init_value[0], computation=computation,
+                         jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
   else:
-    jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value))
-    out = reduce_p.bind(operand, init_value, computation=computation,
-                        jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
-    return out[0]
+    raise NotImplementedError("multiple operands")
+  return tuple(out) if return_tuple else out[0]
 
 @cache()
 def _reduction_jaxpr(computation, aval):
