@@ -1035,23 +1035,25 @@ def reduce(operand: Union[Array, Tuple[Array]], init_value: Union[Array, Tuple[A
     raise TypeError("reduce: length of operand must match length of init_value; got "
                     f"len(operand)={len(operand)}, len(init_value)={len(init_value)}.")
   
-  if len(operand) == 1:
-    monoid_reducer = _get_monoid_reducer(computation, init_value[0])
-    if monoid_reducer:
-      out = (monoid_reducer(operand[0], dimensions),)
-    else:
-      jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value[0]))
-      out = reduce_p.bind(operand[0], init_value[0], computation=computation,
-                         jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
+  monoid_reducer = _get_monoid_reducer(computation, init_value[0])
+  if len(operand) == 1 and monoid_reducer:
+    out = (monoid_reducer(operand[0], dimensions),)
   else:
-    raise NotImplementedError("multiple operands")
+    jaxpr, consts = _reduction_jaxpr(computation, *(_abstractify(v) for v in init_value))
+    # TODO(mattjj): handle consts correctly
+    # TODO(mattjj): don't pass computation
+    out = reduce_p.bind(*operand, *init_value, computation=computation,
+                        jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
   return tuple(out) if return_tuple else out[0]
 
 @cache()
-def _reduction_jaxpr(computation, aval):
-  pval = pe.PartialVal.unknown(aval)
-  comp = lu.wrap_init(lambda x, y: (computation(x, y),))
-  jaxpr, _, consts = pe.trace_to_jaxpr(comp, (pval, pval), instantiate=False)
+def _reduction_jaxpr(computation, *avals):
+  pvals = tuple(pe.PartialVal.unknown(aval) for aval in avals)
+  if len(pvals) == 1:
+    comp = lu.wrap_init(lambda x, y: (computation(x, y),))
+  else:
+    comp = lu.wrap_init(computation)
+  jaxpr, _, consts = pe.trace_to_jaxpr(comp, 2 * pvals, instantiate=True)
   return jaxpr, consts
 
 def _get_monoid_reducer(monoid_op: Callable, x: Array) -> Optional[Callable]:
@@ -4091,18 +4093,34 @@ batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
 
 
-def _reduce_abstract_eval(operand, init_value, *, computation, jaxpr, consts,
-                         dimensions):
-  return (ShapedArray(
-    shape=tuple(onp.delete(operand.shape, dimensions)),
-    dtype=_dtype(operand, init_value)
-  ),)
+def _reduce_abstract_eval(*args, dimensions, **kwargs):
+  N = len(args) // 2
+  operands, init_values = args[:N], args[N:]
+  if len(operands) != len(init_values):
+    raise TypeError("Expected number of operands to equal number of init_values; "
+                    f"got {len(operands)} and {len(init_values)}")
+  if any(operand.shape != operands[0].shape for operand in operands[1:]):
+    shapes = " ".join(str(operand.shape) for operand in operands)
+    raise TypeError(f"Arguments to reduce must have equal shapes, got: {shapes}")
+  shape = tuple(onp.delete(operands[0].shape, dimensions))
+  return tuple(
+    ShapedArray(shape, dtype=dtypes.canonicalize_dtype(operand.dtype))
+    for operand in operands
+  )
 
-def _reduce_translation_rule(c, operand, init_value, *, computation, jaxpr,
-                             consts, dimensions):
-  xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
-  out = xops.Reduce(c, [operand], [init_value], xla_computation, dimensions)
-  return xops.Tuple(c, [out])
+def _reduce_translation_rule(c, *args, computation, jaxpr, consts, dimensions):
+  N = len(args) // 2
+  operands, init_values = args[:N], args[N:]
+  assert len(operands) == len(init_values)
+  shapes = [c.get_shape(v) for v in init_values]
+  axis_env = xla.AxisEnv(1)  # no parallel primitives inside reductions
+  subc = xla_bridge.make_computation_builder("variadic_reduction_computation")
+  assert len(consts) == 0, "Reduction computations cannot have constants"
+  args = [xb.parameter(subc, 2 * i + j, shape)
+          for i, shape in enumerate(shapes) for j in range(2)]
+  out = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
+  xla_computation = subc.build(xops.Tuple(subc, out))
+  return xops.Reduce(c, operands, init_values, xla_computation, dimensions)
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
                        dimensions):
