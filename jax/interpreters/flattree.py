@@ -409,6 +409,8 @@ def naryop_tree_rule(
       out_leafshapes.append(((size,),))
 
   # split "trivial" axes to match the output leafshape
+  # This lets us support arithmetic with arrays created by functions like
+  # np.zeros().
   leafshapes_fixed = []
   leaves_fixed: List[Leaves] = []
   for leafshapes, leaves in zip(leafshapes_in, leaves_in):
