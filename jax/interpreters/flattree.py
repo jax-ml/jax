@@ -361,7 +361,7 @@ def defnaryop(prim: core.Primitive) -> None:
 
 def naryop_tree_rule(
     prim: core.Primitive,
-    treedefs_in: Tuple[List[TreeDef], ...],
+    treedefs_in: Tuple[Tuple[TreeDef, ...], ...],
     leafshapes_in: Tuple[LeafShapes, ...],
     leaves_in: Tuple[Leaves, ...],
     **params,
@@ -449,7 +449,7 @@ def naryop_tree_rule(
 
 def broadcast_in_dim_tree_rule(
     prim: core.Primitive,
-    treedefs_in: Tuple[List[TreeDef]],
+    treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
     leaves_in: Tuple[Leaves],
     *,
@@ -487,7 +487,7 @@ def broadcast_in_dim_tree_rule(
 
 def squeeze_tree_rule(
     prim: core.Primitive,
-    treedefs_in: Tuple[List[TreeDef]],
+    treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
     leaves_in: Tuple[Leaves],
     *,
@@ -518,7 +518,7 @@ def squeeze_tree_rule(
 
 def transpose_tree_rule(
     prim: core.Primitive,
-    treedefs_in: Tuple[List[TreeDef]],
+    treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
     leaves_in: Tuple[Leaves],
     *,
@@ -547,7 +547,7 @@ def defreducer(prim: core.Primitive, binop_prim: core.Primitive) -> None:
 def reducer_tree_rule(
     prim: core.Primitive,
     binop: Callable[[ArrayLike, ArrayLike], ArrayLike],
-    treedefs_in: Tuple[List[TreeDef]],
+    treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
     leaves_in: Tuple[Leaves],
     *,
@@ -576,7 +576,7 @@ def reducer_tree_rule(
 
 def dot_general_tree_rule(
     prim: core.Primitive,
-    treedefs_in: Tuple[List[TreeDef], ...],
+    treedefs_in: Tuple[Tuple[TreeDef, ...], ...],
     leafshapes_in: Tuple[LeafShapes, ...],
     leaves_in: Tuple[Leaves, ...],
     *,
