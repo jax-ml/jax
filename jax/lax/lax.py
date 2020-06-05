@@ -1020,8 +1020,8 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   else:
     return transpose_p.bind(operand, permutation=permutation)
 
-def reduce(operand: Array, init_value: Array, computation: Callable,
-           dimensions: Sequence[int]) -> Array:
+def reduce(operand: Array, init_value: Array,
+           computation: Callable, dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
@@ -1031,8 +1031,9 @@ def reduce(operand: Array, init_value: Array, computation: Callable,
     return monoid_reducer(operand, dimensions)
   else:
     jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value))
-    return reduce_p.bind(operand, init_value, computation=computation,
-                         jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
+    out = reduce_p.bind(operand, init_value, computation=computation,
+                        jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
+    return out[0]
 
 @cache()
 def _reduction_jaxpr(computation, aval):
@@ -4078,14 +4079,18 @@ batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
 
 
-def _reduce_shape_rule(operand, init_value, *, computation, jaxpr, consts,
-                       dimensions):
-  return tuple(onp.delete(operand.shape, dimensions))
+def _reduce_abstract_eval(operand, init_value, *, computation, jaxpr, consts,
+                         dimensions):
+  return (ShapedArray(
+    shape=tuple(onp.delete(operand.shape, dimensions)),
+    dtype=_dtype(operand, init_value)
+  ),)
 
 def _reduce_translation_rule(c, operand, init_value, *, computation, jaxpr,
                              consts, dimensions):
   xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
-  return xops.Reduce(c, [operand], [init_value], xla_computation, dimensions)
+  out = xops.Reduce(c, [operand], [init_value], xla_computation, dimensions)
+  return xops.Tuple(c, [out])
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
                        dimensions):
@@ -4095,7 +4100,8 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
     assert operand_bdim is not None
     new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
     new_operand_bdim = operand_bdim - int(onp.sum(onp.less(dimensions, operand_bdim)))
-    return reduce(operand, init_value, computation, new_dimensions), new_operand_bdim
+    out = reduce(operand, init_value, computation, new_dimensions)
+    return (out,), (new_operand_bdim,)
   else:
     raise NotImplementedError  # loop and stack
 
@@ -4122,8 +4128,12 @@ def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
   bind = prim.bind if input_shape is None else partial(prim.bind, input_shape=padded_shape)
   return bind(masked_val, axes=axes)
 
-reduce_p = standard_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
-                                        _reduce_translation_rule)
+
+reduce_p = Primitive('reduce')
+reduce_p.multiple_results = True
+reduce_p.def_impl(partial(xla.apply_primitive, reduce_p))
+reduce_p.def_abstract_eval(_reduce_abstract_eval)
+xla.translations[reduce_p] = _reduce_translation_rule
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
