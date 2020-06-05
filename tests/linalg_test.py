@@ -492,8 +492,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, rng_factory):
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(b + (m, n), dtype)]
@@ -618,10 +620,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 3, 5), (5, 5, 5), (20, 20), (5, 10)]
       for pnorm in [jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro']
       for dtype in float_types + complex_types))
-  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   @jtu.skip_on_devices("gpu")  # TODO(#2203): numerical errors
   def testCond(self, shape, pnorm, dtype):
     _skip_if_unsupported_type(dtype)
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
 
     def gen_mat():
       # arr_gen = jtu.rand_some_nan(self.rng())
@@ -733,8 +737,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   def testPinv(self, shape, dtype, rng_factory):
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
@@ -742,10 +748,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.linalg.pinv, jnp.linalg.pinv, args_maker,
                             tol=1e-2)
     self._CompileAndCheck(jnp.linalg.pinv, args_maker)
-    # TODO(phawkins): 1e-1 seems like a very loose tolerance.
-    jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
+    if jtu.device_under_test() != "tpu":
+      # TODO(phawkins): 1e-1 seems like a very loose tolerance.
+      jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
 
-  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   def testPinvGradIssue2792(self):
     def f(p):
       a = jnp.array([[0., 0.],[-p, 1.]], jnp.float32) * 1 / (1 + p**2)
@@ -787,8 +793,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")
   def testMatrixRank(self, shape, dtype, rng_factory):
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
