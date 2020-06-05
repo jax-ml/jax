@@ -295,3 +295,7 @@ epub_exclude_files = ['search.html']
 
 
 # -- Extension configuration -------------------------------------------------
+
+# Tell sphinx-autodoc-typehints to generate stub parameter annotations including
+# types, even if the parameters aren't explicitly documented.
+always_document_param_types = True
