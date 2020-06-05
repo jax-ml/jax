@@ -1476,9 +1476,7 @@ def _lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
         msg = ("linearized function called on tangent values inconsistent with "
                "the original primal values.")
         raise ValueError(msg) from e
-    dummy = (core.unit,) * len(tangents)
-    out = eval_jaxpr(jaxpr, consts, *(dummy + tangents))
-    tangents_out = out[len(out)//2:]
+    tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
     return tuple(map(lambda out_pv, tan_out: out_pv.merge_with_known(tan_out),
                      out_pvals, tangents_out))
 
