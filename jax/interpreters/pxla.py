@@ -883,7 +883,6 @@ def reconcile_num_partitions(jaxpr, outer_num_parts: Optional[int]):
   return outer_num_parts
 
 
-
 def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
   """Returns the total number of partitions from PartitionSpecs inside `jaxpr`.
 
@@ -895,7 +894,7 @@ def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
       nparts = get_num_partitions(parts)
       if expected_num_parts is None:
         expected_num_parts = nparts
-      elif nparts != expected_num_parts:
+      elif nparts is not None and nparts != expected_num_parts:
         # TODO(skye): raise this error as we trace the jaxpr
         raise ValueError(
             f"with_sharding_constraint with partitions={parts} "
@@ -903,10 +902,9 @@ def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
             f"partitions: {expected_num_parts}. If these partitions look "
             f"right, check outer sharded_jit and/or other "
             f"with_sharding_constraint calls.")
-      elif eqn.primitive.call_primitive:
-        expected_num_parts = _inner_partitions(eqn.params["call_jaxpr"],
-                                               expected_num_parts)
-      # TODO(skye): control flow
+    else:
+      for subjaxpr in core.jaxprs_in_params(eqn.params):
+        expected_num_parts = _inner_partitions(subjaxpr, expected_num_parts)
   return expected_num_parts
 
 
