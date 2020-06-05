@@ -262,7 +262,7 @@ class JVPTrace(Trace):
     if 'donated_invars' in new_params:
       new_donated_invars = (*params['donated_invars'],
                             *[m for m, t in zip(params['donated_invars'], tangents)
-                              if t is not zero])
+                              if type(t) is not Zero])
       new_params['donated_invars'] = tuple(new_donated_invars)
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
     primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
@@ -492,7 +492,7 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _):
   if 'donated_invars' in params:
     new_donated_invars = (*[d for d, x in zip(params['donated_invars'], args)
                             if not is_undefined_primal(x)],
-                          *[False for x in ct if x is not zero])
+                          *[False for x in ct if type(x) is not Zero])
     params['donated_invars'] = tuple(new_donated_invars)
   out_flat = primitive.bind(fun, *all_args, **params)
   return tree_unflatten(out_tree(), out_flat)
@@ -536,10 +536,10 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   new_mapped_invars = (*[m for m, x in zip(params['mapped_invars'], args)
                          if not is_undefined_primal(x)],
-                       *[True for x in ct if type(x) is not zero])
+                       *[True for x in ct if type(x) is not Zero])
   new_donated_invars = (*[d for d, x in zip(params['donated_invars'], args)
                           if not is_undefined_primal(x)],
-                        *[False for x in ct if type(x) is not zero])
+                        *[False for x in ct if type(x) is not Zero])
   new_params = dict(params, name=wrap_name(params['name'], 'transpose'),
                     mapped_invars=tuple(new_mapped_invars),
                     donated_invars=tuple(new_donated_invars))
