@@ -1027,11 +1027,9 @@ def reduce(operand: Union[Array, Tuple[Array]], init_value: Union[Array, Tuple[A
   operator.
   """
   return_tuple = isinstance(operand, tuple)
-  if return_tuple != isinstance(init_value, tuple):
-    raise TypeError("reduce: inputs must both be tuples of arrays or both be arrays; got "
-                    f"type(operand)={type(operand)}, type(init_value)={type(init_value)}.")
   if not return_tuple:
     operand = (operand,)
+  if not isinstance(init_value, tuple):
     init_value = (init_value,)
   if len(operand) != len(init_value):
     raise TypeError("reduce: length of operand must match length of init_value; got "
