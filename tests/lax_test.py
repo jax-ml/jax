@@ -1234,7 +1234,6 @@ class LaxTest(jtu.JaxTestCase):
   def testMultiReduce(self, shape, dtype, dims):
     rng = jtu.rand_default(self.rng())
     op = lambda a1, b1, a2, b2: (lax.min(a1, a2), lax.max(b1, b2))
-    init_val = (_get_min_identity(dtype), _get_max_identity(dtype))
 
     np_fun = lambda a, b: (a.min(axis=dims), b.max(axis=dims))
     def jnp_fun(a, b):

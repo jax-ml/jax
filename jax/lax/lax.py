@@ -1034,7 +1034,7 @@ def reduce(operand: Union[Array, Tuple[Array]], init_value: Union[Array, Tuple[A
   if len(operand) != len(init_value):
     raise TypeError("reduce: length of operand must match length of init_value; got "
                     f"len(operand)={len(operand)}, len(init_value)={len(init_value)}.")
-  
+
   monoid_reducer = _get_monoid_reducer(computation, init_value[0])
   if len(operand) == 1 and monoid_reducer:
     out = (monoid_reducer(operand[0], dimensions),)
