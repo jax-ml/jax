@@ -950,12 +950,14 @@ class LaxTest(jtu.JaxTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_pad)
   def testPad(self, harness: primitive_harness.Harness):
-    self._CompileAndCheck(harness.dyn_fun, harness.dyn_args_maker)
+    self._CompileAndCheck(harness.dyn_fun,
+                          lambda: harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_pad)
   def testPadAgainstNumpy(self,  harness: primitive_harness.Harness):
     self._CheckAgainstNumpy(lax_reference.pad,
-                            harness.fun, harness.args_maker)
+                            harness.fun,
+                            lambda: harness.args_maker(self.rng()))
 
   def testReverse(self):
     rev = api.jit(lambda operand: lax.rev(operand, dimensions))

@@ -76,6 +76,9 @@ class Harness:
     self.rng_factory = rng_factory
     self.params = params
 
+  def __str__(self):
+    return self.name
+
   def _arg_maker(self, arg_descriptor, rng: Rng):
     if type(arg_descriptor) is StaticArg:
       return arg_descriptor.value
@@ -110,10 +113,23 @@ class Harness:
     return all_args
 
 
-def parameterized(harness_group: Iterable[Harness]):
-  return testing.parameterized.named_parameters(
-    dict(testcase_name=harness.name, harness=harness)
-    for harness in harness_group)
+def parameterized(harness_group: Iterable[Harness],
+                  one_containing : Optional[str] = None):
+  """Decorator for tests.
+  The tests receives a `harness` argument.
+
+  The `one_containing` parameter is useful for debugging. If given, then
+  picks only one harness whose name containsthe string. The testcase_name is
+  empty, to make it easier for the debugger to recognize the test.
+  """
+  cases = tuple(
+    dict(testcase_name=harness.name if one_containing is None else "",
+         harness=harness)
+    for harness in harness_group
+    if one_containing is None or one_containing in harness.name)
+  if one_containing is not None:
+    cases = cases[0:1]
+  return testing.parameterized.named_parameters(*cases)
 
 
 lax_pad = jtu.cases_from_list(
@@ -125,7 +141,11 @@ lax_pad = jtu.cases_from_list(
           rng_factory=jtu.rand_small)
   for shape in [(2, 3)]
   for dtype in default_dtypes
-  for pads in [[(1, 2, 1), (0, 1, 0)]]
+  for pads in [
+    [(0, 0, 0), (0, 0, 0)],  # no padding
+    [(1, 1, 0), (2, 2, 0)],  # edge padding
+    [(1, 2, 1), (0, 1, 0)],  # edge padding and interior padding
+  ]
 )
 
 lax_squeeze = jtu.cases_from_list(
