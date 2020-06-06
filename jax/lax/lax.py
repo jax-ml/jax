@@ -4124,16 +4124,19 @@ def _reduce_translation_rule(c, *args, computation, jaxpr, consts, dimensions):
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
                        dimensions):
+  if len(batched_args) != 2:
+    # TODO(jakevdp): implement this after generalizing reduce implementation.
+    raise NotImplementedError("reduce batch rule for more than one array.")
   operand, init_value = batched_args
   operand_bdim, init_value_bdim = batch_dims
-  if init_value_bdim is None:
-    assert operand_bdim is not None
-    new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
-    new_operand_bdim = operand_bdim - int(onp.sum(onp.less(dimensions, operand_bdim)))
-    out = reduce(operand, init_value, computation, new_dimensions)
-    return (out,), (new_operand_bdim,)
-  else:
-    raise NotImplementedError  # loop and stack
+  if init_value_bdim is not None:
+    # TODO(jakevdp): implement this via loop and stack.
+    raise NotImplementedError("batched reduce with different init_val per batch")
+  assert operand_bdim is not None
+  new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
+  new_operand_bdim = operand_bdim - int(onp.sum(onp.less(dimensions, operand_bdim)))
+  out = reduce(operand, init_value, computation, new_dimensions)
+  return (out,), (new_operand_bdim,)
 
 def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.get_shape(init_value)

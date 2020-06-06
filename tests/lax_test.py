@@ -32,6 +32,7 @@ from jax import lax
 from jax import test_util as jtu
 from jax import lax_reference
 from jax.test_util import check_grads
+from jax.lax.lax import _get_min_identity, _get_max_identity
 from jax.lib import xla_client
 import jax.util
 
@@ -1220,6 +1221,30 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.transpose(x, perm)
     numpy_op = lambda x: lax_reference.transpose(x, perm)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_reducedims={}"
+       .format(jtu.format_shape_dtype_string(shape, dtype), dims),
+      "shape": shape, "dtype": dtype, "dims": dims}
+      for dtype in default_dtypes
+      for shape, dims in [
+          [(3, 4, 5), (0,)], [(3, 4, 5), (1, 2)],
+          [(3, 4, 5), (0, 2)], [(3, 4, 5), (0, 1, 2)]
+      ]))
+  def testMultiReduce(self, shape, dtype, dims):
+    rng = jtu.rand_default(self.rng())
+    op = lambda a1, b1, a2, b2: (lax.min(a1, a2), lax.max(b1, b2))
+    init_val = (_get_min_identity(dtype), _get_max_identity(dtype))
+
+    np_fun = lambda a, b: (a.min(axis=dims), b.max(axis=dims))
+    def jnp_fun(a, b):
+      # device_put here to ensure dtype below is correct.
+      a, b = jax.device_put(a), jax.device_put(b)
+      init_val = (_get_min_identity(a.dtype), _get_max_identity(b.dtype))
+      return lax.reduce((a, b), init_val, op, dims)
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_inshape={}_reducedims={}_initval={}"
