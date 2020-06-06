@@ -83,7 +83,7 @@ class Config(object):
 
   def config_with_absl(self):
     # Run this before calling `app.run(main)` etc
-    import absl.flags as absl_FLAGS
+    import absl.flags as absl_FLAGS  # noqa: F401
     from absl import app, flags as absl_flags
 
     self.use_absl = True

@@ -144,7 +144,6 @@ def _nan_like(c, operand):
 def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
-  dtype = shape.element_type().type
   result, info = potrf_impl(c, operand, lower=True)
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   return _broadcasting_select(c,
@@ -454,7 +453,6 @@ xla.backend_specific_translations['cpu'][triangular_solve_p] = \
 def _triangular_solve_gpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.get_shape(a)
-  dtype = shape.element_type().type
   dims = shape.dimensions()
   m, n = dims[-2:]
   batch = prod(dims[:-2])

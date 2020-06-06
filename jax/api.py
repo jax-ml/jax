@@ -23,13 +23,13 @@ tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
 
-
+# flake8: noqa: F401
 import collections
 import functools
 import inspect
 import itertools as it
 import threading
-from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
 import numpy as onp
@@ -342,9 +342,7 @@ def xla_computation(fun: Callable,
     wrapped = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, dyn_args = argnums_partial(wrapped, dyn_argnums, args)
-    else:
-      dyn_args = args
+      wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
@@ -1630,9 +1628,7 @@ def make_jaxpr(fun: Callable,
     wrapped = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, dyn_args = argnums_partial(wrapped, dyn_argnums, args)
-    else:
-      dyn_args = args
+      wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_pvals = map(pv_like, jax_args)

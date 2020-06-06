@@ -33,7 +33,7 @@ from .config import FLAGS
 from . import linear_util as lu
 
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
-from .pprint_util import pp, vcat, hcat, PrettyPrint
+from .pprint_util import pp, vcat, PrettyPrint
 
 # TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
 check_leaks = False

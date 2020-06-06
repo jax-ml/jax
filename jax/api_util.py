@@ -13,11 +13,10 @@
 # limitations under the License.
 
 
-from .tree_util import (build_tree, tree_flatten, tree_unflatten,
-                        treedef_is_leaf, tree_multimap, _replace_nones,
+from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
 from . import linear_util as lu
-from .util import safe_map, unzip2, partial, curry, WrapHashably, Hashable
+from .util import safe_map, curry, WrapHashably, Hashable
 from .core import unit
 
 from typing import Tuple

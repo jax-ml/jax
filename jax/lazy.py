@@ -16,7 +16,7 @@
 from collections import namedtuple
 import functools
 import operator as op
-from typing import Any, Callable, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 
