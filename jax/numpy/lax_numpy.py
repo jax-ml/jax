@@ -2540,6 +2540,17 @@ tril_indices = _wrap_indices_function(np.tril_indices)
 triu_indices = _wrap_indices_function(np.triu_indices)
 mask_indices = _wrap_indices_function(np.mask_indices)
 
+
+@_wraps(np.triu_indices_from)
+def triu_indices_from(arr, k=0):
+  return triu_indices(arr.shape[-2], k=k, m=arr.shape[-1])
+
+
+@_wraps(np.tril_indices_from)
+def tril_indices_from(arr, k=0):
+  return tril_indices(arr.shape[-2], k=k, m=arr.shape[-1])
+
+
 @_wraps(np.diag_indices)
 def diag_indices(n, ndim=2):
   if n < 0:

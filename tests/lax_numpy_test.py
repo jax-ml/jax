@@ -1482,6 +1482,58 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "n={}_k={}_m={}".format(n, k, m),
+      "n": n, "k": k, "m": m}
+    for n in range(1, 5)
+    for k in [-1, 0, 1]
+    for m in range(1, 5)))
+  def testTrilIndices(self, n, k, m):
+    np_fun = lambda n, k, m: np.tril_indices(n, k=k, m=m)
+    jnp_fun = lambda n, k, m: jnp.tril_indices(n, k=k, m=m)
+    args_maker = lambda: [n, k, m]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "n={}_k={}_m={}".format(n, k, m),
+      "n": n, "k": k, "m": m}
+    for n in range(1, 5)
+    for k in [-1, 0, 1]
+    for m in range(1, 5)))
+  def testTriuIndices(self, n, k, m):
+    np_fun = lambda n, k, m: np.triu_indices(n, k=k, m=m)
+    jnp_fun = lambda n, k, m: jnp.triu_indices(n, k=k, m=m)
+    args_maker = lambda: [n, k, m]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_shape={}_k={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), k),
+      "dtype": dtype, "shape": shape, "k": k, "rng_factory": jtu.rand_default}
+    for dtype in default_dtypes
+    for shape in [(1,1), (1,2), (2,2), (2,3), (3,2), (3,3), (4,4)]
+    for k in [-1, 0, 1]))
+  def testTriuIndicesFrom(self, shape, dtype, k, rng_factory):
+    rng = rng_factory(self.rng())
+    np_fun = lambda arr, k: np.triu_indices_from(arr, k=k)
+    jnp_fun = lambda arr, k: jnp.triu_indices_from(arr, k=k)
+    args_maker = lambda: [rng(shape, dtype), k]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_shape={}_k={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), k),
+      "dtype": dtype, "shape": shape, "k": k, "rng_factory": jtu.rand_default}
+    for dtype in default_dtypes
+    for shape in [(1,1), (1,2), (2,2), (2,3), (3,2), (3,3), (4,4)]
+    for k in [-1, 0, 1]))
+  def testTrilIndicesFrom(self, shape, dtype, k, rng_factory):
+    rng = rng_factory(self.rng())
+    np_fun = lambda arr, k: np.tril_indices_from(arr, k=k)
+    jnp_fun = lambda arr, k: jnp.tril_indices_from(arr, k=k)
+    args_maker = lambda: [rng(shape, dtype), k]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_ndim={}_n={}".format(ndim, n),
        "ndim": ndim, "n": n}
       for ndim in [0, 1, 4]
