@@ -23,7 +23,6 @@ tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
 
-# TODO(vanderplas): define exactly what attributes we want in jax.api.
 # flake8: noqa: F401
 import collections
 import functools
