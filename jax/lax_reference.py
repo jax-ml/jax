@@ -232,16 +232,19 @@ def reshape(operand, new_sizes, dimensions=None):
   return np.reshape(np.transpose(operand, dimensions), new_sizes)
 
 def pad(operand, padding_value, padding_config):
+  # https://www.tensorflow.org/xla/operation_semantics#pad
   lo, hi, interior = zip(*padding_config)
-  outshape = np.add(np.add(np.add(lo, hi), operand.shape),
+  # Handle first the positive edge padding and interior
+  lo_pos, hi_pos = np.clip(lo, 0, None), np.clip(hi, 0, None)
+  outshape = np.add(np.add(np.add(lo_pos, hi_pos), operand.shape),
                      np.multiply(interior, np.subtract(operand.shape, 1)))
   out = np.full(outshape, padding_value, operand.dtype)
   lhs_slices = tuple(_slice(l if l > 0 else 0, -h if h > 0 else None, step)
-                     for l, h, step in zip(lo, hi, np.add(1, interior)))
-  rhs_slices = tuple(_slice(l if l < 0 else 0, -h if h < 0 else None)
+                     for l, h, step in zip(lo_pos, hi_pos, np.add(1, interior)))
+  out[lhs_slices] = operand
+  trim_slices = tuple(_slice(-l if l < 0 else 0, h if h < 0 else None)
                      for l, h in zip(lo, hi))
-  out[lhs_slices] = operand[rhs_slices]
-  return out
+  return out[trim_slices]
 
 def rev(operand, dimensions):
   dimensions = frozenset(dimensions)

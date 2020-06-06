@@ -80,9 +80,9 @@ class Harness:
     return self.name
 
   def _arg_maker(self, arg_descriptor, rng: Rng):
-    if type(arg_descriptor) is StaticArg:
+    if isinstance(arg_descriptor, StaticArg):
       return arg_descriptor.value
-    if type(arg_descriptor) is RandArg:
+    if isinstance(arg_descriptor, RandArg):
       return self.rng_factory(rng)(arg_descriptor.shape, arg_descriptor.dtype)
     return arg_descriptor
 
@@ -93,7 +93,7 @@ class Harness:
   def dyn_args_maker(self, rng: Rng) -> Sequence:
     """A dynamic-argument maker, for use with `dyn_fun`."""
     return [self._arg_maker(ad, rng) for ad in self.arg_descriptors
-            if type(ad) is not StaticArg]
+            if isinstance(ad, StaticArg)]
 
   def dyn_fun(self, *dyn_args):
     """Invokes `fun` given just the dynamic arguments."""
@@ -105,7 +105,7 @@ class Harness:
     next_dynamic_argnum = 0
     all_args = []
     for ad in self.arg_descriptors:
-      if type(ad) is StaticArg:
+      if isinstance(ad, StaticArg):
         all_args.append(ad.value)
       else:
         all_args.append(dyn_args[next_dynamic_argnum])
@@ -116,11 +116,13 @@ class Harness:
 def parameterized(harness_group: Iterable[Harness],
                   one_containing : Optional[str] = None):
   """Decorator for tests.
-  The tests receives a `harness` argument.
+
+  The tests receive a `harness` argument.
 
   The `one_containing` parameter is useful for debugging. If given, then
-  picks only one harness whose name containsthe string. The testcase_name is
-  empty, to make it easier for the debugger to recognize the test.
+  picks only one harness whose name contains the string. The whole set of
+  parameterized tests is reduced to one test, whose name is not decorated
+  to make it easier to pick for running.
   """
   cases = tuple(
     dict(testcase_name=harness.name if one_containing is None else "",
@@ -137,7 +139,7 @@ lax_pad = jtu.cases_from_list(
           lax.pad,
           [RandArg(arg_shape, dtype), np.array(0, dtype), StaticArg(pads)],
           rng_factory=jtu.rand_small,
-          arg_shape=arg_shape, dtype=dtype)
+          arg_shape=arg_shape, dtype=dtype, pads=pads)
   for arg_shape in [(2, 3)]
   for dtype in default_dtypes
   for pads in [
@@ -148,10 +150,10 @@ lax_pad = jtu.cases_from_list(
 )
 
 lax_squeeze = jtu.cases_from_list(
-  Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_dimensions={dimensions}",
+  Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_dimensions={dimensions}",  # type: ignore
           lax.squeeze,
-          [RandArg(arg_shape, dtype), StaticArg(dimensions)],
-          arg_shape=arg_shape, dtype=dtype)
+          [RandArg(arg_shape, dtype), StaticArg(dimensions)],  # type: ignore[has-type]
+          arg_shape=arg_shape, dtype=dtype, dimensions=dimensions)  # type: ignore[has-type]
   for arg_shape, dimensions in [
     [(1,), (0,)],
     [(1,), (-1,)],
