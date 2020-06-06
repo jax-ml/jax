@@ -131,14 +131,13 @@ from jax.interpreters import partial_eval as pe
 from jax import pprint_util as ppu
 from jax import util
 from jaxlib import xla_client
-from jaxlib import xla_extension
 from jaxlib import version as jaxlib_version
 
 import logging
 import msgpack  # type: ignore
 import numpy as np
 import traceback
-from typing import (Any, Callable, Dict, Iterable, List, Optional, NamedTuple,
+from typing import (Any, Callable, Dict, List, Optional, NamedTuple,
                     Sequence, Tuple, cast)
 
 xops = xla_client._xla.ops
@@ -558,7 +557,6 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
            cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True, False)[0])))
   elif eqn.primitive is lax.cond_p:
     branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
-    nr_operands = len(branches[0].jaxpr.invars)
     index, *operands = eqn.invars
     new_invars = [index, *operands, input_token_var]
     eqns.append(core.new_jaxpr_eqn(
@@ -864,7 +862,7 @@ def outfeed_receiver(*,
         return device
       consumer = _consumer_registry_by_id.get(consumer_id)
       if consumer is None:
-        logging.error(f"Ignoring received outfeed for unknown tap consumer")
+        logging.error("Ignoring received outfeed for unknown tap consumer")
         count_tap_exceptions += 1
         continue  # We need to read the entire outfeed
       try:

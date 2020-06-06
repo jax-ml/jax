@@ -69,7 +69,6 @@ and get_params.
 
 from collections import namedtuple
 import functools
-import operator
 
 import jax.numpy as jnp
 from jax.util import partial, safe_zip, safe_map, unzip2

@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Sequence, Union
 
 import jax.numpy as jnp
 
 from jax import core
 from jax.core import Trace, Tracer, new_master
 from jax import linear_util as lu
-from jax.util import partial, safe_map, wrap_name
-from jax.interpreters import xla
-from jax.interpreters import partial_eval as pe
+from jax.util import partial, safe_map
 
 import inspect
 from jax.api_util import (wraps, flatten_fun_nokwargs)

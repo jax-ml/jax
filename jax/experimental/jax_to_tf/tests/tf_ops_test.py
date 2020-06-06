@@ -15,7 +15,6 @@
 
 from absl.testing import absltest
 from absl.testing import parameterized
-from typing import Any, Callable, Sequence, Tuple
 
 import jax
 import jax.lax as lax

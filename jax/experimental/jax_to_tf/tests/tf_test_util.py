@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-from typing import Any, Callable, Sequence, Tuple
+from typing import Any, Callable, Tuple
 import tensorflow as tf  # type: ignore[import]
 
 from jax.config import config
@@ -47,4 +47,3 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     res_tf = func_tf(*args)
     self.assertAllClose(res_jax, res_tf, atol=atol, rtol=rtol)
     return (res_jax, res_tf)
-
