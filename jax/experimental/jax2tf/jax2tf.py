@@ -628,6 +628,10 @@ def _pad_shape(operand, padding_value, padding_config):
 
 def _pad(operand, padding_value, padding_config):
   low, high, interior = util.unzip3(padding_config)
+  if all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in padding_config):
+    return tf.pad(operand, util.safe_zip(low, high),
+                  mode="CONSTANT", constant_values=padding_value)
+  # TODO(necula): implement shape inference for XlaPad
   out_shape = _pad_shape(operand, padding_value, padding_config)
   out = tfxla.pad(operand, padding_value, low, high, interior)
   out.set_shape(out_shape)
