@@ -22,6 +22,9 @@ from jax.interpreters.flattree import (
     TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
     restore_tree,
 )
+import jax
+from jax import linear_util as lu
+from jax import api
 from jax import disable_jit, jit, make_jaxpr, shapecheck, tree_vectorize
 from jax import lax
 import jax.numpy as jnp
@@ -349,3 +352,31 @@ class FlatTreeTest(jtu.JaxTestCase):
 
     expected = {'a': 2.0, 'b': -2.0}
     self.assertAllClose(actual, expected, check_dtypes=True)
+
+    @tree_vectorize
+    def eye(*arrays):
+      jnp.concatenate(arrays)
+
+  # TODO(shoyer): currently broken!
+  # def test_jacfwd(self):
+
+  #   @tree_vectorize
+  #   def calc_jacobian(f, x):
+  #     pushfwd = partial(jax.jvp, f, (x,))
+  #     basis = jnp.eye(x.size, dtype=x.dtype)
+  #     y, jac = jax.vmap(pushfwd, out_axes=(None, 1))((basis,))
+  #     return jac
+
+  #   def jacfwd(fun, argnums=0):
+  #     def jacfun(*args):
+  #       f_partial, dyn_args = api.argnums_partial(
+  #           lu.wrap_init(fun), argnums, args)
+  #       result = calc_jacobian(f_partial.call_wrapped, dyn_args)
+  #       return result[0] if isinstance(argnums, int) else result
+  #     return jacfun
+
+  #   f = lambda x: {'c': x['a'] * (1 + x['b'] ** 2), 'd': x['a'] - x['b']}
+  #   tree = {'a': 1.0, 'b': 2.0}
+  #   expected = jax.jacfwd(f)(tree)
+  #   actual = jacfwd(f)(tree)
+  #   self.assertTreeEqual(expected, actual)

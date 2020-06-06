@@ -24,6 +24,7 @@ import numpy as np
 from .. import core
 from .. import dtypes
 from .. import linear_util as lu
+from ..interpreters import ad
 from ..util import prod, safe_map as map, split_list, unzip2, unzip3
 from ..tree_util import (
     tree_structure, tree_flatten, tree_unflatten, register_pytree_node,
@@ -261,9 +262,15 @@ def tree_call_tree_rule(treedefs_in, leafshapes_in, leaves_in, *, fun):
   result = fun(*args)
   return convert_vectorized_tree(result)
 
+def tree_call_jvp(primals, tangents, *, fun):
+  from jax.api import jvp
+  # Note: does not seem to be right
+  return jvp(fun, primals, tangents)
+
 tree_call_p = core.Primitive('tree_call')
 tree_call_p.def_impl(tree_call_impl)
 tree_rules[tree_call_p] = tree_call_tree_rule
+ad.primitive_jvps[tree_call_p] = tree_call_jvp
 
 def tree_callable(fun):
   return partial(tree_call_p.bind, fun=fun)
