@@ -2611,13 +2611,11 @@ def polyadd(a, b):
   a = asarray(a)
   b = asarray(b)
 
-  shape_diff = a.shape[0] - b.shape[0]
-  if shape_diff > 0:
-    b = concatenate((np.zeros(shape_diff, dtype=b.dtype), b))
+  if b.shape[0] <= a.shape[0]:
+    return a.at[-b.shape[0]:].add(b)
   else:
-    a = concatenate((np.zeros(shape_diff, dtype=b.dtype), a))
+    return b.at[-a.shape[0]:].add(a)
 
-  return lax.add(a,b)
 
 def _trim_zeros(a):
   for i, v in enumerate(a):
