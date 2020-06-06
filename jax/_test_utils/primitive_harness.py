@@ -26,20 +26,20 @@ from jax import test_util as jtu
 from jax import dtypes
 from jax import lax
 
-import numpy as onp
+import numpy as np
 
 # TODO: these are copied from tests/lax_test.py (make this source of truth)
 def supported_dtypes(dtypes):
   return [t for t in dtypes if t in jtu.supported_dtypes()]
 
-float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
-                                 onp.float64])
-complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
-complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
+float_dtypes = supported_dtypes([dtypes.bfloat16, np.float16, np.float32,
+                                 np.float64])
+complex_elem_dtypes = supported_dtypes([np.float32, np.float64])
+complex_dtypes = supported_dtypes([np.complex64, np.complex128])
 inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = supported_dtypes([onp.int32, onp.int64])
-uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
-bool_dtypes = [onp.bool_]
+int_dtypes = supported_dtypes([np.int32, np.int64])
+uint_dtypes = supported_dtypes([np.uint32, np.uint64])
+bool_dtypes = [np.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
 
@@ -48,7 +48,7 @@ Rng = Any  # A random number generator
 class RandArg(NamedTuple):
   """Descriptor for a randomly generated argument."""
   shape: Tuple[int, ...]
-  dtype: onp.dtype
+  dtype: np.dtype
 
 class StaticArg(NamedTuple):
   """Descriptor for a static argument."""
@@ -133,13 +133,12 @@ def parameterized(harness_group: Iterable[Harness],
 
 
 lax_pad = jtu.cases_from_list(
-  Harness(f"_inshape={jtu.format_shape_dtype_string(shape, dtype)}_pads={pads}",
+  Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_pads={pads}",
           lax.pad,
-          [RandArg(shape, dtype),
-           onp.array(0, dtype),
-           StaticArg(pads)],
-          rng_factory=jtu.rand_small)
-  for shape in [(2, 3)]
+          [RandArg(arg_shape, dtype), np.array(0, dtype), StaticArg(pads)],
+          rng_factory=jtu.rand_small,
+          arg_shape=arg_shape, dtype=dtype)
+  for arg_shape in [(2, 3)]
   for dtype in default_dtypes
   for pads in [
     [(0, 0, 0), (0, 0, 0)],  # no padding
@@ -151,8 +150,7 @@ lax_pad = jtu.cases_from_list(
 lax_squeeze = jtu.cases_from_list(
   Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_dimensions={dimensions}",
           lax.squeeze,
-          [RandArg(arg_shape, dtype),
-           StaticArg(dimensions)],
+          [RandArg(arg_shape, dtype), StaticArg(dimensions)],
           arg_shape=arg_shape, dtype=dtype)
   for arg_shape, dimensions in [
     [(1,), (0,)],
@@ -164,5 +162,5 @@ lax_squeeze = jtu.cases_from_list(
     [(2, 1, 3, 1), (3,)],
     [(2, 1, 3, 1), (1, -1)],
   ]
-  for dtype in [onp.float32]
+  for dtype in [np.float32]
 )

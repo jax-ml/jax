@@ -13,11 +13,14 @@
 # limitations under the License.
 """Tests for the jax_to_tf transformation."""
 
+import unittest
+
 from absl.testing import absltest
 from absl.testing import parameterized
 from typing import Any, Callable, Sequence, Tuple
 
 import jax
+from jax import dtypes
 import jax.lax as lax
 import jax.numpy as jnp
 from jax import test_util as jtu
@@ -173,6 +176,8 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_pad)
   def test_pad(self, harness: primitive_harness.Harness):
+    if harness.params["dtype"] is dtypes.bfloat16:
+      raise unittest.SkipTest("bfloat16 not implemented")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            with_function=True)
 
