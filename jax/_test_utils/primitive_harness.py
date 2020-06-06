@@ -93,7 +93,7 @@ class Harness:
   def dyn_args_maker(self, rng: Rng) -> Sequence:
     """A dynamic-argument maker, for use with `dyn_fun`."""
     return [self._arg_maker(ad, rng) for ad in self.arg_descriptors
-            if isinstance(ad, StaticArg)]
+            if not isinstance(ad, StaticArg)]
 
   def dyn_fun(self, *dyn_args):
     """Invokes `fun` given just the dynamic arguments."""

@@ -16,7 +16,7 @@
 import collections
 from functools import partial
 import itertools
-from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Sequence, cast
+from typing import Optional, cast
 from unittest import SkipTest
 
 from absl.testing import absltest
