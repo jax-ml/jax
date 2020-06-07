@@ -2492,6 +2492,9 @@ def tril(m, k=0):
   mask = tri(*m_shape[-2:], k=k, dtype=bool)
   return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
+@_wraps(np.tril_indices_from)
+def tril_indices_from(arr, k=0):
+  return tril_indices(arr.shape[-2], k=k, m=arr.shape[-1])
 
 @_wraps(np.triu, update_doc=False)
 def triu(m, k=0):
