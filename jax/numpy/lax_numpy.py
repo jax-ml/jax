@@ -35,20 +35,21 @@ import warnings
 import numpy as np
 import opt_einsum
 
-from jax import jit, device_put, custom_jvp
+from jax import jit, custom_jvp
 from .vectorize import vectorize
 from ._util import _wraps
 from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags
-from ..interpreters.xla import DeviceArray
+from ..interpreters.xla import (DeviceArray, device_put, array_result_handler,
+                                DeviceValue)
 from ..interpreters.masking import Poly
 from .. import lax
 from .. import ops
 from ..util import (partial, unzip2, prod as _prod,
                     subvals, safe_zip)
-from ..lib import pytree
+from ..tree_util import tree_leaves, tree_flatten
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -2107,19 +2108,24 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
   lax._check_user_dtype_supported(dtype, "array")
+  dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
-  if isinstance(object, ndarray) or isscalar(object):
-    out = device_put(object)
-    if dtype and _dtype(out) != dtypes.canonicalize_dtype(dtype):
+  if _can_call_numpy_array(object):
+    object = np.array(object, dtype=dtype, ndmin=ndmin)
+  assert type(object) not in dtypes.python_scalar_dtypes
+
+  if type(object) is np.ndarray:
+    out = _device_put_raw(object)
+    if dtype: assert _dtype(out) == dtype
+  elif isinstance(object, (DeviceValue, core.Tracer)):
+    out = object
+    if dtype and _dtype(out) != dtype:
       out = lax.convert_element_type(out, dtype)
-  elif hasattr(object, '__array__'):
-    # this case is for duck-typed handling of objects that implement `__array__`
-    out = array(object.__array__(), dtype and dtypes.canonicalize_dtype(dtype))
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      out = array(np.array([], dtype or float_))
+      out = _device_put_raw(np.array([], dtype or float_))
   else:
     try:
       view = memoryview(object)
@@ -2133,6 +2139,15 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
   return out
+
+def _can_call_numpy_array(x):
+  return _all(not isinstance(l, (core.Tracer, DeviceValue))
+              for l in tree_leaves(x))
+
+def _device_put_raw(x):
+  aval = core.raise_to_shaped(core.get_aval(x))
+  return array_result_handler(None, aval)(device_put(x))
+
 
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):
@@ -3431,7 +3446,7 @@ def _split_index_for_jit(idx):
   # indexing logic to handle them.
   idx = _expand_bool_indices(idx)
 
-  leaves, treedef = pytree.flatten(idx)
+  leaves, treedef = tree_flatten(idx)
   dynamic = [None] * len(leaves)
   static = [None] * len(leaves)
   for i, x in enumerate(leaves):

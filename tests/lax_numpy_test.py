@@ -2134,16 +2134,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             return np.array([], dtype=dtype)
     assert type(jnp.array(NDArrayLike())) == jax.interpreters.xla.DeviceArray
 
-    class DeviceArrayLike:
-        def __array__(self, dtype=None):
-            return jnp.array([], dtype=dtype)
-    assert type(jnp.array(DeviceArrayLike())) == jax.interpreters.xla.DeviceArray
+    # NOTE(mattjj): disabled b/c __array__ must produce ndarrays
+    # class DeviceArrayLike:
+    #     def __array__(self, dtype=None):
+    #         return jnp.array([], dtype=dtype)
+    # assert type(jnp.array(DeviceArrayLike())) == jax.interpreters.xla.DeviceArray
 
   def testArrayMethod(self):
     class arraylike(object):
       dtype = np.float32
       def __array__(self, dtype=None):
-        return 3.
+        return np.array(3., dtype=dtype)
     a = arraylike()
     ans = jnp.array(a)
     assert ans == 3.
