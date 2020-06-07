@@ -920,7 +920,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
   def assertRewrite(self, expected: str, func: Callable, args: Sequence,
                     has_input_token=True, has_output_token=True):
     """Check that the rewrite of func(*args) matches expected."""
-    jaxpr = api.make_jaxpr(func)(*args)
+    _ = api.make_jaxpr(func)(*args)
     # TODO: re-enable when we change the host_callback rewriter
     #assertMultiLineStrippedEqual(self, expected,
     #  str(hcb._rewrite_typed_jaxpr(jaxpr, has_input_token, has_output_token)[0]))
