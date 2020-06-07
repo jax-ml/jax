@@ -358,25 +358,39 @@ class FlatTreeTest(jtu.JaxTestCase):
       jnp.concatenate(arrays)
 
   # TODO(shoyer): currently broken!
-  # def test_jacfwd(self):
+  # def test_jacobian(self):
 
   #   @tree_vectorize
-  #   def calc_jacobian(f, x):
+  #   def _jacfwd(f, x):
   #     pushfwd = partial(jax.jvp, f, (x,))
   #     basis = jnp.eye(x.size, dtype=x.dtype)
   #     y, jac = jax.vmap(pushfwd, out_axes=(None, 1))((basis,))
   #     return jac
 
-  #   def jacfwd(fun, argnums=0):
+  #   @tree_vectorize
+  #   def _jacrev(f, x):
+  #     y, pullback = jax.vjp(f, x)
+  #     basis = jnp.eye(y.size, dtype=y.dtype)
+  #     jac = jax.vmap(pullback)(basis)
+  #     return jac
+
+  #   def _apply_argnums(transform, fun, argnums=0):
   #     def jacfun(*args):
   #       f_partial, dyn_args = api.argnums_partial(
   #           lu.wrap_init(fun), argnums, args)
-  #       result = calc_jacobian(f_partial.call_wrapped, dyn_args)
+  #       result = transform(f_partial.call_wrapped, dyn_args)
   #       return result[0] if isinstance(argnums, int) else result
   #     return jacfun
+
+  #   jacfwd = partial(_apply_argnums, _jacfwd)
+  #   jacrev = partial(_apply_argnums, _jacrev)
 
   #   f = lambda x: {'c': x['a'] * (1 + x['b'] ** 2), 'd': x['a'] - x['b']}
   #   tree = {'a': 1.0, 'b': 2.0}
   #   expected = jax.jacfwd(f)(tree)
-  #   actual = jacfwd(f)(tree)
+
+  #   actual = jacrev(f)(tree)
+  #   self.assertTreeEqual(expected, actual)
+
+  #   actual = jacrev(f)(tree)
   #   self.assertTreeEqual(expected, actual)
