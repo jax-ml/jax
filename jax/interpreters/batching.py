@@ -23,7 +23,6 @@ from .. import linear_util as lu
 from ..util import unzip2, partial, safe_map, wrap_name, split_list
 from . import xla
 from . import partial_eval as pe
-from .. import lax_reference
 
 map = safe_map
 
@@ -311,10 +310,10 @@ def broadcast(x, sz, axis):
     axis = onp.ndim(x)
   shape = list(onp.shape(x))
   shape.insert(axis, sz)
-  broadcast_dims = tuple(onp.delete(onp.arange(len(shape)), axis))
   if isinstance(x, onp.ndarray) or onp.isscalar(x):
-    return lax_reference.broadcast_in_dim(x, shape, broadcast_dims)
+    return onp.broadcast_to(dtypes.coerce_to_array(x), shape)
   else:
+    broadcast_dims = tuple(onp.delete(onp.arange(len(shape)), axis))
     return x.broadcast_in_dim(shape, broadcast_dims)
 
 def moveaxis(x, src, dst):

@@ -25,7 +25,7 @@ import numpy as onp
 from .. import core
 from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, raise_to_shaped
-from ..ad_util import Zero
+from ..ad_util import zero
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
                     wrap_name, cache, curry)
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
@@ -50,7 +50,7 @@ class PartialVal(tuple):
     if not core.skip_checks:
       # type checks
       assert isinstance(pv, (AbstractValue, type(None))), xs
-      assert isinstance(const, core.Tracer) or type(const) is Zero or core.valid_jaxtype(const), xs
+      assert isinstance(const, core.Tracer) or const is zero or core.valid_jaxtype(const), xs
       # invariant checks
       if isinstance(pv, AbstractValue):
         assert const == core.unit, xs
