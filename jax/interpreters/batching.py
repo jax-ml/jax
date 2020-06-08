@@ -16,6 +16,7 @@ import numpy as onp
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 from .. import core
+from .. import dtypes
 from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
