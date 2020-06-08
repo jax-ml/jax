@@ -1022,7 +1022,8 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
 
 def reduce(operand: Union[Array, Sequence[Array]],
            init_value: Union[Array, Sequence[Array]],
-           computation: Callable, dimensions: Sequence[int]) -> Array:
+           computation: Callable,
+           dimensions: Sequence[int]) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
