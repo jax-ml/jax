@@ -375,11 +375,10 @@ tf_not_yet_impl = [
   random.random_gamma_p,
   lax.random_gamma_grad_p,
   pe.remat_call_p,
-  pxla.xla_pmap_p, pxla.axis_index_p,
+  pxla.xla_pmap_p,
+  core.axis_index_p,
 ]
 
-tf_impl[lax.tie_in_p] = lambda x, y: y
-tf_impl[core.identity_p] = lambda x: x
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
 tf_impl[ad_util.add_jaxvals_p] = wrap_binary_op(tf.math.add)

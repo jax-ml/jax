@@ -73,7 +73,7 @@ restored_model = tf.saved_model.load('/some/directory')
 
 ### Installation
 
-Using the JAX to TF bridge. 
+Using the JAX to TF bridge.
 
 ```
 pip install tensorflow

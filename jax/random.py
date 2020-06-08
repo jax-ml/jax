@@ -268,7 +268,7 @@ def split(key: jnp.ndarray, num: int = 2) -> jnp.ndarray:
 
 @partial(jit, static_argnums=(1,))
 def _split(key, num):
-  counts = lax.tie_in(key, lax.iota(np.uint32, num * 2))
+  counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 
@@ -287,8 +287,7 @@ def fold_in(key, data):
 
 @jit
 def _fold_in(key, data):
-  key2 = lax.tie_in(key, PRNGKey(data))
-  return threefry_2x32(key, key2)
+  return threefry_2x32(key, PRNGKey(data))
 
 
 def _random_bits(key, bit_width, shape):
@@ -303,7 +302,7 @@ def _random_bits(key, bit_width, shape):
     # TODO(mattjj): just split the key here
     raise TypeError("requesting more random bits than a single call provides.")
 
-  counts = lax.tie_in(key, lax.iota(np.uint32, max_count))
+  counts = lax.iota(np.uint32, max_count)
   bits = threefry_2x32(key, counts)
   dtype = _UINT_DTYPES[bit_width]
   if bit_width == 64:

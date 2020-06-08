@@ -40,10 +40,10 @@ def _map(f, *xs):
 class ResultToPopulate: pass
 result_to_populate = ResultToPopulate()
 
-def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
-  nouts = len(out_pvals)
-  handlers = [_pval_to_result_handler(npart, parts, out_pval)
-              for parts, out_pval in safe_zip(partitions, out_pvals)]
+def _avals_to_results_handler(nrep, npart, partitions, out_avals):
+  nouts = len(out_avals)
+  handlers = [_aval_to_result_handler(npart, parts, out_aval)
+              for parts, out_aval in safe_zip(partitions, out_avals)]
 
   def handler(out_bufs):
     assert nrep * npart == len(out_bufs)
@@ -58,17 +58,13 @@ def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
   return handler
 
 
-def _pval_to_result_handler(npart, parts, pval):
-  pv, const = pval
-  if pv is None:
-    raise NotImplementedError  # TODO(skye): handle constant outputs
+def _aval_to_result_handler(npart, parts, aval):
+  if aval is not core.abstract_unit:
+    spec = pxla.partitioned_sharding_spec(npart, parts, aval)
+    indices = pxla.spec_to_indices(aval.shape, spec)
   else:
-    if pv is not core.abstract_unit:
-      spec = pxla.partitioned_sharding_spec(npart, parts, pv)
-      indices = pxla.spec_to_indices(pv.shape, spec)
-    else:
-      spec = indices = None
-    return pxla.aval_to_result_handler(spec, indices, pv)
+    spec = indices = None
+  return pxla.aval_to_result_handler(spec, indices, aval)
 
 
 @lu.cache
@@ -78,15 +74,7 @@ def _sharded_callable(
     out_parts_thunk: Callable[[], Tuple[pxla.PartitionsOrReplicated, ...]],
     name: str, *abstract_args):
   nrep = 1
-  in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
-
-  # TODO(skye): add tests for equationless jaxpr cases
-  if not jaxpr.eqns and all(outvar.aval is core.abstract_unit
-                            for outvar in jaxpr.outvars):
-    return lambda *_: [
-        const if pv is None else core.unit for pv, const in out_pvals
-    ]
+  jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args)
 
   if xb.get_backend().platform != "tpu":
     # TODO(skye): fall back to regular jit?
@@ -104,7 +92,7 @@ def _sharded_callable(
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = _xla_sharded_args(c, abstract_args, in_parts)
-  axis_env = xla.AxisEnv(nrep, (), ())
+  axis_env = xla.AxisEnv(nrep, (), (), None)
   out_nodes = xla.jaxpr_subcomp(
       c, jaxpr, None, axis_env, xla_consts,
       extend_name_stack(wrap_name(name, "sharded_jit")), *xla_args)
@@ -129,8 +117,8 @@ def _sharded_callable(
 
   handle_args = partial(pxla.shard_args, compiled.local_devices(),
                         input_indices)
-  handle_outs = _pvals_to_results_handler(nrep, num_partitions, out_parts,
-                                          out_pvals)
+  handle_outs = _avals_to_results_handler(nrep, num_partitions, out_parts,
+                                          out_avals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
                  handle_outs)
 

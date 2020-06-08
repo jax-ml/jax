@@ -273,7 +273,6 @@ def _def_passthrough(prim, argnums=(0,)):
 _def_passthrough(lax.select_p, (0, 1, 2))
 _def_passthrough(lax.broadcast_in_dim_p)
 _def_passthrough(xla.device_put_p)
-_def_passthrough(lax.tie_in_p, (0, 1))
 
 
 class _DoubleDouble:

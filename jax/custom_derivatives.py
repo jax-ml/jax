@@ -13,14 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import update_wrapper, reduce
+from functools import update_wrapper, partial, reduce
 import inspect
 import operator as op
 
 from . import core
 from . import linear_util as lu
 from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
-from .util import safe_zip, safe_map, unzip2, split_list
+from .util import safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
 from .ad_util import Zero, stop_gradient_p
@@ -67,25 +67,23 @@ def _memoize(thunk):
   return memoized
 
 def _initial_style_jaxpr(fun, in_avals):
-  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
-                                               bottom=True, stage_out=False)
-  assert not any(isinstance(c, core.Tracer) for c in consts)
-  out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
+  jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   return typed_jaxpr
 
-def sum_tangents(_, x, *xs):
+def _initial_style_staging():
+  dynamic_trace = core.trace_state.trace_stack.dynamic
+  return dynamic_trace and dynamic_trace.level != 0
+
+def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
-def zeros_like_pytree(x):
+def _zeros_like_pytree(x):
   return tree_map(Zero.from_value, x)
 
-def stop_gradient(x):
-  return tree_map(_stop_gradient, x)
-
+@partial(partial, tree_map)
 def _stop_gradient(x):
-  if isinstance(x, core.Tracer) or core.valid_jaxtype(x):
+  if isinstance(x, core.Tracer):
     return stop_gradient_p.bind(x)
   else:
     return x
@@ -193,10 +191,10 @@ class custom_jvp:
 
     def jvp(primals, tangents):
       primal_out = self(*primals)
-      zeros = zeros_like_pytree(primal_out)
+      zeros = _zeros_like_pytree(primal_out)
       all_tangents_out = [jvp(t, primal_out, *primals) if jvp else zeros
                           for t, jvp in zip(tangents, jvps)]
-      tangent_out = tree_multimap(sum_tangents, primal_out, *all_tangents_out)
+      tangent_out = tree_multimap(_sum_tangents, primal_out, *all_tangents_out)
       return primal_out, tangent_out
 
     self.defjvp(jvp)
@@ -209,7 +207,7 @@ class custom_jvp:
     if self.nondiff_argnums:
       is_nondiff = [False] * len(args)
       for i in self.nondiff_argnums: is_nondiff[i] = True
-      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      args = [_stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
       dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
@@ -220,7 +218,7 @@ class custom_jvp:
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_tree1 = flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_tree2 = _flatten_jvp(jvp, in_tree)
-    if core.trace_state.initial_style:
+    if _initial_style_staging():
       out_flat = custom_jvp_call_jaxpr(flat_fun, flat_jvp, *args_flat)
       out_tree = out_tree1()
     else:
@@ -270,12 +268,8 @@ class CustomJVPCallPrimitive(core.CallPrimitive):
         fun, self, top_trace and top_trace.level, ())
     jvp, env_trace_todo2 = core.process_env_traces(
         jvp, self, top_trace and top_trace.level, ())
-    if top_trace is None:
-      with core.new_sublevel():
-        outs = self.impl(fun, jvp, *args)
-    else:
-      tracers = map(top_trace.full_raise, args)
-      outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)
+    tracers = map(top_trace.full_raise, args)
+    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if env_trace_todo:
       raise core.UnexpectedTracerError
@@ -450,7 +444,7 @@ class custom_vjp:
     if self.nondiff_argnums:
       is_nondiff = [False] * len(args)
       for i in self.nondiff_argnums: is_nondiff[i] = True
-      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      args = [_stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
       dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
@@ -463,7 +457,7 @@ class custom_vjp:
     flat_fun, out_tree = flatten_fun_nokwargs(f_, in_tree)
     flat_fwd, out_trees = _flatten_fwd(fwd, in_tree)
     flat_bwd = _flatten_bwd(bwd, in_tree, out_trees)
-    if core.trace_state.initial_style:
+    if _initial_style_staging():
       out_flat = custom_vjp_call_jaxpr(flat_fun, flat_fwd, flat_bwd,
                                        *args_flat, out_trees=out_trees)
       out_tree = out_tree()

@@ -38,6 +38,7 @@ from jax.interpreters import xla
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
+from jax import linear_util as lu
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -235,7 +236,7 @@ class APITest(jtu.JaxTestCase):
     assert jit(f, static_argnums=(1,))(0, 5) == 10
     self.assertRaisesRegex(
         TypeError,
-        "('JaxprTracer' object cannot be interpreted as an integer"
+        "('JaxprTracer2' object cannot be interpreted as an integer"
         "|Abstract value passed to .*)",
         lambda: jit(f)(0, 5))
 
@@ -244,7 +245,7 @@ class APITest(jtu.JaxTestCase):
       f = lambda x: castfun(x)
       self.assertRaisesRegex(
           TypeError,
-          "('JaxprTracer' object cannot be interpreted as an integer"
+          "('JaxprTracer2' object cannot be interpreted as an integer"
           "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
@@ -921,7 +922,7 @@ class APITest(jtu.JaxTestCase):
     def f():
       return jnp.zeros((3, 4))
 
-    xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
+    xla_comp = api.xla_computation(f)()
     out_shape, = xla_comp.program_shape().result_shape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
 
@@ -1179,7 +1180,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
   def test_jit_reference_dropping(self):
-    x = np.ones(10)
+    x = jnp.ones(10)
     f = (lambda x: lambda: x)(x)  # reference to x in f's closure
     g = jit(f)
     x = weakref.ref(x)      # no more strong ref to x in this scope
@@ -1367,7 +1368,7 @@ class APITest(jtu.JaxTestCase):
       return x + self._saved_tracer
     with self.assertRaisesRegex(
         core.UnexpectedTracerError,
-        re.compile("Encountered an unexpected tracer.*Incompatible sublevel",
+        re.compile("Encountered an unexpected tracer.*Can't lift",
                    re.DOTALL)):
       api.jit(func1)(2.)
 
@@ -1597,7 +1598,7 @@ class RematTest(jtu.JaxTestCase):
     finally:
       lax.sin_p.def_impl(sin_impl)
     num_calls = len(called)
-    self.assertEqual(num_calls, 1)
+    self.assertLessEqual(num_calls, 1)
 
   def test_remat_binomial_checkpointing(self):
     def binom_checkpoint(funs):
@@ -1722,13 +1723,21 @@ class RematTest(jtu.JaxTestCase):
 
   def test_remat_jit_static_argnum(self):
     # https://github.com/google/jax/issues/2833
+    # adapted after omnistaging changes
+    def named_call(f):
+      def named_f(*args):
+        f_ = lu.wrap_init(lambda: (f(*args),))
+        out, = core.call_p.bind(f_)
+        return out
+      return named_f
+
     def f(a_bool, y):
       if a_bool:
         return y + 1
       else:
         return y
 
-    api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
+    api.jit(named_call(f), static_argnums=0)(True, 1)  # no crash
 
   def test_remat_eval_counter(self):
     # https://github.com/google/jax/issues/2737
@@ -1793,13 +1802,13 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_const(self):
     def fun(x):
-      return (x, 1., jnp.zeros(1))
+      return (x, 1., np.zeros(1))
 
     jaxpr = api.make_jaxpr(fun)(0.)
     self.assertMultiLineStrippedEqual("""
-{ lambda b ; a.
+{ lambda a ; b.
   let
-  in (a, 1.0, b) }
+  in (b, 1.0, a) }
     """, str(jaxpr))
 
   def test_cond(self):
@@ -1813,19 +1822,18 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual("""
 { lambda  ; a.
   let b = ge a 0.0
-      c = convert_element_type[ new_dtype=int32
+      c = add a 1.0
+      d = add a 2.0
+      e = convert_element_type[ new_dtype=int32
                                 old_dtype=bool ] b
-      d = add a 1.0
-      e = add a 2.0
-      f = cond[ branches=( { lambda  ; e_ c a b.
-                             let d = sub b c
+      f = cond[ branches=( { lambda  ; e_ a b c.
+                             let d = sub c a
                              in (d,) }
-                           { lambda  ; c f_ a b.
-                             let d = add a c
+                           { lambda  ; a f_ b c.
+                             let d = add b a
                              in (d,) } )
-                linear=(False, False, False, False) ] c a a d e
-  in (f,) }
-        """, str(jaxpr))
+                linear=(False, False, False, False) ] e a a c d
+  in (f,) }""", str(jaxpr))
 
   def test_make_jaxpr_static_argnums(self):
     def f(x, y):
@@ -1993,7 +2001,7 @@ class LazyTest(jtu.JaxTestCase):
   def test_constant_forcing_computations_cached(self):
     # from https://github.com/google/jax/issues/1909
     xla._lazy_force_computation.cache_clear()  # clear force compile cache
-    big_lazy_x = jnp.ones((api.device_count(), 100))
+    big_lazy_x = np.ones((api.device_count(), 100))
     f = api.pmap(lambda x: 2 * x)
     _ = f(big_lazy_x)
 
@@ -2220,8 +2228,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_tracers_error_message(self):
-    raise unittest.SkipTest("TODO")  # TODO(mattjj)
-
     def f(x):
       @api.custom_jvp
       def g(y):
@@ -2253,7 +2259,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = (2., 3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_nondiff_arg_tracer(self):
+  def test_nondiff_arg_jit_tracer(self):
     @partial(api.custom_jvp, nondiff_argnums=(0,))
     def f(x, y):
       return x * y
@@ -2833,18 +2839,18 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x  # identity function
 
     def clip_gradient_fwd(lo, hi, x):
-        # return x, None
-        return x, (hi, )
+      # return x, None
+      return x, (hi, )
 
     def clip_gradient_bwd(lo, hi, _, g):
-        return (jnp.clip(g, lo, hi),)
+      return (jnp.clip(g, lo, hi),)
 
     _clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
 
     def clip_gradient(x):
-        lo = -1
-        hi = x + 1  # causes things to break
-        return _clip_gradient(lo, hi, x)
+      lo = -1
+      hi = x + 1  # causes things to break
+      return _clip_gradient(lo, hi, x)
 
     jax.grad(clip_gradient)(1.)  # doesn't crash
 
@@ -2871,13 +2877,14 @@ class InvertibleADTest(jtu.JaxTestCase):
   let c = exp a
       d = mul c 4.0
       e = mul d a
-      f = div e a
-      g = mul b f
-      h = mul b a
-      i = mul h 4.0
-      j = div f 4.0
-      k = mul i j
-      l = add_any g k
+      f = mul b a
+      g = div e a
+      h = mul b g
+      i = div g 4.0
+      j = mul f 4.0
+      _ = log i
+      k = mul j i
+      l = add_any h k
   in (l,) }
     """, str(jaxpr))
 
@@ -3246,7 +3253,7 @@ class BufferDonationTest(jtu.JaxTestCase):
     self.assertDeleted(x)
     np.testing.assert_allclose(y, [1.] * n)
 
-  def test_pmap_nested_donate_raises(self):
+  def test_pmap_nested_donate_ignored(self):
     pmap_fun = jit(lambda x: api.pmap(lambda y: y ** 2, donate_argnums=0)(x))
     a = api.pmap(lambda x: x)(jnp.array([1]))
 

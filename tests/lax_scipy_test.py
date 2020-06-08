@@ -77,7 +77,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
     op_record("polygamma", 2, (int_dtypes, float_dtypes), jtu.rand_positive, True, (0,)),
-    op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
+    op_record("xlogy", 2, float_dtypes, jtu.rand_positive, True),
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
     # TODO: enable gradient test for zeta by restricting the domain of
     # of inputs to some reasonable intervals

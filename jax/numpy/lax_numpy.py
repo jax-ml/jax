@@ -42,10 +42,10 @@ from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags
-from ..interpreters.xla import (DeviceArray, device_put, array_result_handler,
-                                DeviceValue, abstractify)
+from ..interpreters.xla import DeviceArray, DeviceValue
 from ..interpreters.masking import Poly
 from .. import lax
+from ..lax.lax import _device_put_raw
 from .. import ops
 from ..util import (partial, unzip2, prod as _prod,
                     subvals, safe_zip)
@@ -1080,6 +1080,7 @@ def reshape(a, newshape, order="C"):
 def _compute_newshape(a, newshape):
   """Fixes a -1 value in newshape, if present."""
   # other errors, like having more than one -1, are caught downstream
+  newshape = list(map(int, newshape))
   newsize = _prod(newshape)
   if newsize < 0:
     fix = a.size // -newsize
@@ -2176,10 +2177,6 @@ def _can_call_numpy_array(x):
   return _all(not isinstance(l, (core.Tracer, DeviceValue))
               for l in tree_leaves(x))
 
-# TODO(mattjj): maybe move these two functions into xla.py
-def _device_put_raw(x):
-  return array_result_handler(None, abstractify(x))(device_put(x))
-
 
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):
@@ -3125,9 +3122,8 @@ def _argminmax(name, op, a, axis):
     raise ValueError("attempt to get {} of an empty sequence".format(name))
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
-  idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
+  idxs = arange(a.shape[axis]).reshape(shape)
   maxval = iinfo(dtypes.canonicalize_dtype(idxs.dtype)).max
-  maxval = lax.tie_in(a, maxval)
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
 
@@ -3345,7 +3341,6 @@ def _take_along_axis(arr, indices, axis):
       j += 1
     elif idx_shape[i] != 1:
       iota = lax.iota(_dtype(indices), out_shape[i])
-      iota = lax.tie_in(arr, iota)
       iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
       gather_indices.append(iota)
       slice_sizes.append(1)

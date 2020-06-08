@@ -255,8 +255,7 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
 
       in_avals = map(abstract, primals_in + primals_out + primals_out)
       ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
-        complete_ivjp_flat, map(PartialVal.unknown, in_avals),
-        instantiate=True, stage_out=False)
+          complete_ivjp_flat, map(PartialVal.unknown, in_avals), instantiate=True)
       assert not ivjp_jaxpr.constvars  # That might happen some time, but don't bother until then
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
       ivjp_jaxpr = core.TypedJaxpr(ivjp_jaxpr, [], in_avals, out_avals)
@@ -268,7 +267,7 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
                 map(ad.is_undefined_primal, primals_out) +
                 [False] * len(cts_in))
     jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
-        ivjp_jaxpr, unknowns, instantiate=False, trace_type=None)
+        ivjp_jaxpr, unknowns, instantiate=False)
     unknown_rec_primals_in, unknown_cotangents = split_list(out_unknowns, [num_inputs])
     # Make sure we're able to compute all cotangents. We don't really care if we
     # can reconstruct or primals or not, although failure to do so might result in

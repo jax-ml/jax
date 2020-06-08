@@ -120,7 +120,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     x2_uncommitted = jnp.array([2, 3])
     z1, z2, z3 = jax.jit(lambda x, y: (y, 1, x))(x_uncommitted, x2_uncommitted)
     self.assert_uncommitted_to_device(z1, devices[0])
-    self.assertIs(z2, 1)
+    self.assert_uncommitted_to_device(z2, devices[0])
     self.assert_uncommitted_to_device(z3, devices[0])
 
 

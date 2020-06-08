@@ -53,7 +53,7 @@ class InfeedTest(jax.test_util.JaxTestCase):
       y, token = lax.infeed(
           token, shape=jax.ShapedArray((3, 4), np.float32))
       token = lax.outfeed(token, y + onp.float32(1))
-      return lax.tie_in(token, x - 1)
+      return x - 1
 
     x = onp.float32(7.5)
     y = onp.random.randn(3, 4).astype(onp.float32)
@@ -76,7 +76,7 @@ class InfeedTest(jax.test_util.JaxTestCase):
     def f(n):
       token = lax.create_token(n)
       token = lax.fori_loop(0, n, doubler, token)
-      return lax.tie_in(token, n)
+      return n
 
     device = jax.local_devices()[0]
     n = 10

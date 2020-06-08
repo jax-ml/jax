@@ -1227,23 +1227,8 @@ def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   return top_k_p.bind(operand, k=k)
 
 def tie_in(x: Array, y: Array) -> Array:
-  """Returns the value of ``y`` but with a fake data dependence on ``x``.
-
-  When staging to XLA (e.g. running under jit or pmap), values that don't depend
-  on computation inputs are computed op-by-op, and folded into the XLA
-  computation as constants.
-
-  ``tie_in`` provides a way to explicitly stage values into the computation.
-  When staging to XLA and ``x`` is already staged, then the result of ``tie_in``
-  is ``y``, but staged to XLA. Downstream use of the result will also be staged
-  to XLA.
-
-  For example, ``lax.sin(const)`` would be constant-folded if ``const`` is
-  a constant array, but ``lax.sin(lax.tie_in(x, const))``, will be staged to
-  XLA as long as ``x`` is staged to XLA.
-  """
-  return tie_in_p.bind(x, y)
-
+  """Deprecated. Ignores ``x`` and returns ``y``."""
+  return y
 
 def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
@@ -1259,9 +1244,17 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(onp.shape(fill_value)))
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
-  # TODO(mattjj): remove device_put when dtype conversion produces DeviceArray
-  fill_value = xla.device_put_p.bind(convert_element_type(fill_value, dtype))
+  fill_value = convert_element_type(fill_value, dtype)
+  if not isinstance(fill_value, (xla.DeviceArray, core.Tracer)):
+    fill_value = _device_put_raw(fill_value)
   return broadcast(fill_value, shape)
+
+def _device_put_raw(x):
+  if isinstance(x, xla.DeviceValue):
+    return x
+  else:
+    aval = raise_to_shaped(core.get_aval(x))
+    return xla.array_result_handler(None, aval)(xla.device_put(x))
 
 def iota(dtype: DType, size: int) -> Array:
   """Wraps XLA's `Iota
@@ -1516,7 +1509,6 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
     `fill_value`, similar to the output of np.full.
   """
   fill_shape = onp.shape(x) if shape is None else canonicalize_shape(shape)
-  fill_value = tie_in(x, fill_value)
   return full(fill_shape, fill_value, dtype or _dtype(x))
 
 
@@ -3075,12 +3067,6 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
       return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
-
-  if type(operand) is pxla.ShardedDeviceArray and dimensions is None:
-    array = _reshape_sharded_device_array(operand, new_sizes, old_sizes)
-    if array is not None:
-      return array
-
   return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
                              dimensions=dimensions)
 
@@ -3103,59 +3089,6 @@ def _is_singleton_reshape(old, new):
       d2 = next(new, None)
     else:
       return None
-
-def _reshape_sharded_device_array(array, new_sizes, old_sizes):
-  """Returns None if `array` could not be efficiently reshaped.
-
-  This function is primarily to support soft_pmap, although these optimizations
-  could be useful when directly calling reshape as well.
-  """
-  # TODO(jekbradbury): the axis split/merge logic below assumes that
-  # ShardedDevicesArrays are always sharded across their leading axes. Remove
-  # this constraint, especially if/when we add APIs that produce sharding across
-  # interior axes.
-  if any(num_shards != 1 for num_shards
-         in array.sharding_spec.shards_per_axis[1:]):
-    return None
-
-  # TODO(skye): handle replicated buffers
-  if array.sharding_spec.replication_factors:
-    return None
-
-  # ShardedDevicesArrays require all buffers to have the same shape
-  chunk_shape = array.device_buffers[0].shape().dimensions()
-  chunk_size = chunk_shape[0] if len(chunk_shape) > 0 else 1
-
-  if _is_axis_merge(old_sizes, new_sizes):
-    num_chunks, ragged = divmod(new_sizes[0], chunk_size)
-    if ragged: return None
-    aval = ShapedArray(new_sizes, array.dtype)
-    sharding_spec = pxla.ShardingSpec(
-        shards_per_axis=(num_chunks,) + (1,) * (len(new_sizes) - 1),
-        is_axis_materialized=(True,) * len(new_sizes),
-        replication_factors=[])
-    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
-
-  if _is_axis_split(old_sizes, new_sizes):
-    split_axis_size, ragged = divmod(old_sizes[0], chunk_size)
-    if ragged: return None
-    if new_sizes[0] != split_axis_size: return None
-    aval = ShapedArray(new_sizes, array.dtype)
-    sharding_spec = pxla._pmap_sharding_spec(
-        new_sizes[0], new_sizes[0], 1, None,
-        ShapedArray(new_sizes[1:], array.dtype), True)
-    return pxla.ShardedDeviceArray(aval, sharding_spec, array.device_buffers)
-
-  return None
-
-def _is_axis_merge(s1, s2):
-  # TODO(skye): we might still be able to handle these cases as merges, I
-  # haven't thought about it much.
-  if len(s1) < 2 or len(s2) < 1: return False
-  return s1[2:] == s2[1:] and s1[0] * s1[1] == s2[0]
-
-def _is_axis_split(s1, s2):
-  return _is_axis_merge(s2, s1)
 
 def _reshape_shape_rule(operand, *, new_sizes, dimensions):
   if not onp.all(onp.greater_equal(new_sizes, 0)):
@@ -3479,7 +3412,7 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   assert ad.is_undefined_primal(operand)
   assert all(not ad.is_undefined_primal(s) for s in start_indices)
   operand_shape = operand.aval.shape
-  zeros = full(operand_shape, tie_in(t, _zero(t)))
+  zeros = full(operand_shape, _zero(t))
   return ([dynamic_update_slice(zeros, t, start_indices)] +
           [None] * len(start_indices))
 
@@ -3647,7 +3580,7 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
   operand_shape = operand.aval.shape
   if type(t) is ad_util.Zero:
     return ad_util.Zero
-  zeros = full(operand_shape, tie_in(t, _zero(t)))
+  zeros = full(operand_shape, _zero(t))
   scatter_dnums = ScatterDimensionNumbers(
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
@@ -4132,7 +4065,7 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
 
 def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.get_shape(init_value)
-  axis_env = xla.AxisEnv(1)  # no parallel primitives inside reductions
+  axis_env = xla.AxisEnv(1, (), (), None)  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [xb.parameter(subc, 0, shape), xb.parameter(subc, 1, shape)]
@@ -5016,7 +4949,6 @@ def _top_k_jvp(primals, tangents, *, k):
     gather_indices = []
     for i in range(rank-1):
       _iota = iota(k_idxs.dtype, idx_shape[i])
-      _iota = tie_in(operand, _iota)
       _iota = broadcast_in_dim(_iota, gather_index_shape, (i,))
       gather_indices.append(_iota)
     gather_indices.append(reshape(k_idxs, gather_index_shape))
@@ -5049,31 +4981,6 @@ xla.translations[top_k_p] = partial(standard_translate, 'top_k')
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
-def _tie_in_transpose_rule(t, x, y):
-  # TODO(apaszke): What to do about this?
-  if ad.is_undefined_primal(x):
-    return [ad_util.Zero(x.aval), t]
-  else:
-    return [ad_util.Zero.from_value(x), t]
-
-def _tie_in_batch_rule(batched_args, batch_dims):
-  y = tie_in(*batched_args)
-  _, bdim_y = batch_dims
-  return y, bdim_y
-
-def _tie_in_impl(x, y):
-  core.check_valid_jaxtype(x)
-  core.check_valid_jaxtype(y)
-  return y
-
-tie_in_p = Primitive('tie_in')
-tie_in_p.def_impl(_tie_in_impl)
-tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
-xla.translations[tie_in_p] = lambda c, x, y: y
-ad.deflinear2(tie_in_p, _tie_in_transpose_rule)
-batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
-
 
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
@@ -5085,7 +4992,6 @@ def _stop_gradient_batch_rule(batched_args, batch_dims):
   dim, = batch_dims
   return stop_gradient(x), dim
 
-xla.translations[ad_util.stop_gradient_p] = lambda c, x: x
 ad.primitive_jvps[ad_util.stop_gradient_p] = _stop_gradient_jvp_rule
 batching.primitive_batchers[ad_util.stop_gradient_p] = _stop_gradient_batch_rule
 

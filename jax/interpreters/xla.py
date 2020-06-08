@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from collections import defaultdict, deque
+from collections import defaultdict, deque, namedtuple
 import itertools as it
 import operator as op
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tuple
@@ -246,7 +246,7 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
     handle_result = aval_to_result_handler(device, aval_out)
   else:
     handlers = map(partial(aval_to_result_handler, device), aval_out)
-    handle_result = lambda xs: tuple(h(x) for h, x in unsafe_zip(handlers, xs))
+    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs))
   tuple_args = len(avals) > 100
   if prim in initial_style_translations:
     nreps = initial_style_primitive_replicas(params)
@@ -258,8 +258,8 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
         f"compiling a primitive computation `{prim}` that requires {nreps} "
         f"replicas, but only {xb.device_count(backend)} XLA devices are "
         f"available on backend {backend.platform}.")
-  built_c = primitive_computation(prim, AxisEnv(nreps), backend, tuple_args,
-                                  *avals, **params)
+  built_c = primitive_computation(prim, AxisEnv(nreps, (), (), None), backend,
+                                  tuple_args, *avals, **params)
   options = xb.get_compile_options(
       num_replicas=nreps,
       num_partitions=1,
@@ -320,8 +320,8 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     raise RuntimeError(msg) from e
 
 def primitive_subcomputation(prim, *avals, **params):
-  return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
-  return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
+  axis_env = AxisEnv(1, (), (), None)
+  return primitive_computation(prim, axis_env, None, False, *avals, **params)
 
 def _execute_compiled_primitive(prim, compiled, result_handler, *args):
   device, = compiled.local_devices()
@@ -410,17 +410,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
       ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
                  map(aval, eqn.invars), backend, *in_nodes, **new_params)
     elif eqn.primitive in parallel_translations:
-      replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      axis_index_groups = eqn.params.get('axis_index_groups', None)
-      if axis_index_groups is not None:
-        replica_groups = [[axis_group[i] for i in axis_index_group]
-                          for axis_group in replica_groups
-                          for axis_index_group in axis_index_groups]
-      new_params = {k: v for k, v in eqn.params.items()
-                    if k not in ('axis_name', 'axis_index_groups')}
       rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, replica_groups=replica_groups, platform=platform,
-                 **new_params)
+      ans = rule(c, *in_nodes, axis_env=axis_env, platform=platform, **eqn.params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = call_translations[eqn.primitive]
@@ -452,14 +443,7 @@ def check_backend_params(params, outer_backend):
   return {k: params[k] for k in params if k != 'backend'}
 
 
-class AxisEnv:
-  def __init__(self, nreps, names=(), sizes=(), devices=None):
-    assert isinstance(names, tuple)
-    assert isinstance(sizes, tuple)
-    self.nreps = nreps
-    self.names = names
-    self.sizes = sizes
-    self.devices = devices
+AxisEnv = namedtuple('AxisEnv', ['nreps', 'names', 'sizes', 'devices'])
 
 def extend_axis_env(env, name, size):
   return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,), env.devices)
@@ -603,16 +587,16 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
                      "got device={} and backend={}".format(device, backend))
 
   abstract_args, arg_devices = unzip2(arg_specs)
-  pvals: Sequence[pe.PartialVal] = [pe.PartialVal.unknown(aval) for aval in abstract_args]
-  jaxpr, pvals, consts = pe.trace_to_jaxpr(
-      fun, pvals, instantiate=False, stage_out=True, bottom=True)
+  jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args)
+  if any(isinstance(c, core.Tracer) for c in consts):
+    raise core.UnexpectedTracerError("Encountered an unexpected tracer.")
   map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
   jaxpr, uses_outfeed = apply_outfeed_rewriter(jaxpr)
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
   backend = device.platform if device else backend
-  result_handlers = tuple(map(partial(_pval_to_result_handler, device), pvals))
+  result_handlers = tuple(aval_to_result_handler(device, a) for a in out_avals)
 
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
@@ -647,7 +631,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   xla_consts = _xla_consts(c, consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
-      c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
+      c, jaxpr, backend, AxisEnv(nreps, (), (), None), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   out_tuple = xops.Tuple(c, out_nodes)
   backend = xb.get_backend(backend)
@@ -759,14 +743,6 @@ def _xla_param(builder, param_num, xla_shape, replicated, partitions):
   else:
     return xb.with_sharding(builder, partitions, make_param)
 
-def _pval_to_result_handler(device, pval):
-  pv, const = pval
-  if pv is None:
-    const = _device_put_impl(const, device) if device else const
-    return lambda _: const
-  else:
-    return aval_to_result_handler(device, pv)
-
 def _execute_compiled(compiled: XlaExecutable, uses_outfeed: bool,
                       handlers, *args):
   check_before_outfeed_execution(uses_outfeed)
@@ -812,7 +788,6 @@ def _get_device(device, backend):
 xla_call_p = core.CallPrimitive('xla_call')
 xla_call = xla_call_p.bind
 xla_call_p.def_impl(_xla_call_impl)
-pe.staged_out_calls.add(xla_call_p)
 
 def _xla_call_partial_eval_update_params(params, in_unknowns):
   call_jaxpr = params['call_jaxpr']
@@ -842,6 +817,7 @@ def _xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
   return dict(params, donated_invars=(*donated_primals, *donated_cotangents))
 ad.call_transpose_param_updaters[xla_call_p] = _xla_call_transpose_update_params
 
+
 def _xla_call_translation_rule(c, axis_env,
                                in_nodes, name_stack, backend, name,
                                call_jaxpr, donated_invars, device=None):
@@ -863,7 +839,6 @@ initial_style_translations: Dict[core.Primitive, Callable] = {}
 call_translations: Dict[core.Primitive, Callable] = {}
 backend_specific_translations: Dict[str, Dict[core.Primitive, Callable]] = defaultdict(dict)
 
-translations[core.identity_p] = lambda c, x: x
 call_translations[xla_call_p] = _xla_call_translation_rule
 
 def zeros_like_translation_rule(c, x):
@@ -879,11 +854,13 @@ def add_jaxvals_translation_rule(c, x, y):
   return xops.Add(x, y)
 translations[ad_util.add_jaxvals_p] = add_jaxvals_translation_rule
 
+translations[ad_util.stop_gradient_p] = lambda c, x: x
+
+
 @lu.transformation
 def _tuple_output(*args, **kwargs):
   ans = yield args, kwargs
   yield (ans,)
-
 
 def lower_fun(fun, multiple_results):
   # This function can only be used to lower functions that take JAX array types
@@ -896,14 +873,13 @@ def lower_fun(fun, multiple_results):
   def f(c, *xla_args, **params):
     # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
-    pvals = [pe.PartialVal.unknown(a) for a in avals]
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
-    jaxpr, _, consts = pe.trace_to_jaxpr(wrapped_fun, pvals, instantiate=True,
-                                         stage_out=True)
-    xla_consts = _xla_consts(c, consts)
-    outs = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1), xla_consts, '', *xla_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
+    axis_env = AxisEnv(1, (), (), None)
+    outs = jaxpr_subcomp(c, jaxpr, None, axis_env, _xla_consts(c, consts), '',
+                         *xla_args)
     if multiple_results:
       return xops.Tuple(c, outs)
     else:
@@ -920,12 +896,9 @@ def _array_aval_from_xla_shape(xla_shape):
 
 def lower_fun_initial_style(fun):
   def f(c, axis_env, name_stack, avals, backend, *xla_args, **params):
-    pvals = [pe.PartialVal.unknown(a) for a in avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(
-        lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
-    xla_consts = _xla_consts(c, consts)
-    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, name_stack,
-                         *xla_args)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals)
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, _xla_consts(c, consts),
+                         name_stack, *xla_args)
     return xops.Tuple(c, outs)
   return f
 
@@ -1240,7 +1213,8 @@ def _device_put_impl(x, device: Optional[Device] = None):
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
-pe.custom_partial_eval_rules[device_put_p] = lambda trace, x, **params: x
+device_put_p.def_abstract_eval(lambda x, device=None: x)
+translations[device_put_p] = lambda c, x, device=None: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
 device_put_p.def_abstract_eval(lambda x, **params: x)
 masking.defvectorized(device_put_p)
@@ -1284,3 +1258,23 @@ def _remat_translation_rule(c, axis_env, in_nodes,
 
   return xops.Conditional(pred, true_op, remat_subc, false_op, dummy_subc)
 call_translations[pe.remat_call_p] = _remat_translation_rule
+
+
+def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
+  div = xb.constant(c, onp.array(axis_env.nreps // prod(axis_env.sizes),
+                                 dtype=onp.uint32))
+  mod = xb.constant(c, onp.array(axis_env.sizes[-1], dtype=onp.uint32))
+  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
+  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+parallel_translations[core.axis_index_p] = _axis_index_translation_rule
+
+
+def _call_translation_rule(c, axis_env, in_nodes, name_stack,
+                           *, backend, call_jaxpr):
+  subc = xb.make_computation_builder("core_call")
+  args = [xb.parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
+  out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
+                            extend_name_stack(name_stack, 'core_call'), *args)
+  subc = subc.Build(xops.Tuple(subc, out_nodes))
+  return xops.Call(c, subc, list(in_nodes))
+call_translations[core.call_p] = _call_translation_rule
