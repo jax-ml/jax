@@ -99,7 +99,7 @@ class custom_jvp:
   This class is meant to be used as a function decorator. Instances are
   callables that behave similarly to the underlying function to which the
   decorator was applied, except when a differentiation transformation (like
-  ``jax.jvp`` or ``jax.grad``) is applied, in which case a custom user-supplied
+  :py:func:`jax.jvp` or :py:func:`jax.grad`) is applied, in which case a custom user-supplied
   JVP rule function is used instead of tracing into and performing automatic
   differentiation of the underlying function's implementation. There is a single
   instance method, ``defjvp``, which defines the custom JVP rule.
@@ -356,7 +356,7 @@ class custom_vjp:
   This class is meant to be used as a function decorator. Instances are
   callables that behave similarly to the underlying function to which the
   decorator was applied, except when a reverse-mode differentiation
-  transformation (like ``jax.grad``) is applied, in which case a custom
+  transformation (like :py:func:`jax.grad`) is applied, in which case a custom
   user-supplied VJP rule function is used instead of tracing into and performing
   automatic differentiation of the underlying function's implementation. There
   is a single instance method, ``defvjp``, which defines the custom VJP rule.
