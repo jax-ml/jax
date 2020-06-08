@@ -14,7 +14,7 @@
 
 from contextlib import contextmanager
 from collections import Counter, namedtuple
-from functools import partial
+from functools import partial, reduce
 from itertools import chain, product
 import operator as op
 import string
@@ -219,13 +219,32 @@ class Poly(dict):
     assert self.is_constant
     return op.index(next(iter(self.values())))
 
-  def evaluate(self, values_dict):
-    return sum(coeff * prod([values_dict[id] ** deg for id, deg in mon.items()])
-               for mon, coeff in self.items())
+  def evaluate(self, env):
+    prod = lambda xs: reduce(op.mul, xs) if xs else 1
+    terms = [mul(coeff, prod([pow(env[id], deg) for id, deg in mon.items()]))
+             for mon, coeff in self.items()]
+    return sum(terms) if len(terms) > 1 else terms[0]
 
   @property
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
+
+def pow(x, deg):
+  try:
+    deg = int(deg)
+  except:
+    return x ** deg
+  else:
+    return 1 if deg == 0 else x if deg == 1 else x ** deg
+
+def mul(coeff, mon):
+  try:
+    coeff = int(coeff)
+  except:
+    return coeff * mon
+  else:
+    return  0 if coeff == 0 else mon if coeff == 1 else coeff * mon
+
 
 abstract_arrays._DIMENSION_TYPES.add(Poly)
 
