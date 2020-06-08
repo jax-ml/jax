@@ -798,13 +798,8 @@ def _cond_jvp(primals, tangents, branches, linear):
       index, *ops, *ops_dot, branches=branches_jvp, linear=linear_jvp)
   out_primals, out_tangents = split_list(out, [len(out_nz)])
   out_tangents_iter = iter(out_tangents)
-<<<<<<< HEAD
-  out_tangents = [next(out_tangents_iter) if nz else ad_util.Zero.from_value(p)
-                  for p, nz in zip(out_primals, out_nz)]
-=======
   out_tangents = [
       next(out_tangents_iter) if nz else ad_util.zero for nz in out_nz]
->>>>>>> parent of e36c72b9... Make ad_util.zero a class that carries avals (similar to UndefinedPrimal) (#3222)
   return out_primals, out_tangents
 
 def _cond_partial_eval(trace, *tracers, branches, linear):
