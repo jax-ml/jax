@@ -1033,6 +1033,8 @@ def reduce(operand: Union[Array, Sequence[Array]],
     operand = (operand,)
   if not isinstance(init_value, Sequence):
     init_value = (init_value,)
+  if len(operand) == 0:
+    raise TypeError("reduce requires at least one operand")
   if len(operand) != len(init_value):
     raise TypeError("reduce: length of operands tuple must match length of init_values tuple; got "
                     f"len(operand)={len(operand)}, len(init_value)={len(init_value)}.")
