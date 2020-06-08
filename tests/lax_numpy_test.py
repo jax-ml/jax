@@ -1119,16 +1119,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(
-          jtu.format_shape_dtype_string(shape, dtype)),
-       "dtype": dtype, "shape": shape}
+      {"testcase_name": "a_shape={} , b_shape={}".format(
+          jtu.format_shape_dtype_string(a_shape, dtype),
+          jtu.format_shape_dtype_string(b_shape, dtype)),
+       "dtype": dtype, "a_shape": a_shape, "b_shape" : b_shape}
       for dtype in default_dtypes
-      for shape in one_dim_array_shapes))
-  def testPolyAdd(self, shape, dtype):
+      for a_shape in one_dim_array_shapes
+      for b_shape in one_dim_array_shapes))
+  def testPolyAdd(self, a_shape, b_shape, dtype):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda arg1, arg2: np.polyadd(arg1, arg2)
     jnp_fun = lambda arg1, arg2: jnp.polyadd(arg1, arg2)
-    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    args_maker = lambda: [rng(a_shape, dtype), rng(b_shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
