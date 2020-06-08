@@ -74,10 +74,10 @@ def jvp_subtrace_aux(master, primals, tangents):
       assert x._trace.level < trace.level
   ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
   ans_tracers = map(trace.full_raise, ans)
-  aux_tracers = map(trace.full_raise, aux)
   out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
-  aux_primals, _            = unzip2((t.primal, t.tangent) for t in aux_tracers)
-  aux_primals = map(core.full_lower, aux_primals)
+  aux_primals = [core.full_lower(x.primal)
+                 if isinstance(x, JVPTracer) and x._trace.level == trace.level
+                 else x for x in aux]
   yield (out_primals, out_tangents), aux_primals
 
 def linearize(traceable, *primals, **kwargs):
