@@ -73,6 +73,8 @@ Additional reading:
   * JAX_sharp_bits_
 
 
+.. _faq-data-placement:
+
 Controlling data and computation placement on devices
 -----------------------------------------------------
 

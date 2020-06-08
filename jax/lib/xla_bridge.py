@@ -174,13 +174,14 @@ def get_device_backend(device=None):
 def device_count(backend: str = None):
   """Returns the total number of devices.
 
-  On most platforms, this is the same as ``local_device_count()``. However, on
-  multi-host platforms, this will return the total number of devices across all
-  hosts.
+  On most platforms, this is the same as :py:func:`jax.local_device_count`.
+  However, on multi-host platforms, this will return the total number of devices
+  across all hosts.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
 
   Returns:
     Number of devices.
@@ -196,17 +197,19 @@ def local_device_count(backend: str =None):
 def devices(backend: str = None):
   """Returns a list of all devices for a given backend.
 
-  Each device is represented by a subclass of ``Device`` (e.g. ``CpuDevice``,
-  ``GpuDevice``). The length of the returned list is equal to
-  ``device_count(backend)``. Local devices can be identified by comparing
-  ``Device.host_id`` to ``host_id()``.
+  Each device is represented by a subclass of :class:`Device` (e.g.
+  :class:`CpuDevice`, :class:`GpuDevice`). The length of the returned list is
+  equal to ``device_count(backend)``. Local devices can be identified by comparing
+  :meth:`Device.host_id` to the value returned by :py:func:`jax.host_id``.
 
   If ``backend`` is ``None``, returns all the devices from the default backend.
-  The default backend is generally 'gpu' or 'tpu' if available, otherwise 'cpu'.
+  The default backend is generally ``'gpu'`` or ``'tpu'`` if available,
+  otherwise ``'cpu'``.
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
 
   Returns:
     List of Device subclasses.
@@ -215,15 +218,16 @@ def devices(backend: str = None):
 
 
 def local_devices(host_id: int = None, backend: str = None):
-  """Like ``devices``, but only returns devices local to a given host.
+  """Like :py:func:`jax.devices`, but only returns devices local to a given host.
 
   If ``host_id`` is ``None``, returns devices local to this host.
 
   Args:
     host_id: the integer ID of the host. Host IDs can be retrieved via
-      ``host_ids()``.
+      :py:func:`jax.host_ids`.
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
 
   Returns:
     List of Device subclasses.
@@ -243,7 +247,8 @@ def host_id(backend: str = None):
 
   Args:
     backend: This is an experimental feature and the API is likely to change.
-      Optional, a string representing the xla backend. 'cpu', 'gpu', or 'tpu'.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
 
   Returns:
     Integer host ID.
