@@ -363,6 +363,7 @@ class FlatTreeTest(jtu.JaxTestCase):
   #   @tree_vectorize
   #   def _jacfwd(f, x):
   #     pushfwd = partial(jax.jvp, f, (x,))
+  #     y, dy = pushfwd((x,))
   #     basis = jnp.eye(x.size, dtype=x.dtype)
   #     y, jac = jax.vmap(pushfwd, out_axes=(None, 1))((basis,))
   #     return jac
@@ -389,8 +390,8 @@ class FlatTreeTest(jtu.JaxTestCase):
   #   tree = {'a': 1.0, 'b': 2.0}
   #   expected = jax.jacfwd(f)(tree)
 
-  #   actual = jacrev(f)(tree)
-  #   self.assertTreeEqual(expected, actual)
+  #   actual = jacfwd(f)(tree)
+  #   self.assertTreeEqual(expected, actual, check_dtypes=True)
 
   #   actual = jacrev(f)(tree)
-  #   self.assertTreeEqual(expected, actual)
+  #   self.assertTreeEqual(expected, actual, check_dtypes=True)

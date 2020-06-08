@@ -22,6 +22,7 @@ from typing import (
 import numpy as np
 
 from .. import core
+from .. import api_util
 from .. import dtypes
 from .. import linear_util as lu
 from ..interpreters import ad
@@ -197,11 +198,24 @@ class TreeTrace(core.Trace):
     return TreeTracer(self, treedefs, leafshapes, leaves)
 
   def process_call(self, call_primitive, f, tracers, params):
-    flat_in, tree_tracer_def_in = _flatten_tree_tracers(tracers)
-    f_tree, out_structure = tree_subtrace(f, self.master, tree_tracer_def_in)
-    flat_out = call_primitive.bind(f_tree, *flat_in, **params)
-    out_tracers = _unflatten_tree_tracers(self, out_structure(), flat_out)
-    return out_tracers
+    params = dict(params)
+    tree_call = params.pop('tree_call', False)
+    if tree_call:
+      treedefs_in, leaves_in = unzip2([(t.treedefs, t.leaves) for t in tracers])
+      args = tuple(map(restore_tree, treedefs_in, leaves_in))
+      flat_args, in_tree = tree_flatten(args)
+      f, out_tree = api_util.flatten_fun_nokwargs(f, in_tree)
+      flat_result = call_primitive.bind(f, *flat_args, **params)
+      result, = tree_unflatten(out_tree(), flat_result)
+      treedefs, leafshapes, leaves = convert_vectorized_tree(result)
+      tracer = TreeTracer(self, treedefs, leafshapes, leaves)
+      return [tracer]
+    else:
+      flat_in, tree_tracer_def_in = _flatten_tree_tracers(tracers)
+      f_tree, out_structure = tree_subtrace(f, self.master, tree_tracer_def_in)
+      flat_out = call_primitive.bind(f_tree, *flat_in, **params)
+      out_tracers = _unflatten_tree_tracers(self, out_structure(), flat_out)
+      return out_tracers
 
   def post_process_call(self, call_primitive, out_tracers, params):
     flat, tree_tracer_def = _flatten_tree_tracers(tracers)
@@ -253,27 +267,18 @@ def restore_tree(treedefs: Tuple[TreeDef, ...], leaves: Leaves) -> PyTree:
 tree_rules = {}
 
 
-def tree_call_impl(*args, fun):
-  return fun(*args)
+@lu.transformation
+def flatten_fun_one_output(*args):
+  ans = yield args, {}
+  yield [ans]
 
-def tree_call_tree_rule(treedefs_in, leafshapes_in, leaves_in, *, fun):
-  # TODO(shoyer): some way to indicate/handle multiple outputs?
-  args = tuple(map(restore_tree, treedefs_in, leaves_in))
-  result = fun(*args)
-  return convert_vectorized_tree(result)
-
-def tree_call_jvp(primals, tangents, *, fun):
-  from jax.api import jvp
-  # Note: does not seem to be right
-  return jvp(fun, primals, tangents)
-
-tree_call_p = core.Primitive('tree_call')
-tree_call_p.def_impl(tree_call_impl)
-tree_rules[tree_call_p] = tree_call_tree_rule
-ad.primitive_jvps[tree_call_p] = tree_call_jvp
 
 def tree_callable(fun):
-  return partial(tree_call_p.bind, fun=fun)
+  def wrapper(*args):
+    f = flatten_fun_one_output(lu.wrap_init(fun))
+    y, = core.call(f, *args, tree_call=True)
+    return y
+  return wrapper
 
 
 def tie_in_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in) -> TreeState:
