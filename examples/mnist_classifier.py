@@ -26,7 +26,6 @@ import itertools
 import numpy.random as npr
 
 import jax.numpy as jnp
-from jax.config import config
 from jax import jit, grad, random
 from jax.experimental import optimizers
 from jax.experimental import stax
