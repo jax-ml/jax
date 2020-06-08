@@ -38,6 +38,7 @@ from jax.flatten_util import ravel_pytree
 from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 from jax.interpreters import partial_eval as pe
 from jax import linear_util as lu
+from jax import config
 
 map = safe_map
 zip = safe_zip
@@ -45,11 +46,15 @@ zip = safe_zip
 
 @cache()
 def closure_convert(fun, in_tree, in_avals):
-  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  with core.initial_style_staging():
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-      wrapped_fun, in_pvals, instantiate=True, stage_out=False)
+  if config.omnistaging_enabled:
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  else:
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    with core.initial_style_staging():
+      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        wrapped_fun, in_pvals, instantiate=True, stage_out=False)
   out_tree = out_tree()
 
   # We only want to closure convert for constants with respect to which we're

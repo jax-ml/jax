@@ -41,11 +41,11 @@ from ._util import _wraps
 from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
-from ..config import flags
-from ..interpreters.xla import (DeviceArray, device_put, array_result_handler,
-                                DeviceValue, abstractify)
+from ..config import flags, config
+from ..interpreters.xla import DeviceArray, DeviceValue
 from ..interpreters.masking import Poly
 from .. import lax
+from ..lax.lax import _device_put_raw
 from .. import ops
 from ..util import (partial, unzip2, prod as _prod,
                     subvals, safe_zip)
@@ -1876,8 +1876,11 @@ def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 
   normalizer = sum(logical_not(isnan(a)), axis=axis, keepdims=keepdims)
   normalizer = normalizer - ddof
-  zero = lax.full_like(normalizer, 0, shape=())
-  normalizer_mask = lax.le(normalizer, zero)
+  if config.omnistaging_enabled:
+    normalizer_mask = lax.le(normalizer, 0)
+  else:
+    zero = lax.full_like(normalizer, 0, shape=())
+    normalizer_mask = lax.le(normalizer, zero)
 
   result = nansum(centered, axis, keepdims=keepdims)
   result = where(normalizer_mask, nan, result)
@@ -2268,10 +2271,6 @@ def _can_call_numpy_array(x):
   return _all(not isinstance(l, (core.Tracer, DeviceValue))
               for l in tree_leaves(x))
 
-# TODO(mattjj): maybe move these two functions into xla.py
-def _device_put_raw(x):
-  return array_result_handler(None, abstractify(x))(device_put(x))
-
 
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):
@@ -2379,7 +2378,7 @@ def arange(start, stop=None, step=None, dtype=None):
     stop = None if stop is None else require(stop, msg("stop"))
     step = None if step is None else require(step, msg("step"))
     if dtype is None:
-      dtype = _dtype(start, *filter(lambda x: x is not None, [stop, step]))
+      dtype = _dtype(start, *(x for x in [stop, step] if x is not None))
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 
@@ -3475,7 +3474,8 @@ def _take_along_axis(arr, indices, axis):
       j += 1
     elif idx_shape[i] != 1:
       iota = lax.iota(_dtype(indices), out_shape[i])
-      iota = lax.tie_in(arr, iota)
+      if not config.omnistaging_enabled:
+        iota = lax.tie_in(arr, iota)
       iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
       gather_indices.append(iota)
       slice_sizes.append(1)
@@ -3895,9 +3895,9 @@ def _expand_bool_indices(idx):
         abstract_i = core.get_aval(i)
 
       if not type(abstract_i) is ConcreteArray:
-        msg = ("Array boolean indices must be static (e.g. no dependence on an "
-               "argument to a jit or vmap function).")
-        raise IndexError(msg)
+        # TODO(mattjj): improve this error by tracking _why_ the indices are not
+        # concrete
+        raise IndexError("Array boolean indices must be concrete.")
       else:
         out.extend(np.where(i))
     else:

@@ -63,7 +63,7 @@ def variance_scaling(scale, mode, distribution, in_axis=-2, out_axis=-1, dtype=j
     elif distribution == "normal":
       return random.normal(key, shape, dtype) * jnp.sqrt(variance)
     elif distribution == "uniform":
-      return random.uniform(key, shape, dtype, -1) * np.sqrt(3 * variance)
+      return random.uniform(key, shape, dtype, -1) * jnp.sqrt(3 * variance)
     else:
       raise ValueError("invalid distribution for variance scaling initializer")
   return init

@@ -18,7 +18,7 @@ from typing import Callable, Dict
 
 from .. import core
 from .. import linear_util as lu
-from ..core import Trace, Tracer, new_master
+from ..core import Trace, Tracer
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..util import safe_map, safe_zip, unzip2, unzip3
 
@@ -37,7 +37,7 @@ def papply(fun, name, in_vals, axis_size):
 
 @lu.transformation_with_aux
 def papply_transform(name, axis_size, *args):
-  with new_master(PapplyTrace) as master:
+  with core.new_master(PapplyTrace) as master:
     trace = PapplyTrace(master, core.cur_sublevel())
     in_tracers = map(partial(PapplyTracer, trace, name, axis_size, axis=0), args)
     outs = yield in_tracers, {}

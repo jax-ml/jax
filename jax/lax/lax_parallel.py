@@ -31,6 +31,7 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
+from jax.config import config
 
 from jax.interpreters.pxla import axis_index
 
@@ -287,14 +288,14 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 
 ### parallel primitives
 
-def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
-                               axis_index_groups):
-  assert tuple(which_mapped) == (True,)
+def _allreduce_soft_pmap_rule(prim, reducer, vals, mapped, chunk_size,
+                              *, axis_name, axis_index_groups):
   if axis_index_groups is not None:
     raise NotImplementedError("soft_pmap does not yet support axis_index_groups")
-  vals = (reducer(x, [0]) for x in vals)
-  out = prim.bind(*vals, axis_name=axis_name, axis_index_groups=axis_index_groups)
-  return out, False
+  reduced_vals = [reducer(x, [0]) if m else x for x, m in zip(vals, mapped)]
+  outs = prim.bind(*reduced_vals, axis_name=axis_name,
+                   axis_index_groups=axis_index_groups)
+  return outs, (False,) * len(vals)
 
 def _allreduce_translation_rule(prim, c, val, *, axis_name, axis_index_groups,
                                 axis_env, platform):
@@ -380,8 +381,8 @@ psum_p = core.Primitive('psum')
 psum_p.multiple_results = True
 psum_p.def_impl(partial(pxla.apply_parallel_primitive, psum_p))
 psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
-pxla.split_axis_rules[psum_p] = \
-    partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
+pxla.soft_pmap_rules[psum_p] = \
+    partial(_allreduce_soft_pmap_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
 ad.deflinear(psum_p, _psum_transpose_rule)
@@ -392,16 +393,16 @@ pmax_p = core.Primitive('pmax')
 pmax_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
-pxla.split_axis_rules[pmax_p] = \
-    partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
+# pxla.split_axis_rules[pmax_p] = \
+#     partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
 
 
 pmin_p = core.Primitive('pmin')
 pmin_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
-pxla.split_axis_rules[pmin_p] = \
-    partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
+# pxla.split_axis_rules[pmin_p] = \
+#     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 
 
 def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
@@ -467,7 +468,6 @@ def _moveaxis(src, dst, x):
 all_to_all_p = core.Primitive('all_to_all')
 all_to_all_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
-pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 
@@ -640,8 +640,6 @@ _defbroadcasting(lax.min_p)
 _defbroadcasting(lax.shift_left_p)
 _defbroadcasting(lax.shift_right_arithmetic_p)
 _defbroadcasting(lax.shift_right_logical_p)
-
-_defidentity(lax.tie_in_p)
 
 _defreducer(lax.reduce_sum_p, psum)
 _defreducer(lax.reduce_max_p, pmax)
@@ -949,3 +947,20 @@ parallel.papply_primitive_rules[lax.broadcast_in_dim_p] = \
 parallel.papply_primitive_rules[lax.pad_p] = _pad_papply_rule
 parallel.papply_primitive_rules[lax.slice_p] = _slice_papply_rule
 parallel.papply_primitive_rules[lax.gather_p] = _gather_papply_rule
+
+
+@config.omnistaging_enablers.append
+def omnistaging_enabler() -> None:
+  # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
+  # tracing time.
+  @psum_p.def_custom_bind
+  def psum_bind(*args, axis_name, **params):
+    if len(args) == 1 and not isinstance(args[0], core.Tracer):
+      x, = args
+    if all(not isinstance(x, core.Tracer) for x in args):
+      if type(axis_name) is tuple:
+        size = prod([core.axis_frame(name).size for name in axis_name])  # type: ignore
+      else:
+        size = core.axis_frame(axis_name).size  # type: ignore
+      return tuple(size * x for x in args)
+    return core.Primitive.bind(psum_p, *args, axis_name=axis_name, **params)

@@ -170,11 +170,13 @@ class CoreTest(jtu.JaxTestCase):
     nodes_equal = tree_multimap(operator.eq, tree, tree2)
     assert tree_reduce(operator.and_, nodes_equal)
 
-  @parameterized.parameters(test_specs)
+  @parameterized.named_parameters(
+      (str(i), *spec) for i, spec in enumerate(test_specs))
   def test_jit(self, f, args):
     jtu.check_close(jit(f)(*args), f(*args))
 
-  @parameterized.parameters(test_specs)
+  @parameterized.named_parameters(
+      (str(i), *spec) for i, spec in enumerate(test_specs))
   def test_jvp(self, f, args):
     jtu.check_jvp(f, partial(jvp, f), args, rtol={np.float32: 3e-2})
 
@@ -191,7 +193,8 @@ class CoreTest(jtu.JaxTestCase):
     jtu.check_jvp(f, partial(jvp_unlinearized, f), args,
                   rtol={np.float32: 3e-2})
 
-  @parameterized.parameters(test_specs)
+  @parameterized.named_parameters(
+      (str(i), *spec) for i, spec in enumerate(test_specs))
   def test_vjp(self, f, args):
     jtu.check_vjp(f, partial(vjp, f), args,
                   rtol={np.float32: 3e-1, np.float64: 1e-5},
@@ -249,7 +252,7 @@ class CoreTest(jtu.JaxTestCase):
     assert foo2(*args) == expected_output
     assert foo3(*args) == foo(*args)
 
-  def test_jvp_2(self):
+  def test_jvp_repeated_fwd(self):
     d_sin = fwd_deriv(jnp.sin)
     d2_sin = fwd_deriv(d_sin)
     d3_sin = fwd_deriv(d2_sin)
@@ -305,6 +308,9 @@ class CoreTest(jtu.JaxTestCase):
         newsym(core.abstract_unit), newsym(core.abstract_unit))
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
+
+
+class JaxprTypeChecks(jtu.JaxTestCase):
 
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr

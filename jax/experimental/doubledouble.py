@@ -27,6 +27,7 @@ import numpy as np
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax.api_util import flatten_fun_nokwargs
 from jax import ad_util, core, lax, xla
+from jax.lax import lax as lax_internal
 from jax.util import unzip2, wrap_name
 import jax.numpy as jnp
 import jax.linear_util as lu
@@ -273,7 +274,10 @@ def _def_passthrough(prim, argnums=(0,)):
 _def_passthrough(lax.select_p, (0, 1, 2))
 _def_passthrough(lax.broadcast_in_dim_p)
 _def_passthrough(xla.device_put_p)
-_def_passthrough(lax.tie_in_p, (0, 1))
+try:
+  _def_passthrough(lax_internal.tie_in_p, (0, 1))
+except AttributeError:
+  pass
 
 
 class _DoubleDouble:

@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, Sequence, Union
 import jax.numpy as jnp
 
 from jax import core
-from jax.core import Trace, Tracer, new_master
+from jax.core import Trace, Tracer
 from jax import linear_util as lu
 from jax.util import partial, safe_map
 
@@ -103,7 +103,7 @@ def callback_subtrace(master, *in_vals, **params):
 
 @lu.transformation
 def _callback_fun(callback, strip_calls, *in_vals, **params):
-  with new_master(CallbackTrace) as master:
+  with core.new_master(CallbackTrace) as master:
     master.callback = callback # NOTE: Is this OK?
     master.strip_calls = strip_calls
     out_vals = yield (master,) + in_vals, params
