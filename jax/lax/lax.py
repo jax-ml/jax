@@ -1020,16 +1020,17 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   else:
     return transpose_p.bind(operand, permutation=permutation)
 
-def reduce(operand: Union[Array, Tuple[Array]], init_value: Union[Array, Tuple[Array]],
+def reduce(operand: Union[Array, Sequence[Array]],
+           init_value: Union[Array, Sequence[Array]],
            computation: Callable, dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
   """
-  return_tuple = isinstance(operand, tuple)
+  return_tuple = isinstance(operand, Sequence)
   if not return_tuple:
     operand = (operand,)
-  if not isinstance(init_value, tuple):
+  if not isinstance(init_value, Sequence):
     init_value = (init_value,)
   if len(operand) != len(init_value):
     raise TypeError("reduce: length of operands tuple must match length of init_values tuple; got "
