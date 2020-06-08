@@ -560,7 +560,7 @@ def tracers_to_jaxpr(
     recipe = t.recipe
     if isinstance(recipe, JaxprEqnRecipe):
       if recipe.eqn_id not in processed_eqn_ids:
-        eqns.append(recipe_to_eqn(lambda: newvar(core.abstract_unit), getvar, recipe))
+        eqns.append(recipe_to_eqn(lambda: core.dropvar, getvar, recipe))
         processed_eqn_ids.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
