@@ -1032,7 +1032,7 @@ def reduce(operand: Union[Array, Tuple[Array]], init_value: Union[Array, Tuple[A
   if not isinstance(init_value, tuple):
     init_value = (init_value,)
   if len(operand) != len(init_value):
-    raise TypeError("reduce: length of operand must match length of init_value; got "
+    raise TypeError("reduce: length of operands tuple must match length of init_values tuple; got "
                     f"len(operand)={len(operand)}, len(init_value)={len(init_value)}.")
 
   monoid_reducer = _get_monoid_reducer(computation, init_value[0])
