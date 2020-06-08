@@ -15,6 +15,7 @@
 
 import functools
 import itertools as it
+import re
 import types
 
 import numpy as onp
@@ -242,3 +243,27 @@ def wrap_name(name, transform_name):
 
 def extend_name_stack(stack, name=''):
   return stack + name + '/'
+
+# Workaround to avoid expanding type aliases. See:
+# https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
+# When building docs, enable `from __future__ import annotations` everywhere.
+# We cannot keep these in the source until we upgrade to Python 3.7.
+# To check that this is working as intended, open
+# https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.broadcast.html#jax.lax.broadcast
+# and you should see the type of the operand as `Array` not `Any`.
+_import_re = re.compile(r'^((__all__.*)|(import.*)|(from.*import.*))$', re.MULTILINE)
+def rewrite_future_annotations(text: str, add=True):
+  to_insert = "from __future__ import annotations"
+  found = re.search(_import_re, text)
+  if found:  # Found an import
+    if found.group(1) == to_insert:  # It is our import
+      if not add:
+        return text[0:found.start(1)] + text[found.end(1)+1:]
+    else:
+      if add:
+        return text[0:found.start(1)] + to_insert + "\n" + text[found.start(1):]
+  else:  # No import in the file
+    if add:
+      return to_insert + "\n" + text
+
+  return text

@@ -26,29 +26,36 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
+import atexit
 import os
+import re
 import sys
 import typing
 
 sys.path.insert(0, os.path.abspath('..'))
+from jax import util
 
-
-# Workaround to avoid expanding type aliases. See:
-# https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
-
-# When building docs, enable `from __future__ import annotations` everywhere.
-def _rewrite(p):
-  with open(p) as f:
-    contents = f.read()
-  with open(p, 'w') as f:
-    f.write('from __future__ import annotations\n')
-    f.write(contents)
-
-if 'READTHEDOCS' in os.environ:
+# Workaround to avoid expanding type aliases.
+# See comment for util.py:rewrite_future_annotations.
+def _rewrite_all(add=True):
+  print(f'{"Adding" if add else "Removing"} annotation support')
   for path, dirs, files in os.walk('../jax/'):
     for file in files:
       if file.endswith('.py'):
-        _rewrite(os.path.abspath(os.path.join(path, file)))
+        # Ignore some files, these result in Sphinx Python syntax errors?
+        if file in ['functions.py', 'lax_parallel.py', 'linalg.py',
+                    'special.py', 'random.py']:
+          continue
+        full_path = os.path.abspath(os.path.join(path, file))
+        with open(full_path, 'r') as f:
+          contents = f.read()
+        contents = util.rewrite_future_annotations(contents, add=add)
+        with open(full_path, 'w') as f:
+          f.write(contents)
+
+if 'READTHEDOCS' in os.environ:
+  _rewrite_all(True)
+  atexit.register(lambda: _rewrite_all(False))
 
 # Monkey patch for the typing module to prevent it from expanding type aliases.
 typing.get_type_hints = lambda obj, *unused: obj.__annotations__

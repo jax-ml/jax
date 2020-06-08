@@ -16,6 +16,7 @@ from absl.testing import absltest
 
 from jax import linear_util as lu
 from jax import test_util as jtu
+from jax import util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -62,6 +63,32 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual((2, 4), scaled_positional)
     self.assertEqual(dict(three=6, four=8), scaled_kwargs)
     self.assertEqual(2, out_thunk())
+
+  def test_rewrite_future_annotations(self):
+    look_for = "from __future__ import annotations"
+    text = """
+# Some comments
+import jax
+"""
+    text1 = util.rewrite_future_annotations(text, add=True)
+    self.assertIn(look_for, text1)
+    # Inserting again does not make a difference
+    text11 = util.rewrite_future_annotations(text1, add=True)
+    self.assertEqual(text1, text11)
+    # Removing brings us back
+    text2 = util.rewrite_future_annotations(text1, add=False)
+    self.assertEqual(text, text2)
+    # Removing again makes no difference
+    text22 = util.rewrite_future_annotations(text1, add=False)
+    self.assertEqual(text2, text22)
+
+    text_no_imports = """
+Some text with no imports, and no newline"""
+    text1 = util.rewrite_future_annotations(text_no_imports, add=True)
+    self.assertIn(look_for, text1)
+    # Removing brings us back
+    text2 = util.rewrite_future_annotations(text1, add=False)
+    self.assertEqual(text_no_imports, text2)
 
 
 if __name__ == "__main__":
