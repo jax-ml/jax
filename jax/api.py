@@ -1905,7 +1905,7 @@ def defjvp(fun, *jvprules):
     ans = fun(*primals)
     tangents_out = [rule(t, ans, *primals) for rule, t in zip(jvprules, tangents)
                     if rule is not None and type(t) is not ad_util.Zero]
-    return ans, functools.reduce(ad.add_tangents, tangents_out, ad_util.zero)
+    return ans, functools.reduce(ad.add_tangents, tangents_out, ad_util.Zero.from_value(ans))
   defjvp_all(fun, custom_jvp)
 
 def defvjp_all(fun, custom_vjp):
