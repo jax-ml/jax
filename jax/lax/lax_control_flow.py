@@ -776,7 +776,7 @@ def _cond_batching_rule(args, dims, branches, linear):
     return out, out_dims
 
 def _cond_jvp(primals, tangents, branches, linear):
-  nonzeros = [type(t) is not ad_util.zero for t in tangents]
+  nonzeros = [type(t) is not ad_util.Zero for t in tangents]
 
   index_nz, *ops_nz = nonzeros
   assert index_nz is False
