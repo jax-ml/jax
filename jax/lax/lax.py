@@ -2131,7 +2131,7 @@ def _sub_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases
   # we instantiate zeros for convenience, it doesn't always hold.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  return [t, neg(t) if t is not ad_util.zero else ad_util.zero]
+  return [t, neg(t) if type(t) is not ad_util.Zero else ad_util.Zero]
 
 sub_p = standard_naryop([_num, _num], 'sub')
 ad.defjvp(sub_p,
@@ -2145,7 +2145,7 @@ ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
-  res = ad_util.zero if cotangent is ad_util.zero else div(cotangent, y)
+  res = ad_util.Zero if type(cotangent) is ad_util.Zero else div(cotangent, y)
   return res, None
 div_p = standard_naryop([_num, _num], 'div')
 ad.defjvp(div_p,
@@ -2401,7 +2401,7 @@ def _conv_general_dilated_transpose_rhs(
   assert type(dimension_numbers) is ConvDimensionNumbers
   if onp.size(g) == 0:
     # Avoids forming degenerate convolutions where the RHS has spatial size 0.
-    return ad_util.zero
+    return ad_util.Zero
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
   assert batch_group_count == 1 or feature_group_count == 1
@@ -2871,8 +2871,8 @@ def _concatenate_translation_rule(c, *operands, **kwargs):
 def _concatenate_transpose_rule(t, *operands, dimension):
   operand_shapes = [o.aval.shape if ad.is_undefined_primal(o) else o.shape
                     for o in operands]
-  if t is ad_util.zero:
-    return [ad_util.zero if ad.is_undefined_primal(o) else None for o in operands]
+  if t is ad_util.Zero:
+    return ad_util.Zero
   else:
     limit_points = onp.cumsum([shape[dimension] for shape in operand_shapes])
     starts = onp.zeros((len(operands), t.ndim), dtype=int)
@@ -2916,9 +2916,8 @@ def _pad_shape_rule(operand, padding_value, *, padding_config):
   return tuple(out_shape)
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
-  if t is ad_util.zero:
-    return [ad_util.zero if ad.is_undefined_primal(operand) else None,
-            ad_util.zero if ad.is_undefined_primal(padding_value) else None]
+  if t is ad_util.Zero:
+    return ad_util.Zero
 
   lo, hi, interior = zip(*padding_config)
   total = lambda x: _reduce_sum(x, list(range(t.ndim)))
@@ -3250,10 +3249,8 @@ def _select_dtype_rule(pred, on_true, on_false):
 
 def _select_transpose_rule(t, pred, on_true, on_false):
   assert not ad.is_undefined_primal(pred)
-  if t is ad_util.zero:
-    return [None,
-            ad_util.zero if ad.is_undefined_primal(on_true) else None,
-            ad_util.zero if ad.is_undefined_primal(on_false) else None]
+  if type(t) is ad_util.Zero:
+    return ad_util.Zero
   else:
     zeros = full_like(t, 0)
     return [None,
@@ -3442,9 +3439,9 @@ def _dynamic_slice_translation_rule(c, operand, *start_indices, slice_sizes):
   return xops.DynamicSlice(operand, start_indices, slice_sizes)
 
 def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
-  tangent_out = ad_util.zero
-  if tangents[0] is not ad_util.zero:
-    tangent_out = dynamic_slice(tangents[0], primals[1:], slice_sizes)
+  tangent_out = tangents[0]
+  if type(tangent_out) is not ad_util.Zero:
+    tangent_out = dynamic_slice(tangent_out, primals[1:], slice_sizes)
   return dynamic_slice(primals[0], primals[1:], slice_sizes), tangent_out
 
 def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
@@ -3521,11 +3518,11 @@ def _dynamic_update_slice_jvp(primals, tangents):
   start_indices = primals[2:]
   g_operand, g_update = tangents[:2]
   val_out = dynamic_update_slice(operand, update, start_indices)
-  if g_operand is ad_util.zero and g_update is ad_util.zero:
-    tangent_out = ad_util.zero
+  if type(g_operand) is ad_util.Zero and type(g_update) is ad_util.Zero:
+    tangent_out = ad_util.Zero.from_value(val_out)
   else:
-    g_operand = ad.instantiate_zeros(operand, g_operand)
-    g_update = ad.instantiate_zeros(update, g_update)
+    g_operand = ad.instantiate_zeros(g_operand)
+    g_update = ad.instantiate_zeros(g_update)
     tangent_out = dynamic_update_slice(g_operand, g_update, start_indices)
   return val_out, tangent_out
 
@@ -3617,14 +3614,14 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
                           slice_sizes):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
-  if t is ad_util.zero:
-    return [ad_util.zero, ad_util.zero]
+  if type(t) is ad_util.Zero:
+    return ad_util.Zero
   zeros = full(operand_shape, tie_in(t, _zero(t)))
   scatter_dnums = ScatterDimensionNumbers(
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
     scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
-  return [scatter_add(zeros, start_indices, t, scatter_dnums), ad_util.zero]
+  return [scatter_add(zeros, start_indices, t, scatter_dnums), ad_util.Zero.from_value(start_indices)]
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                           slice_sizes):
@@ -3727,11 +3724,11 @@ def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
   val_out = scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dimension_numbers)
-  if g_operand is ad_util.zero and g_updates is ad_util.zero:
-    tangent_out = ad_util.zero
+  if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
+    tangent_out = ad_util.Zero.from_value(val_out)
   else:
-    g_operand = ad.instantiate_zeros(operand, g_operand)
-    g_updates = ad.instantiate_zeros(updates, g_updates)
+    g_operand = ad.instantiate_zeros(g_operand)
+    g_updates = ad.instantiate_zeros(g_updates)
     tangent_out = scatter_add_p.bind(
         g_operand, scatter_indices, g_updates, update_jaxpr=update_jaxpr,
         update_consts=update_consts, dimension_numbers=dimension_numbers)
@@ -3744,8 +3741,8 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
     updates_shape = updates.aval.shape
   else:
     updates_shape = updates.shape
-  if t is ad_util.zero:
-    return [ad_util.zero, None, ad_util.zero]
+  if type(t) is ad_util.Zero:
+    return ad_util.Zero
 
   operand_t = update_t = None
   if ad.is_undefined_primal(operand):
@@ -3775,8 +3772,8 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
     updates_shape = updates.aval.shape
   else:
     updates_shape = updates.shape
-  if t is ad_util.zero:
-    return [ad_util.zero, None, ad_util.zero]
+  if type(t) is ad_util.Zero:
+    return ad_util.Zero
 
   operand_t = update_t = None
   if ad.is_undefined_primal(operand):
@@ -3884,11 +3881,11 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=scatter_dnums)
 
-  if g_operand is ad_util.zero and g_updates is ad_util.zero:
-    tangent_out = ad_util.zero
+  if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
+    tangent_out = ad_util.Zero.from_value(val_out)
   else:
-    g_operand = ad.instantiate_zeros(operand, g_operand)
-    g_updates = ad.instantiate_zeros(updates, g_updates)
+    g_operand = ad.instantiate_zeros(g_operand)
+    g_updates = ad.instantiate_zeros(g_updates)
 
     # gather_dnums and slice_sizes define the gather op that is the inverse of
     # the scatter op specified by scatter_dnums
@@ -3986,15 +3983,14 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   g_operand, g_scatter_indices, g_updates = tangents
   dnums = dimension_numbers
 
-  if g_operand is ad_util.zero and g_updates is ad_util.zero:
+  if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     val_out = scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
       update_consts=update_consts, dimension_numbers=dnums)
-    tangent_out = ad_util.zero
-    return val_out, tangent_out
+    return val_out, ad_util.Zero.from_value(val_out)
 
-  g_operand = ad.instantiate_zeros(operand, g_operand)
-  g_updates = ad.instantiate_zeros(updates, g_updates)
+  g_operand = ad.instantiate_zeros(g_operand)
+  g_updates = ad.instantiate_zeros(g_updates)
 
   # If there are overlapping indices in the scatter, it is unspecified which
   # update "wins". So we use the following perhaps surprising scheme:
@@ -4507,8 +4503,8 @@ def _select_and_scatter_add_jvp(
       source, operand, select_prim, window_dimensions, window_strides,
       padding)
   del g_operand
-  if g_source is ad_util.zero:
-    tangent_out = ad_util.zero
+  if type(g_source) is ad_util.Zero:
+    tangent_out = ad_util.Zero.from_value(val_out)
   else:
     tangent_out = _select_and_scatter_add(
         g_source, operand, select_prim, window_dimensions,
@@ -4693,8 +4689,8 @@ def _select_and_gather_add_jvp(
       source, operand, select_prim, window_dimensions, window_strides,
       padding)
   del g_operand
-  if g_source is ad_util.zero:
-    tangent_out = ad_util.zero
+  if type(g_source) is ad_util.Zero:
+    tangent_out = ad_util.Zero.from_value(val_out)
   else:
     tangent_out = _select_and_gather_add(
         g_source, operand, select_prim, window_dimensions,
@@ -4932,8 +4928,7 @@ def _sort_jvp(primals, tangents, *, dimension):
   primals = sort_p.bind(*(primals + (iotas[dimension],)), dimension=dimension)
   idx = tuple(primals[-1] if i == dimension else iotas[i]
               for i in range(len(shape)))
-  tangents_out = tuple(ad_util.zero if t is ad_util.zero else t[idx]
-                       for t in tangents)
+  tangents_out = tuple(t if type(t) is ad_util.Zero else t[idx] for t in tangents)
   return tuple(primals[:-1]), tangents_out
 
 def _sort_batch_rule(batched_args, batch_dims, *, dimension):
@@ -4978,8 +4973,8 @@ def _top_k_jvp(primals, tangents, *, k):
   operand, = primals
   tangent, = tangents
   primals_out = top_k(operand, k)
-  if tangent is ad_util.zero:
-    tangents_out = (ad_util.zero, ad_util.zero)
+  if type(tangent) is ad_util.Zero:
+    tangent_out = ad_util.Zero.from_value(primals_out[0])
   else:
     _, k_idxs = primals_out
     idx_shape = k_idxs.shape
@@ -4998,9 +4993,8 @@ def _top_k_jvp(primals, tangents, *, k):
       offset_dims=(),
       collapsed_slice_dims=tuple(range(rank)),
       start_index_map=tuple(range(rank)))
-    tangents_out = (gather(tangent, gather_indices, dnums, slice_sizes),
-                    ad_util.zero)
-  return primals_out, tangents_out
+    tangent_out = gather(tangent, gather_indices, dnums, slice_sizes)
+  return primals_out, (tangent_out, ad_util.Zero.from_value(primals_out[1]))
 
 def _top_k_batch_rule(batched_args, batch_dims, *, k):
   operand, = batched_args
@@ -5022,8 +5016,12 @@ xla.translations[top_k_p] = partial(standard_translate, 'top_k')
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
-def _tie_in_transpose_rule(t):
-  return [ad_util.zero, t]
+def _tie_in_transpose_rule(t, x, y):
+  # TODO(apaszke): What to do about this?
+  if ad.is_undefined_primal(x):
+    return [ad_util.Zero(x.aval), t]
+  else:
+    return [ad_util.Zero.from_value(x), t]
 
 def _tie_in_batch_rule(batched_args, batch_dims):
   y = tie_in(*batched_args)
@@ -5039,7 +5037,7 @@ tie_in_p = Primitive('tie_in')
 tie_in_p.def_impl(_tie_in_impl)
 tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
 xla.translations[tie_in_p] = lambda c, x, y: y
-ad.deflinear(tie_in_p, _tie_in_transpose_rule)
+ad.deflinear2(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 
@@ -5047,7 +5045,7 @@ masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
-  return stop_gradient(x), ad_util.zero
+  return stop_gradient(x), ad_util.Zero.from_value(x)
 
 def _stop_gradient_batch_rule(batched_args, batch_dims):
   x, = batched_args

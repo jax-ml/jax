@@ -1027,7 +1027,7 @@ def _gamma_impl(key, a):
     samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
   else:
     samples = vmap(_gamma_one)(keys, alphas)
-  return jnp.reshape(samples, a_shape),
+  return jnp.reshape(samples, a_shape)
 
 def _gamma_batching_rule(batched_args, batch_dims):
     k, a = batched_args
@@ -1035,14 +1035,13 @@ def _gamma_batching_rule(batched_args, batch_dims):
     size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
     k = batching.bdim_at_front(k, bk, size)
     a = batching.bdim_at_front(a, ba, size)
-    return random_gamma_p.bind(k, a), (0,)
+    return random_gamma_p.bind(k, a), 0
 
 random_gamma_p = core.Primitive('random_gamma')
-random_gamma_p.multiple_results = True
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a: (abstract_arrays.raise_to_shaped(a),))
-ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_grad(ans[0], a),))
-xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl)
+random_gamma_p.def_abstract_eval(lambda key, a: abstract_arrays.raise_to_shaped(a))
+ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
+xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, multiple_results=False)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key, a, shape=None, dtype=np.float64):
@@ -1080,7 +1079,7 @@ def _gamma(key, a, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  return random_gamma_p.bind(key, a)[0]
+  return random_gamma_p.bind(key, a)
 
 
 @partial(jit, static_argnums=(2, 3, 4))

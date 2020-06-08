@@ -367,8 +367,8 @@ def triangular_solve_transpose_rule(
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
   assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
-  if cotangent is ad_util.zero:
-    cotangent_b = ad_util.zero
+  if type(cotangent) is ad_util.Zero:
+    cotangent_b = ad_util.Zero(b.aval)
   else:
     cotangent_b = triangular_solve(a, cotangent, left_side, lower,
                                    not transpose_a, conjugate_a, unit_diagonal)
@@ -620,7 +620,7 @@ def _lu_jvp_rule(primals, tangents):
   l_dot = jnp.matmul(l, jnp.tril(lau, -1))
   u_dot = jnp.matmul(jnp.triu(lau), u)
   lu_dot = l_dot + u_dot
-  return (lu, pivots), (lu_dot, ad_util.zero)
+  return (lu, pivots), (lu_dot, ad_util.Zero.from_value(pivots))
 
 
 def _lu_batching_rule(batched_args, batch_dims):

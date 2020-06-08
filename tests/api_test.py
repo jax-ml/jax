@@ -1763,6 +1763,12 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       g(jnp.ones((1, 1)), b=1)
 
+  def test_vmap_unmapped_last(self):
+    @partial(jax.vmap, out_axes=jax.interpreters.batching.last)
+    def f(x):
+      return np.zeros((2,))
+    f(np.zeros((5,)))
+
 
 class JaxprTest(jtu.JaxTestCase):
 

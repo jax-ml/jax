@@ -23,7 +23,7 @@ from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
 from .util import safe_zip, safe_map, unzip2, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
-from .ad_util import zero, stop_gradient_p
+from .ad_util import Zero, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
@@ -79,7 +79,7 @@ def sum_tangents(x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
 def zeros_like_pytree(x):
-  return tree_map(lambda _: zero, x)
+  return tree_map(Zero.from_value, x)
 
 def stop_gradient(x):
   return tree_map(_stop_gradient, x)
@@ -303,7 +303,7 @@ custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 
 def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk):
   jvp_jaxpr = jvp_jaxpr_thunk()
-  tangents = map(ad.instantiate_zeros, primals, tangents)
+  tangents = map(ad.instantiate_zeros, tangents)
   outs = core.jaxpr_as_fun(jvp_jaxpr)(*primals, *tangents)
   return split_list(outs, [len(outs) // 2])
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
@@ -545,7 +545,7 @@ custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
 
 def _custom_vjp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, fwd_jaxpr_thunk,
                                bwd, out_trees):
-  tangents = map(ad.instantiate_zeros, primals, tangents)
+  tangents = map(ad.instantiate_zeros, tangents)
   fwd_jaxpr = fwd_jaxpr_thunk()
   out_tree, res_tree = out_trees()
   res_and_primals_out = core.jaxpr_as_fun(fwd_jaxpr)(*primals)

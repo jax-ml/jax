@@ -1880,11 +1880,11 @@ def defjvp_all(fun, custom_jvp):
     num_consts, in_tree = params['num_consts'], params['in_tree']
     _, args_flat = split_list(primals, [num_consts])
     consts_dot, args_dot_flat = split_list(tangents, [num_consts])
-    if not all(t is ad_util.zero for t in consts_dot):
+    if not all(type(t) is ad_util.Zero for t in consts_dot):
       msg = ("Detected differentiation with respect to closed-over values with "
              "custom JVP rule, which isn't supported.")
       raise ValueError(msg)
-    args_dot_flat = map(ad.instantiate_zeros, args_flat, args_dot_flat)
+    args_dot_flat = map(ad.instantiate_zeros, args_dot_flat)
     args = tree_unflatten(in_tree, args_flat)
     args_dot = tree_unflatten(in_tree, args_dot_flat)
     out, out_dot = custom_jvp(args, args_dot)
@@ -1904,7 +1904,7 @@ def defjvp(fun, *jvprules):
   def custom_jvp(primals, tangents):
     ans = fun(*primals)
     tangents_out = [rule(t, ans, *primals) for rule, t in zip(jvprules, tangents)
-                    if rule is not None and t is not ad_util.zero]
+                    if rule is not None and type(t) is not ad_util.Zero]
     return ans, functools.reduce(ad.add_tangents, tangents_out, ad_util.zero)
   defjvp_all(fun, custom_jvp)
 
