@@ -1875,7 +1875,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda a, w: jnp.histogram_bin_edges(a, bins=bins, range=range,
                                                    weights=_weights(w))
     args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
-    tol = {jnp.bfloat16: 2E-2, np.float16: 1E-2}
+    tol = {jnp.bfloat16: 2e-2, np.float16: 1e-2, np.float64: 1e-14}
     # linspace() compares poorly to numpy when using bfloat16
     if dtype != jnp.bfloat16:
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
@@ -3650,7 +3650,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda: jnp.zeros(1.))
     self.assertRaisesRegex(
         TypeError,
-        "Shapes must be 1D sequences of concrete values of integer type.*\n"
+        r"Shapes must be 1D sequences of concrete values of integer type.*\n"
         "If using `jit`, try using `static_argnums` or applying `jit` to smaller subfunctions.",
         lambda: api.jit(jnp.zeros)(2))
 

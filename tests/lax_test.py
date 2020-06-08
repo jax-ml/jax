@@ -1695,10 +1695,11 @@ class LaxTest(jtu.JaxTestCase):
                                        (onp.int32(1), onp.int16(2))))
 
   def test_tie_in_error(self):
-    with core.skipping_checks():
-      with self.assertRaisesRegex(
-          TypeError, ".* of type .*tuple.* is not a valid JAX type"):
-        api.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
+    raise SkipTest("test no longer needed after trivializing tie_in")
+    # with core.skipping_checks():
+    #   with self.assertRaisesRegex(
+    #       TypeError, ".* of type .*tuple.* is not a valid JAX type"):
+    #     api.make_jaxpr(lambda x: lax.tie_in((x, x), 1))(1.)
 
   def test_primitive_jaxtype_error(self):
     with core.skipping_checks():

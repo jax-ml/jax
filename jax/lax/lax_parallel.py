@@ -20,6 +20,7 @@ import collections
 import numpy as onp
 
 from jax import core
+from jax.core import axis_index
 from jax import ad_util
 from jax import dtypes
 from jax import tree_util
@@ -31,8 +32,6 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
-
-from jax.interpreters.pxla import axis_index
 
 xops = xc.ops
 
@@ -289,33 +288,39 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 
 ### parallel primitives
 
-def standard_pmap_primitive(name, multiple_results=False):
-  prim = core.Primitive(name)
-  prim.multiple_results = multiple_results
-  prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
-  prim.def_abstract_eval(lambda x, *args, **params: x)
-  return prim
-
-
-def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
-                               axis_index_groups):
-  assert tuple(which_mapped) == (True,)
+def _allreduce_soft_pmap_rule(prim, reducer, vals, mapped, chunk_size,
+                              *, axis_name, axis_index_groups):
   if axis_index_groups is not None:
     raise NotImplementedError("soft_pmap does not yet support axis_index_groups")
-  vals = (reducer(x, [0]) for x in vals)
-  return prim.bind(*vals, axis_name=axis_name), False
+  reduced_vals = [reducer(x, [0]) if m else x for x, m in zip(vals, mapped)]
+  outs = prim.bind(*reduced_vals, axis_name=axis_name,
+                   axis_index_groups=axis_index_groups)
+  return outs, (False,) * len(vals)
 
-def _allreduce_translation_rule(prim, c, val, replica_groups, platform=None):
+def _allreduce_translation_rule(prim, c, val, *, axis_name, axis_index_groups,
+                                axis_env, platform):
+  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
   dtype = c.get_shape(val).numpy_dtype()
   scalar = ShapedArray((), dtype)
   computation = xla.primitive_subcomputation(prim, scalar, scalar)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
   return xops.AllReduce(val, computation, replica_groups_protos, None, None)
 
+def _replica_groups(axis_env, axis_name, axis_index_groups):
+  replica_groups = xla.axis_groups(axis_env, axis_name)
+  if axis_index_groups is not None:
+    replica_groups = [[axis_group[i] for i in axis_index_group]
+                      for axis_group in replica_groups
+                      for axis_index_group in axis_index_groups]
+  return replica_groups
+
 # psum translation rule has special handling for complex dtypes
-def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
+def _psum_translation_rule(c, *args, axis_name, axis_index_groups, axis_env,
+                           platform):
   if platform in ("cpu", "tpu"):
-    return _notuple_psum_translation_rule(c, *args, replica_groups=replica_groups)
+    return _notuple_psum_translation_rule(c, *args, axis_name=axis_name,
+                                          axis_index_groups=axis_index_groups,
+                                          axis_env=axis_env, platform=platform)
 
   # XLA's tuple all-reduce doesn't support different dtypes in the same
   # allreduce. Instead, we perform once all-reduce for each argument input type.
@@ -327,6 +332,7 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
 
   # The outputs, in the original argument order.
   out = [None] * len(args)
+  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
   for dtype, (indices, dtype_args) in sorted(args_by_type.items()):
     is_complex = dtypes.issubdtype(dtype, onp.complexfloating)
@@ -352,10 +358,12 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
 # cross-task communication either.
 # TODO(b/155446630): An XLA:TPU optimization pass also doesn't support
 # tuple all-reduce yet. Meanwhile, rely on deterministic compiler behavior.
-def _notuple_psum_translation_rule(c, *args, replica_groups):
+def _notuple_psum_translation_rule(c, *args, axis_name, axis_env,
+                                   axis_index_groups, platform):
   def _translate(val):
     psum = partial(_allreduce_translation_rule, lax.add_p, c,
-                   replica_groups=replica_groups)
+                   axis_name=axis_name, axis_env=axis_env,
+                   axis_index_groups=axis_index_groups, platform=platform)
     dtype = c.get_shape(val).numpy_dtype()
     if dtypes.issubdtype(dtype, onp.complexfloating):
       return xops.Complex(psum(xops.Real(val)), psum(xops.Imag(val)))
@@ -363,33 +371,48 @@ def _notuple_psum_translation_rule(c, *args, replica_groups):
       return psum(val)
   return xops.Tuple(c, list(map(_translate, args)))
 
-psum_p = standard_pmap_primitive('psum', multiple_results=True)
-psum_p.def_abstract_eval(
-    lambda *args, **params: tuple(map(raise_to_shaped, args)))
-pxla.split_axis_rules[psum_p] = \
-    partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
+psum_p = core.Primitive('psum')
+psum_p.multiple_results = True
+psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
+pxla.soft_pmap_rules[psum_p] = \
+    partial(_allreduce_soft_pmap_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
-pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
 ad.deflinear(psum_p, lambda ts, axis_name, axis_index_groups: psum_p.bind(
     *ts, axis_name=axis_name, axis_index_groups=axis_index_groups))
 pxla.multi_host_supported_collectives.add(psum_p)
 
+# We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
+# tracing time.
+@psum_p.def_custom_bind
+def psum_bind(*args, axis_name, **params):
+  if len(args) == 1 and not isinstance(args[0], core.Tracer):
+    x, = args
+    if type(axis_name) is tuple:
+      size = prod([core.axis_frame(name).size for name in axis_name])
+    else:
+      size = core.axis_frame(axis_name).size
+    return (size * x,)
+  return core.Primitive.bind(psum_p, *args, axis_name=axis_name, **params)
 
-pmax_p = standard_pmap_primitive('pmax')
+
+pmax_p = core.Primitive('pmax')
+pmax_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
-pxla.split_axis_rules[pmax_p] = \
-    partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
+# pxla.split_axis_rules[pmax_p] = \
+#     partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
 
 
-pmin_p = standard_pmap_primitive('pmin')
+pmin_p = core.Primitive('pmin')
+pmin_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
-pxla.split_axis_rules[pmin_p] = \
-    partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
+# pxla.split_axis_rules[pmin_p] = \
+#     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 
 
-def _ppermute_translation_rule(c, x, replica_groups, perm, platform=None):
+def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
+  replica_groups = _replica_groups(axis_env, axis_name, None)
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -407,15 +430,17 @@ def _ppermute_transpose_rule(t, perm, axis_name):
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
-ppermute_p = standard_pmap_primitive('ppermute')
+ppermute_p = core.Primitive('ppermute')
+ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups,
-                                 platform=None):
+def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
+                                 axis_env, platform):
   # Workaround for AllToAll not being implemented on CPU.
+  replica_groups = _replica_groups(axis_env, axis_name, None)
   if len(replica_groups[0]) == 1:
     return x
   else:
@@ -443,9 +468,10 @@ def _moveaxis(src, dst, x):
   perm.insert(dst, src)
   return lax.transpose(x, perm)
 
-all_to_all_p = standard_pmap_primitive('all_to_all')
+all_to_all_p = core.Primitive('all_to_all')
+all_to_all_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
-pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
+# pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
 
 ### papply rules
@@ -616,8 +642,6 @@ _defbroadcasting(lax.min_p)
 _defbroadcasting(lax.shift_left_p)
 _defbroadcasting(lax.shift_right_arithmetic_p)
 _defbroadcasting(lax.shift_right_logical_p)
-
-_defidentity(lax.tie_in_p)
 
 _defreducer(lax.reduce_sum_p, psum)
 _defreducer(lax.reduce_max_p, pmax)

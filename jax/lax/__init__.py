@@ -270,7 +270,6 @@ from .lax import (
   tanh,
   tanh_p,
   tie_in,
-  tie_in_p,
   top_k,
   top_k_p,
   transpose,
@@ -285,7 +284,7 @@ from .lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
                   _reduce_window_min, _reduce_window_prod,
                   _select_and_gather_add, _float, _complex, _input_dtype,
                   _const, _eq_meet, _broadcasting_select,
-                  _check_user_dtype_supported, _one, _const,
+                  _check_user_dtype_supported, _one, _zero, _const,
                   _upcast_fp16_for_computation, _broadcasting_shape_rule,
                   _eye, _tri, _delta, _ones, _zeros, _canonicalize_axis)
 from .lax_control_flow import (
@@ -324,5 +323,4 @@ from .lax_parallel import (
   psum,
   psum_p,
   pswapaxes,
-  standard_pmap_primitive,
 )

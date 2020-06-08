@@ -246,7 +246,6 @@ def wrap_binary_op(func):
 
 tf_impl: Dict[core.Primitive, Callable[..., Any]] = {}
 
-tf_impl[lax.tie_in_p] = lambda x, y: y
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
 tf_impl[xla.device_put_p] = lambda x, device=None: x

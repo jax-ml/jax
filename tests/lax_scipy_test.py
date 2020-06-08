@@ -72,7 +72,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("ndtr", 1, float_dtypes, jtu.rand_default, True),
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
-    op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
+    op_record("xlogy", 2, float_dtypes, jtu.rand_positive, True),
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
 ]
 

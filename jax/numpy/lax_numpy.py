@@ -42,10 +42,10 @@ from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags
-from ..interpreters.xla import (DeviceArray, device_put, array_result_handler,
-                                DeviceValue)
+from ..interpreters.xla import DeviceArray, DeviceValue
 from ..interpreters.masking import Poly
 from .. import lax
+from ..lax.lax import _device_put_raw
 from .. import ops
 from ..util import (partial, unzip2, prod as _prod,
                     subvals, safe_zip)
@@ -2146,10 +2146,6 @@ def _can_call_numpy_array(x):
   return _all(not isinstance(l, (core.Tracer, DeviceValue))
               for l in tree_leaves(x))
 
-def _device_put_raw(x):
-  aval = core.raise_to_shaped(core.get_aval(x))
-  return array_result_handler(None, aval)(device_put(x))
-
 
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):
@@ -3062,9 +3058,8 @@ def _argminmax(name, op, a, axis):
     raise ValueError("attempt to get {} of an empty sequence".format(name))
   shape = [1] * a.ndim
   shape[axis] = a.shape[axis]
-  idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
+  idxs = arange(a.shape[axis]).reshape(shape)
   maxval = iinfo(dtypes.canonicalize_dtype(idxs.dtype)).max
-  maxval = lax.tie_in(a, maxval)
   mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
   return min(mask_idxs, axis)
 
@@ -3282,7 +3277,6 @@ def _take_along_axis(arr, indices, axis):
       j += 1
     elif idx_shape[i] != 1:
       iota = lax.iota(_dtype(indices), out_shape[i])
-      iota = lax.tie_in(arr, iota)
       iota = lax.broadcast_in_dim(iota, gather_index_shape, (j,))
       gather_indices.append(iota)
       slice_sizes.append(1)

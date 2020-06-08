@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from jax import core
 from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
                    valid_jaxtype, raise_to_shaped, get_aval)
 from .tree_util import register_pytree_node
@@ -27,7 +28,10 @@ jaxval_adders = {}
 jaxval_adders[Unit] = lambda _, __: unit
 
 def add_jaxvals(x, y):
-  return add_jaxvals_p.bind(x, y)
+  if core.get_aval(x) is core.get_aval(y) is core.abstract_unit:
+    return core.unit
+  else:
+    return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p = Primitive('add_any')
 

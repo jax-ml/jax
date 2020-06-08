@@ -240,12 +240,10 @@ class JVPTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
-    try:
-      jvp = primitive_jvps[primitive]
-    except KeyError as err:
-      raise NotImplementedError(
-          "Forward-mode differentiation rule for '{}' not implemented"
-          .format(primitive)) from err
+    jvp = primitive_jvps.get(primitive)
+    if not jvp:
+      msg = f"Forward-mode differentiation rule for '{primitive}' not implemented"
+      raise NotImplementedError(msg)
     primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
     if primitive.multiple_results:
       return [JVPTracer(self, x, t) for x, t in zip(primal_out, tangent_out)]
@@ -255,52 +253,35 @@ class JVPTrace(Trace):
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
-    nonzero_tangents, in_tree_def = tree_flatten(tangents)
+    nonzero_tangents, tangent_tree_def = tree_flatten(tangents)
     f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master),
-                                    len(primals), in_tree_def)
-    name = params.get('name', f.__name__)
-    new_params = dict(params, name=wrap_name(name, 'jvp'))
-    if 'donated_invars' in new_params:
-      new_donated_invars = (*params['donated_invars'],
-                            *[m for m, t in zip(params['donated_invars'], tangents)
-                              if type(t) is not Zero])
-      new_params['donated_invars'] = tuple(new_donated_invars)
+                                    len(primals), tangent_tree_def)
+    nz_tangents = [type(t) is not Zero for t in tangents]
+    params = dict(params, name=wrap_name(params['name'], 'jvp'))
+    if isinstance(call_primitive, core.MapPrimitive):
+      mapped_invars = params['mapped_invars']
+      mapped_tangents = [m for m, nz in zip(mapped_invars, nz_tangents) if nz]
+      params = dict(params, mapped_invars=(*mapped_invars, *mapped_tangents))
+    update_params = call_param_updaters.get(call_primitive)
+    new_params = update_params(params, nz_tangents) if update_params else params
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
     primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
 
   def post_process_call(self, call_primitive, out_tracers, params):
     primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
-    out = primals + tangents
+    out, treedef = tree_flatten((primals, tangents))
     del primals, tangents
     master = self.master
     def todo(x):
-      n = len(x) // 2
-      primals, tangents = x[:n], x[n:]
+      primals, tangents = tree_unflatten(treedef, x)
       trace = JVPTrace(master, core.cur_sublevel())
       return map(partial(JVPTracer, trace), primals, tangents)
     return out, todo
 
-  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
-    # only differs from process_call in that it must update mapped_invars
-    # TODO de-duplicate code
-    assert map_primitive.multiple_results
-    primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
-    nonzero_tangents, in_tree_def = tree_flatten(tangents)
-    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master),
-                                    len(primals), in_tree_def)
-    new_name = wrap_name(params.get('name', f.__name__), 'jvp')
-    new_mapped_invars = (*params['mapped_invars'],
-                         *[m for m, t in zip(params['mapped_invars'], tangents)
-                           if type(t) is not Zero])
-    new_donated_invars = (*params['donated_invars'],
-                          *[m for m, t in zip(params['donated_invars'], tangents)
-                            if type(t) is not Zero])
-    new_params = dict(params, name=new_name, mapped_invars=new_mapped_invars,
-                      donated_invars=new_donated_invars)
-    result = map_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
-    primal_out, tangent_out = tree_unflatten(out_tree_def(), result)
-    return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
+  # The only difference between process_map and process_call is that
+  # the `mapped_invars` param must be updated; that's handled in process_call.
+  process_map = process_call
   post_process_map = post_process_call
 
   def process_custom_jvp_call(self, _, __, f_jvp, tracers):
@@ -362,8 +343,11 @@ def _primal_tangent_shapes_match(primal, tangent):
     tangent_aval = raise_to_shaped(get_aval(tangent))
     assert primal_aval == tangent_aval
 
-# -------------------- Primitives --------------------
+call_param_updaters: Dict[core.Primitive, Callable] = {}
+call_transpose_param_updaters: Dict[core.Primitive, Callable] = {}
 
+
+# -------------------- Primitives --------------------
 
 primitive_jvps : Dict[core.Primitive, Callable] = {}
 
@@ -489,13 +473,13 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  params = dict(params, name=wrap_name(params['name'], 'transpose'))
-  if 'donated_invars' in params:
-    new_donated_invars = (*[d for d, x in zip(params['donated_invars'], args)
-                            if not is_undefined_primal(x)],
-                          *[False for x in ct if type(x) is not Zero])
-    params['donated_invars'] = tuple(new_donated_invars)
-  out_flat = primitive.bind(fun, *all_args, **params)
+  new_params = dict(params, name=wrap_name(params['name'], 'transpose'))
+  update_params = call_transpose_param_updaters.get(primitive)
+  if update_params:
+    undef_primals = [is_undefined_primal(x) for x in args]
+    nonzero_cts = [type(x) is not Zero for x in ct]
+    new_params = update_params(new_params, undef_primals, nonzero_cts)
+  out_flat = primitive.bind(fun, *all_args, **new_params)
   return tree_unflatten(out_tree(), out_flat)
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 
@@ -504,15 +488,12 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   # backward_pass can only transpose linear computations, but the call_jaxpr embedded in
   # remat contains primal (non-linear) equations too. Hence, we have to eliminate those
   # (in this case via partial_eval) before we call into backward_pass again.
-  typed_call_jaxpr = core.TypedJaxpr(
-      call_jaxpr, [],
-      [raise_to_shaped(p.aval if is_undefined_primal(p) else get_aval(p)) for p in primals_in],
-      cotangent_in_avals)
+  in_avals = [raise_to_shaped(p.aval if is_undefined_primal(p) else get_aval(p))
+              for p in primals_in]
+  typed_call_jaxpr = core.TypedJaxpr(call_jaxpr, [], in_avals, cotangent_in_avals)
+  unknowns = map(is_undefined_primal, primals_in)
   primal_jaxpr, tangent_jaxpr, out_unknowns = \
-    pe.partial_eval_jaxpr(typed_call_jaxpr,
-                          unknowns=map(is_undefined_primal, primals_in),
-                          instantiate=True,
-                          trace_type=None)
+    pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True)
 
   def do_transpose(primals_in, cotangents_in):
     # NOTE: This is passing in undefined primals in place of tangent arguments, but it
@@ -538,12 +519,13 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   new_mapped_invars = (*[m for m, x in zip(params['mapped_invars'], args)
                          if not is_undefined_primal(x)],
                        *[True for x in ct if type(x) is not Zero])
-  new_donated_invars = (*[d for d, x in zip(params['donated_invars'], args)
-                          if not is_undefined_primal(x)],
-                        *[False for x in ct if type(x) is not Zero])
   new_params = dict(params, name=wrap_name(params['name'], 'transpose'),
-                    mapped_invars=tuple(new_mapped_invars),
-                    donated_invars=tuple(new_donated_invars))
+                    mapped_invars=new_mapped_invars)
+  update_params = call_transpose_param_updaters.get(primitive)
+  if update_params:
+    undef_primals = [is_undefined_primal(x) for x in args]
+    nonzero_cts = [type(x) is not Zero for x in ct]
+    new_params = update_params(new_params, undef_primals, nonzero_cts)
   out_flat = primitive.bind(fun, *all_args, **new_params)
   arg_cts = tree_unflatten(out_tree(), out_flat)
 
@@ -563,9 +545,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
   tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
-  pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
-  jaxpr_out, pvals_out, literals_out = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
-  avals_out, _ = unzip2(pvals_out)
+  jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
   jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
   return jaxpr_out, out_nonzeros()
 
@@ -649,9 +629,7 @@ def defvjp_all(prim, custom_vjp):
       primals_out = [primals_out]
     out_avals = [raise_to_shaped(get_aval(x)) for x in primals_out]
     ct_pvals = [pe.PartialVal.unknown(aval) for aval in out_avals]
-    with core.initial_style_staging():
-      jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals,
-                                        instantiate=True)
+    jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
     tangents_out = fun_lin_p.bind(*it.chain(res, tangents), trans_jaxpr=jaxpr,
                                   num_res=len(res), out_avals=out_avals)
     return primals_out + tangents_out

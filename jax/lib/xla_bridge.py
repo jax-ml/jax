@@ -423,7 +423,8 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
                     onp.uint8, onp.uint16, onp.uint32, onp.uint64,
                     onp.float16, onp.float32, onp.float64, onp.float128,
-                    onp.bool_, onp.longlong]:
+                    onp.bool_, onp.longlong,
+                    xla_client.bfloat16]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
