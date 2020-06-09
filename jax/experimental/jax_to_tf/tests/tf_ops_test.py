@@ -86,8 +86,6 @@ LAX_LOGICAL_ELEMENTWISE_BINARY = (
     lax.bitwise_or,
     lax.bitwise_xor,
     lax.shift_left,
-    lax.shift_right_arithmetic,
-    lax.shift_right_logical,
 )
 
 REDUCE = (
@@ -244,6 +242,23 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
     r_tf = f_tf(a, b)
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
                         r_tf[np.isfinite(r_tf)], atol=1e-4)
+
+  # TODO(necula): combine tests that are identical except for the harness
+  # wait until we get more experience with using harnesses.
+  @primitive_harness.parameterized(primitive_harness.lax_shift_left)
+  def test_shift_left(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_shift_right_logical)
+  def test_shift_right_logical(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_shift_right_arithmetic)
+  def test_shift_right_arithmetic(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",

@@ -321,12 +321,43 @@ tf_impl[lax.rem_p] = wrap_binary_op(_rem)
 tf_impl[lax.max_p] = wrap_binary_op(tf.math.maximum)
 tf_impl[lax.min_p] = wrap_binary_op(tf.math.minimum)
 
+# Map from TF signed types to TF unsigned types.
+_SIGNED_TO_UNSIGNED_TABLE = {
+    tf.int8: tf.uint8,
+    tf.int16: tf.uint16,
+    tf.int32: tf.uint32,
+    tf.int64: tf.uint64,
+}
+
+# Map from TF unsigned types to TF signed types.
+_UNSIGNED_TO_SIGNED_TABLE = {u: s for s, u in _SIGNED_TO_UNSIGNED_TABLE.items()}
 
 # Note: Bitwise operations only yield identical results on unsigned integers!
-tf_impl[lax.shift_left_p] = tf.bitwise.left_shift
 # pylint: disable=protected-access
-tf_impl[lax.shift_right_arithmetic_p] = tfxla._shift_right_arithmetic_helper
-tf_impl[lax.shift_right_logical_p] = tfxla._shift_right_logical_helper
+def _shift_right_arithmetic(x, y):
+  if x.dtype.is_unsigned:
+    orig_x_dtype = x.dtype
+    signed_dtype = _UNSIGNED_TO_SIGNED_TABLE[orig_x_dtype]
+    x = tf.cast(x, signed_dtype)
+    y = tf.cast(y, signed_dtype)
+    res = tf.bitwise.right_shift(x, y)
+    return tf.cast(res, orig_x_dtype)
+  else:
+    return tf.bitwise.right_shift(x, y)
+tf_impl[lax.shift_right_arithmetic_p] = _shift_right_arithmetic
+
+def _shift_right_logical(x, y):
+  if x.dtype.is_unsigned:
+    return tf.bitwise.right_shift(x, y)
+  else:
+    orig_x_dtype = x.dtype
+    unsigned_dtype = _SIGNED_TO_UNSIGNED_TABLE[orig_x_dtype]
+    x = tf.cast(x, unsigned_dtype)
+    y = tf.cast(y, unsigned_dtype)
+    res = tf.bitwise.right_shift(x, y)
+    return tf.cast(res, orig_x_dtype)
+tf_impl[lax.shift_right_logical_p] = _shift_right_logical
+
 tf_impl[lax.shift_left_p] = tf.bitwise.left_shift
 tf_impl[lax.not_p] = tf.bitwise.invert
 
