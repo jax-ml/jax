@@ -205,4 +205,3 @@ lax_shift_right_arithmetic = jtu.cases_from_list(
           [arg, StaticArg(np.array([shift_amount], dtype=dtype))])
   for arg, dtype, shift_amount in shift_inputs
 )
-

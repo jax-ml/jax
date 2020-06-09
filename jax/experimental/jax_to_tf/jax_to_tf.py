@@ -175,7 +175,7 @@ class TensorFlowTracer(core.Tracer):
     self._trace = trace
     if not isinstance(val, (tf.Tensor, tf.Variable)):
       aval = xla.abstractify(val)
-      val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)
+      val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore[attribute-error]
     self.val = val
 
   @property
@@ -336,12 +336,13 @@ _UNSIGNED_TO_SIGNED_TABLE = {u: s for s, u in _SIGNED_TO_UNSIGNED_TABLE.items()}
 # pylint: disable=protected-access
 def _shift_right_arithmetic(x, y):
   if x.dtype.is_unsigned:
-    orig_x_dtype = x.dtype
-    signed_dtype = _UNSIGNED_TO_SIGNED_TABLE[orig_x_dtype]
+    assert x.dtype == y.dtype
+    orig_dtype = x.dtype
+    signed_dtype = _UNSIGNED_TO_SIGNED_TABLE[orig_dtype]
     x = tf.cast(x, signed_dtype)
     y = tf.cast(y, signed_dtype)
     res = tf.bitwise.right_shift(x, y)
-    return tf.cast(res, orig_x_dtype)
+    return tf.cast(res, orig_dtype)
   else:
     return tf.bitwise.right_shift(x, y)
 tf_impl[lax.shift_right_arithmetic_p] = _shift_right_arithmetic
@@ -350,12 +351,13 @@ def _shift_right_logical(x, y):
   if x.dtype.is_unsigned:
     return tf.bitwise.right_shift(x, y)
   else:
-    orig_x_dtype = x.dtype
-    unsigned_dtype = _SIGNED_TO_UNSIGNED_TABLE[orig_x_dtype]
+    assert x.dtype == y.dtype
+    orig_dtype = x.dtype
+    unsigned_dtype = _SIGNED_TO_UNSIGNED_TABLE[orig_dtype]
     x = tf.cast(x, unsigned_dtype)
     y = tf.cast(y, unsigned_dtype)
     res = tf.bitwise.right_shift(x, y)
-    return tf.cast(res, orig_x_dtype)
+    return tf.cast(res, orig_dtype)
 tf_impl[lax.shift_right_logical_p] = _shift_right_logical
 
 tf_impl[lax.shift_left_p] = tf.bitwise.left_shift
