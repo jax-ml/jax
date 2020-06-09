@@ -15,7 +15,6 @@
 """An ONNX to XLA compiler by JAX-tracing a Numpy-backed ONNX interpreter."""
 
 from io import BytesIO
-from functools import partial
 import hashlib
 import urllib.request
 import sys
@@ -25,7 +24,6 @@ import onnx
 from onnx import numpy_helper
 
 import jax.numpy as jnp
-import jax.ops
 from jax import jit, grad
 from jax import lax
 
@@ -134,4 +132,3 @@ if __name__ == "__main__":
   fun = lambda inputs: jnp.sum(compiled_predict(inputs))
   print("a derivative with respect to inputs:")
   print(grad(fun)(jnp.ones((1, 1, 28, 28)))[..., :3, :3])
-

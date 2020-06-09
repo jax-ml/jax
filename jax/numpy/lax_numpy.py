@@ -1354,17 +1354,19 @@ def broadcast_to(arr, shape):
 
 @_wraps(np.split)
 def split(ary, indices_or_sections, axis=0):
-  dummy_val = np.broadcast_to(0, ary.shape)  # zero strides
+  axis = core.concrete_or_error(int, axis, "in jax.numpy.split argument `axis`")
+  size = ary.shape[axis]
   if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
     indices_or_sections = [core.concrete_or_error(int, i_s, "in jax.numpy.split argument 1")
                            for i_s in indices_or_sections]
+    split_indices = np.concatenate([[0], indices_or_sections, [size]])
   else:
     indices_or_sections = core.concrete_or_error(int, indices_or_sections,
                                                  "in jax.numpy.split argument 1")
-  axis = core.concrete_or_error(int, axis, "in jax.numpy.split argument `axis`")
-
-  subarrays = np.split(dummy_val, indices_or_sections, axis)  # shapes
-  split_indices = np.cumsum([0] + [np.shape(sub)[axis] for sub in subarrays])
+    part_size, r = _divmod(size, indices_or_sections)
+    if r != 0:
+      raise ValueError("array split does not result in an equal division")
+    split_indices = np.arange(indices_or_sections + 1) * part_size
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
