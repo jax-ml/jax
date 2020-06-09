@@ -295,6 +295,7 @@ def tie_in_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in) -> TreeState:
 
 
 def defvectorized(prim):
+  print(f'defvectorized: {prim.__module__}.{prim}')
   tree_rules[prim] = partial(vectorized_tree_rule, prim)
 
 def vectorized_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
@@ -369,6 +370,7 @@ def _axes_for_leaf(
 
 
 def defnaryop(prim: core.Primitive) -> None:
+  print(f'defnaryop: {prim.__module__}.{prim}')
   tree_rules[prim] = partial(naryop_tree_rule, prim)
 
 def naryop_tree_rule(
