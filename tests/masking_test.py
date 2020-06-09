@@ -397,7 +397,6 @@ class MaskingTest(jtu.JaxTestCase):
                ['float_', 'float_'], jtu.rand_default(self.rng()))
 
   def test_jit(self):
-    raise SkipTest
     @partial(mask, in_shapes=['n'], out_shape='2*n')
     @jit
     def duplicate(x):
@@ -411,6 +410,17 @@ class MaskingTest(jtu.JaxTestCase):
     python_should_be_executing = False
     out = duplicate([jnp.arange(3)], dict(n=2))
     assert np.all(np.array([0, 1, 0, 1]) == out[:4])
+
+  def test_jit2(self):
+    # Trigger MaskTrace.post_process_call
+    def fun(x):
+      @jit
+      def concat(y):
+        return lax.concatenate([x, y], 0)
+      return concat(jnp.array([1., 2., 3.], dtype='float32'))
+
+    self.check(fun, ['n'], '(n+3,)', {'n': 2}, [(3,)], ['float32'],
+               rand_default(self.rng()))
 
   @parameterized.named_parameters({
       'testcase_name': "padding_config={}_shapes={}".format(padding_config,
@@ -442,8 +452,6 @@ class MaskingTest(jtu.JaxTestCase):
 
 
   def test_numpy_pad(self):
-    # TODO (j-towns) requires mask(jit)
-    raise SkipTest
     def numpy_pad(x):
       return jnp.pad(x, (0, 1), constant_values=5.)
 
@@ -614,8 +622,6 @@ class MaskingTest(jtu.JaxTestCase):
     self.check(d, ['2'], '', {}, [(2,)], ['int_'], jtu.rand_int(self.rng(), 0, 10))
 
   def test_where(self):
-    # Requires mask(jit)
-    raise SkipTest
     self.check(lambda x: jnp.where(x < 0, x, 0. * x), ['n'], 'n',
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
 
