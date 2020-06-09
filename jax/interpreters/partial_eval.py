@@ -680,7 +680,7 @@ remat_call_p.def_custom_bind(remat_call)
 remat_call_p.def_impl(core.call_impl)
 remat_call_p.multiple_results = True
 
-def _remat_partial_eval(trace, _, f, tracers, params):
+def _remat_partial_eval(wrap_unknown_pvals, trace, _, f, tracers, params):
   concrete = params['concrete']
 
   # Unlike JaxprTrace.process_call, we want to form a jaxpr for the entirety of
@@ -718,10 +718,6 @@ def _remat_partial_eval(trace, _, f, tracers, params):
                                                                 instantiate=False,
                                                                 trace_type=trace.master.trace_type)
   out_knowns = [not b for b in out_unknowns]
-
-  # First, we prune the jaxpr to be staged out not to have too many outputs.
-  typed_jaxpr = _dce_jaxpr(typed_jaxpr, out_unknowns, drop_outputs=True)
-
   out_known_pvals, out_unknown_pvals = _partition_knowns(eval_out_pvals, out_unknowns)
 
   # Next, we need values for the outputs that should be known. Since consts
@@ -749,17 +745,30 @@ def _remat_partial_eval(trace, _, f, tracers, params):
 
   # Unknown outputs get wrapped in tracers with the appropriate recipe, as in JaxprTrace.process_call
   const_tracers = map(trace.new_instantiated_const, consts)
+  unknown_output_tracers = wrap_unknown_pvals(
+    trace,
+    typed_jaxpr,
+    tuple(it.chain(const_tracers, env_tracers, instantiated_tracers)),
+    out_known_pvals,
+    out_unknown_pvals,
+    out_unknowns,
+    params)
+
+  return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
+
+def _remat_make_output_tracers(trace, typed_jaxpr, input_tracers, _, out_unknown_pvals, out_unknowns, params):
   unknown_output_tracers = [JaxprTracer(trace, out_pval, None) for out_pval in out_unknown_pvals]
+  typed_jaxpr = _dce_jaxpr(typed_jaxpr, out_unknowns, drop_outputs=True)
   lifted_jaxpr = convert_constvars_jaxpr(typed_jaxpr.jaxpr)
   new_params = dict(params, call_jaxpr=lifted_jaxpr)
-  eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, instantiated_tracers)),
+  eqn = new_eqn_recipe(input_tracers,
                        unknown_output_tracers,
                        remat_call_p,
                        new_params)
   for t in unknown_output_tracers: t.recipe = eqn
+  return unknown_output_tracers
 
-  return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
-call_partial_eval_rules[remat_call_p] = _remat_partial_eval
+call_partial_eval_rules[remat_call_p] = partial(_remat_partial_eval, _remat_make_output_tracers)
 
 def _partition_knowns(l, unknowns):
   return ([e for e, unknown in zip(l, unknowns) if not unknown],

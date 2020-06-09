@@ -15,7 +15,7 @@ from ..custom_derivatives import _initial_style_jaxpr, _resolve_kwargs
 from ..abstract_arrays import ConcreteArray
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
-from ..util import safe_map, safe_zip, unzip2, split_list
+from ..util import safe_map, safe_zip, unzip2, split_list, cache
 
 map = safe_map
 zip = safe_zip
@@ -31,107 +31,33 @@ invertible_call_p.def_custom_bind(invertible_call)
 invertible_call_p.def_impl(core.call_impl)
 invertible_call_p.multiple_results = True
 
-def _invertible_call_partial_eval(trace, _, f, tracers, params):
-  concrete = params['concrete']
-
-  # Unlike JaxprTrace.process_call, we want to form a jaxpr for the entirety of
-  # the function being called, not just for the unknown parts. To do that, we
-  # instantiate all the input tracers as constants in the jaxpr being formed.
-  # Those tracers might have concrete avals, and doing abstract interpretation
-  # on concrete avals engenders a tradeoff: it allows data-dependent Python
-  # control flow to work, but it can in some cases lead to redundant FLOPs (done
-  # both in the `bind` call below and the `core.jaxpr_as_fun` call). We use the
-  # `concrete` parameter to switch this behavior, and if `concrete` is False
-  # then we raise the avals to the Shaped level.
-  if concrete:
-    instantiated_tracers = map(trace.instantiate_const, tracers)
-  else:
-    instantiated_tracers = map(trace.instantiate_const_abstracted, tracers)
-
-  # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
-  in_pvs, in_consts = unzip2(t.pval for t in instantiated_tracers)
-  fun, aux = pe.partial_eval(f, trace, in_pvs)
-  with core.initial_style_staging():
-    out_flat = invertible_call_p.bind(fun, *in_consts, **params)
-  out_pvs, jaxpr, env = aux()
-  env = map(trace.full_raise, env)
-  out_pval_consts1, consts = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-  out_pvals1 = [PartialVal((pv, const)) for pv, const in zip(out_pvs, out_pval_consts1)]
-
-  # Since we traced with everything marked as unknown, but we need to know which
-  # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
-
-  in_avals = ([raise_to_shaped(t.pval.get_aval()) for t in env]
-              + [raise_to_shaped(pv) for pv in in_pvs])
-  out_avals = [raise_to_shaped(pv if pv is not None
-                               else abstract_unit if var is unitvar
-                               else get_aval(var.val) if type(var) is Literal
-                               else get_aval(const))
-               for var, pv, const in zip(jaxpr.outvars, out_pvs, out_pval_consts1)]
-  typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
-  in_unknowns = [t.pval[0] is not None for t in it.chain(env, tracers)]
-  jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(typed_jaxpr, in_unknowns,
-                                                    instantiate=False,
-                                                    trace_type=trace.master.trace_type)
-  num_outputs = len(jaxpr_unknown.out_avals)
-  num_res = len(jaxpr_known.out_avals) - len(jaxpr_unknown.out_avals)
-  jaxpr_known = _dce_jaxpr(jaxpr_known,
-                           [not b for b in out_unknowns] + [False] * num_res,
-                           drop_outputs=True)
-
-  # Next, we need values for the outputs that should be known. Since consts
-  # weren't passed through Python for evaluation, we need to evaluate jaxpr_known,
-  # minus the residual outputs that we don't need. When `concrete=True`, as an
-  # optimization we can avoid redoing *some* redundant FLOPs, namely those that
-  # produced concrete avals at the output, simply by using those as computed
-  # values. For the use case of inverse-mode ad in op-by-op ("eager mode")
-  # evaluation, all the primal outputs should be concrete (thus not recomputed).
-  to_compute = [type(pv) is not ConcreteArray
-                for uk, pv in zip(out_unknowns, out_pvs)
-                if not uk]
-  jaxpr_1_primals = _dce_jaxpr(jaxpr_known, to_compute)
-  _, in_consts = unzip2(t.pval for t in it.chain(env, tracers))
-  out_pval_consts2 = core.jaxpr_as_fun(jaxpr_1_primals)(*in_consts)
-  out_known_pvals, out_unknown_pvals = _partition_knowns(out_pvals1, out_unknowns)
-  out_known_pvals = map(_reconstruct_pval, out_known_pvals, out_pval_consts2, [False] * len(out_known_pvals))
-
-  # Now that we have out_pvals, the rest is similar to JaxprTrace.process_call.
-  # Known outputs should keep propagating as constants
-  assert all(pv.is_known() for pv in out_known_pvals)
-  known_output_tracers = [JaxprTracer(trace, out_pval, ConstVar(out_pval.get_known()))
-                          for out_pval in out_known_pvals]
-
-  # Unknown outputs get wrapped in tracers with the appropriate recipe, as in JaxprTrace.process_call
-  const_tracers = map(trace.new_instantiated_const, consts)
+def _invertible_call_make_output_tracers(trace, typed_jaxpr, in_tracers, out_known_pvals, out_unknown_pvals, _, params):
   unknown_output_tracers = [JaxprTracer(trace, out_pval, None) for out_pval in out_unknown_pvals]
   lifted_jaxpr = convert_constvars_jaxpr(typed_jaxpr.jaxpr)
   # Add dummy arguments representing the outputs to the jaxpr. Those should remain unused in case
   # the expression actually ends up being evaluated, but they make it well-formed.
-  newvar = core.gensym([lifted_jaxpr])
-  out_known_avals = [raise_to_shaped(get_aval(pval.get_known())) for pval in out_known_pvals]
-  lifted_jaxpr.invars += map(newvar, out_known_avals)
+  out_known_avals = tuple(raise_to_shaped(get_aval(pval.get_known())) for pval in out_known_pvals)
+  lifted_jaxpr = _append_invars(lifted_jaxpr, out_known_avals)
   new_params = dict(params, call_jaxpr=lifted_jaxpr)
   # We also append some dummy outputs that correspond to the known outputs we left in the call_jaxpr
-  dummy_outputs = [JaxprTracer(trace, out_pval, core.unit) for out_pval in out_known_pvals]
-  eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env,
-                                      instantiated_tracers,
-                                      known_output_tracers)),
+  dummy_outputs = [JaxprTracer(trace, pval, core.unit) for pval in out_known_pvals]
+
+  output_constants = [JaxprTracer(trace, pval, ConstVar(pval.get_known())) for pval in out_known_pvals]
+  eqn = new_eqn_recipe(tuple(it.chain(in_tracers, output_constants)),
                        dummy_outputs + unknown_output_tracers,
                        invertible_call_p,
                        new_params)
   for t in unknown_output_tracers: t.recipe = eqn
+  return unknown_output_tracers
 
-  return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
-pe.call_partial_eval_rules[invertible_call_p] = _invertible_call_partial_eval
+pe.call_partial_eval_rules[invertible_call_p] = partial(
+    pe._remat_partial_eval, _invertible_call_make_output_tracers)
 
-def _partition_knowns(l, unknowns):
-  return ([e for e, unknown in zip(l, unknowns) if not unknown],
-          [e for e, unknown in zip(l, unknowns) if unknown])
 
-def _zip_knowns(kl, ul, unknowns):
-  ul_it = iter(ul)
-  kl_it = iter(kl)
-  return [next(ul_it) if unknown else next(kl_it) for unknown in unknowns]
+@cache()
+def _append_invars(jaxpr, avals):
+  newvar = core.gensym([jaxpr])
+  return core.Jaxpr(jaxpr.constvars, jaxpr.invars + map(newvar, avals), jaxpr.outvars, jaxpr.eqns)
 
 
 def _invertible_call_transpose(params, call_jaxpr, args, ct, _):
@@ -237,8 +163,8 @@ ad.primitive_jvps[custom_ivjp_p] = _custom_ivjp_jvp
 ################################################################################
 
 def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotangents_in):
-  if all(ct is ad.zero for ct in cotangents_in):
-    return [ad.zero] * len(jaxpr.invars)
+  if all(type(ct) is ad.Zero for ct in cotangents_in):
+    return zero_vars(jaxpr.invars)
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
@@ -246,7 +172,7 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
       ct_env[v] = ad.add_tangents(ct_env[v], ct) if v in ct_env else ct
 
   def read_cotangent(v):
-    return ct_env.get(v, ad.zero)
+    return ct_env.get(v, ad.Zero(v.aval))
 
   def read_primal(v):
     if type(v) is Literal:
@@ -292,7 +218,7 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
     cts_in = map(read_cotangent, eqn.outvars)
     should_invert = any(type(primal) is not ad.UndefinedPrimal
                         for primal in primals_out)
-    should_vjp = any(ct is not ad.zero for ct in cts_in)
+    should_vjp = any(type(ct) is not ad.Zero for ct in cts_in)
     assert not eqn.primitive.call_primitive
     assert not (should_invert ^ should_vjp)  # Either both true or both false
 
@@ -360,7 +286,10 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
   # NOTE: We keep the cotangents associated with primal variables, while the contract of a
   #       transpose is to return them in positions associated with tangent variables, which
   #       is what causes this whole confusion.
-  return [ad.zero] * len(primal_invars) + map(read_cotangent, primal_invars) + [ad.zero] * len(primals_out)
+  return zero_vars(primal_invars) + map(read_cotangent, primal_invars) + zero_vars(primals_out)
+
+def zero_vars(vs):
+  return map(lambda v: ad.Zero(v.aval), vs)
 
 primitive_ivjps = {}
 
