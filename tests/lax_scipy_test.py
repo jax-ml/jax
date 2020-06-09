@@ -17,6 +17,7 @@ import collections
 import functools
 from functools import partial
 import itertools
+from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -52,10 +53,9 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, test_name=None):
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    # TODO: digamma has no JVP implemented.
     op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
     op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
-    op_record("digamma", 1, float_dtypes, jtu.rand_positive, False),
+    op_record("digamma", 1, float_dtypes, jtu.rand_positive, True),
     op_record("gammainc", 2, float_dtypes, jtu.rand_positive, True),
     op_record("gammaincc", 2, float_dtypes, jtu.rand_positive, True),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
@@ -74,6 +74,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
     op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
+    op_record("zeta", 2, float_dtypes, jtu.rand_positive, True),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -155,6 +156,29 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
                             tol={onp.float32: 1e-3, onp.float64: 1e-14})
+    self._CompileAndCheck(lax_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_x={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), x),
+       "rng_factory": jtu.rand_positive, "shape": shape, "dtype": dtype,
+       "x": x}
+      for shape in all_shapes
+      for dtype in float_dtypes
+      for x in [0, 1, 2, onp.array([1, 2, 3, 4])]))
+  def testPolygamma(self, rng_factory, shape, dtype, x):
+    def scipy_fun(q):
+      return osp_special.polygamma(x, q)
+
+    def lax_fun(q):
+      return lsp_special.polygamma(x, q)
+
+    if onp.ndim(x) == 1 and (len(shape) == 0 or shape[-1] != x.shape[-1]):
+      raise SkipTest("arguments are not broadcastable")
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={onp.float32: 1e-6, onp.float64: 1e-12})
     self._CompileAndCheck(lax_fun, args_maker)
 
   def testIssue980(self):
