@@ -420,7 +420,7 @@ class MaskingTest(jtu.JaxTestCase):
       return concat(jnp.array([1., 2., 3.], dtype='float32'))
 
     self.check(fun, ['n'], '(n+3,)', {'n': 2}, [(3,)], ['float32'],
-               rand_default(self.rng()))
+               jtu.rand_default(self.rng()))
 
   @parameterized.named_parameters({
       'testcase_name': "padding_config={}_shapes={}".format(padding_config,
@@ -627,9 +627,9 @@ class MaskingTest(jtu.JaxTestCase):
 
   def test_split(self):
     self.check(lambda x: jnp.split(x, 2), ['2*n'], ['n', 'n'], dict(n=4),
-               [(8,)], ['float_'], rand_default(self.rng()))
+               [(8,)], ['float_'], jtu.rand_default(self.rng()))
     self.check(lambda x: jnp.split(x, [10]), ['n'], ['10', 'n+-10'], dict(n=12),
-               [(12,)], ['float_'], rand_default(self.rng()))
+               [(12,)], ['float_'], jtu.rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list([{
     'testcase_name': "operator={}".format(operator.__name__), 'operator': operator}
