@@ -110,3 +110,10 @@ pytype_library(
         "//third_party/py/msgpack",
     ],
 )
+
+pytype_library(
+    name = "jax_to_tf",
+    deps = [
+        "//third_party/py/jax/experimental/jax_to_tf",
+    ],
+)
