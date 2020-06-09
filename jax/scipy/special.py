@@ -201,7 +201,7 @@ def zeta(x, q=None):
 
 
 @api.custom_jvp
-@_wraps(osp_special.polygamma)
+@_wraps(osp_special.polygamma, update_doc=False)
 def polygamma(n, x):
   assert jnp.issubdtype(lax.dtype(n), jnp.integer)
   n, x = _promote_args_inexact("polygamma", n, x)
@@ -209,8 +209,6 @@ def polygamma(n, x):
   n_plus = n + dtype(1)
   sign = dtype(1) - (n_plus % dtype(2)) * dtype(2)
   return jnp.where(n == 0, digamma(x), sign * jnp.exp(gammaln(n_plus)) * zeta(n_plus, x))
-# FIXME: this does not work for higher derivatives, should we create
-# a new primitive for polygamma?
 polygamma.defjvps(None, lambda g, ans, n, x: lax.mul(g, polygamma(n + 1, x)))
 
 

@@ -72,6 +72,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("ndtr", 1, float_dtypes, jtu.rand_default, True),
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
+    op_record("polygamma", 2, float_dtypes, jtu.rand_positive, True),
     op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
     op_record("zeta", 2, float_dtypes, jtu.rand_positive, True),
@@ -126,6 +127,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
                           test_autodiff):
     rng = rng_factory(self.rng())
+    if scipy_op is osp_special.polygamma:
+      dtypes = list(dtypes)
+      dtypes[0] = onp.int32 if dtypes[0] == onp.float32 else onp.int64
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
@@ -133,6 +137,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_op, args_maker, rtol=1e-5)
 
     if test_autodiff:
+      if scipy_op is osp_special.polygamma:
+        lax_op = partial(lax_op, args[0])
+        args = args[1:]
       jtu.check_grads(lax_op, args, order=1,
                       atol=jtu.if_device_under_test("tpu", .1, 1e-3),
                       rtol=.1, eps=1e-3)
@@ -156,29 +163,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
                             tol={onp.float32: 1e-3, onp.float64: 1e-14})
-    self._CompileAndCheck(lax_fun, args_maker)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_x={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), x),
-       "rng_factory": jtu.rand_positive, "shape": shape, "dtype": dtype,
-       "x": x}
-      for shape in all_shapes
-      for dtype in float_dtypes
-      for x in [0, 1, 2, onp.array([1, 2, 3, 4])]))
-  def testPolygamma(self, rng_factory, shape, dtype, x):
-    def scipy_fun(q):
-      return osp_special.polygamma(x, q)
-
-    def lax_fun(q):
-      return lsp_special.polygamma(x, q)
-
-    if onp.ndim(x) == 1 and (len(shape) == 0 or shape[-1] != x.shape[-1]):
-      raise SkipTest("arguments are not broadcastable")
-    rng = rng_factory(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
-                            tol={onp.float32: 1e-6, onp.float64: 1e-12})
     self._CompileAndCheck(lax_fun, args_maker)
 
   def testIssue980(self):

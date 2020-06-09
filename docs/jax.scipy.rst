@@ -86,8 +86,10 @@ jax.scipy.special
    multigammaln
    ndtr
    ndtri
+   polygamma
    xlog1py
    xlogy
+   zeta
 
 
 jax.scipy.stats
