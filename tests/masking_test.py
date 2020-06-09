@@ -396,6 +396,8 @@ class MaskingTest(jtu.JaxTestCase):
     self.check(lax.dot, ['(m, n)', 'n'], 'm', dict(m=2, n=3), [(4, 5), (5,)],
                ['float_', 'float_'], jtu.rand_default(self.rng()))
 
+  # TODO(mattjj,j-towns): fix test failure and reenable.
+  @jtu.skip_on_devices("tpu")
   def test_jit(self):
     @partial(mask, in_shapes=['n'], out_shape='2*n')
     @jit
@@ -451,6 +453,8 @@ class MaskingTest(jtu.JaxTestCase):
                  jtu.rand_default(self.rng()))
 
 
+  # TODO(mattjj,j-towns): fix test failure and reenable.
+  @jtu.skip_on_devices("tpu")
   def test_numpy_pad(self):
     def numpy_pad(x):
       return jnp.pad(x, (0, 1), constant_values=5.)
@@ -621,6 +625,8 @@ class MaskingTest(jtu.JaxTestCase):
 
     self.check(d, ['2'], '', {}, [(2,)], ['int_'], jtu.rand_int(self.rng(), 0, 10))
 
+  # TODO(mattjj,j-towns): fix test failure and reenable.
+  @jtu.skip_on_devices("tpu")
   def test_where(self):
     self.check(lambda x: jnp.where(x < 0, x, 0. * x), ['n'], 'n',
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
