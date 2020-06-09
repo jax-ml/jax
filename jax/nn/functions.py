@@ -208,7 +208,7 @@ def log_softmax(x, axis=-1):
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
   """
-  shifted = x - lax.stop_gradient(x.max(axis, keepdims=True))
+  shifted = x - x.max(axis, keepdims=True)
   return shifted - jnp.log(jnp.sum(jnp.exp(shifted), axis, keepdims=True))
 
 def softmax(x, axis=-1):
