@@ -626,7 +626,10 @@ class MaskingTest(jtu.JaxTestCase):
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
 
   def test_split(self):
-    raise SkipTest
+    self.check(lambda x: jnp.split(x, 2), ['2*n'], ['n', 'n'], dict(n=4),
+               [(8,)], ['float_'], rand_default(self.rng()))
+    self.check(lambda x: jnp.split(x, [10]), ['n'], ['10', 'n+-10'], dict(n=12),
+               [(12,)], ['float_'], rand_default(self.rng()))
 
   @parameterized.named_parameters(jtu.cases_from_list([{
     'testcase_name': "operator={}".format(operator.__name__), 'operator': operator}
