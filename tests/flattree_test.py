@@ -157,7 +157,13 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(lambda x, y: x + y)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
-  def test_arithmetic_with_non_tree(self):
+  def test_arithmetic_with_scalar(self):
+    tree = {'x': 0.0, 'y': jnp.array([1.0]), 'z': jnp.array([[2.0, 3.0]])}
+    expected = {'x': 1.0, 'y': jnp.array([2.0]), 'z': jnp.array([[3.0, 4.0]])}
+    actual = tree_vectorize(jnp.add)(tree, 1)
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
+  def test_arithmetic_with_vector(self):
     tree = {'x': 0.0, 'y': jnp.array([1.0]), 'z': jnp.array([[2.0, 3.0]])}
     expected = {'x': 1.0, 'y': jnp.array([2.0]), 'z': jnp.array([[3.0, 4.0]])}
     actual = tree_vectorize(lambda x: x + jnp.ones_like(x))(tree)

@@ -428,7 +428,7 @@ def naryop_tree_rule(
   for leafshapes, leaves in zip(leafshapes_in, leaves_in):
     leafshapes_ = list(leafshapes)
     for axis in range(ndim):
-      if leafshapes[axis] != out_leafshapes[axis] and leafshapes[axis] != ((1,),):
+      if leafshapes[axis] != out_leafshapes[axis] and _axis_length(leafshapes[axis]) != 1:
         leaves = _split_leaves(leafshapes, leaves, axis, out_leafshapes[axis])
         leafshapes_[axis] = out_leafshapes[axis]
     leafshapes_fixed.append(leafshapes_)
