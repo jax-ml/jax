@@ -27,12 +27,13 @@ import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
 from jax.experimental import jax_to_tf
-from . import tf_test_util
-from . import primitive_harness
-
+from jax.experimental.jax_to_tf.tests import tf_test_util
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+# Import after parsing flags
+from jax.experimental.jax_to_tf.tests import primitive_harness
 
 # TODO(tomhennigan) Increase coverage here.
 LAX_ELEMENTWISE_UNARY = (
