@@ -18,10 +18,9 @@ NumPy (lax_reference) or TensorFlow.
 """
 
 
-from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence, Tuple, Union
 
 from absl import testing
-from jax import api
 from jax import test_util as jtu
 from jax import dtypes
 from jax import lax
@@ -146,6 +145,9 @@ lax_pad = jtu.cases_from_list(
     [(0, 0, 0), (0, 0, 0)],  # no padding
     [(1, 1, 0), (2, 2, 0)],  # edge padding
     [(1, 2, 1), (0, 1, 0)],  # edge padding and interior padding
+    [(0, 0, 0), (-1, -1, 0)],  # negative padding
+    [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
+    [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
   ]
 )
 

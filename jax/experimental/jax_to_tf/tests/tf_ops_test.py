@@ -178,6 +178,9 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
   def test_pad(self, harness: primitive_harness.Harness):
     if harness.params["dtype"] is dtypes.bfloat16:
       raise unittest.SkipTest("bfloat16 not implemented")
+    # TODO: implement (or decide not to) pads with negative edge padding
+    if any([lo < 0 or hi < 0 for lo, hi, mid in harness.params["pads"]]):
+      raise unittest.SkipTest("pad with negative pad not supported")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            with_function=True)
 
