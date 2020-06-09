@@ -75,7 +75,7 @@ def _initial_style_jaxpr(fun, in_avals):
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   return typed_jaxpr
 
-def sum_tangents(x, *xs):
+def sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
 def zeros_like_pytree(x):
@@ -196,7 +196,7 @@ class custom_jvp:
       zeros = zeros_like_pytree(primal_out)
       all_tangents_out = [jvp(t, primal_out, *primals) if jvp else zeros
                           for t, jvp in zip(tangents, jvps)]
-      tangent_out = tree_multimap(sum_tangents, *all_tangents_out)
+      tangent_out = tree_multimap(sum_tangents, primal_out, *all_tangents_out)
       return primal_out, tangent_out
 
     self.defjvp(jvp)

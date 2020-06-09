@@ -2476,6 +2476,17 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = -1.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_jvps_first_rule_is_none(self):
+    # https://github.com/google/jax/issues/3389
+    @api.custom_jvp
+    def f(x, y):
+      return x ** 2 * y
+
+    f.defjvps(None, lambda x_dot, primal_out, x, y: 2 * x * y * x_dot)
+    ans = grad(f, 1)(2., 3.)  # doesn't crash
+    expected = 12.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
