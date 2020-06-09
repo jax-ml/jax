@@ -1042,7 +1042,6 @@ def reduce(operand: Union[Array, Sequence[Array]],
   if len(operand) != len(init_value):
     raise TypeError("reduce: length of operands tuple must match length of init_values tuple; got "
                     f"len(operand)={len(operand)}, len(init_value)={len(init_value)}.")
-
   monoid_reducer = _get_monoid_reducer(computation, init_value[0])
   if len(operand) == 1 and monoid_reducer:
     out = (monoid_reducer(operand[0], dimensions),)
@@ -1826,18 +1825,20 @@ def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
 standard_naryop = partial(naryop, _input_dtype)
 
 
+def _broadcast_array(array, array_shape, result_shape):
+  if array_shape == result_shape:
+    return array
+  bcast_dims = tuple(range(len(result_shape) - len(array_shape),
+                            len(result_shape)))
+  result = xops.BroadcastInDim(array, result_shape, bcast_dims)
+  return result
+
+
 def _broadcast_translate(translate: Callable):
   # Decorator for translation rules which adds explicit broadcasting of
   # positional arguments. This is necessary only for a handful of primitives
   # whose XLA implementations do not support broadcasting.
-  def _broadcast_array(array, array_shape, result_shape):
-    if array_shape == result_shape:
-      return array
-    bcast_dims = tuple(range(len(result_shape) - len(array_shape),
-                             len(result_shape)))
-    result = xops.BroadcastInDim(array, result_shape, bcast_dims)
-    return result
-
+  @functools.wraps(translate)
   def _broadcasted_translation_rule(c, *args, **kwargs):
     shapes = [c.get_shape(arg).dimensions() for arg in args]
     result_shape = broadcast_shapes(*shapes)
@@ -4123,10 +4124,8 @@ def _reduce_abstract_eval(*args, dimensions, **kwargs):
   if len(operands) != len(init_values):
     raise TypeError("Expected number of operands to equal number of init_values; "
                     f"got {len(operands)} and {len(init_values)}")
-  if any(operand.shape != operands[0].shape for operand in operands[1:]):
-    shapes = " ".join(str(operand.shape) for operand in operands)
-    raise TypeError(f"Arguments to reduce must have equal shapes, got: {shapes}")
-  shape = tuple(onp.delete(operands[0].shape, dimensions))
+  shape = broadcast_shapes(*(operand.shape for operand in operands))
+  shape = tuple(onp.delete(shape, dimensions))
   return tuple(
     ShapedArray(shape, dtype=dtypes.canonicalize_dtype(operand.dtype))
     for operand in operands
@@ -4136,31 +4135,47 @@ def _reduce_translation_rule(c, *args, computation, jaxpr, consts, dimensions):
   N = len(args) // 2
   operands, init_values = args[:N], args[N:]
   assert len(operands) == len(init_values)
-  shapes = [c.get_shape(v) for v in init_values]
+  # XLA::Reduce requires operands to have the same dimensions: broadcast.
+  operand_shapes = [c.get_shape(operand).dimensions() for operand in operands]
+  result_shape = broadcast_shapes(*operand_shapes)
+  operands = [_broadcast_array(operand, shape, result_shape)
+              for operand, shape in zip(operands, operand_shapes)]
+  init_value_shapes = [c.get_shape(v) for v in init_values]
   axis_env = xla.AxisEnv(1)  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("variadic_reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [xb.parameter(subc, 2 * i + j, shape)
-          for i, shape in enumerate(shapes) for j in range(2)]
+          for i, shape in enumerate(init_value_shapes) for j in range(2)]
   out = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
   xla_computation = subc.build(xops.Tuple(subc, out))
   return xops.Reduce(c, operands, init_values, xla_computation, dimensions)
 
 def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
                        dimensions):
-  if len(batched_args) != 2:
-    # TODO(jakevdp): implement this after generalizing reduce implementation.
-    raise NotImplementedError("reduce batch rule for more than one array.")
-  operand, init_value = batched_args
-  operand_bdim, init_value_bdim = batch_dims
-  if init_value_bdim is not None:
-    # TODO(jakevdp): implement this via loop and stack.
+  N = len(batched_args) // 2
+  operands, init_values = batched_args[:N], batched_args[N:]
+  assert len(operands) == len(init_values)
+  operand_bdims, init_value_bdims = batch_dims[:N], batch_dims[N:]
+  assert len(operand_bdims) == len(init_value_bdims)
+
+  # batching over init_values is not yet supported; the best approach will
+  # likely be to loop and stack.
+  if any(init_value_bdim is not None for init_value_bdim in init_value_bdims):
     raise NotImplementedError("batched reduce with different init_val per batch")
-  assert operand_bdim is not None
-  new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
-  new_operand_bdim = operand_bdim - int(onp.sum(onp.less(dimensions, operand_bdim)))
-  out = reduce(operand, init_value, computation, new_dimensions)
-  return (out,), (new_operand_bdim,)
+
+  # We should always have a batched dimension in operands.
+  assert any(operand_bdim is not None for operand_bdim in operand_bdims)
+
+  def rollaxis(op, dim):
+    perm = [dim] + [i for i in range(len(op.shape)) if i != dim]
+    return transpose(op, perm)
+
+  operands = [op if dim is None else rollaxis(op, dim)
+              for (op, dim) in zip(operands, operand_bdims)]
+  operand_bdims = [0] * len(operand_bdims)
+  dimensions = [d + 1 for d in dimensions]
+  out = reduce(operands, init_values, computation, dimensions)
+  return out, operand_bdims
 
 def _reduction_computation(c, jaxpr, consts, init_value):
   shape = c.get_shape(init_value)
