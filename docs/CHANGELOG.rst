@@ -9,10 +9,15 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.70 (Unreleased)
+jax 0.1.71 (Unreleased)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.69...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...master>`_.
+
+jax 0.1.70 (June 8, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.69...jax-v0.1.70>`_.
 
 * New features:
 
