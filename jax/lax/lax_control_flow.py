@@ -1474,13 +1474,6 @@ def _scan_batching_rule(args, dims, reverse, length, jaxpr, num_consts,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-def _scan_shape_rule(shapes, reverse, length, jaxpr,
-                     num_consts, num_carry, linear):
-  const_shexprs, init_shexprs, xs_shexprs = split_list(shapes, [num_consts, num_carry])
-  _, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_shapes = [(length,) + tuple(y_aval.shape) for y_aval in y_avals]
-  return init_shexprs + ys_shapes
-
 def _scan_masking_rule(padded_vals, logical_shapes, reverse, length,
                        jaxpr, num_consts, num_carry, linear):
   dynamic_length, = masking.shape_as_value((length,))
