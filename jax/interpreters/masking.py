@@ -18,14 +18,14 @@ from functools import partial, reduce
 from itertools import chain, product
 import operator as op
 import string
-from typing import Callable, Dict, Sequence, Union
+from typing import Callable, Dict, Sequence, Union, Generator
 
 import numpy as np
 
 from .. import abstract_arrays
 from .. import core, dtypes
 from ..tree_util import tree_unflatten
-from ..core import Trace, Tracer
+from ..core import Trace, Tracer, MainTrace, thread_local_state
 from ..util import safe_map, safe_zip, unzip2, prod, wrap_name
 from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
@@ -75,12 +75,15 @@ def padded_shape_as_value(shape):
   assert is_tracing() or not is_polymorphic(shape)
   return eval_poly_shape(shape, shape_envs.padded)
 
+def ensure_padded_shape(shape):
+  return padded_shape_as_value(shape) if is_tracing() else shape
+
 def mask_fun(fun, logical_env, padded_env, in_vals, polymorphic_shapes):
   env_keys, padded_env_vals = unzip2(sorted(padded_env.items()))
   logical_env_vals = [logical_env[k] for k in env_keys]
   # Make padded_env hashable
   padded_env = (env_keys, padded_env_vals)
-  with core.new_main(MaskTrace) as main:
+  with core.new_main(MaskTrace, dynamic=True) as main:
     fun, out_shapes = mask_subtrace(fun, main, polymorphic_shapes, padded_env)
     out_vals = fun.call_wrapped(*(logical_env_vals + in_vals))
     del main
@@ -384,6 +387,15 @@ class MaskTracer(Tracer):
     else:
       return self
 
+@contextmanager
+def _suspend_masking() -> Generator[MainTrace, None, None]:
+  stack = thread_local_state.trace_state.trace_stack
+  main = stack.stack[0]
+  prev_dynamic, stack.dynamic = stack.dynamic, main
+  try:
+    yield main
+  finally:
+    stack.dynamic = prev_dynamic
 
 class MaskTrace(Trace):
   def pure(self, val):
@@ -405,7 +417,8 @@ class MaskTrace(Trace):
     logical_shapes = map(shape_as_value, polymorphic_shapes)
     # TODO(mattjj): generalize mask rule signature
     if primitive.name == 'reshape': params['polymorphic_shapes'] = polymorphic_shapes
-    out = masking_rule(vals, logical_shapes, **params)
+    with _suspend_masking():
+      out = masking_rule(vals, logical_shapes, **params)
     if primitive.multiple_results:
       return map(partial(MaskTracer, self), out, (o.shape for o in out_aval))
     else:
@@ -416,7 +429,8 @@ class MaskTrace(Trace):
     params = dict(params, name=wrap_name(params.get('name', f.__name__), 'mask'))
     vals, shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
     if not any(is_polymorphic(s) for s in shapes):
-      return call_primitive.bind(f, *vals, **params)
+      with _suspend_masking():
+        return call_primitive.bind(f, *vals, **params)
     else:
       logical_env, padded_env = shape_envs
       env_keys, padded_env_vals = unzip2(sorted(padded_env.items()))
@@ -427,7 +441,8 @@ class MaskTrace(Trace):
       if 'donated_invars' in params:
         params = dict(params, donated_invars=((False,) * len(logical_env_vals) +
                                               params['donated_invars']))
-      vals_out = call_primitive.bind(f, *(logical_env_vals + vals), **params)
+      with _suspend_masking():
+        vals_out = call_primitive.bind(f, *(logical_env_vals + vals), **params)
       return [MaskTracer(self, v, s) for v, s in zip(vals_out, shapes_out())]
 
   def post_process_call(self, call_primitive, out_tracers, params):
