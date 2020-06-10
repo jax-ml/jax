@@ -54,6 +54,7 @@ from ..util import (partial, get_module_functions, unzip2, prod as _prod,
                     subvals, safe_zip)
 from ..lib import pytree
 from ..lib import xla_client
+from ..third_party.numpy.lax_numpy import setxor1d
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -3318,21 +3319,6 @@ def unique(ar, return_index=False, return_inverse=False,
 
   raise NotImplementedError(
         "np.unique is not implemented for the axis argument")
-
-@_wraps(np.setxor1d)
-def setxor1d(ar1, ar2, assume_unique=False):
-  if not assume_unique:
-    ar1 = unique(ar1)
-    ar2 = unique(ar2)
-  
-  aux = concatenate((ar1, ar2))
-  if aux.size == 0:
-    return aux
-
-  aux = sort(aux)
-  ar_true = array([True])
-  flag = concatenate((ar_true, aux[1:] != aux[:-1], ar_true))
-  return aux[flag[1:] & flag[:-1]]
 
 ### Indexing
 
