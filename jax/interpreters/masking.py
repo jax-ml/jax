@@ -33,7 +33,6 @@ from .. import linear_util as lu
 map = safe_map
 zip = safe_zip
 
-shape_parameterized_primitive_rules: Dict[core.Primitive, Callable] = {}
 masking_rules: Dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
@@ -369,7 +368,7 @@ class MaskTracer(Tracer):
 
   @property
   def dtype(self):
-    return self.val.dtype
+    return self.val.dtype if hasattr(self.val, 'dtype') else type(self.val)
 
   def is_pure(self):
     return all(type(poly) is not Poly or poly.is_constant
@@ -393,24 +392,18 @@ class MaskTrace(Trace):
     return MaskTracer(self, val.val, val.polymorphic_shape)
 
   def process_primitive(self, primitive, tracers, params):
+    masking_rule = masking_rules.get(primitive)
+    if masking_rule is None:
+      raise NotImplementedError(
+        f'Masking rule for {primitive} not implemented yet.')
+    aout = primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals, polymorphic_shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
-    if primitive in shape_parameterized_primitive_rules:
-      rule = shape_parameterized_primitive_rules[primitive]
-      out, out_shape = rule(shape_envs, vals, polymorphic_shapes, **params)
+    logical_shapes = map(shape_as_value, polymorphic_shapes)
+    out = masking_rule(vals, logical_shapes, **params)
+    if primitive.multiple_results:
+      return map(partial(MaskTracer, self), out, (o.shape for o in aout))
     else:
-      avals = [t.aval for t in tracers]
-      out = primitive.abstract_eval(*avals, **params)
-      out_shape = [o.shape for o in out] if primitive.multiple_results else out.shape
-      logical_shapes = map(shape_as_value, polymorphic_shapes)
-      masking_rule = masking_rules.get(primitive)
-      if masking_rule is None:
-        raise NotImplementedError(
-            'Masking rule for {} not implemented yet.'.format(primitive))
-      out = masking_rule(vals, logical_shapes, **params)
-    if not primitive.multiple_results:
-      return MaskTracer(self, out, out_shape)
-    else:
-      return map(partial(MaskTracer, self), out, out_shape)
+      return MaskTracer(self, out, aout.shape)
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
