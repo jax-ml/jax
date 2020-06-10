@@ -19,6 +19,7 @@ import copy
 from functools import partial
 import re
 import unittest
+import types
 import warnings
 import weakref
 
@@ -559,6 +560,29 @@ class APITest(jtu.JaxTestCase):
 
     self.assertAllClose((45., 9.), api.jvp(func, (5.,), (1.,)))
 
+  def test_linear_transpose_integer(self):
+    x = jnp.arange(5, dtype=np.int64)
+    transpose_fun = api.linear_transpose(lambda x: 2 * x, x)
+    y, = transpose_fun(x)
+    self.assertArraysEqual(2 * x, y, check_dtypes=True)
+
+  def test_linear_transpose_abstract(self):
+    x = types.SimpleNamespace(shape=(3,), dtype=np.int64)
+    y = jnp.arange(3, dtype=np.int64)
+    transpose_fun = api.linear_transpose(lambda x: 2 * x, x)
+    z, = transpose_fun(y)
+    self.assertArraysEqual(2 * y, z, check_dtypes=True)
+
+  def test_linear_transpose_error(self):
+    x = jnp.arange(5)
+
+    transpose_fun = api.linear_transpose(lambda x: [x, x], x)
+    with self.assertRaisesRegex(TypeError, "cotangent tree does not match"):
+      transpose_fun(x)
+
+    transpose_fun = api.linear_transpose(lambda x: jnp.stack([x, x]), x)
+    with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
+      transpose_fun(x)
 
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: jnp.sin(x))(1 + 2j))

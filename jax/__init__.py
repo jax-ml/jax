@@ -47,6 +47,7 @@ from .api import (
   local_device_count,
   local_devices,
   linearize,
+  linear_transpose,
   make_jaxpr,
   mask,
   partial,  # TODO(phawkins): update callers to use functools.partial.

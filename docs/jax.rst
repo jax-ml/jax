@@ -44,6 +44,7 @@ Automatic differentiation
     hessian
     jvp
     linearize
+    linear_transpose
     vjp
     custom_jvp
     custom_vjp

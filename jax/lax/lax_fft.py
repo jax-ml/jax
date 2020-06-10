@@ -18,7 +18,7 @@ from functools import partial
 import numpy as onp
 
 from jax.abstract_arrays import ShapedArray
-from jax.api import jit, vjp
+from jax.api import jit, vjp, linear_transpose, ShapeDtypeStruct
 from jax.core import Primitive
 from jax.interpreters import xla
 from jax.util import prod
@@ -99,9 +99,10 @@ def _rfft_transpose(t, fft_lengths):
   # asymptotic complexity and is also rather complicated), we rely JAX to
   # transpose a naive RFFT implementation.
   dummy_shape = t.shape[:-len(fft_lengths)] + fft_lengths
-  dummy_primals = lax.full_like(t, 0.0, _real_dtype(t.dtype), dummy_shape)
-  _, jvpfun = vjp(partial(_naive_rfft, fft_lengths=fft_lengths), dummy_primals)
-  result, = jvpfun(t)
+  dummy_primal = ShapeDtypeStruct(dummy_shape, _real_dtype(t.dtype))
+  transpose = linear_transpose(
+      partial(_naive_rfft, fft_lengths=fft_lengths), dummy_primal)
+  result, = transpose(t)
   assert result.dtype == _real_dtype(t.dtype), (result.dtype, t.dtype)
   return result
 

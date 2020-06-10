@@ -45,7 +45,8 @@ from jax.lib import xla_client
 from jax.util import (partial, unzip2, unzip4, safe_map, safe_zip, split_list,
                       split_dict, cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           treedef_children, treedef_tuple, tree_multimap)
+                           treedef_children, treedef_tuple, tree_multimap,
+                           tree_leaves)
 from jax import ad_util
 
 xops = xla_client.ops
@@ -1748,17 +1749,11 @@ def _split_linear_solve_args(args, const_lengths):
   return _LinearSolveTuple(*params_list[:-1]), params_list[-1]
 
 
-def _transpose_function(linear_fun, primals):
-  """Transpose a linear function."""
-  # TODO(shoyer): can we use something more direct than the vjp machinery?
-  # It's particularly awkward that we need the second argument to give
-  # particular values of the primals, which are entirely arbitrary.
-  _, vjp_fun = jax.vjp(linear_fun, primals)
-
+def _transpose_one_output(linear_fun, primals):
+  transpose_fun = jax.linear_transpose(linear_fun, primals)
   def transposed_fun(x):
-    (y,) = vjp_fun(x)
+    (y,) = transpose_fun(x)
     return y
-
   return transposed_fun
 
 
@@ -1766,14 +1761,12 @@ def _flatten(args):
   return [x for arg in args for x in arg]
 
 
-def _check_shapes(func_name, expected_name, actual, expected, tree):
-  actual_shapes = _map(onp.shape, actual)
-  expected_shapes = _map(onp.shape, expected)
+def _check_shapes(func_name, expected_name, actual, expected):
+  actual_shapes = _map(onp.shape, tree_leaves(actual))
+  expected_shapes = _map(onp.shape, tree_leaves(expected))
   if actual_shapes != expected_shapes:
-    raise ValueError('{}() output shapes must match {}, got {} and {}'
-                     .format(func_name, expected_name,
-                             tree_unflatten(tree, actual_shapes),
-                             tree_unflatten(tree, expected_shapes)))
+    raise ValueError(f"{func_name}() output shapes must match {func_name}, "
+                     f"got {actual_shapes} and {expected_shapes}")
 
 
 def custom_linear_solve(
@@ -1815,14 +1808,22 @@ def custom_linear_solve(
 
   b_flat, in_args_tree = tree_flatten((b,))
   b_avals = tuple(_map(_abstractify, b_flat))
-  matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
-      matvec, in_args_tree, b_avals)
 
   tree, = treedef_children(in_args_tree)
+
+  def _shape_checked(fun, name):
+    def f(x):
+      y = fun(x)
+      _check_shapes(name, "b", y, b_flat)
+      return y
+    return f
+
+  matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
+      _shape_checked(matvec, "matvec"), in_args_tree, b_avals)
   _check_tree("matvec", "b", out_tree, tree)
 
   solve_jaxpr, solve_consts, out_tree = _initial_style_jaxpr(
-      partial(solve, matvec), in_args_tree, b_avals)
+      _shape_checked(partial(solve, matvec), "solve"), in_args_tree, b_avals)
   _check_tree("solve", "b", out_tree, tree)
 
   if transpose_solve is None:
@@ -1834,13 +1835,14 @@ def custom_linear_solve(
       vecmat_jaxpr = matvec_jaxpr
       vecmat_consts = matvec_consts
     else:
-      vecmat = _transpose_function(matvec, b)
+      vecmat = _transpose_one_output(matvec, b)
       vecmat_jaxpr, vecmat_consts, out_tree = _initial_style_jaxpr(
           vecmat, in_args_tree, b_avals)
       assert out_tree == tree
 
     tr_solve_jaxpr, tr_solve_consts, out_tree = _initial_style_jaxpr(
-        partial(transpose_solve, vecmat), in_args_tree, b_avals)
+        _shape_checked(partial(transpose_solve, vecmat), "transpose_solve"),
+        in_args_tree, b_avals)
     _check_tree("transpose_solve", "b", out_tree, tree)
 
   all_consts = [matvec_consts, vecmat_consts, solve_consts, tr_solve_consts]
@@ -1850,20 +1852,17 @@ def custom_linear_solve(
 
   out_flat = linear_solve_p.bind(
       *(_flatten(all_consts) + b_flat),
-      const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
+      const_lengths=const_lengths, jaxprs=jaxprs)
   return tree_unflatten(tree, out_flat)
 
 
-def _linear_solve_abstract_eval(*args, **kwargs):
-  return _map(raise_to_shaped, args[sum(kwargs['const_lengths']):])
+def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
+  return _map(raise_to_shaped, args[sum(const_lengths):])
 
 
-def _custom_linear_solve_impl(*args, **kwargs):
-  const_lengths, jaxprs, tree = split_dict(
-      kwargs, ['const_lengths', 'jaxprs', 'tree'])
+def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
   params, b = _split_linear_solve_args(args, const_lengths)
   x = core.jaxpr_as_fun(jaxprs.solve)(*(params.solve + b))
-  _check_shapes('solve', 'b', x, b, tree)
   return x
 
 
@@ -1880,12 +1879,12 @@ def _tangent_linear_map(func, params, params_dot, *x):
   return out_tangent
 
 
-def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
+def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
   # A x - b = 0
   # ∂A x + A ∂x - ∂b = 0
   # ∂x = A^{-1} (∂b - ∂A x)
 
-  kwargs = dict(const_lengths=const_lengths, jaxprs=jaxprs, tree=tree)
+  kwargs = dict(const_lengths=const_lengths, jaxprs=jaxprs)
   x = linear_solve_p.bind(*primals, **kwargs)
 
   params, _ = _split_linear_solve_args(primals, const_lengths)
@@ -1897,7 +1896,6 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
   else:
     matvec_tangents = _tangent_linear_map(
         core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec, *x)
-    _check_shapes("matvec", "b", matvec_tangents, x, tree)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
   x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
@@ -1905,10 +1903,7 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs, tree):
   return x, x_dot
 
 
-def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
-  const_lengths, jaxprs, tree = split_dict(
-      kwargs, ['const_lengths', 'jaxprs', 'tree'])
-
+def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
   if jaxprs.transpose_solve is None:
     raise TypeError('transpose_solve required for backwards mode automatic '
                     'differentiation of custom_linear_solve')
@@ -1917,14 +1912,11 @@ def _linear_solve_transpose_rule(cotangent, *primals, **kwargs):
   assert all(ad.is_undefined_primal(x) for x in b)
   cotangent_b = linear_solve_p.bind(
       *(_flatten(params.transpose()) + cotangent),
-      const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose(),
-      tree=tree)
+      const_lengths=const_lengths.transpose(), jaxprs=jaxprs.transpose())
   return [None] * sum(const_lengths) + cotangent_b
 
 
-def _linear_solve_batching_rule(args, dims, **kwargs):
-  const_lengths, jaxprs, tree = split_dict(kwargs,
-                                           ["const_lengths", "jaxprs", "tree"])
+def _linear_solve_batching_rule(args, dims, const_lengths, jaxprs):
   orig_bat = [d is not batching.not_mapped for d in dims]
   size, = {
       a.shape[d] for a, d in zip(args, dims) if d is not batching.not_mapped
@@ -1990,8 +1982,7 @@ def _linear_solve_batching_rule(args, dims, **kwargs):
   outs = linear_solve_p.bind(
       *(new_params + new_b),
       const_lengths=const_lengths,
-      jaxprs=batched_jaxprs,
-      tree=tree)
+      jaxprs=batched_jaxprs)
   out_dims = [0 if batched else batching.not_mapped for batched in b_bat]
   return outs, out_dims
 
