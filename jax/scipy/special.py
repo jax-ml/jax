@@ -200,16 +200,21 @@ def zeta(x, q=None):
   return S + I + T
 
 
-@api.custom_jvp
 @_wraps(osp_special.polygamma, update_doc=False)
 def polygamma(n, x):
   assert jnp.issubdtype(lax.dtype(n), jnp.integer)
   n, x = _promote_args_inexact("polygamma", n, x)
+  shape = lax.broadcast_shapes(n.shape, x.shape)
+  return _polygamma(jnp.broadcast_to(n, shape), jnp.broadcast_to(x, shape))
+
+
+@api.custom_jvp
+def _polygamma(n, x):
   dtype = lax.dtype(n).type
   n_plus = n + dtype(1)
   sign = dtype(1) - (n_plus % dtype(2)) * dtype(2)
   return jnp.where(n == 0, digamma(x), sign * jnp.exp(gammaln(n_plus)) * zeta(n_plus, x))
-polygamma.defjvps(None, lambda g, ans, n, x: lax.mul(g, polygamma(n + 1, x)))
+_polygamma.defjvps(None, lambda g, ans, n, x: lax.mul(g, _polygamma(n + 1, x)))
 
 
 # Normal distributions
