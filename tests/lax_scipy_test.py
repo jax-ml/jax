@@ -17,7 +17,6 @@ import collections
 import functools
 from functools import partial
 import itertools
-from unittest import SkipTest
 
 from absl.testing import absltest
 from absl.testing import parameterized
