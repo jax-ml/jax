@@ -1218,7 +1218,7 @@ class PmapTest(jtu.JaxTestCase):
     w = weakref.ref(f)
     g = pmap(f)
     g(np.ones((1,), dtype=np.float32)).block_until_ready()
-    del x, f, g
+    del f, g
     gc.collect()
     # 'f' should not be alive at this point; in particular the pmap cache must
     # not keep it alive.
