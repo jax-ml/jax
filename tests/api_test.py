@@ -584,6 +584,21 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
       transpose_fun(x)
 
+    transpose_fun = api.linear_transpose(lambda x: x, x)
+    with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
+      transpose_fun(1.5 * x)
+
+    transpose_fun = api.linear_transpose(lambda x: x, 1.5 * x)
+    with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
+      transpose_fun(x)
+
+  def test_linear_transpose_complex(self):
+    f = lambda x: (1 + 2j) * x
+    transpose = api.linear_transpose(f, 0)
+    actual, = transpose(3 + 4j)
+    expected = -5 + 10j
+    self.assertEqual(actual, expected)
+
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: jnp.sin(x))(1 + 2j))
 

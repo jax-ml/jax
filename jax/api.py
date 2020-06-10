@@ -1581,7 +1581,7 @@ def linear_transpose(fun: Callable, *args) -> Callable:
   avoids the overhead of overhead of computing the forward pass.
 
   Args:
-    fun: The linear function to be transposed.
+    fun: the linear function to be transposed.
     *args: a positional argument tuple of arrays, scalars, or (nested) standard
       Python containers (tuples, lists, dicts, namedtuples, i.e. pytrees) of
       those types. Since only the ``shape`` and ``dtype`` attributes are
@@ -1590,7 +1590,7 @@ def linear_transpose(fun: Callable, *args) -> Callable:
       because those are treated as standard Python containers.
 
   Returns:
-    A callable representing the transpose of ``fun``.
+    A callable that calculates the transpose of ``fun``.
   """
   def abstractify(x):
     return core.ShapedArray(onp.shape(x), dtypes.result_type(x))
@@ -1609,7 +1609,8 @@ def linear_transpose(fun: Callable, *args) -> Callable:
              f"expected {out_tree()} but got {out_tree2}")
       raise TypeError(msg)
     if not all(map(core.typecheck, out_avals, out_cotangents)):
-      raise TypeError("cotangent type does not match function output")
+      raise TypeError("cotangent type does not match function output, "
+                      f"expected {out_avals} but got {out_cotangents}")
     dummies = [ad.UndefinedPrimal(a) for a in in_avals]
     in_cotangents = ad.backward_pass(jaxpr, consts, dummies, out_cotangents)
     return tree_unflatten(in_tree, in_cotangents)
@@ -1784,7 +1785,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
     def shape_dtype_struct(x):
       return ShapeDtypeStruct(x.shape, x.dtype)
 
-    class ShapeDtypeStruct(object):
+    class ShapeDtypeStruct:
       __slots__ = ["shape", "dtype"]
       def __init__(self, shape, dtype):
         self.shape = shape
