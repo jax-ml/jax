@@ -3123,7 +3123,9 @@ class BufferDonationTest(jtu.JaxTestCase):
 
     x = jnp.asarray([0, 1])
     x_copy = jnp.array(x, copy=True)
-    _test(x)  # donation
+    with warnings.catch_warnings():
+      warnings.simplefilter("ignore")
+      _test(x)  # donation
 
     # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
     print(x_copy)  # doesn't crash
