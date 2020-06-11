@@ -1593,13 +1593,6 @@ def _memcpy(axis, num, src, dst, offset):
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
 
 
-def _check_tree(func_name, expected_name, actual_tree, expected_tree):
-  if actual_tree != expected_tree:
-    raise TypeError(
-        "{}() output pytree structure must match {}, got {} and {}."
-        .format(func_name, expected_name, actual_tree, expected_tree))
-
-
 def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
 
@@ -1615,6 +1608,13 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
            "got\n{}\nand\n{}.")
     raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),
                                tree_unflatten(tree2, avals2)))
+
+
+def _check_tree(func_name, expected_name, actual_tree, expected_tree):
+  if actual_tree != expected_tree:
+    raise TypeError(
+        f"{func_name}() output pytree structure must match {expected_name}, "
+        f"got {actual_tree} and {expected_tree}.")
 
 
 def _stop_gradient_fun(f):
@@ -1765,8 +1765,9 @@ def _check_shapes(func_name, expected_name, actual, expected):
   actual_shapes = _map(onp.shape, tree_leaves(actual))
   expected_shapes = _map(onp.shape, tree_leaves(expected))
   if actual_shapes != expected_shapes:
-    raise ValueError(f"{func_name}() output shapes must match {func_name}, "
-                     f"got {actual_shapes} and {expected_shapes}")
+    raise ValueError(
+        f"{func_name}() output shapes must match {expected_name}, "
+        f"got {actual_shapes} and {expected_shapes}")
 
 
 def custom_linear_solve(
