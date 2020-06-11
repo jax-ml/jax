@@ -18,7 +18,7 @@ import sys
 
 from absl import app
 import jax
-from jax.experimental import jax_to_tf
+from jax.experimental import jax2tf
 
 import tensorflow as tf
 
@@ -47,7 +47,7 @@ class StaxModule(tf.Module):
 
   def __init__(self, apply_fn, params, name=None):
     super().__init__(name=name)
-    self.apply_fn = jax_to_tf.convert(apply_fn)
+    self.apply_fn = jax2tf.convert(apply_fn)
     self.params = tf.nest.map_structure(tf.Variable, params)
 
   @tf.function(autograph=False)

@@ -18,7 +18,7 @@ import tensorflow as tf  # type: ignore[import]
 
 from jax.config import config
 from jax import dtypes
-from jax.experimental import jax_to_tf
+from jax.experimental import jax2tf
 from jax import test_util as jtu
 
 class JaxToTfTestCase(jtu.JaxTestCase):
@@ -40,7 +40,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                         atol=None,
                         rtol=None) -> Tuple[Any, Any]:
     """Compares jax_func(*args) with convert(jax_func)(*args)."""
-    func_tf = jax_to_tf.convert(func_jax)
+    func_tf = jax2tf.convert(func_jax)
     if with_function:
       func_tf = tf.function(func_tf)
     res_jax = func_jax(*args)

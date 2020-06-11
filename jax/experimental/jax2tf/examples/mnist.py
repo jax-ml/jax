@@ -23,7 +23,7 @@ import tensorflow_datasets as tfds
 from jax.config import config
 config.config_with_absl()
 
-from jax.experimental import jax_to_tf
+from jax.experimental import jax2tf
 
 TRAIN_EXAMPLES = 60000
 BATCH_SIZE = 1000
@@ -86,7 +86,7 @@ def train_epoch_jax(params, train_dataset):
 
 
 @tf.function
-@jax_to_tf.convert
+@jax2tf.convert
 def accuracy_fn_tf(params, batch):
   logits = predict_jax(params, batch["image"])
   return jnp.mean(jnp.argmax(logits, axis=-1) == batch["label"])
