@@ -846,7 +846,7 @@ def _tuple_output(*args, **kwargs):
 
 def lower_fun(fun, multiple_results=True):
   # This function can only be used to lower functions that take JAX array types
-  # as arguments (and e.g. don't accept unit values), because it assumes it can
+  # as arguments (and e.g., don't accept unit values), because it assumes it can
   # map from XLA types to JAX types. In general that mapping is not possible (as
   # the mapping from JAX types to XLA types is not invertible), but for now at
   # least we assume that the mapping from JAX *array* types to XLA array types
