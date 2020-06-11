@@ -3114,6 +3114,21 @@ class BufferDonationTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "nested.*not supported"):
       jit_fun(a)
 
+  def test_jnp_array_copy(self):
+    # https://github.com/google/jax/issues/3412
+
+    @partial(api.jit, donate_argnums=(0,))
+    def _test(array):
+      return array.at[0].set(77)
+
+    x = jnp.asarray([0, 1])
+    x_copy = jnp.array(x, copy=True)
+    new_x = _test(x)
+
+    # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
+    print(x_copy)  # doesn't crash
+
+
   # === pmap ===
 
   @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
