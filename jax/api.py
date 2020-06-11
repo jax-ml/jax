@@ -175,8 +175,8 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
 def disable_jit():
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
-  For debugging purposes, it is useful to have a mechanism that disables
-  :py:func:`jit` everywhere in a dynamic context.
+  For debugging it is useful to have a mechanism that disables :py:func:`jit`
+  everywhere in a dynamic context.
 
   Values that have a data dependence on the arguments to a jitted function are
   traced and abstracted. For example, an abstract value may be a
