@@ -20,7 +20,7 @@ import numpy as np
 import os
 import sys
 
-from jax.experimental.jax_to_tf.tests import tf_test_util
+from jax.experimental.jax2tf.tests import tf_test_util
 
 # Import ../../../../examples/resnet50.py
 def from_examples_import_resnet50():

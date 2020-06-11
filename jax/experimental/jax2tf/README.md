@@ -28,18 +28,18 @@ Most commonly people want to use this tool in order to:
 ### Converting basic functions.
 
 As a rule of thumb, if you can `jax.jit` your function then you should be able
-to use `jax_to_tf.convert`:
+to use `jax2tf.convert`:
 
 ```python
 import jax
-from jax.experimental import jax_to_tf
+from jax.experimental import jax2tf
 def some_jax_function(x, y, z):
   return jax.something(x, y, z)
 
 # tf_ops.from_jax is a higher order function that returns a wrapped function with
 # the same signature as your input function but accepting TensorFlow tensors (or
 # variables) as input.
-tf_version = jax_to_tf.convert(some_jax_function)
+tf_version = jax2tf.convert(some_jax_function)
 
 # For example you can call tf_version with some TensorFlow tensors:
 tf_version(tf_x, tf_y, tf_z)
@@ -59,7 +59,7 @@ is trivial.
 
 ```python
 f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
-f_tf = jax_to_tf.convert(f_jax)
+f_tf = jax2tf.convert(f_jax)
 
 # You can save the model just like you would with any other TensorFlow function:
 my_model = tf.Module()
