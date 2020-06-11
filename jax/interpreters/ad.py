@@ -195,7 +195,8 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       cts_out = get_primitive_transpose(eqn.primitive)(
           params, call_jaxpr, invals, cts_in, cts_in_avals)
     else:
-      cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
+      with pe.userline(eqn.source_info):
+        cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
     cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
     # FIXME: Some invars correspond to primals!
     map(write_cotangent, eqn.invars, cts_out)

@@ -25,6 +25,7 @@ import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
                     Type, Union, cast)
+from os.path import basename
 
 import numpy as onp
 
@@ -147,10 +148,13 @@ class JaxprEqn(NamedTuple):
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
+  source_info: Optional[Any]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
-new_jaxpr_eqn = JaxprEqn
+
+def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
+  return JaxprEqn(invars, outvars, primitive, params, source_info)
 
 
 @total_ordering
@@ -1403,9 +1407,11 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
 def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')
-  return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
-          >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+  return (pp(f'{basename(eqn.source_info.filename)}:{eqn.source_info.lineno}	') >>
+          pp('{} = '.format(lhs)) >>
+          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items())) >>
+          pp(' ') >> pp(pp_vars(eqn.invars))
+          ) + pp_subexpr
 
 def pp_jaxpr(jaxpr: Jaxpr) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))

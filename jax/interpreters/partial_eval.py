@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import itertools as it
 from collections import namedtuple
 import contextlib
@@ -149,12 +150,12 @@ class JaxprTrace(Trace):
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
-      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params)
+      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, stacktrace())
       for t in out_tracers: t.recipe = eqn
       return out_tracers
     else:
       out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
-      out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive, params)
+      out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive, params, stacktrace())
       return out_tracer
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
@@ -426,11 +427,13 @@ class JaxprEqnRecipe(NamedTuple):
   outvars: 'Sequence[ref[JaxprTracer]]'
   primitive: core.Primitive
   params: Dict[str, Any]
+  stack_trarce: Optional[Any]
 
 def new_eqn_recipe(invars: Sequence[JaxprTracer],
                    outvars: Sequence[JaxprTracer],
                    primitive: core.Primitive,
-                   params: Dict[str, Any]) -> JaxprEqnRecipe:
+                   params: Dict[str, Any],
+                   stack_trace: Optional[Any] = None) -> JaxprEqnRecipe:
   """Constructs a new JaxEqnRecipe.
 
   Params:
@@ -446,18 +449,18 @@ def new_eqn_recipe(invars: Sequence[JaxprTracer],
     assert "mapped_invars" in params
     assert "donated_invars" in params
   return JaxprEqnRecipe(object(), tuple(invars), map(ref, outvars), primitive,
-                        params)
+                        params, stack_trace)
 
 
 def recipe_to_eqn(unused_var: Callable[[], core.Var],
                   getvar: Callable[[JaxprTracer], core.Atom],
                   recipe: JaxprEqnRecipe) -> core.JaxprEqn:
-  _, in_tracers, out_tracer_refs, primitive, params = recipe
+  _, in_tracers, out_tracer_refs, primitive, params, stacktrace = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
   outvars = [unused_var() if t is None else cast(core.Var, getvar(t))
              for t in out_tracers]
-  return new_jaxpr_eqn(invars, outvars, primitive, params)
+  return new_jaxpr_eqn(invars, outvars, primitive, params, stacktrace)
 
 def tracers_to_jaxpr(
   in_tracers: List[JaxprTracer],
@@ -787,7 +790,8 @@ def _inline_literals(jaxpr, constvals):
   new_invars = [var[v] for v in jaxpr.invars]
   new_eqns = [new_jaxpr_eqn([lit(v) or var[v] for v in eqn.invars],
                             [var[v] if v in used else dropvar for v in eqn.outvars],
-                            eqn.primitive, eqn.params)
+                            eqn.primitive, eqn.params,
+                            eqn.source_info)
               for eqn in jaxpr.eqns]
   new_outvars = [lit(v) or var[v] for v in jaxpr.outvars]
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns)
@@ -841,7 +845,7 @@ class JaxprTrace2(core.Trace):
     out_tracers = [JaxprTracer2(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
     outvars = map(self.getvar, out_tracers)
-    eqn = new_jaxpr_eqn(invars, outvars, primitive, params)
+    eqn = new_jaxpr_eqn(invars, outvars, primitive, params, stacktrace())
     self.frame.eqns.append(eqn)
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
@@ -854,7 +858,8 @@ class JaxprTrace2(core.Trace):
     constvars = map(self.getvar, map(self.instantiate_const, consts))
     update_params = call_param_updaters.get(call_primitive, dict)
     new_params = update_params(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, call_primitive, new_params)
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, call_primitive, new_params,
+                        stacktrace())
     self.frame.eqns.append(eqn)
     return out_tracers
 
@@ -919,3 +924,31 @@ def trace_to_jaxpr_final(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, master, in_avals)
     del master
   return jaxpr, out_avals, consts
+
+
+FrameInfo = namedtuple('FrameInfo', ['filename', 'lineno', 'func'])
+
+
+user_line = None
+
+def stacktrace():
+  if not user_line:
+    frames = [FrameInfo(f.filename, f.lineno, f.function)
+              for f in inspect.stack()]
+    frame = next(f for f in frames if 'peter' in f.filename)
+    return frame
+  else:
+    return user_line
+
+@contextlib.contextmanager
+def userline(l):
+  global user_line
+  prev, user_line = user_line, l
+  try:
+    yield
+  finally:
+    user_line = prev
+
+# TODO
+# [ ] propagate user source provenance
+# [ ] transform stack info
