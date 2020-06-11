@@ -43,7 +43,7 @@ from jax.interpreters import masking
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client
 from jax.util import (partial, unzip2, unzip4, safe_map, safe_zip, split_list,
-                      split_dict, cache, extend_name_stack)
+                      cache, extend_name_stack)
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            treedef_children, treedef_tuple, tree_multimap,
                            tree_leaves)
