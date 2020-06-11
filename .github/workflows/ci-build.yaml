@@ -50,6 +50,10 @@ jobs:
             os: ubuntu-latest
             enable-x64: enable-x64
             num_generated_cases: 25
+          - python-version: 3.7
+            os: ubuntu-latest
+            enable-x64: enable-x64
+            num_generated_cases: 25
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
