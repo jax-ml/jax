@@ -12,7 +12,6 @@ on:
 
 jobs:
   lint_and_typecheck:
-
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -39,17 +38,24 @@ jobs:
         mypy jax
 
   build:
-
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: [3.7]
-        os: [ubuntu-latest, macos-latest]
-        enable-x64: [0, 1]
-        exclude:
-          - os: macos-latest
-            enable-x64: 0
-
+        include:
+          - python-version: 3.6
+            os: macos-latest
+            enable-x64: disable-x64
+            num_generated_cases: 10
+        include:
+          - python-version: 3.7
+            os: ubuntu-latest
+            enable-x64: enable-x64
+            num_generated_cases: 25
+        include:
+          - python-version: 3.8
+            os: ubuntu-latest
+            enable-x64: enable-x64
+            num_generated_cases: 25
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
@@ -63,4 +69,35 @@ jobs:
     - name: Run tests
       run: |
         pip install -e .
-        JAX_NUM_GENERATED_CASES=25 JAX_ENABLE_X64=${{ matrix.enable-x64 }} pytest -n auto tests
+        [ ${{ matrix.enable-x64 }} = enable-x64 ] && JAX_ENABLE_X64=1 || JAX_ENABLE_X64=0 
+        export JAX_NUM_GENERATED_CASES=${{ matrix.num_generated_cases }}
+        echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
+        echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+        if [ $JAX_ENABLE_X64 = 0 ]; then
+          pytest -n auto jax/experimental/jax2tf/tests
+        fi
+        pytest -n auto tests examples
+
+
+  documentation:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        sudo apt install -y pandoc
+        python -m pip install --upgrade pip
+        pip install -r docs/requirements.txt
+    - name: Build and test documentation
+      run: |
+        sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html
+        pytest docs
+        pytest --doctest-modules jax/api.py
+
