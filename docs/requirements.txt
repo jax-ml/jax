@@ -9,6 +9,8 @@ msgpack
 # The next packages are for notebooks
 matplotlib
 sklearn
+# For CI tests.
+pytest
 # Must install jax itself for notebook execution to work
 .
 
