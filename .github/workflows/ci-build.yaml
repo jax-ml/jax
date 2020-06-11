@@ -40,10 +40,6 @@ jobs:
       matrix:
         include:
           - python-version: 3.6
-            os: macos-latest
-            enable-x64: disable-x64
-            num_generated_cases: 10
-          - python-version: 3.7
             os: ubuntu-latest
             enable-x64: disable-x64
             num_generated_cases: 25
