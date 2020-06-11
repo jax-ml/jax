@@ -830,7 +830,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   across the mapped axis:
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(np.arange(2.), 4.))
-  (DeviceArray([4., 5.], dtype=float32), array([8., 8.]))
+  (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32))
 
   If the ``out_axes`` is specified for a mapped result, the result is
   transposed accordingly.

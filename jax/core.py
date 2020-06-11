@@ -202,6 +202,19 @@ def gensym(jaxprs: Optional[Sequence[Jaxpr]] = None,
   counter = it.count(start=start)
   return lambda aval: Var(next(counter), suffix, aval)
 
+# In a jaxpr, `dropvar` can appear in place of a bound variable to indicate that
+# the assignment is dropped, i.e. that an expression's output value will never
+# be read. In that sense, `dropvar` is not a variable, but it is convenient to
+# treat it as a special case of one. Its `aval` is similarly inexact.
+class DropVar(Var):
+  count = -1
+  suffix = ''
+  def __init__(self): pass
+  @property
+  def aval(self): return abstract_unit
+  def __repr__(self): return '_'
+dropvar = DropVar()
+
 class Literal:
   __slots__ = ["val", "hash"]
 
@@ -1175,13 +1188,11 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   def write(v: Var, a: AbstractValue) -> None:
     if v in env:
       raise TypeError(f"Variable '{v}' already bound")
-    # TODO(frostig): we'd rather check equality or just typecompat here, but
-    # partial_eval.tracers_to_jaxpr types eqn outvars as abstract_unit if the
-    # outvars are unused
-    if not typecompat(v.aval, a) and v.aval is not abstract_unit:
-      raise TypeError(f"Variable '{v}' inconsistently typed as {a}, "
-                      f"bound as {v.aval}")
-    env[v] = a
+    if v is not dropvar:
+      if not typecompat(v.aval, a):
+        raise TypeError(f"Variable '{v}' inconsistently typed as {a}, "
+                        f"bound as {v.aval}")
+      env[v] = a
 
   env : Dict[Var, AbstractValue] = {}
 

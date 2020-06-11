@@ -21,8 +21,8 @@ import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
-from jax.experimental import jax_to_tf
-from jax.experimental.jax_to_tf.tests import tf_test_util
+from jax.experimental import jax2tf
+from jax.experimental.jax2tf.tests import tf_test_util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -33,7 +33,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
   def testSavedModel(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
     model = tf.Module()
-    model.f = tf.function(jax_to_tf.convert(f_jax),
+    model.f = tf.function(jax2tf.convert(f_jax),
                           input_signature=[tf.TensorSpec([], tf.float32)])
     x = np.array(0.7)
     self.assertAllClose(model.f(x), f_jax(x))

@@ -74,10 +74,10 @@ def jvp_subtrace_aux(master, primals, tangents):
       assert x._trace.level < trace.level
   ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
   ans_tracers = map(trace.full_raise, ans)
-  aux_tracers = map(trace.full_raise, aux)
   out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
-  aux_primals, _            = unzip2((t.primal, t.tangent) for t in aux_tracers)
-  aux_primals = map(core.full_lower, aux_primals)
+  aux_primals = [core.full_lower(x.primal)
+                 if isinstance(x, JVPTracer) and x._trace.level == trace.level
+                 else x for x in aux]
   yield (out_primals, out_tangents), aux_primals
 
 def linearize(traceable, *primals, **kwargs):
@@ -144,7 +144,8 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
-    if ct is not None and type(v) is not Literal and type(ct) is not Zero:
+    if (ct is not None and type(v) is not Literal and
+        type(ct) is not Zero and ct is not Zero):
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
       if not core.skip_checks:
         ct_aval = core.get_aval(ct_env[v])
@@ -195,7 +196,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
           params, call_jaxpr, invals, cts_in, cts_in_avals)
     else:
       cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
-    cts_out = map(lambda v: Zero(v.aval), eqn.invars) if cts_out is Zero else cts_out
+    cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
     # FIXME: Some invars correspond to primals!
     map(write_cotangent, eqn.invars, cts_out)
     for var in to_drop:

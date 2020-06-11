@@ -362,7 +362,7 @@ For example, here is an example fori loop
 >>> print(make_jaxpr(func10)(onp.ones(16), 5))
 { lambda c d ; a b.
   let e = add a d
-      f g h = while[ body_jaxpr={ lambda  ; e g a b c.
+      _ _ f = while[ body_jaxpr={ lambda  ; e g a b c.
                                   let d = add a 1
                                       f = add c e
                                       h = add f g
@@ -372,7 +372,7 @@ For example, here is an example fori loop
                                   let d = lt a b
                                   in (d,) }
                      cond_nconsts=0 ] c a 0 b e
-  in (h,) }
+  in (f,) }
 
 The top-level jaxpr has two constvars: ``c`` (corresponding to ``ones * 3.`` from the body
 of the loop) and ``d`` (corresponding to the use of ``ones`` in the initial carry).

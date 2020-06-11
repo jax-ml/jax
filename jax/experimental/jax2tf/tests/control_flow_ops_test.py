@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for the jax_to_tf conversion for control-flow primitives."""
+"""Tests for the jax2tf conversion for control-flow primitives."""
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -22,8 +22,8 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 import numpy as np
 
-from jax.experimental import jax_to_tf
-from jax.experimental.jax_to_tf.tests import tf_test_util
+from jax.experimental import jax2tf
+from jax.experimental.jax2tf.tests import tf_test_util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -39,7 +39,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: t + 1., lambda f: f, x)
 
-    with jax_to_tf.enable_jit():
+    with jax2tf.enable_jit():
       self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
       self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
 
@@ -51,7 +51,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: (t + 1., 1.), lambda f: (f + 2., 2.), x)
 
-    with jax_to_tf.enable_jit():
+    with jax2tf.enable_jit():
       self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
       self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
 
@@ -66,7 +66,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       #      for(i=x; i < 4; i++);
       return lax.while_loop(lambda c: c < 4, lambda c: c + 1, x)
 
-    with jax_to_tf.enable_jit():
+    with jax2tf.enable_jit():
       self.ConvertAndCompare(func, 0, with_function=with_function)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -98,7 +98,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
       return lax.while_loop(cond, body, (0, x))
 
-    with jax_to_tf.enable_jit():
+    with jax2tf.enable_jit():
       self.ConvertAndCompare(func, cond_const, with_function=with_function)
 
 
@@ -127,7 +127,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def product_xs_ys(xs, ys):
       return jax.vmap(product_xs_y, in_axes=(None, 0))(xs, ys)
 
-    with jax_to_tf.enable_jit():
+    with jax2tf.enable_jit():
       self.ConvertAndCompare(product_xs_ys, xs, ys, with_function=with_function)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -143,7 +143,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       return lax.scan(body, 0., (xs, ys))
 
     arg = np.arange(10, dtype=np.float32)
-    with jax_to_tf.enable_jit():
+    with jax2tf.enable_jit():
       self.ConvertAndCompare(f_jax, arg, arg, with_function=with_function)
 
 

@@ -15,6 +15,7 @@
 import numpy as onp
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
+import jax
 from .. import core
 from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, raise_to_shaped
@@ -23,7 +24,6 @@ from .. import linear_util as lu
 from ..util import unzip2, partial, safe_map, wrap_name, split_list
 from . import xla
 from . import partial_eval as pe
-from .. import lax_reference
 
 map = safe_map
 
@@ -294,13 +294,6 @@ defvectorized(xla.device_put_p)
 
 ### util
 
-# These utilities depend on primitives for things like broadcasting, reshaping,
-# and transposition on arrays. To avoid a circular import from depending on
-# lax.py, these functions use method dispatch on their arguments, which could be
-# DeviceArrays, numpy.ndarrays, or traced versions of those. This strategy
-# almost works, except for broadcast, for which raw numpy.ndarrays don't have a
-# method. To handle that case, the `broadcast` function uses a try/except.
-
 class _Last(object): pass
 last = _Last()
 
@@ -312,10 +305,7 @@ def broadcast(x, sz, axis):
   shape = list(onp.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(onp.delete(onp.arange(len(shape)), axis))
-  if isinstance(x, onp.ndarray) or onp.isscalar(x):
-    return lax_reference.broadcast_in_dim(x, shape, broadcast_dims)
-  else:
-    return x.broadcast_in_dim(shape, broadcast_dims)
+  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
 
 def moveaxis(x, src, dst):
   if core.get_aval(x) is core.abstract_unit:

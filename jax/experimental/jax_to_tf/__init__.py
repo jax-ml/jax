@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from .jax_to_tf import enable_jit, convert
+from .jax_to_tf import convert
