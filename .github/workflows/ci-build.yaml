@@ -1,4 +1,4 @@
-name: JAX continuous integration
+name: Continuous integration
 
 on:
   # Trigger the workflow on push or pull request,
@@ -40,10 +40,15 @@ jobs:
 
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: [3.8]
+        python-version: [3.7]
+        os: [ubuntu-latest, macos-latest]
+        enable-x64: [0, 1]
+        exclude:
+          - os: macos-latest
+            enable-x64: 0
 
     steps:
     - uses: actions/checkout@v2
@@ -58,4 +63,4 @@ jobs:
     - name: Run tests
       run: |
         pip install -e .
-        pytest tests/api_test.py
+        JAX_NUM_GENERATED_CASES=25 JAX_ENABLE_X64=${{ matrix.enable-x64 }} pytest -n auto tests

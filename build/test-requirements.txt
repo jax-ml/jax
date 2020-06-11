@@ -2,3 +2,5 @@ flake8
 jaxlib==0.1.47
 msgpack
 mypy==0.770
+pytest-xdist
+wheel
