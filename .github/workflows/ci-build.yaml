@@ -46,12 +46,10 @@ jobs:
             os: macos-latest
             enable-x64: disable-x64
             num_generated_cases: 10
-        include:
           - python-version: 3.7
             os: ubuntu-latest
             enable-x64: enable-x64
             num_generated_cases: 25
-        include:
           - python-version: 3.8
             os: ubuntu-latest
             enable-x64: enable-x64
