@@ -23,7 +23,7 @@ from typing import Callable, Dict, Sequence, Union
 import numpy as onp
 
 from .. import abstract_arrays
-from .. import core
+from .. import core, dtypes
 from ..tree_util import tree_unflatten
 from ..core import Trace, Tracer
 from ..util import safe_map, safe_zip, unzip2, prod, wrap_name
@@ -368,7 +368,7 @@ class MaskTracer(Tracer):
 
   @property
   def dtype(self):
-    return getattr(self.val, 'dtype', type(self.val))
+    return dtypes.dtype(self.val)
 
   def is_pure(self):
     return all(type(poly) is not Poly or poly.is_constant
@@ -396,14 +396,14 @@ class MaskTrace(Trace):
     if masking_rule is None:
       raise NotImplementedError(
         f'Masking rule for {primitive} not implemented yet.')
-    aout = primitive.abstract_eval(*(t.aval for t in tracers), **params)
+    out_aval = primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals, polymorphic_shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
     logical_shapes = map(shape_as_value, polymorphic_shapes)
     out = masking_rule(vals, logical_shapes, **params)
     if primitive.multiple_results:
-      return map(partial(MaskTracer, self), out, (o.shape for o in aout))
+      return map(partial(MaskTracer, self), out, (o.shape for o in out_aval))
     else:
-      return MaskTracer(self, out, aout.shape)
+      return MaskTracer(self, out, out_aval.shape)
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
