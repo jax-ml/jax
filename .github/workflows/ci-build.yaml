@@ -62,10 +62,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r build/test-requirements.txt
     - name: Run tests
+      env:
+        JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
       run: |
-        pip install -e .
         [ ${{ matrix.enable-x64 }} = enable-x64 ] && JAX_ENABLE_X64=1 || JAX_ENABLE_X64=0 
-        export JAX_NUM_GENERATED_CASES=${{ matrix.num_generated_cases }}
+        pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         if [ $JAX_ENABLE_X64 = 0 ]; then
