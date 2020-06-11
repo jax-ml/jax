@@ -574,27 +574,33 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysEqual(2 * y, z, check_dtypes=True)
 
   def test_linear_transpose_error(self):
-    x = jnp.arange(5)
+    with self.assertRaisesRegex(
+        TypeError, "input and output dtypes do not match"):
+      api.linear_transpose(lambda x: 1j * x, 1.0)
 
-    transpose_fun = api.linear_transpose(lambda x: [x, x], x)
+    with self.assertRaisesRegex(
+        TypeError, "input and output dtypes do not match"):
+      api.linear_transpose(lambda x: 0.5 * x, 1)
+
+    transpose_fun = api.linear_transpose(lambda x: [x, x], 1)
     with self.assertRaisesRegex(TypeError, "cotangent tree does not match"):
-      transpose_fun(x)
+      transpose_fun(1)
 
-    transpose_fun = api.linear_transpose(lambda x: jnp.stack([x, x]), x)
+    transpose_fun = api.linear_transpose(lambda x: jnp.stack([x, x]), 1)
     with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
-      transpose_fun(x)
+      transpose_fun(1)
 
-    transpose_fun = api.linear_transpose(lambda x: x, x)
+    transpose_fun = api.linear_transpose(lambda x: x, 1)
     with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
-      transpose_fun(1.5 * x)
+      transpose_fun(1.5)
 
-    transpose_fun = api.linear_transpose(lambda x: x, 1.5 * x)
+    transpose_fun = api.linear_transpose(lambda x: x, 1.5)
     with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
-      transpose_fun(x)
+      transpose_fun(1)
 
   def test_linear_transpose_complex(self):
     f = lambda x: (1 + 2j) * x
-    transpose = api.linear_transpose(f, 0)
+    transpose = api.linear_transpose(f, 1j)
     actual, = transpose(3 + 4j)
     expected = -5 + 10j
     self.assertEqual(actual, expected)

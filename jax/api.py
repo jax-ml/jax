@@ -1602,6 +1602,12 @@ def linear_transpose(fun: Callable, *args) -> Callable:
                                                instantiate=True)
   out_avals, _ = unzip2(out_pvals)
 
+  input_type = onp.result_type(*in_avals)
+  output_type = onp.result_type(*out_avals)
+  if input_type != output_type:
+    raise TypeError(f"input and output dtypes do not match, got {input_type} "
+                    f"and {output_type}")
+
   def transposed_fun(out_cotangent):
     out_cotangents, out_tree2 = tree_flatten(out_cotangent)
     if out_tree() != out_tree2:
