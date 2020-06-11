@@ -574,14 +574,6 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysEqual(2 * y, z, check_dtypes=True)
 
   def test_linear_transpose_error(self):
-    with self.assertRaisesRegex(
-        TypeError, "input and output dtypes do not match"):
-      api.linear_transpose(lambda x: 1j * x, 1.0)
-
-    with self.assertRaisesRegex(
-        TypeError, "input and output dtypes do not match"):
-      api.linear_transpose(lambda x: 0.5 * x, 1)
-
     transpose_fun = api.linear_transpose(lambda x: [x, x], 1)
     with self.assertRaisesRegex(TypeError, "cotangent tree does not match"):
       transpose_fun(1)

@@ -1580,14 +1580,20 @@ def linear_transpose(fun: Callable, *args) -> Callable:
   For linear functions, this transformation is equivalent to ``vjp``, but
   avoids the overhead of overhead of computing the forward pass.
 
+  Note that the outputs of the transposed function will always have the exact
+  same dtypes as ``*args``, even if some values are truncated (e.g., from
+  complex to float or float to integer). To avoid truncation, use dtypes in
+  ``**args`` that match the full range of output values.
+
   Args:
     fun: the linear function to be transposed.
     *args: a positional argument tuple of arrays, scalars, or (nested) standard
       Python containers (tuples, lists, dicts, namedtuples, i.e. pytrees) of
-      those types. Since only the ``shape`` and ``dtype`` attributes are
-      accessed, only values that duck-type arrays are required, rather than
-      real ndarrays. Note that the duck-typed objects cannot be namedtuples
-      because those are treated as standard Python containers.
+      those types used for evaluating the shape/dtype of ``fun(*args)``. Since
+      only the ``shape`` and ``dtype`` attributes are accessed, only values
+      that duck-type arrays are required, rather than real ndarrays. (Note that
+      the duck-typed objects cannot be namedtuples because those are treated
+      as standard Python containers.)
 
   Returns:
     A callable that calculates the transpose of ``fun``.
@@ -1601,12 +1607,6 @@ def linear_transpose(fun: Callable, *args) -> Callable:
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(flat_fun, in_pvals,
                                                instantiate=True)
   out_avals, _ = unzip2(out_pvals)
-
-  input_type = onp.result_type(*in_avals)
-  output_type = onp.result_type(*out_avals)
-  if input_type != output_type:
-    raise TypeError(f"input and output dtypes do not match, got {input_type} "
-                    f"and {output_type}")
 
   def transposed_fun(out_cotangent):
     out_cotangents, out_tree2 = tree_flatten(out_cotangent)

@@ -2239,7 +2239,7 @@ def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
 
 def _convert_element_type_transpose_rule(t, *, new_dtype, old_dtype):
   assert t.dtype == new_dtype, (t.dtype, new_dtype)
-  return [convert_element_type_p.bind(t, new_dtype=new_dtype,
+  return [convert_element_type_p.bind(t, new_dtype=old_dtype,
                                       old_dtype=new_dtype)]
 
 convert_element_type_p = standard_primitive(
