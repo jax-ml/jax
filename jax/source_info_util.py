@@ -34,13 +34,10 @@ _jax_path = os.path.dirname(_get_stacktrace()[0].file_name)
 
 def user_frame(source_info: Optional[SourceInfo]) -> Optional[Frame]:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
-  try:
     # Guess that the user's frame is the innermost stack frame that isn't in the
     # jax source tree.
-    return next(x for x in (source_info or [])
-                if not x.file_name.startswith(_jax_path))
-  except StopIteration:
-    return None
+  return next((x for x in (source_info or [])
+               if not x.file_name.startswith(_jax_path)), None)
 
 
 def summarize(source_info: Optional[SourceInfo]) -> str:
