@@ -27,7 +27,7 @@ from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, raise_to_shaped
 from ..ad_util import Zero
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
-                    wrap_name, cache, curry)
+                    cache, curry)
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
                     AbstractValue, unit, unitvar, abstract_unit,
                     TypedJaxpr, new_jaxpr_eqn)
