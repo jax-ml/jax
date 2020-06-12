@@ -268,8 +268,10 @@ Not every function in NumPy is implemented; contributions are welcome!
     tri
     tril
     tril_indices
+    tril_indices_from
     triu
     triu_indices
+    triu_indices_from
     true_divide
     trunc
     unique

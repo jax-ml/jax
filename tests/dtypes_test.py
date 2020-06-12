@@ -69,6 +69,10 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
       self.assertEqual(y.dtype, dtypes.canonicalize_dtype(dtype), msg=(f, y))
 
+  def testUnsupportedType(self):
+    with self.assertRaisesRegex(TypeError, "nonsense.* not understood"):
+      dtypes.canonicalize_dtype("nonsense")
+
   @parameterized.named_parameters(
     {"testcase_name": "_swap={}_jit={}".format(swap, jit),
      "swap": swap, "jit": jit}

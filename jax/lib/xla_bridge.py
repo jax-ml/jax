@@ -200,7 +200,7 @@ def devices(backend: str = None):
   Each device is represented by a subclass of :class:`Device` (e.g.
   :class:`CpuDevice`, :class:`GpuDevice`). The length of the returned list is
   equal to ``device_count(backend)``. Local devices can be identified by comparing
-  :meth:`Device.host_id` to the value returned by :py:func:`jax.host_id``.
+  :meth:`Device.host_id` to the value returned by :py:func:`jax.host_id`.
 
   If ``backend`` is ``None``, returns all the devices from the default backend.
   The default backend is generally ``'gpu'`` or ``'tpu'`` if available,

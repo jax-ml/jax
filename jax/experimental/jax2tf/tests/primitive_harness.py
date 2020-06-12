@@ -21,23 +21,30 @@ NumPy (lax_reference) or TensorFlow.
 from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence, Tuple, Union
 
 from absl import testing
+from jax import config
 from jax import test_util as jtu
 from jax import dtypes
 from jax import lax
 
 import numpy as np
 
+FLAGS = config.FLAGS
+
 # TODO: these are copied from tests/lax_test.py (make this source of truth)
+# Do not run int64 tests unless FLAGS.jax_enable_x64, otherwise we get a
+# mix of int32 and int64 operations.
 def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
+  return [t for t in dtypes if
+          t in jtu.supported_dtypes() and
+          (FLAGS.jax_enable_x64 or np.dtype(t).itemsize != 8)]
 
 float_dtypes = supported_dtypes([dtypes.bfloat16, np.float16, np.float32,
                                  np.float64])
 complex_elem_dtypes = supported_dtypes([np.float32, np.float64])
 complex_dtypes = supported_dtypes([np.complex64, np.complex128])
 inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = supported_dtypes([np.int32, np.int64])
-uint_dtypes = supported_dtypes([np.uint32, np.uint64])
+int_dtypes = supported_dtypes([np.int8, np.int16, np.int32, np.int64])
+uint_dtypes = supported_dtypes([np.uint8, np.uint16, np.uint32, np.uint64])
 bool_dtypes = [np.bool_]
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -167,4 +174,34 @@ lax_squeeze = jtu.cases_from_list(
     [(2, 1, 3, 1), (1, -1)],
   ]
   for dtype in [np.float32]
+)
+
+shift_inputs = [
+  (arg, dtype, shift_amount)
+  for dtype in supported_dtypes(uint_dtypes + int_dtypes)
+  for arg in [
+    np.array([-250, -1, 0, 1, 250], dtype=dtype),
+  ]
+  for shift_amount in [0, 1, 2, 3, 7]
+]
+
+lax_shift_left = jtu.cases_from_list(
+  Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
+          lax.shift_left,
+          [arg, StaticArg(np.array([shift_amount], dtype=dtype))])
+  for arg, dtype, shift_amount in shift_inputs
+)
+
+lax_shift_right_logical = jtu.cases_from_list(
+  Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
+          lax.shift_right_logical,
+          [arg, StaticArg(np.array([shift_amount], dtype=dtype))])
+  for arg, dtype, shift_amount in shift_inputs
+)
+
+lax_shift_right_arithmetic = jtu.cases_from_list(
+  Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
+          lax.shift_right_arithmetic,
+          [arg, StaticArg(np.array([shift_amount], dtype=dtype))])
+  for arg, dtype, shift_amount in shift_inputs
 )

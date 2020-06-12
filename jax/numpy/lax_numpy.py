@@ -43,7 +43,7 @@ from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags
 from ..interpreters.xla import (DeviceArray, device_put, array_result_handler,
-                                DeviceValue)
+                                DeviceValue, abstractify)
 from ..interpreters.masking import Poly
 from .. import lax
 from .. import ops
@@ -2120,9 +2120,12 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     out = _device_put_raw(object)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceValue, core.Tracer)):
-    out = object
-    if dtype and _dtype(out) != dtype:
-      out = lax.convert_element_type(out, dtype)
+    if isinstance(object, DeviceArray) and copy:
+      # We perform a copy by bouncing back to the host
+      # TODO(phawkins): add a device runtime function to copy a buffer
+      out = _device_put_raw(np.asarray(object))
+    else:
+      out = object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
@@ -2138,6 +2141,9 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
+  if dtype and _dtype(out) != dtype:
+    out = lax.convert_element_type(out, dtype)
+
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
   return out
@@ -2146,9 +2152,9 @@ def _can_call_numpy_array(x):
   return _all(not isinstance(l, (core.Tracer, DeviceValue))
               for l in tree_leaves(x))
 
+# TODO(mattjj): maybe move these two functions into xla.py
 def _device_put_raw(x):
-  aval = core.raise_to_shaped(core.get_aval(x))
-  return array_result_handler(None, aval)(device_put(x))
+  return array_result_handler(None, abstractify(x))(device_put(x))
 
 
 @_wraps(np.asarray)
@@ -2541,6 +2547,17 @@ def _wrap_indices_function(f):
 tril_indices = _wrap_indices_function(np.tril_indices)
 triu_indices = _wrap_indices_function(np.triu_indices)
 mask_indices = _wrap_indices_function(np.mask_indices)
+
+
+@_wraps(np.triu_indices_from)
+def triu_indices_from(arr, k=0):
+  return triu_indices(arr.shape[-2], k=k, m=arr.shape[-1])
+
+
+@_wraps(np.tril_indices_from)
+def tril_indices_from(arr, k=0):
+  return tril_indices(arr.shape[-2], k=k, m=arr.shape[-1])
+
 
 @_wraps(np.diag_indices)
 def diag_indices(n, ndim=2):
