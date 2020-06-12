@@ -425,6 +425,9 @@ class MaskTrace(Trace):
       # Make padded_env hashable
       padded_env = (env_keys, padded_env_vals)
       f, shapes_out = mask_subtrace(f, self.master, shapes, padded_env)
+      if 'donated_invars' in params:
+        params = dict(params, donated_invars=((False,) * len(logical_env_vals) +
+                                              params['donated_invars']))
       vals_out = call_primitive.bind(f, *(logical_env_vals + vals), **params)
       return [MaskTracer(self, v, s) for v, s in zip(vals_out, shapes_out())]
 
