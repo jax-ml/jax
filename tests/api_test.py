@@ -1413,6 +1413,17 @@ class APITest(jtu.JaxTestCase):
       return np.zeros((2,))
     f(np.zeros((5,)))
 
+  def test_xla_constant_dedup(self):
+    y = np.array([7, 14], dtype=np.float32)
+    def f(x):
+      return x + y + y
+
+    x = np.array([1, 2], dtype=np.float32)
+    hlo_lines = jax.xla_computation(f)(x).as_hlo_text().split('\n')
+    hlo_lines = set([s.strip() for s in hlo_lines])
+    self.assertIn('constant.1 = f32[2]{0} constant({7, 14})', hlo_lines)
+    self.assertNotIn('constant.2 = f32[2]{0} constant({7, 14})', hlo_lines)
+
 
 class RematTest(jtu.JaxTestCase):
 
