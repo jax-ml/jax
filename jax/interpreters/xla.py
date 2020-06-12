@@ -590,6 +590,12 @@ def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
           yield subindex, sub
   return tuple(_flatten_shape(s, index=()))
 
+def _xla_consts(c, consts):
+  unique_consts = {id(const): const for const in consts}
+  xla_consts = {
+      id_: xb.constant(c, const) for id_, const in unique_consts.items()}
+  return [xla_consts[id(const)] for const in consts]
+
 @lu.cache
 def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *arg_specs):
   if device is not None and backend is not None:
@@ -638,7 +644,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
-  xla_consts = map(partial(xb.constant, c), consts)
+  xla_consts = _xla_consts(c, consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
@@ -896,8 +902,8 @@ def lower_fun(fun, multiple_results):
       wrapped_fun = _tuple_output(wrapped_fun)
     jaxpr, _, consts = pe.trace_to_jaxpr(wrapped_fun, pvals, instantiate=True,
                                          stage_out=True)
-    consts = map(partial(xb.constant, c), consts)
-    outs = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1), consts, '', *xla_args)
+    xla_consts = _xla_consts(c, consts)
+    outs = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1), xla_consts, '', *xla_args)
     if multiple_results:
       return xops.Tuple(c, outs)
     else:
@@ -917,8 +923,8 @@ def lower_fun_initial_style(fun):
     pvals = [pe.PartialVal.unknown(a) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
-    consts = map(partial(xb.constant, c), consts)
-    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack,
+    xla_consts = _xla_consts(c, consts)
+    outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, name_stack,
                          *xla_args)
     return xops.Tuple(c, outs)
   return f
