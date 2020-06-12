@@ -24,6 +24,8 @@ from ..numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
 from ..numpy._util import _wraps
 
+from ..third_party.scipy.special import ellipk, ellipe, ellipj, ellipkinc, ellipeinc, cosm1
+
 
 @_wraps(osp_special.gammaln)
 def gammaln(x):
