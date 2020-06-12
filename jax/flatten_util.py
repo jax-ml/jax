@@ -14,7 +14,6 @@
 
 
 from .tree_util import tree_flatten, tree_unflatten
-from . import linear_util as lu
 from .util import safe_zip
 
 import jax.numpy as jnp
