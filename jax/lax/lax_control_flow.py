@@ -29,6 +29,7 @@ import numpy as onp
 import jax
 from jax import core
 from jax import dtypes
+from jax import source_info_util
 from jax import util
 from jax.lax import lax
 from jax import linear_util as lu
@@ -879,7 +880,8 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   linear_2 = (False,) * num_res + linear
   params = dict(branches=branches_2, linear=linear_2)
   eqn = pe.new_eqn_recipe(
-      [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params)
+      [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
+      source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1350,7 +1352,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                           out_tracers, scan_p,
                           dict(reverse=reverse, length=length, jaxpr=jaxpr_2_opt,
                                num_consts=num_consts_2,
-                               num_carry=num_carry, linear=tuple(linear_2)))
+                               num_carry=num_carry, linear=tuple(linear_2)),
+                          source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 

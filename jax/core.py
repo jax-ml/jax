@@ -31,6 +31,7 @@ import numpy as onp
 from . import dtypes
 from .config import FLAGS
 from . import linear_util as lu
+from . import source_info_util
 
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
@@ -141,12 +142,12 @@ def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
 
 
-
 class JaxprEqn(NamedTuple):
   invars: List['Atom']
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
+  source_info: Optional[source_info_util.SourceInfo]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
@@ -341,7 +342,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
+    with source_info_util.user_context(eqn.source_info):
+      ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -1285,19 +1287,22 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
                          not isinstance(v, (Jaxpr, TypedJaxpr)))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
-def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
+def pp_eqn(eqn: JaxprEqn, source_info=False) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars)
   pp_subexpr = pp('')
-  return (pp('{} = '.format(lhs)) >>
+  doc = (pp('{} = '.format(lhs)) >>
           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
-          >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+          >> pp(' ') >> pp(pp_vars(eqn.invars)))
+  if source_info:
+    doc >>= pp('  [{}]'.format(source_info_util.summarize(eqn.source_info)))
+  return doc + pp_subexpr
 
-def pp_jaxpr(jaxpr: Jaxpr) -> PrettyPrint:
+def pp_jaxpr(jaxpr: Jaxpr, source_info=False) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
           ((pp('let ') >>
-            vcat(map(pp_eqn, jaxpr.eqns))) +
+            vcat(map(partial(pp_eqn, source_info=source_info), jaxpr.eqns))) +
            pp('in {} }}'.format(pp_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
