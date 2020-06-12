@@ -563,6 +563,51 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(fun(2), cfun(2))
     self.assertEqual(fun(3), cfun(3))
 
+  def testSwitchResidualsMerge(self):
+    def get_conds(fun):
+      jaxpr = api.make_jaxpr(api.grad(fun))(0., 0)
+      return [eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'cond']
+
+    def branch_invars_len(cond_eqn):
+      lens = [len(jaxpr.jaxpr.invars) for jaxpr in cond_eqn.params['branches']]
+      assert len(set(lens)) == 1
+      return lens[0]
+
+    def branch_outvars_len(cond_eqn):
+      lens = [len(jaxpr.jaxpr.outvars) for jaxpr in cond_eqn.params['branches']]
+      assert len(set(lens)) == 1
+      return lens[0]
+
+    branches1 = [
+        lambda x: jnp.sin(x),
+        lambda x: jnp.cos(x)]   # branch residuals overlap, should be reused
+    branches2 = branches1 + [
+        lambda x: jnp.sinh(x)]  # another overlapping residual, expect reuse
+    branches3 = branches2 + [
+        lambda x: jnp.sin(x) + jnp.cos(x)]  # requires one more residual slot
+    def fun1(x, i):
+      return lax.switch(i + 1, branches1, x)
+    def fun2(x, i):
+      return lax.switch(i + 1, branches2, x)
+    def fun3(x, i):
+      return lax.switch(i + 1, branches3, x)
+
+    fwd1, bwd1 = get_conds(fun1)
+    fwd2, bwd2 = get_conds(fun2)
+    fwd3, bwd3 = get_conds(fun3)
+
+    fwd1_num_out = branch_outvars_len(fwd1)
+    fwd2_num_out = branch_outvars_len(fwd2)
+    fwd3_num_out = branch_outvars_len(fwd3)
+    assert fwd1_num_out == fwd2_num_out
+    assert fwd3_num_out == fwd2_num_out + 1
+
+    bwd1_num_in = branch_invars_len(bwd1)
+    bwd2_num_in = branch_invars_len(bwd2)
+    bwd3_num_in = branch_invars_len(bwd3)
+    assert bwd1_num_in == bwd2_num_in
+    assert bwd3_num_in == bwd2_num_in + 1
+
   def testOneBranchSwitch(self):
     branch = lambda x: -x
     f = lambda i, x: lax.switch(i, [branch], x)
