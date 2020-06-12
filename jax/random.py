@@ -1186,7 +1186,7 @@ def poisson(key, lam, shape=(), dtype=np.int64):
   shape = abstract_arrays.canonicalize_shape(shape)
   if np.shape(lam) != shape:
     lam = jnp.broadcast_to(lam, shape)
-  lam = lam.astype(np.float32)
+  lam = lax.convert_element_type(lam, np.float32)
   return _poisson(key, lam, shape, dtype)
 
 
