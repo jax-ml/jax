@@ -24,17 +24,21 @@ zip = safe_zip
 
 
 def ravel_pytree(pytree):
+  """Ravel (i.e. flatten) a pytree of arrays down to a 1D array.
+
+  Args:
+    pytree: a pytree to ravel.
+
+  Returns:
+    A pair where the first element is a 1D array representing the flattened and
+    concatenated leaf values, and the second element is a callable for
+    unflattening a 1D vector of the same length back to a pytree of of the same
+    structure as the input ``pytree``.
+  """
   leaves, treedef = tree_flatten(pytree)
-  flat, unravel_list = vjp(ravel_list, *leaves)
+  flat, unravel_list = vjp(_ravel_list, *leaves)
   unravel_pytree = lambda flat: tree_unflatten(treedef, unravel_list(flat))
   return flat, unravel_pytree
 
-def ravel_list(*lst):
+def _ravel_list(*lst):
   return jnp.concatenate([jnp.ravel(elt) for elt in lst]) if lst else jnp.array([])
-
-
-@lu.transformation_with_aux
-def ravel_fun(unravel_inputs, flat_in, **kwargs):
-  pytree_args = unravel_inputs(flat_in)
-  ans = yield pytree_args, {}
-  yield ravel_pytree(ans)
