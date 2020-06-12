@@ -7,6 +7,7 @@
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
 | [**Install guide**](#installation)
+| [**Neural net libraries**](#neural-network-libraries)
 | [**Change logs**](https://jax.readthedocs.io/en/latest/CHANGELOG.html)
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 | [**Code search**](https://cs.opensource.google/jax/jax)
@@ -77,6 +78,7 @@ perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grad
 * [Transformations](#transformations)
 * [Current gotchas](#current-gotchas)
 * [Installation](#installation)
+* [Neural net libraries](#neural-net-libraries)
 * [Citing JAX](#citing-jax)
 * [Reference documentation](#reference-documentation)
 
@@ -443,6 +445,11 @@ if you run into any errors or problems with the prebuilt wheels.
 See [Building JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
+## Neural network libraries
+
+There are lots of great deep learning libraries built on top of JAX!
+
+If you want a batteries-included library for neural network training, try [Flax](https://github.com/google/flax) by a Google Brain team in Amsterdam. Another good option is DeepMind's [Haiku](https://github.com/deepmind/dm-haiku), a JAX version of Sonnet focused solely on neural network layers. Finally, [Trax](https://github.com/google/trax) by a Brain team in California is a configuration-driven framework focused on sequence model research and reinforcement learning as a successor to Tensor2Tensor.
 
 ## Citing JAX
 
