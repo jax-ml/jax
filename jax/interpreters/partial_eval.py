@@ -262,8 +262,7 @@ class JaxprTrace(Trace):
       return out_tracers
     return out, todo
 
-  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
-    return self.process_call(map_primitive, f, tracers, params)
+  process_map = process_call
 
   def post_process_map(self, map_primitive, out_tracers, params):
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
