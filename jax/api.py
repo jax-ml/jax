@@ -169,8 +169,6 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
                        name=flat_fun.__name__, donated_invars=donated_invars)
     return tree_unflatten(out_tree(), out)
 
-  jitted_name = "jit({}, static_argnums={})"
-  f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
 @contextmanager
@@ -1167,8 +1165,6 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
         donated_invars=tuple(donated_invars))
     return tree_unflatten(out_tree(), out)
 
-  namestr = "pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 class _TempAxisName:
