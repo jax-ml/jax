@@ -49,6 +49,7 @@ OpRecord = collections.namedtuple(
 
 def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None):
   test_name = test_name or name
+  nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
@@ -141,6 +142,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           list_args.insert(i, args[i])
         return lax_op(*list_args)
 
+      assert list(nondiff_argnums) == sorted(set(nondiff_argnums))
       diff_args = [x for i, x in enumerate(args) if i not in nondiff_argnums]
       jtu.check_grads(partial_lax_op, diff_args, order=1,
                       atol=jtu.if_device_under_test("tpu", .1, 1e-3),
