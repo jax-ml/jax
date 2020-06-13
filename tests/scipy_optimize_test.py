@@ -66,31 +66,26 @@ def eggholder(np):
 class TestBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_func={}_maxiter={}_use_jit={}".format(func_and_init[0].__name__, maxiter, use_jit),
-     "maxiter": maxiter, "use_jit": use_jit, "func_and_init": func_and_init}
+    {"testcase_name": "_func={}_maxiter={}".format(func_and_init[0].__name__, maxiter),
+     "maxiter": maxiter, "func_and_init": func_and_init}
     for maxiter in [None]
-    for use_jit in [True, False]
     for func_and_init in [(rosenbrock, jnp.zeros(2)),
                           (himmelblau, jnp.zeros(2)),
                           (matyas, jnp.ones(2) * 6.),
                           (eggholder, jnp.ones(2) * 100.)]))
-  def test_minimize(self, maxiter, use_jit, func_and_init):
+  def test_minimize(self, maxiter, func_and_init):
     # Note, cannot compare step for step with scipy BFGS because our line search is _slightly_ different.
 
     func, x0 = func_and_init
 
     def compare(func, x0):
-      if use_jit:
-        @jit
-        def min_op(x0):
-          result = bfgs_minimize(func(jnp), x0,
-                                 options=dict(ls_maxiter=100, maxiter=maxiter, g_tol=1e-6))
-          return result
-      else:
-        def min_op(x0):
-          result = bfgs_minimize(func(jnp), x0,
-                                 options=dict(ls_maxiter=100, maxiter=maxiter, g_tol=1e-6))
-          return result
+      self._CompileAndCheck(func, lambda: [x0])
+
+      @jit
+      def min_op(x0):
+        result = bfgs_minimize(func(jnp), x0,
+                               options=dict(ls_maxiter=100, maxiter=maxiter, g_tol=1e-6))
+        return result
 
       jax_res = min_op(x0)
 
