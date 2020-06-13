@@ -293,31 +293,31 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo, dphi_lo,
   return state
 
 
-def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, maxiter=10, c1=1e-4,
+def line_search(value_and_gradient, position, direction, old_fval=None, gfk=None, maxiter=10, c1=1e-4,
                 c2=0.9):
-  """
-  Inexact line search that satisfies strong Wolfe conditions.
-  Algorithm 3.5 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 59-61
+    """
+    Inexact line search that satisfies strong Wolfe conditions.
+    Algorithm 3.5 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 59-61
 
-  Notes:
-      We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
-  Args:
-      value_and_gradient: callable
-          function of form f(x) that returns a tuple of real scalar and gradient of same dtype and shape as x.
-          x is a flat ndarray.
-      position: ndarray
-          variable value to start search from.
-      direction: ndarray
-          direction to search in. Assumes the direction is a descent direction.
-      f_0, g_0: ndarray, optional
-          initial value of value_and_gradient as position.
-      maxiter: int
-          maximum number of iterations to search
-      c1, c2: Wolfe criteria constant, see ref.
+    Notes:
+        We utilise boolean arithmetic to avoid jax.cond calls which don't work on accelerators.
+    Args:
+        value_and_gradient: callable
+            function of form f(x) that returns a tuple of real scalar and gradient of same dtype and shape as x.
+            x is a flat ndarray.
+        position: ndarray
+            variable value to start search from.
+        direction: ndarray
+            direction to search in. Assumes the direction is a descent direction.
+        old_fval, gfk: ndarray, optional
+            initial value of value_and_gradient as position.
+        maxiter: int
+            maximum number of iterations to search
+        c1, c2: Wolfe criteria constant, see ref.
 
-  Returns: LineSearchResults
+    Returns: LineSearchResults
 
-  """
+    """
 
   def restricted_func_and_grad(t):
     phi, g = value_and_gradient(position + t * direction)
@@ -337,18 +337,18 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
                                 ('phi_star', float),
                                 ('dphi_star', float),
                                 ('g_star', jnp.ndarray)])
-  if f_0 is None or g_0 is None:
-    phi_0, dphi_0, g_0 = restricted_func_and_grad(0.)
-  else:
-    phi_0 = f_0
-    dphi_0 = jnp.dot(g_0, direction)
+    if old_fval is None or gfk is None:
+        phi_0, dphi_0, gfk = restricted_func_and_grad(0.)
+    else:
+        phi_0 = old_fval
+        dphi_0 = jnp.dot(gfk, direction)
 
-  def wolfe_one(a_i, phi_i):
-    # actually negation of W1
-    return phi_i > phi_0 + c1 * a_i * dphi_0
+    def wolfe_one(a_i, phi_i):
+        # actually negation of W1
+        return phi_i > phi_0 + c1 * a_i * dphi_0
 
-  def wolfe_two(dphi_i):
-    return jnp.abs(dphi_i) <= -c2 * dphi_0
+    def wolfe_two(dphi_i):
+        return jnp.abs(dphi_i) <= -c2 * dphi_0
 
   state = LineSearchState(done=False,
                           failed=False,
@@ -357,12 +357,12 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
                           a_i1=0.,
                           phi_i1=phi_0,
                           dphi_i1=dphi_0,
-                          nfev=1 if (f_0 is None or g_0 is None) else 0,
-                          ngev=1 if (f_0 is None or g_0 is None) else 0,
+                          nfev=1 if (old_fval is None or gfk is None) else 0,
+                          ngev=1 if (old_fval is None or gfk is None) else 0,
                           a_star=0.,
                           phi_star=phi_0,
                           dphi_star=dphi_0,
-                          g_star=g_0)
+                          g_star=gfk)
 
   def body(state):
     # no amax in this version, we just double as in scipy.
@@ -389,7 +389,7 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
                   a_i,
                   phi_i,
                   dphi_i,
-                  g_0,
+                  gfk,
                   ~star_to_zoom1)
 
     state = state._replace(nfev=state.nfev + zoom1.nfev,
@@ -404,7 +404,7 @@ def line_search(value_and_gradient, position, direction, f_0=None, g_0=None, max
                   state.a_i1,
                   state.phi_i1,
                   state.dphi_i1,
-                  g_0,
+                  gfk,
                   ~star_to_zoom2)
 
     state = state._replace(nfev=state.nfev + zoom2.nfev,

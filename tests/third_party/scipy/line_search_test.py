@@ -119,7 +119,7 @@ class TestLineSearch(jtu.JaxTestCase):
       f0 = f(x)
       g0 = fprime(x)
       self.fcount = 0
-      res = line_search(value_and_grad(f, fprime), x, p, f_0=f0, g_0=g0)
+      res = line_search(value_and_grad(f, fprime), x, p, old_fval=f0, gfk=g0)
       s = res.a_k
       fv = res.f_k
       gv = res.g_k

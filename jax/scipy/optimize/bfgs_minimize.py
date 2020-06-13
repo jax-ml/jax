@@ -87,7 +87,7 @@ def bfgs_minimize(func, x0, options=None):
 
   def body(state):
     p_k = -(state.H_k @ state.g_k)
-    line_search_results = line_search(value_and_grad, state.x_k, p_k, f_0=state.f_k, g_0=state.g_k,
+    line_search_results = line_search(value_and_grad, state.x_k, p_k, old_fval=state.f_k, gfk=state.g_k,
                                       maxiter=ls_maxiter)
     state = state._replace(nfev=state.nfev + line_search_results.nfev,
                            ngev=state.ngev + line_search_results.ngev,
