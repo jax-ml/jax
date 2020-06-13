@@ -166,9 +166,6 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
     out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,
                        name=flat_fun.__name__, donated_invars=donated_invars)
     return tree_unflatten(out_tree(), out)
-
-  jitted_name = "jit({}, static_argnums={})"
-  f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
 @contextmanager
@@ -1164,9 +1161,6 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
         mapped_invars=tuple(axis is not None for axis in in_axes_flat),
         donated_invars=tuple(donated_invars))
     return tree_unflatten(out_tree(), out)
-
-  namestr = "pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 class _TempAxisName:
@@ -1221,9 +1215,6 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
                                   donated_invars=donated_invars)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
-
-  namestr = "soft_pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 def _reshape_split(num_chunks, x):
