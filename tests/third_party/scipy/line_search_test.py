@@ -3,7 +3,6 @@ from absl.testing import absltest, parameterized
 from jax.config import config
 from jax import test_util as jtu, numpy as jnp, value_and_grad, grad
 from jax.scipy.optimize.line_search import line_search
-from tests.scipy_optimize_test import value_and_grad
 from scipy.optimize.linesearch import line_search_wolfe2
 
 config.parse_flags_with_absl()

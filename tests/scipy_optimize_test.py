@@ -24,13 +24,6 @@ import numpy as onp
 config.parse_flags_with_absl()
 
 
-def value_and_grad(f, fprime):
-  def func(x):
-    return f(x), fprime(x)
-
-  return func
-
-
 def rosenbrock(np):
   def func(x):
     return np.sum(100. * np.diff(x) ** 2 + (1. - x[:-1]) ** 2)
