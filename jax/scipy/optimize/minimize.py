@@ -1,4 +1,4 @@
-from .bfgs_minimize import bfgs_minimize
+from .bfgs_minimize import fmin_bfgs
 from typing import NamedTuple
 import jax.numpy as jnp
 
@@ -16,7 +16,7 @@ class OptimizeResults(NamedTuple):
   nit: int  # Number of iterations of the optimization algorithm
 
 
-def minimize(fun, x0, *, method=None, tol=None, options=None):
+def minimize(fun, x0, *, args=(), method=None, tol=None, options=None):
   """
   Interface to scalar function minimisation.
 
@@ -24,6 +24,8 @@ def minimize(fun, x0, *, method=None, tol=None, options=None):
   Args:
       fun: jax function
       x0: initial guess, currently only single flat arrays supported.
+      args: tuple, optional
+          Extra arguments to pass to func as func(x,*args)
       method: Available methods: ['BFGS']
       tol: Tolerance for termination. For detailed control, use solver-specific options.
       options: A dictionary of solver options. All methods accept the following generic options:
@@ -35,7 +37,7 @@ def minimize(fun, x0, *, method=None, tol=None, options=None):
 
   """
   if method.lower() == 'bfgs':
-    results = bfgs_minimize(fun, x0, options=options)
+    results = fmin_bfgs(fun, x0, args=args, options=options)
     return OptimizeResults(x=results.x_k,
                            success=(results.converged) & (~results.failed),
                            status=results.failed,

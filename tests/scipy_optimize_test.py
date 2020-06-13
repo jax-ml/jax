@@ -17,7 +17,7 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 from jax import jit
 from jax.config import config
-from jax.scipy.optimize.bfgs_minimize import bfgs_minimize
+from jax.scipy.optimize.bfgs_minimize import fmin_bfgs
 from scipy.optimize import minimize as smin
 import numpy as onp
 
@@ -83,8 +83,8 @@ class TestBFGS(jtu.JaxTestCase):
 
       @jit
       def min_op(x0):
-        result = bfgs_minimize(func(jnp), x0,
-                               options=dict(ls_maxiter=100, maxiter=maxiter, g_tol=1e-6))
+        result = fmin_bfgs(func(jnp), x0,
+                           options=dict(ls_maxiter=100, maxiter=maxiter, gtol=1e-6))
         return result
 
       jax_res = min_op(x0)
