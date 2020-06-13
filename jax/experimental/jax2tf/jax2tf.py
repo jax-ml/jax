@@ -292,8 +292,8 @@ def promote_types(*values):
 
 
 def wrap_binary_op(func):
-  def wrapped_func(lhs, rhs, *args, **kwargs):
-    return func(*promote_types(lhs, rhs), *args, **kwargs)
+  def wrapped_func(lhs, rhs, **kwargs):
+    return func(*promote_types(lhs, rhs), **kwargs)
   return wrapped_func
 
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
@@ -657,7 +657,8 @@ tf_impl[lax.dynamic_slice_p] = _dynamic_slice
 
 
 def _dynamic_update_slice(operand, update, *start_indices):
-  return tfxla.dynamic_update_slice(operand, update, tf.stack(start_indices))
+  return tfxla.dynamic_update_slice(*promote_types(operand, update),
+                                    tf.stack(start_indices))
 tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 

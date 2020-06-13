@@ -280,6 +280,21 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            with_function=True)
 
+  @primitive_harness.parameterized(primitive_harness.lax_slice)
+  def test_slice(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
+  def test_dynamic_slice(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_dynamic_update_slice)
+  def test_dynamic_update_slice(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
          f_jax=f_jax)
