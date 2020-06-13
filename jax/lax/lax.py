@@ -4276,7 +4276,6 @@ reduce_and_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(onp.b
                                  'reduce_and', _reduce_and_translation_rule)
 batching.defreducer(reduce_and_p)
 
-
 def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
                               window_dimensions, window_strides, padding):
   if operand.dtype != init_value.dtype:

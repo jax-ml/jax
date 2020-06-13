@@ -1336,7 +1336,6 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
                        map(tuple, out_shapes), out_tree_thunk())
   return fun
 
-
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
   """Computes a (forward-mode) Jacobian-vector product of ``fun``.
 
