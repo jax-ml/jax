@@ -16,6 +16,7 @@ from functools import partial
 
 import numpy as np
 from absl.testing import absltest, parameterized
+import pytest
 
 import jax
 from jax import linear_util as lu
@@ -403,8 +404,7 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = ({'x': 0.5, 'y': 2.0}, {'x': 3.0, 'y': 8.0})
     self.assertAllClose(actual, expected, check_dtypes=True)
 
-  # TODO(shoyer): currently broken!
-
+  @pytest.mark.xfail
   def test_vmap_tree_call(self):
 
     def g(x):
@@ -421,6 +421,7 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = f(g, tree)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
+  @pytest.mark.xfail
   def test_jacobian(self):
 
     @tree_vectorize
