@@ -13,23 +13,22 @@
 # limitations under the License.
 
 from functools import partial
-import itertools as it
-from unittest import SkipTest
 
 import numpy as np
 from absl.testing import absltest, parameterized
-from jax.experimental.treevec import (
-    TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
-    restore_tree, tree_vectorize,
-)
+
 import jax
 from jax import linear_util as lu
 from jax import api
 from jax import disable_jit, jit, make_jaxpr, shapecheck
 from jax import lax
+from jax.config import config
+from jax.experimental.treevec import (
+    TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
+    restore_tree, tree_vectorize,
+)
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_structure
-from jax.config import config
 import jax.test_util as jtu
 
 config.parse_flags_with_absl()
@@ -458,3 +457,7 @@ class FlatTreeTest(jtu.JaxTestCase):
 
     actual = jacrev(f)(tree)
     self.assertTreeEqual(expected, actual, check_dtypes=True)
+
+
+if __name__ == "__main__":
+  absltest.main()

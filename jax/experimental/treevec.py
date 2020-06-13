@@ -21,17 +21,17 @@ from typing import (
 
 import numpy as np
 
+import jax.numpy as jnp
 from .. import core
 from .. import api
 from .. import dtypes
 from .. import lax
 from .. import linear_util as lu
-from ..api_util import flatten_fun, flatten_fun_nokwargs
-from ..interpreters import ad
+from ..api_util import flatten_fun_nokwargs
 from ..interpreters import xla
 from ..util import prod, safe_map as map, split_list, unzip2, unzip3
 from ..tree_util import (
-    tree_structure, tree_flatten, tree_unflatten, register_pytree_node,
+    tree_structure, tree_flatten, tree_unflatten,
 )
 
 
@@ -253,7 +253,7 @@ class TreeTrace(core.Trace):
       return out_tracers
 
   def post_process_call(self, call_primitive, out_tracers, params):
-    flat, tree_tracer_def = _flatten_tree_tracers(tracers)
+    flat, tree_tracer_def = _flatten_tree_tracers(out_tracers)
     master = self.master
     def todo(flat):
       trace = TreeTrace(master, core.cur_sublevel())
@@ -265,7 +265,6 @@ TreeState = Tuple[Sequence[TreeDef], LeafShapes, Leaves]
 
 
 def convert_vectorized_tree(tree: PyTree) -> TreeState:
-  import jax.numpy as jnp
   xs, treedef = tree_flatten(tree)
   leafshape = tuple(np.shape(x) for x in xs)
   dtype = jnp.result_type(*xs)
@@ -274,7 +273,6 @@ def convert_vectorized_tree(tree: PyTree) -> TreeState:
 
 
 def convert_leaf_array(leaf: ArrayLike) -> TreeState:
-  import jax.numpy as jnp
   treedef = tree_structure(leaf)
   if treedef != TRIVIAL_TREEDEF:
     raise ValueError(
@@ -299,7 +297,7 @@ def restore_tree(treedefs: Tuple[TreeDef, ...], leaves: Leaves) -> PyTree:
 
 ### rule definitions
 
-tree_rules = {}
+tree_rules: Dict[core.Primitive, Callable] = {}
 
 
 def tree_callable(fun):
@@ -411,7 +409,6 @@ def _split_leaf(
     axis: int,
     shapes: Sequence[Tuple[int, ...]],
 ) -> List[ArrayLike]:
-  import jax.numpy as jnp
   if _axis_length(shapes) != array.shape[axis]:
     raise ValueError("mismatched axis shape")
   indices = np.cumsum([prod(shape) for shape in shapes[:-1]])
@@ -460,7 +457,6 @@ def naryop_tree_rule(
     leaves_in: Tuple[Leaves, ...],
     **params,
 ) -> TreeState:
-  from .. import lax
 
   treedefs_in, leafshapes_in, leaves_in, scalars = _filter_scalar_leaves(
       treedefs_in, leafshapes_in, leaves_in)
