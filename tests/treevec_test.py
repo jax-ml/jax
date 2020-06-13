@@ -18,14 +18,14 @@ from unittest import SkipTest
 
 import numpy as np
 from absl.testing import absltest, parameterized
-from jax.interpreters.flattree import (
+from jax.experimental.treevec import (
     TRIVIAL_TREEDEF, convert_vectorized_tree, convert_leaf_array,
-    restore_tree,
+    restore_tree, tree_vectorize,
 )
 import jax
 from jax import linear_util as lu
 from jax import api
-from jax import disable_jit, jit, make_jaxpr, shapecheck, tree_vectorize
+from jax import disable_jit, jit, make_jaxpr, shapecheck
 from jax import lax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_structure

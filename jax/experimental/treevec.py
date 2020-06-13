@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial, reduce
+from functools import partial, reduce, wraps
 import itertools
 import operator
 from typing import (
@@ -22,10 +22,13 @@ from typing import (
 import numpy as np
 
 from .. import core
+from .. import api
 from .. import api_util
 from .. import dtypes
+from .. import lax
 from .. import linear_util as lu
 from ..interpreters import ad
+from ..interpreters import xla
 from ..util import prod, safe_map as map, split_list, unzip2, unzip3
 from ..tree_util import (
     tree_structure, tree_flatten, tree_unflatten, register_pytree_node,
@@ -39,6 +42,33 @@ ArrayLike = Any
 PyTree = Any
 LeafShapes = Sequence[Sequence[Tuple[int, ...]]]
 Leaves = Dict[Tuple[int, ...], ArrayLike]
+
+
+# TODO(shoyer): use linear_util for this transformation
+def _apply_callable_args(fun, args, callable_transform):
+  callables = []
+  out_args = []
+  for i, arg in enumerate(args):
+    if callable(arg):
+      callables.append((i, callable_transform(arg)))
+    else:
+      out_args.append(arg)
+  def transformed(*args):
+    args = list(args)
+    for i, arg in callables:
+      args.insert(i, arg)
+    return fun(*args)
+  return transformed, tuple(out_args)
+
+def tree_vectorize(fun):
+  api._check_callable(fun)
+  @wraps(fun)
+  def f_undone(*args):
+    fun2, args = _apply_callable_args(fun, args, tree_callable)
+    f = lu.wrap_init(fun2)
+    outputs = tree_fun(tree_trace(f)).call_wrapped(args)
+    return outputs
+  return f_undone
 
 @lu.transformation
 def tree_fun(trees):
@@ -281,7 +311,7 @@ def tree_callable(fun):
   return wrapper
 
 
-def tie_in_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in) -> TreeState:
+def tie_in_tree_rule(treedefs_in, leafshapes_in, leaves_in) -> TreeState:
   x_treedefs, y_treedefs = treedefs_in
   x_leafshapes, y_leafshapes = leafshapes_in
   x_leaves, y_leaves = leaves_in
@@ -290,13 +320,11 @@ def tie_in_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in) -> TreeState:
   x_example = next(iter(x_leaves.values()))
   out_leaves = {}
   for coords in _iter_leaf_coords(y_treedefs):
-    out_leaves[coords] = prim.bind(x_example, y_leaves[coords])
+    out_leaves[coords] = lax.tie_in_p.bind(x_example, y_leaves[coords])
   return y_treedefs, y_leafshapes, out_leaves
 
+tree_rules[lax.tie_in_p] = tie_in_tree_rule
 
-def defvectorized(prim):
-  print(f'defvectorized: {prim.__module__}.{prim}')
-  tree_rules[prim] = partial(vectorized_tree_rule, prim)
 
 def vectorized_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
   treedefs, = treedefs_in
@@ -305,6 +333,48 @@ def vectorized_tree_rule(prim, treedefs_in, leafshapes_in, leaves_in, **params):
   out_leaves = {coords: prim.bind(leaves[coords], **params)
                 for coords in _iter_leaf_coords(treedefs)}
   return treedefs, leafshapes, out_leaves
+
+def defvectorized(prim):
+  tree_rules[prim] = partial(vectorized_tree_rule, prim)
+
+defvectorized(lax.neg_p)
+defvectorized(lax.sign_p)
+defvectorized(lax.floor_p)
+defvectorized(lax.ceil_p)
+defvectorized(lax.round_p)
+defvectorized(lax.is_finite_p)
+defvectorized(lax.exp_p)
+defvectorized(lax.log_p)
+defvectorized(lax.expm1_p)
+defvectorized(lax.log1p_p)
+defvectorized(lax.tanh_p)
+defvectorized(lax.sin_p)
+defvectorized(lax.cos_p)
+defvectorized(lax.sinh_p)
+defvectorized(lax.cosh_p)
+defvectorized(lax.asinh_p)
+defvectorized(lax.acosh_p)
+defvectorized(lax.atanh_p)
+defvectorized(lax.lgamma_p)
+defvectorized(lax.digamma_p)
+defvectorized(lax.bessel_i0e_p)
+defvectorized(lax.bessel_i1e_p)
+defvectorized(lax.erf_p)
+defvectorized(lax.erfc_p)
+defvectorized(lax.erf_inv_p)
+defvectorized(lax.real_p)
+defvectorized(lax.imag_p)
+defvectorized(lax.conj_p)
+defvectorized(lax.abs_p)
+defvectorized(lax.sqrt_p)
+defvectorized(lax.rsqrt_p)
+defvectorized(lax.integer_pow_p)
+defvectorized(lax.not_p)
+defvectorized(lax.population_count_p)
+defvectorized(lax.convert_element_type_p)
+defvectorized(lax.bitcast_convert_type_p)
+
+defvectorized(xla.device_put_p)
 
 
 def _filter_scalar_leaves(treedefs_in, leafshapes_in, leaves_in):
@@ -368,10 +438,6 @@ def _axes_for_leaf(
     leaf_axis += leaf_ndim
   return tuple(out_axes)
 
-
-def defnaryop(prim: core.Primitive) -> None:
-  print(f'defnaryop: {prim.__module__}.{prim}')
-  tree_rules[prim] = partial(naryop_tree_rule, prim)
 
 def naryop_tree_rule(
     prim: core.Primitive,
@@ -460,9 +526,39 @@ def naryop_tree_rule(
 
   return out_treedefs, out_leafshapes, out_leaves
 
+def defnaryop(prim: core.Primitive) -> None:
+  tree_rules[prim] = partial(naryop_tree_rule, prim)
+
+defnaryop(lax.nextafter_p)
+defnaryop(lax.atan2_p)
+defnaryop(lax.regularized_incomplete_beta_p)
+defnaryop(lax.igamma_p)
+defnaryop(lax.igamma_grad_a_p)
+defnaryop(lax.igammac_p)
+defnaryop(lax.complex_p)
+defnaryop(lax.pow_p)
+defnaryop(lax.and_p)
+defnaryop(lax.or_p)
+defnaryop(lax.xor_p)
+defnaryop(lax.add_p)
+defnaryop(lax.sub_p)
+defnaryop(lax.mul_p)
+defnaryop(lax.div_p)
+defnaryop(lax.rem_p)
+defnaryop(lax.max_p)
+defnaryop(lax.min_p)
+defnaryop(lax.shift_left_p)
+defnaryop(lax.shift_right_arithmetic_p)
+defnaryop(lax.shift_right_logical_p)
+defnaryop(lax.eq_p)
+defnaryop(lax.ne_p)
+defnaryop(lax.ge_p)
+defnaryop(lax.gt_p)
+defnaryop(lax.le_p)
+defnaryop(lax.lt_p)
+
 
 def broadcast_in_dim_tree_rule(
-    prim: core.Primitive,
     treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
     leaves_in: Tuple[Leaves],
@@ -493,14 +589,15 @@ def broadcast_in_dim_tree_rule(
     leaf_shape = _leafshape(out_leafshapes, out_coords)
     leaf_bdims = _axes_for_leaf(
         out_leafshapes, out_coords, broadcast_dimensions)
-    out_leaves[out_coords] = prim.bind(
+    out_leaves[out_coords] = lax.broadcast_in_dim_p.bind(
         leaf, shape=leaf_shape, broadcast_dimensions=leaf_bdims)
 
   return out_treedefs, out_leafshapes, out_leaves
 
+tree_rules[lax.broadcast_in_dim_p] = broadcast_in_dim_tree_rule
+
 
 def squeeze_tree_rule(
-    prim: core.Primitive,
     treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
     leaves_in: Tuple[Leaves],
@@ -525,13 +622,14 @@ def squeeze_tree_rule(
       _iter_leaf_coords(treedefs), _iter_leaf_coords(out_treedefs)):
     leaf = leaves[in_coords]
     leaf_dims = _axes_for_leaf(leafshapes, in_coords, dimensions)
-    out_leaves[out_coords] = prim.bind(leaf, dimensions=leaf_dims)
+    out_leaves[out_coords] = lax.squeeze_p.bind(leaf, dimensions=leaf_dims)
 
   return out_treedefs, out_leafshapes, out_leaves
 
+tree_rules[lax.squeeze_p] = squeeze_tree_rule
+
 
 def transpose_tree_rule(
-    prim: core.Primitive,
     treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
     leaves_in: Tuple[Leaves],
@@ -550,13 +648,12 @@ def transpose_tree_rule(
     out_coords = tuple(in_coords[p] for p in permutation)
     leaf = leaves[in_coords]
     leaf_perm = _axes_for_leaf(leafshapes, in_coords, permutation)
-    out_leaves[out_coords] = prim.bind(leaf, permutation=leaf_perm)
+    out_leaves[out_coords] = lax.transpose_p.bind(leaf, permutation=leaf_perm)
 
   return out_treedefs, out_leafshapes, out_leaves
 
+tree_rules[lax.transpose_p] = transpose_tree_rule
 
-def defreducer(prim: core.Primitive, binop_prim: core.Primitive) -> None:
-  tree_rules[prim] = partial(reducer_tree_rule, prim, binop_prim.bind)
 
 def reducer_tree_rule(
     prim: core.Primitive,
@@ -587,9 +684,18 @@ def reducer_tree_rule(
   out_leaves = {k: reduce(binop, v) for k, v in out_nodes.items()}
   return out_treedefs, out_leafshapes, out_leaves
 
+def defreducer(prim: core.Primitive, binop_prim: core.Primitive) -> None:
+  tree_rules[prim] = partial(reducer_tree_rule, prim, binop_prim.bind)
+
+defreducer(lax.reduce_sum_p, lax.add_p)
+defreducer(lax.reduce_prod_p, lax.mul_p)
+defreducer(lax.reduce_max_p, lax.max_p)
+defreducer(lax.reduce_min_p, lax.min_p)
+defreducer(lax.reduce_or_p, lax.or_p)
+defreducer(lax.reduce_and_p, lax.and_p)
+
 
 def dot_general_tree_rule(
-    prim: core.Primitive,
     treedefs_in: Tuple[Tuple[TreeDef, ...], ...],
     leafshapes_in: Tuple[LeafShapes, ...],
     leaves_in: Tuple[Leaves, ...],
@@ -651,9 +757,12 @@ def dot_general_tree_rule(
       leaf_dim_numbers = ((leaf_lhs_contracting, leaf_rhs_contracting),
                           (leaf_batch, leaf_batch))
 
-      reduced_leaf = prim.bind(lhs_leaves[lhs_coords], rhs_leaves[rhs_coords],
-                               dimension_numbers=leaf_dim_numbers, **params)
+      reduced_leaf = lax.dot_general_p.bind(
+          lhs_leaves[lhs_coords], rhs_leaves[rhs_coords],
+          dimension_numbers=leaf_dim_numbers, **params)
       out_nodes[out_coords].append(reduced_leaf)
 
   out_leaves = {k: reduce(operator.add, v) for k, v in out_nodes.items()}
   return out_treedefs, out_leafshapes, out_leaves
+
+tree_rules[lax.dot_general_p] = dot_general_tree_rule

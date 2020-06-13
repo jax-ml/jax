@@ -46,7 +46,6 @@ from ..interpreters import pxla
 from ..interpreters import ad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..interpreters import flattree
 from ..util import curry, cache, safe_zip, unzip2, prod
 from ..tree_util import build_tree, tree_unflatten, tree_map
 from ..lib import pytree
@@ -1767,7 +1766,6 @@ def unop(result_dtype, accepted_dtypes, name, translation_rule=None):
                             translation_rule=translation_rule)
   batching.defvectorized(prim)
   masking.defvectorized(prim)
-  flattree.defvectorized(prim)
   return prim
 standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
@@ -1807,7 +1805,6 @@ def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
   masking.defnaryop(prim)
-  flattree.defnaryop(prim)
   return prim
 standard_naryop = partial(naryop, _input_dtype)
 
@@ -2111,7 +2108,6 @@ integer_pow_p = standard_primitive(
   translation_rule=_integer_pow_translation_rule)
 batching.defvectorized(integer_pow_p)
 masking.defvectorized(integer_pow_p)
-flattree.defvectorized(integer_pow_p)
 ad.defjvp(integer_pow_p, _integer_pow_jvp)
 
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
@@ -2261,7 +2257,6 @@ convert_element_type_p = standard_primitive(
 ad.deflinear(convert_element_type_p, _convert_element_type_transpose_rule)
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
-flattree.defvectorized(convert_element_type_p)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
@@ -2280,7 +2275,6 @@ bitcast_convert_type_p = standard_primitive(
 ad.defjvp_zero(bitcast_convert_type_p)
 batching.defvectorized(bitcast_convert_type_p)
 masking.defvectorized(bitcast_convert_type_p)
-flattree.defvectorized(bitcast_convert_type_p)
 
 
 def _conv_general_dilated_shape_rule(
@@ -2711,8 +2705,6 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 masking.masking_rules[dot_general_p] = _dot_general_masking_rule
-flattree.tree_rules[dot_general_p] = partial(
-    flattree.dot_general_tree_rule, dot_general_p)
 
 
 def _broadcast_shape_rule(operand, sizes):
@@ -2792,8 +2784,6 @@ broadcast_in_dim_p = standard_primitive(
 broadcast_in_dim_p.def_impl(_broadcast_in_dim_impl)
 ad.deflinear(broadcast_in_dim_p, _broadcast_in_dim_transpose_rule)
 batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
-flattree.tree_rules[broadcast_in_dim_p] = partial(
-    flattree.broadcast_in_dim_tree_rule, broadcast_in_dim_p)
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -2995,7 +2985,6 @@ squeeze_p = standard_primitive(_squeeze_shape_rule, _squeeze_dtype_rule,
                                'squeeze', _squeeze_translation_rule)
 ad.deflinear2(squeeze_p, _squeeze_transpose_rule)
 batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
-flattree.tree_rules[squeeze_p] = partial(flattree.squeeze_tree_rule, squeeze_p)
 
 
 def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
@@ -3198,8 +3187,6 @@ transpose_p.def_impl(_transpose_impl)
 ad.deflinear(transpose_p,
              lambda t, permutation: [transpose(t, onp.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
-flattree.tree_rules[transpose_p] = partial(
-    flattree.transpose_tree_rule, transpose_p)
 
 
 def _select_shape_rule(pred, on_true, on_false):
@@ -4112,7 +4099,6 @@ ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p)
 _masking_defreducer(reduce_sum_p,
                     lambda shape, dtype: onp.broadcast_to(onp.array(0, dtype), shape))
-flattree.defreducer(reduce_sum_p, add_p)
 
 
 def _reduce_op_shape_rule(operand, *, axes):
@@ -4163,7 +4149,6 @@ reduce_prod_p = standard_primitive(
   'reduce_prod', _reduce_prod_translation_rule)
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p)
-flattree.defreducer(reduce_prod_p, mul_p)
 
 
 def _reduce_chooser_shape_rule(operand, *, axes):
@@ -4191,7 +4176,6 @@ reduce_max_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_max', _reduce_max_translation_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p)
-flattree.defreducer(reduce_max_p, max_p)
 
 
 _reduce_min_translation_rule = partial(
@@ -4200,7 +4184,6 @@ reduce_min_p = standard_primitive(_reduce_op_shape_rule, _input_dtype,
                                   'reduce_min', _reduce_min_translation_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
-flattree.defreducer(reduce_min_p, min_p)
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
@@ -4219,7 +4202,6 @@ _reduce_or_translation_rule = partial(_reduce_logical_translation_rule,
 reduce_or_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(onp.bool_),
                                  'reduce_or', _reduce_or_translation_rule)
 batching.defreducer(reduce_or_p)
-flattree.defreducer(reduce_or_p, or_p)
 
 
 _reduce_and_translation_rule = partial(_reduce_logical_translation_rule,
@@ -4227,7 +4209,6 @@ _reduce_and_translation_rule = partial(_reduce_logical_translation_rule,
 reduce_and_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(onp.bool_),
                                  'reduce_and', _reduce_and_translation_rule)
 batching.defreducer(reduce_and_p)
-flattree.defreducer(reduce_and_p, and_p)
 
 
 def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
@@ -4985,7 +4966,6 @@ xla.translations[tie_in_p] = lambda c, x, y: y
 ad.deflinear(tie_in_p, _tie_in_transpose_rule)
 batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
 masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
-flattree.tree_rules[tie_in_p] = partial(flattree.tie_in_tree_rule, tie_in_p)
 
 
 def _stop_gradient_jvp_rule(primals, tangents):

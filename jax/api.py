@@ -61,7 +61,6 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
-from .interpreters import flattree
 from .custom_derivatives import custom_jvp, custom_vjp
 from .config import flags, config, bool_env
 
@@ -1327,34 +1326,6 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
   if not all(map(masking._shape_spec_consistent, out_shapes, out_shapes_)):
     raise masking.ShapeError
   return fun
-
-
-# TODO(shoyer): use linear_util for this transformation
-def _apply_callable_args(fun, args, callable_transform):
-  callables = []
-  out_args = []
-  for i, arg in enumerate(args):
-    if callable(arg):
-      callables.append((i, callable_transform(arg)))
-    else:
-      out_args.append(arg)
-  def transformed(*args):
-    args = list(args)
-    for i, arg in callables:
-      args.insert(i, arg)
-    return fun(*args)
-  return transformed, tuple(out_args)
-
-
-def tree_vectorize(fun):
-  _check_callable(fun)
-  @wraps(fun)
-  def f_undone(*args):
-    fun2, args = _apply_callable_args(fun, args, flattree.tree_callable)
-    f = lu.wrap_init(fun2)
-    outputs = flattree.tree_fun(flattree.tree_trace(f)).call_wrapped(args)
-    return outputs
-  return f_undone
 
 
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:
