@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import functools
-
+import operator as op
 
 class PrettyPrint(object):
   """Crude Hughes-inspired pretty printer."""
@@ -42,6 +41,11 @@ class PrettyPrint(object):
                        + [(indent, common_line)]
                        + indented_block.lines[1:])
 
+  def __or__(self, rhs):
+    max_len = max(len(s) for _, s in self.lines)
+    return PrettyPrint([(indent, s1.ljust(max_len) + s2)
+                        for (indent, s1), (_, s2) in zip(self.lines, rhs.lines)])
+
   def __str__(self):
     return '\n'.join(' ' * indent + s for indent, s in self.lines)
 
@@ -49,17 +53,11 @@ class PrettyPrint(object):
 def pp(s):
   return PrettyPrint([(0, line) for line in str(s).splitlines()])
 
-
 def hcat(ps):
-  return functools.reduce(lambda x, y: x >> y, ps)
-
+  return functools.reduce(op.rshift, ps)
 
 def vcat(ps):
-  if not ps:
-    return pp('')
-  else:
-    return functools.reduce(lambda x, y: x + y, ps)
-
+  return sum(ps, pp(''))
 
 def print_list(xs):
   return ' '.join(map(str, xs))

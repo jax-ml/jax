@@ -1287,23 +1287,23 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
                          not isinstance(v, (Jaxpr, TypedJaxpr)))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
-def pp_eqn(eqn: JaxprEqn, source_info=False) -> PrettyPrint:
+def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars)
-  pp_subexpr = pp('')
-  doc = (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
-          >> pp(' ') >> pp(pp_vars(eqn.invars)))
-  if source_info:
-    doc >>= pp('  [{}]'.format(source_info_util.summarize(eqn.source_info)))
-  return doc + pp_subexpr
+  return (pp('{} = '.format(lhs)) >>
+           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
+           >> pp(' ') >> pp(pp_vars(eqn.invars)))
 
-def pp_jaxpr(jaxpr: Jaxpr, source_info=False) -> PrettyPrint:
+def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))
+  pp_eqns = vcat(map(partial(pp_eqn), jaxpr.eqns))
+  if source_info:
+    src = vcat(pp('  [{}]'.format(source_info_util.summarize(eqn.source_info)))
+               for eqn in jaxpr.eqns)
+    pp_eqns |= src
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
-          ((pp('let ') >>
-            vcat(map(partial(pp_eqn, source_info=source_info), jaxpr.eqns))) +
-           pp('in {} }}'.format(pp_outvars))).indent(2))
+          ((pp('let ') >> pp_eqns)
+           + pp('in {} }}'.format(pp_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
   jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]
