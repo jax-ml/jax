@@ -359,45 +359,62 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = {'a': 2.0, 'b': -2.0}
     self.assertAllClose(actual, expected, check_dtypes=True)
 
-    @tree_vectorize
-    def eye(*arrays):
-      jnp.concatenate(arrays)
-
   # TODO(shoyer): currently broken!
-  # def test_jacobian(self):
 
-  #   @tree_vectorize
-  #   def _jacfwd(f, x):
-  #     pushfwd = partial(jax.jvp, f, (x,))
-  #     y, dy = pushfwd((x,))
-  #     basis = jnp.eye(x.size, dtype=x.dtype)
-  #     y, jac = jax.vmap(pushfwd, out_axes=(None, 1))((basis,))
-  #     return jac
+  def test_vmap(self):
+    @tree_vectorize
+    def f(x):
+      return jax.vmap(jnp.square, x)
 
-  #   @tree_vectorize
-  #   def _jacrev(f, x):
-  #     y, pullback = jax.vjp(f, x)
-  #     basis = jnp.eye(y.size, dtype=y.dtype)
-  #     jac = jax.vmap(pullback)(basis)
-  #     return jac
+    tree = {'x': 2.0, 'y': np.array([3.0, 4.0])}
+    expected = {'x': 4.0, 'y': np.array([9.0, 16.0])}
+    actual = f(tree)
+    self.assertAllClose(actual, expected, check_dtypes=True)
 
-  #   def _apply_argnums(transform, fun, argnums=0):
-  #     def jacfun(*args):
-  #       f_partial, dyn_args = api.argnums_partial(
-  #           lu.wrap_init(fun), argnums, args)
-  #       result = transform(f_partial.call_wrapped, dyn_args)
-  #       return result[0] if isinstance(argnums, int) else result
-  #     return jacfun
+  def test_jvp(self):
+    @tree_vectorize
+    def f(x, y):
+      return jax.jvp(lambda x: 0.5 * x ** 2, (x,), (y,))
 
-  #   jacfwd = partial(_apply_argnums, _jacfwd)
-  #   jacrev = partial(_apply_argnums, _jacrev)
+    primal = {'x': 1.0, 'y': 2.0}
+    tangent = {'x': 3.0, 'y': 4.0}
+    actual = f(primal, tangent)
+    expected = {'x': 3.0, 'y': 8.0}
+    self.assertAllClose(actual, expected, check_dtypes=True)
 
-  #   f = lambda x: {'c': x['a'] * (1 + x['b'] ** 2), 'd': x['a'] - x['b']}
-  #   tree = {'a': 1.0, 'b': 2.0}
-  #   expected = jax.jacfwd(f)(tree)
+  def test_jacobian(self):
 
-  #   actual = jacfwd(f)(tree)
-  #   self.assertTreeEqual(expected, actual, check_dtypes=True)
+    @tree_vectorize
+    def _jacfwd(f, x):
+      pushfwd = partial(jax.jvp, f, (x,))
+      basis = jnp.eye(x.size, dtype=x.dtype)
+      y, jac = jax.vmap(pushfwd, out_axes=(None, 1))((basis,))
+      return jac
 
-  #   actual = jacrev(f)(tree)
-  #   self.assertTreeEqual(expected, actual, check_dtypes=True)
+    @tree_vectorize
+    def _jacrev(f, x):
+      y, pullback = jax.vjp(f, x)
+      basis = jnp.eye(y.size, dtype=y.dtype)
+      jac = jax.vmap(pullback)(basis)
+      return jac
+
+    def _apply_argnums(transform, fun, argnums=0):
+      def jacfun(*args):
+        f_partial, dyn_args = api.argnums_partial(
+            lu.wrap_init(fun), argnums, args)
+        result = transform(f_partial.call_wrapped, dyn_args)
+        return result[0] if isinstance(argnums, int) else result
+      return jacfun
+
+    jacfwd = partial(_apply_argnums, _jacfwd)
+    jacrev = partial(_apply_argnums, _jacrev)
+
+    f = lambda x: {'c': x['a'] * (1 + x['b'] ** 2), 'd': x['a'] - x['b']}
+    tree = {'a': 1.0, 'b': 2.0}
+    expected = jax.jacfwd(f)(tree)
+
+    actual = jacfwd(f)(tree)
+    self.assertTreeEqual(expected, actual, check_dtypes=True)
+
+    actual = jacrev(f)(tree)
+    self.assertTreeEqual(expected, actual, check_dtypes=True)
