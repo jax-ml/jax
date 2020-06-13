@@ -23,11 +23,12 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import core
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.abstract_arrays import make_shaped_array
 from jax.api import jvp, linearize, vjp, jit, make_jaxpr
-from jax.core import UnshapedArray, ShapedArray, ConcreteArray
+from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
@@ -330,16 +331,50 @@ class CoreTest(jtu.JaxTestCase):
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(2)   # int, not float!
     jtu.check_raises_regexp(
         lambda: core.check_jaxpr(jaxpr),
-        TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
-                    "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
+        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
+                    r"bound as ShapedArray(.*) in '. = sin .'"))
 
     jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(np.ones((2, 3)))
     jtu.check_raises_regexp(
         lambda: core.check_jaxpr(jaxpr),
-        TypeError, ("Jaxpr equation LHS .* is ShapedArray(.*), "
-                    "RHS is inferred as ShapedArray(.*), in '.* = sin .*'"))
+        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
+                    r"bound as ShapedArray(.*) in '. = sin .'"))
 
+  def test_jaxpr_dropvar_from_jit_call(self):
+    def inner(x):
+      return x + 1, x + 2
+
+    def f(x):
+      _, y = jit(inner)(x)
+      return y + 3
+
+    jaxpr = make_jaxpr(f)(1).jaxpr
+    assert jaxpr.eqns[0].outvars[0] is core.dropvar
+    core.check_jaxpr(jaxpr)
+
+  def test_jaxpr_dropvar_from_loop(self):
+    def f(x):
+      _, y = lax.while_loop(lambda s: s[0] < 0.,
+                            lambda s: (jnp.sin(s[0]), jnp.cos(s[1])),
+                            (x, x))
+      return y + 1.
+
+    jaxpr = make_jaxpr(f)(1.).jaxpr
+    assert jaxpr.eqns[0].outvars[0] is core.dropvar
+    core.check_jaxpr(jaxpr)
+
+  def test_jaxpr_dropvar_from_cond(self):
+    def f(x):
+      _, y = lax.cond(x < 0.,
+                      lambda x: (jnp.sin(x), x + 1.),
+                      lambda x: (jnp.cos(x), x + 2.),
+                      x)
+      return y
+
+    jaxpr = make_jaxpr(f)(1.).jaxpr
+    assert jaxpr.eqns[-1].outvars[0] is core.dropvar
+    core.check_jaxpr(jaxpr)
 
 if __name__ == '__main__':
   absltest.main()

@@ -17,13 +17,12 @@ from functools import partial
 import numpy as np
 import scipy.special as osp_special
 
-from .. import util
 from .. import lax
 from .. import api
 from ..numpy import lax_numpy as jnp
 from ..numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
-from ..numpy._util import _wraps                        
+from ..numpy._util import _wraps
 
 
 @_wraps(osp_special.gammaln)
@@ -105,7 +104,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   dims = _reduction_dims(a, axis)
   dimadd = lambda x: lax.expand_dims(x, dims)
   amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
-  amax = lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0))
+  amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
   amax_singletons = dimadd(amax)
   out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
                                    _constant_like(a, 0), lax.add, dims)), amax)
@@ -289,7 +288,6 @@ def ndtri(p):
   Raises:
     TypeError: if `p` is not floating-type.
   """
-  x = jnp.asarray(p)
   dtype = lax.dtype(p)
   if dtype not in (jnp.float32, jnp.float64):
     raise TypeError(

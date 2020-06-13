@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
@@ -210,7 +210,7 @@ class PartitionSpec(tuple):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
 
-def sharded_jit(fun: Callable, in_parts, out_parts):
+def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
   WARNING: this feature is still under active development! It may not work well,
@@ -249,11 +249,20 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
     out_parts: The output partitions, i.e. how each output of ``fun`` should be
       partitioned or replicated. This follows the same convention as
      ``in_parts``.
+    num_partitions: Optional. If set, explicitly specifies the number of devices
+      ``fun`` should partitioned across (rather than inferring it from
+      ``in_parts``, ``out_parts``, and/or any ``with_sharding_constraint``
+      calls).  Setting this should usually be unnecessary, but can be used to
+      maintain device persistence across multiple sharded_jit calls when some of
+      those calls only involve replicated values.
 
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
   """
-  num_parts = pxla.get_num_partitions(in_parts, out_parts)
+  if num_partitions != None:
+    num_parts = num_partitions
+  else:
+    num_parts = pxla.get_num_partitions(in_parts, out_parts)
 
   def wrapped(*args, **kwargs):
     if kwargs:

@@ -78,7 +78,7 @@ kaiming_normal = he_normal = partial(variance_scaling, 2.0, "fan_in", "truncated
 def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
   """
   Construct an initializer for uniformly distributed orthogonal matrices.
-  
+
   If the shape is not square, the matrices will have orthonormal rows or columns
   depending on which side is smaller.
   """
@@ -100,7 +100,7 @@ def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
 
 def delta_orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
   """
-  Construct an initializer for delta orthogonal kernels; see arXiv:1806.05393. 
+  Construct an initializer for delta orthogonal kernels; see arXiv:1806.05393.
 
   The shape must be 3D, 4D or 5D.
   """

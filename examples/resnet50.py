@@ -21,7 +21,6 @@ optimization library.
 import numpy.random as npr
 
 import jax.numpy as jnp
-from jax.config import config
 from jax import jit, grad, random
 from jax.experimental import optimizers
 from jax.experimental import stax
@@ -124,4 +123,3 @@ if __name__ == "__main__":
   for i in range(num_steps):
     opt_state = update(i, opt_state, next(batches))
   trained_params = get_params(opt_state)
-

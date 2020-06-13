@@ -26,12 +26,8 @@ rules for the underlying :code:`lax` primitives.
 
 import builtins
 import collections
-from collections.abc import Sequence
-import itertools
 import operator
 import os
-import re
-import string
 import types
 from typing import Sequence, Set, Tuple, Union
 import warnings
@@ -39,21 +35,21 @@ import warnings
 import numpy as np
 import opt_einsum
 
-from jax import jit, device_put, custom_jvp
+from jax import jit, custom_jvp
 from .vectorize import vectorize
 from ._util import _wraps
 from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags
-from ..interpreters.xla import DeviceArray
+from ..interpreters.xla import (DeviceArray, device_put, array_result_handler,
+                                DeviceValue, abstractify)
 from ..interpreters.masking import Poly
 from .. import lax
 from .. import ops
-from ..util import (partial, get_module_functions, unzip2, prod as _prod,
+from ..util import (partial, unzip2, prod as _prod,
                     subvals, safe_zip)
-from ..lib import pytree
-from ..lib import xla_client
+from ..tree_util import tree_leaves, tree_flatten
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(
@@ -656,6 +652,8 @@ def _conv(x, y, mode, op, precision):
   if ndim(x) != 1 or ndim(y) != 1:
     raise ValueError(f"{op}() only support 1-dimensional inputs.")
   x, y = _promote_dtypes_inexact(x, y)
+  if len(x) == 0 or len(y) == 0:
+    raise ValueError(f"{op}: inputs cannot be empty, got shapes {x.shape} and {y.shape}.")
 
   out_order = slice(None)
   if len(x) < len(y):
@@ -1145,14 +1143,14 @@ def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
   if axis is None:
     a_shape = shape(a)
     axis = tuple(i for i, d in enumerate(a_shape) if d == 1)
-  elif isinstance(axis, int):
+  elif not isinstance(axis, tuple):
     axis = (axis,)
   return lax.squeeze(a, axis)
 
 
 @_wraps(np.expand_dims)
 def expand_dims(a, axis: Union[int, Tuple[int, ...]]):
-  if isinstance(axis, int):
+  if not isinstance(axis, tuple):
     axis = (axis,)
   return lax.expand_dims(a, axis)
 
@@ -1356,17 +1354,19 @@ def broadcast_to(arr, shape):
 
 @_wraps(np.split)
 def split(ary, indices_or_sections, axis=0):
-  dummy_val = np.broadcast_to(0, ary.shape)  # zero strides
+  axis = core.concrete_or_error(int, axis, "in jax.numpy.split argument `axis`")
+  size = ary.shape[axis]
   if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
     indices_or_sections = [core.concrete_or_error(int, i_s, "in jax.numpy.split argument 1")
                            for i_s in indices_or_sections]
+    split_indices = np.concatenate([[0], indices_or_sections, [size]])
   else:
     indices_or_sections = core.concrete_or_error(int, indices_or_sections,
                                                  "in jax.numpy.split argument 1")
-  axis = core.concrete_or_error(int, axis, "in jax.numpy.split argument `axis`")
-
-  subarrays = np.split(dummy_val, indices_or_sections, axis)  # shapes
-  split_indices = np.cumsum([0] + [np.shape(sub)[axis] for sub in subarrays])
+    part_size, r = _divmod(size, indices_or_sections)
+    if r != 0:
+      raise ValueError("array split does not result in an equal division")
+    split_indices = np.arange(indices_or_sections + 1) * part_size
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
@@ -1538,7 +1538,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
 
 def _reduction_dims(a, axis):
   if axis is None:
-    return np.arange(ndim(a))
+    return tuple(range(ndim(a)))
   elif isinstance(axis, (np.ndarray, tuple, list)):
     return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
@@ -1795,7 +1795,7 @@ def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
-def _make_cumulative_reduction(np_reduction, reduction, squash_nan=False):
+def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_value=0):
   # We want to allow XLA to fuse the pad and reduce-window operators to
   # avoid materializing the padded output.
   # Consider removing `jit` once again if reduce-window is generalized to
@@ -1816,8 +1816,8 @@ def _make_cumulative_reduction(np_reduction, reduction, squash_nan=False):
           "axis {} is out of bounds for array of dimension {}".format(
               axis, num_dims))
 
-    if squash_nan:
-      a = where(isnan(a), _constant_like(a, unit), a)
+    if fill_nan:
+      a = where(isnan(a), _constant_like(a, fill_value), a)
 
     if not dtype and _dtype(a) == bool_:
       dtype = int_
@@ -1833,13 +1833,13 @@ def _make_cumulative_reduction(np_reduction, reduction, squash_nan=False):
   return cumulative_reduction
 
 
-cumsum = _make_cumulative_reduction(np.cumsum, lax.cumsum, squash_nan=False)
-cumprod = _make_cumulative_reduction(np.cumprod, lax.cumprod, squash_nan=False)
+cumsum = _make_cumulative_reduction(np.cumsum, lax.cumsum, fill_nan=False)
+cumprod = _make_cumulative_reduction(np.cumprod, lax.cumprod, fill_nan=False)
 cumproduct = cumprod
 nancumsum = _make_cumulative_reduction(np.nancumsum, lax.cumsum,
-                                       squash_nan=True)
+                                       fill_nan=True, fill_value=0)
 nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
-                                        squash_nan=True)
+                                        fill_nan=True, fill_value=1)
 
 
 ### Array-creation functions
@@ -1919,7 +1919,7 @@ def _pad_edge(array, pad_width):
   nd = ndim(array)
   for i in range(nd):
     if array.shape[i] == 0:
-      _check_no_padding(pad_width[i], mode)
+      _check_no_padding(pad_width[i], "edge")
       continue
 
     n = array.shape[i]
@@ -2035,7 +2035,7 @@ def column_stack(tup):
   for v in tup:
     arr = array(v)
     if arr.ndim < 2:
-      arr = expand_dims(arr, axis=0)
+      arr = atleast_2d(arr).T
     arrays.append(arr)
   return concatenate(arrays, 1)
 
@@ -2110,24 +2110,27 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
   lax._check_user_dtype_supported(dtype, "array")
+  dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
-  if isinstance(object, ndarray):
-    if dtype and _dtype(object) != dtypes.canonicalize_dtype(dtype):
-      out = lax.convert_element_type(object, dtype)
+  if _can_call_numpy_array(object):
+    object = np.array(object, dtype=dtype, ndmin=ndmin)
+  assert type(object) not in dtypes.python_scalar_dtypes
+
+  if type(object) is np.ndarray:
+    out = _device_put_raw(object)
+    if dtype: assert _dtype(out) == dtype
+  elif isinstance(object, (DeviceValue, core.Tracer)):
+    if isinstance(object, DeviceArray) and copy:
+      # We perform a copy by bouncing back to the host
+      # TODO(phawkins): add a device runtime function to copy a buffer
+      out = _device_put_raw(np.asarray(object))
     else:
-      out = device_put(object)
-  elif isscalar(object):
-    out = lax.reshape(object, ())
-    if dtype and _dtype(out) != dtypes.canonicalize_dtype(dtype):
-      out = lax.convert_element_type(out, dtype)
-  elif hasattr(object, '__array__'):
-    # this case is for duck-typed handling of objects that implement `__array__`
-    out = array(object.__array__(), dtype and dtypes.canonicalize_dtype(dtype))
+      out = object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      out = array(np.array([], dtype or float_))
+      out = _device_put_raw(np.array([], dtype or float_))
   else:
     try:
       view = memoryview(object)
@@ -2138,9 +2141,21 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
+  if dtype and _dtype(out) != dtype:
+    out = lax.convert_element_type(out, dtype)
+
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
   return out
+
+def _can_call_numpy_array(x):
+  return _all(not isinstance(l, (core.Tracer, DeviceValue))
+              for l in tree_leaves(x))
+
+# TODO(mattjj): maybe move these two functions into xla.py
+def _device_put_raw(x):
+  return array_result_handler(None, abstractify(x))(device_put(x))
+
 
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):
@@ -2533,6 +2548,17 @@ tril_indices = _wrap_indices_function(np.tril_indices)
 triu_indices = _wrap_indices_function(np.triu_indices)
 mask_indices = _wrap_indices_function(np.mask_indices)
 
+
+@_wraps(np.triu_indices_from)
+def triu_indices_from(arr, k=0):
+  return triu_indices(arr.shape[-2], k=k, m=arr.shape[-1])
+
+
+@_wraps(np.tril_indices_from)
+def tril_indices_from(arr, k=0):
+  return tril_indices(arr.shape[-2], k=k, m=arr.shape[-1])
+
+
 @_wraps(np.diag_indices)
 def diag_indices(n, ndim=2):
   if n < 0:
@@ -2580,6 +2606,27 @@ def diag(v, k=0):
   else:
     raise ValueError("diag input must be 1d or 2d")
 
+_SCALAR_VALUE_DOC="""\
+This differs from np.diagflat for some scalar values of v,
+jax always returns a two-dimensional array, whereas numpy may
+return a scalar depending on the type of v.
+"""
+
+@_wraps(np.diagflat, lax_description=_SCALAR_VALUE_DOC)
+def diagflat(v, k=0):
+  v = ravel(v)
+  v_length = len(v)
+  adj_length = v_length + _abs(k)
+  res = zeros(adj_length*adj_length, dtype=v.dtype)
+  i = arange(0, adj_length-_abs(k))
+  if (k >= 0):
+    fi = i+k+i*adj_length
+  else:
+    fi = i+(i-k)*adj_length
+  res = ops.index_update(res, ops.index[fi], v)
+  res = res.reshape(adj_length,adj_length)
+  return res
+
 
 @_wraps(np.polyval)
 def polyval(p, x):
@@ -2592,6 +2639,53 @@ def polyval(p, x):
   for i in range(len(p)):
     y = y * x + p[i]
   return y
+
+@_wraps(np.polyadd)
+def polyadd(a, b):
+  a = asarray(a)
+  b = asarray(b)
+
+  if b.shape[0] <= a.shape[0]:
+    return a.at[-b.shape[0]:].add(b)
+  else:
+    return b.at[-a.shape[0]:].add(a)
+
+
+def _trim_zeros(a):
+  for i, v in enumerate(a):
+    if v != 0:
+      return a[i:]
+  return a[:0]
+
+_LEADING_ZEROS_DOC="""\
+Setting trim_leading_zeros=True makes the output match that of numpy.
+But prevents the function from being able to be used in compiled code.
+"""
+
+@_wraps(np.polymul, lax_description=_LEADING_ZEROS_DOC)
+def polymul(a1, a2, *, trim_leading_zeros=False):
+  if isinstance(a1, np.poly1d):
+    a1 = asarray(a1)
+  if isinstance(a2, np.poly1d):
+    a2 = asarray(a2)
+  if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
+    a1, a2 = _trim_zeros(a1), _trim_zeros(a2)
+  if len(a1) == 0:
+    a1 = asarray([0.])
+  if len(a2) == 0:
+    a2 = asarray([0.])
+  val = convolve(a1, a2, mode='full')
+  return val
+
+@_wraps(np.polysub)
+def polysub(a, b):
+  a = asarray(a)
+  b = asarray(b)
+
+  if b.shape[0] <= a.shape[0]:
+    return a.at[-b.shape[0]:].add(-b)
+  else:
+    return -b.at[-a.shape[0]:].add(-a)
 
 
 @_wraps(np.append)
@@ -3369,7 +3463,7 @@ def _split_index_for_jit(idx):
   # indexing logic to handle them.
   idx = _expand_bool_indices(idx)
 
-  leaves, treedef = pytree.flatten(idx)
+  leaves, treedef = tree_flatten(idx)
   dynamic = [None] * len(leaves)
   static = [None] * len(leaves)
   for i, x in enumerate(leaves):

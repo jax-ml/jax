@@ -33,7 +33,7 @@ class EinsumTest(jtu.JaxTestCase):
   def _check(self, s, *ops):
     a = np.einsum(s, *ops)
     b = jnp.einsum(s, *ops, precision=lax.Precision.HIGHEST)
-    self.assertAllClose(a, b, atol=1e-4, rtol=1e-4, check_dtypes=True)
+    self.assertAllClose(a, b, atol=1e-4, rtol=1e-4)
 
   def test_three_operands_1(self):
     r = self.rng()

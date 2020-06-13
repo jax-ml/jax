@@ -22,10 +22,9 @@ import numpy as np
 import jax.numpy as jnp
 import jax.test_util as jtu
 from jax import jit, grad, jacfwd, jacrev
-from jax import core, tree_util
+from jax import tree_util
 from jax import lax
 from jax.experimental import optimizers
-from jax.interpreters import xla
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -40,7 +39,7 @@ class OptimizerTests(jtu.JaxTestCase):
   def _CheckFuns(self, optimizer, loss, x0, *args):
     init_fun, update_fun, get_params = optimizer(*args)
     opt_state = init_fun(x0)
-    self.assertAllClose(x0, get_params(opt_state), check_dtypes=True)
+    self.assertAllClose(x0, get_params(opt_state))
     opt_state2 = update_fun(0, grad(loss)(x0), opt_state)  # doesn't crash
     self.assertEqual(tree_util.tree_structure(opt_state),
                      tree_util.tree_structure(opt_state2))
@@ -265,7 +264,6 @@ class OptimizerTests(jtu.JaxTestCase):
     opt_init, opt_update, get_params = optimizers.sgd(5e-2)
 
     x0 = np.array([0.5], dtype=np.float64)
-    params = np.array([0.3], dtype=np.float64)
 
     def minimize_structure(test_params):
       energy_fn = functools.partial(harmonic_bond, params=test_params)
@@ -295,7 +293,7 @@ class OptimizerTests(jtu.JaxTestCase):
 
     J1 = jacrev(loss, argnums=(0,))(initial_params)
     J2 = jacfwd(loss, argnums=(0,))(initial_params)
-    self.assertAllClose(J1, J2, check_dtypes=True, rtol=1e-6)
+    self.assertAllClose(J1, J2, rtol=1e-6)
 
   def testUnpackPackRoundTrip(self):
     opt_init, _, _ = optimizers.momentum(0.1, mass=0.9)

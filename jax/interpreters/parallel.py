@@ -18,10 +18,9 @@ from typing import Callable, Dict
 
 from .. import core
 from .. import linear_util as lu
-from ..core import Trace, Tracer, Primitive, new_master
+from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..util import safe_map, safe_zip, unzip2, unzip3
-from . import partial_eval as pe
 
 map = safe_map
 zip = safe_zip

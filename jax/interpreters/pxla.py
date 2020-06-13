@@ -77,6 +77,18 @@ class ShardingSpec:
   logical ordering of data shards. Use `spec_to_indices` to resolve a
   ShardingSpec to the specific logical ordering expected throughout the system.
 
+  Sharding includes "replication", where the same data is present on multiple
+  devices. Replication is always applied to the entire logical array, i.e. the
+  whole array is copied N times, although each copy may still be sharded
+  according to the rest of the ShardingSpec. This means that unlike other kinds
+  of sharding, replication isn't associated with a particular logical array
+  axis. However, it does have a position relative to the logical array axes,
+  which is necessary to specify how replication is mapped to devices in
+  `spec_to_indices`. One to think about this is if you added an extra length-N
+  logical axis containing the N copies of the original array, where would that
+  new axis go? This would affect the final buffer order computed in
+  `spec_to_indices`.
+
   Attributes:
     shards_per_axis: a tuple the same length as the array shape. Indicates how
       many shards each axis is divided into. Each axis must be divided into
@@ -86,27 +98,30 @@ class ShardingSpec:
       (i.e. sum(is_axis_materialized) == len(device_buffer.shape())). Any
       unmaterialized axes must be sharded into size-1 chunks
       (i.e. array_shape[i] == shards_per_axis[i]).
-    replication_factor: the number of copies of the logical array.
+    replication_factors: list of tuples of (factor, index) describing how many
+      times the array is replicated and before which logical axis index each
+      virtual replication axis is inserted.
   """
+
   def __init__(self,
                shards_per_axis: Tuple[int, ...],
                is_axis_materialized: Tuple[bool, ...],
-               replication_factor: int):
+               replication_factors: List[Tuple[int, int]]):
     assert len(shards_per_axis) == len(is_axis_materialized)
     self.shards_per_axis = shards_per_axis
     self.is_axis_materialized = is_axis_materialized
-    self.replication_factor = replication_factor
+    self.replication_factors = replication_factors
 
   def __eq__(self, other):
     return (self.shards_per_axis == other.shards_per_axis and
             self.is_axis_materialized == other.is_axis_materialized and
-            self.replication_factor == other.replication_factor)
+            self.replication_factors == other.replication_factors)
 
   def __repr__(self):
     return ("ShardingSpec(shards_per_axis=%s, is_axis_materialized=%s, "
             "replication_factor=%s)" %
             (self.shards_per_axis, self.is_axis_materialized,
-             self.replication_factor))
+             self.replication_factors))
 
 
 def spec_to_indices(shape: Tuple[int, ...],
@@ -123,31 +138,49 @@ def spec_to_indices(shape: Tuple[int, ...],
 
   Returns:
     A tuple of length `prod(sharding_spec.shards_per_axis) *
-    sharding_spec.replication_factor`.  Each element is an int, a slice object
-    with step=1, or a tuple thereof, to be treated as an index into the full
-    logical array.
+    prod(factor for factor, index in sharding_spec.replication_factors)`. Each
+    element is an int, a slice object with step=1, or a tuple thereof, to be
+    treated as an index into the full logical array.
   """
   assert len(shape) == len(sharding_spec.shards_per_axis)
-  indices_per_axis = [
-      _axis_indices(axis_size, num_shards, is_materialized)
-      for axis_size, num_shards, is_materialized in zip(
-          shape, sharding_spec.shards_per_axis, sharding_spec.is_axis_materialized)]
+  if not shape:
+    # special case: scalars can only be indexed by `()`
+    total_replication_factor = int(prod(factor for factor, index in
+                                        sharding_spec.replication_factors))
+    return ((),) * total_replication_factor
 
-  # Remove trailing slice(None) indices. This simplifies the final indices and
-  # hopefully makes them more likely to match what's passed in by the user in
-  # ShardedDeviceArray.__getitem__.
-  while len(indices_per_axis) > 1 and indices_per_axis[-1] == [slice(None)]:
-    indices_per_axis.pop(-1)
+  replication_factors = sorted(sharding_spec.replication_factors,
+                               key=op.itemgetter(1))
+  logical_index = 0
+  indices_per_mesh_axis = []
+  for mesh_index in range(len(shape) + len(sharding_spec.replication_factors)):
+    if replication_factors and replication_factors[0][1] == logical_index:
+      # Insert a placeholder `None` to represent a replication factor. These
+      # will all be removed later, since they don't correspond to logical axes.
+      factor, _ = replication_factors.pop(0)
+      indices_per_mesh_axis.append([None] * factor)
+    else:
+      indices = _axis_indices(
+          shape[logical_index],
+          sharding_spec.shards_per_axis[logical_index],
+          sharding_spec.is_axis_materialized[logical_index])
+      indices_per_mesh_axis.append(indices)
+      logical_index += 1
+  assert logical_index == len(shape) and not replication_factors
 
-  # `product` will always return a sequence of tuples. Skip the tuples if each
-  # index is a single element.
-  if len(indices_per_axis) == 1:
-    indices = list(indices_per_axis[0])
-  else:
-    indices = list(product(*indices_per_axis))
+  indices = list(product(*indices_per_mesh_axis))
 
-  return tuple(i for i in indices
-               for _ in range(sharding_spec.replication_factor))
+  # remove placeholder `None`s and trailing colons, then unwrap
+  # single-element tuples
+  def canonicalize(index):
+    index = [i for i in index if i is not None]
+    while len(index) > 1 and index[-1] == slice(None):
+      index.pop(-1)
+    assert index
+    if len(index) == 1:
+      return index[0]
+    return tuple(index)
+  return tuple(canonicalize(index) for index in indices)
 
 
 def _axis_indices(axis_size, num_shards, is_materialized):
@@ -391,7 +424,7 @@ def axis_index(axis_name):
 
   Args:
     axis_name: hashable Python object used to name the pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
 
   Returns:
     An integer representing the index.
@@ -486,7 +519,8 @@ class ShardedDeviceArray(xla.DeviceArray):
       stored in the corresponding device buffer, i.e. `array[indices[i]] ==
       device_buffers[i].to_py()`.
   """
-  __slots__ = ["device_buffers", "sharding_spec", "indices"]
+  __slots__ = ["device_buffers", "sharding_spec", "indices",
+               "_one_replica_buffer_indices"]
 
   # TODO(skye): expose PyLocalBuffers in xla_client
   def __init__(self,
@@ -511,14 +545,27 @@ class ShardedDeviceArray(xla.DeviceArray):
     self.sharding_spec = sharding_spec
     self.indices = indices
     self._npy_value = None
+    self._one_replica_buffer_indices = None
     if not core.skip_checks:
       assert type(aval) is ShapedArray
 
+  @property
+  def one_replica_buffer_indices(self):
+    """Indices of buffers containing one complete copy of the array data."""
+    if self._one_replica_buffer_indices is None:
+      one_replica_indices = []
+      seen_index_hashes = set()
+      for i, index in enumerate(self.indices):
+        hashed_index = _hashable_index(index)
+        if hashed_index not in seen_index_hashes:
+          one_replica_indices.append(i)
+          seen_index_hashes.add(hashed_index)
+      self._one_replica_buffer_indices = one_replica_indices
+    return self._one_replica_buffer_indices
+
   def copy_to_host_async(self):
-    if self._npy_value is None:
-      # TODO(skye): only transfer one replica?
-      for buf in self.device_buffers:
-        buf.copy_to_host_async()
+    for buffer_index in self.one_replica_buffer_indices:
+      self.device_buffers[buffer_index].copy_to_host_async()
 
   def delete(self):
     for buf in self.device_buffers:
@@ -541,8 +588,7 @@ class ShardedDeviceArray(xla.DeviceArray):
     if self._npy_value is None:
       self.copy_to_host_async()
       npy_value = onp.empty(self.aval.shape, self.aval.dtype)
-      for i in range(0, len(self.device_buffers),
-                     self.sharding_spec.replication_factor):
+      for i in self.one_replica_buffer_indices:
         npy_value[self.indices[i]] = self.device_buffers[i].to_py()
       self._npy_value = npy_value
     return self._npy_value
@@ -599,36 +645,32 @@ xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
 def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size, global_axis_size,
-                  devices, name, mapped_invars):
+                  devices, name, mapped_invars, donated_invars):
   abstract_args = map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
                                    global_axis_size, devices, name, mapped_invars,
-                                   *abstract_args)
+                                   donated_invars, *abstract_args)
   return compiled_fun(*args)
 
 @lu.cache
 def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
-                      devices, name, mapped_invars, *avals):
+                      devices, name, mapped_invars, donated_invars, *avals):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
+  inner_pmap = len(_thread_local_state.dynamic_axis_env) > 0
+
   # Determine global_axis_size for use in AxisEnv.
+  must_run_on_all_devices = True
   if devices:
     assert global_axis_size is None  # Checked in api.py
     global_axis_size = len(devices)
+    must_run_on_all_devices = False
   elif xb.host_count() > 1:
     if global_axis_size is None:
-      # TODO(skye): relax this constraint or provide functionality for
-      # automatically passing appropriate `devices`.
-      # TODO(trevorcai): This check forces us to provide global_axis_size for
-      # all pmaps on pmap-on-pod. Can we do it after tracing?
-      if axis_size != xb.local_device_count():
-        raise ValueError(
-            "On multi-host platforms, the input to pmapped functions must have "
-            "leading axis size equal to the number of local devices if no "
-            "`devices` argument is specified. Got axis_size=%d, "
-            "num_local_devices=%d" % (axis_size, xb.local_device_count()))
-      global_axis_size = xb.device_count()
+      if inner_pmap:
+        raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
+      global_axis_size = axis_size * xb.host_count()
   else:
     if global_axis_size is not None:
       if global_axis_size != axis_size:
@@ -637,11 +679,6 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
                 global_axis_size, axis_size))
     else:
       global_axis_size = axis_size
-
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority,
-              "Compiling {} for {} devices with args {}.".format(
-                  fun.__name__, global_axis_size, avals))
 
   if devices:
     local_devices = [d for d in devices if d.host_id == xb.host_id()]
@@ -690,6 +727,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
     results = [handler(None) for handler in handlers]
     return lambda *_: results
 
+  # TODO: replace this with a chain of pmaps and/or sharded_jits
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
   num_global_replicas = global_axis_size * jaxpr_replicas
@@ -697,6 +735,28 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   num_local_shards = num_local_replicas * num_partitions
   num_global_shards = num_global_replicas * num_partitions
+
+  if (xb.host_count() > 1 and not inner_pmap and
+      must_run_on_all_devices and num_local_shards != xb.local_device_count()):
+    if num_local_shards == axis_size:
+      raise ValueError(
+         f"On multi-host platforms, the input to pmapped functions must have "
+         f"leading axis size equal to the number of local devices if no "
+         f"`devices` argument is specified. Got axis_size={axis_size}, "
+         f"num_local_devices={xb.local_device_count()}")
+    else:
+      raise ValueError(
+        f"On multi-host platforms, pmapped functions must run across all "
+        f"devices, i.e. num_replicas * num_partitions should equal the "
+        f"number of local devices. Got num_replicas={num_local_replicas}, "
+        f"num_partitions={num_partitions}, and "
+        f"num_local_devices={xb.local_device_count()}")
+
+  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+  logging.log(log_priority,
+              f"Compiling {fun.__name__} for {num_global_shards} devices with "
+              f"args {avals}. (num_replicas={num_global_replicas} "
+              f"num_partitions={num_partitions}")
 
   axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
 
@@ -714,6 +774,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
   else:
     out_tuple = build_out_tuple()
+  backend = xb.get_backend(backend)
+  if backend.platform == "tpu":
+    donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   built = c.Build(out_tuple)
 
   if devices is None:
@@ -754,12 +817,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   # get_default_device_assignment() returns 2D assignment, caller may have
   # provided 1D list of devices).
   device_assignment = tree_map(lambda d: d.id, devices)
+  # Convert to 2D in case it's 1D and we have > 1 partitions.
+  device_assignment = onp.array(device_assignment).reshape(
+      (num_global_replicas, num_partitions))
   compile_options = xb.get_compile_options(
-          num_replicas=num_global_replicas,
-          num_partitions=num_partitions,
-          device_assignment=device_assignment)
+      num_replicas=num_global_replicas,
+      num_partitions=num_partitions,
+      device_assignment=device_assignment)
   compile_options.parameter_is_tupled_arguments = tuple_args
-  backend = xb.get_backend(backend)
   compiled = backend.compile(built, compile_options=compile_options)
 
   input_sharding_specs = [
@@ -818,19 +883,18 @@ def reconcile_num_partitions(jaxpr, outer_num_parts: Optional[int]):
   return outer_num_parts
 
 
-
 def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
   """Returns the total number of partitions from PartitionSpecs inside `jaxpr`.
 
   Also validates that this number matches `expected_num_parts` if provided.
   """
   for eqn in jaxpr.eqns:
-    if eqn.primitive.name == "sharding_constraint":
+    if eqn.primitive.name in ["sharding_constraint", "infeed"]:
       parts = eqn.params["partitions"]
       nparts = get_num_partitions(parts)
       if expected_num_parts is None:
         expected_num_parts = nparts
-      elif nparts != expected_num_parts:
+      elif nparts is not None and nparts != expected_num_parts:
         # TODO(skye): raise this error as we trace the jaxpr
         raise ValueError(
             f"with_sharding_constraint with partitions={parts} "
@@ -838,10 +902,9 @@ def _inner_partitions(jaxpr, expected_num_parts: Optional[int]):
             f"partitions: {expected_num_parts}. If these partitions look "
             f"right, check outer sharded_jit and/or other "
             f"with_sharding_constraint calls.")
-      elif eqn.primitive.call_primitive:
-        expected_num_parts = _inner_partitions(eqn.params["call_jaxpr"],
-                                               expected_num_parts)
-      # TODO(skye): control flow
+    else:
+      for subjaxpr in core.jaxprs_in_params(eqn.params):
+        expected_num_parts = _inner_partitions(subjaxpr, expected_num_parts)
   return expected_num_parts
 
 
@@ -916,10 +979,10 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
 
   if devices is None:
     assert nrep is not None
+    # TODO(skye): use different device assignment on multihost
     devices = xb.get_backend(backend).get_default_device_assignment(nrep)
   assert nrep == len(devices)
 
-  # TODO(jekbradbury): use ShardingSpec.replication_factor instead
   aval = xla.abstractify(val)  # type: ShapedArray
   replicated_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
   # TODO(skye): figure out how partitioning should work here
@@ -960,29 +1023,44 @@ def _pval_to_result_handler(axis_size, nrep, npart, parts, pval, devices, backen
     return aval_to_result_handler(sharding_spec, indices, unsharded_aval)
 
 def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, mapped):
-  if not mapped and npart > 1:
-    # TODO(skye, jekbradbury): ShardingSpec assumes replication is treated as
-    # the innermost axis, but in this case, it needs to be the outer axis.
-    raise NotImplementedError(
-        "Using pmap(in_axes=None) over sharded_jit not yet implemented.")
+  """Sharding spec for arguments or results of a pmap.
+
+  Args:
+    nrep: number of local XLA replicas (product of local axis sizes)
+    axis_size: local axis size for outer pmap
+    npart: total number of XLA partitions (required by sharded_jit calls)
+    parts: the partitioning of the value or None
+    sharded_aval: the aval of the value inside the outer pmap
+    mapped: whether the value is mapped in the outer pmap
+
+  Returns:
+    A ShardingSpec.
+  """
 
   if sharded_aval is core.abstract_unit:
     return None
 
   replication_factor, ragged = divmod(nrep, axis_size)
   assert not ragged
+  # get the sharding spec from inner sharded_jits as if we weren't in a pmap
   shard_spec = partitioned_sharding_spec(npart, parts, sharded_aval)
   assert shard_spec is not None  # hint for pytype
   if mapped:
+    # replication_factor represents the product of inner pmaps, so it goes
+    # after the outer pmapped axis at index 0
+    replication_factors = [] if replication_factor == 1 else [(replication_factor, 1)]
+    replication_factors.extend((factor, index + 1) for factor, index
+                                in shard_spec.replication_factors)
     return ShardingSpec(
         shards_per_axis=(axis_size,) + shard_spec.shards_per_axis,
-        is_axis_materialized=(False,) + shard_spec.shards_per_axis,
-        replication_factor=replication_factor * shard_spec.replication_factor)
+        is_axis_materialized=(False,) + shard_spec.is_axis_materialized,
+        replication_factors=replication_factors)
   else:
     return ShardingSpec(
         shards_per_axis=shard_spec.shards_per_axis,
         is_axis_materialized=shard_spec.is_axis_materialized,
-        replication_factor=replication_factor * axis_size)
+        replication_factors=[(replication_factor * axis_size, 0)] +
+            shard_spec.replication_factors)
 
 
 def partitioned_sharding_spec(num_partitions: int,
@@ -991,16 +1069,20 @@ def partitioned_sharding_spec(num_partitions: int,
     return None
 
   if partitions is None:
+    # hit by both replicated sharded_jit and no sharded_jit
+    # we drop the extra singleton replication factor in the latter case
+    # where we put the replication doesn't matter because all the shards_per_axis
+    # are 1
     return ShardingSpec(
         shards_per_axis=(1,) * len(aval.shape),
         is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=num_partitions)
+        replication_factors=[] if num_partitions == 1 else [(num_partitions, 0)])
   else:
     assert len(partitions) == len(aval.shape)
     return ShardingSpec(
         shards_per_axis=tuple(partitions),
         is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=1)
+        replication_factors=[])
 
 
 def execute_replicated(compiled,
@@ -1017,11 +1099,16 @@ xla_pmap_p.multiple_results = True
 xla_pmap = partial(core.map_bind, xla_pmap_p)
 xla_pmap_p.def_custom_bind(xla_pmap)
 xla_pmap_p.def_impl(xla_pmap_impl)
+pe.staged_out_calls.add(xla_pmap_p)
 
 def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name,
-                           call_jaxpr, *, backend=None, mapped_invars):
+                           call_jaxpr, *, backend=None, mapped_invars,
+                           donated_invars):
+  if any(donated_invars):
+    raise ValueError("Donating buffers passed to a a pmap nested inside a jit "
+                     "or another pmap is not supported.")
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.devices is not None or (axis_env.names and devices is not None):

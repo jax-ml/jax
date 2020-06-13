@@ -25,7 +25,6 @@ import time
 import matplotlib.pyplot as plt
 
 import jax.numpy as jnp
-from jax.config import config
 from jax import jit, grad, lax, random
 from jax.experimental import optimizers
 from jax.experimental import stax

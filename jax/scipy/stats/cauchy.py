@@ -24,7 +24,6 @@ from ...numpy.lax_numpy import _promote_args_inexact, _constant_like
 @_wraps(osp_stats.cauchy.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_inexact("cauchy.logpdf", x, loc, scale)
-  one = _constant_like(x, 1)
   pi = _constant_like(x, np.pi)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   normalize_term = lax.log(lax.mul(pi, scale))

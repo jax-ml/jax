@@ -49,7 +49,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform psums over the first
       two and last two replicas). Groups must cover all axis indices exactly
@@ -87,7 +87,7 @@ def pmean(x, axis_name, *, axis_index_groups=None):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmeans over the first
       two and last two replicas). Groups must cover all axis indices exactly
@@ -119,7 +119,7 @@ def pmax(x, axis_name, *, axis_index_groups=None):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmaxes over the first
       two and last two replicas). Groups must cover all axis indices exactly
@@ -142,7 +142,7 @@ def pmin(x, axis_name, *, axis_index_groups=None):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     axis_index_groups: optional list of lists containing axis indices (e.g. for
       an axis of size 4, [[0, 1], [2, 3]] would perform pmins over the first
       two and last two replicas). Groups must cover all axis indices exactly
@@ -177,8 +177,9 @@ def ppermute(x, axis_name, perm):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
-    perm: list of pairs of ints, representing (source_index, destination_index)
+      :func:`jax.pmap` documentation for more details).
+    perm: list of pairs of ints, representing
+      ``(source_index, destination_index)``
       pairs that encode how the mapped axis named ``axis_name`` should be
       shuffled. The integer values are treated as indices into the mapped axis
       ``axis_name``. Any two pairs should not have the same source index or the
@@ -204,7 +205,7 @@ def pshuffle(x, axis_name, perm):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     perm: list of of ints, representing the new order of the source indices
       that encode how the mapped axis named ``axis_name`` should be
       shuffled. The integer values are treated as indices into the mapped axis
@@ -236,7 +237,7 @@ def pswapaxes(x, axis_name, axis):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
 
@@ -263,7 +264,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     split_axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
     concat_axis: int indicating the position in the output to materialize the
@@ -271,6 +272,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 
   Returns:
     Array(s) with shape given by the expression::
+
       np.insert(np.delete(x.shape, split_axis), concat_axis, axis_size)
 
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
@@ -476,7 +478,7 @@ def all_gather(x, axis_name):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
 
   Returns:
     Array(s) representing the result of an all-gather along the axis

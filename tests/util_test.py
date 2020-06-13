@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from absl.testing import absltest
 
-import jax
-from jax import api, lax
 from jax import linear_util as lu
 from jax import test_util as jtu
-from jax import tree_util
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -64,3 +62,7 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual((2, 4), scaled_positional)
     self.assertEqual(dict(three=6, four=8), scaled_kwargs)
     self.assertEqual(2, out_thunk())
+
+
+if __name__ == "__main__":
+    absltest.main()

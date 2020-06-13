@@ -30,7 +30,7 @@ from ._util import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as jnp
 from ..util import get_module_functions
-from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve
+from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve # noqa: F401
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 _H = lambda x: jnp.conj(jnp.swapaxes(x, -1, -2))
@@ -170,14 +170,14 @@ def _cofactor_solve(a, b):
   If a is rank n-1, then the lower right corner of u will be zero and the
   triangular_solve will fail.
   Let x = solve(p @ l, b) and y = det(a)*solve(a, b).
-  Then y_{n} = 
+  Then y_{n}
   x_{n} / u_{nn} * prod_{i=1...n}(u_{ii}) =
   x_{n} * prod_{i=1...n-1}(u_{ii})
   So by replacing the lower-right corner of u with prod_{i=1...n-1}(u_{ii})^-1
   we can avoid the triangular_solve failing.
   To correctly compute the rest of y_{i} for i != n, we simply multiply
   x_{i} by det(a) for all i != n, which will be zero if rank(a) = n-1.
-  
+
   For the second case, a check is done on the matrix to see if `solve`
   returns NaN or Inf, and gives a matrix of zeros as a result, as the
   gradient of the determinant of a matrix with rank less than n-1 is 0.
@@ -196,7 +196,6 @@ def _cofactor_solve(a, b):
   a_shape = jnp.shape(a)
   b_shape = jnp.shape(b)
   a_ndims = len(a_shape)
-  b_ndims = len(b_shape)
   if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2]
     and b_shape[-2:] == a_shape[-2:]):
     msg = ("The arguments to _cofactor_solve must have shapes "

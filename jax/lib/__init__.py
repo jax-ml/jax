@@ -15,6 +15,11 @@
 # This module is largely a wrapper around `jaxlib` that performs version
 # checking on import.
 
+__all__ = [
+  'cuda_prng', 'cusolver', 'jaxlib', 'lapack',
+  'pytree', 'tpu_client', 'version', 'xla_client'
+]
+
 import jaxlib
 
 _minimum_jaxlib_version = (0, 1, 47)
@@ -44,10 +49,8 @@ def _check_jaxlib_version():
 
 _check_jaxlib_version()
 
-
 from jaxlib import xla_client
 from jaxlib import lapack
-
 from jaxlib import pytree
 from jaxlib import cusolver
 try:

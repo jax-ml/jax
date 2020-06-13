@@ -144,15 +144,15 @@ class LaxRandomTest(jtu.JaxTestCase):
     if jtu.device_under_test() != "tpu":
       bits8 = random._random_bits(key, 8, (3,))
       expected8 = np.array([216, 115,  43], dtype=np.uint8)
-      self.assertArraysEqual(bits8, expected8, check_dtypes=True)
+      self.assertArraysEqual(bits8, expected8)
 
       bits16 = random._random_bits(key, 16, (3,))
       expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
-      self.assertArraysEqual(bits16, expected16, check_dtypes=True)
+      self.assertArraysEqual(bits16, expected16)
 
     bits32 = random._random_bits(key, 32, (3,))
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
-    self.assertArraysEqual(bits32, expected32, check_dtypes=True)
+    self.assertArraysEqual(bits32, expected32)
 
     bits64 = random._random_bits(key, 64, (3,))
     if FLAGS.jax_enable_x64:
@@ -160,7 +160,7 @@ class LaxRandomTest(jtu.JaxTestCase):
                              7882654074788531506], dtype=np.uint64)
     else:
       expected64 = np.array([676898860, 3164047411, 4010691890], dtype=np.uint32)
-    self.assertArraysEqual(bits64, expected64, check_dtypes=True)
+    self.assertArraysEqual(bits64, expected64)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
@@ -227,7 +227,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertWarns(FutureWarning):
       perm2 = crand(key)
 
-    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertAllClose(perm1, perm2)
     self.assertFalse(np.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(np.sort(perm1), x, check_dtypes=False)
 
@@ -245,12 +245,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm1 = rand(key)
     perm2 = crand(key)
 
-    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertAllClose(perm1, perm2)
     self.assertFalse(np.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(np.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
     self.assertArraysAllClose(
-      x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype),
-      check_dtypes=True)
+      x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype))
 
   def testPermutationInteger(self):
     key = random.PRNGKey(0)
@@ -261,7 +260,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     perm1 = rand(key)
     perm2 = crand(key)
 
-    self.assertAllClose(perm1, perm2, check_dtypes=True)
+    self.assertAllClose(perm1, perm2)
     self.assertEqual(perm1.dtype, perm2.dtype)
     self.assertFalse(np.all(perm1 == np.arange(100)))  # seems unlikely!
     self.assertAllClose(np.sort(perm1), np.arange(100), check_dtypes=False)
@@ -380,7 +379,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     compiled_samples = crand(key, alpha)
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self.assertAllClose(samples.sum(-1), np.ones(10000, dtype=dtype), check_dtypes=True)
+      self.assertAllClose(samples.sum(-1), np.ones(10000, dtype=dtype))
       alpha_sum = sum(alpha)
       for i, a in enumerate(alpha):
         self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
@@ -435,7 +434,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
+    self.assertAllClose(actual_grad, expected_grad,
                         rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
 
   def testGammaGradType(self):
@@ -656,7 +655,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     def fail(*args, **kwargs): assert False
     apply_primitive, xla.apply_primitive = xla.apply_primitive, fail
     try:
-      out = random.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
+      _ = random.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
       xla.apply_primitive = apply_primitive
 
@@ -664,34 +663,33 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Test to ensure consistent random values between JAX versions
     k = random.PRNGKey(0)
 
-    randints = random.randint(k, (3, 3), 0, 8)
     if FLAGS.jax_enable_x64:
         self.assertAllClose(
             random.randint(k, (3, 3), 0, 8),
             np.array([[7, 2, 6],
                        [2, 1, 0],
-                       [6, 7, 7]], dtype='int64'),
-            check_dtypes=True)
+                       [6, 7, 7]], dtype='int64'))
     else:
         self.assertAllClose(
             random.randint(k, (3, 3), 0, 8),
             np.array([[2, 1, 3],
                        [6, 1, 5],
-                       [6, 3, 4]], dtype='int32'),
-            check_dtypes=True)
+                       [6, 3, 4]], dtype='int32'))
 
     self.assertAllClose(
         random.split(k, 4),
         np.array([[2285895361, 1501764800],
                    [1518642379, 4090693311],
                    [ 433833334, 4221794875],
-                   [ 839183663, 3740430601]], dtype='uint32'),
-        check_dtypes=True)
+                   [ 839183663, 3740430601]], dtype='uint32'))
 
     self.assertAllClose(
         random.fold_in(k, 4),
-        np.array([2285895361,  433833334], dtype='uint32'),
-        check_dtypes=True)
+        np.array([2285895361,  433833334], dtype='uint32'))
+
+  def testDtypeErrorMessage(self):
+    with self.assertRaisesRegex(ValueError, r"dtype argument to.*"):
+      random.normal(random.PRNGKey(0), (), dtype=jnp.int32)
 
 
 if __name__ == "__main__":

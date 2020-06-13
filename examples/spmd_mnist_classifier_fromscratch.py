@@ -28,7 +28,6 @@ import numpy as np
 import numpy.random as npr
 
 from jax import jit, grad, pmap
-from jax.config import config
 from jax.scipy.special import logsumexp
 from jax.lib import xla_bridge
 from jax.tree_util import tree_map

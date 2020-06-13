@@ -57,4 +57,3 @@ def threefry2x32(c, keys, data):
       shape_with_layout=xla_client.Shape.tuple_shape([shape, shape]),
       operand_shapes_with_layout=(shape,) * 4,
       opaque=opaque)
-

@@ -24,7 +24,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import pmap, vjp
+from jax import jit, pmap, vjp
 from jax import lax
 from jax import test_util as jtu
 from jax import tree_util
@@ -40,6 +40,7 @@ config.parse_flags_with_absl()
 class ShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super(ShardedJitTest, self).setUp()
     if jtu.device_under_test() != "tpu":
       raise SkipTest
 
@@ -124,8 +125,8 @@ class ShardedJitTest(jtu.JaxTestCase):
     self.assertLen(result.device_buffers, 1)
 
   def testShardingConstraint(self):
-    if jax.local_device_count() < 4:
-      raise SkipTest("requires 4 devices")
+    if jax.local_device_count() < 2:
+      raise SkipTest("requires 2 devices")
 
     def f(x):
       y = x + 1
@@ -160,6 +161,24 @@ class ShardedJitTest(jtu.JaxTestCase):
                         actual.device_buffers[1].to_py(),
                         check_dtypes=False)
 
+  def testNestedShardingConstraint(self):
+    if jax.local_device_count() < 2:
+      raise SkipTest("requires 2 devices")
+
+    shape = (8, 8)
+
+    @jit
+    def f(x):
+      return lax.while_loop(lambda i: i[0,0] < 10.,
+                            lambda i: with_sharding_constraint(i + 1., P(2, 1)),
+                            x)
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    expected = x + 10.
+    actual = sharded_jit(f, in_parts=None, out_parts=None)(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    self.assertLen(actual.device_buffers, 2)
+
   def testGradOfShardingConstraint(self):
     if jax.local_device_count() < 4:
       raise SkipTest("requires 4 devices")
@@ -181,11 +200,48 @@ class ShardedJitTest(jtu.JaxTestCase):
     expected = expected_f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
 
+  @parameterized.named_parameters({
+      "testcase_name": f"_partition_input={partition_input}",
+      "partition_input": partition_input
+  } for partition_input in [True, False])
+  def testInfeed(self, partition_input):
+    if jax.local_device_count() % 2 != 0:
+      raise SkipTest
+
+    shape = (jax.local_device_count() * 2, 4)
+    # Run computation across all devices so we know which devices to feed.
+    parts = P(jax.local_device_count(), 1)
+    in_parts = parts if partition_input else None
+    infeed_shapes = (jax.ShapedArray(shape, np.float32),
+                     jax.ShapedArray((1,), np.float32))
+    infeed_parts = (parts, None)
+
+    @partial(sharded_jit, in_parts=in_parts, out_parts=None)
+    def f(x):
+      token = lax.create_token(x)
+      (y, z), token = lax.infeed(token, infeed_shapes, partitions=infeed_parts)
+      return x @ y.T + z
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    y = x + 1
+    shard_size = shape[0] // jax.local_device_count()
+    y_shards = [y[i:i+shard_size] for i in range(0, shape[0], shard_size)]
+    z = jnp.array([3.], dtype=np.float32)
+
+    result = f(x)
+    assert len(jax.local_devices()) == len(y_shards)
+    for device, y_shard in zip(jax.local_devices(), y_shards):
+      device.transfer_to_infeed((y_shard, z))
+
+    expected = x @ y.T + z
+    self.assertAllClose(result, expected, check_dtypes=False)
+
 
 # TODO(skye): add more error tests
 class ShardedJitErrorsTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super(ShardedJitErrorsTest, self).setUp()
     if jtu.device_under_test() != "tpu":
       raise SkipTest
 
@@ -235,6 +291,7 @@ class ShardedJitTestNoTpu(jtu.JaxTestCase):
 class PmapOfShardedJitTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super(PmapOfShardedJitTest, self).setUp()
     if jtu.device_under_test() != "tpu":
       raise SkipTest
 
@@ -257,6 +314,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     for r in flat_result:
       self.assertTrue(isinstance(r, pxla.ShardedDeviceArray))
       self.assertEqual(len(r.device_buffers), num_shards)
+
 
   @parameterized.named_parameters({
       "testcase_name":
@@ -412,6 +470,27 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     self.assertAllClose(result, expected, check_dtypes=False)
     self.assertIsInstance(result, pxla.ShardedDeviceArray)
     self.assertLen(result.device_buffers, 4)
+
+  def testInAxesNone(self):
+    shape = (4, 4)
+    replicas = 2
+    in_partitions = (P(2, 1), None, None)
+    out_partitions = P(2, 1)
+    in_axes = (None, None, 0)
+    x = y = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    dummy = np.arange(replicas, dtype=np.float32) + 1
+    num_shards = replicas * np.prod(in_partitions[0])
+    if num_shards > jax.local_device_count():
+      raise SkipTest("requires %d devices" % num_shards)
+
+    def f(x, y, _):
+      return x @ y
+
+    result = pmap(
+        sharded_jit(f, in_parts=in_partitions, out_parts=out_partitions),
+        in_axes=in_axes)(x, y, dummy)
+    expected = pmap(f, in_axes=in_axes)(x, y, dummy)
+    self.assertAllClose(result, expected, check_dtypes=True)
 
 
 if __name__ == "__main__":

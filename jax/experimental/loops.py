@@ -500,7 +500,7 @@ class _CondBuilder(_LoopBuilder):
   """Builds a lax.cond operation."""
 
   def __init__(self, pred):
-    self.pred = pred
+    self.index = lax.convert_element_type(pred, np.int32)
 
   def can_use_index_var(self):
     return False
@@ -511,17 +511,16 @@ class _CondBuilder(_LoopBuilder):
     in_vals, in_tree = tree_util.tree_flatten(
         (body_const_vals, tree_util.tree_unflatten(carried_tree, init_vals)))
     in_avals = safe_map(_BodyTracer.abstractify, in_vals)
-    false_body_typed_jaxpr, false_body_const_vals, _ = (
+    pass_through_typed_jaxpr, pass_through_const_vals, _ = (
       lax_control_flow._initial_style_jaxpr(
           lambda *args: args[1],
           in_tree,
           tuple(in_avals)))
-    assert len(false_body_const_vals) == 0
+    assert len(pass_through_const_vals) == 0
     args = list(itertools.chain(body_const_vals, init_vals))
     return lax_control_flow.cond_p.bind(
-        self.pred, *args,
-        true_jaxpr=body_typed_jaxpr,
-        false_jaxpr=false_body_typed_jaxpr,
+        self.index, *args,
+        branches=(pass_through_typed_jaxpr, body_typed_jaxpr),
         linear=(False,) * len(args))
 
 

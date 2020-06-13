@@ -131,14 +131,14 @@ from jax.interpreters import partial_eval as pe
 from jax import pprint_util as ppu
 from jax import util
 from jaxlib import xla_client
-from jaxlib import xla_extension
 from jaxlib import version as jaxlib_version
 
 import logging
 import msgpack  # type: ignore
 import numpy as np
 import traceback
-from typing import Any, Callable, Dict, Iterable, List, Optional, NamedTuple, Sequence, Tuple
+from typing import (Any, Callable, Dict, List, Optional, NamedTuple,
+                    Sequence, Tuple, cast)
 
 xops = xla_client._xla.ops
 
@@ -341,11 +341,11 @@ positional arguments and parameters:
   * nr_untapped: how many positional arguments (from the tail) should not be
   passed to the tap function.
   * arg_treedef: the treedef of the tapped positional arguments.
-  * transforms: a tuple of the transformations that have been applied. Each 
+  * transforms: a tuple of the transformations that have been applied. Each
     element of the tuple is itself a tuple with the first element the name
-    of the transform. The remaining elements depend on the transform. For 
-    example, for `batch`, the parameters are the dimensions that have been 
-    batched, and for `mask` the logical shapes. These are unpacked by 
+    of the transform. The remaining elements depend on the transform. For
+    example, for `batch`, the parameters are the dimensions that have been
+    batched, and for `mask` the logical shapes. These are unpacked by
     _ConsumerCallable before passing to the user function.
 
   * the remaining parameters are passed to the tap function.
@@ -388,7 +388,7 @@ id_tap_p.def_abstract_eval(_id_tap_abstract_eval)
 # The AttributeError is for regular values, the KeyError is for ConcreteArray
 def _instantiate_zeros(arg, tan):
   """Turn special ad.zero tangents into arrays of 0s."""
-  if tan is not ad.zero:
+  if type(tan) is not ad.Zero:
     return tan
 
   try:
@@ -556,17 +556,16 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
            body_jaxpr=_rewrite_typed_jaxpr(body_jaxpr, True, True)[0],
            cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True, False)[0])))
   elif eqn.primitive is lax.cond_p:
-    true_jaxpr, false_jaxpr, linear = util.split_dict(
-      eqn.params, ["true_jaxpr", "false_jaxpr", "linear"])
-    nr_operands = len(true_jaxpr.jaxpr.invars)
-    pred, *operands = eqn.invars
-    new_invars = (pred, *operands, input_token_var)
+    branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
+    index, *operands = eqn.invars
+    new_invars = [index, *operands, input_token_var]
     eqns.append(core.new_jaxpr_eqn(
       new_invars, eqn.outvars + [output_token_var],
       eqn.primitive,
       dict(eqn.params,
-           true_jaxpr=_rewrite_typed_jaxpr(true_jaxpr, True, True)[0],
-           false_jaxpr=_rewrite_typed_jaxpr(false_jaxpr, True, True)[0],
+           branches=tuple(
+               _rewrite_typed_jaxpr(jaxpr, True, True)[0]
+               for jaxpr in branches),
            linear=(*linear, False))))
   elif eqn.primitive is lax.scan_p:
     num_consts, num_carry, carry_jaxpr, linear, _, _ = util.split_dict(
@@ -600,7 +599,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
            num_carry=num_carry + 1,
            linear=linear + (False,))))
   elif eqn.primitive is xla.xla_call_p:
-    call_jaxpr = eqn.params["call_jaxpr"]
+    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
     eqns.append(core.new_jaxpr_eqn(
       eqn.invars + [input_token_var],
       eqn.outvars + [output_token_var],
@@ -839,7 +838,7 @@ def outfeed_receiver(*,
     backends = backends or xla_client._get_local_backends().keys()
     devices = tuple(itertools.chain(
         *[api.local_devices(api.host_id(backend), backend)
-          for backend in backends]))
+          for backend in backends if backend != "interpreter"]))
   else:
     if backends:
       raise ValueError("At most one of `devices` or `backends` must be given.")
@@ -863,7 +862,7 @@ def outfeed_receiver(*,
         return device
       consumer = _consumer_registry_by_id.get(consumer_id)
       if consumer is None:
-        logging.error(f"Ignoring received outfeed for unknown tap consumer")
+        logging.error("Ignoring received outfeed for unknown tap consumer")
         count_tap_exceptions += 1
         continue  # We need to read the entire outfeed
       try:

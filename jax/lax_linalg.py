@@ -144,7 +144,6 @@ def _nan_like(c, operand):
 def _cholesky_cpu_gpu_translation_rule(potrf_impl, c, operand):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
-  dtype = shape.element_type().type
   result, info = potrf_impl(c, operand, lower=True)
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   return _broadcasting_select(c,
@@ -368,8 +367,8 @@ def triangular_solve_transpose_rule(
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
   assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
-  if cotangent is ad_util.zero:
-    cotangent_b = ad_util.zero
+  if type(cotangent) is ad_util.Zero:
+    cotangent_b = ad_util.Zero(b.aval)
   else:
     cotangent_b = triangular_solve(a, cotangent, left_side, lower,
                                    not transpose_a, conjugate_a, unit_diagonal)
@@ -454,7 +453,6 @@ xla.backend_specific_translations['cpu'][triangular_solve_p] = \
 def _triangular_solve_gpu_translation_rule(
     c, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
   shape = c.get_shape(a)
-  dtype = shape.element_type().type
   dims = shape.dimensions()
   m, n = dims[-2:]
   batch = prod(dims[:-2])
@@ -622,7 +620,7 @@ def _lu_jvp_rule(primals, tangents):
   l_dot = jnp.matmul(l, jnp.tril(lau, -1))
   u_dot = jnp.matmul(jnp.triu(lau), u)
   lu_dot = l_dot + u_dot
-  return (lu, pivots), (lu_dot, ad_util.zero)
+  return (lu, pivots), (lu_dot, ad_util.Zero.from_value(pivots))
 
 
 def _lu_batching_rule(batched_args, batch_dims):
@@ -854,8 +852,16 @@ def svd_impl(operand, full_matrices, compute_uv):
   return s, u, vt
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
-  raise NotImplementedError(
-    "Singular value decomposition is only implemented on the CPU and GPU backends")
+  shape = c.get_shape(operand).dimensions()
+  m, n = shape[-2:]
+  u, s, v = xops.SVD(operand)
+  permutation = list(range(len(shape)))
+  permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
+  vt = xops.Transpose(v, permutation)
+  if not full_matrices and m != n:
+    u = xops.SliceInDim(u, 0, min(m, n), stride=1, dimno=len(shape) - 1)
+    vt = xops.SliceInDim(vt, 0, min(m, n), stride=1, dimno=len(shape) - 2)
+  return xops.Tuple(c, [s, u, vt])
 
 def svd_abstract_eval(operand, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):

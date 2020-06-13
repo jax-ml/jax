@@ -17,7 +17,6 @@ import collections
 import enum
 from functools import partial
 import itertools
-import unittest
 import warnings
 
 from absl.testing import absltest
@@ -26,7 +25,6 @@ from absl.testing import parameterized
 import numpy as onp
 
 from jax import api
-from jax import lax
 from jax import numpy as jnp
 from jax import ops
 from jax import test_util as jtu
@@ -404,7 +402,7 @@ class IndexingTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     fun = lambda x: x[indexer]
-    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters({
       "testcase_name":
@@ -505,7 +503,7 @@ class IndexingTest(jtu.JaxTestCase):
       return x[indexer]
 
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
-    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -555,7 +553,7 @@ class IndexingTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype), indexer]
     fun = lambda x, idx: jnp.asarray(x)[idx]
-    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -637,7 +635,7 @@ class IndexingTest(jtu.JaxTestCase):
       idx = type(indexer)(util.subvals(indexer_with_dummies, substitutes))
       return jnp.asarray(x)[idx]
 
-    self._CompileAndCheck(fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(fun, args_maker)
 
   def testAdvancedIndexingManually(self):
     x = onp.random.RandomState(0).randn(3, 4, 5)
@@ -649,7 +647,7 @@ class IndexingTest(jtu.JaxTestCase):
     a1 = op(x, index_array)
     a2 = cop(x, index_array)
 
-    self.assertAllClose(a1, a2, check_dtypes=True)
+    self.assertAllClose(a1, a2)
 
     op = lambda x, index_array: x[..., index_array, :, index_array, None]
     cop = api.jit(op)
@@ -657,7 +655,7 @@ class IndexingTest(jtu.JaxTestCase):
     a1 = op(x, index_array)
     a2 = cop(x, index_array)
 
-    self.assertAllClose(a1, a2, check_dtypes=True)
+    self.assertAllClose(a1, a2)
 
     op = lambda x, index_array: x[index_array, ..., index_array[:, None], None]
     cop = api.jit(op)
@@ -665,7 +663,7 @@ class IndexingTest(jtu.JaxTestCase):
     a1 = op(x, index_array)
     a2 = cop(x, index_array)
 
-    self.assertAllClose(a1, a2, check_dtypes=True)
+    self.assertAllClose(a1, a2)
 
   def testUnpacking(self):
 
@@ -678,7 +676,7 @@ class IndexingTest(jtu.JaxTestCase):
     a1 = foo(onp.arange(3))
     a2 = cfoo(onp.arange(3))
 
-    self.assertAllClose(a1, a2, check_dtypes=True)
+    self.assertAllClose(a1, a2)
 
   def testBooleanIndexingArray1D(self):
     idx = onp.array([True, True, False])
@@ -741,8 +739,8 @@ class IndexingTest(jtu.JaxTestCase):
     primals, tangents = api.jvp(api.grad(f), (x, i), (x, onp.zeros_like(i)))
     expected = onp.broadcast_to(
       onp.array([0, 3, 0], dtype=onp.float32)[:, None], (3, 4))
-    self.assertAllClose(expected, primals, check_dtypes=True)
-    self.assertAllClose(onp.zeros_like(x), tangents, check_dtypes=True)
+    self.assertAllClose(expected, primals)
+    self.assertAllClose(onp.zeros_like(x), tangents)
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/google/jax/issues/1621
@@ -793,7 +791,7 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
     array = jnp.ones(5)
-    self.assertAllClose(array, array[:10], check_dtypes=True)
+    self.assertAllClose(array, array[:10])
 
 
 def _broadcastable_shapes(shape):
@@ -879,8 +877,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
-    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker)
+    self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
@@ -906,8 +904,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
-    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker)
+    self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
@@ -933,8 +931,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
-    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker)
+    self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(

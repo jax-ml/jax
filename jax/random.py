@@ -16,19 +16,17 @@
 
 Example usage:
 
-```python
-rng = jax.random.PRNGKey(seed)
-for i in range(num_steps):
-  rng, rng_input = jax.random.split(rng)
-  params = compiled_update(rng_input, params, next(batches))
-```
+>>> rng = jax.random.PRNGKey(seed)
+>>> for i in range(num_steps):
+...   rng, rng_input = jax.random.split(rng)
+...   params = compiled_update(rng_input, params, next(batches))
 
 Context:
 
 Among other requirements, the JAX PRNG aims to:
 (a) ensure reproducibility,
 (b) parallelize well, both in terms of vectorization (generating array values)
-and multi-replica, multi-core computation. In particular it should not use 
+and multi-replica, multi-core computation. In particular it should not use
 sequencing constraints between random function calls.
 
 The approach is based on:
@@ -58,7 +56,6 @@ from jax.lib import cuda_prng
 from jax import core
 from jax import abstract_arrays
 from jax.numpy.linalg import cholesky
-from jax.scipy.special import logit
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import xla
@@ -361,6 +358,9 @@ def uniform(key: jnp.ndarray,
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
+                     f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _uniform(key, shape, dtype, minval, maxval)
@@ -545,6 +545,9 @@ def normal(key: jnp.ndarray,
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `normal` must be a float dtype, "
+                     f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _normal(key, shape, dtype)
@@ -583,6 +586,9 @@ def multivariate_normal(key: jnp.ndarray,
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -636,6 +642,9 @@ def truncated_normal(key: jnp.ndarray,
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `truncated_normal` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -716,6 +725,9 @@ def beta(key: jnp.ndarray,
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `beta` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -750,6 +762,9 @@ def cauchy(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `cauchy` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _cauchy(key, shape, dtype)
@@ -782,6 +797,9 @@ def dirichlet(key, alpha, shape=None, dtype=np.float64):
     ``shape + (alpha.shape[-1],)`` if ``shape`` is not None, or else
     ``alpha.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `dirichlet` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -816,6 +834,9 @@ def exponential(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `exponential` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _exponential(key, shape, dtype)
@@ -1006,7 +1027,7 @@ def _gamma_impl(key, a):
     samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
   else:
     samples = vmap(_gamma_one)(keys, alphas)
-  return jnp.reshape(samples, a_shape),
+  return jnp.reshape(samples, a_shape)
 
 def _gamma_batching_rule(batched_args, batch_dims):
     k, a = batched_args
@@ -1014,14 +1035,13 @@ def _gamma_batching_rule(batched_args, batch_dims):
     size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
     k = batching.bdim_at_front(k, bk, size)
     a = batching.bdim_at_front(a, ba, size)
-    return random_gamma_p.bind(k, a), (0,)
+    return random_gamma_p.bind(k, a), 0
 
 random_gamma_p = core.Primitive('random_gamma')
-random_gamma_p.multiple_results = True
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a: (abstract_arrays.raise_to_shaped(a),))
-ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: (tangent * _gamma_grad(ans[0], a),))
-xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl)
+random_gamma_p.def_abstract_eval(lambda key, a: abstract_arrays.raise_to_shaped(a))
+ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
+xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, multiple_results=False)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key, a, shape=None, dtype=np.float64):
@@ -1041,6 +1061,9 @@ def gamma(key, a, shape=None, dtype=np.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``a.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `gamma` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -1056,7 +1079,7 @@ def _gamma(key, a, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  return random_gamma_p.bind(key, a)[0]
+  return random_gamma_p.bind(key, a)
 
 
 @partial(jit, static_argnums=(2, 3, 4))
@@ -1163,7 +1186,7 @@ def poisson(key, lam, shape=(), dtype=np.int64):
   shape = abstract_arrays.canonicalize_shape(shape)
   if np.shape(lam) != shape:
     lam = jnp.broadcast_to(lam, shape)
-  lam = lam.astype(np.float32)
+  lam = lax.convert_element_type(lam, np.float32)
   return _poisson(key, lam, shape, dtype)
 
 
@@ -1180,6 +1203,9 @@ def gumbel(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `gumbel` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _gumbel(key, shape, dtype)
@@ -1234,6 +1260,9 @@ def laplace(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `laplace` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _laplace(key, shape, dtype)
@@ -1259,6 +1288,9 @@ def logistic(key, shape=(), dtype=np.float64):
   Returns:
     A random array with the specified shape and dtype.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `logistic` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _logistic(key, shape, dtype)
@@ -1299,6 +1331,9 @@ def pareto(key, b, shape=None, dtype=np.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``b.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `pareto` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
@@ -1333,6 +1368,9 @@ def t(key, df, shape=(), dtype=np.float64):
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``df.shape``.
   """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `t` must be a float "
+                     f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
   return _t(key, df, shape, dtype)

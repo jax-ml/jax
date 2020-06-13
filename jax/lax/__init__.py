@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# flake8: noqa: F401
 from .lax import (
   ConvDimensionNumbers,
   DotDimensionNumbers,
@@ -298,6 +299,7 @@ from .lax_control_flow import (
   scan,
   scan_bind,
   scan_p,
+  switch,
   while_loop,
   while_p,
   associative_scan,

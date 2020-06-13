@@ -462,7 +462,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_grad_and_aux_basic(self):
     g, aux = grad(lambda x: (x**3, [x**2]), has_aux=True)(3.)
-    self.assertAllClose(g, grad(lambda x: x**3)(3.), check_dtypes=True)
+    self.assertAllClose(g, grad(lambda x: x**3)(3.))
     self.assertAllClose(aux, [9.], check_dtypes=False)
 
   def test_grad_and_aux_nested(self):
@@ -557,7 +557,7 @@ class APITest(jtu.JaxTestCase):
       res2 = api.jit(inner)(5.)
       return res1 + res2
 
-    self.assertAllClose((45., 9.), api.jvp(func, (5.,), (1.,)), check_dtypes=True)
+    self.assertAllClose((45., 9.), api.jvp(func, (5.,), (1.,)))
 
 
   def test_complex_grad_raises_error(self):
@@ -596,7 +596,7 @@ class APITest(jtu.JaxTestCase):
 
     ans = jacrev(f)(zs)
     expected = grad(f)(zs)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def test_complex_input_jacfwd_raises_error(self):
     self.assertRaises(TypeError, lambda: jacfwd(lambda x: jnp.sin(x))(1 + 2j))
@@ -656,7 +656,7 @@ class APITest(jtu.JaxTestCase):
       return 0. if pt.is_zero() else jnp.sqrt(pt.x ** 2 + pt.y ** 2)
 
     f(pt)  # doesn't crash
-    g = api.grad(f)(pt)
+    _ = api.grad(f)(pt)
     self.assertIsInstance(pt, ZeroPoint)
 
   @parameterized.parameters(1, 2, 3)
@@ -966,7 +966,7 @@ class APITest(jtu.JaxTestCase):
       return pmapped_multi_step(state)
 
     u = jnp.ones((device_count, 100))
-    u_final = multi_step_pmap(u)  # doesn't crash
+    _ = multi_step_pmap(u)  # doesn't crash
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -980,7 +980,7 @@ class APITest(jtu.JaxTestCase):
       futures = [executor.submit(partial(f, x)) for x in xs]
       ys = [f.result() for f in futures]
     for x, y in zip(xs, ys):
-      self.assertAllClose(x, y, check_dtypes=True)
+      self.assertAllClose(x, y)
 
   def test_concurrent_jit(self):
     @jit
@@ -992,7 +992,7 @@ class APITest(jtu.JaxTestCase):
       futures = [executor.submit(partial(f, x)) for x in xs]
       ys = [f.result() for f in futures]
     for x, y in zip(xs, ys):
-      self.assertAllClose(x * 2 - 3., y, check_dtypes=True)
+      self.assertAllClose(x * 2 - 3., y)
 
   def test_dtype_warning(self):
     # cf. issue #1230
@@ -1054,7 +1054,7 @@ class APITest(jtu.JaxTestCase):
 
     out1 = api.vmap(f, (None, 0, 0))(dictionary, x, y)
     out2 = api.vmap(f, [None, 0, 0])(dictionary, x, y)
-    self.assertAllClose(out1, out2, check_dtypes=True)
+    self.assertAllClose(out1, out2)
 
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/google/jax/issues/795
@@ -1455,8 +1455,6 @@ class APITest(jtu.JaxTestCase):
 
   def test_remat_symbolic_zeros(self):
     # code from https://github.com/google/jax/issues/1907
-    test_remat = True
-    test_scan = True
 
     key = jax.random.PRNGKey(0)
     key, split = jax.random.split(key)
@@ -1765,6 +1763,13 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       g(jnp.ones((1, 1)), b=1)
 
+  def test_vmap_unmapped_last(self):
+    @partial(jax.vmap, out_axes=jax.interpreters.batching.last)
+    def f(x):
+      return np.zeros((2,))
+    f(np.zeros((5,)))
+
+
 class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):
@@ -1793,16 +1798,18 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual("""
 { lambda  ; a.
   let b = ge a 0.0
-      c = add a 1.0
-      d = add a 2.0
-      e = cond[ false_jaxpr={ lambda  ; e_ c a b.
-                              let d = sub b c
-                              in (d,) }
-                linear=(False, False, False, False)
-                true_jaxpr={ lambda  ; c f_ a b.
+      c = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] b
+      d = add a 1.0
+      e = add a 2.0
+      f = cond[ branches=( { lambda  ; e_ c a b.
+                             let d = sub b c
+                             in (d,) }
+                           { lambda  ; c f_ a b.
                              let d = add a c
-                             in (d,) } ] b a a c d
-  in (e,) }
+                             in (d,) } )
+                linear=(False, False, False, False) ] c a a d e
+  in (f,) }
         """, str(jaxpr))
 
   def test_make_jaxpr_static_argnums(self):
@@ -2006,11 +2013,10 @@ class CustomJVPTest(jtu.JaxTestCase):
     f.defjvp(f_jvp)
 
     x = 3.
-    self.assertAllClose(f(x), jnp.sin(x), check_dtypes=True)
+    self.assertAllClose(f(x), jnp.sin(x))
     self.assertAllClose(api.jvp(f, (x,), (1.,)),
-                        (jnp.sin(x), 2 * jnp.cos(x)),
-                        check_dtypes=True)
-    self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x), check_dtypes=True)
+                        (jnp.sin(x), 2 * jnp.cos(x)))
+    self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x))
 
   def test_invariance(self):
     @api.custom_jvp
@@ -2051,8 +2057,8 @@ class CustomJVPTest(jtu.JaxTestCase):
         return f(x), 3 * g
     f.defjvp(f_jvp)
     x = 2.
-    self.assertAllClose(f(x), jnp.sin(x), check_dtypes=True)
-    self.assertAllClose(f(-x), jnp.cos(-x), check_dtypes=True)
+    self.assertAllClose(f(x), jnp.sin(x))
+    self.assertAllClose(f(-x), jnp.cos(-x))
     self.assertAllClose(api.jvp(f, (x,), (1.,)),
                         (jnp.sin(x), 2.),
                         check_dtypes=False)
@@ -2078,29 +2084,24 @@ class CustomJVPTest(jtu.JaxTestCase):
     xx = jnp.arange(6.).reshape(2, 3)
 
     # vmap of f
-    self.assertAllClose(api.vmap(f)(x), jnp.sin(x), check_dtypes=True)
-    self.assertAllClose(api.vmap(api.vmap(f))(xx), jnp.sin(xx), check_dtypes=True)
+    self.assertAllClose(api.vmap(f)(x), jnp.sin(x))
+    self.assertAllClose(api.vmap(api.vmap(f))(xx), jnp.sin(xx))
 
     # vmap of jvp of f
     self.assertAllClose(api.vmap(lambda x: api.jvp(f, (x,), (x,)))(x),
-                        (jnp.sin(x), 2 * jnp.cos(x) * x),
-                        check_dtypes=True)
+                        (jnp.sin(x), 2 * jnp.cos(x) * x))
     self.assertAllClose(api.vmap(api.vmap(lambda x: api.jvp(f, (x,), (x,))))(xx),
-                        (jnp.sin(xx), 2 * jnp.cos(xx) * xx),
-                        check_dtypes=True)
+                        (jnp.sin(xx), 2 * jnp.cos(xx) * xx))
 
     # jvp of vmap of f
     self.assertAllClose(api.jvp(api.vmap(f), (x,), (x,)),
-                        (jnp.sin(x), 2 * jnp.cos(x) * x),
-                        check_dtypes=True)
+                        (jnp.sin(x), 2 * jnp.cos(x) * x))
     self.assertAllClose(api.jvp(api.vmap(api.vmap(f)), (xx,), (xx,)),
-                        (jnp.sin(xx), 2 * jnp.cos(xx) * xx),
-                        check_dtypes=True)
+                        (jnp.sin(xx), 2 * jnp.cos(xx) * xx))
 
     # vmap of jvp of vmap of f
     self.assertAllClose(api.vmap(lambda x: api.jvp(api.vmap(f), (x,), (x,)))(xx),
-                        (jnp.sin(xx), 2 * jnp.cos(xx) * xx),
-                        check_dtypes=True)
+                        (jnp.sin(xx), 2 * jnp.cos(xx) * xx))
 
   def test_jit(self):
     @api.custom_jvp
@@ -2115,8 +2116,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     x = 3.
 
     # jit
-    self.assertAllClose(api.jit(f)(x), jnp.sin(x), check_dtypes=True)
-    self.assertAllClose(api.jit(api.jit(f))(x), jnp.sin(x), check_dtypes=True)
+    self.assertAllClose(api.jit(f)(x), jnp.sin(x))
+    self.assertAllClose(api.jit(api.jit(f))(x), jnp.sin(x))
 
     # jit of jvp
     self.assertAllClose(api.jit(lambda x: api.jvp(f, (x,), (x,)))(x),
@@ -2138,7 +2139,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       return f(x), {'b': 2 * jnp.cos(x['a']) * g['a']}
     f.defjvp(f_jvp)
     x = {'a': 3.}
-    self.assertAllClose(f(x)['b'], jnp.sin(x['a']), check_dtypes=True)
+    self.assertAllClose(f(x)['b'], jnp.sin(x['a']))
     self.assertAllClose(api.jvp(f, (x,), (x,)),
                         ({'b': jnp.sin(x['a'])},
                          {'b': 2 * jnp.cos(x['a']) * x['a']}),
@@ -2211,8 +2212,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       def g(y):
         return x + y
       def g_jvp(primals, tangents):
-        (y,), (t,) = primals, tangents
-        return g(x), 2 * y
+        return g(x), 2 * primals[0]
       g.defjvp(g_jvp)
       return g(1.)
 
@@ -2476,6 +2476,17 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = -1.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_jvps_first_rule_is_none(self):
+    # https://github.com/google/jax/issues/3389
+    @api.custom_jvp
+    def f(x, y):
+      return x ** 2 * y
+
+    f.defjvps(None, lambda x_dot, primal_out, x, y: 2 * x * y * x_dot)
+    ans = grad(f, 1)(2., 3.)  # doesn't crash
+    expected = 12.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -2490,11 +2501,10 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_rev)
 
     x = 3.
-    self.assertAllClose(f(x), jnp.sin(x), check_dtypes=True)
-    self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x), check_dtypes=True)
+    self.assertAllClose(f(x), jnp.sin(x))
+    self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x))
     self.assertAllClose(api.value_and_grad(f)(x),
-                        (jnp.sin(x), 2 * jnp.cos(x)),
-                        check_dtypes=True)
+                        (jnp.sin(x), 2 * jnp.cos(x)))
 
   def test_invariance(self):
     @api.custom_vjp
@@ -2538,8 +2548,8 @@ class CustomVJPTest(jtu.JaxTestCase):
         return (3 * g,)
     f.defvjp(f_fwd, f_rev)
     x = 2.
-    self.assertAllClose(f(x), jnp.sin(x), check_dtypes=True)
-    self.assertAllClose(f(-x), jnp.cos(-x), check_dtypes=True)
+    self.assertAllClose(f(x), jnp.sin(x))
+    self.assertAllClose(f(-x), jnp.cos(-x))
     self.assertAllClose(api.value_and_grad(f)(x), (jnp.sin(x), 2.),
                         check_dtypes=False)
     self.assertAllClose(api.value_and_grad(f)(-x), (jnp.cos(-x), 3.),
@@ -2561,33 +2571,26 @@ class CustomVJPTest(jtu.JaxTestCase):
     xx = jnp.arange(6.).reshape(2, 3)
 
     # vmap of f
-    self.assertAllClose(api.vmap(f)(x), jnp.sin(x), check_dtypes=True)
-    self.assertAllClose(api.vmap(api.vmap(f))(xx), jnp.sin(xx), check_dtypes=True)
+    self.assertAllClose(api.vmap(f)(x), jnp.sin(x))
+    self.assertAllClose(api.vmap(api.vmap(f))(xx), jnp.sin(xx))
 
     # vmap of grad of f
-    self.assertAllClose(api.vmap(api.grad(f))(x), 2 * jnp.cos(x),
-                        check_dtypes=True)
+    self.assertAllClose(api.vmap(api.grad(f))(x), 2 * jnp.cos(x))
     self.assertAllClose(api.vmap(api.value_and_grad(f))(x),
-                        (jnp.sin(x), 2 * jnp.cos(x)),
-                        check_dtypes=True)
-    self.assertAllClose(api.vmap(api.vmap(api.grad(f)))(xx), 2 * jnp.cos(xx),
-                        check_dtypes=True)
+                        (jnp.sin(x), 2 * jnp.cos(x)))
+    self.assertAllClose(api.vmap(api.vmap(api.grad(f)))(xx), 2 * jnp.cos(xx))
     self.assertAllClose(api.vmap(api.vmap(api.value_and_grad(f)))(xx),
-                        (jnp.sin(xx), 2 * jnp.cos(xx)),
-                        check_dtypes=True)
+                        (jnp.sin(xx), 2 * jnp.cos(xx)))
 
     # grad of vmap of f
     self.assertAllClose(api.grad(lambda x: api.vmap(f)(x).sum())(x),
-                        2 * jnp.cos(x),
-                        check_dtypes=True)
+                        2 * jnp.cos(x))
     self.assertAllClose(api.grad(lambda x: api.vmap(api.vmap(f))(x).sum())(xx),
-                        2 * jnp.cos(xx),
-                        check_dtypes=True)
+                        2 * jnp.cos(xx))
 
     # vmap of grad of vmap of f
     self.assertAllClose(api.vmap(api.grad(lambda x: api.vmap(f)(x).sum()))(xx),
-                        2 * jnp.cos(xx),
-                        check_dtypes=True)
+                        2 * jnp.cos(xx))
 
   def test_jit(self):
     @api.custom_vjp
@@ -2602,8 +2605,8 @@ class CustomVJPTest(jtu.JaxTestCase):
     x = 3.
 
     # jit
-    self.assertAllClose(api.jit(f)(x), jnp.sin(x), check_dtypes=True)
-    self.assertAllClose(api.jit(api.jit(f))(x), jnp.sin(x), check_dtypes=True)
+    self.assertAllClose(api.jit(f)(x), jnp.sin(x))
+    self.assertAllClose(api.jit(api.jit(f))(x), jnp.sin(x))
 
     # jit of grad
     self.assertAllClose(api.jit(api.grad(f))(x), 2 * jnp.cos(x),
@@ -2624,10 +2627,9 @@ class CustomVJPTest(jtu.JaxTestCase):
       return ({'a': 2 * cos_x * g['b']},)
     f.defvjp(f_fwd, f_bwd)
     x = {'a': 3.}
-    self.assertAllClose(f(x)['b'], jnp.sin(x['a']), check_dtypes=True)
+    self.assertAllClose(f(x)['b'], jnp.sin(x['a']))
     self.assertAllClose(api.grad(lambda x: f(x)['b'])(x),
-                        {'a': 2 * jnp.cos(x['a'])},
-                        check_dtypes=True)
+                        {'a': 2 * jnp.cos(x['a'])})
 
   def test_jvp_error(self):
     @api.custom_vjp
@@ -2679,7 +2681,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     ans = api.grad(api.grad(foo))(3.)
     expected = -2. * jnp.sin(3.)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def test_initial_style_vmap(self):
     @api.custom_vjp
@@ -2850,7 +2852,7 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     ad.defvjp_all(foo_p, lambda x: (x**2, lambda g: (12.,)))
     val_ans, grad_ans = api.value_and_grad(foo)(3.)
     self.assertAllClose(val_ans, 9., check_dtypes=False)
-    self.assertAllClose(grad_ans, 12., check_dtypes=True)
+    self.assertAllClose(grad_ans, 12.)
 
   def test_defvjp_all_higher_order_revmode(self):
     foo_p = Primitive('foo')
@@ -3064,6 +3066,97 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     b = jnp.dot(a + jnp.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
 
+class BufferDonationTest(jtu.JaxTestCase):
+
+  def test_jit_donate_argnums_warning_raised(self):
+    x = jnp.array([1.0, 2.0], jnp.float32)
+    y = jnp.array([1, 2], jnp.int32)
+    f = jit(lambda x, y: x.sum() + y.sum(), donate_argnums=(0, 1))
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      f(x, y)
+
+      self.assertLen(w, 1)
+      self.assertTrue(issubclass(w[-1].category, UserWarning))
+      self.assertIn(
+          "Some donated buffers were not usable: f32[2]{0}, s32[2]{0}",
+          str(w[-1].message))
+
+  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  def test_jit_donate_argnums_invalidates_input(self):
+    # We can't just use `lambda x: x` because JAX simplifies this away.
+    move = jit(lambda x: x + x - x, donate_argnums=0)
+    x = jnp.ones([])
+    y = move(x)
+    self.assertDeleted(x)
+    self.assertEqual(y, 1.)
+
+  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  def test_jit_donate_argnums_static_argnums(self):
+    jit_fun = jit(lambda a, b, c, d: ((a + b + c), (a + b + d)),
+                  static_argnums=(0, 1), donate_argnums=(2, 3))
+
+    a = jnp.array(1)
+    b = jnp.array(2)
+    c = jax.device_put(jnp.array([1., 1.]))
+    d = jax.device_put(jnp.array([1., 1., 1.]))
+    e, f = jit_fun(a, b, c, d)
+    np.testing.assert_allclose(e, jnp.array([4., 4.]))
+    np.testing.assert_allclose(f, jnp.array([4., 4., 4.]))
+    self.assertNotDeleted(a)
+    self.assertNotDeleted(b)
+    self.assertDeleted(c)
+    self.assertDeleted(d)
+
+  def test_jit_nested_donate_ignored(self):
+    jit_fun = jit(lambda x: jit(lambda y: y ** 2, donate_argnums=0)(x))
+    a = jax.device_put(jnp.array(1))
+    with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+      jit_fun(a)
+
+  def test_jnp_array_copy(self):
+    # https://github.com/google/jax/issues/3412
+
+    @partial(api.jit, donate_argnums=(0,))
+    def _test(array):
+      return array.at[0].set(77)
+
+    x = jnp.asarray([0, 1])
+    x_copy = jnp.array(x, copy=True)
+    with warnings.catch_warnings():
+      warnings.simplefilter("ignore")
+      _test(x)  # donation
+
+    # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
+    print(x_copy)  # doesn't crash
+
+
+  # === pmap ===
+
+  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  def test_pmap_donate_argnums_invalidates_input(self):
+    move = api.pmap(lambda x: x + x - x, donate_argnums=0)
+    n = jax.local_device_count()
+    x = api.pmap(lambda x: x)(jnp.ones([n]))
+    y = move(x)
+    self.assertDeleted(x)
+    np.testing.assert_allclose(y, [1.] * n)
+
+  def test_pmap_nested_donate_raises(self):
+    pmap_fun = jit(lambda x: api.pmap(lambda y: y ** 2, donate_argnums=0)(x))
+    a = api.pmap(lambda x: x)(jnp.array([1]))
+    with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+      pmap_fun(a)
+
+  assertDeleted = lambda self, x: self._assertDeleted(x, True)
+  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
+
+  def _assertDeleted(self, x, deleted):
+    if hasattr(x, "device_buffer"):
+      self.assertEqual(x.device_buffer.is_deleted(), deleted)
+    else:
+      for buffer in x.device_buffers:
+        self.assertEqual(buffer.is_deleted(), deleted)
 
 if __name__ == '__main__':
   absltest.main()

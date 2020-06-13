@@ -16,8 +16,6 @@ from unittest import SkipTest
 
 from absl.testing import absltest
 from jax import test_util as jtu
-from jax.interpreters import xla
-from jax.lib import xla_bridge as xb
 
 import jax
 from jax import numpy as jnp
@@ -82,10 +80,10 @@ class MetadataTest(jtu.JaxTestCase):
     hlo = jax.xla_computation(f)(1.).get_hlo_module().to_string()
     self.assertRegex(hlo, 'op_type="cond"')
     self.assertRegex(hlo, 'op_name=".*cond\\[ linear=\\(False, False\\) \\]"')
-    self.assertRegex(hlo, 'op_type="sin"')
-    self.assertRegex(hlo, 'op_name=".*cond/true_fun/sin"')
     self.assertRegex(hlo, 'op_type="cos"')
-    self.assertRegex(hlo, 'op_name=".*cond/false_fun/cos"')
+    self.assertRegex(hlo, 'op_name=".*cond/branch_0_fun/cos"')
+    self.assertRegex(hlo, 'op_type="sin"')
+    self.assertRegex(hlo, 'op_name=".*cond/branch_1_fun/sin"')
 
 
 if __name__ == "__main__":

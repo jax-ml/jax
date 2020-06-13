@@ -208,7 +208,7 @@ def log_softmax(x, axis=-1):
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
   """
-  shifted = x - x.max(axis, keepdims=True)
+  shifted = x - lax.stop_gradient(x.max(axis, keepdims=True))
   return shifted - jnp.log(jnp.sum(jnp.exp(shifted), axis, keepdims=True))
 
 def softmax(x, axis=-1):
@@ -225,7 +225,7 @@ def softmax(x, axis=-1):
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
   """
-  unnormalized = jnp.exp(x - x.max(axis, keepdims=True))
+  unnormalized = jnp.exp(x - lax.stop_gradient(x.max(axis, keepdims=True)))
   return unnormalized / unnormalized.sum(axis, keepdims=True)
 
 def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):

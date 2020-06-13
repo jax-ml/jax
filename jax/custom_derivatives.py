@@ -15,16 +15,15 @@
 
 from functools import partial, update_wrapper, reduce
 import inspect
-import itertools as it
 import operator as op
 
 from . import core
 from . import linear_util as lu
 from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
-from .util import safe_zip, safe_map, unzip2, split_list, curry
+from .util import safe_zip, safe_map, unzip2, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
-from .ad_util import zero, stop_gradient_p
+from .ad_util import Zero, stop_gradient_p
 from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
@@ -76,11 +75,11 @@ def _initial_style_jaxpr(fun, in_avals):
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   return typed_jaxpr
 
-def sum_tangents(x, *xs):
+def sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
 def zeros_like_pytree(x):
-  return tree_map(lambda _: zero, x)
+  return tree_map(Zero.from_value, x)
 
 def stop_gradient(x):
   return tree_map(_stop_gradient, x)
@@ -100,7 +99,7 @@ class custom_jvp:
   This class is meant to be used as a function decorator. Instances are
   callables that behave similarly to the underlying function to which the
   decorator was applied, except when a differentiation transformation (like
-  ``jax.jvp`` or ``jax.grad``) is applied, in which case a custom user-supplied
+  :py:func:`jax.jvp` or :py:func:`jax.grad`) is applied, in which case a custom user-supplied
   JVP rule function is used instead of tracing into and performing automatic
   differentiation of the underlying function's implementation. There is a single
   instance method, ``defjvp``, which defines the custom JVP rule.
@@ -197,7 +196,7 @@ class custom_jvp:
       zeros = zeros_like_pytree(primal_out)
       all_tangents_out = [jvp(t, primal_out, *primals) if jvp else zeros
                           for t, jvp in zip(tangents, jvps)]
-      tangent_out = tree_multimap(sum_tangents, *all_tangents_out)
+      tangent_out = tree_multimap(sum_tangents, primal_out, *all_tangents_out)
       return primal_out, tangent_out
 
     self.defjvp(jvp)
@@ -266,8 +265,6 @@ def _flatten_jvp(in_tree, *args):
 def _custom_jvp_call_bind(prim, fun, jvp, *args):
   args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
-  level = (core.trace_state.trace_stack.next_level(True)
-           if top_trace is None else top_trace.level)
   if top_trace is None:
     with core.new_sublevel():
       outs = prim.impl(fun, jvp, *args)
@@ -306,7 +303,7 @@ custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 
 def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk):
   jvp_jaxpr = jvp_jaxpr_thunk()
-  tangents = map(ad.instantiate_zeros, primals, tangents)
+  tangents = map(ad.instantiate_zeros, tangents)
   outs = core.jaxpr_as_fun(jvp_jaxpr)(*primals, *tangents)
   return split_list(outs, [len(outs) // 2])
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
@@ -359,7 +356,7 @@ class custom_vjp:
   This class is meant to be used as a function decorator. Instances are
   callables that behave similarly to the underlying function to which the
   decorator was applied, except when a reverse-mode differentiation
-  transformation (like ``jax.grad``) is applied, in which case a custom
+  transformation (like :py:func:`jax.grad`) is applied, in which case a custom
   user-supplied VJP rule function is used instead of tracing into and performing
   automatic differentiation of the underlying function's implementation. There
   is a single instance method, ``defvjp``, which defines the custom VJP rule.
@@ -507,8 +504,6 @@ def _flatten_bwd(in_tree, out_trees, *args):
 def _custom_vjp_call_bind(prim, fun, fwd, bwd, *args, out_trees):
   args = map(core.full_lower, args)
   top_trace = core.find_top_trace(args)
-  level = (core.trace_state.trace_stack.next_level(True)
-           if top_trace is None else top_trace.level)
   if top_trace is None:
     with core.new_sublevel():
       outs = prim.impl(fun, fwd, bwd, *args, out_trees=out_trees)
@@ -550,7 +545,7 @@ custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
 
 def _custom_vjp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, fwd_jaxpr_thunk,
                                bwd, out_trees):
-  tangents = map(ad.instantiate_zeros, primals, tangents)
+  tangents = map(ad.instantiate_zeros, tangents)
   fwd_jaxpr = fwd_jaxpr_thunk()
   out_tree, res_tree = out_trees()
   res_and_primals_out = core.jaxpr_as_fun(fwd_jaxpr)(*primals)

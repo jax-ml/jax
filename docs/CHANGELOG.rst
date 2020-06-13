@@ -9,15 +9,51 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.69 (unreleased)
+jax 0.1.71 (Unreleased)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.68...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...master>`_.
+
+jaxlib 0.1.48 (June 12, 2020)
+------------------------------
+
+* New features:
+
+  * Adds support for fast traceback collection.
+  * Adds preliminary support for on-device heap profiling.
+  * Implements ``np.nextafter`` for ``bfloat16`` types.
+  * Complex128 support for FFTs on CPU and GPU.
+
+* Bugfixes:
+
+  * Improved float64 ``tanh`` accuracy on GPU.
+  * float64 scatters on GPU are much faster.
+  * Complex matrix multiplication on CPU should be much faster.
+  * Stable sorts on CPU should actually be stable now.
+  * Concurrency bug fix in CPU backend.
+
+
+jax 0.1.70 (June 8, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.69...jax-v0.1.70>`_.
+
+* New features:
+
+  * ``lax.switch`` introduces indexed conditionals with multiple
+    branches, together with a generalization of the ``cond``
+    primitive
+    `#3318 <https://github.com/google/jax/pull/3318>`_.
+
+jax 0.1.69 (June 3, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.68...jax-v0.1.69>`_.
 
 jax 0.1.68 (May 21, 2020)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.67...jax.-v0.1.68>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.67...jax-v0.1.68>`_.
 
 * New features:
 

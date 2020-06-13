@@ -25,7 +25,6 @@ from jax import random
 from jax import jacfwd, jit
 from jax.experimental import stax
 from jax.experimental.jet import jet, fact, zero_series
-from jax.tree_util import tree_map
 from jax import lax
 
 from jax.config import config
@@ -160,11 +159,9 @@ class JetTest(jtu.JaxTestCase):
 
     atol = 1e-4
     rtol = 1e-4
-    self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
-                        check_dtypes=True)
+    self.assertAllClose(y, expected_y, atol=atol, rtol=rtol)
 
-    self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
-                        check_dtypes=True)
+    self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol)
 
 
   @jtu.skip_on_devices("tpu")
