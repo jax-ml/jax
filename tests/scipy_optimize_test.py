@@ -72,7 +72,7 @@ class TestBFGS(jtu.JaxTestCase):
     func, x0 = func_and_init
 
     def compare(func, x0):
-      self._CompileAndCheck(func, lambda: [x0])
+      self._CompileAndCheck(func, lambda: [x0], check_dtypes=False)
 
       @jit
       def min_op(x0):
