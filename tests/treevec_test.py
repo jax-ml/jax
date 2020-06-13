@@ -213,6 +213,26 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = tree_vectorize(add_outer3)(tree1, tree2)
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+  def test_concatenate_trivial(self):
+    @tree_vectorize
+    def concat(x, y):
+      return jnp.concatenate([x, y], axis=0)
+
+    actual = concat(jnp.arange(3), jnp.arange(3, 5))
+    expected = jnp.arange(5)
+    self.assertArraysEqual(actual, expected)
+
+  def test_concatenate_stack(self):
+    @tree_vectorize
+    def stack(*args):
+      return jnp.stack(args)
+
+    tree1 = {'x': 0, 'y': jnp.array([1, 2])}
+    tree2 = {'x': 3, 'y': jnp.array([4, 5])}
+    actual = stack(tree1, tree2)
+    expected = {'x': jnp.array([0, 3]), 'y': jnp.array([[1, 2], [4, 5]])}
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
   def test_reduce(self):
     tree = {'x': jnp.array(1.0),
             'y': jnp.array([2.0]),

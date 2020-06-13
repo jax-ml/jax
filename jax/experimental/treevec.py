@@ -572,6 +572,82 @@ defnaryop(lax.le_p)
 defnaryop(lax.lt_p)
 
 
+def concatenate_tree_rule(
+    treedefs_in: Tuple[Tuple[TreeDef, ...], ...],
+    leafshapes_in: Tuple[LeafShapes, ...],
+    leaves_in: Tuple[Leaves, ...],
+    *,
+    dimension: int,
+) -> TreeState:
+
+  ndim, = {len(treedefs) for treedefs in treedefs_in}
+
+  out_treedefs = []
+  out_leafshapes = []
+
+  for axis in range(ndim):
+    # check treedefs
+    non_trivial_treedefs = {treedefs[axis] for treedefs in treedefs_in
+                            if treedefs[axis] != TRIVIAL_TREEDEF}
+    if axis == dimension and non_trivial_treedefs:
+      raise ValueError(
+          f"non-trivial treedefs along concatenated axis={axis}: "
+          f"{non_trivial_treedefs}"
+      )
+    if len(non_trivial_treedefs) > 1:
+      raise ValueError(
+          f"conflicting treedefs along axis={axis}: {non_trivial_treedefs}"
+      )
+
+    if len(non_trivial_treedefs) == 1:
+      treedef, = non_trivial_treedefs
+      out_treedefs.append(treedef)
+    else:
+      out_treedefs.append(TRIVIAL_TREEDEF)
+
+    # check shapes
+    non_trivial_shapes = {leafshapes[axis] for leafshapes in leafshapes_in
+                          if len(leafshapes[axis]) != 1}
+    if axis == dimension and non_trivial_shapes:
+      raise ValueError(
+          f"shapes along concatenated axis are not all 1D: "
+          f"{non_trivial_shapes}"
+      )
+    if len(non_trivial_shapes) > 1:
+      raise ValueError(
+          f"conflicting shapes along axis={axis}: {non_trivial_shapes}"
+      )
+    if len(non_trivial_shapes) == 1:
+      shapes, = non_trivial_shapes
+      out_leafshapes.append(shapes)
+    else:
+      lengths = [_axis_length(leafshapes[axis]) for leafshapes in leafshapes_in]
+      if axis == dimension:
+        size = sum(lengths)
+      else:
+        size, = lengths
+      out_leafshapes.append(((size,),))
+
+  # split "trivial" axes to match the output leafshape
+  leaves_fixed: List[Leaves] = []
+  for leafshapes, leaves in zip(leafshapes_in, leaves_in):
+    for axis in range(ndim):
+      if axis != dimension and leafshapes[axis] != out_leafshapes[axis]:
+        leaves = _split_leaves(leafshapes, leaves, axis, out_leafshapes[axis])
+    leaves_fixed.append(leaves)
+
+  # compute leaves
+  out_leaves = {}
+  for coords in _iter_leaf_coords(out_treedefs):
+    args = [leaves[coords] for leaves in leaves_fixed]
+    leaf_dim, = _axes_for_leaf(out_leafshapes, coords, (dimension,))
+    out_leaves[coords] = lax.concatenate_p.bind(*args, dimension=leaf_dim)
+
+  return out_treedefs, out_leafshapes, out_leaves
+
+tree_rules[lax.concatenate_p] = concatenate_tree_rule
+
+
 def broadcast_in_dim_tree_rule(
     treedefs_in: Tuple[Tuple[TreeDef, ...]],
     leafshapes_in: Tuple[LeafShapes],
