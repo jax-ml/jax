@@ -23,10 +23,10 @@ import numpy as np
 
 from .. import core
 from .. import api
-from .. import api_util
 from .. import dtypes
 from .. import lax
 from .. import linear_util as lu
+from ..api_util import flatten_fun, flatten_fun_nokwargs
 from ..interpreters import ad
 from ..interpreters import xla
 from ..util import prod, safe_map as map, split_list, unzip2, unzip3
@@ -44,31 +44,17 @@ LeafShapes = Sequence[Sequence[Tuple[int, ...]]]
 Leaves = Dict[Tuple[int, ...], ArrayLike]
 
 
-# TODO(shoyer): use linear_util for this transformation
-def _apply_callable_args(fun, args, callable_transform):
-  callables = []
-  out_args = []
-  for i, arg in enumerate(args):
-    if callable(arg):
-      callables.append((i, callable_transform(arg)))
-    else:
-      out_args.append(arg)
-  def transformed(*args):
-    args = list(args)
-    for i, arg in callables:
-      args.insert(i, arg)
-    return fun(*args)
-  return transformed, tuple(out_args)
-
 def tree_vectorize(fun):
+  """Apply the tree-vectorization transfrom to a function."""
   api._check_callable(fun)
   @wraps(fun)
-  def f_undone(*args):
-    fun2, args = _apply_callable_args(fun, args, tree_callable)
-    f = lu.wrap_init(fun2)
+  def transformed(*args):
+    f = lu.wrap_init(fun)
+    f, args = _apply_callables(f, tree_callable, args)
+    f, out_tree = _flatten_fun_output(f)
     outputs = tree_fun(tree_trace(f)).call_wrapped(args)
-    return outputs
-  return f_undone
+    return tree_unflatten(out_tree(), outputs)
+  return transformed
 
 @lu.transformation
 def tree_fun(trees):
@@ -82,11 +68,32 @@ def tree_trace(master, trees):
   trace = TreeTrace(master, core.cur_sublevel())
   in_tracers = [TreeTracer(trace, *convert_vectorized_tree(t)) for t in trees]
   ans = yield in_tracers, {}
-  flat, treedef_out = tree_flatten(ans)
-  out_tracers = map(trace.full_raise, flat)
-  out_trees = tuple(restore_tree(t.treedefs, t.leaves) for t in out_tracers)
-  out = tree_unflatten(treedef_out, out_trees)
+  out_tracers = map(trace.full_raise, ans)
+  out = tuple(restore_tree(t.treedefs, t.leaves) for t in out_tracers)
   yield out
+
+@lu.transformation_with_aux
+def _flatten_fun_output(*args):
+  ans = yield args, {}
+  yield tree_flatten(ans)
+
+def _apply_callables(f, callable_transform, args):
+  callables = []
+  out_args = []
+  for i, arg in enumerate(args):
+    if callable(arg):
+      callables.append((i, callable_transform(arg)))
+    else:
+      out_args.append(arg)
+  return _partial_args(f, callables), tuple(out_args)
+
+@lu.transformation
+def _partial_args(fixed_args, *dyn_args):
+  args = list(dyn_args)
+  for i, arg in fixed_args:
+    args.insert(i, arg)
+  ans = yield args, {}
+  yield ans
 
 
 def is_trivial_axis(
@@ -234,7 +241,7 @@ class TreeTrace(core.Trace):
       treedefs_in, leaves_in = unzip2([(t.treedefs, t.leaves) for t in tracers])
       args = tuple(map(restore_tree, treedefs_in, leaves_in))
       flat_args, in_tree = tree_flatten(args)
-      f, out_tree = api_util.flatten_fun_nokwargs(f, in_tree)
+      f, out_tree = flatten_fun_nokwargs(f, in_tree)
       flat_result = call_primitive.bind(f, *flat_args, **params)
       result, = tree_unflatten(out_tree(), flat_result)
       treedefs, leafshapes, leaves = convert_vectorized_tree(result)
