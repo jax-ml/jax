@@ -233,6 +233,9 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = {'x': jnp.array([0, 3]), 'y': jnp.array([[1, 2], [4, 5]])}
     self.assertTreeEqual(actual, expected, check_dtypes=True)
 
+    actual = stack(tree1, jnp.array([3, 4, 5]))
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
+
   def test_reduce(self):
     tree = {'x': jnp.array(1.0),
             'y': jnp.array([2.0]),
