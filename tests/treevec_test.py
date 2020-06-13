@@ -258,21 +258,17 @@ class FlatTreeTest(jtu.JaxTestCase):
     tree = {'x': 1, 'y': 2}
 
     def f(x):
-      self.assertEqual(x, tree)
-      return x
+      return {'a': x['x'], 'b': x['y']}
 
     @tree_vectorize
     def g(f, x):
       return f(x)
 
     actual = g(f, tree)
-    self.assertTreeEqual(actual, tree, check_dtypes=True)
+    expected = {'a': 1, 'b': 2}
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
 
-    # TODO(shoyer): fix this
-    # TypeError: No abstraction handler for type: <class 'function'>
-    # self.assertIn('tree_call', str(make_jaxpr(g)(f, tree)))
-
-  def test_tree_call_impl(self):
+  def test_tree_call_on_scalar(self):
     tree = {'x': 1, 'y': 2}
     def f(x):
       self.assertEqual(x, 3)
@@ -359,12 +355,15 @@ class FlatTreeTest(jtu.JaxTestCase):
     expected = {'a': 2.0, 'b': -2.0}
     self.assertAllClose(actual, expected, check_dtypes=True)
 
-  # TODO(shoyer): currently broken!
-
   def test_vmap(self):
+
+    def square_scalar(x):
+      assert x.shape == ()
+      return jnp.square(x)
+
     @tree_vectorize
     def f(x):
-      return jax.vmap(jnp.square, x)
+      return jax.vmap(square_scalar)(x)
 
     tree = {'x': 2.0, 'y': np.array([3.0, 4.0])}
     expected = {'x': 4.0, 'y': np.array([9.0, 16.0])}
@@ -379,7 +378,25 @@ class FlatTreeTest(jtu.JaxTestCase):
     primal = {'x': 1.0, 'y': 2.0}
     tangent = {'x': 3.0, 'y': 4.0}
     actual = f(primal, tangent)
-    expected = {'x': 3.0, 'y': 8.0}
+    expected = ({'x': 0.5, 'y': 2.0}, {'x': 3.0, 'y': 8.0})
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
+  # TODO(shoyer): currently broken!
+
+  def test_vmap_tree_call(self):
+
+    def g(x):
+      print(x)
+      assert x['a'].shape == ()
+      return {'b': x['a']}
+
+    @tree_vectorize
+    def f(g, x):
+      return jax.vmap(g)(x)
+
+    tree = {'a': jnp.arange(3.0)}
+    expected = {'b': jnp.arange(3.0)}
+    actual = f(g, tree)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
   def test_jacobian(self):

@@ -235,9 +235,7 @@ class TreeTrace(core.Trace):
     return TreeTracer(self, treedefs, leafshapes, leaves)
 
   def process_call(self, call_primitive, f, tracers, params):
-    params = dict(params)
-    tree_call = params.pop('tree_call', False)
-    if tree_call:
+    if call_primitive is tree_call_p:
       treedefs_in, leaves_in = unzip2([(t.treedefs, t.leaves) for t in tracers])
       args = tuple(map(restore_tree, treedefs_in, leaves_in))
       flat_args, in_tree = tree_flatten(args)
@@ -304,18 +302,27 @@ def restore_tree(treedefs: Tuple[TreeDef, ...], leaves: Leaves) -> PyTree:
 tree_rules = {}
 
 
+def tree_callable(fun):
+  def wrapper(*args):
+    f = _flatten_fun_one_output(lu.wrap_init(fun))
+    y, = tree_call(f, *args)
+    return y
+  return wrapper
+
 @lu.transformation
-def flatten_fun_one_output(*args):
+def _flatten_fun_one_output(*args):
   ans = yield args, {}
   yield [ans]
 
+def _tree_call_impl(fun: lu.WrappedFun, *args, **params):
+  return fun.call_wrapped(*args)
 
-def tree_callable(fun):
-  def wrapper(*args):
-    f = flatten_fun_one_output(lu.wrap_init(fun))
-    y, = core.call(f, *args, tree_call=True)
-    return y
-  return wrapper
+tree_call_p = core.Primitive('tree_call')
+tree_call_p.call_primitive = True
+tree_call_p.multiple_results = True
+tree_call = partial(core.call_bind, tree_call_p)
+tree_call_p.def_custom_bind(tree_call)
+tree_call_p.def_impl(_tree_call_impl)
 
 
 def tie_in_tree_rule(treedefs_in, leafshapes_in, leaves_in) -> TreeState:
