@@ -112,28 +112,6 @@ def line_search_backtracking(value_and_gradient, position, direction, f_0=None, 
   return result
 
 
-def _cubic_interpolation(a_1, phi_1, dphi_1, a_2, phi_2, dphi_2):
-  """
-  Computes the cubic interpolation minimiser based on two previous evaluations of the
-  restricted function. It assumes that the minimum of the interpolation is in (a_1,a_2).
-
-  Args:
-      a_1: a previous step
-      phi_1: phi(a_1)
-      dphi_1: phi'(a_1)
-      a_2: a previous step not equal to a_1
-      phi_2: phi(a_2)
-      dphi_2: phi'(a_2)
-
-  Returns: a step minimising the cubic interpolant.
-
-  """
-  d1 = dphi_1 + dphi_2 - 3. * (phi_1 - phi_2) / (a_1 - a_2)
-  d2 = jnp.sign(a_2 - a_1) * jnp.sqrt(d1 ** 2 - dphi_1 * dphi_2)
-  a_3 = a_1 - (a_2 - a_1) * (dphi_2 + d2 - d1) / (dphi_2 - dphi_1 + 2. * d2)
-  return a_3
-
-
 def _cubicmin(a, fa, fpa, b, fb, c, fc):
   C = fpa
   db = b - a
@@ -316,7 +294,6 @@ def line_search(value_and_gradient, position, direction, old_fval=None, gfk=None
         c1, c2: Wolfe criteria constant, see ref.
 
     Returns: LineSearchResults
-
     """
 
   def restricted_func_and_grad(t):
