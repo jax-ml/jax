@@ -9,6 +9,13 @@ from scipy.optimize.linesearch import line_search_wolfe2
 config.parse_flags_with_absl()
 
 
+def f_and_fprime(f, fprime):
+  def func(x):
+    return f(x), fprime(x)
+
+  return func
+
+
 class TestLineSearch(jtu.JaxTestCase):
   # -- scalar functions; must have dphi(0.) < 0
 
@@ -74,7 +81,7 @@ class TestLineSearch(jtu.JaxTestCase):
     phi = bind_index(value, 0)
     derphi = bind_index(value, 1)
     for old_phi0 in np.random.randn(3):
-      res = line_search(value_and_grad(phi, derphi), 0., 1.)
+      res = line_search(f_and_fprime(phi, derphi), 0., 1.)
       s, phi1, derphi1 = res.a_k, res.f_k, res.g_k
       self.assertAllClose(phi1, phi(s), check_dtypes=False, atol=1e-6)
       if derphi1 is not None:
@@ -134,13 +141,13 @@ class TestLineSearch(jtu.JaxTestCase):
     x = -60 * p
     c2 = 0.5
 
-    res = line_search(value_and_grad(f, fp), x, p, c2=c2)
+    res = line_search(f_and_fprime(f, fp), x, p, c2=c2)
     s = res.a_k
     # s, _, _, _, _, _ = ls.line_search_wolfe2(f, fp, x, p, amax=30, c2=c2)
     self.assert_line_wolfe(x, p, s, f, fp)
     self.assertTrue(s >= 30.)
 
-    res = line_search(value_and_grad(f, fp), x, p, c2=c2, maxiter=5)
+    res = line_search(f_and_fprime(f, fp), x, p, c2=c2, maxiter=5)
     self.assertTrue(res.failed)
     # s=30 will only be tried on the 6th iteration, so this won't converge
 

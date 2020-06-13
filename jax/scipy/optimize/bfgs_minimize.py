@@ -102,7 +102,7 @@ def bfgs_minimize(func, x0, options=None):
     sy_k = s_k[:, None] * y_k[None, :]
     w = jnp.eye(d) - rho_k * sy_k
     H_kp1 = jnp.where(jnp.isfinite(rho_k),
-                      jnp.linalg.multi_dot(w, state.H_k, w.T) + rho_k * s_k[:, None] * s_k[None, :], state.H_k)
+                      jnp.linalg.multi_dot([w, state.H_k, w.T]) + rho_k * s_k[:, None] * s_k[None, :], state.H_k)
 
     converged = jnp.linalg.norm(g_kp1) < g_tol
 
