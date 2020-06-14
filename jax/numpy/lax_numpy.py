@@ -1995,6 +1995,8 @@ def concatenate(arrays, axis=0):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
+  if axis is None:
+    return concatenate([ravel(a) for a in arrays], axis=0)
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
   arrays = _promote_dtypes(*arrays)
   # lax.concatenate can be slow to compile for wide concatenations, so form a
