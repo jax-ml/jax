@@ -1578,12 +1578,12 @@ def linear_transpose(fun: Callable, *args) -> Callable:
   """Transpose a function that is promised to be linear.
 
   For linear functions, this transformation is equivalent to ``vjp``, but
-  avoids the overhead of overhead of computing the forward pass.
+  avoids the overhead of computing the forward pass.
 
-  Note that the outputs of the transposed function will always have the exact
-  same dtypes as ``*args``, even if some values are truncated (e.g., from
-  complex to float or float to integer). To avoid truncation, use dtypes in
-  ``**args`` that match the full range of output values.
+  The outputs of the transposed function will always have the exact same dtypes
+  as ``*args``, even if some values are truncated (e.g., from complex to float
+  or float to integer). To avoid truncation, use dtypes in ``**args`` that
+  match the full range of output values.
 
   Args:
     fun: the linear function to be transposed.
@@ -1597,6 +1597,15 @@ def linear_transpose(fun: Callable, *args) -> Callable:
 
   Returns:
     A callable that calculates the transpose of ``fun``.
+
+  >>> import jax
+  >>> import types
+  >>>
+  >>> f = lambda x, y: 0.5 * x - 0.5 * y
+  >>> scalar = types.SimpleNamespace(shape=(), dtype=float)
+  >>> f_transpose = jax.linear_transpose(f, scalar, scalar)
+  >>> f_transpose(1.0)
+  (DeviceArray(0.5, dtype=float64), DeviceArray(-0.5, dtype=float64))
   """
   def abstractify(x):
     return core.ShapedArray(onp.shape(x), dtypes.result_type(x))
