@@ -66,7 +66,9 @@ newaxis = None
 _PRECISION_DOC = """\
 In addition to the original NumPy arguments listed below, also supports
 ``precision`` for extra control over matrix-multiplication precision
-on supported devices. See :py:func:`jax.lax.dot` for details.
+on supported devices. ``precision`` may be set to ``None``, which means
+default precision for the backend, or any ``jax.lax.Precision`` enum value
+(``Precision.DEFAULT``, ``Precision.HIGH`` or ``Precision.HIGHEST``).
 """
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
