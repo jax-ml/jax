@@ -393,8 +393,8 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = f(tree)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
- @pytest.mark.xfail
- def test_vmap_tree_call(self):
+  @pytest.mark.xfail
+  def test_vmap_tree_call(self):
 
     def g(x):
       assert x['a'].shape == ()

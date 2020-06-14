@@ -226,25 +226,25 @@ class TreeTrace(core.Trace):
     return TreeTracer(self, tracer.treedefs, tracer.leafshapes, tracer.leaves)
 
   def process_primitive(self, primitive, tracers, params):
-    assert not primitive.multiple_results  # TODO
     rule = tree_rules[primitive]
     treedefs_in, leafshapes_in, leaves_in = unzip3(
         (t.treedefs, t.leafshapes, t.leaves) for t in tracers)
-    treedefs, leafshapes, leaves = rule(
-        treedefs_in, leafshapes_in, leaves_in, **params)
-    return TreeTracer(self, treedefs, leafshapes, leaves)
+    result = rule(treedefs_in, leafshapes_in, leaves_in, **params)
+    if primitive.multiple_results:
+      return map(partial(TreeTracer, self), *result)
+    else:
+      return TreeTracer(self, *result)
 
   def process_call(self, call_primitive, f, tracers, params):
     if call_primitive is tree_call_p:
-      treedefs_in, leaves_in = unzip2([(t.treedefs, t.leaves) for t in tracers])
+      treedefs_in, leaves_in = unzip2((t.treedefs, t.leaves) for t in tracers)
       args = tuple(map(restore_tree, treedefs_in, leaves_in))
       flat_args, in_tree = tree_flatten(args)
       f, out_tree = flatten_fun_nokwargs(f, in_tree)
       flat_result = call_primitive.bind(f, *flat_args, **params)
-      result, = tree_unflatten(out_tree(), flat_result)
-      treedefs, leafshapes, leaves = convert_vectorized_tree(result)
-      tracer = TreeTracer(self, treedefs, leafshapes, leaves)
-      return [tracer]
+      result = tree_unflatten(out_tree(), flat_result)
+      parts = unzip3(map(convert_vectorized_tree, result))
+      return map(partial(TreeTracer, self), *parts)
     else:
       flat_in, tree_tracer_def_in = _flatten_tree_tracers(tracers)
       f_tree, out_structure = tree_subtrace(f, self.master, tree_tracer_def_in)
