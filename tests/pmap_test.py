@@ -854,6 +854,29 @@ class PmapTest(jtu.JaxTestCase):
     ans = s(keys)  # doesn't crash
     self.assertEqual(ans.shape, (13, N_DEVICES))
 
+  def testVmapOfPmap3(self):
+    # https://github.com/google/jax/issues/3399
+    device_count = xla_bridge.device_count()
+    if device_count < 2:
+      raise SkipTest("test requires at least two devices")
+
+    def map_version(qs, pts):
+      return jax.lax.map(lambda x: func(x, pts), qs)
+
+    def vmap_version(qs, pts):
+      return jax.vmap(func, in_axes=(0, None))(qs, pts)
+
+    def func(q, pts):
+      q_from_pmap = jax.pmap(lambda x, y: y, in_axes=(0, None))(pts, q)
+      return q, q_from_pmap
+
+    pts = jnp.ones(device_count)
+    qs = jnp.asarray(((0,0), (3,3), (2,2)))
+
+    _, expected = map_version(qs, pts)
+    _, ans = vmap_version(qs, pts)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testVmapOfPmapNonLeadingAxis(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
@@ -1209,7 +1232,6 @@ class PmapTest(jtu.JaxTestCase):
 
       out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1])
-
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
