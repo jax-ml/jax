@@ -22,7 +22,7 @@ from jax import grad
 from jax import jit
 from jax import vmap
 from jax.config import config
-import jax.numpy as np
+import jax.numpy as jnp
 import jax.random as random
 import jax.scipy as scipy
 import matplotlib.pyplot as plt
@@ -34,7 +34,7 @@ def main(unused_argv):
 
   numpts = 7
   key = random.PRNGKey(0)
-  eye = np.eye(numpts)
+  eye = jnp.eye(numpts)
 
   def cov_map(cov_func, xs, xs2=None):
     """Compute a covariance matrix from a covariance function and data points.
@@ -51,19 +51,19 @@ def main(unused_argv):
       return vmap(lambda x: vmap(lambda y: cov_func(x, y))(xs))(xs2).T
 
   def softplus(x):
-    return np.logaddexp(x, 0.)
+    return jnp.logaddexp(x, 0.)
 
   # Note, writing out the vectorized form of the identity
   # ||x-y||^2 = <x-y,x-y> = ||x||^2 + ||y||^2 - 2<x,y>
   # for computing squared distances would be more efficient (but less succinct).
   def exp_quadratic(x1, x2):
-    return np.exp(-np.sum((x1 - x2)**2))
+    return jnp.exp(-jnp.sum((x1 - x2)**2))
 
   def gp(params, x, y, xtest=None, compute_marginal_likelihood=False):
     noise = softplus(params['noise'])
     amp = softplus(params['amplitude'])
     ls = softplus(params['lengthscale'])
-    ymean = np.mean(y)
+    ymean = jnp.mean(y)
     y = y - ymean
     x = x / ls
     train_cov = amp*cov_map(exp_quadratic, x) + eye * (noise + 1e-6)
@@ -71,20 +71,20 @@ def main(unused_argv):
     kinvy = scipy.linalg.solve_triangular(
         chol.T, scipy.linalg.solve_triangular(chol, y, lower=True))
     if compute_marginal_likelihood:
-      log2pi = np.log(2. * 3.1415)
-      ml = np.sum(
-          -0.5 * np.dot(y.T, kinvy) -
-          np.sum(np.log(np.diag(chol))) -
+      log2pi = jnp.log(2. * 3.1415)
+      ml = jnp.sum(
+          -0.5 * jnp.dot(y.T, kinvy) -
+          jnp.sum(jnp.log(jnp.diag(chol))) -
           (numpts / 2.) * log2pi)
-      ml -= np.sum(-0.5 * np.log(2 * 3.1415) - np.log(amp)**2) # lognormal prior
+      ml -= jnp.sum(-0.5 * jnp.log(2 * 3.1415) - jnp.log(amp)**2) # lognormal prior
       return -ml
 
     if xtest is not None:
       xtest = xtest / ls
     cross_cov = amp*cov_map(exp_quadratic, x, xtest)
-    mu = np.dot(cross_cov.T, kinvy) + ymean
+    mu = jnp.dot(cross_cov.T, kinvy) + ymean
     v = scipy.linalg.solve_triangular(chol, cross_cov, lower=True)
-    var = (amp * cov_map(exp_quadratic, xtest) - np.dot(v.T, v))
+    var = (amp * cov_map(exp_quadratic, xtest) - jnp.dot(v.T, v))
     return mu, var
 
   marginal_likelihood = partial(gp, compute_marginal_likelihood=True)
@@ -92,9 +92,9 @@ def main(unused_argv):
   grad_fun = jit(grad(marginal_likelihood))
 
   # Covariance hyperparameters to be learned
-  params = {"amplitude": np.zeros((1, 1)),
-            "noise": np.zeros((1, 1)) - 5.,
-            "lengthscale": np.zeros((1, 1))}
+  params = {"amplitude": jnp.zeros((1, 1)),
+            "noise": jnp.zeros((1, 1)) - 5.,
+            "lengthscale": jnp.zeros((1, 1))}
   momentums = dict([(k, p * 0.) for k, p in params.items()])
   scales = dict([(k, p * 0. + 1.) for k, p in params.items()])
 
@@ -104,15 +104,14 @@ def main(unused_argv):
     for k in (params):
       momentums[k] = 0.9 * momentums[k] + 0.1 * grads[k][0]
       scales[k] = 0.9 * scales[k] + 0.1 * grads[k][0]**2
-      params[k] -= lr * momentums[k]/np.sqrt(scales[k] + 1e-5)
+      params[k] -= lr * momentums[k]/jnp.sqrt(scales[k] + 1e-5)
     return params, momentums, scales
 
   # Create a really simple toy 1D function
-  y_fun = lambda x: np.sin(x) + 0.1 * random.normal(key, shape=(x.shape[0], 1))
+  y_fun = lambda x: jnp.sin(x) + 0.1 * random.normal(key, shape=(x.shape[0], 1))
   x = (random.uniform(key, shape=(numpts, 1)) * 4.) + 1
   y = y_fun(x)
-  xtest = np.linspace(0, 6., 200)[:, None]
-  ytest = y_fun(xtest)
+  xtest = jnp.linspace(0, 6., 200)[:, None]
 
   for i in range(1000):
     params, momentums, scales = train_step(params, momentums, scales, x, y)
@@ -122,7 +121,7 @@ def main(unused_argv):
 
   print(params)
   mu, var = predict(params, x, y, xtest)
-  std = np.sqrt(np.diag(var))
+  std = jnp.sqrt(jnp.diag(var))
   plt.plot(x, y, "k.")
   plt.plot(xtest, mu)
   plt.fill_between(xtest.flatten(),

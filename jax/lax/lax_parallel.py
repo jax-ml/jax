@@ -38,16 +38,23 @@ xops = xc.ops
 
 ### parallel traceables
 
-def psum(x, axis_name):
+def psum(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
   each leaf in the tree.
 
+  Inputs of boolean dtype are converted to integers before the reduction.
+
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform psums over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
+
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -63,10 +70,15 @@ def psum(x, axis_name):
   >>> print(y)
   [ 0.          0.16666667  0.33333334  0.5       ]
   """
+  _validate_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
-  return treedef.unflatten(psum_p.bind(*leaves, axis_name=axis_name))
+  leaves = [lax.convert_element_type(l, onp.int32)
+            if dtypes.dtype(l) == onp.bool_ else l for l in leaves]
+  out_flat = psum_p.bind(*leaves, axis_name=axis_name,
+                         axis_index_groups=axis_index_groups)
+  return tree_util.tree_unflatten(treedef, out_flat)
 
-def pmean(x, axis_name):
+def pmean(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -75,7 +87,11 @@ def pmean(x, axis_name):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform pmeans over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
@@ -91,10 +107,10 @@ def pmean(x, axis_name):
   >>> print(y)
   [ 0.          0.66666667  1.33333334  2.0       ]
   """
-  x, n = psum((x, 1), axis_name=axis_name)
+  x, n = psum((x, 1), axis_name=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(lambda v: v / n, x)
 
-def pmax(x, axis_name):
+def pmax(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -103,15 +119,21 @@ def pmax(x, axis_name):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform pmaxes over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce max along the axis ``axis_name``.
   """
-  return tree_util.tree_map(partial(pmax_p.bind, axis_name=axis_name), x)
+  _validate_axis_index_groups(axis_index_groups)
+  return tree_util.tree_map(partial(
+      pmax_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
 
-def pmin(x, axis_name):
+def pmin(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -120,13 +142,29 @@ def pmin(x, axis_name):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would perform pmins over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce min along the axis ``axis_name``.
   """
-  return tree_util.tree_map(partial(pmin_p.bind, axis_name=axis_name), x)
+  _validate_axis_index_groups(axis_index_groups)
+  return tree_util.tree_map(partial(
+      pmin_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
+
+def _validate_axis_index_groups(axis_index_groups):
+  if axis_index_groups is None:
+    return
+  len_0 = len(axis_index_groups[0])
+  if any(len(g) != len_0 for g in axis_index_groups):
+    raise ValueError("axis_index_groups must all be the same size")
+  axis_space = range(len_0 * len(axis_index_groups))
+  if set(i for g in axis_index_groups for i in g) != set(axis_space):
+    raise ValueError("axis_index_groups must cover all indices exactly once")
 
 def ppermute(x, axis_name, perm):
   """Perform a collective permutation according to the permutation ``perm``.
@@ -139,8 +177,9 @@ def ppermute(x, axis_name, perm):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
-    perm: list of pairs of ints, representing (source_index, destination_index)
+      :func:`jax.pmap` documentation for more details).
+    perm: list of pairs of ints, representing
+      ``(source_index, destination_index)``
       pairs that encode how the mapped axis named ``axis_name`` should be
       shuffled. The integer values are treated as indices into the mapped axis
       ``axis_name``. Any two pairs should not have the same source index or the
@@ -166,7 +205,7 @@ def pshuffle(x, axis_name, perm):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     perm: list of of ints, representing the new order of the source indices
       that encode how the mapped axis named ``axis_name`` should be
       shuffled. The integer values are treated as indices into the mapped axis
@@ -198,7 +237,7 @@ def pswapaxes(x, axis_name, axis):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
 
@@ -225,7 +264,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
     split_axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
     concat_axis: int indicating the position in the output to materialize the
@@ -233,6 +272,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 
   Returns:
     Array(s) with shape given by the expression::
+
       np.insert(np.delete(x.shape, split_axis), concat_axis, axis_size)
 
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
@@ -257,13 +297,16 @@ def standard_pmap_primitive(name, multiple_results=False):
   return prim
 
 
-def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name):
+def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
+                               axis_index_groups):
   assert tuple(which_mapped) == (True,)
+  if axis_index_groups is not None:
+    raise NotImplementedError("soft_pmap does not yet support axis_index_groups")
   vals = (reducer(x, [0]) for x in vals)
   return prim.bind(*vals, axis_name=axis_name), False
 
 def _allreduce_translation_rule(prim, c, val, replica_groups, platform=None):
-  dtype = c.GetShape(val).numpy_dtype()
+  dtype = c.get_shape(val).numpy_dtype()
   scalar = ShapedArray((), dtype)
   computation = xla.primitive_subcomputation(prim, scalar, scalar)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
@@ -271,14 +314,14 @@ def _allreduce_translation_rule(prim, c, val, replica_groups, platform=None):
 
 # psum translation rule has special handling for complex dtypes
 def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
-  if platform == "cpu":
-    return _cpu_psum_translation_rule(c, *args, replica_groups=replica_groups)
+  if platform in ("cpu", "tpu"):
+    return _notuple_psum_translation_rule(c, *args, replica_groups=replica_groups)
 
   # XLA's tuple all-reduce doesn't support different dtypes in the same
   # allreduce. Instead, we perform once all-reduce for each argument input type.
   args_by_type = collections.defaultdict(lambda: ([], []))
   for i, arg in enumerate(args):
-    indices, dtype_args = args_by_type[c.GetShape(arg).numpy_dtype()]
+    indices, dtype_args = args_by_type[c.get_shape(arg).numpy_dtype()]
     indices.append(i)
     dtype_args.append(arg)
 
@@ -291,7 +334,7 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
     if is_complex:
       dtype_args = ([xops.Real(x) for x in dtype_args] +
                     [xops.Imag(x) for x in dtype_args])
-    scalar = ShapedArray((), c.GetShape(dtype_args[0]).numpy_dtype())
+    scalar = ShapedArray((), c.get_shape(dtype_args[0]).numpy_dtype())
     computation = xla.primitive_subcomputation(lax.add_p, scalar, scalar)
     all_reduce = xops.AllReduce(xops.Tuple(c, dtype_args), computation,
                                 replica_groups_protos, None, None)
@@ -307,11 +350,13 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
 # TODO(b/150476027): CPU doesn't support tuple all-reduce correctly. But
 # fortunately we don't really need it in that case because CPU doesn't support
 # cross-task communication either.
-def _cpu_psum_translation_rule(c, *args, replica_groups):
+# TODO(b/155446630): An XLA:TPU optimization pass also doesn't support
+# tuple all-reduce yet. Meanwhile, rely on deterministic compiler behavior.
+def _notuple_psum_translation_rule(c, *args, replica_groups):
   def _translate(val):
     psum = partial(_allreduce_translation_rule, lax.add_p, c,
                    replica_groups=replica_groups)
-    dtype = c.GetShape(val).numpy_dtype()
+    dtype = c.get_shape(val).numpy_dtype()
     if dtypes.issubdtype(dtype, onp.complexfloating):
       return xops.Complex(psum(xops.Real(val)), psum(xops.Imag(val)))
     else:
@@ -319,12 +364,14 @@ def _cpu_psum_translation_rule(c, *args, replica_groups):
   return xops.Tuple(c, list(map(_translate, args)))
 
 psum_p = standard_pmap_primitive('psum', multiple_results=True)
-psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
+psum_p.def_abstract_eval(
+    lambda *args, **params: tuple(map(raise_to_shaped, args)))
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
-ad.deflinear(psum_p, lambda ts, axis_name: psum(ts, axis_name=axis_name))
+ad.deflinear(psum_p, lambda ts, axis_name, axis_index_groups: psum_p.bind(
+    *ts, axis_name=axis_name, axis_index_groups=axis_index_groups))
 pxla.multi_host_supported_collectives.add(psum_p)
 
 
@@ -431,7 +478,7 @@ def all_gather(x, axis_name):
   Args:
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
-      ``pmap`` docstring for more details).
+      :func:`jax.pmap` documentation for more details).
 
   Returns:
     Array(s) representing the result of an all-gather along the axis

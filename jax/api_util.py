@@ -13,11 +13,13 @@
 # limitations under the License.
 
 
-from .tree_util import (build_tree, tree_flatten, tree_unflatten,
-                        treedef_is_leaf)
+from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
+                        tree_structure)
 from . import linear_util as lu
-from .util import safe_map, unzip2, partial, curry, WrapHashably, Hashable
+from .util import safe_map, curry, WrapHashably, Hashable
 from .core import unit
+
+from typing import Tuple
 
 map = safe_map
 
@@ -82,6 +84,49 @@ def argnums_partial(f, dyn_argnums, args):
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
 
+def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
+  """Returns a tuple with a boolean value for each leaf in args."""
+  res = []
+  for i, arg in enumerate(args):
+    donate = bool(i in donate_argnums)
+    res.extend((donate,) * tree_structure(arg).num_leaves)
+  res.extend((False,) * tree_structure(kwargs).num_leaves)
+  return tuple(res)
+
+def rebase_donate_argnums(donate_argnums, static_argnums) -> Tuple[int, ...]:
+  """Shifts donate to account for static.
+
+  >>> rebase_donate_argnums((3, 4), (0, 1))
+  (1, 2)
+
+  Args:
+    donate_argnums: An iterable of ints.
+    static_argnums: An iterable of ints.
+
+  Returns:
+    A tuple of unique, sorted integer values based on donate_argnums with each
+    element offset to account for static_argnums.
+  """
+  if not (static_argnums or donate_argnums):
+    return tuple(sorted(donate_argnums))
+
+  static_argnums = sorted(set(static_argnums))
+  donate_argnums = sorted(set(donate_argnums))
+  i = j = o = 0
+  out = []
+  while j < len(donate_argnums):
+    if i < len(static_argnums) and static_argnums[i] == donate_argnums[j]:
+      raise ValueError(f"`static_argnums` {static_argnums} and "
+                       f"`donate_argnums` {donate_argnums} cannot intersect.")
+
+    if i < len(static_argnums) and static_argnums[i] < donate_argnums[j]:
+      o += 1
+      i += 1
+    else:
+      out.append(donate_argnums[j] - o)
+      j += 1
+  return tuple(out)
+
 def wrap_hashably(arg):
   try:
     hash(arg)
@@ -97,3 +142,23 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
     args[i] = arg
   ans = yield args, kwargs
   yield ans
+
+def flatten_axes(treedef, axis_tree):
+  # given an axis spec tree axis_tree (a pytree with integers and Nones at the
+  # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
+  # the given treedef, build a complete axis spec tree with the same structure
+  # and return the flattened result
+  # TODO(mattjj,phawkins): improve this implementation
+  proxy = object()
+  dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
+  axes = []
+  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+  try:
+    tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+  except ValueError as e:
+    msg = ("axes specification must be a tree prefix of the corresponding "
+           "value, got specification {} for value {}.")
+    raise ValueError(msg.format(axis_tree, treedef)) from e
+  axes = [None if a is proxy else a for a in axes]
+  assert len(axes) == treedef.num_leaves
+  return axes

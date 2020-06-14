@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# flake8: noqa: F401
 from . import bernoulli
 from . import poisson
 from . import beta
@@ -26,3 +27,4 @@ from . import pareto
 from . import t
 from . import uniform
 from . import logistic
+from . import geom

@@ -18,6 +18,7 @@ import scipy.stats as osp_stats
 
 from ... import lax
 from ...numpy import lax_numpy as jnp
+from ...numpy._util import _wraps
 from ..special import gammaln, xlogy
 
 
@@ -26,7 +27,7 @@ def _is_simplex(x):
     return jnp.all(x > 0, axis=-1) & (x_sum <= 1) & (x_sum > 1 - 1e-6)
 
 
-@jnp._wraps(osp_stats.dirichlet.logpdf, update_doc=False)
+@_wraps(osp_stats.dirichlet.logpdf, update_doc=False)
 def logpdf(x, alpha):
     args = (np.ones((0,), lax.dtype(x)), np.ones((1,), lax.dtype(alpha)))
     to_dtype = lax.dtype(osp_stats.dirichlet.logpdf(*args))
@@ -37,6 +38,6 @@ def logpdf(x, alpha):
     return jnp.where(_is_simplex(x), log_probs, -jnp.inf)
 
 
-@jnp._wraps(osp_stats.dirichlet.pdf, update_doc=False)
+@_wraps(osp_stats.dirichlet.pdf, update_doc=False)
 def pdf(x, alpha):
   return lax.exp(logpdf(x, alpha))

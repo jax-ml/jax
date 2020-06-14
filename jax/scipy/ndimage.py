@@ -21,8 +21,9 @@ import textwrap
 import scipy.ndimage
 
 from .. import api
-from ..numpy import lax_numpy as np
-from ..numpy.lax_numpy import _wraps
+from .. import lax
+from ..numpy import lax_numpy as jnp
+from ..numpy._util import _wraps
 from ..util import safe_zip as zip
 
 
@@ -31,33 +32,34 @@ _nonempty_sum = functools.partial(functools.reduce, operator.add)
 
 _INDEX_FIXERS = {
     'constant': lambda index, size: index,
-    'nearest': lambda index, size: np.clip(index, 0, size - 1),
+    'nearest': lambda index, size: jnp.clip(index, 0, size - 1),
     'wrap': lambda index, size: index % size,
 }
 
 
+def _round_half_away_from_zero(a):
+  return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)
+
+
 def _nearest_indices_and_weights(coordinate):
-  index = np.around(coordinate).astype(np.int32)
+  index = _round_half_away_from_zero(coordinate).astype(jnp.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
 
 def _linear_indices_and_weights(coordinate):
-  lower = np.floor(coordinate)
-  upper = np.ceil(coordinate)
-  l_index = lower.astype(np.int32)
-  u_index = upper.astype(np.int32)
-  one = coordinate.dtype.type(1)
-  l_weight = one - (coordinate - lower)
-  u_weight = one - l_weight  # handles the edge case lower==upper
-  return [(l_index, l_weight), (u_index, u_weight)]
+  lower = jnp.floor(coordinate)
+  upper_weight = coordinate - lower
+  lower_weight = 1 - upper_weight
+  index = lower.astype(jnp.int32)
+  return [(index, lower_weight), (index + 1, upper_weight)]
 
 
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
 def _map_coordinates(input, coordinates, order, mode, cval):
-  input = np.asarray(input)
-  coordinates = [np.asarray(c, input.dtype) for c in coordinates]
-  cval = np.asarray(cval, input.dtype)
+  input = jnp.asarray(input)
+  coordinates = [jnp.asarray(c) for c in coordinates]
+  cval = jnp.asarray(cval, input.dtype)
 
   if len(coordinates) != input.ndim:
     raise ValueError('coordinates must be a sequence of length input.ndim, but '
@@ -95,14 +97,17 @@ def _map_coordinates(input, coordinates, order, mode, cval):
   outputs = []
   for items in itertools.product(*valid_1d_interpolations):
     indices, validities, weights = zip(*items)
-    if any(valid is not True for valid in validities):
-      all_valid = functools.reduce(operator.and_, validities)
-      contribution = np.where(all_valid, input[indices], cval)
-    else:
+    if all(valid is True for valid in validities):
+      # fast path
       contribution = input[indices]
+    else:
+      all_valid = functools.reduce(operator.and_, validities)
+      contribution = jnp.where(all_valid, input[indices], cval)
     outputs.append(_nonempty_prod(weights) * contribution)
   result = _nonempty_sum(outputs)
-  return result
+  if jnp.issubdtype(input.dtype, jnp.integer):
+    result = _round_half_away_from_zero(result)
+  return result.astype(input.dtype)
 
 
 @_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\

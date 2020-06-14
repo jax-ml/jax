@@ -20,19 +20,29 @@ import itertools
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 
+from jax import core
 from jax import test_util as jtu
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
 import jax
-import jax.numpy as np
+import jax.numpy as jnp
 
 from jax.config import config
 config.parse_flags_with_absl()
 
+
 class NNFunctionsTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    super().tearDown()
+    config.update("jax_numpy_rank_promotion", "allow")
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
@@ -45,7 +55,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testSoftplusGradInf(self):
     self.assertAllClose(
-        1., jax.grad(nn.softplus)(float('inf')), check_dtypes=True)
+        1., jax.grad(nn.softplus)(float('inf')))
 
   def testSoftplusGradNegInf(self):
     check_grads(nn.softplus, (-float('inf'),), order=1,
@@ -56,9 +66,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
                 rtol=1e-2 if jtu.device_under_test() == "tpu" else None)
 
   @parameterized.parameters([
-      int, np.int32, float, np.float64, np.float32, np.float64,])
+      int, jnp.int32, float, jnp.float64, jnp.float32, jnp.float64,])
   def testSoftplusZero(self, dtype):
-    self.assertEqual(np.log(dtype(2)), nn.softplus(dtype(0)))
+    self.assertEqual(jnp.log(dtype(2)), nn.softplus(dtype(0)))
 
   def testReluGrad(self):
     rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
@@ -79,58 +89,64 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.elu(1e4)
     self.assertAllClose(val, 1e4, check_dtypes=False)
 
+  def testGluValue(self):
+    val = nn.glu(jnp.array([1.0, 0.0]))
+    self.assertAllClose(val, jnp.array([0.5]))
+
   @parameterized.parameters(*itertools.product(
-      (np.float32, np.bfloat16, np.float16),
+      (jnp.float32, jnp.bfloat16, jnp.float16),
       (nn.gelu, nn.relu, nn.softplus, nn.sigmoid)))
   def testDtypeMatchesInput(self, dtype, fn):
-    if dtype is np.float16 and jtu.device_under_test() == "tpu":
+    if dtype is jnp.float16 and jtu.device_under_test() == "tpu":
       self.skipTest("float16 not supported on TPU")
-    x = np.zeros((), dtype=dtype)
+    x = jnp.zeros((), dtype=dtype)
     out = fn(x)
     self.assertEqual(out.dtype, dtype)
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testEluMemory(self):
     # see https://github.com/google/jax/pull/1640
-    jax.make_jaxpr(nn.elu)(np.ones((10 ** 12,)))  # don't oom
+    with core.skipping_checks():  # With checks we materialize the array
+      jax.make_jaxpr(nn.elu)(jnp.ones((10 ** 12,)))  # don't oom
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testHardTanhMemory(self):
     # see https://github.com/google/jax/pull/1640
-    jax.make_jaxpr(nn.hard_tanh)(np.ones((10 ** 12,)))  # don't oom
+    with core.skipping_checks():  # With checks we materialize the array
+      jax.make_jaxpr(nn.hard_tanh)(jnp.ones((10 ** 12,)))  # don't oom
 
   def testOneHot(self):
-    actual = nn.one_hot(np.array([0, 1, 2]), 3)
-    expected = np.array([[1., 0., 0.],
+    actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
+    expected = jnp.array([[1., 0., 0.],
                          [0., 1., 0.],
                          [0., 0., 1.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
-    actual = nn.one_hot(np.array([1, 2, 0]), 3)
-    expected = np.array([[0., 1., 0.],
+    actual = nn.one_hot(jnp.array([1, 2, 0]), 3)
+    expected = jnp.array([[0., 1., 0.],
                          [0., 0., 1.],
                          [1., 0., 0.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
   def testOneHotOutOfBound(self):
-    actual = nn.one_hot(np.array([-1, 3]), 3)
-    expected = np.array([[0., 0., 0.],
+    actual = nn.one_hot(jnp.array([-1, 3]), 3)
+    expected = jnp.array([[0., 0., 0.],
                          [0., 0., 0.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
   def testOneHotNonArrayInput(self):
     actual = nn.one_hot([0, 1, 2], 3)
-    expected = np.array([[1., 0., 0.],
+    expected = jnp.array([[1., 0., 0.],
                          [0., 1., 0.],
                          [0., 0., 1.]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
   def testOneHotCustomDtype(self):
-    actual = nn.one_hot(np.array([0, 1, 2]), 3, dtype=np.bool_)
-    expected = np.array([[True, False, False],
+    actual = nn.one_hot(jnp.array([0, 1, 2]), 3, dtype=jnp.bool_)
+    expected = jnp.array([[True, False, False],
                          [False, True, False],
                          [False, False, True]])
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    self.assertAllClose(actual, expected)
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
@@ -158,6 +174,14 @@ INITIALIZER_RECS = [
 
 class NNInitializersTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    config.update("jax_numpy_rank_promotion", "raise")
+
+  def tearDown(self):
+    super().tearDown()
+    config.update("jax_numpy_rank_promotion", "allow")
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_{}_{}".format(
@@ -167,12 +191,12 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in [onp.float32, onp.float64]))
+      for dtype in [np.float32, np.float64]))
   def testInitializer(self, initializer, shape, dtype):
     rng = random.PRNGKey(0)
     val = initializer(rng, shape, dtype)
-    self.assertEqual(shape, np.shape(val))
-    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), np.dtype(val))
+    self.assertEqual(shape, jnp.shape(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -183,14 +207,14 @@ class NNInitializersTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype}
       for rec in INITIALIZER_RECS
       for shape in rec.shapes
-      for dtype in [onp.float32, onp.float64]))
+      for dtype in [np.float32, np.float64]))
   def testInitializerProvider(self, initializer_provider, shape, dtype):
     rng = random.PRNGKey(0)
     initializer = initializer_provider(dtype=dtype)
     val = initializer(rng, shape)
 
-    self.assertEqual(shape, np.shape(val))
-    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), np.dtype(val))
+    self.assertEqual(shape, jnp.shape(val))
+    self.assertEqual(jax.dtypes.canonicalize_dtype(dtype), jnp.dtype(val))
 
 
 if __name__ == "__main__":

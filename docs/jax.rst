@@ -17,11 +17,61 @@ Subpackages
     jax.ops
     jax.random
     jax.tree_util
+    jax.flatten_util
     jax.dlpack
     jax.profiler
 
 Just-in-time compilation (:code:`jit`)
 --------------------------------------
+
+.. autosummary::
+
+    jit
+    disable_jit
+    xla_computation
+    make_jaxpr
+    eval_shape
+    device_put
+
+Automatic differentiation
+-------------------------
+
+.. autosummary::
+
+    grad
+    value_and_grad
+    jacfwd
+    jacrev
+    hessian
+    jvp
+    linearize
+    vjp
+    custom_jvp
+    custom_vjp
+
+
+Vectorization (:code:`vmap`)
+----------------------------
+
+.. autosummary::
+
+    vmap
+    jax.numpy.vectorize
+
+Parallelization (:code:`pmap`)
+------------------------------
+
+.. autosummary::
+
+    pmap
+    devices
+    local_devices
+    host_id
+    host_ids
+    device_count
+    local_device_count
+    host_count
+
 
 .. autofunction:: jit
 .. autofunction:: disable_jit
@@ -29,9 +79,6 @@ Just-in-time compilation (:code:`jit`)
 .. autofunction:: make_jaxpr
 .. autofunction:: eval_shape
 .. autofunction:: device_put
-
-Automatic differentiation
--------------------------
 
 .. autofunction:: grad
 .. autofunction:: value_and_grad
@@ -44,15 +91,8 @@ Automatic differentiation
 .. autofunction:: custom_jvp
 .. autofunction:: custom_vjp
 
-
-Vectorization (:code:`vmap`)
-----------------------------
-
 .. autofunction:: vmap
 .. autofunction:: jax.numpy.vectorize
-
-Parallelization (:code:`pmap`)
-------------------------------
 
 .. autofunction:: pmap
 .. autofunction:: devices

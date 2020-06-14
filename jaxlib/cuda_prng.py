@@ -40,10 +40,10 @@ def threefry2x32(c, keys, data):
   c = _unpack_builder(c)
   assert len(keys) == 2, keys
   assert len(data) == 2, data
-  dims = c.GetShape(keys[0]).dimensions()
+  dims = c.get_shape(keys[0]).dimensions()
   dtype = np.dtype(np.uint32)
   for x in itertools.chain(keys, data):
-    x_shape = c.GetShape(x)
+    x_shape = c.get_shape(x)
     assert x_shape.element_type() == dtype
     assert dims == x_shape.dimensions(), (dims, x_shape)
   ndims = len(dims)
@@ -57,4 +57,3 @@ def threefry2x32(c, keys, data):
       shape_with_layout=xla_client.Shape.tuple_shape([shape, shape]),
       operand_shapes_with_layout=(shape,) * 4,
       opaque=opaque)
-

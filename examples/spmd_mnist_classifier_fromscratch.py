@@ -24,16 +24,15 @@ optimizers libraries.
 from functools import partial
 import time
 
-import numpy as onp
+import numpy as np
 import numpy.random as npr
 
 from jax import jit, grad, pmap
-from jax.config import config
 from jax.scipy.special import logsumexp
 from jax.lib import xla_bridge
 from jax.tree_util import tree_map
 from jax import lax
-import jax.numpy as np
+import jax.numpy as jnp
 from examples import datasets
 
 
@@ -44,24 +43,24 @@ def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
 def predict(params, inputs):
   activations = inputs
   for w, b in params[:-1]:
-    outputs = np.dot(activations, w) + b
-    activations = np.tanh(outputs)
+    outputs = jnp.dot(activations, w) + b
+    activations = jnp.tanh(outputs)
 
   final_w, final_b = params[-1]
-  logits = np.dot(activations, final_w) + final_b
+  logits = jnp.dot(activations, final_w) + final_b
   return logits - logsumexp(logits, axis=1, keepdims=True)
 
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
-  return -np.mean(np.sum(preds * targets, axis=1))
+  return -jnp.mean(jnp.sum(preds * targets, axis=1))
 
 @jit
 def accuracy(params, batch):
   inputs, targets = batch
-  target_class = np.argmax(targets, axis=1)
-  predicted_class = np.argmax(predict(params, inputs), axis=1)
-  return np.mean(predicted_class == target_class)
+  target_class = jnp.argmax(targets, axis=1)
+  predicted_class = jnp.argmax(predict(params, inputs), axis=1)
+  return jnp.mean(predicted_class == target_class)
 
 
 if __name__ == "__main__":
@@ -110,7 +109,7 @@ if __name__ == "__main__":
   # We replicate the parameters so that the constituent arrays have a leading
   # dimension of size equal to the number of devices we're pmapping over.
   init_params = init_random_params(param_scale, layer_sizes)
-  replicate_array = lambda x: onp.broadcast_to(x, (num_devices,) + x.shape)
+  replicate_array = lambda x: np.broadcast_to(x, (num_devices,) + x.shape)
   replicated_params = tree_map(replicate_array, init_params)
 
   for epoch in range(num_epochs):

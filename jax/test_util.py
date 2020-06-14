@@ -16,19 +16,16 @@
 from contextlib import contextmanager
 import functools
 import re
-import itertools as it
 import os
 from typing import Dict, Sequence, Union
-import sys
 import unittest
 import warnings
+import zlib
 
-from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 import numpy.random as npr
-import scipy
 
 from . import api
 from . import core
@@ -65,8 +62,8 @@ EPS = 1e-4
 
 def _dtype(x):
   return (getattr(x, 'dtype', None) or
-          onp.dtype(dtypes.python_scalar_dtypes.get(type(x), None)) or
-          onp.asarray(x).dtype)
+          np.dtype(dtypes.python_scalar_dtypes.get(type(x), None)) or
+          np.asarray(x).dtype)
 
 def is_sequence(x):
   try:
@@ -77,60 +74,60 @@ def is_sequence(x):
     return True
 
 _default_tolerance = {
-  onp.dtype(onp.bool_): 0,
-  onp.dtype(onp.int8): 0,
-  onp.dtype(onp.int16): 0,
-  onp.dtype(onp.int32): 0,
-  onp.dtype(onp.int64): 0,
-  onp.dtype(onp.uint8): 0,
-  onp.dtype(onp.uint16): 0,
-  onp.dtype(onp.uint32): 0,
-  onp.dtype(onp.uint64): 0,
-  onp.dtype(dtypes.bfloat16): 1e-2,
-  onp.dtype(onp.float16): 1e-3,
-  onp.dtype(onp.float32): 1e-6,
-  onp.dtype(onp.float64): 1e-15,
-  onp.dtype(onp.complex64): 1e-6,
-  onp.dtype(onp.complex128): 1e-15,
+  np.dtype(np.bool_): 0,
+  np.dtype(np.int8): 0,
+  np.dtype(np.int16): 0,
+  np.dtype(np.int32): 0,
+  np.dtype(np.int64): 0,
+  np.dtype(np.uint8): 0,
+  np.dtype(np.uint16): 0,
+  np.dtype(np.uint32): 0,
+  np.dtype(np.uint64): 0,
+  np.dtype(dtypes.bfloat16): 1e-2,
+  np.dtype(np.float16): 1e-3,
+  np.dtype(np.float32): 1e-6,
+  np.dtype(np.float64): 1e-15,
+  np.dtype(np.complex64): 1e-6,
+  np.dtype(np.complex128): 1e-15,
 }
 
 def default_tolerance():
   if device_under_test() != "tpu":
     return _default_tolerance
   tol = _default_tolerance.copy()
-  tol[onp.dtype(onp.float32)] = 1e-3
-  tol[onp.dtype(onp.complex64)] = 1e-3
+  tol[np.dtype(np.float32)] = 1e-3
+  tol[np.dtype(np.complex64)] = 1e-3
   return tol
 
 default_gradient_tolerance = {
-  onp.dtype(dtypes.bfloat16): 1e-1,
-  onp.dtype(onp.float16): 1e-2,
-  onp.dtype(onp.float32): 2e-3,
-  onp.dtype(onp.float64): 1e-5,
-  onp.dtype(onp.complex64): 1e-3,
-  onp.dtype(onp.complex128): 1e-5,
+  np.dtype(dtypes.bfloat16): 1e-1,
+  np.dtype(np.float16): 1e-2,
+  np.dtype(np.float32): 2e-3,
+  np.dtype(np.float64): 1e-5,
+  np.dtype(np.complex64): 1e-3,
+  np.dtype(np.complex128): 1e-5,
 }
 
 def _assert_numpy_allclose(a, b, atol=None, rtol=None):
-  a = a.astype(onp.float32) if a.dtype == dtypes.bfloat16 else a
-  b = b.astype(onp.float32) if b.dtype == dtypes.bfloat16 else b
+  a = a.astype(np.float32) if a.dtype == dtypes.bfloat16 else a
+  b = b.astype(np.float32) if b.dtype == dtypes.bfloat16 else b
   kw = {}
   if atol: kw["atol"] = atol
   if rtol: kw["rtol"] = rtol
-  onp.testing.assert_allclose(a, b, **kw)
+  np.testing.assert_allclose(a, b, **kw)
 
 def tolerance(dtype, tol=None):
   tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
-  tol = {onp.dtype(key): value for key, value in tol.items()}
-  dtype = dtypes.canonicalize_dtype(onp.dtype(dtype))
+  tol = {np.dtype(key): value for key, value in tol.items()}
+  dtype = dtypes.canonicalize_dtype(np.dtype(dtype))
   return tol.get(dtype, default_tolerance()[dtype])
 
 def _normalize_tolerance(tol):
   tol = tol or 0
   if isinstance(tol, dict):
-    return {onp.dtype(k): v for k, v in tol.items()}
+    return {np.dtype(k): v for k, v in tol.items()}
   else:
     return {k: tol for k in _default_tolerance.keys()}
 
@@ -160,23 +157,23 @@ def check_close(xs, ys, atol=None, rtol=None):
 
 def inner_prod(xs, ys):
   def contract(x, y):
-    return onp.real(onp.dot(onp.conj(x).reshape(-1), y.reshape(-1)))
-  return tree_reduce(onp.add, tree_multimap(contract, xs, ys))
+    return np.real(np.dot(np.conj(x).reshape(-1), y.reshape(-1)))
+  return tree_reduce(np.add, tree_multimap(contract, xs, ys))
 
 
-add = partial(tree_multimap, lambda x, y: onp.add(x, y, dtype=_dtype(x)))
-sub = partial(tree_multimap, lambda x, y: onp.subtract(x, y, dtype=_dtype(x)))
-conj = partial(tree_map, lambda x: onp.conj(x, dtype=_dtype(x)))
+add = partial(tree_multimap, lambda x, y: np.add(x, y, dtype=_dtype(x)))
+sub = partial(tree_multimap, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
+conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
-  return tree_map(lambda x: onp.multiply(x, a, dtype=_dtype(x)), xs)
+  return tree_map(lambda x: np.multiply(x, a, dtype=_dtype(x)), xs)
 
 
 def rand_like(rng, x):
-  shape = onp.shape(x)
+  shape = np.shape(x)
   dtype = _dtype(x)
-  randn = lambda: onp.asarray(rng.randn(*shape), dtype=dtype)
-  if dtypes.issubdtype(dtype, onp.complexfloating):
+  randn = lambda: np.asarray(rng.randn(*shape), dtype=dtype)
+  if dtypes.issubdtype(dtype, np.complexfloating):
     return randn() + dtype.type(1.0j) * randn()
   else:
     return randn()
@@ -196,13 +193,13 @@ def _merge_tolerance(tol, default):
     return tol
   out = default.copy()
   for k, v in tol.items():
-    out[onp.dtype(k)] = v
+    out[np.dtype(k)] = v
   return out
 
 def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
-  rng = onp.random.RandomState(0)
+  rng = np.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
   v_out, t_out = f_jvp(args, tangent)
   v_out_expected = f(*args)
@@ -217,7 +214,7 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
 def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
-  _rand_like = partial(rand_like, onp.random.RandomState(0))
+  _rand_like = partial(rand_like, np.random.RandomState(0))
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
   check_close(v_out, v_out_expected, atol=atol, rtol=rtol)
@@ -327,13 +324,13 @@ def if_device_under_test(device_type: Union[str, Sequence[str]],
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    return {onp.bool_, onp.int32, onp.uint32, dtypes.bfloat16, onp.float32,
-            onp.complex64}
+    return {np.bool_, np.int32, np.uint32, dtypes.bfloat16, np.float32,
+            np.complex64}
   else:
-    return {onp.bool_, onp.int8, onp.int16, onp.int32, onp.int64,
-            onp.uint8, onp.uint16, onp.uint32, onp.uint64,
-            dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
-            onp.complex64, onp.complex128}
+    return {np.bool_, np.int8, np.int16, np.int32, np.int64,
+            np.uint8, np.uint16, np.uint32, np.uint64,
+            dtypes.bfloat16, np.float16, np.float32, np.float64,
+            np.complex64, np.complex128}
 
 def skip_if_unsupported_type(dtype):
   if dtype not in supported_dtypes():
@@ -369,12 +366,6 @@ def skip_on_flag(flag_name, skip_value):
     return test_method_wrapper
   return skip
 
-# TODO(phawkins): bug https://github.com/google/jax/issues/432
-skip_on_mac_linalg_bug = partial(
-  unittest.skipIf,
-  sys.platform == "darwin" and scipy.version.version > "1.1.0",
-  "Test fails on Mac with new scipy (issue #432)")
-
 
 def format_test_name_suffix(opname, shapes, dtypes):
   arg_descriptions = (format_shape_dtype_string(shape, dtype)
@@ -406,33 +397,39 @@ def _cast_to_shape(value, shape, dtype):
   """Casts `value` to the correct Python type for `shape` and `dtype`."""
   if shape is NUMPY_SCALAR_SHAPE:
     # explicitly cast to NumPy scalar in case `value` is a Python scalar.
-    return onp.dtype(dtype).type(value)
+    return np.dtype(dtype).type(value)
   elif shape is PYTHON_SCALAR_SHAPE:
     # explicitly cast to Python scalar via https://stackoverflow.com/a/11389998
-    return onp.asarray(value).item()
+    return np.asarray(value).item()
   elif type(shape) in (list, tuple):
-    assert onp.shape(value) == tuple(shape)
+    assert np.shape(value) == tuple(shape)
     return value
   else:
     raise TypeError(type(shape))
 
 
 def dtype_str(dtype):
-  return onp.dtype(dtype).name
+  return np.dtype(dtype).name
 
 
 def format_shape_dtype_string(shape, dtype):
+  if isinstance(shape, np.ndarray):
+    return f'{dtype_str(dtype)}[{shape}]'
+  elif isinstance(shape, list):
+    shape = tuple(shape)
+  return _format_shape_dtype_string(shape, dtype)
+
+@functools.lru_cache(maxsize=64)
+def _format_shape_dtype_string(shape, dtype):
   if shape is NUMPY_SCALAR_SHAPE:
     return dtype_str(dtype)
   elif shape is PYTHON_SCALAR_SHAPE:
     return 'py' + dtype_str(dtype)
-  elif type(shape) in (list, tuple):
+  elif type(shape) is tuple:
     shapestr = ','.join(str(dim) for dim in shape)
     return '{}[{}]'.format(dtype_str(dtype), shapestr)
   elif type(shape) is int:
     return '{}[{},]'.format(dtype_str(dtype), shape)
-  elif isinstance(shape, onp.ndarray):
-    return '{}[{}]'.format(dtype_str(dtype), shape)
   else:
     raise TypeError(type(shape))
 
@@ -442,7 +439,7 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
 
   Args:
     rand: a function for producing random values of a given shape, e.g. a
-      bound version of either onp.RandomState.randn or onp.RandomState.rand.
+      bound version of either np.RandomState.randn or np.RandomState.rand.
     shape: a shape value as a tuple of positive integers.
     dtype: a numpy dtype.
     scale: optional, a multiplicative scale for the random values (default 1).
@@ -453,71 +450,75 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     An ndarray of the given shape and dtype using random values based on a call
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
-  r = lambda: onp.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
-  if dtypes.issubdtype(dtype, onp.complexfloating):
+  r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
+  if dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
-  return _cast_to_shape(onp.asarray(post(vals), dtype), shape, dtype)
+  return _cast_to_shape(np.asarray(post(vals), dtype), shape, dtype)
 
 
-def rand_default(scale=3):
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=scale)
+def rand_fullrange(rng, standardize_nans=False):
+  """Random numbers that span the full range of available bits."""
+  def gen(shape, dtype, post=lambda x: x):
+    dtype = np.dtype(dtype)
+    size = dtype.itemsize * np.prod(_dims_of_shape(shape))
+    vals = rng.randint(0, np.iinfo(np.uint8).max, size=size, dtype=np.uint8)
+    vals = post(vals).view(dtype).reshape(shape)
+    # Non-standard NaNs cause errors in numpy equality assertions.
+    if standardize_nans and np.issubdtype(dtype, np.floating):
+      vals[np.isnan(vals)] = np.nan
+    return _cast_to_shape(vals, shape, dtype)
+  return gen
 
 
-def rand_nonzero():
-  post = lambda x: onp.where(x == 0, onp.array(1, dtype=x.dtype), x)
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3, post=post)
+def rand_default(rng, scale=3):
+  return partial(_rand_dtype, rng.randn, scale=scale)
 
 
-def rand_positive():
+def rand_nonzero(rng):
+  post = lambda x: np.where(x == 0, np.array(1, dtype=x.dtype), x)
+  return partial(_rand_dtype, rng.randn, scale=3, post=post)
+
+
+def rand_positive(rng):
   post = lambda x: x + 1
-  rand = npr.RandomState(0).rand
-  return partial(_rand_dtype, rand, scale=2, post=post)
+  return partial(_rand_dtype, rng.rand, scale=2, post=post)
 
 
-def rand_small():
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=1e-3)
+def rand_small(rng):
+  return partial(_rand_dtype, rng.randn, scale=1e-3)
 
 
-def rand_not_small(offset=10.):
-  post = lambda x: x + onp.where(x > 0, offset, -offset)
-  randn = npr.RandomState(0).randn
-  return partial(_rand_dtype, randn, scale=3., post=post)
+def rand_not_small(rng, offset=10.):
+  post = lambda x: x + np.where(x > 0, offset, -offset)
+  return partial(_rand_dtype, rng.randn, scale=3., post=post)
 
 
-def rand_small_positive():
-  rand = npr.RandomState(0).rand
-  return partial(_rand_dtype, rand, scale=2e-5)
+def rand_small_positive(rng):
+  return partial(_rand_dtype, rng.rand, scale=2e-5)
 
-def rand_uniform(low=0.0, high=1.0):
+def rand_uniform(rng, low=0.0, high=1.0):
   assert low < high
-  rand = npr.RandomState(0).rand
   post = lambda x: x * (high - low) + low
-  return partial(_rand_dtype, rand, post=post)
+  return partial(_rand_dtype, rng.rand, post=post)
 
 
-def rand_some_equal():
-  randn = npr.RandomState(0).randn
-  rng = npr.RandomState(0)
+def rand_some_equal(rng):
 
   def post(x):
     x_ravel = x.ravel()
     if len(x_ravel) == 0:
       return x
-    flips = rng.rand(*onp.shape(x)) < 0.5
-    return onp.where(flips, x_ravel[0], x)
+    flips = rng.rand(*np.shape(x)) < 0.5
+    return np.where(flips, x_ravel[0], x)
 
-  return partial(_rand_dtype, randn, scale=100., post=post)
+  return partial(_rand_dtype, rng.randn, scale=100., post=post)
 
 
-def rand_some_inf():
+def rand_some_inf(rng):
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   """
   TODO: Complex numbers are not correctly tested
@@ -525,14 +526,14 @@ def rand_some_inf():
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not dtypes.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if dtypes.issubdtype(dtype, onp.complexfloating):
-      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+    if dtypes.issubdtype(dtype, np.complexfloating):
+      base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
-             onp.array(1j, dtype) * rand(shape, base_dtype))
+             np.array(1j, dtype) * rand(shape, base_dtype))
       return _cast_to_shape(out, shape, dtype)
 
     dims = _dims_of_shape(shape)
@@ -540,27 +541,26 @@ def rand_some_inf():
     neginf_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(posinf_flips, onp.array(onp.inf, dtype=dtype), vals)
-    vals = onp.where(neginf_flips, onp.array(-onp.inf, dtype=dtype), vals)
+    vals = np.where(posinf_flips, np.array(np.inf, dtype=dtype), vals)
+    vals = np.where(neginf_flips, np.array(-np.inf, dtype=dtype), vals)
 
-    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+    return _cast_to_shape(np.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
 
-def rand_some_nan():
+def rand_some_nan(rng):
   """Return a random sampler that produces nans in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if dtypes.issubdtype(dtype, onp.complexfloating):
-      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+    if dtypes.issubdtype(dtype, np.complexfloating):
+      base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
-             onp.array(1j, dtype) * rand(shape, base_dtype))
+             np.array(1j, dtype) * rand(shape, base_dtype))
       return _cast_to_shape(out, shape, dtype)
 
-    if not dtypes.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
@@ -568,16 +568,15 @@ def rand_some_nan():
     nan_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(nan_flips, onp.array(onp.nan, dtype=dtype), vals)
+    vals = np.where(nan_flips, np.array(np.nan, dtype=dtype), vals)
 
-    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+    return _cast_to_shape(np.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
 
-def rand_some_inf_and_nan():
+def rand_some_inf_and_nan(rng):
   """Return a random sampler that produces infinities in floating types."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   """
   TODO: Complex numbers are not correctly tested
@@ -585,14 +584,14 @@ def rand_some_inf_and_nan():
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not dtypes.issubdtype(dtype, onp.floating):
+    if not dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if dtypes.issubdtype(dtype, onp.complexfloating):
-      base_dtype = onp.real(onp.array(0, dtype=dtype)).dtype
+    if dtypes.issubdtype(dtype, np.complexfloating):
+      base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
-             onp.array(1j, dtype) * rand(shape, base_dtype))
+             np.array(1j, dtype) * rand(shape, base_dtype))
       return _cast_to_shape(out, shape, dtype)
 
     dims = _dims_of_shape(shape)
@@ -601,19 +600,18 @@ def rand_some_inf_and_nan():
     nan_flips = rng.rand(*dims) < 0.1
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(posinf_flips, onp.array(onp.inf, dtype=dtype), vals)
-    vals = onp.where(neginf_flips, onp.array(-onp.inf, dtype=dtype), vals)
-    vals = onp.where(nan_flips, onp.array(onp.nan, dtype=dtype), vals)
+    vals = np.where(posinf_flips, np.array(np.inf, dtype=dtype), vals)
+    vals = np.where(neginf_flips, np.array(-np.inf, dtype=dtype), vals)
+    vals = np.where(nan_flips, np.array(np.nan, dtype=dtype), vals)
 
-    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+    return _cast_to_shape(np.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
 
 # TODO(mattjj): doesn't handle complex types
-def rand_some_zero():
+def rand_some_zero(rng):
   """Return a random sampler that produces some zeros."""
-  rng = npr.RandomState(1)
-  base_rand = rand_default()
+  base_rand = rand_default(rng)
 
   def rand(shape, dtype):
     """The random sampler function."""
@@ -621,28 +619,25 @@ def rand_some_zero():
     zeros = rng.rand(*dims) < 0.5
 
     vals = base_rand(shape, dtype)
-    vals = onp.where(zeros, onp.array(0, dtype=dtype), vals)
+    vals = np.where(zeros, np.array(0, dtype=dtype), vals)
 
-    return _cast_to_shape(onp.asarray(vals, dtype=dtype), shape, dtype)
+    return _cast_to_shape(np.asarray(vals, dtype=dtype), shape, dtype)
 
   return rand
 
 
-def rand_int(low, high=None):
-  randint = npr.RandomState(0).randint
+def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
-    return randint(low, high=high, size=shape, dtype=dtype)
+    return rng.randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
-def rand_unique_int():
-  randchoice = npr.RandomState(0).choice
+def rand_unique_int(rng, high=None):
   def fn(shape, dtype):
-    return randchoice(onp.arange(onp.prod(shape), dtype=dtype),
+    return rng.choice(np.arange(high or np.prod(shape), dtype=dtype),
                       size=shape, replace=False)
   return fn
 
-def rand_bool():
-  rng = npr.RandomState(0)
+def rand_bool(rng):
   def generator(shape, dtype):
     return _cast_to_shape(rng.rand(*_dims_of_shape(shape)) < 0.5, shape, dtype)
   return generator
@@ -708,7 +703,25 @@ class JaxTestCase(parameterized.TestCase):
   # def tearDown(self) -> None:
   #   assert core.reset_trace_state()
 
-  def assertArraysAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
+  def setUp(self):
+    super(JaxTestCase, self).setUp()
+    core.skip_checks = False
+    # We use the adler32 hash for two reasons.
+    # a) it is deterministic run to run, unlike hash() which is randomized.
+    # b) it returns values in int32 range, which RandomState requires.
+    self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
+
+  def rng(self):
+    return self._rng
+
+  def assertArraysEqual(self, x, y, *, check_dtypes=True):
+    """Assert that x and y arrays are exactly equal."""
+    if check_dtypes:
+      self.assertDtypesMatch(x, y)
+    np.testing.assert_equal(x, y)
+
+  def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
+                           rtol=None):
     """Assert that x and y are close (up to numerical tolerances)."""
     self.assertEqual(x.shape, y.shape)
     atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
@@ -719,28 +732,34 @@ class JaxTestCase(parameterized.TestCase):
     if check_dtypes:
       self.assertDtypesMatch(x, y)
 
-  def assertDtypesMatch(self, x, y):
-    if FLAGS.jax_enable_x64:
+  def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
+    if not FLAGS.jax_enable_x64 and canonicalize_dtypes:
+      self.assertEqual(dtypes.canonicalize_dtype(_dtype(x)),
+                       dtypes.canonicalize_dtype(_dtype(y)))
+    else:
       self.assertEqual(_dtype(x), _dtype(y))
 
-  def assertAllClose(self, x, y, check_dtypes, atol=None, rtol=None):
+  def assertAllClose(self, x, y, *, check_dtypes=True, atol=None, rtol=None,
+                     canonicalize_dtypes=True):
     """Assert that x and y, either arrays or nested tuples/lists, are close."""
     if isinstance(x, dict):
       self.assertIsInstance(y, dict)
       self.assertEqual(set(x.keys()), set(y.keys()))
       for k in x.keys():
-        self.assertAllClose(x[k], y[k], check_dtypes, atol=atol, rtol=rtol)
+        self.assertAllClose(x[k], y[k], check_dtypes=check_dtypes, atol=atol,
+                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes)
     elif is_sequence(x) and not hasattr(x, '__array__'):
       self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
       self.assertEqual(len(x), len(y))
       for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes, atol=atol, rtol=rtol)
-    elif hasattr(x, '__array__') or onp.isscalar(x):
-      self.assertTrue(hasattr(y, '__array__') or onp.isscalar(y))
+        self.assertAllClose(x_elt, y_elt, check_dtypes=check_dtypes, atol=atol,
+                            rtol=rtol, canonicalize_dtypes=canonicalize_dtypes)
+    elif hasattr(x, '__array__') or np.isscalar(x):
+      self.assertTrue(hasattr(y, '__array__') or np.isscalar(y))
       if check_dtypes:
-        self.assertDtypesMatch(x, y)
-      x = onp.asarray(x)
-      y = onp.asarray(y)
+        self.assertDtypesMatch(x, y, canonicalize_dtypes=canonicalize_dtypes)
+      x = np.asarray(x)
+      y = np.asarray(y)
       self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol)
     elif x == y:
       return
@@ -755,7 +774,7 @@ class JaxTestCase(parameterized.TestCase):
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg="Found\n{}\nExpecting\n{}".format(what, expected))
 
-  def _CompileAndCheck(self, fun, args_maker, check_dtypes,
+  def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True,
                        rtol=None, atol=None):
     """Helper method for running JAX compilation and allclose assertions."""
     args = args_maker()
@@ -767,9 +786,9 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = True
     python_ans = fun(*args)
 
-    python_shapes = tree_map(lambda x: onp.shape(x), python_ans)
-    onp_shapes = tree_map(lambda x: onp.shape(onp.asarray(x)), python_ans)
-    self.assertEqual(python_shapes, onp_shapes)
+    python_shapes = tree_map(lambda x: np.shape(x), python_ans)
+    np_shapes = tree_map(lambda x: np.shape(np.asarray(x)), python_ans)
+    self.assertEqual(python_shapes, np_shapes)
 
     cache_misses = xla.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
@@ -785,8 +804,10 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, monitored_ans, check_dtypes, atol, rtol)
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
+    self.assertAllClose(python_ans, monitored_ans, check_dtypes=check_dtypes,
+                        atol=atol, rtol=rtol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+                        atol=atol, rtol=rtol)
 
     args = args_maker()
 
@@ -796,15 +817,18 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes, atol, rtol)
+    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+                        atol=atol, rtol=rtol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
-                         check_dtypes=False, tol=None):
+                         check_dtypes=True, tol=None,
+                         canonicalize_dtypes=True):
     args = args_maker()
     lax_ans = lax_op(*args)
     numpy_ans = numpy_reference_op(*args)
     self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
-                        atol=tol, rtol=tol)
+                        atol=tol, rtol=tol,
+                        canonicalize_dtypes=canonicalize_dtypes)
 
 
 @contextmanager

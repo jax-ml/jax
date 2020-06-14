@@ -50,7 +50,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(yshape, dtype),
           mode),
        "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
-       "rng_factory": jtu.rand_default,
        "jsp_op": getattr(jsp_signal, op),
        "osp_op": getattr(osp_signal, op)}
       for mode in ['full', 'same', 'valid']
@@ -58,14 +57,14 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for dtype in default_dtypes
       for xshape in onedim_shapes
       for yshape in onedim_shapes))
-  def testConvolutions(self, xshape, yshape, dtype, mode, rng_factory, jsp_op, osp_op):
-    rng = rng_factory()
+  def testConvolutions(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
     tol = {onp.float16: 1e-2, onp.float32: 1e-2, onp.float64: 1e-8}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "op={}_xshape=[{}]_yshape=[{}]_mode={}".format(
@@ -74,7 +73,6 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(yshape, dtype),
           mode),
        "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
-       "rng_factory": jtu.rand_default,
        "jsp_op": getattr(jsp_signal, op),
        "osp_op": getattr(osp_signal, op)}
       for mode in ['full', 'same', 'valid']
@@ -82,14 +80,14 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for dtype in default_dtypes
       for xshape in twodim_shapes
       for yshape in twodim_shapes))
-  def testConvolutions2D(self, xshape, yshape, dtype, mode, rng_factory, jsp_op, osp_op):
-    rng = rng_factory()
+  def testConvolutions2D(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
+    rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {onp.float16: 1e-2, onp.float32: 1e-2}
+    tol = {onp.float16: 1e-2, onp.float32: 1e-2, onp.float64: 1e-14}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
 
 if __name__ == "__main__":

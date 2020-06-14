@@ -4,9 +4,13 @@ jaxlib
 ipykernel
 nbsphinx
 sphinx-autodoc-typehints
+# For host_callback.py
+msgpack
 # The next packages are for notebooks
 matplotlib
 sklearn
+# For CI tests.
+pytest
 # Must install jax itself for notebook execution to work
 .
 

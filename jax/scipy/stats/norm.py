@@ -18,7 +18,8 @@ import scipy.stats as osp_stats
 
 from ... import lax
 from ...numpy import lax_numpy as jnp
-from ...numpy.lax_numpy import _promote_args_inexact, _constant_like, _wraps
+from ...numpy._util import _wraps
+from ...numpy.lax_numpy import _promote_args_inexact, _constant_like
 from .. import special
 
 @_wraps(osp_stats.norm.logpdf, update_doc=False)

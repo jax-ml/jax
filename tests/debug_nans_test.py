@@ -15,13 +15,10 @@
 """Tests for --debug_nans."""
 
 from absl.testing import absltest
-from absl.testing import parameterized
-
-import numpy as onp
 
 import jax
 from jax import test_util as jtu
-from jax import numpy as np
+from jax import numpy as jnp
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -36,18 +33,22 @@ class DebugNaNsTest(jtu.JaxTestCase):
     config.update("jax_debug_nans", self.cfg)
 
   def testSingleResultPrimitiveNoNaN(self):
-    A = np.array([[1., 2.], [2., 3.]])
-    B = np.tanh(A)
+    A = jnp.array([[1., 2.], [2., 3.]])
+    _ = jnp.tanh(A)
 
   def testMultipleResultPrimitiveNoNaN(self):
-    A = np.array([[1., 2.], [2., 3.]])
-    D, V = np.linalg.eig(A)
+    A = jnp.array([[1., 2.], [2., 3.]])
+    _, _ = jnp.linalg.eig(A)
 
   def testJitComputationNoNaN(self):
-    A = np.array([[1., 2.], [2., 3.]])
-    B = jax.jit(np.tanh)(A)
+    A = jnp.array([[1., 2.], [2., 3.]])
+    _ = jax.jit(jnp.tanh)(A)
 
   def testSingleResultPrimitiveNaN(self):
-    A = np.array(0.)
+    A = jnp.array(0.)
     with self.assertRaises(FloatingPointError):
-      B = 0. / A
+      _ = 0. / A
+
+
+if __name__ == '__main__':
+  absltest.main()

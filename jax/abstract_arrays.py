@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as onp
+from functools import partial
+
+import numpy as np
 
 from . import ad_util
 from . import core
@@ -31,18 +33,18 @@ raise_to_shaped = core.raise_to_shaped
 
 def make_shaped_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return ShapedArray(onp.shape(x), dtype)
+  return ShapedArray(np.shape(x), dtype)
 
 def zeros_like_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return onp.broadcast_to(onp.array(0, dtype), onp.shape(x))
+  return zeros_like_shaped_array(ShapedArray(np.shape(x), dtype))
 
-array_types = {onp.ndarray, onp.bool_,
-               onp.int8, onp.int16, onp.int32, onp.int64,
-               onp.uint8, onp.uint16, onp.uint32, onp.uint64,
-               dtypes.bfloat16, onp.float16, onp.float32, onp.float64,
-               onp.complex64, onp.complex128,
-               onp.longlong}
+array_types = {np.ndarray, np.bool_,
+               np.int8, np.int16, np.int32, np.int64,
+               np.uint8, np.uint16, np.uint32, np.uint64,
+               dtypes.bfloat16, np.float16, np.float32, np.float64,
+               np.complex64, np.complex128,
+               np.longlong}
 
 for t in array_types:
   core.pytype_aval_mappings[t] = ConcreteArray
@@ -51,22 +53,22 @@ for t in array_types:
 
 def zeros_like_shaped_array(aval):
   assert isinstance(aval, ShapedArray)
-  return onp.zeros(aval.shape, dtype=aval.dtype)
+  return np.broadcast_to(np.array(0, aval.dtype), aval.shape)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
 core.literalable_types.update(array_types)
 
-def _zeros_like_python_scalar(x):
-  return onp.array(0, dtypes.python_scalar_dtypes[type(x)])
+def _zeros_like_python_scalar(t, x):
+  return np.array(0, dtypes.python_scalar_dtypes[t])
 
-def _make_concrete_python_scalar(x):
+def _make_concrete_python_scalar(t, x):
   return ConcreteArray(
-    onp.array(x, dtype=dtypes.python_scalar_dtypes[type(x)]),
+    np.array(x, dtype=dtypes.python_scalar_dtypes[t]),
     weak_type=True)
 
 for t in dtypes.python_scalar_dtypes.keys():
-  core.pytype_aval_mappings[t] = _make_concrete_python_scalar
-  ad_util.jaxval_zeros_likers[t] = _zeros_like_python_scalar
+  core.pytype_aval_mappings[t] = partial(_make_concrete_python_scalar, t)
+  ad_util.jaxval_zeros_likers[t] = partial(_zeros_like_python_scalar, t)
 
 core.literalable_types.update(dtypes.python_scalar_dtypes.keys())

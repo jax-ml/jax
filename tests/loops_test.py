@@ -16,12 +16,11 @@
 
 
 from absl.testing import absltest
-import numpy as onp
+import numpy as np
 import re
 
 from jax import api, lax, ops
-from jax import core
-from jax import numpy as np
+from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental import loops
 
@@ -36,7 +35,7 @@ class LoopsTest(jtu.JaxTestCase):
       with loops.Scope() as s:
         s.x = r + 1
         return s.x
-    self.assertAllClose(4.0, f_op(3.), check_dtypes=True)
+    self.assertAllClose(4.0, f_op(3.))
 
   def test_loop_empty(self):
     def f_op(r):
@@ -45,7 +44,7 @@ class LoopsTest(jtu.JaxTestCase):
           pass
         return r
 
-    self.assertAllClose(3.0, f_op(3.), check_dtypes=True)
+    self.assertAllClose(3.0, f_op(3.))
 
   def test_loop_1(self):
     """One loop with one state var, with transforms."""
@@ -57,14 +56,14 @@ class LoopsTest(jtu.JaxTestCase):
         return s.out
     def f_expected(inc):
       return 10 + 5 * inc
-    self.assertAllClose(f_expected(2.), f_op(2.), check_dtypes=True)
-    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.), check_dtypes=True)
-    self.assertAllClose(5., api.grad(f_op)(2.), check_dtypes=True)
-    self.assertAllClose(5., api.grad(f_op)(2.), check_dtypes=True)
-    inc_batch = onp.arange(5, dtype=np.float_)
-    self.assertAllClose(np.array([f_expected(inc) for inc in inc_batch],
-                                 dtype=np.float_),
-                        api.vmap(f_op)(inc_batch), check_dtypes=True)
+    self.assertAllClose(f_expected(2.), f_op(2.))
+    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.))
+    self.assertAllClose(5., api.grad(f_op)(2.))
+    self.assertAllClose(5., api.grad(f_op)(2.))
+    inc_batch = np.arange(5, dtype=jnp.float_)
+    self.assertAllClose(jnp.array([f_expected(inc) for inc in inc_batch],
+                                  dtype=jnp.float_),
+                        api.vmap(f_op)(inc_batch))
 
 
   def test_loop_2(self):
@@ -78,7 +77,7 @@ class LoopsTest(jtu.JaxTestCase):
           s.out2 += 1.
         return (s.out1, s.out2)
 
-    self.assertAllClose((10. + 2. * 5, 20. + 1. * 5), f_op(2.), check_dtypes=True)
+    self.assertAllClose((10. + 2. * 5, 20. + 1. * 5), f_op(2.))
 
 
   def test_add_vectors(self):
@@ -86,14 +85,14 @@ class LoopsTest(jtu.JaxTestCase):
       with loops.Scope() as s:
         n = x.shape[0]
         assert n == y.shape[0]
-        s.out = np.zeros(shape=[n], dtype=np.float32)
+        s.out = jnp.zeros(shape=[n], dtype=jnp.float32)
         for i in s.range(n):
           s.out = ops.index_add(s.out, i, x[i] + y[i])
         return s.out
 
-    x = np.array([1., 2., 3.], dtype=np.float32)
-    y = np.array([4., 5., 6.], dtype=np.float32)
-    self.assertAllClose(np.add(x, y), add_vec(x, y), check_dtypes=True)
+    x = jnp.array([1., 2., 3.], dtype=jnp.float32)
+    y = jnp.array([4., 5., 6.], dtype=jnp.float32)
+    self.assertAllClose(jnp.add(x, y), add_vec(x, y))
 
   def test_matmul(self):
     def matmul(x, y):
@@ -101,16 +100,16 @@ class LoopsTest(jtu.JaxTestCase):
         n, m = x.shape
         m1, p = y.shape
         assert m == m1
-        s.out = np.zeros(shape=[n, p], dtype=np.float32)
+        s.out = jnp.zeros(shape=[n, p], dtype=jnp.float32)
         for i in s.range(n):
           for j in s.range(p):
             for k in s.range(m):
               s.out = ops.index_add(s.out, (i, j), x[i, k] * y[k, j])
         return s.out
 
-    x = np.array([[1., 2., 3.]], dtype=np.float32)  # 1x3
-    y = np.array([[4.], [5.], [6.]], dtype=np.float32)  # 3x1
-    self.assertAllClose(np.matmul(x, y), matmul(x, y), check_dtypes=True)
+    x = jnp.array([[1., 2., 3.]], dtype=jnp.float32)  # 1x3
+    y = jnp.array([[4.], [5.], [6.]], dtype=jnp.float32)  # 3x1
+    self.assertAllClose(jnp.matmul(x, y), matmul(x, y))
 
   def test_reuse_range(self):
     """Ranges can be reused, as long as not nested in each other."""
@@ -137,12 +136,12 @@ class LoopsTest(jtu.JaxTestCase):
             s.out += inc
         return s.out
 
-    self.assertAllClose(10. + 5 * (2. + 6 * 2.), f_op(2.), check_dtypes=True)
+    self.assertAllClose(10. + 5 * (2. + 6 * 2.), f_op(2.))
 
   def test_example_doc(self):
     "The example from the module docstring."
     def f_expected():
-      arr = onp.zeros(5, dtype=np.float_)
+      arr = np.zeros(5, dtype=jnp.float_)
       for i in range(arr.shape[0]):
         arr[i] += 2.
         if i % 2 == 0:
@@ -150,7 +149,7 @@ class LoopsTest(jtu.JaxTestCase):
       return arr
 
     def f_op_jax():
-      arr = np.zeros(5)
+      arr = jnp.zeros(5)
       def loop_body(i, acc_arr):
         arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
         return lax.cond(i % 2 == 0,
@@ -163,15 +162,15 @@ class LoopsTest(jtu.JaxTestCase):
 
     def f_op_loops():
       with loops.Scope() as s:
-        s.arr = np.zeros(5)  # Must create the mutable state of the loop as `scope` fields.
+        s.arr = jnp.zeros(5)  # Must create the mutable state of the loop as `scope` fields.
         for i in s.range(s.arr.shape[0]):
           s.arr = ops.index_update(s.arr, i, s.arr[i] + 2.)
           for _ in s.cond_range(i % 2 == 0):  # Conditionals are also sugared as loops with 0 or 1 iterations
             s.arr = ops.index_update(s.arr, i, s.arr[i] + 1.)
         return s.arr
 
-    self.assertAllClose(f_expected(), f_op_jax(), check_dtypes=True)
-    self.assertAllClose(f_expected(), f_op_loops(), check_dtypes=True)
+    self.assertAllClose(f_expected(), f_op_jax())
+    self.assertAllClose(f_expected(), f_op_loops())
 
   def test_loop_mutable_used_but_not_changed(self):
     def f_op(inc):
@@ -185,7 +184,7 @@ class LoopsTest(jtu.JaxTestCase):
 
       return save_to_other_var
 
-    self.assertAllClose(10. + 5 * 2., f_op(2.), check_dtypes=True)
+    self.assertAllClose(10. + 5 * 2., f_op(2.))
 
   def test_range_locations(self):
     """Ranges have locations."""
@@ -258,7 +257,7 @@ class LoopsTest(jtu.JaxTestCase):
           pass
         return i
 
-    self.assertAllClose(4, f_op(4), check_dtypes=True)
+    self.assertAllClose(4, f_op(4))
 
   def test_error_new_state_in_loop(self):
     """Error when creating new state in a loop."""
@@ -282,13 +281,13 @@ class LoopsTest(jtu.JaxTestCase):
           s.out += inc
         return s.out
 
-    self.assertAllClose(16., f_op(0, 4, 4.), check_dtypes=True)
+    self.assertAllClose(16., f_op(0, 4, 4.))
     # Ok to jit, as long as the start and end are static
-    self.assertAllClose(16., api.jit(f_op, static_argnums=(0, 1))(0, 4, 4.), check_dtypes=True)
+    self.assertAllClose(16., api.jit(f_op, static_argnums=(0, 1))(0, 4, 4.))
     with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
-      self.assertAllClose(16., api.jit(f_op)(0, 4, 4.), check_dtypes=True)
+      self.assertAllClose(16., api.jit(f_op)(0, 4, 4.))
     with self.assertRaisesRegex(TypeError, "Abstract tracer value encountered where concrete value is expected"):
-      self.assertAllClose(16., api.vmap(f_op)(np.zeros(10), np.ones(10), np.array([4.] * 10)), check_dtypes=True)
+      self.assertAllClose(16., api.vmap(f_op)(jnp.zeros(10), jnp.ones(10), jnp.array([4.] * 10)))
 
   def test_cond(self):
     def f_op(inc):
@@ -298,8 +297,8 @@ class LoopsTest(jtu.JaxTestCase):
           s.out += inc
         return s.out
 
-    self.assertAllClose(10. + 2., f_op(2.), check_dtypes=True)
-    self.assertAllClose(10., f_op(-2.), check_dtypes=True)
+    self.assertAllClose(10. + 2., f_op(2.))
+    self.assertAllClose(10., f_op(-2.))
 
   def test_cond_state(self):
     """Conditionals predicated on scope fields."""
@@ -310,8 +309,8 @@ class LoopsTest(jtu.JaxTestCase):
           s.out *= 2.
         return s.out
 
-    self.assertAllClose(2. * 2., f_op(2.), check_dtypes=True)
-    self.assertAllClose(-2., f_op(-2.), check_dtypes=True)
+    self.assertAllClose(2. * 2., f_op(2.))
+    self.assertAllClose(-2., f_op(-2.))
 
   def test_cond_nested(self):
     """Nested conditionals."""
@@ -342,7 +341,7 @@ class LoopsTest(jtu.JaxTestCase):
         return s.out
 
     for init in [-1., 0., 9., 10.]:
-      self.assertAllClose(f_expected(init), f_op(init), check_dtypes=True)
+      self.assertAllClose(f_expected(init), f_op(init))
 
 
   def test_error_cond_using_index_var(self):
@@ -374,13 +373,13 @@ class LoopsTest(jtu.JaxTestCase):
       out += 1.
       return out
 
-    self.assertAllClose(f_expected(2.), f_op(2.), check_dtypes=True)
-    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.), check_dtypes=True)
-    self.assertAllClose(f_expected(1.), f_op(1.), check_dtypes=True)
-    init_batch = onp.array([1., 2., 3.], dtype=onp.float32)
-    self.assertAllClose(onp.array([f_expected(init) for init in init_batch],
-                                  dtype=onp.float32),
-                        api.vmap(f_op)(init_batch), check_dtypes=True)
+    self.assertAllClose(f_expected(2.), f_op(2.))
+    self.assertAllClose(f_expected(2.), api.jit(f_op)(2.))
+    self.assertAllClose(f_expected(1.), f_op(1.))
+    init_batch = np.array([1., 2., 3.], dtype=np.float32)
+    self.assertAllClose(np.array([f_expected(init) for init in init_batch],
+                                  dtype=np.float32),
+                        api.vmap(f_op)(init_batch))
 
   def test_error_while_cond_mutation(self):
     """Disallow mutation in the while conditional."""

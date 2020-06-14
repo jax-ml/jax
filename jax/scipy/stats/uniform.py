@@ -16,8 +16,8 @@
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import (_constant_like, _promote_args_inexact, _wraps,
-                                where, inf, logical_or)
+from ...numpy._util import _wraps
+from ...numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or
 
 
 @_wraps(osp_stats.uniform.logpdf, update_doc=False)

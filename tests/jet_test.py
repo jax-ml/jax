@@ -16,16 +16,15 @@
 from functools import reduce
 
 from absl.testing import absltest
-import numpy as onp
+import numpy as np
 
 from jax import test_util as jtu
-import jax.numpy as np
+import jax.numpy as jnp
 import jax.scipy.special
 from jax import random
 from jax import jacfwd, jit
 from jax.experimental import stax
 from jax.experimental.jet import jet, fact, zero_series
-from jax.tree_util import tree_map
 from jax import lax
 
 from jax.config import config
@@ -61,10 +60,6 @@ class JetTest(jtu.JaxTestCase):
     self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
 
-    # TODO(duvenaud): Lower zero_series to actual zeros automatically.
-    if terms == zero_series:
-      terms = tree_map(np.zeros_like, expected_terms)
-
     self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
 
@@ -75,20 +70,16 @@ class JetTest(jtu.JaxTestCase):
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
 
     def _convert(x):
-      return np.where(np.isfinite(x), x, np.nan)
+      return jnp.where(jnp.isfinite(x), x, jnp.nan)
 
     y = _convert(y)
     expected_y = _convert(expected_y)
 
-    terms = _convert(np.asarray(terms))
-    expected_terms = _convert(np.asarray(expected_terms))
+    terms = _convert(jnp.asarray(terms))
+    expected_terms = _convert(jnp.asarray(expected_terms))
 
     self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
-
-    # TODO(duvenaud): Lower zero_series to actual zeros automatically.
-    if terms == zero_series:
-      terms = tree_map(np.zeros_like, expected_terms)
 
     self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
@@ -97,14 +88,14 @@ class JetTest(jtu.JaxTestCase):
   def test_dot(self):
     M, K, N = 2, 3, 4
     order = 3
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     x1 = rng.randn(M, K)
     x2 = rng.randn(K, N)
     primals = (x1, x2)
     terms_in1 = [rng.randn(*x1.shape) for _ in range(order)]
     terms_in2 = [rng.randn(*x2.shape) for _ in range(order)]
     series_in = (terms_in1, terms_in2)
-    self.check_jet(np.dot, primals, series_in)
+    self.check_jet(jnp.dot, primals, series_in)
 
   @jtu.skip_on_devices("tpu")
   def test_conv(self):
@@ -115,7 +106,7 @@ class JetTest(jtu.JaxTestCase):
     init_fun, apply_fun = stax.Conv(3, (2, 2), padding='VALID')
     _, (W, b) = init_fun(key, input_shape)
 
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
 
     x = rng.randn(*input_shape).astype("float32")
     primals = (W, b, x)
@@ -133,14 +124,14 @@ class JetTest(jtu.JaxTestCase):
 
   def unary_check(self, fun, lims=[-2, 2], order=3):
     dims = 2, 3
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     primal_in = transform(lims, rng.rand(*dims))
     terms_in = [rng.randn(*dims) for _ in range(order)]
     self.check_jet(fun, (primal_in,), (terms_in,), atol=1e-4, rtol=1e-4)
 
   def binary_check(self, fun, lims=[-2, 2], order=3, finite=True):
     dims = 2, 3
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     if isinstance(lims, tuple):
       x_lims, y_lims = lims
     else:
@@ -156,7 +147,7 @@ class JetTest(jtu.JaxTestCase):
 
   def expit_check(self, lims=[-2, 2], order=3):
     dims = 2, 3
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     primal_in = transform(lims, rng.rand(*dims))
     terms_in = [rng.randn(*dims) for _ in range(order)]
 
@@ -168,27 +159,25 @@ class JetTest(jtu.JaxTestCase):
 
     atol = 1e-4
     rtol = 1e-4
-    self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
-                        check_dtypes=True)
+    self.assertAllClose(y, expected_y, atol=atol, rtol=rtol)
 
-    self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
-                        check_dtypes=True)
+    self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol)
 
 
   @jtu.skip_on_devices("tpu")
-  def test_exp(self):        self.unary_check(np.exp)
+  def test_exp(self):        self.unary_check(jnp.exp)
   @jtu.skip_on_devices("tpu")
-  def test_neg(self):        self.unary_check(np.negative)
+  def test_neg(self):        self.unary_check(jnp.negative)
   @jtu.skip_on_devices("tpu")
-  def test_floor(self):      self.unary_check(np.floor)
+  def test_floor(self):      self.unary_check(jnp.floor)
   @jtu.skip_on_devices("tpu")
-  def test_ceil(self):       self.unary_check(np.ceil)
+  def test_ceil(self):       self.unary_check(jnp.ceil)
   @jtu.skip_on_devices("tpu")
-  def test_round(self):      self.unary_check(np.round)
+  def test_round(self):      self.unary_check(jnp.round)
   @jtu.skip_on_devices("tpu")
-  def test_sign(self):       self.unary_check(np.sign)
+  def test_sign(self):       self.unary_check(jnp.sign)
   @jtu.skip_on_devices("tpu")
-  def test_log(self):        self.unary_check(np.log, lims=[0.8, 4.0])
+  def test_log(self):        self.unary_check(jnp.log, lims=[0.8, 4.0])
   @jtu.skip_on_devices("tpu")
   def test_gather(self):     self.unary_check(lambda x: x[1:])
   @jtu.skip_on_devices("tpu")
@@ -196,27 +185,35 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_reduce_min(self): self.unary_check(lambda x: x.min(axis=1))
   @jtu.skip_on_devices("tpu")
-  def test_all_max(self):    self.unary_check(np.max)
+  def test_all_max(self):    self.unary_check(jnp.max)
   @jtu.skip_on_devices("tpu")
-  def test_all_min(self):    self.unary_check(np.min)
+  def test_all_min(self):    self.unary_check(jnp.min)
   @jtu.skip_on_devices("tpu")
   def test_stopgrad(self):   self.unary_check(lax.stop_gradient)
   @jtu.skip_on_devices("tpu")
-  def test_abs(self):        self.unary_check(np.abs)
+  def test_abs(self):        self.unary_check(jnp.abs)
   @jtu.skip_on_devices("tpu")
-  def test_fft(self):        self.unary_check(np.fft.fft)
+  def test_fft(self):        self.unary_check(jnp.fft.fft)
   @jtu.skip_on_devices("tpu")
-  def test_log1p(self):      self.unary_check(np.log1p, lims=[0, 4.])
+  def test_log1p(self):      self.unary_check(jnp.log1p, lims=[0, 4.])
   @jtu.skip_on_devices("tpu")
-  def test_expm1(self):      self.unary_check(np.expm1)
+  def test_expm1(self):      self.unary_check(jnp.expm1)
   @jtu.skip_on_devices("tpu")
-  def test_tanh(self):       self.unary_check(np.tanh, lims=[-500, 500], order=5)
+  def test_sin(self):        self.unary_check(jnp.sin)
+  @jtu.skip_on_devices("tpu")
+  def test_cos(self):        self.unary_check(jnp.cos)
+  @jtu.skip_on_devices("tpu")
+  def test_sinh(self):       self.unary_check(jnp.sinh)
+  @jtu.skip_on_devices("tpu")
+  def test_cosh(self):       self.unary_check(jnp.cosh)
+  @jtu.skip_on_devices("tpu")
+  def test_tanh(self):       self.unary_check(jnp.tanh, lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
   def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
   def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
-  def test_sqrt(self):       self.unary_check(np.sqrt, lims=[0, 5.])
+  def test_sqrt(self):       self.unary_check(jnp.sqrt, lims=[0, 5.])
   @jtu.skip_on_devices("tpu")
   def test_rsqrt(self):      self.unary_check(lax.rsqrt, lims=[0, 5000.])
   @jtu.skip_on_devices("tpu")
@@ -225,6 +222,10 @@ class JetTest(jtu.JaxTestCase):
   def test_acosh(self):      self.unary_check(lax.acosh, lims=[-100, 100])
   @jtu.skip_on_devices("tpu")
   def test_atanh(self):      self.unary_check(lax.atanh, lims=[-1, 1])
+  @jtu.skip_on_devices("tpu")
+  def test_erf(self):        self.unary_check(lax.erf)
+  @jtu.skip_on_devices("tpu")
+  def test_erfc(self):       self.unary_check(lax.erfc)
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
@@ -247,11 +248,11 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_ne(self):    self.binary_check(lambda x, y: x != y)
   @jtu.skip_on_devices("tpu")
-  def test_and(self):   self.binary_check(lambda x, y: np.logical_and(x, y))
+  def test_and(self):   self.binary_check(lambda x, y: jnp.logical_and(x, y))
   @jtu.skip_on_devices("tpu")
-  def test_or(self):    self.binary_check(lambda x, y: np.logical_or(x, y))
+  def test_or(self):    self.binary_check(lambda x, y: jnp.logical_or(x, y))
   @jtu.skip_on_devices("tpu")
-  def test_xor(self):   self.binary_check(lambda x, y: np.logical_xor(x, y))
+  def test_xor(self):   self.binary_check(lambda x, y: jnp.logical_xor(x, y))
   @jtu.skip_on_devices("tpu")
   @jtu.ignore_warning(message="overflow encountered in power")
   def test_pow(self):  self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
@@ -272,7 +273,7 @@ class JetTest(jtu.JaxTestCase):
   def test_select(self):
     M, K = 2, 3
     order = 3
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     b = rng.rand(M, K) < 0.5
     x = rng.randn(M, K)
     y = rng.randn(M, K)
@@ -281,7 +282,22 @@ class JetTest(jtu.JaxTestCase):
     terms_x = [rng.randn(*x.shape) for _ in range(order)]
     terms_y = [rng.randn(*y.shape) for _ in range(order)]
     series_in = (terms_b, terms_x, terms_y)
-    self.check_jet(np.where, primals, series_in)
+    self.check_jet(jnp.where, primals, series_in)
+
+  def test_inst_zero(self):
+    def f(x):
+      return 2.
+    def g(x):
+      return 2. + 0 * x
+    x = jnp.ones(1)
+    order = 3
+    f_out_primals, f_out_series = jet(f, (x, ), ([jnp.ones_like(x) for _ in range(order)], ))
+    assert f_out_series is not zero_series
+
+    g_out_primals, g_out_series = jet(g, (x, ), ([jnp.ones_like(x) for _ in range(order)], ))
+
+    assert g_out_primals == f_out_primals
+    assert g_out_series == f_out_series
 
 
 if __name__ == '__main__':

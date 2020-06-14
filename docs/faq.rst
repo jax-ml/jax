@@ -72,6 +72,61 @@ Additional reading:
 
   * JAX_sharp_bits_
 
+
+.. _faq-data-placement:
+
+Controlling data and computation placement on devices
+-----------------------------------------------------
+
+We describe first the principles of data and computation placement
+in JAX.
+
+In JAX the computation follows the data placement. JAX arrays
+have two placement properties: the device where the data resides,
+and whether it is **committed** to the device or not (we sometimes
+say that the data is *sticky* to the device).
+
+By default, JAX arrays are placed uncommitted on the default device
+(``jax.devices()[0]``).
+
+>>> from jax import numpy as jnp
+>>> print(jnp.ones(3).device_buffer.device())  # doctest: +SKIP
+gpu:0
+
+Computations involving uncommitted data are performed on the default
+device and the results are uncommitted on the default device.
+
+Data can also be placed explicitly on a device using :func:`jax.device_put`
+with a ``device`` parameter, in which case if becomes **committed** to the device:
+
+>>> import jax
+>>> from jax import device_put
+>>> print(device_put(1, jax.devices()[2]).device_buffer.device())  # doctest: +SKIP
+gpu:2
+
+Computations involving some committed inputs, will happen on the
+committed device, and the result will be committed on the
+same device. It is an error to invoke an operation on
+arguments that are committed to more than one device.
+
+You can also use :func:`jax.device_put` without a ``device`` parameter,
+in which case the data is left as is if already on a device (whether
+committed or not), or a Python value that is not on any device is
+placed uncommitted on the default device.
+
+Jitted functions behave as any other primitive operation
+(will follow the data and will error if invoked on data
+committed on more than one device).
+
+(As of April 2020, :func:`jax.jit` has a `device` parameter
+that affects slightly the device placement. That parameter
+is experimental, is likely to be removed or changed, and
+its use is not recommended.)
+
+For a worked-out example, we recommend reading through
+``test_computation_follows_data`` in
+`multi_device_test.py <https://github.com/google/jax/blob/master/tests/multi_device_test.py>`_.
+
 .. comment We refer to the anchor below in JAX error messages
 
 `Abstract tracer value encountered where concrete value is expected` error

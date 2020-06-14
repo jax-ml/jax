@@ -64,7 +64,7 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
   XLA implements unbatched triangular solve directly, so we need only implement
   the batched case."""
   c = _unpack_builder(c)
-  b_shape = c.GetShape(b)
+  b_shape = c.get_shape(b)
   dtype = b_shape.element_type()
   dims = b_shape.dimensions()
   assert len(dims) >= 2
@@ -74,7 +74,7 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
   batch = _prod(batch_dims)
   k = m if left_side else n
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   if (batch_dims + (k, k) != a_shape.dimensions() or
       a_shape.element_type() != dtype):
     raise ValueError("Argument mismatch for trsm, got {} and {}".format(
@@ -104,7 +104,7 @@ def trsm(c, a, b, left_side=False, lower=False, trans_a=False, conj_a=False,
 def potrf(c, a, lower):
   """Cholesky decomposition."""
   c = _unpack_builder(c)
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   m, n = dims[-2:]
@@ -138,7 +138,7 @@ def potrf(c, a, lower):
 def getrf(c, a):
   """LU decomposition."""
   c = _unpack_builder(c)
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -182,7 +182,7 @@ def getrf(c, a):
 def geqrf(c, a):
   """QR decomposition."""
   c = _unpack_builder(c)
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -220,7 +220,7 @@ def geqrf(c, a):
 def orgqr(c, a, tau):
   """Product of elementary Householder reflections."""
   c = _unpack_builder(c)
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -229,7 +229,7 @@ def orgqr(c, a, tau):
   num_bd = len(batch_dims)
   batch = _prod(batch_dims)
 
-  tau_dims = c.GetShape(tau).dimensions()
+  tau_dims = c.get_shape(tau).dimensions()
   assert tau_dims[:-1] == dims[:-2]
   k = tau_dims[-1]
 
@@ -265,7 +265,7 @@ def syevd(c, a, lower=False):
   """Symmetric (Hermitian) eigendecomposition."""
   c = _unpack_builder(c)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dtype = a_shape.element_type()
   dims = a_shape.dimensions()
   assert len(dims) >= 2
@@ -311,7 +311,7 @@ def gesvd(c, a, full_matrices=True, compute_uv=True):
   """Singular value decomposition."""
   c = _unpack_builder(c)
 
-  a_shape = c.GetShape(a)
+  a_shape = c.get_shape(a)
   dims = a_shape.dimensions()
   dtype = a_shape.element_type()
   assert len(dims) >= 2

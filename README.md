@@ -2,7 +2,7 @@
 <img src="https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
-# JAX: Autograd and XLA [![Test status](https://travis-ci.org/google/jax.svg?branch=master)](https://travis-ci.org/google/jax)
+# JAX: Autograd and XLA ![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
@@ -384,11 +384,10 @@ installed as the `jaxlib` package. Use the following instructions to install a
 binary package with `pip`, or to build JAX from source.
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
-macOS (10.12 or later) platforms, but not yet Windows. We're not currently
-working on Windows support, but contributions are welcome
-(see [#438](https://github.com/google/jax/issues/438)). Some users have reported
-success with building a CPU-only `jaxlib` from source using the Windows Subsytem
-for Linux.
+macOS (10.12 or later) platforms. Windows users can use JAX on CPU via the
+[Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about).
+We're not currently working on native Windows support, but contributions are
+welcome (see [#438](https://github.com/google/jax/issues/438)).
 
 ### pip installation
 
@@ -413,7 +412,7 @@ PYTHON_VERSION=cp37  # alternatives: cp36, cp37, cp38
 CUDA_VERSION=cuda92  # alternatives: cuda92, cuda100, cuda101, cuda102
 PLATFORM=linux_x86_64  # alternatives: linux_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.45-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.47-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
@@ -429,15 +428,29 @@ nvcc --version
 grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different path
 ```
 
+Note that some GPU functionality expects the CUDA installation to be at
+`/usr/local/cuda-X.X`, where X.X should be replaced with the CUDA version number
+(e.g. `cuda-10.2`). If CUDA is installed elsewhere on your system, you can either
+create a symlink:
+
+```bash
+sudo ln -s /path/to/cuda /usr/local/cuda-X.X
+```
+
+Or set the following environment variable before importing JAX:
+
+```bash
+XLA_FLAGS=--xla_gpu_cuda_data_dir=/path/to/cuda
+```
+
 The Python version must match your Python interpreter. There are prebuilt wheels
-for Python 3.6, 3.7, and 3.8; for anything else, you must build from
-source. Jax requires Python 3.6 or above. Jax does not support Python 2 any
-more.
+for Python 3.6, 3.7, and 3.8; for anything else, you must build from source. Jax
+requires Python 3.6 or above. Jax does not support Python 2 any more.
 
 To try automatic detection of the correct version for your system, you can run:
 
 ```bash
-pip install --upgrade https://storage.googleapis.com/jax-releases/`nvidia-smi | sed -En "s/.* CUDA Version: ([0-9]*)\.([0-9]*).*/cuda\1\2/p"`/jaxlib-0.1.45-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
+pip install --upgrade https://storage.googleapis.com/jax-releases/`nvidia-smi | sed -En "s/.* CUDA Version: ([0-9]*)\.([0-9]*).*/cuda\1\2/p"`/jaxlib-0.1.47-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
 ```
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)

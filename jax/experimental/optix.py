@@ -19,8 +19,8 @@ typically used in the context of optimizing neural nets.
 
 Each transformation defines:
 
-* an ``init_fn``, to initialize a (possibly empty) set of statistics, or ``state``.
-* an ``update_fn`` to transform an input gradient and update the state.
+* ``init_fn``, to initialize (possibly empty) sets of statistics (aka ``state``)
+* ``update_fn`` to transform a parameter update or gradient and update the state
 
 An (optional) ``chain`` utility can be used to build custom optimizers by
 chaining arbitrary sequences of transformations. For any sequence of
@@ -49,31 +49,39 @@ from jax.tree_util import tree_multimap
 from jax.tree_util import tree_structure
 from jax.tree_util import tree_unflatten
 
-
 ###
-# Composable gradient transformations.
+# Typing
 
 # TODO(jaslanides): Make these more specific.
-OptState = NamedTuple  # Optimizer state is a (possibly empty) namedtuple.
-Params = Any  # Parameters are nests of `jnp.ndarrays`.
-Updates = Params  # Gradient updates are of the same type as parameters.
+# pylint:disable=no-value-for-parameter
 
+OptState = NamedTuple  # Transformation states are (possibly empty) namedtuples.
+Params = Any  # Parameters are arbitrary nests of `jnp.ndarrays`.
+Updates = Params  # Gradient updates are of the same type as parameters.
 
 InitFn = Callable[[Params], Union[OptState, Sequence[OptState]]]
 UpdateFn = Callable[[Updates, OptState], Tuple[Updates, OptState]]
 
 
-class InitUpdate(NamedTuple):
+###
+# Composable gradient transformations.
+
+
+class GradientTransformation(NamedTuple):
   """Optix optimizers consists of a pair of functions: (initialiser, update)."""
   init: InitFn
   update: UpdateFn
+
+
+# TODO(mtthss): Remove alias, once existing references are updated
+InitUpdate = GradientTransformation
 
 
 class ClipState(OptState):
   """The `clip` transformation is stateless."""
 
 
-def clip(max_delta) -> InitUpdate:
+def clip(max_delta) -> GradientTransformation:
   """Clip updates element-wise, to be between -max_delta and +max_delta.
 
   Args:
@@ -86,23 +94,25 @@ def clip(max_delta) -> InitUpdate:
   def init_fn(_):
     return ClipState()
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     updates = tree_multimap(
         lambda g: jnp.clip(g, -max_delta, max_delta), updates)
     return updates, state
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 def global_norm(updates: Updates) -> Updates:
-  return jnp.sqrt(jnp.sum([jnp.sum(x**2) for x in tree_leaves(updates)]))
+  return jnp.sqrt(
+      sum([jnp.sum(jnp.square(x)) for x in tree_leaves(updates)]))
 
 
 class ClipByGlobalNormState(OptState):
   """The `clip_by_global_norm` transformation is stateless."""
 
 
-def clip_by_global_norm(max_norm) -> InitUpdate:
+def clip_by_global_norm(max_norm) -> GradientTransformation:
   """Clip updates using their global norm.
 
   References:
@@ -118,14 +128,15 @@ def clip_by_global_norm(max_norm) -> InitUpdate:
   def init_fn(_):
     return ClipByGlobalNormState()
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     g_norm = global_norm(updates)
     trigger = g_norm < max_norm
     updates = tree_multimap(
         lambda t: jnp.where(trigger, t, (t / g_norm) * max_norm), updates)
     return updates, state
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class TraceState(OptState):
@@ -133,7 +144,7 @@ class TraceState(OptState):
   trace: Params
 
 
-def trace(decay: float, nesterov: bool) -> InitUpdate:
+def trace(decay: float, nesterov: bool) -> GradientTransformation:
   """Compute a trace of past updates.
 
   Args:
@@ -147,14 +158,15 @@ def trace(decay: float, nesterov: bool) -> InitUpdate:
   def init_fn(params):
     return TraceState(trace=tree_multimap(jnp.zeros_like, params))
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     f = lambda g, t: g + decay * t
     update_trace = tree_multimap(f, updates, state.trace)
     updates = (
         tree_multimap(f, updates, update_trace) if nesterov else update_trace)
     return updates, TraceState(trace=update_trace)
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class ScaleByRmsState(OptState):
@@ -185,12 +197,13 @@ def scale_by_rms(decay: float = 0.9, eps: float = 1e-8):
     nu = tree_multimap(jnp.zeros_like, params)  # second moment
     return ScaleByRmsState(nu=nu)
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     nu = _update_moment(updates, state.nu, decay, 2)
     updates = tree_multimap(lambda g, n: g / (jnp.sqrt(n + eps)), updates, nu)
     return updates, ScaleByRmsState(nu=nu)
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class ScaleByRStdDevState(OptState):
@@ -199,7 +212,8 @@ class ScaleByRStdDevState(OptState):
   nu: Updates
 
 
-def scale_by_stddev(decay: float = 0.9, eps: float = 1e-8) -> InitUpdate:
+def scale_by_stddev(
+    decay: float = 0.9, eps: float = 1e-8) -> GradientTransformation:
   """Rescale updates by the root of the centered exp. moving average of squares.
 
   References:
@@ -218,14 +232,15 @@ def scale_by_stddev(decay: float = 0.9, eps: float = 1e-8) -> InitUpdate:
     nu = tree_multimap(jnp.zeros_like, params)  # Second moment
     return ScaleByRStdDevState(mu=mu, nu=nu)
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     mu = _update_moment(updates, state.mu, decay, 1)
     nu = _update_moment(updates, state.nu, decay, 2)
     updates = tree_multimap(
-        lambda g, m, n: g / jnp.sqrt(n - m**2 + eps), updates, mu, nu)
+        lambda g, m, n: g / jnp.sqrt(n - jnp.square(m) + eps), updates, mu, nu)
     return updates, ScaleByRStdDevState(mu=mu, nu=nu)
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class ScaleByAdamState(OptState):
@@ -237,7 +252,8 @@ class ScaleByAdamState(OptState):
 
 def scale_by_adam(b1: float = 0.9,
                   b2: float = 0.999,
-                  eps: float = 1e-8) -> InitUpdate:
+                  eps: float = 1e-8,
+                  eps_root: float = 0.0) -> GradientTransformation:
   """Rescale updates according to the Adam algorithm.
 
   References:
@@ -247,6 +263,8 @@ def scale_by_adam(b1: float = 0.9,
     b1: decay rate for the exponentially weighted average of grads.
     b2: decay rate for the exponentially weighted average of squared grads.
     eps: term added to the denominator to improve numerical stability.
+    eps_root: term added to the denominator inside the square-root to improve
+      numerical stability when backpropagating gradients through the rescaling.
 
   Returns:
     An (init_fn, update_fn) tuple.
@@ -257,23 +275,24 @@ def scale_by_adam(b1: float = 0.9,
     nu = tree_multimap(jnp.zeros_like, params)  # Second moment
     return ScaleByAdamState(count=jnp.zeros([], jnp.int32), mu=mu, nu=nu)
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     mu = _update_moment(updates, state.mu, b1, 1)
     nu = _update_moment(updates, state.nu, b2, 2)
     mu_hat = tree_multimap(lambda t: t / (1 - b1 ** (state.count + 1)), mu)
     nu_hat = tree_multimap(lambda t: t / (1 - b2 ** (state.count + 1)), nu)
     updates = tree_multimap(
-        lambda m, v: m / (jnp.sqrt(v) + eps), mu_hat, nu_hat)
+        lambda m, v: m / (jnp.sqrt(v + eps_root) + eps), mu_hat, nu_hat)
     return updates, ScaleByAdamState(count=state.count + 1, mu=mu, nu=nu)
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class ScaleState(NamedTuple):
   """The scale transformation is stateless."""
 
 
-def scale(step_size: float) -> InitUpdate:
+def scale(step_size: float) -> GradientTransformation:
   """Scale updates by some fixed scalar `step_size`.
 
   Args:
@@ -286,11 +305,12 @@ def scale(step_size: float) -> InitUpdate:
   def init_fn(_):
     return ScaleState()
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     updates = tree_multimap(lambda g: step_size * g, updates)
     return updates, state
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class ScaleByScheduleState(OptState):
@@ -312,11 +332,12 @@ def scale_by_schedule(step_size_fn: Callable[[jnp.ndarray], jnp.ndarray]):
   def init_fn(_):
     return ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
+    del params
     updates = tree_multimap(lambda g: step_size_fn(state.count) * g, updates)
     return updates, ScaleByScheduleState(count=state.count + 1)
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class AddNoiseState(OptState):
@@ -325,7 +346,7 @@ class AddNoiseState(OptState):
   rng_key: jnp.ndarray
 
 
-def add_noise(eta: float, gamma: float, seed: int) -> InitUpdate:
+def add_noise(eta: float, gamma: float, seed: int) -> GradientTransformation:
   """Add gradient noise.
 
   References:
@@ -341,10 +362,11 @@ def add_noise(eta: float, gamma: float, seed: int) -> InitUpdate:
   """
 
   def init_fn(_):
-    return AddNoiseState(count=jnp.zeros([], jnp.int32),
-                         rng_key=jrandom.PRNGKey(seed))
+    return AddNoiseState(
+        count=jnp.zeros([], jnp.int32), rng_key=jrandom.PRNGKey(seed))
 
-  def update_fn(updates, state):  # pylint: disable=missing-docstring
+  def update_fn(updates, state, params=None):  # pylint: disable=missing-docstring
+    del params
     num_vars = len(tree_leaves(updates))
     treedef = tree_structure(updates)
     variance = eta / (1 + state.count) ** gamma
@@ -356,7 +378,7 @@ def add_noise(eta: float, gamma: float, seed: int) -> InitUpdate:
         lambda g, n: g + variance * n, updates, noise)
     return updates, AddNoiseState(count=state.count + 1, rng_key=all_keys[0])
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 class ApplyEvery(OptState):
@@ -365,7 +387,7 @@ class ApplyEvery(OptState):
   grad_acc: Updates
 
 
-def apply_every(k: int = 1) -> InitUpdate:
+def apply_every(k: int = 1) -> GradientTransformation:
   """accumulate gradients and apply them every k steps.
 
   Args:
@@ -379,8 +401,8 @@ def apply_every(k: int = 1) -> InitUpdate:
     grad_acc = tree_multimap(jnp.zeros_like, params)
     return ApplyEvery(count=jnp.zeros([], jnp.int32), grad_acc=grad_acc)
 
-  def update_fn(updates, state):
-
+  def update_fn(updates, state, params=None):
+    del params
     c = state.count % k
     acc = c != 0
     grad_acc = tree_multimap(
@@ -389,14 +411,14 @@ def apply_every(k: int = 1) -> InitUpdate:
     updates = tree_multimap(lambda ga: emit * ga, grad_acc)
     return updates, ApplyEvery(count=state.count + 1, grad_acc=grad_acc)
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 ###
 # Utilities for building and using custom optimizers.
 
 
-def chain(*args: InitUpdate) -> InitUpdate:
+def chain(*args: GradientTransformation) -> GradientTransformation:
   """Applies a list of chainable update transformations.
 
   Given a sequence of chainable transforms, `chain` returns an `init_fn`
@@ -416,14 +438,14 @@ def chain(*args: InitUpdate) -> InitUpdate:
   def init_fn(params):
     return [fn(params) for fn in init_fns]
 
-  def update_fn(updates, state):
+  def update_fn(updates, state, params=None):
     new_state = []
     for s, fn in zip(state, update_fns):
-      updates, new_s = fn(updates, s)
+      updates, new_s = fn(updates, s, params)
       new_state.append(new_s)
     return updates, new_state
 
-  return InitUpdate(init_fn, update_fn)
+  return GradientTransformation(init_fn, update_fn)
 
 
 def apply_updates(params: Params, updates: Updates) -> Params:
@@ -450,7 +472,7 @@ def apply_updates(params: Params, updates: Updates) -> Params:
 
 def sgd(learning_rate: float,
         momentum: float = 0.,
-        nesterov: bool = False) -> InitUpdate:
+        nesterov: bool = False) -> GradientTransformation:
   return chain(
       trace(decay=momentum, nesterov=nesterov),
       scale(-learning_rate),
@@ -460,7 +482,7 @@ def sgd(learning_rate: float,
 def noisy_sgd(learning_rate: float,
               eta: float = 0.01,
               gamma: float = 0.55,
-              seed: int = 0) -> InitUpdate:
+              seed: int = 0) -> GradientTransformation:
   return chain(
       trace(decay=0., nesterov=False),
       scale(-learning_rate),
@@ -471,7 +493,7 @@ def noisy_sgd(learning_rate: float,
 def adam(learning_rate: float,
          b1: float = 0.9,
          b2: float = 0.999,
-         eps: float = 1e-8) -> InitUpdate:
+         eps: float = 1e-8) -> GradientTransformation:
   return chain(
       scale_by_adam(b1=b1, b2=b2, eps=eps),
       scale(-learning_rate),
@@ -481,7 +503,7 @@ def adam(learning_rate: float,
 def rmsprop(learning_rate: float,
             decay: float = 0.9,
             eps: float = 1e-8,
-            centered: bool = False) -> InitUpdate:
+            centered: bool = False) -> GradientTransformation:
   if centered:
     return chain(
         scale_by_stddev(decay=decay, eps=eps),

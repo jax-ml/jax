@@ -1,7 +1,7 @@
 Understanding Jaxprs
 ====================
 
-Updated: February 14, 2020 (for commit 9e6fe64).
+Updated: May 3, 2020 (for commit f1a46fe).
 
 (Note: the code examples in this file can be seed also in
 ``jax/tests/api_test::JaxprTest.testExamplesJaxprDoc``.)
@@ -173,26 +173,21 @@ ConstVars arise when the computation ontains array constants, either
 from the Python program, or from constant-folding. For example, the function
 ``func6`` below
 
-.. testcode::
-
-    def func5(first, second):
-      temp = first + jnp.sin(second) * 3. - jnp.ones(8)
-      return temp
-
-    def func6(first):
-      return func5(first, jnp.ones(8))
-
-    print(make_jaxpr(func6)(jnp.ones(8)))
-
+>>> def func5(first, second):
+...   temp = first + jnp.sin(second) * 3. - jnp.ones(8)
+...   return temp
+...
+>>> def func6(first):
+...   return func5(first, jnp.ones(8))
+...
 
 JAX produces the following jaxpr
 
-.. testoutput::
-
-    { lambda b d ; a.
-      let c = add a b
-          e = sub c d
-      in (e,) }
+>>> print(make_jaxpr(func6)(jnp.ones(8)))
+{ lambda b d ; a.
+  let c = add a b
+      e = sub c d
+  in (e,) }
 
 When tracing ``func6``, the function ``func5`` is invoked with a constant value
 (``onp.ones(8)``) for the second argument. As a result, the sub-expression
@@ -207,53 +202,92 @@ Higher-order primitives
 jaxpr includes several higher-order primitives. They are more complicated because
 they include sub-jaxprs.
 
-Cond
-^^^^
+Conditionals
+^^^^^^^^^^^^
 
-JAX traces through normal Python conditionals. To capture a conditional expression
-for dynamic execution, one must use the :py:func:`jax.lax.cond` constructor
-with the following signature::
+JAX traces through normal Python conditionals. To capture a
+conditional expression for dynamic execution, one must use the
+:py:func:`jax.lax.switch` and :py:func:`jax.lax.cond` constructors,
+which have the signatures::
 
-  lax.cond(pred : bool, true_op: A, true_body: A -> B, false_op: C, false_body: C -> B) -> B
+  lax.switch(index: int, branches: Sequence[A -> B], operand: A) -> B
 
-For example
+  lax.cond(pred: bool, true_body: A -> B, false_body: A -> B, operand: A) -> B
 
+Both of these will bind a primitive called ``cond`` internally. The
+``cond`` primitive in jaxprs reflects the more general signature of
+:py:func:`lax.switch`: it takes an integer denoting the index of the branch
+to execute (clamped into valid indexing range).
+
+For example:
+
+>>> from jax import lax
+>>>
+>>> def one_of_three(index, arg):
+...   return lax.switch(index, [lambda x: x + 1.,
+...                             lambda x: x - 2.,
+...                             lambda x: x + 3.],
+...                     arg)
+...
+>>> print(make_jaxpr(one_of_three)(1, 5.))
+{ lambda  ; a b.
+  let c = clamp 0 a 2
+      d = cond[ branches=( { lambda  ; a.
+                             let b = add a 1.0
+                             in (b,) }
+                           { lambda  ; a.
+                             let b = sub a 2.0
+                             in (b,) }
+                           { lambda  ; a.
+                             let b = add a 3.0
+                             in (b,) } )
+                linear=(False,) ] c b
+  in (d,) }
+
+The cond primitive has a number of parameters:
+
+  * `branches` are jaxprs that correspond to the branch
+    functionals. In this example, those functionals each take one
+    input variable, corresponding to ``x``.
+  * `linear` is a tuple of booleans that is used internally by the
+    auto-differentiation machinery to encode which of the input
+    parameters are used linearly in the conditional.
+
+The above instance of the cond primitive takes two operands.  The first
+one (``c``) is the branch index, then ``b`` is the operand (``arg``) to
+be passed to whichever jaxpr in ``branches`` is selected by the branch
+index.
+
+Another example, using :py:func:`lax.cond`:
 
 >>> from jax import lax
 >>>
 >>> def func7(arg):
 ...   return lax.cond(arg >= 0.,
-...                   arg,
 ...                   lambda xtrue: xtrue + 3.,
-...                   arg,
-...                   lambda xfalse: xfalse - 3.)
+...                   lambda xfalse: xfalse - 3.,
+...                   arg)
 ...
 >>> print(make_jaxpr(func7)(5.))
 { lambda  ; a.
   let b = ge a 0.0
-      c = cond[ false_jaxpr={ lambda  ; a.
-                              let b = sub a 3.0
-                              in (b,) }
-                linear=(False, False)
-                true_jaxpr={ lambda  ; a.
+      c = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] b
+      d = cond[ branches=( { lambda  ; a.
+                             let b = sub a 3.0
+                             in (b,) }
+                           { lambda  ; a.
                              let b = add a 3.0
-                             in (b,) } ] b a a
-  in (c,) }
+                             in (b,) } )
+                linear=(False,) ] c a
+  in (d,) }
 
 
-The cond primitive has a number of parameters:
-
-  * `true_jaxpr` and `false_jaxpr` are jaxprs that correspond to the true
-    and false branch functionals. In this example, those functionals take each
-    one input variable, corresponding to ``xtrue`` and ``xfalse`` respectively.
-  * `linear` is a tuple of booleans that is used internally by the auto-differentiation
-    machinery to encode which of the input parameters are used linearly in the
-    conditional.
-
-The above instance of the cond primitive takes 3 operands.
-The first one (``b``) is the predicate, then ``a` is the ``true_op`` (``arg``, to be
-passed to ``true_jaxpr``) and also ``a`` is the ``false_op``
-(``arg``, to be passed to ``false_jaxpr``).
+In this case, the boolean predicate is converted to an integer index
+(0 or 1), and ``branches`` are jaxprs that correspond to the false and
+true branch functionals, in that order. Again, each functional takes
+one input variable, corresponding to ``xtrue`` and ``xfalse``
+respectively.
 
 The following example shows a more complicated situation when the input
 to the branch functionals is a tuple, and the `false` branch functional
@@ -261,40 +295,45 @@ contains a constant ``jnp.ones(1)`` that is hoisted as a `constvar`
 
 >>> def func8(arg1, arg2):  # arg2 is a pair
 ...   return lax.cond(arg1 >= 0.,
-...                   arg2,
 ...                   lambda xtrue: xtrue[0],
-...                   arg2,
-...                   lambda xfalse: jnp.ones(1) + xfalse[1])
+...                   lambda xfalse: jnp.ones(1) + xfalse[1],
+...                   arg2)
 ...
 >>> print(make_jaxpr(func8)(5., (jnp.zeros(1), 2.)))
-{ lambda e ; a b c.
+{ lambda f ; a b c.
   let d = ge a 0.0
-      f = cond[ false_jaxpr={ lambda  ; c a b.
-                              let d = add c b
-                              in (d,) }
-                linear=(False, False, False, False, False)
-                true_jaxpr={ lambda  ; a b.
-                             let
-                             in (a,) } ] d b c e b c
-  in (f,) }
+      e = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] d
+      g = cond[ branches=( { lambda  ; c a b.
+                             let d = add c b
+                             in (d,) }
+                           { lambda  ; e_ a b.
+                             let 
+                             in (a,) } )
+                linear=(False, False, False) ] e f b c
+  in (g,) }
 
-The top-level jaxpr has one `constvar` ``e`` (corresponding to ``jnp.ones(1)`` from the
-body of the ``false_jaxpr``) and three input variables ``a b c`` (corresponding to ``arg1``
-and the two elements of ``arg2``; note that ``arg2`` has been flattened).
-The ``true_jaxpr`` has two input variables (corresponding to the two elements of ``arg2``
-that is passed to ``true_jaxpr``).
-The ``false_jaxpr`` has three input variables (``c`` corresponding to the constant for
-``jnp.ones(1)``, and ``a b`` for the two elements of ``arg2`` that are passed
-to ``false_jaxpr``).
+The top-level jaxpr has one `constvar` ``f`` (corresponding to
+``jnp.ones(1)`` from the body of the first (false) branch) and three
+input variables ``a b c`` (corresponding to ``arg1`` and the two
+elements of ``arg2``; note that ``arg2`` has been flattened).  The
+``false_jaxpr`` has three input variables (``c`` corresponding to the
+constant for ``jnp.ones(1)``, and ``a b`` for the two elements of
+``arg2`` that are passed to ``false_jaxpr``).  The ``true_jaxpr`` has
+three input variables. The first (``e_``) is an unused argument
+matching the constant first argument ``c`` of ``false_jaxpr``
+(required for the jaxpr signatures to match). The subsequent two
+correspond to the two elements of ``arg2`` that is passed to
+``true_jaxpr``.
 
-The actual operands to the cond primitive are: ``d b c e b c``, which correspond in order to:
+The actual operands to the cond primitive are: ``e f b c``, which
+correspond in order to:
 
-  * 1 operand for the predicate,
-  * 2 operands for ``true_jaxpr``, i.e., ``b`` and ``c``, which are input vars,
-    corresponding to ``arg2`` for the top-level jaxpr,
-  * 1 constant for ``false_jaxpr``, i.e., ``e``, which is a consvar for the top-level jaxpr,
-  * 2 operands for ``true_jaxpr``, i.e., ``b`` and ``c``, which are the input vars
-    corresponding to ``arg2`` for the top-level jaxpr.
+  * one operand for the predicate,
+  * one constant (only used by ``false_jaxpr``, but passed to both),
+    i.e., ``f``, which is a constvar for the top-level jaxpr
+  * two operands passed to both jaxprs, i.e., ``b`` and ``c``, which are
+    input vars, corresponding to ``arg2`` for the top-level jaxpr.
 
 While
 ^^^^^
@@ -323,7 +362,7 @@ For example, here is an example fori loop
 >>> print(make_jaxpr(func10)(onp.ones(16), 5))
 { lambda c d ; a b.
   let e = add a d
-      f g h = while[ body_jaxpr={ lambda  ; e g a b c.
+      _ _ f = while[ body_jaxpr={ lambda  ; e g a b c.
                                   let d = add a 1
                                       f = add c e
                                       h = add f g
@@ -333,7 +372,7 @@ For example, here is an example fori loop
                                   let d = lt a b
                                   in (d,) }
                      cond_nconsts=0 ] c a 0 b e
-  in (h,) }
+  in (f,) }
 
 The top-level jaxpr has two constvars: ``c`` (corresponding to ``ones * 3.`` from the body
 of the loop) and ``d`` (corresponding to the use of ``ones`` in the initial carry).
@@ -380,8 +419,7 @@ For the example consider the function ``func11`` below
 ...
 >>> print(make_jaxpr(func11)(onp.ones(16), 5.))
 { lambda c ; a b.
-  let d e = scan[ forward=True
-                  jaxpr={ lambda  ; f a b c.
+  let d e = scan[ jaxpr={ lambda  ; f a b c.
                           let d = mul b c
                               e = add a d
                               g = add e f
@@ -389,7 +427,8 @@ For the example consider the function ``func11`` below
                   length=16
                   linear=(False, False, False, False)
                   num_carry=1
-                  num_consts=1 ] b 0.0 a c
+                  num_consts=1
+                  reverse=False ] b 0.0 a c
   in (d, e) }
 
 The top-level jaxpr has one constvar ``c`` corresponding to the ``ones`` constant,
@@ -437,6 +476,7 @@ computation should run. For example
                                      e = add a d
                                  in (e,) }
                     device=None
+                    donated_invars=(False, False, False)
                     name=inner ] b a c
       e = add a d
   in (e,) }
@@ -476,10 +516,12 @@ example
                     call_jaxpr={ lambda  ; d b a.
                                  let c = add a b
                                      e = add c d
-                                     f = psum[ axis_name=rows ] a
+                                     f = psum[ axis_index_groups=None
+                                               axis_name=rows ] a
                                      g = div e f
                                  in (g,) }
                     devices=None
+                    donated_invars=(False, False, False)
                     global_axis_size=None
                     mapped_invars=(True, False, True)
                     name=inner ] c b a

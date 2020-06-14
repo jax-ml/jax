@@ -17,7 +17,8 @@ import warnings
 
 from .. import lax
 from ..numpy import lax_numpy as jnp
-from ..numpy.lax_numpy import (_wraps, _promote_dtypes_inexact)
+from ..numpy.lax_numpy import _promote_dtypes_inexact
+from ..numpy._util import _wraps
 
 
 # Note: we do not re-use the code from jax.numpy.convolve here, because the handling
@@ -28,6 +29,8 @@ def _convolve_nd(in1, in2, mode, *, precision):
     raise ValueError("mode must be one of ['full', 'same', 'valid']")
   if in1.ndim != in2.ndim:
     raise ValueError("in1 and in2 must have the same number of dimensions")
+  if in1.size == 0 or in2.size == 0:
+    raise ValueError(f"zero-size arrays not supported in convolutions, got shapes {in1.shape} and {in2.shape}.")
   in1, in2 = _promote_dtypes_inexact(in1, in2)
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))

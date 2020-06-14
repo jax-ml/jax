@@ -15,7 +15,7 @@
 
 from functools import partial
 
-import numpy as onp
+import numpy as np
 
 import jax
 from jax import core
@@ -51,14 +51,17 @@ def jet(fun, primals, series):
     yield tree_flatten(ans)
 
   f, out_tree = flatten_fun_output(lu.wrap_init(fun))
-  out_primals, out_terms = jet_fun(jet_subtrace(f)).call_wrapped(primals, series)
+  out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
 @lu.transformation
-def jet_fun(primals, series):
+def jet_fun(order, primals, series):
   with core.new_master(JetTrace) as master:
+    master.order = order
     out_primals, out_terms = yield (master, primals, series), {}
     del master
+  out_terms = [[np.zeros_like(p)] * order if s is zero_series else s
+               for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms
 
 @lu.transformation
@@ -110,12 +113,12 @@ class JetTrace(core.Trace):
 
   def process_primitive(self, primitive, tracers, params):
     assert not primitive.multiple_results  # TODO
+    order = self.master.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
-    order, = {len(terms) for terms in series_in if terms is not zero_series}
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
     # TODO(mattjj): avoid always instantiating zeros
-    series_in = [[onp.zeros(onp.shape(x), dtype=onp.result_type(x))
+    series_in = [[np.zeros(np.shape(x), dtype=np.result_type(x))
                   if t is zero_term else t for t in series]
                  for x, series in zip(primals_in, series_in)]
     rule = jet_rules[primitive]
@@ -126,7 +129,13 @@ class JetTrace(core.Trace):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
     f_jet, out_tree_def = traceable(jet_subtrace(f, self.master), in_tree_def)
-    result = call_primitive.bind(f_jet, *primals_and_series, **params)
+    new_params = dict(params)
+    if "donated_invars" in params:
+      if any(params["donated_invars"]):
+        raise ValueError("Buffer donation is not supported with jet.")
+      new_donated_invars = (False,) * len(primals_and_series)
+      new_params["donated_invars"] = new_donated_invars
+    result = call_primitive.bind(f_jet, *primals_and_series, **new_params)
     primals_out, series_out = tree_unflatten(out_tree_def(), result)
     return [JetTracer(self, p, ts) for p, ts in zip(primals_out, series_out)]
 
@@ -209,7 +218,36 @@ deflinear(lax.tie_in_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
+def def_deriv(prim, deriv):
+  """
+  Define the jet rule for a primitive in terms of its first derivative.
+  """
+  jet_rules[prim] = partial(deriv_prop, prim, deriv)
 
+def deriv_prop(prim, deriv, primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  primal_out = prim.bind(x)
+  c0, cs = jet(deriv, primals_in, series_in)
+  c = [c0] + cs
+  u = [x] + series
+  v = [primal_out] + [None] * len(series)
+  for k in range(1, len(v)):
+    v[k] = fact(k-1) * sum(_scale(k, j) * c[k-j] * u[j] for j in range(1, k + 1))
+  primal_out, *series_out = v
+  return primal_out, series_out
+
+
+def_deriv(lax.erf_p, lambda x: lax.mul(lax._const(x, 2. / np.sqrt(np.pi)), lax.exp(lax.neg(lax.square(x)))))
+
+def def_comp(prim, comp):
+  """
+  Define the jet rule for a primitive in terms of a composition of simpler primitives.
+  """
+  jet_rules[prim] = partial(jet, comp)
+
+
+def_comp(lax.erfc_p, lambda x: 1 - lax.erf(x))
 
 ### More complicated rules
 
@@ -257,6 +295,15 @@ def _pow_taylor(primals_in, series_in):
 
   return primal_out, series_out
 jet_rules[lax.pow_p] = _pow_taylor
+
+def _integer_pow_taylor(primals_in, series_in, *, y):
+  if y == 2:
+    fn = lambda x: x * x
+  else:
+    fn = lambda x: lax.pow(x, np.array(y, dtype=x.dtype))
+  return jet(fn, primals_in, series_in)
+jet_rules[lax.integer_pow_p] = _integer_pow_taylor
+
 
 def _expit_taylor(primals_in, series_in):
   x, = primals_in
@@ -354,6 +401,26 @@ def _div_taylor_rule(primals_in, series_in, **params):
   return primal_out, series_out
 jet_rules[lax.div_p] = _div_taylor_rule
 
+def _sinusoidal_rule(sign, prims, primals_in, series_in):
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  s, c = prims
+  s = [s(x)] + [None] * len(series)
+  c = [c(x)] + [None] * len(series)
+  for k in range(1, len(s)):
+    s[k] = fact(k-1) * sum(_scale(k, j) * u[j] * c[k-j] for j in range(1, k + 1))
+    c[k] = fact(k-1) * sum(_scale(k, j) * u[j] * s[k-j] for j in range(1, k + 1)) * sign
+  return (s[0], s[1:]), (c[0], c[1:])
+
+def _get_ind(f, ind):
+  return lambda *args: f(*args)[ind]
+
+jet_rules[lax.sin_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 0)
+jet_rules[lax.cos_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 1)
+jet_rules[lax.sinh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 0)
+jet_rules[lax.cosh_p] = _get_ind(partial(_sinusoidal_rule, 1, (lax.sinh, lax.cosh)), 1)
+
 def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   x, y = primals_in
   x_terms, y_terms = series_in
@@ -413,4 +480,3 @@ def _select_taylor_rule(primal_in, series_in, **params):
   series_out = [sel(*terms_in, **params) for terms_in in zip(*series_in)]
   return primal_out, series_out
 jet_rules[lax.select_p] = _select_taylor_rule
-

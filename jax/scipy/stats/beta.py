@@ -15,7 +15,8 @@
 import scipy.stats as osp_stats
 
 from ... import lax
-from ...numpy.lax_numpy import (_promote_args_inexact, _constant_like, _wraps,
+from ...numpy._util import _wraps
+from ...numpy.lax_numpy import (_promote_args_inexact, _constant_like,
                                 where, inf, logical_or)
 from ..special import betaln
 
@@ -35,4 +36,3 @@ def logpdf(x, a, b, loc=0, scale=1):
 @_wraps(osp_stats.beta.pdf, update_doc=False)
 def pdf(x, a, b, loc=0, scale=1):
   return lax.exp(logpdf(x, a, b, loc, scale))
-

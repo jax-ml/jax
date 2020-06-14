@@ -61,13 +61,5 @@ def vcat(ps):
     return functools.reduce(lambda x, y: x + y, ps)
 
 
-def pp_kv_pairs(kv_pairs):
-  if kv_pairs:
-    kv_pairs = vcat([pp('{}='.format(k)) >> pp(v) for k, v in kv_pairs])
-    return pp('[ ') >> kv_pairs >> pp(' ]')
-  else:
-    return pp('')
-
-
 def print_list(xs):
   return ' '.join(map(str, xs))
