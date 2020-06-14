@@ -18,11 +18,12 @@ from absl.testing import absltest
 import numpy as np
 
 import jax
-from jax import dtypes
+from jax import dtypes, vjp
 from jax import test_util as jtu
 import jax.numpy as jnp
 from jax.experimental.ode import odeint
-from jax.tree_util import tree_map
+from jax.flatten_util import ravel_pytree
+from jax.tree_util import tree_all, tree_map
 
 import scipy.integrate as osp_integrate
 
@@ -180,6 +181,46 @@ class ODETest(jtu.JaxTestCase):
       x0_eval = jnp.zeros((5, 2))
       f = lambda x0: odeint(lambda x, _t: x, x0, t)
       jax.vmap(f)(x0_eval)  # doesn't crash
+
+  def test_stiff_system_step_sizes(self):
+    # See https://github.com/google/jax/issues/3437.
+    def eval_spline(ta, tb, Q, y_old, t):
+      t_local = (t - ta) / (tb - ta)
+      return y_old + Q @ jnp.power(t_local, jnp.arange(1, Q.shape[-1] + 1))
+
+    x0 = jnp.ones(2)
+    _, unravel = ravel_pytree((jnp.zeros(()), x0))
+
+    ta = 16.213825
+    tb = 20.0
+    Q = jnp.array([[6.3427440e-14, -8.2662921e-14, 3.6318472e-14],
+                  [-2.8858358e-07, 3.2965616e-07, -1.2716738e-07],
+                  [-2.8858358e-07, 3.2965616e-07, -1.2716738e-07]])
+    y_old = jnp.array([1.9997644e+00, 8.8936645e-08, 8.8936645e-08])
+
+    def fun(_t, y, K):
+      _, x = y
+      u = -K @ x
+      return x.T @ x + u.T @ u, u
+
+    def adj_dynamics(aug, t):
+      K = jnp.eye(2)
+
+      _, y_bar, _ = aug
+      y = unravel(eval_spline(ta, tb, Q, y_old, -t))
+      _, vjpfun = vjp(fun, -t, y, K)
+      return vjpfun(y_bar)
+
+    y_bar = (jnp.ones(()), jnp.zeros((2, )))
+    aug = (jnp.zeros(()), y_bar, jnp.zeros((2, 2)))
+    adj_path = odeint(adj_dynamics, aug, jnp.array([-tb, -ta]))
+
+    # Make sure that we don't have NaNs.
+    assert tree_all(tree_map(lambda x: jnp.all(jnp.isfinite(x)), adj_path))
+
+    # K = I is in fact optimal so the gradient should be near zero.
+    _, _, adj_theta = adj_path
+    assert jnp.allclose(adj_theta, 0)
 
 
 if __name__ == '__main__':
