@@ -393,6 +393,22 @@ class FlatTreeTest(jtu.JaxTestCase):
     actual = f(tree)
     self.assertAllClose(actual, expected, check_dtypes=True)
 
+ @pytest.mark.xfail
+ def test_vmap_tree_call(self):
+
+    def g(x):
+      assert x['a'].shape == ()
+      return {'b': x['a']}
+
+    @tree_vectorize
+    def f(g, x):
+      return jax.vmap(g)(x)
+
+    tree = {'a': jnp.arange(3.0)}
+    expected = {'b': jnp.arange(3.0)}
+    actual = f(g, tree)
+    self.assertAllClose(actual, expected, check_dtypes=True)
+
   def test_jvp(self):
     @tree_vectorize
     def f(x, y):
@@ -405,21 +421,20 @@ class FlatTreeTest(jtu.JaxTestCase):
     self.assertAllClose(actual, expected, check_dtypes=True)
 
   @pytest.mark.xfail
-  def test_vmap_tree_call(self):
+  def test_jvp_tree_call(self):
 
     def g(x):
-      print(x)
-      assert x['a'].shape == ()
-      return {'b': x['a']}
+      return {'b': 0.5 * x['a'] ** 2}
 
     @tree_vectorize
-    def f(g, x):
-      return jax.vmap(g)(x)
+    def f(g, x, y):
+      z, dz = jax.jvp(g, (x,), (y,))
+      # print(z, dz)
+      return z, dz
 
-    tree = {'a': jnp.arange(3.0)}
-    expected = {'b': jnp.arange(3.0)}
-    actual = f(g, tree)
-    self.assertAllClose(actual, expected, check_dtypes=True)
+    actual = f(g, {'a': 2.0}, {'a': 3.0})
+    expected = ({'b': 2.0}, {'b': 6.0})
+    self.assertTreeEqual(actual, expected, check_dtypes=True)
 
   @pytest.mark.xfail
   def test_jacobian(self):
@@ -458,6 +473,7 @@ class FlatTreeTest(jtu.JaxTestCase):
 
     actual = jacrev(f)(tree)
     self.assertTreeEqual(expected, actual, check_dtypes=True)
+
 
 
 if __name__ == "__main__":
