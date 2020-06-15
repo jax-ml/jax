@@ -298,10 +298,18 @@ jet_rules[lax.pow_p] = _pow_taylor
 
 def _integer_pow_taylor(primals_in, series_in, *, y):
   if y == 2:
-    fn = lambda x: x * x
-  else:
-    fn = lambda x: lax.pow(x, np.array(y, dtype=x.dtype))
-  return jet(fn, primals_in, series_in)
+    return jet(lambda x: x * x, primals_in, series_in)
+  x, = primals_in
+  series, = series_in
+  u = [x] + series
+  v = [lax.integer_pow(x, y)] + [None] * len(series)
+  for k in range(1, len(v)):
+    vu = sum(_scale(k, j) * v[k-j] * u[j] for j in range(1, k + 1))
+    uv = sum(_scale(k, j) * u[k-j] * v[j] for j in range(1, k))
+    v[k] = np.where(x == 0, 0, fact(k-1) * (y * vu - uv) / x)
+  primal_out, *series_out = v
+
+  return primal_out, series_out
 jet_rules[lax.integer_pow_p] = _integer_pow_taylor
 
 
