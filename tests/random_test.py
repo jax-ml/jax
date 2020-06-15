@@ -166,7 +166,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testRngUniform(self, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.uniform() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
@@ -203,7 +203,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in [np.float16, np.float32, np.float64]))
   def testNormal(self, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.normal() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
@@ -355,7 +355,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in [np.float16, np.float32, np.float64]))
   def testCauchy(self, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.cauchy() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
@@ -392,7 +392,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testExponential(self, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.exponential() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.exponential(key, (10000,), dtype)
@@ -458,7 +458,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for lam in [0.5, 3, 9, 11, 50, 500]
       for dtype in [np.int16, np.int32, np.int64]))
   def testPoisson(self, lam, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.poisson() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
@@ -504,7 +504,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testLaplace(self, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.laplace() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.laplace(key, (10000,), dtype)
@@ -520,7 +520,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testLogistic(self, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.logistic() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.logistic(key, (10000,), dtype)
@@ -555,13 +555,11 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_df={}_{}".format(df, dtype),
-       "df": df, "dtype": np.dtype(dtype)}
+       "df": df, "dtype": np.dtype(dtype).name}
       for df in [0.1, 1., 10.]
-      for dtype in float_dtypes))
+      for dtype in [np.float32, np.float64]))
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
-      raise SkipTest("random.t() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
     crand = api.jit(rand)
@@ -578,7 +576,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for dim in [1, 3, 5]
       for dtype in float_dtypes))
   def testMultivariateNormal(self, dim, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.multivariate_normal() not supported on TPU for 16-bit types.")
     r = np.random.RandomState(dim)
     mean = r.randn(dim)
