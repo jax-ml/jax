@@ -67,7 +67,7 @@ def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
   e = y0
   return a, b, c, d, e
 
-def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
+def initial_step_size(fun, t0, t1, y0, order, rtol, atol, f0):
   # Algorithm from:
   # E. Hairer, S. P. Norsett G. Wanner,
   # Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
@@ -76,6 +76,11 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
   d1 = jnp.linalg.norm(f0 / scale)
 
   h0 = jnp.where((d0 < 1e-5) | (d1 < 1e-5), 1e-6, 0.01 * d0 / d1)
+
+  # This deviates slightly from Hairer and Wanner, but protects us from
+  # overshooting the goal time step. `h0` is especially radical in stiff
+  # systems.
+  h0 = jnp.clip(h0, 0.0, t1 - t0)
 
   y1 = y0 + h0 * f0
   f1 = fun(y1, t0 + h0)
@@ -198,7 +203,7 @@ def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
     return carry, y_target
 
   f0 = func_(y0, ts[0])
-  dt = initial_step_size(func_, ts[0], y0, 4, rtol, atol, f0)
+  dt = initial_step_size(func_, ts[0], ts[1], y0, 4, rtol, atol, f0)
   interp_coeff = jnp.array([y0] * 5)
   init_carry = [y0, f0, ts[0], dt, ts[0], interp_coeff]
   _, ys = lax.scan(scan_fun, init_carry, ts[1:])
