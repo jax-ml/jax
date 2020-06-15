@@ -135,7 +135,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     args = args_maker()
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
                         check_dtypes=False)
-    self._CompileAndCheck(lax_op, args_maker, rtol=1e-5)
+    self._CompileAndCheck(lax_op, args_maker, rtol=1e-4)
 
     if test_autodiff:
       def partial_lax_op(*vals):
