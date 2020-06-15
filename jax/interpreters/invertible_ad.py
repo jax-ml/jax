@@ -1,18 +1,16 @@
-from typing import Callable
 from functools import partial
-from enum import Enum
 import itertools as it
+from typing import Dict, Any
 
 import jax
 from jax import core
 from jax import linear_util as lu
 from . import ad
 from . import partial_eval as pe
-from .partial_eval import (PartialVal, partial_eval_jaxpr, _dce_jaxpr, _reconstruct_pval,
+from .partial_eval import (PartialVal, partial_eval_jaxpr,
                            JaxprTracer, ConstVar, convert_constvars_jaxpr, new_eqn_recipe)
-from ..core import raise_to_shaped, get_aval, unitvar, abstract_unit, Literal, Jaxpr
+from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
 from ..custom_derivatives import _initial_style_jaxpr, _resolve_kwargs
-from ..abstract_arrays import ConcreteArray
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
 from ..util import safe_map, safe_zip, unzip2, split_list, cache
@@ -340,4 +338,3 @@ def get_primitive_inverse(p):
 def definverse(primitive, inverse_rule):
   primitive_inverses[primitive] = inverse_rule
   return inverse_rule
-
