@@ -57,14 +57,13 @@ TfVal = Any
 # Whenever we are in a JAX tracing context we must use `core.unit` values
 # in those places. However, when we move to TF we have to turn them into
 # some small TFVal; it does not matter which value since it will never be used
-# in an actual operation.
+# in an actual operation. We will use `tf.constant(np.nan, float32)`.
 TfValOrUnit = Union[TfVal, core.Unit]
-
-_unit_tfval = tf.constant(np.nan, tf.float32)
 
 def _tfval_remove_unit(args: Sequence[TfValOrUnit]) -> Sequence[TfVal]:
   """Replace core.unit with regular TF values."""
-  return [_unit_tfval if a is core.unit else a for a in args]
+  return [tf.constant(np.nan, tf.float32) if a is core.unit else a
+          for a in args]
 
 def _tfval_add_unit(vals: Sequence[TfVal],
                     avals: Sequence[core.AbstractValue]) -> Sequence[TfValOrUnit]:
