@@ -17,7 +17,7 @@ import contextlib
 import functools
 import string
 import threading
-from typing import Any, Callable, Dict, Sequence
+from typing import Any, Callable, Dict, Iterable, Sequence, Union
 
 import jax
 from jax import abstract_arrays
@@ -47,10 +47,38 @@ import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
-# A value suitable in a TF tracing context: tf.Tensor, tf.Var, or
-# Python scalar or numpy.ndarray.
+# A value suitable in a TF tracing context: tf.Tensor, tf.Variable, tf.EagerTensor,
+# or Python scalar or numpy.ndarray.
 TfVal = Any
 
+# During JAX transformations we sometimes produce a Jaxpr that has arguments
+# of abstract value core.abstract_unit and results equal to core.unit.
+# These are arguments and results that are not used in the computation.
+# Whenever we are in a JAX tracing context we must use `core.unit` values
+# in those places. However, when we move to TF we have to turn them into
+# some small TFVal; it does not matter which value since it will never be used
+# in an actual operation.
+TfValOrUnit = Union[TfVal, core.Unit]
+
+_unit_tfval = tf.constant(np.nan, tf.float32)
+
+def _tfval_remove_unit(args: Sequence[TfValOrUnit]) -> Sequence[TfVal]:
+  """Replace core.unit with regular TF values."""
+  return [_unit_tfval if a is core.unit else a for a in args]
+
+def _tfval_add_unit(vals: Sequence[TfVal],
+                    avals: Sequence[core.AbstractValue]) -> Sequence[TfValOrUnit]:
+  """Turn regular TfVals into TfValOrUnit, based on expected abstract values."""
+  return [core.unit if aval is core.abstract_unit else v
+          for v, aval in util.safe_zip(vals, avals)]
+
+# The implementation rules for primitives. The rule will be called with the
+# arguments (TfValOrUnit) and must return TfValOrUnit (or a sequence thereof,
+# if primitive.multiple_results). The vast majority of primitives do not need
+# to worry about core.unit inputs or results. The exception are primarily the
+# control-flow primitives.
+tf_impl: Dict[core.Primitive,
+              Callable[..., Any]] = {}
 
 # TODO(necula): used for tests, until we handle all control-flow primitives
 class _JitState(threading.local):
@@ -112,11 +140,11 @@ def convert(fun):
       thereof.
 
   Returns:
-    A version of `fun` that expects `tf.Tensor`s as arguments (or
-    tuple/lists/dicts) thereof, and returns `tf.Tensor`s as outputs.
+    A version of `fun` that expects TfVals as arguments (or
+    tuple/lists/dicts) thereof, and returns TfVals as outputs.
   """
   @disable_gradient
-  def wrapped_fun(*args):
+  def wrapped_fun(*args: TfValOrUnit) -> TfValOrUnit:
     # TODO(necula): remove the jit disabling once we handle all control-flow.
     # Disabling the jit helps to avoid some unsupported jax primitives.
     # E.g. scan will be statically unrolled.
@@ -139,29 +167,36 @@ def convert(fun):
 
 
 def _interpret_fun(fun: lu.WrappedFun,
-                   in_vals: Sequence[TfVal]) -> Sequence[TfVal]:
+                   in_vals: Sequence[TfValOrUnit]) -> Sequence[TfValOrUnit]:
   with core.new_master(TensorFlowTrace) as master:
     fun = _interpret_subtrace(fun, master)
-    out_vals = fun.call_wrapped(*in_vals)
+    out_vals: Sequence[TfValOrUnit] = fun.call_wrapped(*in_vals)
     del master
   return out_vals
 
 
 @lu.transformation
-def _interpret_subtrace(master: core.MasterTrace, *in_vals: TfVal):
+def _interpret_subtrace(master: core.MasterTrace, *in_vals: TfValOrUnit):
   trace = TensorFlowTrace(master, core.cur_sublevel())
-  in_tracers = [TensorFlowTracer(trace, val) for val in in_vals]
-  outs = yield in_tracers, {}
-  out_tracers = map(trace.full_raise, outs)
-  out_vals = [t.val for t in out_tracers]
+  in_tracers = tuple(TensorFlowTracer(trace, val) for val in in_vals)
+  outs = yield in_tracers, {}  # type: Sequence[TfValOrUnit]
+  out_tracers: Iterable[TensorFlowTracer] = map(trace.full_raise, outs)  # type: ignore
+  out_vals: Sequence[TfValOrUnit] = tuple(t.val for t in out_tracers)
   yield out_vals
 
 
-def _interpret_jaxpr(jaxpr: core.TypedJaxpr, *args: TfVal) -> Sequence[TfVal]:
-  """Evaluate a Jaxpr with tf.Tensor arguments."""
+def _interpret_jaxpr(jaxpr: core.TypedJaxpr, *args: TfValOrUnit) -> Sequence[TfVal]:
+  """Evaluates a Jaxpr with tf.Tensor arguments.
+
+  It is safe to call this function with arguments TfVal or TfValOrUnit, they
+  will be replaced with `core.unit` if the `jaxpr` expects units.
+
+  The output is a sequence of TfVal (no `core.unit`), suitable for use with TF.
+  """
   fun: lu.WrappedFun = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
-  out_vals = _interpret_fun(fun, args)
-  return out_vals
+  args_jax: Sequence[TfValOrUnit] = _tfval_add_unit(args, jaxpr.in_avals)
+  out_vals_jax: Sequence[TfValOrUnit] = _interpret_fun(fun, args_jax)
+  return _tfval_remove_unit(out_vals_jax)
 
 ### tracer
 
@@ -175,18 +210,22 @@ def abstractify(t: tf.Tensor):
 
 class TensorFlowTracer(core.Tracer):
   """Tracer class that boxes a `tf.Tensor`."""
+  # val: TfValOrUnit
   __slots__ = ["val"]
 
-  def __init__(self, trace, val):
+  def __init__(self, trace: 'TensorFlowTrace', val: TfValOrUnit):
     self._trace = trace
-    if not isinstance(val, (tf.Tensor, tf.Variable)):
+    if not (val is core.unit or isinstance(val, (tf.Tensor, tf.Variable))):
       aval = xla.abstractify(val)
-      val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore[attribute-error]
+      val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore
     self.val = val
 
   @property
   def aval(self):
-    return abstractify(self.val)
+    if self.val is core.unit:
+      return core.abstract_unit
+    else:
+      return abstractify(self.val)
 
   def full_lower(self):
     return self
@@ -194,30 +233,38 @@ class TensorFlowTracer(core.Tracer):
 
 class TensorFlowTrace(core.Trace):
   """Trace class that underlies the jax2tf transformation."""
-
-  def pure(self, val):
+  def pure(self, val: TfValOrUnit):
+    """Lifts a non-Tracer into the TensorFlowTrace."""
     return TensorFlowTracer(self, val)
 
-  def lift(self, val):
+  def lift(self, val: core.Tracer):
+    """Lifts a core.Tracer from a lower-level master into the TensorFlowTrace."""
+    # TODO(necula): this should never be needed
     return TensorFlowTracer(self, val)
 
-  def sublift(self, val):
+  def sublift(self, val: TensorFlowTracer):
+    # TODO(necula): this should never be needed
     return TensorFlowTracer(self, val.val)
 
-  def process_primitive(self, primitive, tracers, params):
+  def process_primitive(self, primitive: core.Primitive,
+                        tracers: Sequence[TensorFlowTracer],
+                        params) -> TensorFlowTracer:
     impl = self.get_primitive_impl(primitive)
-    val_out = impl(*[t.val for t in tracers], **params)
+    args_tf: Sequence[TfValOrUnit] = [t.val for t in tracers]
+    # impl takes core.unit and returns core.unit when needed.
+    val_out: TfValOrUnit = impl(*args_tf, **params)
     if primitive.multiple_results:
-      out = map(functools.partial(TensorFlowTracer, self), val_out)
+      out = map(functools.partial(TensorFlowTracer, self), val_out)  # type: ignore
     else:
       out = TensorFlowTracer(self, val_out)
-    return out
+    return out  # type: ignore
 
-  def process_call(self, call_primitive, f, tracers, params):
+  def process_call(self, call_primitive: core.Primitive, f,
+                   tracers: Sequence[TensorFlowTracer], params):
     assert call_primitive.multiple_results
-    vals = [t.val for t in tracers]
+    vals: Sequence[TfValOrUnit] = [t.val for t in tracers]
     f = _interpret_subtrace(f, self.master)
-    vals_out = f.call_wrapped(*vals)
+    vals_out: Sequence[TfValOrUnit] = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v) for v in vals_out]
 
   def post_process_call(self, call_primitive, out_tracers, params):
@@ -252,7 +299,6 @@ def wrap_binary_op(func):
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
-tf_impl: Dict[core.Primitive, Callable[..., Any]] = {}
 
 for unexpected in [
   xla.xla_call_p]:  # Not part of the public API
@@ -261,7 +307,7 @@ for unexpected in [
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  ad_util.add_jaxvals_p, ad.custom_lin_p,
+  ad.custom_lin_p,
 
   lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax_fft.fft_p,
   lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p, lax.outfeed_p,
@@ -287,6 +333,7 @@ tf_impl[lax.tie_in_p] = lambda x, y: y
 tf_impl[core.identity_p] = lambda x: x
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
+tf_impl[ad_util.add_jaxvals_p] = wrap_binary_op(tf.math.add)
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
 tf_impl[lax.neg_p] = tf.math.negative
@@ -842,39 +889,43 @@ tf_impl[lax.scatter_mul_p] = functools.partial(_scatter, tf.math.multiply)
 tf_impl[lax.scatter_add_p] = functools.partial(_scatter, tf.math.add)
 
 
-def _cond(index: TfVal, *operands: TfVal,
+def _cond(index: TfVal, *operands: TfValOrUnit,
           branches: Sequence[core.TypedJaxpr],
-          linear: Sequence[bool]):
+          linear: Sequence[bool]) -> Sequence[TfValOrUnit]:
   del linear
   # tf.cond needs lambdas with no arguments.
-  tf_branches = [functools.partial(_interpret_jaxpr, jaxpr, *operands)
+  branches_tf = [functools.partial(_interpret_jaxpr, jaxpr, *operands)
                  for jaxpr in branches]
-  return tf.switch_case(index, tf_branches)
+  res_tf: Sequence[TfVal] = tf.switch_case(index, branches_tf)
+  return _tfval_add_unit(res_tf, branches[0].out_avals)
 
 tf_impl[lax.cond_p] = _cond
 
 
-def _while(*args, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
-           body_nconsts: int, body_jaxpr: core.TypedJaxpr):
+def _while(*args: TfValOrUnit, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
+           body_nconsts: int, body_jaxpr: core.TypedJaxpr) -> Sequence[TfValOrUnit]:
   cond_consts, body_consts, init_carry = util.split_list(args, [cond_nconsts,
                                                                 body_nconsts])
   if cond_jaxpr.out_avals[0].shape:  # type: ignore[attr-defined]
     # The conditional is not a scalar, this must be a batched while
-    return _batched_while(*args,
-                          cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr,
-                          body_nconsts=body_nconsts, body_jaxpr=body_jaxpr)
+    return _batched_cond_while(*args,
+                               cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr,
+                               body_nconsts=body_nconsts, body_jaxpr=body_jaxpr)
 
   # The conditional must return a single value to TF
-  def cond_tf_func(*args):
+  def cond_tf_func(*args: TfVal) -> TfVal:
     pred, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *args)
     return pred
   body_tf_func = functools.partial(_interpret_jaxpr, body_jaxpr, *body_consts)
-  return tf.while_loop(cond_tf_func, body_tf_func, init_carry)
+  res_tf = tf.while_loop(cond_tf_func, body_tf_func, _tfval_remove_unit(init_carry))
+  return _tfval_add_unit(res_tf, body_jaxpr.out_avals)
 
 
-def _batched_while(*args, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
-                   body_nconsts: int, body_jaxpr: core.TypedJaxpr):
-  """Interprets a batched while.
+def _batched_cond_while(*args: TfValOrUnit,
+                        cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
+                        body_nconsts: int, body_jaxpr: core.TypedJaxpr
+                        ) -> Sequence[TfValOrUnit]:
+  """Interprets a while_loop with a batched condition.
 
   A batched while has a conditional that returns a tensor of booleans, and
   a body that returns a list of tensors whose leading dimensions match those
@@ -892,31 +943,34 @@ def _batched_while(*args, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
                                                                 body_nconsts])
   # Initial computation of batched condition
   init_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *init_carry)
+  assert init_pred_b is not core.unit
 
   def new_cond_tf_func(pred_b: TfVal, *carry: TfVal) -> TfVal:
     pred = tf.reduce_any(pred_b, axis=list(range(len(pred_b.shape))))
     return pred
 
   def new_body_tf_func(pred_b: TfVal, *carry: TfVal) -> Sequence[TfVal]:
-    new_carry = _interpret_jaxpr(body_jaxpr, *body_consts, *carry)
+    new_carry: Sequence[TfVal] = _interpret_jaxpr(body_jaxpr,
+                                                  *body_consts, *carry)
 
-    def select_one_carry(new_c, c):
+    def select_one_carry(new_c: TfVal, c: TfVal) -> TfVal:
       pred_b_bcast = _broadcast_in_dim(pred_b, new_c.shape,
                                        list(range(len(pred_b.shape))))
       return tf.where(pred_b_bcast, new_c, c)
 
-    selected_carry = list(util.safe_map(select_one_carry, new_carry, carry))
+    selected_carry: Sequence[TfVal] = list(
+      util.safe_map(select_one_carry, new_carry, carry))
     next_pred_b, = _interpret_jaxpr(cond_jaxpr, *cond_consts, *selected_carry)
     return (next_pred_b, *selected_carry)
 
   _, *res_carry = tf.while_loop(new_cond_tf_func, new_body_tf_func,
-                                (init_pred_b, *init_carry))
-  return res_carry
+                                _tfval_remove_unit((init_pred_b, *init_carry)))
+  return _tfval_add_unit(res_carry, body_jaxpr.out_avals)
 
 tf_impl[lax.while_p] = _while
 
 
-def _scan(*tf_args : TfVal, **kwargs):
+def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
   # We use the scan impl rule to rewrite in terms of while. We wrap it under
   # _interpret_fun to abstract the TF values from scan_impl.
   def func1(*jax_args):
