@@ -24,7 +24,6 @@ Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 
 
 from functools import partial
-import math
 import operator as op
 
 import jax
@@ -134,7 +133,7 @@ def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       jnp.minimum(err_ratio**(1.0 / order) / safety, 1.0 / dfactor))
   return jnp.where(mean_error_ratio == 0, last_step * ifactor, last_step / factor)
 
-def odeint(func, y0, t, *args, rtol=None, atol=None, mxstep=jnp.inf):
+def odeint(func, y0, t, *args, rtol=1e-3, atol=1e-6, mxstep=jnp.inf):
   """Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
 
   Args:
@@ -166,12 +165,6 @@ def odeint(func, y0, t, *args, rtol=None, atol=None, mxstep=jnp.inf):
 @partial(jax.jit, static_argnums=(0, 1, 2, 3))
 def _odeint_wrapper(func, rtol, atol, mxstep, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
-  if rtol is None or atol is None:
-    default_tol = math.sqrt(jnp.finfo(y0.dtype).eps)
-    if rtol is None:
-      rtol = default_tol
-    if atol is None:
-      atol = default_tol
   func = ravel_first_arg(func, unravel)
   out = _odeint(func, rtol, atol, mxstep, y0, ts, *args)
   return jax.vmap(unravel)(out)
