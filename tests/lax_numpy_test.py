@@ -2504,9 +2504,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testArangeOnFloats(self):
     # from https://github.com/google/jax/issues/145
-    expected = np.arange(0.0, 1.0, 0.1, dtype=jnp.float_)
-    ans = jnp.arange(0.0, 1.0, 0.1)
-    self.assertAllClose(expected, ans)
+    self.assertAllClose(np.arange(0.0, 1.0, 0.1, dtype=jnp.float_),
+                        jnp.arange(0.0, 1.0, 0.1))
+    # from https://github.com/google/jax/issues/3450
+    self.assertAllClose(np.arange(2.5, dtype=jnp.float_),
+                        jnp.arange(2.5))
 
   def testSortManually(self):
     # manual tests for sort are nice because we don't have to worry about ties.
