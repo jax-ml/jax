@@ -161,12 +161,10 @@ class BatchTrace(Trace):
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)
     else:
-      mapped_invars = params['mapped_invars']
       size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-      vals = [moveaxis(x, d, 1) if d == 0 and mapped_invar else x
-              for x, d, mapped_invar in zip(vals, dims, mapped_invars)]
-      dims = tuple(not_mapped if d is not_mapped else max(0, d - mapped_invar)
-                   for d, mapped_invar in zip(dims, mapped_invars))
+      vals = [moveaxis(x, d, 1) if d is not not_mapped and d != 1 else x
+              for x, d in zip(vals, dims)]
+      dims = tuple(not_mapped if d is not_mapped else 0 for d in dims)
       f, dims_out = batch_subtrace(f, self.master, dims)
       vals_out = map_primitive.bind(f, *vals, **params)
       dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
