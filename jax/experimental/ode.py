@@ -203,7 +203,7 @@ def _odeint(func, rtol, atol, mxstep, y0, ts, *args):
     return carry, y_target
 
   f0 = func_(y0, ts[0])
-  dt = initial_step_size(func_, ts[0], ts[1], y0, 4, rtol, atol, f0)
+  dt = initial_step_size(func_, ts[0], ts[-1], y0, 4, rtol, atol, f0)
   interp_coeff = jnp.array([y0] * 5)
   init_carry = [y0, f0, ts[0], dt, ts[0], interp_coeff]
   _, ys = lax.scan(scan_fun, init_carry, ts[1:])
