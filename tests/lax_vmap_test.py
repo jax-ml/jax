@@ -23,7 +23,6 @@ from absl.testing import parameterized
 
 import numpy as onp
 
-import jax
 from jax import api
 from jax import dtypes
 from jax import lax
