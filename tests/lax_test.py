@@ -32,7 +32,6 @@ from jax import test_util as jtu
 from jax import lax_reference
 from jax.test_util import check_grads
 from jax.lax.lax import _get_min_identity, _get_max_identity
-from jax.lib import xla_client
 import jax.util
 
 from jax.config import config
