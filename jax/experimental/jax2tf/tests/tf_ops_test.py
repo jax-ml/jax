@@ -20,16 +20,16 @@ from absl.testing import parameterized
 
 import jax
 from jax import dtypes
-import jax.lax as lax
-import jax.numpy as jnp
+from jax import lax
+from jax import numpy as jnp
 from jax import test_util as jtu
+from jax.config import config
+from jax.experimental import jax2tf
+from jax.experimental.jax2tf.tests import tf_test_util
+from jax.interpreters import xla
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
-from jax.experimental import jax2tf
-from jax.experimental.jax2tf.tests import tf_test_util
-
-from jax.config import config
 config.parse_flags_with_absl()
 
 # Import after parsing flags
@@ -107,6 +107,26 @@ INDEX = (
 
 
 class TfOpsTest(tf_test_util.JaxToTfTestCase):
+
+  def test_primitive_coverage(self):
+    """Fail if there are JAX primitives that are not implemented."""
+    # Harvest primitives from XLA translation tables
+    all_primitives = (set(xla.translations)
+                      | set(xla.backend_specific_translations['cpu'])
+                      | set(xla.backend_specific_translations['gpu'])
+                      | set(xla.backend_specific_translations['tpu'])
+                      | set(xla.initial_style_translations)
+                      | set(xla.parallel_translations))
+
+    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl)
+    tf_not_yet_impl = set(jax.experimental.jax2tf.jax2tf.tf_not_yet_impl)
+
+    all_primitives = tuple(sorted(all_primitives, key=str))
+    for p in all_primitives:
+      if p in tf_not_yet_impl:
+        self.assertNotIn(p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl
+      else:
+        self.assertIn(p, tf_impl)
 
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))

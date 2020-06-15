@@ -23,15 +23,21 @@ import jax
 from jax import abstract_arrays
 from jax import ad_util
 from jax import core
+from jax import custom_derivatives
 from jax import lax
 from jax import linear_util as lu
 from jax import numpy as jnp
+from jax import random
 from jax import tree_util
 from jax import util
 from jax.api_util import flatten_fun
 from jax.lax import lax_control_flow
+from jax.lax import lax_fft
+from jax import lax_linalg
+from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
+from jax.interpreters import pxla
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -243,10 +249,42 @@ def wrap_binary_op(func):
     return func(*promote_types(lhs, rhs), *args, **kwargs)
   return wrapped_func
 
+def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
+  assert False, f"Encountered unexpected primitive {p}"
 
 tf_impl: Dict[core.Primitive, Callable[..., Any]] = {}
 
+for unexpected in [
+  xla.xla_call_p]:  # Not part of the public API
+
+  tf_impl[unexpected] = functools.partial(_unexpected_primitive, unexpected)
+
+# Primitives that are not yet implemented must be explicitly declared here.
+tf_not_yet_impl = [
+  ad_util.add_jaxvals_p, ad.custom_lin_p,
+
+  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax_fft.fft_p,
+  lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p, lax.outfeed_p,
+  lax.sort_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
+  lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
+  lax.select_and_gather_add_p, lax.select_and_scatter_p,
+  lax.top_k_p,
+
+  core.call_p,
+  lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
+  lax_linalg.lu_p, lax_linalg.qr_p, lax_linalg.svd_p,
+  lax_linalg.triangular_solve_p,
+
+  custom_derivatives.custom_jvp_call_jaxpr_p,
+  custom_derivatives.custom_vjp_call_jaxpr_p,
+
+  random.random_gamma_p,
+  pe.remat_call_p,
+  pxla.xla_pmap_p, pxla.axis_index_p,
+]
+
 tf_impl[lax.tie_in_p] = lambda x, y: y
+tf_impl[core.identity_p] = lambda x: x
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
 tf_impl[xla.device_put_p] = lambda x, device=None: x
@@ -887,41 +925,6 @@ def _scan(*tf_args : TfVal, **kwargs):
   return _interpret_fun(lu.wrap_init(func1), tf_args)
 
 tf_impl[lax.scan_p] = _scan
-
-# TODO: add_any
-# TODO: after_all
-# TODO: all_to_all
-# TODO: axis_index
-# TODO: cholesky_p
-# TODO: create_token
-# TODO: custom_jvp_call_jaxpr
-# TODO: custom_lin
-# TODO: custom_linear_solve
-# TODO: custom_vjp_call_jaxpr
-# TODO: eig
-# TODO: eigh
-# TODO: fft
-# TODO: id
-# TODO: infeed
-# TODO: lu
-# TODO: outfeed
-# TODO: pmax
-# TODO: pmin
-# TODO: ppermute
-# TODO: psum
-# TODO: qr
-# TODO: random_gamma
-# TODO: reduce
-# TODO: reduce_window
-# TODO: rng_uniform
-# TODO: select_and_gather_add
-# TODO: select_and_scatter
-# TODO: sort
-# TODO: sort_key_val
-# TODO: stop_gradient
-# TODO: svd
-# TODO: top_k
-# TODO: triangular_solve
 
 
 def _register_checkpoint_pytrees():
