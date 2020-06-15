@@ -307,7 +307,7 @@ for unexpected in [
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  ad_util.add_jaxvals_p, ad.custom_lin_p,
+  ad.custom_lin_p,
 
   lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax_fft.fft_p,
   lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p, lax.outfeed_p,
