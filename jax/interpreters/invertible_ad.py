@@ -14,7 +14,7 @@
 
 from functools import partial
 import itertools as it
-from typing import Dict, Any
+from typing import Dict, Any, Callable
 
 import jax
 from jax import core
@@ -303,7 +303,7 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
 def zero_vars(vs):
   return map(lambda v: ad.Zero(v.aval), vs)
 
-primitive_ivjps = {}
+primitive_ivjps: Dict[core.Primitive, Callable] = {}
 
 def synthesize_ivjp(eqn, unknown_primals, primals_in, primals_out, cts_in):
   # Invert eqn
@@ -338,7 +338,7 @@ def split(l, parts):
 # Primitive inverses
 ################################################################################
 
-primitive_inverses = {}
+primitive_inverses: Dict[core.Primitive, Callable] = {}
 
 def get_primitive_inverse(p):
   try:
