@@ -15,6 +15,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import itertools as it
 import os
 from random import shuffle
 from unittest import SkipTest
@@ -36,6 +37,9 @@ from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
 from jax.interpreters import xla
+
+from tests.lax_test import compatible_shapes
+from tests.lax_vmap_test import all_bdims, add_bdim, args_slicer
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -856,10 +860,6 @@ class PmapTest(jtu.JaxTestCase):
 
   def testVmapOfPmap3(self):
     # https://github.com/google/jax/issues/3399
-
-    # TODO(mattjj): re-enable
-    raise SkipTest("temporarily skipping test while debugging others")
-
     device_count = xla_bridge.device_count()
     if device_count < 2:
       raise SkipTest("test requires at least two devices")
@@ -1236,6 +1236,36 @@ class PmapTest(jtu.JaxTestCase):
 
       out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1])
+
+class VmapOfPmapTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"{shapes}_{vmap_bdims}_{pmap_bdims}",
+       "shapes": shapes, "vmap_bdims": vmap_bdims, "pmap_bdims": pmap_bdims}
+      for shape_group in compatible_shapes
+      for num_args in range(1, 4)
+      for shapes in it.combinations_with_replacement(shape_group, num_args)
+      for vmap_bdims in all_bdims(*shapes)
+      for pmap_bdims in it.product([0, None], repeat=num_args)
+      if not all(bd is None for bd in pmap_bdims)
+  ))
+  def testVmapOfPmap(self, shapes, vmap_bdims, pmap_bdims):
+    vmapped_size = 3
+    pmapped_size = xla_bridge.device_count()
+
+    rng = jtu.rand_default(self.rng())
+
+    def fun(*args):
+      return sum(args)
+
+    final_shapes = map(partial(add_bdim, vmapped_size), vmap_bdims,
+                       map(partial(add_bdim, pmapped_size), pmap_bdims, shapes))
+
+    args = [rng(shape, jnp.float32) for shape in final_shapes]
+    args_slice = args_slicer(args, vmap_bdims)
+    ans = vmap(pmap(fun, in_axes=pmap_bdims), vmap_bdims)(*args)
+    expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
+    self.assertAllClose(ans, expected)
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
