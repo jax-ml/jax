@@ -1339,8 +1339,11 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
         r"num_local_devices=\d."):
       f(jnp.ones(xla_bridge.device_count() + 1))
 
-  def testNestedPmapsError(self):
-    # Devices specified in outer pmap
+  def testNestedPmaps(self):
+    if xla_bridge.device_count() % 2 != 0:
+      raise SkipTest
+
+    # Devices specified in outer pmap are OK
     @partial(pmap, axis_name='i', devices=xla_bridge.devices())
     def foo(x):
       @partial(pmap, axis_name='j')
@@ -1348,12 +1351,13 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
         return lax.psum(y, 'j')
       return bar(x)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "Nested pmaps with explicit devices argument."):
-      foo(jnp.ones((xla_bridge.device_count(), 1)))
+    x = jnp.ones((xla_bridge.device_count() // 2, 2))
+    ans = foo(x)
+    expected = x * 2
+    self.assertAllClose(ans, expected)
 
-    # Devices specified in inner pmap
+  def testNestedPmapsError(self):
+    # Devices specified in inner pmap not OK
     @partial(pmap, axis_name='i')
     def foo(x):
       @partial(pmap, axis_name='j', devices=xla_bridge.devices())
@@ -1363,7 +1367,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "Nested pmaps with explicit devices argument."):
+        "Nested pmap with explicit devices argument."):
       foo(jnp.ones((xla_bridge.device_count(), 1)))
 
   def testJitInPmap(self):
