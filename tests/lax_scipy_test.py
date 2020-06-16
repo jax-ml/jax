@@ -44,18 +44,18 @@ numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
 
 OpRecord = collections.namedtuple(
     "OpRecord",
-    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "test_name"])
+    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name"])
 
 
-def op_record(name, nargs, dtypes, rng_factory, test_grad, test_name=None):
+def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None):
   test_name = test_name or name
-  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, test_name)
+  nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
+  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    # TODO: digamma has no JVP implemented.
     op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
     op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
-    op_record("digamma", 1, float_dtypes, jtu.rand_positive, False),
+    op_record("digamma", 1, float_dtypes, jtu.rand_positive, True),
     op_record("gammainc", 2, float_dtypes, jtu.rand_positive, True),
     op_record("gammaincc", 2, float_dtypes, jtu.rand_positive, True),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
@@ -72,8 +72,12 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("ndtr", 1, float_dtypes, jtu.rand_default, True),
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
+    op_record("polygamma", 2, (int_dtypes, float_dtypes), jtu.rand_positive, True, (0,)),
     op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
+    # TODO: enable gradient test for zeta by restricting the domain of
+    # of inputs to some reasonable intervals
+    op_record("zeta", 2, float_dtypes, jtu.rand_positive, False),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -117,22 +121,32 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
             rec.test_name, shapes, dtypes),
          "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
          "test_autodiff": rec.test_autodiff,
+         "nondiff_argnums": rec.nondiff_argnums,
          "scipy_op": getattr(osp_special, rec.name),
          "lax_op": getattr(lsp_special, rec.name)}
         for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-        for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
+        for dtypes in (CombosWithReplacement(rec.dtypes, rec.nargs)
+          if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)))
       for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
-                          test_autodiff):
+                          test_autodiff, nondiff_argnums):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
                         check_dtypes=False)
-    self._CompileAndCheck(lax_op, args_maker, rtol=1e-5)
+    self._CompileAndCheck(lax_op, args_maker, rtol=1e-4)
 
     if test_autodiff:
-      jtu.check_grads(lax_op, args, order=1,
+      def partial_lax_op(*vals):
+        list_args = list(vals)
+        for i in nondiff_argnums:
+          list_args.insert(i, args[i])
+        return lax_op(*list_args)
+
+      assert list(nondiff_argnums) == sorted(set(nondiff_argnums))
+      diff_args = [x for i, x in enumerate(args) if i not in nondiff_argnums]
+      jtu.check_grads(partial_lax_op, diff_args, order=1,
                       atol=jtu.if_device_under_test("tpu", .1, 1e-3),
                       rtol=.1, eps=1e-3)
 

@@ -2253,7 +2253,7 @@ def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    return lax.iota(dtype, start) # avoids materializing
+    return lax.iota(dtype, ceil(start)) # avoids materializing
   else:
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 

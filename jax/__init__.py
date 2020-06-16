@@ -19,6 +19,7 @@ from .api import (
   argnums_partial,  # TODO(phawkins): update Haiku to not use this.
   checkpoint,
   curry,  # TODO(phawkins): update users to avoid this.
+  custom_ivjp,
   custom_gradient,
   custom_jvp,
   custom_vjp,
@@ -39,6 +40,7 @@ from .api import (
   host_count,
   host_id,
   host_ids,
+  invertible,
   jacobian,
   jacfwd,
   jacrev,
