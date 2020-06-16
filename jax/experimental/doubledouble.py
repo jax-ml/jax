@@ -3,7 +3,7 @@
 Following the approach of Dekker 1971
 (http://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf).
 """
-from typing import Any
+from typing import Any, Sequence
 
 from jax.util import curry
 from jax import core, lax, grad
@@ -12,14 +12,15 @@ import jax.linear_util as lu
 
 
 class DoublingTracer(core.Tracer):  
-  def __init__(self, trace, hi, lo):
+  def __init__(self, trace, head, tail):
     self._trace = trace
-    self.hi = hi
-    self.lo = lo
+    # TODO(vanderplas): check head/tail have matching shapes & dtypes
+    self.head = head
+    self.tail = tail
 
   @property
   def aval(self):
-    return core.raise_to_shaped(core.get_aval(self.hi))
+    return core.raise_to_shaped(core.get_aval(self.head))
   
   def full_lower(self):
     return self
@@ -33,13 +34,13 @@ class DoublingTrace(core.Trace):
     return DoublingTracer(self, val, jnp.zeros(jnp.shape(val), jnp.result_type(val)))
 
   def sublift(self, val: DoublingTracer):
-    return DoublingTracer(self, val.hi, val.lo)
+    return DoublingTracer(self, val.head, val.tail)
 
   def process_primitive(self, primitive, tracers, params):
     func = doubling_rules.get(primitive, None)
     if func is None:
       raise NotImplementedError(f"primitive={primitive}")
-    out = func(*((t.hi, t.lo) for t in tracers))
+    out = func(*((t.head, t.tail) for t in tracers))
     return DoublingTracer(self, *out)
 
 
@@ -49,25 +50,32 @@ def doubling_transform(*args):
     trace = DoublingTrace(master, core.cur_sublevel())
     in_tracers = [DoublingTracer(trace, hi, lo) for hi, lo in args]
     outputs = yield in_tracers, {}
-    out_tracers = list(map(trace.full_raise, outputs))
-    out_pairs = [(x.hi, x.lo) for x in out_tracers]
-  yield out_pairs
+    if isinstance(outputs, Sequence):
+      out_tracers = map(trace.full_raise, outputs)
+      result = [(x.head, x.tail) for x in out_tracers]
+    else:
+      out_tracer = trace.full_raise(outputs)
+      result = (out_tracer.head, out_tracer.tail)
+  yield result
 
 
 @curry
 def doubledouble(f, *args):
   g = doubling_transform(lu.wrap_init(f))
   # TODO: flatten pytrees
-  args = ((a, jnp.zeros(jnp.shape(a), jnp.result_type(a))) for a in args)
-  out, = g.call_wrapped(*args)
-  return out[0] + out[1]  
+  args = ((a, jnp.zeros_like(a)) for a in args)
+  out = g.call_wrapped(*args)
+  if isinstance(out, list):
+    return tuple(o[0] + o[1] for o in out)
+  else:
+    return out[0] + out[1]  
 
 
-# Following routines come from Dekker 1971
 doubling_rules = {}
 
-_nmant = jnp.finfo(jnp.float64).nmant
-_mul_const = (2 << (_nmant - _nmant // 2)) + 1
+def _mul_const(dtype):
+  _nmant = jnp.finfo(jnp.float64).nmant
+  return jnp.array((2 << (_nmant - _nmant // 2)) + 1, dtype=dtype)
 
 def _abs2(x):
   x, xx = x
@@ -109,10 +117,12 @@ def _sub2(x, y):
 doubling_rules[lax.sub_p] = _sub2
 
 def _mul12(x, y):
-  p = x * _mul_const
+  dtype = jnp.result_type(x, y)
+  K = _mul_const(dtype)
+  p = x * K
   hx = x - p + p
   tx = x - hx
-  p = y * _mul_const
+  p = y * K
   hy = y - p + p
   ty = y - hy
   p = hx * hy
@@ -155,8 +165,7 @@ if __name__ == '__main__':
 
   @doubledouble
   def f(x, y):
-    out = x * y + 2
-    return (out,)
+    return abs(x + y) - abs(x)
 
-  result = f(10., 5.)
+  result = f(-1E20, -1.0)
   print(result)
