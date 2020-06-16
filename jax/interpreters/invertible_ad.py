@@ -27,6 +27,7 @@ from ..custom_derivatives import _initial_style_jaxpr, _resolve_kwargs
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
 from ..util import safe_map, safe_zip, unzip2, split_list, cache
+from .. import source_info_util
 
 map = safe_map
 zip = safe_zip
@@ -58,7 +59,8 @@ def _invertible_call_make_output_tracers(trace, in_tracers, out_tracers, params)
   new_out_tracers = (*dummy_outputs, *out_tracers_unknown)
 
   eqn = new_eqn_recipe(new_in_tracers, new_out_tracers, invertible_call_p,
-                       dict(params, call_jaxpr=new_jaxpr))
+                       dict(params, call_jaxpr=new_jaxpr),
+                       source_info_util.current())
   for t in out_tracers_unknown: t.recipe = eqn
   return new_out_tracers
 

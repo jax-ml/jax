@@ -778,7 +778,8 @@ def _remat_make_output_tracers(_, in_tracers, out_tracers, params):
 
   # set up eqn for unknown outputs
   unknown_out_tracers = [t for t in out_tracers if not t.pval.is_known()]
-  eqn = new_eqn_recipe(in_tracers, unknown_out_tracers, remat_call_p, new_params)
+  eqn = new_eqn_recipe(in_tracers, unknown_out_tracers, remat_call_p, new_params,
+                       source_info_util.current())
   for t in unknown_out_tracers: t.recipe = eqn
   return out_tracers
 call_partial_eval_rules[remat_call_p] = partial(
