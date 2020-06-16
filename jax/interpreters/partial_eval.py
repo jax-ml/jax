@@ -489,13 +489,13 @@ class JaxprEqnRecipe(NamedTuple):
   outvars: 'Sequence[ref[JaxprTracer]]'
   primitive: core.Primitive
   params: Dict[str, Any]
-  source_info: Optional[source_info_util.SourceInfo]
+  source_info: Optional[source_info_util.Traceback]
 
 def new_eqn_recipe(invars: Sequence[JaxprTracer],
                    outvars: Sequence[JaxprTracer],
                    primitive: core.Primitive,
                    params: Dict[str, Any],
-                   source_info: Optional[source_info_util.SourceInfo]
+                   source_info: Optional[source_info_util.Traceback]
                   ) -> JaxprEqnRecipe:
   """Constructs a new JaxEqnRecipe.
 

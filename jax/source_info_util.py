@@ -16,45 +16,42 @@ import contextlib
 import inspect
 import os.path
 import threading
-from typing import List, NamedTuple, Optional
+from typing import Any, Optional
 
-class Frame(NamedTuple):
-  file_name: str
-  line_num: int
-  function_name: str
+from .lib import xla_client
 
-SourceInfo = List[Frame]
+Traceback = Any  # xla_client.Traceback
+Frame = Any  # xla_client.Traceback::Frame
 
-
-def _get_stacktrace() -> List[Frame]:
-  return [Frame(f.filename, f.lineno, f.function) for f in inspect.stack(0)]
+def _get_stacktrace() -> Traceback:
+  return xla_client.Traceback.get_traceback()
 
 
-_jax_path = os.path.dirname(_get_stacktrace()[0].file_name)
+_jax_path = os.path.dirname(_get_stacktrace()[0].filename)
 
-def user_frame(source_info: Optional[SourceInfo]) -> Optional[Frame]:
+def user_frame(source_info: Optional[Traceback]) -> Optional[Frame]:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
     # Guess that the user's frame is the innermost stack frame that isn't in the
     # jax source tree.
-  return next((x for x in (source_info or [])
-               if not x.file_name.startswith(_jax_path)), None)
+  return next((x for x in (source_info.frames if source_info else [])
+               if not x.filename.startswith(_jax_path)), None)
 
 
-def summarize(source_info: Optional[SourceInfo]) -> str:
+def summarize(source_info: Optional[Traceback]) -> str:
   frame = user_frame(source_info)
-  return (f"{frame.file_name}:{frame.line_num} ({frame.function_name})"
+  return (f"{frame.filename}:{frame.lineno} ({frame.function_name})"
           if frame else "unknown")
 
 
 class _SourceInfoContext(threading.local):
-  context: Optional[SourceInfo]
+  context: Optional[Traceback]
 
   def __init__(self):
     self.context = None
 
 _source_info_context = _SourceInfoContext()
 
-def current() -> Optional[SourceInfo]:
+def current() -> Optional[Traceback]:
   return _source_info_context.context or _get_stacktrace()
 
 @contextlib.contextmanager

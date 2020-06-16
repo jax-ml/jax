@@ -147,7 +147,7 @@ class JaxprEqn(NamedTuple):
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
-  source_info: Optional[source_info_util.SourceInfo]
+  source_info: Optional[source_info_util.Traceback]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
