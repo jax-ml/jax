@@ -54,7 +54,7 @@ def _invertible_call_make_output_tracers(trace, in_tracers, out_tracers, params)
   new_in_tracers = (*in_tracers, *out_consts)
 
   # Append dummy outputs that correspond to known outputs left in the call_jaxpr
-  dummy_outputs = [JaxprTracer(trace, t.pval, core.unit) for t in out_tracers_known]
+  dummy_outputs = [trace.new_const(t.pval.get_known()) for t in out_tracers_known]
   new_out_tracers = (*dummy_outputs, *out_tracers_unknown)
 
   eqn = new_eqn_recipe(new_in_tracers, new_out_tracers, invertible_call_p,
