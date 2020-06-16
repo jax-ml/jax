@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for the jax_to_tf transformation."""
+"""Tests for JAX primitive coverage."""
 
 import unittest
 
@@ -20,20 +20,20 @@ from absl.testing import parameterized
 
 import jax
 from jax import dtypes
-import jax.lax as lax
-import jax.numpy as jnp
+from jax import lax
+from jax import numpy as jnp
 from jax import test_util as jtu
+from jax.config import config
+from jax.experimental import jax2tf
+from jax.experimental.jax2tf.tests import tf_test_util
+from jax.interpreters import xla
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
-from jax.experimental import jax_to_tf
-from jax.experimental.jax_to_tf.tests import tf_test_util
-
-from jax.config import config
 config.parse_flags_with_absl()
 
 # Import after parsing flags
-from jax.experimental.jax_to_tf.tests import primitive_harness
+from jax.experimental.jax2tf.tests import primitive_harness
 
 # TODO(tomhennigan) Increase coverage here.
 LAX_ELEMENTWISE_UNARY = (
@@ -86,8 +86,6 @@ LAX_LOGICAL_ELEMENTWISE_BINARY = (
     lax.bitwise_or,
     lax.bitwise_xor,
     lax.shift_left,
-    lax.shift_right_arithmetic,
-    lax.shift_right_logical,
 )
 
 REDUCE = (
@@ -108,48 +106,27 @@ INDEX = (
 )
 
 
-class TfOpsTest(tf_test_util.JaxToTfTestCase):
+class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
-  def test_basics(self):
-    f_jax = lambda x: jnp.sin(jnp.cos(x))
-    _, res_tf = self.ConvertAndCompare(f_jax, 0.7)
-    self.assertIsInstance(res_tf, tf.Tensor)
+  def test_primitive_coverage(self):
+    """Fail if there are JAX primitives that are not implemented."""
+    # Harvest primitives from XLA translation tables
+    all_primitives = (set(xla.translations)
+                      | set(xla.backend_specific_translations['cpu'])
+                      | set(xla.backend_specific_translations['gpu'])
+                      | set(xla.backend_specific_translations['tpu'])
+                      | set(xla.initial_style_translations)
+                      | set(xla.parallel_translations))
 
-  def test_variable_input(self):
-    f_jax = lambda x: jnp.sin(jnp.cos(x))
-    f_tf = jax_to_tf.convert(f_jax)
-    v = tf.Variable(0.7)
-    self.assertIsInstance(f_tf(v), tf.Tensor)
-    self.assertAllClose(f_jax(0.7), f_tf(v))
+    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl)
+    tf_not_yet_impl = set(jax.experimental.jax2tf.jax2tf.tf_not_yet_impl)
 
-  def test_jit(self):
-    f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
-    self.ConvertAndCompare(f_jax, 0.7)
-
-  def test_nested_jit(self):
-    f_jax = jax.jit(lambda x: jnp.sin(jax.jit(jnp.cos)(x)))
-    f_tf = jax_to_tf.convert(f_jax)
-    np.testing.assert_allclose(f_jax(0.7), f_tf(0.7))
-
-  def test_converts_jax_arrays(self):
-    f_tf = tf.function(lambda x: x)
-    self.assertEqual(f_tf(jnp.zeros([])).numpy(), 0.)
-    self.assertEqual(f_tf(jnp.ones([])).numpy(), 1.)
-    f_tf = tf.function(lambda x: x + x)
-    self.assertEqual(f_tf(jnp.ones([])).numpy(), 2.)
-
-    # Test with ShardedDeviceArray.
-    n = jax.local_device_count()
-    mk_sharded = lambda f: jax.pmap(lambda x: x)(f([n]))
-    f_tf = tf.function(lambda x: x)
-    self.assertAllClose(f_tf(mk_sharded(jnp.zeros)).numpy(),
-                        np.zeros([n]))
-    self.assertAllClose(f_tf(mk_sharded(jnp.ones)).numpy(),
-                        np.ones([n]))
-
-  def test_function(self):
-    f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
-    self.ConvertAndCompare(f_jax, 0.7, with_function=True)
+    all_primitives = tuple(sorted(all_primitives, key=str))
+    for p in all_primitives:
+      if p in tf_not_yet_impl:
+        self.assertNotIn(p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl
+      else:
+        self.assertIn(p, tf_impl)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
@@ -192,7 +169,7 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
   def test_unary_elementwise(self, f_jax=lax.abs):
     x = np.array([-1.6, -1.4, -1.0, 0.0, 0.1, 0.2, 1, 1.4, 1.6],
                  dtype=np.float32)
-    f_tf = tf.function(jax_to_tf.convert(f_jax))
+    f_tf = tf.function(jax2tf.convert(f_jax))
     r_jax = f_jax(x)
     r_tf = f_tf(x)
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
@@ -201,7 +178,7 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
   def test_bitwise_not(self):
     x = np.array([-1, 3, -2, 0, 0, 2, 1, 3], dtype=np.int32)
     f_jax = jax.jit(lax.bitwise_not)
-    f_tf = tf.function(jax_to_tf.convert(f_jax))
+    f_tf = tf.function(jax2tf.convert(f_jax))
     r_jax = f_jax(x)
     r_tf = f_tf(x)
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
@@ -216,7 +193,7 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
                  dtype=np.float32)
     b = np.array([-1.6, 1.4, 1.0, 0.0, 0.1, 0.2, 1, 1.4, -1.6],
                  dtype=np.float32)
-    f_tf = tf.function(jax_to_tf.convert(f_jax))
+    f_tf = tf.function(jax2tf.convert(f_jax))
     r_jax = f_jax(a, b)
     r_tf = f_tf(a, b)
     # Jax outputs 0 and 1 instead of NaN for values outside the domain.
@@ -239,11 +216,43 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
   def test_binary_logical_elementwise(self, f_jax):
     a = np.array([1, 3, 2, 0, 0, 2, 1, 3], dtype=np.uint32)
     b = np.array([1, 2, 3, 0, 1, 0, 2, 3], dtype=np.uint32)
-    f_tf = tf.function(jax_to_tf.convert(f_jax))
+    f_tf = tf.function(jax2tf.convert(f_jax))
     r_jax = f_jax(a, b)
     r_tf = f_tf(a, b)
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
                         r_tf[np.isfinite(r_tf)], atol=1e-4)
+
+  # TODO(necula): combine tests that are identical except for the harness
+  # wait until we get more experience with using harnesses.
+  @primitive_harness.parameterized(primitive_harness.lax_shift_left)
+  def test_shift_left(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_shift_right_logical)
+  def test_shift_right_logical(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_shift_right_arithmetic)
+  def test_shift_right_arithmetic(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_slice)
+  def test_slice(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
+  def test_dynamic_slice(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
+
+  @primitive_harness.parameterized(primitive_harness.lax_dynamic_update_slice)
+  def test_dynamic_update_slice(self, harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
@@ -256,7 +265,7 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
                  dtype=np.float32)
     c = np.array([1.0, -1.0, 2.0, 1.0, 0.3, 0.3, -1.0, 2.4, 1.6],
                  dtype=np.float32)
-    f_tf = tf.function(jax_to_tf.convert(f_jax))
+    f_tf = tf.function(jax2tf.convert(f_jax))
     r_jax = f_jax(a, b, c)
     r_tf = f_tf(a, b, c)
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
@@ -332,15 +341,6 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
                     ]:
       self.ConvertAndCompare(f_jax, rng_key, with_function=True)
 
-  def test_gradients_disabled(self):
-    f = jax_to_tf.convert(jnp.tan)
-    x = tf.ones([])
-    with tf.GradientTape() as tape:
-      tape.watch(x)
-      y = f(x)
-    with self.assertRaisesRegex(ValueError,
-                                'jax2tf currently does not support gradients'):
-      tape.gradient(y, x)
 
   def test_zeros_like(self):
     v = np.float32(2.)
@@ -348,21 +348,8 @@ class TfOpsTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(f_jax, v)
 
   def test_stop_gradient(self):
-    f = jax_to_tf.convert(lax.stop_gradient)
+    f = jax2tf.convert(lax.stop_gradient)
     self.assertEqual(f(tf.ones([])), 1.)
-
-  def test_checkpoint_wrapper_types(self):
-    m = tf.Module()
-    m.a = [tf.Module(), tf.Module()]
-    m.b = (tf.Module(), tf.Module())
-    m.c = {'a': tf.Module(), 'b': tf.Module()}
-    self.assertNotEqual(type(m.a), list)
-    self.assertNotEqual(type(m.b), tuple)
-    self.assertNotEqual(type(m.c), dict)
-    self.assertLen(jax.tree_leaves(m.a), 2)
-    self.assertLen(jax.tree_leaves(m.b), 2)
-    self.assertLen(jax.tree_leaves(m.c), 2)
-
 
 if __name__ == "__main__":
   absltest.main()

@@ -2476,6 +2476,17 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = -1.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_jvps_first_rule_is_none(self):
+    # https://github.com/google/jax/issues/3389
+    @api.custom_jvp
+    def f(x, y):
+      return x ** 2 * y
+
+    f.defjvps(None, lambda x_dot, primal_out, x, y: 2 * x * y * x_dot)
+    ans = grad(f, 1)(2., 3.)  # doesn't crash
+    expected = 12.
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -2822,6 +2833,90 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(clip_gradient)(1.)  # doesn't crash
 
+class InvertibleADTest(jtu.JaxTestCase):
+
+  def test_invertible_basic(self):
+    def f(x):
+      return (jnp.exp(x) * 4) * x
+
+    finv = jax.invertible(f)
+
+    x = jnp.ones((1,))
+
+    def primal_vjp_trace(fun, primals, cotangents):
+      def run(primals, cotangents):
+        out, fun_vjp = jax.vjp(fun, *primals)
+        return fun_vjp(cotangents)
+      return jax.make_jaxpr(run)(primals, cotangents)
+
+    jaxpr = jax.make_jaxpr(lambda p, ct: jax.vjp(finv, p)[1](ct))(x, x)
+    self.assertMultiLineStrippedEqual("""
+{ lambda  ; a b.
+  let c = exp a
+      d = mul c 4.0
+      e = mul d a
+      f = div e a
+      g = mul b f
+      h = mul b a
+      i = mul h 4.0
+      j = div f 4.0
+      k = mul i j
+      l = add_any g k
+  in (l,) }
+    """, str(jaxpr))
+
+    self.assertAllClose(jax.value_and_grad(lambda x: np.sum(f(x)))(x),
+                        jax.value_and_grad(lambda x: np.sum(finv(x)))(x),
+                        check_dtypes=True)
+
+  def test_invertible_blocks(self):
+    # NB: This is the reversible ResNet block
+    def mk_reversible_block(f, g):
+      @jax.custom_ivjp
+      def rev_block(x1, x2):
+        y1 = f(x2) + x1
+        y2 = g(y1) + x2
+        return y1, y2
+
+      @rev_block.defivjp
+      def rev_block_ivjp(xs, ys, dys):
+        (y1, y2) = ys
+        (dy1, dy2) = dys
+
+        dgo, dx2 = dy2, dy2
+        go, gvjp = jax.vjp(g, y1)
+        dy1 += gvjp(dgo)[0]
+        del gvjp
+        x2 = y2 - go
+
+        dfo, dx1 = dy1, dy1
+        fo, fvjp = jax.vjp(f, x2)
+        dx2 += fvjp(dfo)[0]
+        del fvjp
+        x1 = y1 - fo
+
+        return (x1, x2), (dx1, dx2)
+
+      return rev_block
+
+    rev_block = mk_reversible_block(jnp.sin, jnp.cos)
+
+    def g(x1, x2):
+      for i in range(2):
+        x1, x2 = rev_block(x1, x2)
+      return x1, x2
+
+    def reduce(f, x1, x2):
+      y1, y2 = f(x1, x2)
+      return np.sum(y1) + np.sum(y2)
+
+    x = np.ones((1,))
+    # FIXME: This breaks when argnums is left as default (i.e. 0), because JVP prunes
+    #        zero tangents from call primitives.
+    self.assertAllClose(jax.value_and_grad(partial(reduce, jax.invertible(g)), argnums=(0, 1))(x, x + 2),
+                        jax.value_and_grad(partial(reduce, g), argnums=(0, 1))(x, x + 2),
+                        check_dtypes=True)
+
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
 
@@ -3102,6 +3197,23 @@ class BufferDonationTest(jtu.JaxTestCase):
     a = jax.device_put(jnp.array(1))
     with self.assertRaisesRegex(ValueError, "nested.*not supported"):
       jit_fun(a)
+
+  def test_jnp_array_copy(self):
+    # https://github.com/google/jax/issues/3412
+
+    @partial(api.jit, donate_argnums=(0,))
+    def _test(array):
+      return array.at[0].set(77)
+
+    x = jnp.asarray([0, 1])
+    x_copy = jnp.array(x, copy=True)
+    with warnings.catch_warnings():
+      warnings.simplefilter("ignore")
+      _test(x)  # donation
+
+    # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
+    print(x_copy)  # doesn't crash
+
 
   # === pmap ===
 

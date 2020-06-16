@@ -1218,6 +1218,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testConcatenateAxisNone(self):
+    # https://github.com/google/jax/issues/3419
+    a = jnp.array([[1, 2], [3, 4]])
+    b = jnp.array([[5]])
+    jnp.concatenate((a, b), axis=None)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(
           axis, ",".join(str(d) for d in base_shape),
@@ -1480,6 +1486,58 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "n={}_k={}_m={}".format(n, k, m),
+      "n": n, "k": k, "m": m}
+    for n in range(1, 5)
+    for k in [-1, 0, 1]
+    for m in range(1, 5)))
+  def testTrilIndices(self, n, k, m):
+    np_fun = lambda n, k, m: np.tril_indices(n, k=k, m=m)
+    jnp_fun = lambda n, k, m: jnp.tril_indices(n, k=k, m=m)
+    args_maker = lambda: [n, k, m]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "n={}_k={}_m={}".format(n, k, m),
+      "n": n, "k": k, "m": m}
+    for n in range(1, 5)
+    for k in [-1, 0, 1]
+    for m in range(1, 5)))
+  def testTriuIndices(self, n, k, m):
+    np_fun = lambda n, k, m: np.triu_indices(n, k=k, m=m)
+    jnp_fun = lambda n, k, m: jnp.triu_indices(n, k=k, m=m)
+    args_maker = lambda: [n, k, m]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_shape={}_k={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), k),
+      "dtype": dtype, "shape": shape, "k": k, "rng_factory": jtu.rand_default}
+    for dtype in default_dtypes
+    for shape in [(1,1), (1,2), (2,2), (2,3), (3,2), (3,3), (4,4)]
+    for k in [-1, 0, 1]))
+  def testTriuIndicesFrom(self, shape, dtype, k, rng_factory):
+    rng = rng_factory(self.rng())
+    np_fun = lambda arr, k: np.triu_indices_from(arr, k=k)
+    jnp_fun = lambda arr, k: jnp.triu_indices_from(arr, k=k)
+    args_maker = lambda: [rng(shape, dtype), k]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_shape={}_k={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), k),
+      "dtype": dtype, "shape": shape, "k": k, "rng_factory": jtu.rand_default}
+    for dtype in default_dtypes
+    for shape in [(1,1), (1,2), (2,2), (2,3), (3,2), (3,3), (4,4)]
+    for k in [-1, 0, 1]))
+  def testTrilIndicesFrom(self, shape, dtype, k, rng_factory):
+    rng = rng_factory(self.rng())
+    np_fun = lambda arr, k: np.tril_indices_from(arr, k=k)
+    jnp_fun = lambda arr, k: jnp.tril_indices_from(arr, k=k)
+    args_maker = lambda: [rng(shape, dtype), k]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_ndim={}_n={}".format(ndim, n),
@@ -2446,9 +2504,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testArangeOnFloats(self):
     # from https://github.com/google/jax/issues/145
-    expected = np.arange(0.0, 1.0, 0.1, dtype=jnp.float_)
-    ans = jnp.arange(0.0, 1.0, 0.1)
-    self.assertAllClose(expected, ans)
+    self.assertAllClose(np.arange(0.0, 1.0, 0.1, dtype=jnp.float_),
+                        jnp.arange(0.0, 1.0, 0.1))
+    # from https://github.com/google/jax/issues/3450
+    self.assertAllClose(np.arange(2.5, dtype=jnp.float_),
+                        jnp.arange(2.5))
 
   def testSortManually(self):
     # manual tests for sort are nice because we don't have to worry about ties.

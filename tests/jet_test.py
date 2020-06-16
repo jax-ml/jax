@@ -163,6 +163,12 @@ class JetTest(jtu.JaxTestCase):
 
     self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol)
 
+  @jtu.skip_on_devices("tpu")
+  def test_int_pow(self):
+    for p in range(2, 6):
+      self.unary_check(lambda x: x ** p, lims=[-2, 2])
+    self.unary_check(lambda x: x ** 10, lims=[0, 0])
+
 
   @jtu.skip_on_devices("tpu")
   def test_exp(self):        self.unary_check(jnp.exp)
@@ -226,6 +232,8 @@ class JetTest(jtu.JaxTestCase):
   def test_erf(self):        self.unary_check(lax.erf)
   @jtu.skip_on_devices("tpu")
   def test_erfc(self):       self.unary_check(lax.erfc)
+  @jtu.skip_on_devices("tpu")
+  def test_erf_inv(self):    self.unary_check(lax.erf_inv, lims=[-1, 1])
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])

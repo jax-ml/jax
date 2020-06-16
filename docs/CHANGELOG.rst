@@ -14,6 +14,25 @@ jax 0.1.71 (Unreleased)
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...master>`_.
 
+jaxlib 0.1.48 (June 12, 2020)
+------------------------------
+
+* New features:
+
+  * Adds support for fast traceback collection.
+  * Adds preliminary support for on-device heap profiling.
+  * Implements ``np.nextafter`` for ``bfloat16`` types.
+  * Complex128 support for FFTs on CPU and GPU.
+
+* Bugfixes:
+
+  * Improved float64 ``tanh`` accuracy on GPU.
+  * float64 scatters on GPU are much faster.
+  * Complex matrix multiplication on CPU should be much faster.
+  * Stable sorts on CPU should actually be stable now.
+  * Concurrency bug fix in CPU backend.
+
+
 jax 0.1.70 (June 8, 2020)
 ---------------------------
 
