@@ -66,7 +66,9 @@ newaxis = None
 _PRECISION_DOC = """\
 In addition to the original NumPy arguments listed below, also supports
 ``precision`` for extra control over matrix-multiplication precision
-on supported devices. See :py:func:`jax.lax.dot` for details.
+on supported devices. ``precision`` may be set to ``None``, which means
+default precision for the backend, or any ``jax.lax.Precision`` enum value
+(``Precision.DEFAULT``, ``Precision.HIGH`` or ``Precision.HIGHEST``).
 """
 
 # We replace some builtin names to follow Numpy's API, so we capture here.
@@ -1995,6 +1997,8 @@ def concatenate(arrays, axis=0):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
+  if axis is None:
+    return concatenate([ravel(a) for a in arrays], axis=0)
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
   arrays = _promote_dtypes(*arrays)
   # lax.concatenate can be slow to compile for wide concatenations, so form a
@@ -2249,7 +2253,7 @@ def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
   if stop is None and step is None:
     dtype = dtype or _dtype(start)
-    return lax.iota(dtype, start) # avoids materializing
+    return lax.iota(dtype, ceil(start)) # avoids materializing
   else:
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 

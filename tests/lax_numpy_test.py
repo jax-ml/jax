@@ -1218,6 +1218,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testConcatenateAxisNone(self):
+    # https://github.com/google/jax/issues/3419
+    a = jnp.array([[1, 2], [3, 4]])
+    b = jnp.array([[5]])
+    jnp.concatenate((a, b), axis=None)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_axis={}_baseshape=[{}]_dtypes=[{}]".format(
           axis, ",".join(str(d) for d in base_shape),
@@ -2498,9 +2504,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testArangeOnFloats(self):
     # from https://github.com/google/jax/issues/145
-    expected = np.arange(0.0, 1.0, 0.1, dtype=jnp.float_)
-    ans = jnp.arange(0.0, 1.0, 0.1)
-    self.assertAllClose(expected, ans)
+    self.assertAllClose(np.arange(0.0, 1.0, 0.1, dtype=jnp.float_),
+                        jnp.arange(0.0, 1.0, 0.1))
+    # from https://github.com/google/jax/issues/3450
+    self.assertAllClose(np.arange(2.5, dtype=jnp.float_),
+                        jnp.arange(2.5))
 
   def testSortManually(self):
     # manual tests for sort are nice because we don't have to worry about ties.

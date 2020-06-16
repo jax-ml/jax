@@ -15,9 +15,11 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import itertools as it
 import os
 from random import shuffle
 from unittest import SkipTest
+import warnings
 
 import numpy as np
 from absl.testing import absltest
@@ -36,6 +38,9 @@ from jax.lib import xla_bridge
 from jax.util import prod
 from jax.interpreters import pxla
 from jax.interpreters import xla
+
+from tests.lax_test import compatible_shapes
+from tests.lax_vmap_test import all_bdims, add_bdim, args_slicer
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -854,6 +859,29 @@ class PmapTest(jtu.JaxTestCase):
     ans = s(keys)  # doesn't crash
     self.assertEqual(ans.shape, (13, N_DEVICES))
 
+  def testVmapOfPmap3(self):
+    # https://github.com/google/jax/issues/3399
+    device_count = xla_bridge.device_count()
+    if device_count < 2:
+      raise SkipTest("test requires at least two devices")
+
+    def map_version(qs, pts):
+      return jax.lax.map(lambda x: func(x, pts), qs)
+
+    def vmap_version(qs, pts):
+      return jax.vmap(func, in_axes=(0, None))(qs, pts)
+
+    def func(q, pts):
+      q_from_pmap = jax.pmap(lambda x, y: y, in_axes=(0, None))(pts, q)
+      return q, q_from_pmap
+
+    pts = jnp.ones(device_count)
+    qs = jnp.asarray(((0,0), (3,3), (2,2)))
+
+    _, expected = map_version(qs, pts)
+    _, ans = vmap_version(qs, pts)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testVmapOfPmapNonLeadingAxis(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
@@ -1209,6 +1237,53 @@ class PmapTest(jtu.JaxTestCase):
 
       out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1])
+
+  def testJitOfPmapWarningMessage(self):
+    device_count = xla_bridge.device_count()
+
+    if device_count == 1:
+      raise SkipTest("test requires at least two devices")
+
+    def foo(x): return x
+
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      jit(pmap(foo))(jnp.arange(device_count))
+
+      self.assertGreaterEqual(len(w), 1)
+      self.assertIn("The jitted function foo includes a pmap",
+                    str(w[-1].message))
+
+
+class VmapOfPmapTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"{shapes}_{vmap_bdims}_{pmap_bdims}",
+       "shapes": shapes, "vmap_bdims": vmap_bdims, "pmap_bdims": pmap_bdims}
+      for shape_group in compatible_shapes
+      for num_args in range(1, 4)
+      for shapes in it.combinations_with_replacement(shape_group, num_args)
+      for vmap_bdims in all_bdims(*shapes)
+      for pmap_bdims in it.product([0, None], repeat=num_args)
+      if not all(bd is None for bd in pmap_bdims)
+  ))
+  def testVmapOfPmap(self, shapes, vmap_bdims, pmap_bdims):
+    vmapped_size = 3
+    pmapped_size = xla_bridge.device_count()
+
+    rng = jtu.rand_default(self.rng())
+
+    def fun(*args):
+      return sum(args)
+
+    final_shapes = map(partial(add_bdim, vmapped_size), vmap_bdims,
+                       map(partial(add_bdim, pmapped_size), pmap_bdims, shapes))
+
+    args = [rng(shape, jnp.float32) for shape in final_shapes]
+    args_slice = args_slicer(args, vmap_bdims)
+    ans = vmap(pmap(fun, in_axes=pmap_bdims), vmap_bdims)(*args)
+    expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
+    self.assertAllClose(ans, expected)
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):

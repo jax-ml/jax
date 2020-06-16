@@ -61,6 +61,8 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
+from .interpreters import invertible_ad as iad
+from .interpreters.invertible_ad import custom_ivjp
 from .custom_derivatives import custom_jvp, custom_vjp
 from .config import flags, config, bool_env
 
@@ -167,8 +169,6 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
                        name=flat_fun.__name__, donated_invars=donated_invars)
     return tree_unflatten(out_tree(), out)
 
-  jitted_name = "jit({}, static_argnums={})"
-  f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
 @contextmanager
@@ -1165,8 +1165,6 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
         donated_invars=tuple(donated_invars))
     return tree_unflatten(out_tree(), out)
 
-  namestr = "pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 class _TempAxisName:
@@ -1221,9 +1219,6 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
                                   donated_invars=donated_invars)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
-
-  namestr = "soft_pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 def _reshape_split(num_chunks, x):
@@ -1968,3 +1963,24 @@ def custom_gradient(fun):
 
 def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
   return (x,) if isinstance(x, int) else tuple(x)
+
+def invertible(fun: Callable, concrete: bool = False) -> Callable:
+  """Asserts that the decorated function is invertible.
+
+  Applying reverse-mode AD to a decorated function will use a more memory efficient
+  procedure than usual, which will reconstruct the necessary intermediate values
+  by inverting the function. Note that this might degrade the numerical accuracy of
+  obtained gradients if the inverse is unstable.
+
+  Args:
+    fun: The function assumed to be invertible.
+    concrete: See the documentation of checkpoint.
+  """
+  @wraps(fun)
+  def fun_invertible(*args, **kwargs):
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+    out_flat = iad.invertible_call(flat_fun, *args_flat, name=flat_fun.__name__,
+                                   concrete=concrete)
+    return tree_unflatten(out_tree(), out_flat)
+  return fun_invertible
