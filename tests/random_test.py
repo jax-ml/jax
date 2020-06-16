@@ -234,6 +234,29 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(np.sort(perm1), x, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_size={}_replace={}_array_input={}".format(
+          np.dtype(dtype).name, size, replace, array_input),
+        "dtype": np.dtype(dtype).name, "size": size, "replace": replace,
+        "array_input": array_input}
+      for dtype in [np.float32, np.float64, np.int32, np.int64]
+      for size in [(), (5,), (4, 5)]
+      for replace in [True, False]
+      for array_input in [True, False]))
+  def testChoice(self, dtype, size, replace, array_input):
+    key = random.PRNGKey(0)
+    x = 100 if array_input else np.arange(100).astype(dtype)
+    rand = lambda key: random.choice(key, x, size, replace=replace)
+    crand = api.jit(rand)
+
+    sample1 = rand(key)
+    sample2 = crand(key)
+
+    assert sample1.shape == size
+    if not replace:
+      assert len(np.unique(sample1)) == len(np.ravel(sample1))
+    self.assertAllClose(sample1, sample2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "dtype": np.dtype(dtype).name, "shape": shape}
       for dtype in [np.float32, np.float64, np.int32, np.int64]

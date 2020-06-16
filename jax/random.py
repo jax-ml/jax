@@ -530,6 +530,50 @@ def _shuffle(key, x, axis):
   return x
 
 
+def choice(key, a, size=(), replace=True, p=None):
+  """Generates a random sample from a given 1-D array
+
+  Args:
+    key: a PRNGKey used as the random key.
+    a : 1D array or int. If an ndarray, a random sample is generated from
+      its elements. If an int, the random sample is generated as if a were
+      arange(a).
+    size : tuple of ints, optional. Output shape.  If the given shape is,
+      e.g., ``(m, n)``, then ``m * n`` samples are drawn.  Default is (),
+      in which case a single value is returned.
+    replace : boolean.  Whether the sample is with or without replacement.
+    p : 1-D array-like, The probabilities associated with each entry in a.
+      If not given the sample assumes a uniform distribution over all
+      entries in a.
+
+  Returns:
+    an array of shape `size` containing samples from `a`.
+  """
+  if p is not None:
+    # TODO(vanderplas): implement weighted sampling.
+    raise NotImplementedError("jax.random.choice with p != None")
+  a = jnp.asarray(a)
+  if a.ndim not in [0, 1]:
+    raise ValueError("a must be an integer or 1-dimensional")
+  N = np.prod(size).astype(int)
+  if N == 0:
+    return jnp.zeros(size, dtype=a.dtype)
+  if a.ndim == 0 and a < 0:
+    raise ValueError("a must be greater than 0 unless no samples are taken")
+  if replace:
+    if a.ndim == 0:
+      return randint(key, size, 0, a)
+    else:
+      return a[randint(key, size, 0, len(a))]
+  else:
+    if a.ndim == 0:
+      a = jnp.arange(a)
+    if N > len(a):
+      raise ValueError("Cannot take a larger sample than population when 'replace=False'")
+    # TODO(vanderplas): avoid a full permutation?
+    return permutation(key, a)[:N].reshape(size)
+
+
 def normal(key: jnp.ndarray,
            shape: Sequence[int] = (),
            dtype: np.dtype = np.float64) -> jnp.ndarray:
