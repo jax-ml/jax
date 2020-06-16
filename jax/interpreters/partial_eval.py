@@ -704,8 +704,9 @@ def _remat_partial_eval(process_out, trace, _, f, tracers, params):
 
   # Using the instantiated tracers, run call_bind like JaxprTrace.process_call.
   in_pvals = [t.pval for t in instantiated_tracers]
-  jaxpr, eval_out_pvals, consts, env_tracers = trace.partial_eval(
-    f, in_pvals, partial(remat_call_p.bind, **params))
+  with core.initial_style_staging():
+    jaxpr, eval_out_pvals, consts, env_tracers = trace.partial_eval(
+      f, in_pvals, partial(remat_call_p.bind, **params))
 
   # Convert consts to inputs, since they may contain Tracer instances.
   jaxpr = convert_constvars_jaxpr(jaxpr)
