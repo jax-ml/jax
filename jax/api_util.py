@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import inspect
+import itertools
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
 from . import linear_util as lu
 from .util import safe_map, curry, WrapHashably, Hashable
 from .core import unit
 
-from typing import Tuple
+from typing import Iterable, Text, Tuple
 
 map = safe_map
 
@@ -162,3 +163,57 @@ def flatten_axes(treedef, axis_tree):
   axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
+
+
+def _pp_args(args: Iterable[Text]) -> Text:
+  argnames = [f"'{arg}'" for arg in args]
+  if len(argnames) == 1:
+    return "argument: " + argnames[0]
+  else:
+    return "arguments: " + ", ".join(argnames[:-1]) + " and " + argnames[-1]
+
+
+def kwargable(fun):
+  """Sets up (wrapped) ``fun`` to be callable with kwargs and default values.
+
+  Args:
+    fun: The function to be wrapped.
+
+  Returns:
+    A wrapped version of ``fun``, callable with kwargs and default values.
+  """
+  name = fun.__name__
+  parameters = inspect.signature(fun).parameters
+  argnames = tuple(parameters.keys())
+
+  @wraps(fun)
+  def wrapped_fun(*args, **kwargs):
+    flat_args = list(v.default for v in parameters.values())
+    flat_args[:len(args)] = args
+    unexpected_args = []
+    multiple_values = []
+    for k, v in kwargs.items():
+      try:
+        idx = argnames.index(k)
+      except ValueError:
+        unexpected_args.append(k)
+      else:
+        if idx < len(args):
+          multiple_values.append(k)
+        else:
+          flat_args[idx] = v
+    if unexpected_args:
+      msg = f"{name}() got unexpected keyword {_pp_args(unexpected_args)}"
+      raise TypeError(msg)
+    if multiple_values:
+      msg = f"{name}() got multiple values for {_pp_args(multiple_values)}"
+      raise TypeError(msg)
+    missing_args = [arg is inspect.Parameter.empty for arg in flat_args]
+    if any(missing_args):
+      missing_argnames = itertools.compress(argnames, missing_args)
+      msg = f"{name}() missing positional {_pp_args(missing_argnames)}"
+      raise TypeError(msg)
+
+    return fun(*flat_args)
+
+  return wrapped_fun

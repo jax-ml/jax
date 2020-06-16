@@ -13,9 +13,11 @@
 # limitations under the License.
 """Tests for jax.api_util."""
 
+import functools
 import itertools as it
 from absl.testing import absltest
 from absl.testing import parameterized
+import jax
 from jax import api_util
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -66,6 +68,86 @@ class ApiUtilTest(jtu.JaxTestCase):
   def test_rebase_donate_argnums(self, donate, static, expected):
     self.assertEqual(expected,
                      api_util.rebase_donate_argnums(donate, static))
+
+  @parameterized.parameters(
+      (1., 2., 3., (2., 12.)),
+      (2., 4., 6., (4., 48.)),
+  )
+  def test_kwargable_grad_shoud_pass(self, x, y, z, expected):
+    @api_util.kwargable
+    @functools.partial(jax.grad, argnums=(0, 2))
+    def f(x, y, z=z):
+      return x**2 + (y * z**2)
+
+    self.assertSequenceAlmostEqual(f(x, y, z), expected)
+    self.assertSequenceAlmostEqual(f(x, y), expected)
+    self.assertSequenceAlmostEqual(f(x, y=y), expected)
+    self.assertSequenceAlmostEqual(f(y=y, x=x), expected)
+    self.assertSequenceAlmostEqual(f(z=z, y=y, x=x), expected)
+
+  @parameterized.parameters(
+      (1., 2., 3., (2., 12.)),
+      (2., 4., 6., (4., 48.)),
+  )
+  def test_kwargable_grad_should_fail(self, x, y, z, expected):
+    @api_util.kwargable
+    @functools.partial(jax.grad, argnums=(0, 2))
+    def f(x, y, z=z):
+      return x**2 + (y * z**2)
+
+    name = f.__name__
+    expected = fr"^{name}\(\) missing positional arguments: 'x' and 'y'$"
+    with self.assertRaisesRegex(TypeError, expected):
+      f()          # pylint: disable=no-value-for-parameter
+
+    expected = fr"^{name}\(\) got unexpected keyword argument: 'q'$"
+    with self.assertRaisesRegex(TypeError, expected):
+      f(x, y, q=z)  # pylint: disable=unexpected-keyword-arg
+
+    expected = fr"^{name}\(\) got multiple values for argument: 'y'$"
+    with self.assertRaisesRegex(TypeError, expected):
+      f(x, y, y=z)  # pylint: disable=redundant-keyword-arg
+
+  def test_kwargable_vmap_shoud_pass(self):
+    x = jnp.array([1, 2, 3])
+    y = jnp.array([4, 5, 6])
+    z = jnp.array([7, 8, 9])
+    expected = jnp.array([35, 56, 81])
+
+    @api_util.kwargable
+    @jax.vmap
+    def f(x, y, z=z):
+      return (x + y) * z
+
+    self.assertSequenceAlmostEqual(f(x, y, z), expected)
+    self.assertSequenceAlmostEqual(f(x, y), expected)
+    self.assertSequenceAlmostEqual(f(x, y=y), expected)
+    self.assertSequenceAlmostEqual(f(y=y, x=x), expected)
+    self.assertSequenceAlmostEqual(f(z=z, y=y, x=x), expected)
+
+  def test_kwargable_vmap_should_fail(self):
+    x = jnp.array([1, 2, 3])
+    y = jnp.array([4, 5, 6])
+    z = jnp.array([7, 8, 9])
+    expected = jnp.array([35, 56, 81])
+
+    @api_util.kwargable
+    @jax.vmap
+    def f(x, y, z=z):
+      return (x + y) * z
+
+    name = f.__name__
+    expected = fr"^{name}\(\) missing positional arguments: 'x' and 'y'$"
+    with self.assertRaisesRegex(TypeError, expected):
+      f()          # pylint: disable=no-value-for-parameter
+
+    expected = fr"^{name}\(\) got unexpected keyword argument: 'q'$"
+    with self.assertRaisesRegex(TypeError, expected):
+      f(x, y, q=z)  # pylint: disable=unexpected-keyword-arg
+
+    expected = fr"^{name}\(\) got multiple values for argument: 'y'$"
+    with self.assertRaisesRegex(TypeError, expected):
+      f(x, y, y=z)  # pylint: disable=redundant-keyword-arg
 
 if __name__ == "__main__":
   absltest.main()
