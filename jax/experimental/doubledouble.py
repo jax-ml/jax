@@ -93,11 +93,8 @@ def _mul_const(dtype):
 
 def _abs2(x):
   x, xx = x
-  return jnp.where(
-    lax.sign(x) == lax.sign(xx),
-    (lax.abs(x), lax.abs(xx)),
-    (lax.abs(x), -lax.abs(xx))
-  )
+  sign = jnp.where(lax.sign(x) == lax.sign(xx), 1, -1)
+  return (lax.abs(x), sign * lax.abs(xx))
 doubling_rules[lax.abs_p] = _abs2
 
 def _neg2(x):
