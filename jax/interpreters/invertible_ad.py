@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-import itertools as it
 from typing import Dict, Any, Callable
 
 import jax
@@ -21,8 +20,8 @@ from jax import core
 from jax import linear_util as lu
 from . import ad
 from . import partial_eval as pe
-from .partial_eval import (PartialVal, partial_eval_jaxpr,
-                           JaxprTracer, ConstVar, convert_constvars_jaxpr, new_eqn_recipe)
+from .partial_eval import (PartialVal, partial_eval_jaxpr, new_eqn_recipe,
+                           _partition_knowns)
 from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
 from ..custom_derivatives import _initial_style_jaxpr, _resolve_kwargs
 from ..api_util import flatten_fun_nokwargs
@@ -43,24 +42,25 @@ invertible_call_p.def_custom_bind(invertible_call)
 invertible_call_p.def_impl(core.call_impl)
 invertible_call_p.multiple_results = True
 
-def _invertible_call_make_output_tracers(trace, typed_jaxpr, in_tracers, out_known_pvals, out_unknown_pvals, _, params):
-  unknown_output_tracers = [JaxprTracer(trace, out_pval, None) for out_pval in out_unknown_pvals]
-  lifted_jaxpr = convert_constvars_jaxpr(typed_jaxpr.jaxpr)
-  # Add dummy arguments representing the outputs to the jaxpr. Those should remain unused in case
-  # the expression actually ends up being evaluated, but they make it well-formed.
-  out_known_avals = tuple(raise_to_shaped(get_aval(pval.get_known())) for pval in out_known_pvals)
-  lifted_jaxpr = _append_invars(lifted_jaxpr, out_known_avals)
-  new_params = dict(params, call_jaxpr=lifted_jaxpr)
-  # We also append some dummy outputs that correspond to the known outputs we left in the call_jaxpr
-  dummy_outputs = [JaxprTracer(trace, pval, core.unit) for pval in out_known_pvals]
+def _invertible_call_make_output_tracers(trace, in_tracers, out_tracers, params):
+  uks = [not t.pval.is_known() for t in out_tracers]
+  out_tracers_known, out_tracers_unknown = _partition_knowns(out_tracers, uks)
 
-  output_constants = [JaxprTracer(trace, pval, ConstVar(pval.get_known())) for pval in out_known_pvals]
-  eqn = new_eqn_recipe(tuple(it.chain(in_tracers, output_constants)),
-                       dummy_outputs + unknown_output_tracers,
-                       invertible_call_p,
-                       new_params)
-  for t in unknown_output_tracers: t.recipe = eqn
-  return unknown_output_tracers
+  # Add dummy arguments representing the outputs to the jaxpr. Those should
+  # remain unused if the expression is evaluated, but they make it well-formed.
+  out_known_avals = [raise_to_shaped(t.pval.get_aval()) for t in out_tracers_known]
+  out_consts = [trace.instantiate_const(t) for t in out_tracers_known]
+  new_jaxpr = _append_invars(params['call_jaxpr'], tuple(out_known_avals))
+  new_in_tracers = (*in_tracers, *out_consts)
+
+  # Append dummy outputs that correspond to known outputs left in the call_jaxpr
+  dummy_outputs = [trace.new_const(t.pval.get_known()) for t in out_tracers_known]
+  new_out_tracers = (*dummy_outputs, *out_tracers_unknown)
+
+  eqn = new_eqn_recipe(new_in_tracers, new_out_tracers, invertible_call_p,
+                       dict(params, call_jaxpr=new_jaxpr))
+  for t in out_tracers_unknown: t.recipe = eqn
+  return new_out_tracers
 
 pe.call_partial_eval_rules[invertible_call_p] = partial(
     pe._remat_partial_eval, _invertible_call_make_output_tracers)
@@ -69,7 +69,8 @@ pe.call_partial_eval_rules[invertible_call_p] = partial(
 @cache()
 def _append_invars(jaxpr, avals):
   newvar = core.gensym([jaxpr])
-  return core.Jaxpr(jaxpr.constvars, jaxpr.invars + map(newvar, avals), jaxpr.outvars, jaxpr.eqns)
+  return core.Jaxpr(jaxpr.constvars, jaxpr.invars + map(newvar, avals),
+                    jaxpr.outvars, jaxpr.eqns)
 
 
 def _invertible_call_transpose(params, call_jaxpr, args, ct, _):

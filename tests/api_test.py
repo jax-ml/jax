@@ -1266,6 +1266,156 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(ans1, np.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, np.cos(3.), check_dtypes=False)
 
+  def test_trivial_computations(self):
+    x = jnp.array([1, 2, 3])
+    y = api.jit(lambda x: x)(x)
+    self.assertIs(x, y)
+
+    z1, z2 = api.jit(lambda x: (x, x))(x)
+    self.assertIs(z1, z2)
+
+    x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
+    z1, z2, z3 = api.jit(lambda x, y: (y, 1, x))(x1, x2)
+    self.assertIs(z1, x2)
+    self.assertIs(z3, x1)
+    self.assertEqual(z2, 1)
+
+  def test_nested_jit_hoisting(self):
+    @api.jit
+    def f(x, y):
+      z = 2 * x
+      return y + z, 3
+
+    @api.jit
+    def g(x):
+      return f(2, x)
+
+    jaxpr_subcomp = xla.jaxpr_subcomp
+
+    jaxprs = []
+    def jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
+      jaxprs.append(jaxpr)
+      return jaxpr_subcomp(c, jaxpr, *args, **kwargs)
+
+    try:
+      xla.jaxpr_subcomp = jaxpr_subcomp_and_collect
+      ans = g(3)
+    finally:
+      xla.jaxpr_subcomp = jaxpr_subcomp
+
+    self.assertEqual(ans, (7, 3))
+    self.assertLen(jaxprs, 2)
+    outer_jaxpr, inner_jaxpr = jaxprs
+
+    self.assertLen(outer_jaxpr.eqns, 1)
+    self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
+    subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
+    self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
+    self.assertLen(inner_jaxpr.eqns, 2)
+    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
+    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
+
+  def test_primitive_compilation_cache(self):
+    with jtu.count_primitive_compiles() as count:
+      lax.add(1, 2)
+      lax.add(2, 3)
+    self.assertEqual(count[0], 1)
+
+  def test_arange_jit(self):
+    # see https://github.com/google/jax/issues/553
+    def fun(x):
+      r = jnp.arange(x.shape[0])[x]
+      return r
+
+    jit(fun)(jnp.array([0, 1, 2], dtype=jnp.int32))  # doesn't crash
+
+  def helper_save_tracer(self, x):
+    self._saved_tracer = x
+    return x
+
+  def test_escaped_tracers_diffent_top_level_traces(self):
+    api.jit(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        core.UnexpectedTracerError,
+        re.compile(
+          "Encountered an unexpected tracer.*Different traces at same level",
+          re.DOTALL)):
+      api.jit(lambda x: self._saved_tracer)(0.)
+
+  def test_escaped_tracers_cant_lift_sublevels(self):
+    api.jit(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        core.UnexpectedTracerError,
+        re.compile(
+          "Encountered an unexpected tracer.*Can't lift sublevels 1 to 0",
+          re.DOTALL)):
+      api.jit(lambda x: x)(self._saved_tracer)
+
+  def test_escaped_tracers_tracer_from_higher_level(self):
+    api.grad(self.helper_save_tracer)(0.)
+    with self.assertRaisesRegex(
+        core.UnexpectedTracerError,
+        re.compile(
+          "Encountered an unexpected tracer.*Tracer from a higher level",
+          re.DOTALL)):
+      api.grad(lambda x: x)(self._saved_tracer)
+
+  def test_escaped_tracers_incompatible_sublevel(self):
+    def func1(x):
+      api.jit(self.helper_save_tracer)(0.)
+      # Use the tracer
+      return x + self._saved_tracer
+    with self.assertRaisesRegex(
+        core.UnexpectedTracerError,
+        re.compile("Encountered an unexpected tracer.*Incompatible sublevel",
+                   re.DOTALL)):
+      api.jit(func1)(2.)
+
+  def test_escaped_tracers_cant_lift(self):
+    def func1(x):
+      api.grad(self.helper_save_tracer)(0.)
+      return x + self._saved_tracer
+    with self.assertRaisesRegex(
+        core.UnexpectedTracerError,
+        re.compile("Encountered an unexpected tracer.*Can't lift",
+                   re.DOTALL)):
+      api.grad(func1)(2.)
+
+  def test_escaped_tracers_not_among_input_tracers(self):
+    def func1(x):
+      api.grad(self.helper_save_tracer)(x)
+      # Use the tracer
+      return x + self._saved_tracer
+
+    with self.assertRaisesRegex(
+        core.UnexpectedTracerError,
+        re.compile(
+          "Encountered an unexpected tracer.*Tracer not among input tracers",
+          re.DOTALL)):
+      api.jit(func1)(2.)
+
+  def test_pmap_static_kwarg_error_message(self):
+    # https://github.com/google/jax/issues/3007
+    def f(a, b):
+      return a + b
+
+    g = jax.pmap(f, static_broadcasted_argnums=(1,))
+
+    msg = (r"pmapped function has static_broadcasted_argnums=\(1,\) but was "
+           r"called with only 1 positional argument. All static broadcasted "
+           r"arguments must be passed positionally.")
+    with self.assertRaisesRegex(ValueError, msg):
+      g(jnp.ones((1, 1)), b=1)
+
+  def test_vmap_unmapped_last(self):
+    @partial(jax.vmap, out_axes=jax.interpreters.batching.last)
+    def f(x):
+      return np.zeros((2,))
+    f(np.zeros((5,)))
+
+
+class RematTest(jtu.JaxTestCase):
+
   def test_remat_basic(self):
     @api.remat
     def g(x):
@@ -1620,154 +1770,6 @@ class APITest(jtu.JaxTestCase):
     # 2 calls made while transposing g, no reevaluation for transposition of f
     with assertEvals(2):
       vjp(v)
-
-
-  def test_trivial_computations(self):
-    x = jnp.array([1, 2, 3])
-    y = api.jit(lambda x: x)(x)
-    self.assertIs(x, y)
-
-    z1, z2 = api.jit(lambda x: (x, x))(x)
-    self.assertIs(z1, z2)
-
-    x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
-    z1, z2, z3 = api.jit(lambda x, y: (y, 1, x))(x1, x2)
-    self.assertIs(z1, x2)
-    self.assertIs(z3, x1)
-    self.assertEqual(z2, 1)
-
-  def test_nested_jit_hoisting(self):
-    @api.jit
-    def f(x, y):
-      z = 2 * x
-      return y + z, 3
-
-    @api.jit
-    def g(x):
-      return f(2, x)
-
-    jaxpr_subcomp = xla.jaxpr_subcomp
-
-    jaxprs = []
-    def jaxpr_subcomp_and_collect(c, jaxpr, *args, **kwargs):
-      jaxprs.append(jaxpr)
-      return jaxpr_subcomp(c, jaxpr, *args, **kwargs)
-
-    try:
-      xla.jaxpr_subcomp = jaxpr_subcomp_and_collect
-      ans = g(3)
-    finally:
-      xla.jaxpr_subcomp = jaxpr_subcomp
-
-    self.assertEqual(ans, (7, 3))
-    self.assertLen(jaxprs, 2)
-    outer_jaxpr, inner_jaxpr = jaxprs
-
-    self.assertLen(outer_jaxpr.eqns, 1)
-    self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
-    subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
-    self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
-    self.assertLen(inner_jaxpr.eqns, 2)
-    self.assertEqual(inner_jaxpr.eqns[0].primitive.name, 'mul')
-    self.assertEqual(inner_jaxpr.eqns[1].primitive.name, 'add')
-
-  def test_primitive_compilation_cache(self):
-    with jtu.count_primitive_compiles() as count:
-      lax.add(1, 2)
-      lax.add(2, 3)
-    self.assertEqual(count[0], 1)
-
-  def test_arange_jit(self):
-    # see https://github.com/google/jax/issues/553
-    def fun(x):
-      r = jnp.arange(x.shape[0])[x]
-      return r
-
-    jit(fun)(jnp.array([0, 1, 2], dtype=jnp.int32))  # doesn't crash
-
-  def helper_save_tracer(self, x):
-    self._saved_tracer = x
-    return x
-
-  def test_escaped_tracers_diffent_top_level_traces(self):
-    api.jit(self.helper_save_tracer)(0.)
-    with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
-        re.compile(
-          "Encountered an unexpected tracer.*Different traces at same level",
-          re.DOTALL)):
-      api.jit(lambda x: self._saved_tracer)(0.)
-
-  def test_escaped_tracers_cant_lift_sublevels(self):
-    api.jit(self.helper_save_tracer)(0.)
-    with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
-        re.compile(
-          "Encountered an unexpected tracer.*Can't lift sublevels 1 to 0",
-          re.DOTALL)):
-      api.jit(lambda x: x)(self._saved_tracer)
-
-  def test_escaped_tracers_tracer_from_higher_level(self):
-    api.grad(self.helper_save_tracer)(0.)
-    with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
-        re.compile(
-          "Encountered an unexpected tracer.*Tracer from a higher level",
-          re.DOTALL)):
-      api.grad(lambda x: x)(self._saved_tracer)
-
-  def test_escaped_tracers_incompatible_sublevel(self):
-    def func1(x):
-      api.jit(self.helper_save_tracer)(0.)
-      # Use the tracer
-      return x + self._saved_tracer
-    with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
-        re.compile("Encountered an unexpected tracer.*Incompatible sublevel",
-                   re.DOTALL)):
-      api.jit(func1)(2.)
-
-  def test_escaped_tracers_cant_lift(self):
-    def func1(x):
-      api.grad(self.helper_save_tracer)(0.)
-      return x + self._saved_tracer
-    with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
-        re.compile("Encountered an unexpected tracer.*Can't lift",
-                   re.DOTALL)):
-      api.grad(func1)(2.)
-
-  def test_escaped_tracers_not_among_input_tracers(self):
-    def func1(x):
-      api.grad(self.helper_save_tracer)(x)
-      # Use the tracer
-      return x + self._saved_tracer
-
-    with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
-        re.compile(
-          "Encountered an unexpected tracer.*Tracer not among input tracers",
-          re.DOTALL)):
-      api.jit(func1)(2.)
-
-  def test_pmap_static_kwarg_error_message(self):
-    # https://github.com/google/jax/issues/3007
-    def f(a, b):
-      return a + b
-
-    g = jax.pmap(f, static_broadcasted_argnums=(1,))
-
-    msg = (r"pmapped function has static_broadcasted_argnums=\(1,\) but was "
-           r"called with only 1 positional argument. All static broadcasted "
-           r"arguments must be passed positionally.")
-    with self.assertRaisesRegex(ValueError, msg):
-      g(jnp.ones((1, 1)), b=1)
-
-  def test_vmap_unmapped_last(self):
-    @partial(jax.vmap, out_axes=jax.interpreters.batching.last)
-    def f(x):
-      return np.zeros((2,))
-    f(np.zeros((5,)))
 
 
 class JaxprTest(jtu.JaxTestCase):
@@ -2832,6 +2834,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         return _clip_gradient(lo, hi, x)
 
     jax.grad(clip_gradient)(1.)  # doesn't crash
+
 
 class InvertibleADTest(jtu.JaxTestCase):
 
