@@ -163,6 +163,12 @@ class JetTest(jtu.JaxTestCase):
 
     self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol)
 
+  @jtu.skip_on_devices("tpu")
+  def test_int_pow(self):
+    for p in range(2, 6):
+      self.unary_check(lambda x: x ** p, lims=[-2, 2])
+    self.unary_check(lambda x: x ** 10, lims=[0, 0])
+
 
   @jtu.skip_on_devices("tpu")
   def test_exp(self):        self.unary_check(jnp.exp)
