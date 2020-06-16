@@ -226,6 +226,8 @@ class JetTest(jtu.JaxTestCase):
   def test_erf(self):        self.unary_check(lax.erf)
   @jtu.skip_on_devices("tpu")
   def test_erfc(self):       self.unary_check(lax.erfc)
+  @jtu.skip_on_devices("tpu")
+  def test_erf_inv(self):    self.unary_check(lax.erf_inv, lims=[-1, 1])
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
