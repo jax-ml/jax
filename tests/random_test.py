@@ -244,14 +244,16 @@ class LaxRandomTest(jtu.JaxTestCase):
       for array_input in [True, False]))
   def testChoice(self, dtype, size, replace, array_input):
     key = random.PRNGKey(0)
-    x = 100 if array_input else np.arange(100).astype(dtype)
+    x = 100 if not array_input else jnp.arange(100, dtype=dtype)
     rand = lambda key: random.choice(key, x, size, replace=replace)
     crand = api.jit(rand)
 
     sample1 = rand(key)
     sample2 = crand(key)
 
-    assert sample1.shape == size
+    self.assertEqual(size, sample1.shape)
+    if array_input:
+      self.assertEqual(x.dtype, sample1.dtype)
     if not replace:
       assert len(np.unique(sample1)) == len(np.ravel(sample1))
     self.assertAllClose(sample1, sample2)
