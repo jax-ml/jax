@@ -17,7 +17,7 @@
 Following the approach of Dekker 1971
 (http://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf).
 """
-from typing import Any, Sequence
+from typing import Any, Callable, Dict, Sequence
 
 from jax.util import curry
 from jax import core, lax
@@ -85,7 +85,7 @@ def doubledouble(f, *args):
     return out[0] + out[1]
 
 
-doubling_rules = {}
+doubling_rules: Dict[core.Primitive, Callable] = {}
 
 def _mul_const(dtype):
   _nmant = jnp.finfo(dtype).nmant
