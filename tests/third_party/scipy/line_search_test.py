@@ -80,7 +80,7 @@ class TestLineSearch(jtu.JaxTestCase):
     phi = bind_index(value, 0)
     derphi = bind_index(value, 1)
     for old_phi0 in np.random.randn(3):
-      res = line_search(f_and_fprime(phi, derphi), 0., 1.)
+      res = line_search(phi, 0., 1.)
       s, phi1, derphi1 = res.a_k, res.f_k, res.g_k
       self.assertAllClose(phi1, phi(s), check_dtypes=False, atol=1e-6)
       if derphi1 is not None:
@@ -111,14 +111,14 @@ class TestLineSearch(jtu.JaxTestCase):
       x = np.random.randn(N)
       p = np.random.randn(N)
       if jnp.dot(p, fprime(x)) >= 0:
-        # always pick a descent direction
+        # always pick a descent pk
         continue
       k += 1
 
       f0 = f(x)
       g0 = fprime(x)
       self.fcount = 0
-      res = line_search(f_and_fprime(f, fprime), x, p, old_fval=f0, gfk=g0)
+      res = line_search(f, x, p, old_fval=f0, gfk=g0)
       s = res.a_k
       fv = res.f_k
       gv = res.g_k
@@ -140,13 +140,13 @@ class TestLineSearch(jtu.JaxTestCase):
     x = -60 * p
     c2 = 0.5
 
-    res = line_search(f_and_fprime(f, fp), x, p, c2=c2)
+    res = line_search(f, x, p, c2=c2)
     s = res.a_k
     # s, _, _, _, _, _ = ls.line_search_wolfe2(f, fp, x, p, amax=30, c2=c2)
     self.assert_line_wolfe(x, p, s, f, fp)
     self.assertTrue(s >= 30.)
 
-    res = line_search(f_and_fprime(f, fp), x, p, c2=c2, maxiter=5)
+    res = line_search(f, x, p, c2=c2, maxiter=5)
     self.assertTrue(res.failed)
     # s=30 will only be tried on the 6th iteration, so this won't converge
 
@@ -158,7 +158,7 @@ class TestLineSearch(jtu.JaxTestCase):
     # assert not line_search(jax.value_and_grad(f), np.ones(2), np.array([-0.5, -0.25])).failed
     xk = jnp.ones(2)
     pk = jnp.array([-0.5, -0.25])
-    res = line_search(value_and_grad(f), xk, pk, maxiter=100)
+    res = line_search(f, xk, pk, maxiter=100)
 
     scipy_res = line_search_wolfe2(f, grad(f), xk, pk)
 

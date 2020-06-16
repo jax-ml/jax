@@ -19,7 +19,7 @@ class BFGSResults(NamedTuple):
   x_k: jnp.ndarray  # A tensor containing the last argument value found during the search. If the search converged,
   # then this value is the argmin of the objective function.
   f_k: jnp.ndarray  # A tensor containing the value of the objective
-  # function at the `position`. If the search
+  # function at the `xk`. If the search
   # converged, then this is the (local) minimum of
   # the objective function.
   g_k: jnp.ndarray  # A tensor containing the gradient of the objective function at the `final_position`.
@@ -94,7 +94,7 @@ def fmin_bfgs(func, x0, args=(), options=None):
 
   def body(state):
     p_k = -(state.H_k @ state.g_k)
-    line_search_results = line_search(value_and_grad, state.x_k, p_k, old_fval=state.f_k, gfk=state.g_k,
+    line_search_results = line_search(func_with_args, state.x_k, p_k, old_fval=state.f_k, gfk=state.g_k,
                                       maxiter=ls_maxiter)
     state = state._replace(nfev=state.nfev + line_search_results.nfev,
                            ngev=state.ngev + line_search_results.ngev,
