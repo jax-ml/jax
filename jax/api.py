@@ -1219,9 +1219,6 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
                                   donated_invars=donated_invars)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
-
-  namestr = "soft_pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 def _reshape_split(num_chunks, x):

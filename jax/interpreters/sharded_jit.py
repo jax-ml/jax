@@ -26,7 +26,7 @@ from . import xla
 from .. import linear_util as lu
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..api_util import flatten_axes, flatten_fun
+from ..api_util import flatten_axes, flatten_fun, wraps
 from ..tree_util import tree_flatten, tree_unflatten
 from ..util import extend_name_stack, wrap_name, safe_zip
 
@@ -264,6 +264,7 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None):
   else:
     num_parts = pxla.get_num_partitions(in_parts, out_parts)
 
+  @wraps(fun)
   def wrapped(*args, **kwargs):
     if kwargs:
       raise NotImplementedError("sharded_jit over kwargs not yet supported")
