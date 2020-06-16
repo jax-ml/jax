@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 from jax import value_and_grad
-from jax.lax import while_loop, cond
+from jax.lax import while_loop
 from typing import NamedTuple
 
 
