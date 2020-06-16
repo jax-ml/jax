@@ -90,7 +90,7 @@ def fmin_bfgs(func, x0, args=(), options=None):
 
   f_0, g_0 = value_and_grad(x0)
   state = state._replace(f_k=f_0, g_k=g_0, H_k=initial_H, nfev=state.nfev + 1, ngev=state.ngev + 1,
-                         converged=jnp.linalg.norm(g_0) < gtol)
+                         converged=jnp.linalg.norm(g_0, ord=norm) < gtol)
 
   def body(state):
     p_k = -(state.H_k @ state.g_k)
