@@ -20,8 +20,8 @@ from jax import core
 from jax import linear_util as lu
 from . import ad
 from . import partial_eval as pe
-from .partial_eval import (PartialVal, partial_eval_jaxpr, JaxprTracer,
-                           new_eqn_recipe, _partition_knowns)
+from .partial_eval import (PartialVal, partial_eval_jaxpr, new_eqn_recipe,
+                           _partition_knowns)
 from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
 from ..custom_derivatives import _initial_style_jaxpr, _resolve_kwargs
 from ..api_util import flatten_fun_nokwargs
