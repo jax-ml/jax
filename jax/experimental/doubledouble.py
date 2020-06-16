@@ -1,4 +1,18 @@
-"""precision doubling arithmetic transform.
+# Copyright 2020 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Precision doubling arithmetic transform
 
 Following the approach of Dekker 1971
 (http://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf).
@@ -6,12 +20,12 @@ Following the approach of Dekker 1971
 from typing import Any, Sequence
 
 from jax.util import curry
-from jax import core, lax, grad
+from jax import core, lax
 import jax.numpy as jnp
 import jax.linear_util as lu
 
 
-class DoublingTracer(core.Tracer):  
+class DoublingTracer(core.Tracer):
   def __init__(self, trace, head, tail):
     self._trace = trace
     # TODO(vanderplas): check head/tail have matching shapes & dtypes
@@ -21,7 +35,7 @@ class DoublingTracer(core.Tracer):
   @property
   def aval(self):
     return core.raise_to_shaped(core.get_aval(self.head))
-  
+
   def full_lower(self):
     return self
 
@@ -68,13 +82,13 @@ def doubledouble(f, *args):
   if isinstance(out, list):
     return tuple(o[0] + o[1] for o in out)
   else:
-    return out[0] + out[1]  
+    return out[0] + out[1]
 
 
 doubling_rules = {}
 
 def _mul_const(dtype):
-  _nmant = jnp.finfo(jnp.float64).nmant
+  _nmant = jnp.finfo(dtype).nmant
   return jnp.array((2 << (_nmant - _nmant // 2)) + 1, dtype=dtype)
 
 def _abs2(x):
@@ -152,20 +166,10 @@ doubling_rules[lax.div_p] = _div2
 
 def _sqrt2(x):
   x, xx = x
-  c = jnp.sqrt(x)
-  u, uu = mul12(c, c)
-  cc = x - u - uu + xx * 0.5 / c
+  c = lax.sqrt(x)
+  u, uu = _mul12(c, c)
+  cc = (x - u - uu + xx) * 0.5 / c
   y = c + cc
   yy = c - y + cc
   return y, yy
 doubling_rules[lax.sqrt_p] = _sqrt2
-
-
-if __name__ == '__main__':
-
-  @doubledouble
-  def f(x, y):
-    return abs(x + y) - abs(x)
-
-  result = f(-1E20, -1.0)
-  print(result)
