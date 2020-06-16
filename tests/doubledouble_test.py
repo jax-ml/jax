@@ -72,7 +72,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
 
         self.assertAllClose(double_op1(*args), op2(*args))
 
-        # Sanity check: 
+        # Sanity check: make sure test fails for regular precision.
         with self.assertRaisesRegex(AssertionError, "Not equal to tolerance"):
             self.assertAllClose(op1(*args), op2(*args))
 
