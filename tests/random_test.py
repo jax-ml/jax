@@ -234,24 +234,24 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(np.sort(perm1), x, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_size={}_replace={}_array_input={}".format(
-          np.dtype(dtype).name, size, replace, array_input),
-        "dtype": np.dtype(dtype).name, "size": size, "replace": replace,
+      {"testcase_name": "_{}_shape={}_replace={}_array_input={}".format(
+          np.dtype(dtype).name, shape, replace, array_input),
+        "dtype": np.dtype(dtype).name, "shape": shape, "replace": replace,
         "array_input": array_input}
       for dtype in [np.float32, np.float64, np.int32, np.int64]
-      for size in [(), (5,), (4, 5)]
+      for shape in [(), (5,), (4, 5)]
       for replace in [True, False]
       for array_input in [True, False]))
-  def testChoice(self, dtype, size, replace, array_input):
+  def testChoice(self, dtype, shape, replace, array_input):
     key = random.PRNGKey(0)
     x = 100 if not array_input else jnp.arange(100, dtype=dtype)
-    rand = lambda key: random.choice(key, x, size, replace=replace)
+    rand = lambda key: random.choice(key, x, shape, replace=replace)
     crand = api.jit(rand)
 
     sample1 = rand(key)
     sample2 = crand(key)
 
-    self.assertEqual(size, sample1.shape)
+    self.assertEqual(shape, sample1.shape)
     if array_input:
       self.assertEqual(x.dtype, sample1.dtype)
     if not replace:

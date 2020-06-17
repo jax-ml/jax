@@ -555,23 +555,23 @@ def choice(key, a, shape=(), replace=True, p=None):
   a = jnp.asarray(a)
   if a.ndim not in [0, 1]:
     raise ValueError("a must be an integer or 1-dimensional")
-  N = np.prod(size).astype(int)
+  N = np.prod(shape).astype(int)
   if N == 0:
-    return jnp.zeros(size, dtype=a.dtype)
+    return jnp.zeros(shape, dtype=a.dtype)
   if a.ndim == 0 and a < 0:
     raise ValueError("a must be greater than 0 unless no samples are taken")
   if replace:
     if a.ndim == 0:
-      return randint(key, size, 0, a)
+      return randint(key, shape, 0, a)
     else:
-      return a[randint(key, size, 0, len(a))]
+      return a[randint(key, shape, 0, len(a))]
   else:
     if a.ndim == 0:
       a = jnp.arange(a)
     if N > len(a):
       raise ValueError("Cannot take a larger sample than population when 'replace=False'")
     # TODO(vanderplas): avoid a full permutation?
-    return permutation(key, a)[:N].reshape(size)
+    return permutation(key, a)[:N].reshape(shape)
 
 
 def normal(key: jnp.ndarray,
