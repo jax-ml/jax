@@ -83,6 +83,7 @@ extensions = [
     'sphinx.ext.viewcode',
     'nbsphinx',
     'sphinx_autodoc_typehints',
+    'myst_parser',
 ]
 
 intersphinx_mapping = {

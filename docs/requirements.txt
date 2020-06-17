@@ -4,6 +4,7 @@ jaxlib
 ipykernel
 nbsphinx
 sphinx-autodoc-typehints
+myst-parser[sphinx]
 # For host_callback.py
 msgpack
 # The next packages are for notebooks
@@ -13,4 +14,3 @@ sklearn
 pytest
 # Must install jax itself for notebook execution to work
 .
-
