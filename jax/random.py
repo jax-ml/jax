@@ -531,7 +531,7 @@ def _shuffle(key, x, axis):
 
 
 def choice(key, a, shape=(), replace=True, p=None):
-  """Generates a random sample from a given 1-D array
+  """Generates a random sample from a given 1-D array.
 
   Args:
     key: a PRNGKey used as the random key.
@@ -548,7 +548,7 @@ def choice(key, a, shape=(), replace=True, p=None):
       entries in a.
 
   Returns:
-    An array of shape `size` containing samples from `a`.
+    An array of shape `shape` containing samples from `a`.
   """
   if p is not None:
     # TODO(vanderplas): implement weighted sampling.
