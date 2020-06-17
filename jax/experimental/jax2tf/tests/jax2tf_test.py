@@ -16,9 +16,11 @@
 Specific JAX primitive conversion tests are in primitives_test."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 from jax import numpy as jnp
+from jax import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -67,6 +69,25 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_tf(mk_sharded(jnp.ones)).numpy(),
                         np.ones([n]))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_dtype={dtype.__name__}_function={with_function}",
+         with_function=with_function,
+         dtype=dtype)
+    for with_function in [False, True]
+    for dtype in [np.int64, np.float64]))
+  def test_converts_64bit(self, dtype=np.int64, with_function=False):
+    big_const = np.full((5,), 2 ** 33, dtype=dtype)
+    self.ConvertAndCompare(jnp.sin, big_const)
+    f_conv = jax2tf.convert(jnp.sin)
+    if with_function:
+      f_conv = tf.function(f_conv)
+    # We check also when we pass tf.Variable or tf.Tensor into the
+    # converted function
+    self.assertAllClose(jnp.sin(big_const),
+                        f_conv(tf.Variable(big_const)))
+    self.assertAllClose(jnp.sin(big_const),
+                        f_conv(tf.constant(big_const)))
+
   def test_function(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
     self.ConvertAndCompare(f_jax, 0.7, with_function=True)
@@ -80,6 +101,19 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(ValueError,
                                 'jax2tf currently does not support gradients'):
       tape.gradient(y, x)
+
+  def test_convert_argument_non_callable_error(self):
+    with self.assertRaisesRegex(TypeError, "Expected a callable value"):
+      jax2tf.convert(5.)
+
+  def test_convert_argument_non_tensor_error(self):
+    with self.assertRaisesRegex(TypeError,
+                                "Argument.*should be NumPy array"):
+      jax2tf.convert(lambda x: x)(lambda y: y)
+
+  def test_argument_eager_tensor(self):
+    x = jax2tf.convert(jnp.sin)(1.)
+    jax2tf.convert(jnp.cos)(x)  # No error
 
   def test_checkpoint_wrapper_types(self):
     m = tf.Module()
