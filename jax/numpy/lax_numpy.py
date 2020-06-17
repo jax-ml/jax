@@ -2655,6 +2655,18 @@ def polyadd(a, b):
     return b.at[-a.shape[0]:].add(a)
 
 
+@_wraps(np.polyder)
+def polyder(a, m=1):
+  a = asarray(a)
+  if m < 0:
+    raise ValueError("Order of derivative must be positive")
+  if m == 0:
+    return a
+  if m % 1:
+    raise ValueError("m must be an integer")
+  coeff = (arange(len(a), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
+  return a[:-m] * coeff
+
 def _trim_zeros(a):
   for i, v in enumerate(a):
     if v != 0:
