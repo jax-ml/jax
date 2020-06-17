@@ -31,6 +31,7 @@ import numpy as onp
 from . import dtypes
 from .config import FLAGS
 from . import linear_util as lu
+from . import source_info_util
 
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
@@ -141,12 +142,12 @@ def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
 
 
-
 class JaxprEqn(NamedTuple):
   invars: List['Atom']
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
+  source_info: Optional[source_info_util.Traceback]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
@@ -341,7 +342,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
+    with source_info_util.user_context(eqn.source_info):
+      ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -1296,13 +1298,19 @@ def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   else:
     return pp_lhs + pp_rhs.indent(2)
 
-def pp_jaxpr(jaxpr: Jaxpr) -> PrettyPrint:
+def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))
+  pp_eqns = map(pp_eqn, jaxpr.eqns)
+  if source_info:
+    l = max(i + len(s) for x in pp_eqns for i, s in x.lines)
+    pp_eqns = [pp_eqn(e).annotate(l, source_info_util.summarize(e.source_info))
+               for e in jaxpr.eqns]
+  else:
+    pp_eqns = [pp_eqn(e) for e in jaxpr.eqns]
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
-          ((pp('let ') >>
-            vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(pp_outvars))).indent(2))
+          ((pp('let ') >> vcat(pp_eqns))
+           + pp('in {} }}'.format(pp_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
   jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]

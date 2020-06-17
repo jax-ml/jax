@@ -18,7 +18,7 @@ import itertools as it
 from typing import Any, Callable, Dict, Set, List
 
 from . import partial_eval as pe
-from .. import core as core
+from .. import core
 from ..core import Trace, Tracer, new_master, get_aval, call_p, Primitive, Literal
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
@@ -28,6 +28,7 @@ from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
+from .. import source_info_util
 
 zip = safe_zip
 map = safe_map
@@ -189,13 +190,15 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       cts_in = map(read_cotangent, eqn.outvars)
     else:
       cts_in, = map(read_cotangent, eqn.outvars)
-    if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
-      cts_in_avals = [v.aval for v in eqn.outvars]
-      call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
-      cts_out = get_primitive_transpose(eqn.primitive)(
-          params, call_jaxpr, invals, cts_in, cts_in_avals)
-    else:
-      cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
+    with source_info_util.user_context(eqn.source_info):
+      if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
+        cts_in_avals = [v.aval for v in eqn.outvars]
+        call_jaxpr, params = core.extract_call_jaxpr(eqn.primitive, eqn.params)
+        cts_out = get_primitive_transpose(eqn.primitive)(
+            params, call_jaxpr, invals, cts_in, cts_in_avals)
+      else:
+        cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals,
+                                                         **eqn.params)
     cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
     # FIXME: Some invars correspond to primals!
     map(write_cotangent, eqn.invars, cts_out)

@@ -45,6 +45,7 @@ from ..config import flags
 from .. import core
 from .. import linear_util as lu
 from .. import lazy
+from .. import source_info_util
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
 from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
@@ -470,7 +471,8 @@ def _axis_index_bind(*, axis_name):
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
   eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
                           dict(nreps=nreps, sizes=sizes,
-                               soft_size=frame.soft_size, axis_name=axis_name))
+                               soft_size=frame.soft_size, axis_name=axis_name),
+                          source_info_util.current())
   out_tracer.recipe = eqn
 
   if not frame.soft_trace:

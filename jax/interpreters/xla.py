@@ -28,6 +28,7 @@ from .. import ad_util
 from .. import dtypes
 from .. import lazy
 from .. import linear_util as lu
+from .. import source_info_util
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
                                abstract_token)
@@ -388,10 +389,13 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
   _map(write, jaxpr.constvars, consts)
   _map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
+    frame = source_info_util.user_frame(eqn.source_info)
     c.set_op_metadata(xc.OpMetadata(
         op_type=eqn.primitive.name,
         op_name=str(pp(name_stack) >> pp_eqn_compact(
-            eqn.primitive.name, eqn.params))))
+            eqn.primitive.name, eqn.params)),
+        source_file=frame.file_name if frame else None,
+        source_line=frame.line_num if frame else None))
     in_nodes = list(map(read, eqn.invars))
     if eqn.primitive in backend_specific_translations[platform]:
       rule = backend_specific_translations[platform][eqn.primitive]

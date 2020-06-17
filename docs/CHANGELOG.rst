@@ -13,6 +13,8 @@ jax 0.1.71 (Unreleased)
 ---------------------------
 
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...master>`_.
+* The minimum jaxlib version is now 0.1.48.
+
 
 jaxlib 0.1.48 (June 12, 2020)
 ------------------------------
