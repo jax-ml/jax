@@ -17,10 +17,12 @@
 Following the approach of Dekker 1971
 (http://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf).
 """
+from functools import wraps
 import operator
 from typing import Any, Callable, Dict, Sequence
 
-from jax.util import curry
+from jax.tree_util import tree_flatten, tree_unflatten
+from jax.api_util import flatten_fun_nokwargs
 from jax import core, lax
 import jax.numpy as jnp
 import jax.linear_util as lu
@@ -82,16 +84,18 @@ def doubling_transform(*args):
   yield result
 
 
-@curry
-def doubledouble(f, *args):
-  g = doubling_transform(lu.wrap_init(f))
-  # TODO: flatten pytrees
-  args = ((a, jnp.zeros_like(a)) for a in args)
-  out = g.call_wrapped(*args)
-  if isinstance(out, list):
-    return tuple(o[0] + o[1] for o in out)
-  else:
-    return out[0] + out[1]
+def doubledouble(f):
+  @wraps(f)
+  def wrapped(*args):
+    args_flat, in_tree = tree_flatten(args)
+    f_flat, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+    breakpoint()
+    arg_pairs = [(x, jnp.zeros_like(x)) for x in args_flat]
+    out_pairs_flat = doubling_transform(f_flat).call_wrapped(*arg_pairs)
+    out_flat = [head + tail for head, tail in out_pairs_flat]
+    out = tree_unflatten(out_tree(), out_flat)
+    return out
+  return wrapped
 
 
 doubling_rules: Dict[core.Primitive, Callable] = {}
