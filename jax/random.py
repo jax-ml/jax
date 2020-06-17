@@ -530,7 +530,7 @@ def _shuffle(key, x, axis):
   return x
 
 
-def choice(key, a, size=(), replace=True, p=None):
+def choice(key, a, shape=(), replace=True, p=None):
   """Generates a random sample from a given 1-D array
 
   Args:
@@ -538,7 +538,7 @@ def choice(key, a, size=(), replace=True, p=None):
     a : 1D array or int. If an ndarray, a random sample is generated from
       its elements. If an int, the random sample is generated as if a were
       arange(a).
-    size : tuple of ints, optional. Output shape.  If the given shape is,
+    shape : tuple of ints, optional. Output shape.  If the given shape is,
       e.g., ``(m, n)``, then ``m * n`` samples are drawn.  Default is (),
       in which case a single value is returned.
     replace : boolean.  Whether the sample is with or without replacement.
@@ -547,7 +547,7 @@ def choice(key, a, size=(), replace=True, p=None):
       entries in a.
 
   Returns:
-    an array of shape `size` containing samples from `a`.
+    An array of shape `size` containing samples from `a`.
   """
   if p is not None:
     # TODO(vanderplas): implement weighted sampling.
