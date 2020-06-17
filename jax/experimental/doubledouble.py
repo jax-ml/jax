@@ -17,12 +17,18 @@
 Following the approach of Dekker 1971
 (http://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf).
 """
+import operator
 from typing import Any, Callable, Dict, Sequence
 
 from jax.util import curry
-from jax import core, lax
+from jax import core, lax, xla
 import jax.numpy as jnp
 import jax.linear_util as lu
+
+class _Zeros:
+  def __repr__(self):
+    return "_zeros"
+_zero = _Zeros()
 
 
 class DoublingTracer(core.Tracer):
@@ -54,7 +60,7 @@ class DoublingTrace(core.Trace):
     func = doubling_rules.get(primitive, None)
     if func is None:
       raise NotImplementedError(f"primitive={primitive}")
-    out = func(*((t.head, t.tail) for t in tracers))
+    out = func(*((t.head, t.tail) for t in tracers), **params)
     return DoublingTracer(self, *out)
 
 
@@ -170,3 +176,31 @@ def _sqrt2(x):
   yy = c - y + cc
   return y, yy
 doubling_rules[lax.sqrt_p] = _sqrt2
+
+
+# def _def_inequality(prim, op):
+#   def transformed(x, y):
+#     breakpoint()
+#     z, zz = _sub2(x, y)
+#     return op(z + zz, 0), _zero
+#   doubling_rules[prim] = transformed
+
+# _def_inequality(lax.gt_p, operator.gt)
+# _def_inequality(lax.ge_p, operator.ge)
+# _def_inequality(lax.lt_p, operator.lt)
+# _def_inequality(lax.le_p, operator.le)
+# _def_inequality(lax.eq_p, operator.eq)
+# _def_inequality(lax.ne_p, operator.ne)
+
+# def _def_passthrough(prim, argnums=(0,)):
+#   def transformed(*args, **kwargs):
+#     return (
+#       prim.bind(*(arg[0] if i in argnums else arg for i, arg in enumerate(args)), **kwargs),
+#       prim.bind(*(arg[1] if i in argnums else arg for i, arg in enumerate(args)), **kwargs)
+#     )
+#   doubling_rules[prim] = transformed
+
+# _def_passthrough(lax.broadcast_in_dim_p)
+# _def_passthrough(lax.convert_element_type_p)
+# _def_passthrough(xla.device_put_p)
+# _def_passthrough(lax.tie_in_p, (0, 1))
