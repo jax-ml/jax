@@ -550,29 +550,41 @@ def choice(key, a, shape=(), replace=True, p=None):
   Returns:
     An array of shape `shape` containing samples from `a`.
   """
-  if p is not None:
-    # TODO(vanderplas): implement weighted sampling.
-    raise NotImplementedError("jax.random.choice with p != None")
   a = jnp.asarray(a)
   if a.ndim not in [0, 1]:
     raise ValueError("a must be an integer or 1-dimensional")
-  N = np.prod(shape).astype(int)
-  if N == 0:
+  n_inputs = int(a) if a.ndim == 0 else len(a)
+  n_draws = np.prod(shape).astype(int)
+  if n_draws == 0:
     return jnp.zeros(shape, dtype=a.dtype)
-  if a.ndim == 0 and a < 0:
+  if n_inputs <= 0:
     raise ValueError("a must be greater than 0 unless no samples are taken")
-  if replace:
-    if a.ndim == 0:
-      return randint(key, shape, 0, a)
+  if not replace and n_draws > n_inputs:
+    raise ValueError("Cannot take a larger sample than population when 'replace=False'")
+
+  if p is None:
+    if replace:
+      ind = randint(key, shape, 0, n_inputs)
+      result = ind if a.ndim == 0 else a[ind]
     else:
-      return a[randint(key, shape, 0, len(a))]
+      result = permutation(key, a)[:n_draws]
   else:
-    if a.ndim == 0:
-      a = jnp.arange(a)
-    if N > len(a):
-      raise ValueError("Cannot take a larger sample than population when 'replace=False'")
-    # TODO(vanderplas): avoid a full permutation?
-    return permutation(key, a)[:N].reshape(shape)
+    p = jnp.asarray(p)
+    if p.shape != (n_inputs,):
+      raise ValueError("p must be None or match the shape of a")
+    if jnp.any(p < 0):
+      raise ValueError("entries of p must be non-negative.")
+    if replace:
+      p_cuml = jnp.cumsum(p)
+      r = p_cuml[-1] * uniform(key, shape)
+      ind = jnp.searchsorted(p_cuml, r)
+      result = ind if a.ndim == 0 else a[ind]
+    else:
+      # Gumbel-sort trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
+      g = -gumbel(key, (n_inputs,)) - jnp.log(p)
+      ind = jnp.argsort(g)[:n_draws]
+      result = ind if a.ndim == 0 else a[ind]
+  return result.reshape(shape)
 
 
 def normal(key: jnp.ndarray,

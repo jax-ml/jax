@@ -234,18 +234,21 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(np.sort(perm1), x, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_shape={}_replace={}_array_input={}".format(
-          np.dtype(dtype).name, shape, replace, array_input),
+      {"testcase_name": "_{}_shape={}_replace={}_weighted={}_array_input={}".format(
+          np.dtype(dtype).name, shape, replace, weighted, array_input),
         "dtype": np.dtype(dtype).name, "shape": shape, "replace": replace,
-        "array_input": array_input}
+        "weighted": weighted, "array_input": array_input}
       for dtype in [np.float32, np.float64, np.int32, np.int64]
       for shape in [(), (5,), (4, 5)]
       for replace in [True, False]
+      for weighted in [True, False]
       for array_input in [True, False]))
-  def testChoice(self, dtype, shape, replace, array_input):
+  def testChoice(self, dtype, shape, replace, weighted, array_input):
+    N = 100
     key = random.PRNGKey(0)
-    x = 100 if not array_input else jnp.arange(100, dtype=dtype)
-    rand = lambda key: random.choice(key, x, shape, replace=replace)
+    x = N if not array_input else jnp.arange(N, dtype=dtype)
+    p = None if not weighted else jnp.arange(N)
+    rand = lambda key: random.choice(key, x, shape, p=p, replace=replace)
     crand = api.jit(rand)
 
     sample1 = rand(key)
