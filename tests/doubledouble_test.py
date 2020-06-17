@@ -39,7 +39,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
     op_doubled = doubledouble.doubledouble(op)
     args = (rng(shape, dtype),)
     self.assertAllClose(op(*args), op_doubled(*args))
-  
+
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_{}".format(
         op.__name__, jtu.format_shape_dtype_string(shape, dtype)),
@@ -54,7 +54,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
     op_doubled = doubledouble.doubledouble(op)
     args = rng(shape, dtype), rng(shape, dtype)
     self.assertAllClose(op(*args), op_doubled(*args))
-  
+
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_{}".format(
       jtu.format_shape_dtype_string(shape, dtype), label),
@@ -80,7 +80,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
     # Sanity check: make sure test fails for regular precision.
     with self.assertRaisesRegex(AssertionError, "Not equal to tolerance"):
       self.assertAllClose(op1(*args), op2(*args), check_dtypes=check_dtypes)
-  
+
   def testTypeConversion(self):
     x = jnp.arange(10, dtype='float16')
     f = lambda x, y: (x + y).astype('float32')

@@ -21,7 +21,7 @@ import operator
 from typing import Any, Callable, Dict, Sequence
 
 from jax.util import curry
-from jax import core, lax, xla
+from jax import core, lax
 import jax.numpy as jnp
 import jax.linear_util as lu
 
