@@ -19,7 +19,6 @@ profiling information about each computation JAX runs. For example:
 $ TF_CPP_MIN_LOG_LEVEL=0 XLA_FLAGS=--xla_hlo_profile ipython
 ...
 In [1]: from jax import lax
-lax.add
 In [2]: lax.add(1, 2)
 2019-08-08 20:47:52.659030: I external/org_tensorflow/tensorflow/compiler/xla/service/service.cc:168] XLA service 0x7fe2c719e200 executing computations on platform Host. Devices:
 2019-08-08 20:47:52.659054: I external/org_tensorflow/tensorflow/compiler/xla/service/service.cc:175]   StreamExecutor device (0): Host, Default Version
