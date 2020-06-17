@@ -43,7 +43,10 @@ class DoublingTracer(core.Tracer):
     return core.raise_to_shaped(core.get_aval(self.head))
 
   def full_lower(self):
-    return self
+    if self.tail is None:
+      return core.full_lower(self.head)
+    else:
+      return self
 
 
 class DoublingTrace(core.Trace):
@@ -178,19 +181,18 @@ def _sqrt2(x):
 doubling_rules[lax.sqrt_p] = _sqrt2
 
 
-# def _def_inequality(prim, op):
-#   def transformed(x, y):
-#     breakpoint()
-#     z, zz = _sub2(x, y)
-#     return op(z + zz, 0), _zero
-#   doubling_rules[prim] = transformed
+def _def_inequality(prim, op):
+  def transformed(x, y):
+    z, zz = _sub2(x, y)
+    return op(z + zz, 0), None
+  doubling_rules[prim] = transformed
 
-# _def_inequality(lax.gt_p, operator.gt)
-# _def_inequality(lax.ge_p, operator.ge)
-# _def_inequality(lax.lt_p, operator.lt)
-# _def_inequality(lax.le_p, operator.le)
-# _def_inequality(lax.eq_p, operator.eq)
-# _def_inequality(lax.ne_p, operator.ne)
+_def_inequality(lax.gt_p, operator.gt)
+_def_inequality(lax.ge_p, operator.ge)
+_def_inequality(lax.lt_p, operator.lt)
+_def_inequality(lax.le_p, operator.le)
+_def_inequality(lax.eq_p, operator.eq)
+_def_inequality(lax.ne_p, operator.ne)
 
 # def _def_passthrough(prim, argnums=(0,)):
 #   def transformed(*args, **kwargs):

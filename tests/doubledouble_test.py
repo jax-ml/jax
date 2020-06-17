@@ -44,7 +44,9 @@ class DoubleDoubleTest(jtu.JaxTestCase):
           "dtype": dtype, "shape": shape, "op": op}
         for dtype in (jnp.float16, jnp.float32, jnp.float64)
         for shape in ((), (5,), (2, 3), (2, 3, 4))
-        for op in (operator.add, operator.sub, operator.mul, operator.truediv)))
+        for op in (operator.add, operator.sub, operator.mul, operator.truediv,
+                   operator.gt, operator.ge, operator.lt, operator.le,
+                   operator.eq, operator.ne)))
     def testBinaryOp(self, dtype, shape, op):
         rng = jtu.rand_default(self.rng())
         op_doubled = doubledouble.doubledouble(op)
@@ -63,6 +65,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
             ("add_neg_add", lambda x, y: -(x + y) + x, lambda x, y: -y),
             ("add_mul_sub", lambda x, y: 2 * (x + y) - 2 * x, lambda x, y: 2 * y),
             ("add_div_sub", lambda x, y: (x + y) / 2 - x / 2, lambda x, y: y / 2),
+            ("add_lt", lambda x, y: x + y < x, lambda x, y: y < 0)
         ]))
     def testDoubledPrecision(self, shape, dtype, op1, op2):
         """Test operations that would lose precision without doubling."""
