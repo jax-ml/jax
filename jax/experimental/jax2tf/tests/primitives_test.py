@@ -154,13 +154,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_pad)
   def test_pad(self, harness: primitive_harness.Harness):
+    # TODO: figure out the bfloat16 story
     if harness.params["dtype"] is dtypes.bfloat16:
       raise unittest.SkipTest("bfloat16 not implemented")
-    # TODO: implement (or decide not to) pads with negative edge padding
+    # TODO: fix pad with negative padding in XLA (fixed on 06/16/2020)
     if any([lo < 0 or hi < 0 for lo, hi, mid in harness.params["pads"]]):
       raise unittest.SkipTest("pad with negative pad not supported")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           with_function=True)
+                           with_function=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",

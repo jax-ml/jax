@@ -150,7 +150,7 @@ lax_pad = jtu.cases_from_list(
   for dtype in default_dtypes
   for pads in [
     [(0, 0, 0), (0, 0, 0)],  # no padding
-    [(1, 1, 0), (2, 2, 0)],  # edge padding
+    [(1, 1, 0), (2, 2, 0)],  # only positive edge padding
     [(1, 2, 1), (0, 1, 0)],  # edge padding and interior padding
     [(0, 0, 0), (-1, -1, 0)],  # negative padding
     [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
