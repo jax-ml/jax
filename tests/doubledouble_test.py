@@ -25,59 +25,66 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 class DoubleDoubleTest(jtu.JaxTestCase):
-    @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_{}_{}".format(
-            op.__name__, jtu.format_shape_dtype_string(shape, dtype)),
-          "dtype": dtype, "shape": shape, "op": op}
-        for dtype in (jnp.float16, jnp.float32, jnp.float64)
-        for shape in ((), (5,), (2, 3), (2, 3, 4))
-        for op in (abs, operator.neg, jnp.sqrt)))
-    def testUnaryOp(self, dtype, shape, op):
-        rng = jtu.rand_default(self.rng())
-        op_doubled = doubledouble.doubledouble(op)
-        args = (rng(shape, dtype),)
-        self.assertAllClose(op(*args), op_doubled(*args))
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_{}".format(
+        op.__name__, jtu.format_shape_dtype_string(shape, dtype)),
+        "dtype": dtype, "shape": shape, "op": op}
+    for dtype in (jnp.float16, jnp.float32, jnp.float64)
+    for shape in ((), (5,), (2, 3), (2, 3, 4))
+    for op in (abs, operator.neg, jnp.sqrt)))
+  def testUnaryOp(self, dtype, shape, op):
+    rng = jtu.rand_default(self.rng())
+    op_doubled = doubledouble.doubledouble(op)
+    args = (rng(shape, dtype),)
+    self.assertAllClose(op(*args), op_doubled(*args))
+  
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_{}".format(
+        op.__name__, jtu.format_shape_dtype_string(shape, dtype)),
+        "dtype": dtype, "shape": shape, "op": op}
+    for dtype in (jnp.float16, jnp.float32, jnp.float64)
+    for shape in ((), (5,), (2, 3), (2, 3, 4))
+    for op in (operator.add, operator.sub, operator.mul, operator.truediv,
+               operator.gt, operator.ge, operator.lt, operator.le,
+               operator.eq, operator.ne)))
+  def testBinaryOp(self, dtype, shape, op):
+    rng = jtu.rand_default(self.rng())
+    op_doubled = doubledouble.doubledouble(op)
+    args = rng(shape, dtype), rng(shape, dtype)
+    self.assertAllClose(op(*args), op_doubled(*args))
+  
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_{}".format(
+      jtu.format_shape_dtype_string(shape, dtype), label),
+      "shape": shape, "dtype": dtype, "op1": op1, "op2": op2
+    }
+    for dtype in (jnp.float32, jnp.float64)
+    for shape in ((), (5,), (2, 3), (2, 3, 4))
+    for label, op1, op2 in [
+      ('add_sub', lambda x, y: x + y - x, lambda x, y: y),
+      ("add_neg_add", lambda x, y: -(x + y) + x, lambda x, y: -y),
+      ("add_mul_sub", lambda x, y: 2 * (x + y) - 2 * x, lambda x, y: 2 * y),
+      ("add_div_sub", lambda x, y: (x + y) / 2 - x / 2, lambda x, y: y / 2),
+      ("add_lt", lambda x, y: x + y < x, lambda x, y: y < 0),
+    ]))
+  def testDoubledPrecision(self, shape, dtype, op1, op2):
+    """Test operations that would lose precision without doubling."""
+    rng = jtu.rand_default(self.rng())
+    double_op1 = doubledouble.doubledouble(op1)
+    args = 1E20 * rng(shape, dtype), rng(shape, dtype)
 
-    @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_{}_{}".format(
-            op.__name__, jtu.format_shape_dtype_string(shape, dtype)),
-          "dtype": dtype, "shape": shape, "op": op}
-        for dtype in (jnp.float16, jnp.float32, jnp.float64)
-        for shape in ((), (5,), (2, 3), (2, 3, 4))
-        for op in (operator.add, operator.sub, operator.mul, operator.truediv,
-                   operator.gt, operator.ge, operator.lt, operator.le,
-                   operator.eq, operator.ne)))
-    def testBinaryOp(self, dtype, shape, op):
-        rng = jtu.rand_default(self.rng())
-        op_doubled = doubledouble.doubledouble(op)
-        args = rng(shape, dtype), rng(shape, dtype)
-        self.assertAllClose(op(*args), op_doubled(*args))
+    self.assertAllClose(double_op1(*args), op2(*args))
 
-    @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": "_{}_{}".format(
-            jtu.format_shape_dtype_string(shape, dtype), label),
-          "shape": shape, "dtype": dtype, "op1": op1, "op2": op2
-        }
-        for dtype in (jnp.float32, jnp.float64)
-        for shape in ((), (5,), (2, 3), (2, 3, 4))
-        for label, op1, op2 in [
-            ('add_sub', lambda x, y: x + y - x, lambda x, y: y),
-            ("add_neg_add", lambda x, y: -(x + y) + x, lambda x, y: -y),
-            ("add_mul_sub", lambda x, y: 2 * (x + y) - 2 * x, lambda x, y: 2 * y),
-            ("add_div_sub", lambda x, y: (x + y) / 2 - x / 2, lambda x, y: y / 2),
-            ("add_lt", lambda x, y: x + y < x, lambda x, y: y < 0)
-        ]))
-    def testDoubledPrecision(self, shape, dtype, op1, op2):
-        """Test operations that would lose precision without doubling."""
-        rng = jtu.rand_default(self.rng())
-        double_op1 = doubledouble.doubledouble(op1)
-        args = 1E20 * rng(shape, dtype), rng(shape, dtype)
-
-        self.assertAllClose(double_op1(*args), op2(*args))
-
-        # Sanity check: make sure test fails for regular precision.
-        with self.assertRaisesRegex(AssertionError, "Not equal to tolerance"):
-            self.assertAllClose(op1(*args), op2(*args))
+    # Sanity check: make sure test fails for regular precision.
+    with self.assertRaisesRegex(AssertionError, "Not equal to tolerance"):
+      self.assertAllClose(op1(*args), op2(*args))
+  
+  def testTypeConversion(self):
+    x = jnp.arange(10, dtype='float16')
+    f = lambda x, y: (x + y).astype('float32')
+    g = doubledouble.doubledouble(f)
+    self.assertAllClose(f(1E2 * x, 1E-2 * x), 1E2 * x.astype('float32'))
+    self.assertAllClose(g(1E2 * x, 1E-2 * x), 100.01 * x.astype('float32'))
 
 
 if __name__ == '__main__':

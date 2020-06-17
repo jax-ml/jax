@@ -71,7 +71,7 @@ class DoublingTrace(core.Trace):
 def doubling_transform(*args):
   with core.new_master(DoublingTrace) as master:
     trace = DoublingTrace(master, core.cur_sublevel())
-    in_tracers = [DoublingTracer(trace, hi, lo) for hi, lo in args]
+    in_tracers = [DoublingTracer(trace, head, tail) for head, tail in args]
     outputs = yield in_tracers, {}
     if isinstance(outputs, Sequence):
       out_tracers = map(trace.full_raise, outputs)
@@ -193,6 +193,20 @@ _def_inequality(lax.lt_p, operator.lt)
 _def_inequality(lax.le_p, operator.le)
 _def_inequality(lax.eq_p, operator.eq)
 _def_inequality(lax.ne_p, operator.ne)
+
+def _convert_element_type(operand, new_dtype, old_dtype):
+  head, tail = operand
+  head = lax.convert_element_type_p.bind(head, new_dtype=new_dtype, old_dtype=old_dtype)
+  if tail is not None:
+    tail = lax.convert_element_type_p.bind(tail, new_dtype=new_dtype, old_dtype=old_dtype)
+  if jnp.issubdtype(new_dtype, jnp.floating):
+    if tail is None:
+      tail = jnp.zeros_like(head)
+  elif tail is not None:
+    head = head + tail
+    tail = None
+  return (head, tail)
+doubling_rules[lax.convert_element_type_p] = _convert_element_type
 
 # def _def_passthrough(prim, argnums=(0,)):
 #   def transformed(*args, **kwargs):
