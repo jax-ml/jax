@@ -1289,9 +1289,14 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
 
 def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars)
-  return (pp('{} = '.format(lhs)) >>
-           pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
-           >> pp(' ') >> pp(pp_vars(eqn.invars)))
+  pp_lhs = pp(f'{lhs} =')
+  pp_rhs = (pp(eqn.primitive.name) >>
+            pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
+            pp(pp_vars(eqn.invars)))
+  if len(lhs) <= 6:
+    return pp_lhs >> pp(' ') >> pp_rhs
+  else:
+    return pp_lhs + pp_rhs.indent(2)
 
 def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))

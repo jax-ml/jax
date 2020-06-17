@@ -976,7 +976,14 @@ class LaxTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "pads": pads, "rng_factory": jtu.rand_small}
       for shape in [(2, 3)]
       for dtype in default_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)]]))
+      for pads in [
+        [(0, 0, 0), (0, 0, 0)],  # no padding
+        [(1, 1, 0), (2, 2, 0)],  # only positive edge padding
+        [(1, 2, 1), (0, 1, 0)],  # edge padding and interior padding
+        [(0, 0, 0), (-1, -1, 0)],  # negative padding
+        [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
+        [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
+      ]))
   def testPadAgainstNumpy(self, shape, dtype, pads, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]

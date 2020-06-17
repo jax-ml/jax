@@ -2116,6 +2116,7 @@ ad.defjvp(integer_pow_p, _integer_pow_jvp)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_bool_or_int, 'not')
+ad.defjvp_zero(not_p)
 
 and_p = standard_naryop([_bool_or_int, _bool_or_int], 'and')
 ad.defjvp_zero(and_p)

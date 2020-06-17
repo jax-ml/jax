@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, Iterable, Sequence, Union
 import jax
 from jax import abstract_arrays
 from jax import ad_util
+from jax import api
 from jax import core
 from jax import custom_derivatives
 from jax import lax
@@ -47,9 +48,17 @@ import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
-# A value suitable in a TF tracing context: tf.Tensor, tf.Variable, tf.EagerTensor,
-# or Python scalar or numpy.ndarray.
+# A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
+# or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
 TfVal = Any
+def _is_tfval(v: TfVal) -> bool:
+  if isinstance(v, (tf.Tensor, tf.Variable)):
+    return True
+  try:
+    tf.convert_to_tensor(v)
+    return True
+  except ValueError:
+    return False
 
 # During JAX transformations we sometimes produce a Jaxpr that has arguments
 # of abstract value core.abstract_unit and results equal to core.unit.
@@ -59,17 +68,27 @@ TfVal = Any
 # some small TFVal; it does not matter which value since it will never be used
 # in an actual operation. We will use `tf.constant(np.nan, float32)`.
 TfValOrUnit = Union[TfVal, core.Unit]
+def _is_tfvalorunit(v: TfValOrUnit) -> bool:
+  return v is core.unit or _is_tfval(v)
+
 
 def _tfval_remove_unit(args: Sequence[TfValOrUnit]) -> Sequence[TfVal]:
   """Replace core.unit with regular TF values."""
   return [tf.constant(np.nan, tf.float32) if a is core.unit else a
           for a in args]
 
-def _tfval_add_unit(vals: Sequence[TfVal],
+def _tfval_add_unit(vals: Sequence[TfValOrUnit],
                     avals: Sequence[core.AbstractValue]) -> Sequence[TfValOrUnit]:
-  """Turn regular TfVals into TfValOrUnit, based on expected abstract values."""
-  return [core.unit if aval is core.abstract_unit else v
-          for v, aval in util.safe_zip(vals, avals)]
+  """Turn regular TfVals into TfValOrUnit, based on expected abstract values.
+  This function is sometimes called with a mix of core.unit and tf.nan in places
+  of units.
+  """
+  def add_unit(v: TfValOrUnit, aval: core.AbstractValue):
+    if not core.skip_checks:
+      assert ((v is core.unit or tf.math.is_nan(v))
+              if aval is core.abstract_unit else _is_tfval(v))
+    return core.unit if aval is core.abstract_unit else v
+  return util.safe_map(add_unit, vals, avals)
 
 # The implementation rules for primitives. The rule will be called with the
 # arguments (TfValOrUnit) and must return TfValOrUnit (or a sequence thereof,
@@ -142,6 +161,8 @@ def convert(fun):
     A version of `fun` that expects TfVals as arguments (or
     tuple/lists/dicts) thereof, and returns TfVals as outputs.
   """
+  api._check_callable(fun)
+
   @disable_gradient
   def wrapped_fun(*args: TfValOrUnit) -> TfValOrUnit:
     # TODO(necula): remove the jit disabling once we handle all control-flow.
@@ -150,6 +171,11 @@ def convert(fun):
     def doit():
       f = lu.wrap_init(fun)
       args_flat, in_tree = tree_util.tree_flatten((args, {}))
+      for a in args_flat:
+        if not _is_tfvalorunit(a):
+          msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
+                 "be NumPy array, scalar, tf.Variable, or tf.Tensor")
+          raise TypeError(msg)
       flat_fun, out_tree = flatten_fun(f, in_tree)
       out_flat = _interpret_fun(flat_fun, args_flat)
       return tree_util.tree_unflatten(out_tree(), out_flat)
@@ -200,7 +226,7 @@ def _interpret_jaxpr(jaxpr: core.TypedJaxpr, *args: TfValOrUnit) -> Sequence[TfV
 ### tracer
 
 
-def abstractify(t: tf.Tensor):
+def abstractify(t: Union[tf.Tensor, tf.Variable]):
   return abstract_arrays.ShapedArray(tuple(t.shape), t.dtype.as_numpy_dtype)
 
 # TODO(b/26854495): pylint doesn't understand slots and inheritance.
@@ -214,10 +240,21 @@ class TensorFlowTracer(core.Tracer):
 
   def __init__(self, trace: 'TensorFlowTrace', val: TfValOrUnit):
     self._trace = trace
-    if not (val is core.unit or isinstance(val, (tf.Tensor, tf.Variable))):
-      aval = xla.abstractify(val)
-      val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore
-    self.val = val
+    if val is core.unit:
+      self.val = val
+    elif isinstance(val, (tf.Tensor, tf.Variable)):
+      aval: core.ShapedArray = abstractify(val)
+      if np.dtype(aval.dtype) != val.dtype.as_numpy_dtype:  # type: ignore
+        # This is expected when JAX 64-bit is not enabled
+        self.val = tf.cast(val, dtype=aval.dtype)
+      else:
+        self.val = val
+    else:  # Must be a numeric value
+      assert core.skip_checks or _is_tfval(val), f"Non TfVal: {val}"
+      aval = xla.abstractify(val)  # type: ignore
+      self.val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore
+      assert core.skip_checks or aval.strip_weak_type() == self.aval.strip_weak_type(), (
+              f"Expected {aval}, got {self.aval}")
 
   @property
   def aval(self):
@@ -253,9 +290,21 @@ class TensorFlowTrace(core.Trace):
     # impl takes core.unit and returns core.unit when needed.
     val_out: TfValOrUnit = impl(*args_tf, **params)
     if primitive.multiple_results:
-      out = map(functools.partial(TensorFlowTracer, self), val_out)  # type: ignore
+      out = util.safe_map(functools.partial(TensorFlowTracer, self), val_out)  # type: ignore
     else:
       out = TensorFlowTracer(self, val_out)
+
+    # Check that the impl rule returned a value of expected shape and dtype
+    if not core.skip_checks:
+      expected_out_aval: core.AbstractValue = primitive.abstract_eval(
+        *[t.aval for t in tracers], **params)
+      if primitive.multiple_results:
+        for o, expected_aval in zip(out, expected_out_aval):  # type: ignore
+          assert o.aval == expected_aval, (
+            f"{primitive}: out.aval = {o.aval}; expected {expected_aval}")
+      else:
+        assert out.aval == expected_out_aval, (  # type: ignore
+          f"{primitive}: out.aval = {out.aval}; expected {expected_out_aval}")  # type: ignore
     return out  # type: ignore
 
   def process_call(self, call_primitive: core.Primitive, f,
@@ -628,6 +677,10 @@ def _pad_shape(operand, padding_value, padding_config):
 
 def _pad(operand, padding_value, padding_config):
   low, high, interior = util.unzip3(padding_config)
+  if all(lo >= 0 and hi >= 0 and i == 0 for lo, hi, i in padding_config):
+    return tf.pad(operand, util.safe_zip(low, high),
+                  mode="CONSTANT", constant_values=padding_value)
+  # TODO(necula): implement shape inference for XlaPad
   out_shape = _pad_shape(operand, padding_value, padding_config)
   out = tfxla.pad(operand, padding_value, low, high, interior)
   out.set_shape(out_shape)
