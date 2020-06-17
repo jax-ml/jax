@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import contextlib
-import inspect
 import os.path
 import threading
 from typing import Any, Optional
@@ -23,23 +22,18 @@ from .lib import xla_client
 Traceback = Any  # xla_client.Traceback
 Frame = Any  # xla_client.Traceback::Frame
 
-def _get_stacktrace() -> Traceback:
-  return xla_client.Traceback.get_traceback()
-
-
-_jax_path = os.path.dirname(_get_stacktrace()[0].filename)
+_jax_path = os.path.dirname(__file__)
 
 def user_frame(source_info: Optional[Traceback]) -> Optional[Frame]:
   """Heuristic that guesses the identity of the user's code in a stack trace."""
-    # Guess that the user's frame is the innermost stack frame that isn't in the
-    # jax source tree.
+  # Guess the user's frame is the innermost frame not in the jax source tree
   return next((x for x in (source_info.frames if source_info else [])
-               if not x.filename.startswith(_jax_path)), None)
+               if not x.file_name.startswith(_jax_path)), None)
 
 
 def summarize(source_info: Optional[Traceback]) -> str:
   frame = user_frame(source_info)
-  return (f"{frame.filename}:{frame.lineno} ({frame.function_name})"
+  return (f"{frame.file_name}:{frame.line_num} ({frame.function_name})"
           if frame else "unknown")
 
 
@@ -51,8 +45,9 @@ class _SourceInfoContext(threading.local):
 
 _source_info_context = _SourceInfoContext()
 
+
 def current() -> Optional[Traceback]:
-  return _source_info_context.context or _get_stacktrace()
+  return _source_info_context.context or xla_client.Traceback.get_traceback()
 
 @contextlib.contextmanager
 def user_context(c):

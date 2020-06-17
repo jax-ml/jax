@@ -1300,14 +1300,16 @@ def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
 
 def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
   pp_outvars = str(tuple(jaxpr.outvars))
-  pp_eqns = vcat(map(partial(pp_eqn), jaxpr.eqns))
+  pp_eqns = map(pp_eqn, jaxpr.eqns)
   if source_info:
-    src = vcat(pp('  [{}]'.format(source_info_util.summarize(eqn.source_info)))
-               for eqn in jaxpr.eqns)
-    pp_eqns |= src
+    l = max(i + len(s) for x in pp_eqns for i, s in x.lines)
+    pp_eqns = [pp_eqn(e).annotate(l, source_info_util.summarize(e.source_info))
+               for e in jaxpr.eqns]
+  else:
+    pp_eqns = [pp_eqn(e) for e in jaxpr.eqns]
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
-          ((pp('let ') >> pp_eqns)
+          ((pp('let ') >> vcat(pp_eqns))
            + pp('in {} }}'.format(pp_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
