@@ -89,7 +89,6 @@ def doubledouble(f):
   def wrapped(*args):
     args_flat, in_tree = tree_flatten(args)
     f_flat, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
-    breakpoint()
     arg_pairs = [(x, jnp.zeros_like(x)) for x in args_flat]
     out_pairs_flat = doubling_transform(f_flat).call_wrapped(*arg_pairs)
     out_flat = [head + tail for head, tail in out_pairs_flat]
