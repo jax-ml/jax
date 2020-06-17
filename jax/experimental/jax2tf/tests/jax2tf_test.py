@@ -76,6 +76,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     for with_function in [False, True]
     for dtype in [np.int64, np.float64]))
   def test_converts_64bit(self, dtype=np.int64, with_function=False):
+    if jtu.device_under_test() == "tpu":
+      # TODO(necula): fix and re-enable this test.
+      raise self.skipTest("Test is flaky on TPU")
     big_const = np.full((5,), 2 ** 33, dtype=dtype)
     self.ConvertAndCompare(jnp.sin, big_const)
     f_conv = jax2tf.convert(jnp.sin)
