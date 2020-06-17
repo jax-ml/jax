@@ -1,4 +1,4 @@
-sphinx
+sphinx>=2.1
 sphinx_rtd_theme
 jaxlib
 ipykernel
