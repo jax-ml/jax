@@ -576,11 +576,11 @@ def choice(key, a, shape=(), replace=True, p=None):
       raise ValueError("entries of p must be non-negative.")
     if replace:
       p_cuml = jnp.cumsum(p)
-      r = p_cuml[-1] * uniform(key, shape)
+      r = p_cuml[-1] * (1 - uniform(key, shape))
       ind = jnp.searchsorted(p_cuml, r)
       result = ind if a.ndim == 0 else a[ind]
     else:
-      # Gumbel-sort trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
+      # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
       g = -gumbel(key, (n_inputs,)) - jnp.log(p)
       ind = jnp.argsort(g)[:n_draws]
       result = ind if a.ndim == 0 else a[ind]
