@@ -21,8 +21,10 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental import doubledouble
 
-from jax.config import config
+from jax.config import config, flags
 config.parse_flags_with_absl()
+
+FLAGS = flags.FLAGS
 
 class DoubleDoubleTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -31,7 +33,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
         "dtype": dtype, "shape": shape, "op": op}
     for dtype in (jnp.float16, jnp.float32, jnp.float64)
     for shape in ((), (5,), (2, 3), (2, 3, 4))
-    for op in (abs, operator.neg, jnp.sqrt)))
+    for op in (abs, operator.neg, operator.pos, jnp.sqrt)))
   def testUnaryOp(self, dtype, shape, op):
     rng = jtu.rand_default(self.rng())
     op_doubled = doubledouble.doubledouble(op)
@@ -65,19 +67,19 @@ class DoubleDoubleTest(jtu.JaxTestCase):
       ("add_neg_add", lambda x, y: -(x + y) + x, lambda x, y: -y),
       ("add_mul_sub", lambda x, y: 2 * (x + y) - 2 * x, lambda x, y: 2 * y),
       ("add_div_sub", lambda x, y: (x + y) / 2 - x / 2, lambda x, y: y / 2),
-      ("add_lt", lambda x, y: x + y < x, lambda x, y: y < 0),
     ]))
   def testDoubledPrecision(self, shape, dtype, op1, op2):
     """Test operations that would lose precision without doubling."""
     rng = jtu.rand_default(self.rng())
     double_op1 = doubledouble.doubledouble(op1)
     args = 1E20 * rng(shape, dtype), rng(shape, dtype)
+    check_dtypes = not FLAGS.jax_enable_x64
 
-    self.assertAllClose(double_op1(*args), op2(*args))
+    self.assertAllClose(double_op1(*args), op2(*args), check_dtypes=check_dtypes)
 
     # Sanity check: make sure test fails for regular precision.
     with self.assertRaisesRegex(AssertionError, "Not equal to tolerance"):
-      self.assertAllClose(op1(*args), op2(*args))
+      self.assertAllClose(op1(*args), op2(*args), check_dtypes=check_dtypes)
   
   def testTypeConversion(self):
     x = jnp.arange(10, dtype='float16')
