@@ -28,7 +28,6 @@
 #
 import os
 import sys
-import typing
 
 sys.path.insert(0, os.path.abspath('..'))
 
