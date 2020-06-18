@@ -108,7 +108,8 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
       function with different values for these constants will trigger
       recompilation. If the jitted function is called with fewer positional
       arguments than indicated by ``static_argnums`` then an error is raised.
-      Defaults to ().
+      Arguments that are not arrays or containers thereof must be marked as
+      static. Defaults to ().
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via :py:func:`jax.devices`.) The default is inherited from
@@ -957,7 +958,9 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   Args:
     fun: Function to be mapped over argument axes. Its arguments and return
       value should be arrays, scalars, or (nested) standard Python containers
-      (tuple/list/dict) thereof.
+      (tuple/list/dict) thereof. Positional arguments indicated by
+      ``static_broadcasted_argnums`` can be anything at all, provided they are
+      hashable and have an equality operation defined.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
     in_axes: A nonnegative integer, None, or nested Python container thereof
@@ -970,7 +973,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
       trigger recompilation. If the pmaped function is called with fewer
       positional arguments than indicated by ``static_argnums`` then an error is
       raised. Each of the static arguments will be broadcasted to all devices.
-      Defaults to ().
+      Arguments that are not arrays or containers thereof must be marked as
+      static. Defaults to ().
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
       retrieved via jax.devices()). If specified, the size of the mapped axis
