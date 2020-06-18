@@ -90,28 +90,47 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_axis={}_keepdims={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
+      {"testcase_name":
+          "_inshape={}_axis={}_keepdims={}_return_sign={}_use_b_{}".format(
+             jtu.format_shape_dtype_string(shape, dtype),
+             axis, keepdims,return_sign, use_b),
        # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
        "rng_factory": jtu.rand_some_inf_and_nan
                       if jtu.device_under_test() != "cpu"
                       else jtu.rand_default,
        "shape": shape, "dtype": dtype,
-       "axis": axis, "keepdims": keepdims}
+       "axis": axis, "keepdims": keepdims,
+       "return_sign": return_sign, "use_b": use_b}
       for shape in all_shapes for dtype in float_dtypes
       for axis in range(-len(shape), len(shape))
-      for keepdims in [False, True]))
+      for keepdims in [False, True]
+      for return_sign in [False, True]
+      for use_b in [False, True]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
-  def testLogSumExp(self, rng_factory, shape, dtype, axis, keepdims):
+  def testLogSumExp(self, rng_factory, shape, dtype, axis, keepdims,
+                    return_sign, use_b):
     rng = rng_factory(self.rng())
     # TODO(mattjj): test autodiff
-    def scipy_fun(array_to_reduce):
-      return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims)
+    if use_b:
+      def scipy_fun(array_to_reduce, scale_array):
+        return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign, b=scale_array)
 
-    def lax_fun(array_to_reduce):
-      return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims)
+      def lax_fun(array_to_reduce, scale_array):
+        return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign, b=scale_array)
 
-    args_maker = lambda: [rng(shape, dtype)]
+      args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    else:
+      def scipy_fun(array_to_reduce):
+        return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign)
+
+      def lax_fun(array_to_reduce):
+        return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign)
+
+      args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
 
