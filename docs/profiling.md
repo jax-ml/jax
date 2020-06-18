@@ -1,8 +1,5 @@
 # Profiling JAX programs
 
-To profile JAX programs, there are currently two options: `nvprof` and XLA's
-profiling features.
-
 ## TensorBoard profiling
 
 [TensorBoard's
