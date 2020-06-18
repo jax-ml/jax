@@ -494,7 +494,25 @@ def _shift_right_logical(x, y):
 tf_impl[lax.shift_right_logical_p] = _shift_right_logical
 
 tf_impl[lax.shift_left_p] = tf.bitwise.left_shift
-tf_impl[lax.not_p] = tf.bitwise.invert
+
+def _not(x):
+  """Computes bitwise not with support for booleans.
+
+  Numpy and JAX support bitwise not for booleans by applying a logical not!
+  This means that applying bitwise_not yields an unexected result:
+    jnp.bitwise_not(jnp.array([True, False]))
+    >> DeviceArray([False,  True], dtype=bool)
+
+  if you assume that booleans are simply casted to integers.
+    jnp.bitwise_not(jnp.array([True, False]).astype(np.int32)).astype(bool)
+    >> DeviceArray([True,  True], dtype=bool)
+  """
+  if x.dtype == tf.bool:
+    return tf.logical_not(x)
+  else:
+    return tf.bitwise.invert(x)
+
+tf_impl[lax.not_p] = _not
 
 
 def bool_to_int8(f, argnums):
