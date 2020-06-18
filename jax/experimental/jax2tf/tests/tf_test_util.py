@@ -38,11 +38,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     if jtu.device_under_test() != "gpu":
       # TODO(necula): Change the build flags to ensure the GPU is seen by TF
       # It seems that we need --config=cuda build flag for this to work?
-      self.assertEquals(jtu.device_under_test().upper(),
-                        self.tf_default_device.device_type)
+      self.assertEqual(jtu.device_under_test().upper(),
+                       self.tf_default_device.device_type)
 
     with contextlib.ExitStack() as stack:
-      self._resource = stack.enter_context(tf.device(self.tf_default_device))
+      stack.enter_context(tf.device(self.tf_default_device))
       self.addCleanup(stack.pop_all().close)
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
