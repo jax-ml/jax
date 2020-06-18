@@ -101,15 +101,24 @@ expit.defjvps(lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 
 @_wraps(osp_special.logsumexp)
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
-  if b is not None or return_sign:
-    raise NotImplementedError("Only implemented for b=None, return_sign=False")
   dims = _reduction_dims(a, axis)
   dimadd = lambda x: lax.expand_dims(x, dims)
   amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
   amax_singletons = dimadd(amax)
-  out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
-                                   _constant_like(a, 0), lax.add, dims)), amax)
+  if b is None:
+    out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
+                                     _constant_like(a, 0), lax.add, dims)), amax)
+    sign = jnp.ones_like(out)
+  else:
+    sumexp = lax.reduce(lax.mul(lax.exp(lax.sub(a, amax_singletons)), b),
+                        _constant_like(a, 0), lax.add, dims)
+    sign = lax.stop_gradient(lax.sign(sumexp))
+    out = lax.add(lax.log(lax.abs(sumexp)), amax)
+  if return_sign:
+    return (dimadd(out), dimadd(sign)) if keepdims else (out, sign)
+  if b is not None:
+    out = jnp.where(sign < 0, np.nan, out)
   return dimadd(out) if keepdims else out
 
 
