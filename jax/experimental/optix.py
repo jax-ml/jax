@@ -272,7 +272,7 @@ def scale_by_adam(b1: float = 0.9,
 
   def init_fn(params):
     mu = tree_multimap(jnp.zeros_like, params)  # First moment
-    nu = tree_multimap(jnp.zeros_like, params)  # Second moment
+    nu = tree_multimap(jnp.ones_like, params)  # Second moment
     return ScaleByAdamState(count=jnp.zeros([], jnp.int32), mu=mu, nu=nu)
 
   def update_fn(updates, state, params=None):
@@ -280,7 +280,10 @@ def scale_by_adam(b1: float = 0.9,
     mu = _update_moment(updates, state.mu, b1, 1)
     nu = _update_moment(updates, state.nu, b2, 2)
     mu_hat = tree_multimap(lambda t: t / (1 - b1 ** (state.count + 1)), mu)
-    nu_hat = tree_multimap(lambda t: t / (1 - b2 ** (state.count + 1)), nu)
+    if b2 < 1:
+      nu_hat = tree_multimap(lambda t: t / (1 - b2 ** (state.count + 1)), nu)
+    else:
+      nu_hat = nu
     updates = tree_multimap(
         lambda m, v: m / (jnp.sqrt(v + eps_root) + eps), mu_hat, nu_hat)
     return updates, ScaleByAdamState(count=state.count + 1, mu=mu, nu=nu)
