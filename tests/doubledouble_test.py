@@ -39,7 +39,6 @@ class DoubleDoubleTest(jtu.JaxTestCase):
     op_doubled = doubledouble.doubledouble(op)
     args = (rng(shape, dtype),)
     self.assertAllClose(op(*args), op_doubled(*args))
-
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_{}".format(
         op.__name__, jtu.format_shape_dtype_string(shape, dtype)),
@@ -80,13 +79,24 @@ class DoubleDoubleTest(jtu.JaxTestCase):
     # Sanity check: make sure test fails for regular precision.
     with self.assertRaisesRegex(AssertionError, "Not equal to tolerance"):
       self.assertAllClose(op1(*args), op2(*args), check_dtypes=check_dtypes)
-
   def testTypeConversion(self):
     x = jnp.arange(10, dtype='float16')
     f = lambda x, y: (x + y).astype('float32')
     g = doubledouble.doubledouble(f)
     self.assertAllClose(f(1E2 * x, 1E-2 * x), 1E2 * x.astype('float32'))
     self.assertAllClose(g(1E2 * x, 1E-2 * x), 100.01 * x.astype('float32'))
+
+  def testRepeatedDoubling(self):
+    def f(x, y, z):
+      return x + y + z - x - y
+    f2 = doubledouble.doubledouble(f)
+    f4 = doubledouble.doubledouble(f2)
+    dtype = jnp.float32
+    x, y, z = dtype(1E20), dtype(1.0), dtype(1E-20)
+
+    self.assertEqual(f(x, y, z), -y)
+    self.assertEqual(f2(x, y, z), 0)
+    self.assertEqual(f4(x, y, z), z)
 
 
 if __name__ == '__main__':
