@@ -95,9 +95,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
              jtu.format_shape_dtype_string(shape, dtype),
              axis, keepdims,return_sign, use_b),
        # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
-       "rng_factory": jtu.rand_some_inf_and_nan
-                      if jtu.device_under_test() != "cpu"
-                      else jtu.rand_default,
        "shape": shape, "dtype": dtype,
        "axis": axis, "keepdims": keepdims,
        "return_sign": return_sign, "use_b": use_b}
@@ -107,9 +104,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for return_sign in [False, True]
       for use_b in [False, True]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
-  def testLogSumExp(self, rng_factory, shape, dtype, axis, keepdims,
-                    return_sign, use_b):
-    rng = rng_factory(self.rng())
+  def testLogSumExp(self, shape, dtype, axis, keepdims, return_sign, use_b):
+    if jtu.device_under_test() != "cpu":
+      rng = jtu.rand_some_inf_and_nan(self.rng())
+    else:
+      rng = jtu.rand_default(self.rng())
     # TODO(mattjj): test autodiff
     if use_b:
       def scipy_fun(array_to_reduce, scale_array):
