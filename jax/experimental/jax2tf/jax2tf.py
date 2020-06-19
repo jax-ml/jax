@@ -373,6 +373,7 @@ tf_not_yet_impl = [
   custom_derivatives.custom_vjp_call_jaxpr_p,
 
   random.random_gamma_p,
+  lax.random_gamma_grad_p,
   pe.remat_call_p,
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
