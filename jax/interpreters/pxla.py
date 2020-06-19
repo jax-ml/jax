@@ -11,24 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Implementation of pmap and related functionality.
+"""Implementation of pmap and related functionality."""
 
-Note on ShardingSpecs and spec_to_indices():
-A ShardingSpec describes at a high level how a logical array is sharded across
-devices (each ShardedDeviceArray has a ShardingSpec, and ShardingSpecs also
-describe how to shard inputs to a parallel computation). spec_to_indices()
-encodes exactly how a given ShardingSpec is translated to device buffers,
-i.e. how the sharded array is "laid out" across devices. Given a sequence of
-devices, we shard the data across the devices in row-major order, with
-replication treated as an extra inner dimension.
-
-For example, given the logical data array [1, 2, 3, 4], if we were to partition
-this array 4 ways with a replication factor of 2, for a total of 8 devices, the
-data on each device would be: [1, 1], [2, 2], [3, 3], [4, 4].
-
-This encoding is assumed by various parts of the system, e.g. generating
-replica groups for collective operations.
-"""
+# A ShardingSpec describes at a high level how a logical array is sharded across
+# devices (each ShardedDeviceArray has a ShardingSpec, and ShardingSpecs also
+# describe how to shard inputs to a parallel computation). spec_to_indices()
+# encodes exactly how a given ShardingSpec is translated to device buffers, i.e.
+# how the sharded array is "laid out" across devices. Given a sequence of
+# devices, we shard the data across the devices in row-major order, with
+# replication treated as an extra inner dimension.
+#
+# For example, given the logical data array [1, 2, 3, 4], if we were to
+# partition this array 4 ways with a replication factor of 2, for a total of 8
+# devices, the data on each device would be: [1, 1], [2, 2], [3, 3], [4, 4].
+#
+# This encoding is assumed by various parts of the system, e.g. generating
+# replica groups for collective operations.
 
 from collections import defaultdict
 from contextlib import contextmanager
@@ -64,7 +62,7 @@ xops = xc.ops
 
 FLAGS = flags.FLAGS
 
-_map = safe_map
+unsafe_map, map = map, safe_map
 
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
@@ -120,7 +118,7 @@ class ShardingSpec:
 
   def __repr__(self):
     return ("ShardingSpec(shards_per_axis=%s, is_axis_materialized=%s, "
-            "replication_factor=%s)" %
+            "replication_factors=%s)" %
             (self.shards_per_axis, self.is_axis_materialized,
              self.replication_factors))
 
@@ -186,7 +184,7 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def _axis_indices(axis_size, num_shards, is_materialized):
   if not is_materialized:
-    assert axis_size == num_shards
+    assert axis_size == num_shards, f'{axis_size} != {num_shards}'
     return list(range(axis_size))
   if num_shards == 1:
     return [slice(None)]
@@ -785,7 +783,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   tuple_args = len(sharded_avals) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
-  xla_consts = _map(partial(xb.constant, c), consts)
+  xla_consts = map(partial(xb.constant, c), consts)
   replicated = [not m for m in mapped_invars]
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args, replicated,
                                     arg_parts)
@@ -1115,22 +1113,23 @@ def execute_replicated(compiled,
   return out_handler(out_bufs)
 
 
-xla_pmap_p = core.Primitive('xla_pmap')
-xla_pmap_p.map_primitive = True
-xla_pmap_p.multiple_results = True
-xla_pmap = partial(core.map_bind, xla_pmap_p)
-xla_pmap_p.def_custom_bind(xla_pmap)
+xla_pmap_p = core.MapPrimitive('xla_pmap')
+xla_pmap = xla_pmap_p.bind
 xla_pmap_p.def_impl(xla_pmap_impl)
 pe.staged_out_calls.add(xla_pmap_p)
+
+# Set param update handlers to update `donated_invars` just like xla_call_p
+pe.call_param_updaters[xla_pmap_p] = pe.call_param_updaters[xla.xla_call_p]
+ad.call_param_updaters[xla_pmap_p] = ad.call_param_updaters[xla.xla_call_p]
+ad.call_transpose_param_updaters[xla_pmap_p] = \
+    ad.call_transpose_param_updaters[xla.xla_call_p]
 
 def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name,
                            call_jaxpr, *, backend=None, mapped_invars,
                            donated_invars):
-  if any(donated_invars):
-    raise ValueError("Donating buffers passed to a a pmap nested inside a jit "
-                     "or another pmap is not supported.")
+  del donated_invars  # Unused.
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if axis_env.names and devices is not None:

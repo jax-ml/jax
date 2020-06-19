@@ -1062,7 +1062,7 @@ def canonicalize_shape(shape):
   raise TypeError(msg.format(shape))
 
 
-# ------------------- Call and map -------------------
+# ------------------- Call -------------------
 
 def apply_todos(todos, outs):
   todos_list = list(todos)
@@ -1071,7 +1071,7 @@ def apply_todos(todos, outs):
   return outs
 
 @lu.transformation_with_aux
-def process_env_traces(post_processor: str, primitive: Primitive,
+def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
                        level: int, params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
@@ -1084,41 +1084,59 @@ def process_env_traces(post_processor: str, primitive: Primitive,
       break
     trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
-    post_process = getattr(trace, post_processor)
-    outs, cur_todo = post_process(primitive, outs, params)
+    outs, cur_todo = primitive.post_process(trace, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def _call_bind(processor: str, post_processor: str, primitive: Primitive,
-               f: lu.WrappedFun, *args, **params):
+def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
+              fun: lu.WrappedFun, *args, **params):
+  params_tuple = tuple(params.items())
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
-  f, env_trace_todo = process_env_traces(f, post_processor, primitive, level, params_tuple)
+  fun, env_trace_todo = process_env_traces(fun, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
-      outs = primitive.impl(f, *args, **params)
+      outs = primitive.impl(fun, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    process = getattr(top_trace, processor)
-    outs = map(full_lower, process(primitive, f, tracers, params))
+    outs = primitive.process(top_trace, fun, tracers, params)
   return apply_todos(env_trace_todo(), outs)
 
-call_bind = partial(_call_bind, 'process_call', 'post_process_call')
-map_bind = partial(_call_bind, 'process_map', 'post_process_map')
+class CallPrimitive(Primitive):
+  multiple_results = True
+  call_primitive = True
+  bind = call_bind
 
+  def process(self, trace, fun, tracers, params):
+    return trace.process_call(self, fun, tracers, params)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_call(self, out_tracers, params)
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
 
-call_p = Primitive('call')
-call_p.multiple_results = True
-call_p.call_primitive = True
-call = partial(call_bind, call_p)
-call_p.def_custom_bind(call)
+call_p = CallPrimitive('call')
+call = call_p.bind
 call_p.def_impl(call_impl)
 
+# ------------------- Map -------------------
+
+class MapPrimitive(Primitive):
+  multiple_results = True
+  map_primitive = True
+
+  def bind(self, fun, *args, **params):
+    assert len(params['mapped_invars']) == len(args)
+    return call_bind(self, fun, *args, **params)
+
+  def process(self, trace, fun, tracers, params):
+    return trace.process_map(self, fun, tracers, params)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_map(self, out_tracers, params)
 
 # ------------------- Jaxpr checking -------------------
 
@@ -1168,14 +1186,13 @@ def check_jaxpr(jaxpr: Jaxpr):
   try:
     _check_jaxpr(jaxpr, [v.aval for v in jaxpr.invars])
   except Exception as e:
-    exception_type = type(e)
     msg_context = f"while checking jaxpr:\n\n{jaxpr}\n"
     if len(e.args) == 0:
       exception_args = [msg_context]
     else:
-      msg = f"{e.args[0]}\n\n" + msg_context
+      msg = f"{e.args[0]}\n\n{msg_context}"
       exception_args = [msg, *e.args[1:]]
-    raise exception_type(*exception_args) from e
+    raise type(e)(*exception_args) from e
 
 def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
@@ -1203,6 +1220,11 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(write, jaxpr.invars, in_avals)
 
   for eqn in jaxpr.eqns:
+
+    if eqn.primitive in skip_check_primitives:
+      map(write, eqn.outvars, [v.aval for v in eqn.outvars])  # skip checking
+      continue
+
     in_avals = map(read, eqn.invars)
     if eqn.primitive.call_primitive:
       out_avals = check_call(eqn.primitive, in_avals, eqn.params)
@@ -1217,6 +1239,8 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
       raise TypeError(msg + f" in '{eqn}'") from None
 
   map(read, jaxpr.outvars)
+
+skip_check_primitives: Set[Primitive] = set()
 
 def check_eqn(prim, in_avals, params):
   for jaxpr in jaxprs_in_params(params):
