@@ -440,8 +440,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    self.assertAllClose(actual_grad, expected_grad,
-                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
+                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 7e-4)
 
   def testGammaGradType(self):
     # Regression test for https://github.com/google/jax/issues/2130
