@@ -177,7 +177,7 @@ concrete vs. abstract values, you may want to read `Different kinds of JAX value
 Different kinds of JAX values
 ------------------------------
 
-In the process of transforming functions, JAX replaces some some function
+In the process of transforming functions, JAX replaces some function
 arguments with special tracer values.
 You could see this if you use a ``print`` statement::
 
