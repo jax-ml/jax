@@ -96,7 +96,7 @@ Computations involving uncommitted data are performed on the default
 device and the results are uncommitted on the default device.
 
 Data can also be placed explicitly on a device using :func:`jax.device_put`
-with a ``device`` parameter, in which case it—the data—becomes **committed** to the device:
+with a ``device`` parameter, in which case the data becomes **committed** to the device:
 
 >>> import jax
 >>> from jax import device_put
@@ -105,20 +105,20 @@ gpu:2
 
 Computations involving some committed inputs will happen on the
 committed device and the result will be committed on the
-same device. You should not invoke an operation on
-arguments that are committed to more than one device—it will lead to errors.
+same device. Invoking an operation on arguments that are committed 
+to more than one device will raise an error.
 
-You can also use :func:`jax.device_put` without a ``device`` parameter. In this case
-the data is left as is if it's already on the device (committed or not), or a Python 
-value—that is not on any device—is placed uncommitted on the default device.
+You can also use :func:`jax.device_put` without a ``device`` parameter. If the data 
+is already on a device (committed or not), it's left as-is. If the data isn't on any 
+device—that is, it's a regular Python or NumPy value—it's placed uncommitted on the default 
+device. You can also use :func:`jax.device_put` without a `device` parameter. 
 
 Jitted functions behave like any other primitive operations—they will follow the 
 data and will show errors if invoked on data committed on more than one device.
 
-(As of April 2020, :func:`jax.jit` has a `device` parameter
-that affects the device placement slightly. That parameter
-is experimental, is likely to be removed or changed, and
-its use is not recommended.)
+(As of April 2020, :func:`jax.jit` has a `device` parameter that affects the device 
+placement. That parameter is experimental, is likely to be removed or changed, 
+and its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
@@ -131,9 +131,9 @@ For a worked-out example, we recommend reading through
 
 If you are getting an error that a library function is called with
 *"Abstract tracer value encountered where concrete value is expected"*, you may need to
-change how you invoke JAX transformations. Below, you'll first go over such example and then
-a couple of possible solutions. Then, you'll learn the details of what is actually
-happening, if you are curious or the simple solution does not work for you.
+change how you invoke JAX transformations. Below is an example and a couple of possible 
+solutions, followed by the details of what is actually happening, if you are curious 
+or the simple solution does not work for you.
 
 Some library functions take arguments that specify shapes or axes,
 such as the second and third arguments for :func:`jax.numpy.split`::
