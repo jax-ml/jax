@@ -1565,6 +1565,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np.testing.assert_equal(np.diag_indices(n, ndim),
                              jnp.diag_indices(n, ndim))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "arr_shape={}".format(
+        jtu.format_shape_dtype_string(shape, dtype)
+      ),
+       "dtype": dtype, "shape": shape}
+      for dtype in default_dtypes
+      for shape in [(1,1), (2,2), (3,3), (4,4), (5,5)]))
+  def testDiagIndicesFrom(self, dtype, shape):
+    rng = jtu.rand_default(self.rng())
+    np_fun = np.diag_indices_from
+    jnp_fun = jnp.diag_indices_from
+    args_maker = lambda : [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_k={}".format(

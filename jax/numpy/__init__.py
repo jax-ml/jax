@@ -29,7 +29,7 @@ from .lax_numpy import (
     complex128, complex64, complex_, complexfloating, compress, concatenate,
     conj, conjugate, convolve, copysign, corrcoef, correlate, cos, cosh,
     count_nonzero, cov, cross, csingle, cumprod, cumproduct, cumsum, deg2rad,
-    degrees, diag, diagflat, diag_indices, diagonal, diff, digitize, divide, divmod, dot,
+    degrees, diag, diagflat, diag_indices, diag_indices_from, diagonal, diff, digitize, divide, divmod, dot,
     double, dsplit, dstack, dtype, e, ediff1d, einsum, einsum_path, empty,
     empty_like, equal, euler_gamma, exp, exp2, expand_dims, expm1, extract, eye,
     fabs, finfo, fix, flatnonzero, flexible, flip, fliplr, flipud, float16, float32,

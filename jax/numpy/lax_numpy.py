@@ -2573,6 +2573,16 @@ def diag_indices(n, ndim=2):
                      .format(ndim))
   return (lax.iota(int_, n),) * ndim
 
+@_wraps(np.diag_indices_from)
+def diag_indices_from(arr):
+  if not arr.ndim >= 2:
+    raise ValueError("input array must be at least 2-d")
+
+  if len(set(arr.shape)) != 1:
+    raise ValueError("All dimensions of input must be of equal length")
+
+  return diag_indices(arr.shape[0], ndim=arr.ndim)
+
 @_wraps(np.diagonal)
 def diagonal(a, offset=0, axis1=0, axis2=1):
   a_shape = shape(a)
