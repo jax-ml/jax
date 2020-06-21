@@ -104,6 +104,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for return_sign in [False, True]
       for use_b in [False, True]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
+  @jtu.ignore_warning(category=RuntimeWarning,
+                      message="invalid value encountered in log.*")
   def testLogSumExp(self, shape, dtype, axis, keepdims, return_sign, use_b):
     if jtu.device_under_test() != "cpu":
       rng = jtu.rand_some_inf_and_nan(self.rng())
