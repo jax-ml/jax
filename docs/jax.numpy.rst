@@ -274,6 +274,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     tril
     tril_indices
     tril_indices_from
+    trim_zeros
     triu
     triu_indices
     triu_indices_from
