@@ -99,19 +99,20 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape_group, dtype),
           axis, keepdims, return_sign, use_b),
        # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
-       "shape_group": shape_group, "dtype": dtype,
+       "shapes": shapes, "dtype": dtype,
        "axis": axis, "keepdims": keepdims,
        "return_sign": return_sign, "use_b": use_b}
       for shape_group in compatible_shapes for dtype in float_dtypes
-      for axis in range(-max(len(shape) for shape in shape_group),
-                         max(len(shape) for shape in shape_group))
+      for shapes in itertools.product(shape_group, shape_group)
+      for axis in range(-max(len(shape) for shape in shapes),
+                         max(len(shape) for shape in shapes))
       for keepdims in [False, True]
       for return_sign in [False, True]
       for use_b in [False, True]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
   @jtu.ignore_warning(category=RuntimeWarning,
                       message="invalid value encountered in log.*")
-  def testLogSumExp(self, shape_group, dtype, axis,
+  def testLogSumExp(self, shapes, dtype, axis,
                     keepdims, return_sign, use_b):
     if jtu.device_under_test() != "cpu":
       rng = jtu.rand_some_inf_and_nan(self.rng())
@@ -127,8 +128,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
                                      return_sign=return_sign, b=scale_array)
 
-      args_makers = [(lambda: [rng(shape1, dtype), rng(shape2, dtype)])
-                     for shape1 in shape_group for shape2 in shape_group]
+      args_maker = lambda: [rng(shapes[0], dtype), rng(shapes[1], dtype)]
     else:
       def scipy_fun(array_to_reduce):
         return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
@@ -138,10 +138,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
                                      return_sign=return_sign)
 
-      args_makers = [(lambda: [rng(shape, dtype)]) for shape in shape_group]
-    for args_maker in args_makers:
-      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
-      self._CompileAndCheck(lax_fun, args_maker)
+      args_maker = lambda: [rng(shapes[0], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
+    self._CompileAndCheck(lax_fun, args_maker)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
     jtu.cases_from_list(
