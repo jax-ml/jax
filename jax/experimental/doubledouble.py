@@ -17,9 +17,12 @@
 Following the approach of Dekker 1971
 (http://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf).
 """
+import decimal
 from functools import wraps
 import operator
 from typing import Any, Callable, Dict, Sequence
+
+import numpy as np
 
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax.api_util import flatten_fun_nokwargs
@@ -138,13 +141,13 @@ def _mul_const(dtype):
   return jnp.array((2 << (_nmant - _nmant // 2)) + 1, dtype=dtype)
 
 def _normalize(x, y):
-  z = x + y
+  z = jnp.where(jnp.isinf(x), x, x + y)
   zz = jnp.where(
     lax.abs(x) > lax.abs(y),
     x - z + y,
     y - z + x,
   )
-  return z, zz
+  return z, jnp.where(jnp.isinf(z), 0, zz)
 
 def _abs2(x):
   x, xx = x
@@ -273,7 +276,7 @@ _def_passthrough(xla.device_put_p)
 _def_passthrough(lax.tie_in_p, (0, 1))
 
 
-class DoubleDouble:
+class _DoubleDouble:
   """DoubleDouble class with overloaded operators."""
   __slots__ = ["head", "tail"]
 
@@ -281,12 +284,15 @@ class DoubleDouble:
     if isinstance(val, tuple):
       head, tail = val
     elif isinstance(val, str):
-      raise NotImplementedError('string input')
+      dtype = jnp.dtype(dtype or 'float64').type
+      val = decimal.Decimal(val)
+      head = dtype(val)
+      tail = 0 if np.isinf(head) else dtype(val - decimal.Decimal(float(head)))
     elif isinstance(val, int):
       dtype = jnp.dtype(dtype or 'float64').type
-      head = jnp.array(val, dtype=dtype)
-      tail = jnp.array(val - int(head), dtype=dtype)
-    elif isinstance(val, DoubleDouble):
+      head = dtype(val)
+      tail = 0 if np.isinf(head) else dtype(val - int(head))
+    elif isinstance(val, _DoubleDouble):
       head, tail = val.head, val.tail
     else:
       head, tail = val, jnp.zeros_like(val)
@@ -308,7 +314,7 @@ class DoubleDouble:
     if dtype is not None:
       head = head.astype(dtype)
       tail = tail.astype(dtype)
-    return head + tail
+    return head + jnp.where(jnp.isinf(head), 0, tail)
 
   def __repr__(self):
     return f"{self.__class__.__name__}({self.head}, {self.tail})"
