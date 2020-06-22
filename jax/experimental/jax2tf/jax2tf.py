@@ -495,7 +495,6 @@ def _shift_right_logical(x, y):
 tf_impl[lax.shift_right_logical_p] = _shift_right_logical
 
 tf_impl[lax.shift_left_p] = tf.bitwise.left_shift
-tf_impl[lax.not_p] = tf.bitwise.invert
 
 
 def bool_to_int8(f, argnums):
@@ -514,6 +513,7 @@ def bool_to_int8(f, argnums):
 tf_impl[lax.or_p] = bool_to_int8(tf.bitwise.bitwise_or, argnums=(0, 1))
 tf_impl[lax.and_p] = bool_to_int8(tf.bitwise.bitwise_and, argnums=(0, 1))
 tf_impl[lax.xor_p] = bool_to_int8(tf.bitwise.bitwise_xor, argnums=(0, 1))
+tf_impl[lax.not_p] = bool_to_int8(tf.bitwise.invert, argnums=(0,))
 
 tf_impl[lax.eq_p] = wrap_binary_op(tf.math.equal)
 tf_impl[lax.ne_p] = wrap_binary_op(tf.math.not_equal)
