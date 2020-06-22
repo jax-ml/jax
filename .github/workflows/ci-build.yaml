@@ -66,6 +66,6 @@ jobs:
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         if [ $JAX_ENABLE_X64 = 0 ]; then
-          pytest -n auto jax/experimental/jax2tf/tests
+          pytest -n auto jax/experimental/jax2tf/tests -W ignore
         fi
         pytest -n auto tests examples
