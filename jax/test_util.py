@@ -825,10 +825,13 @@ class JaxTestCase(parameterized.TestCase):
                          canonicalize_dtypes=True):
     args = args_maker()
     lax_ans = lax_op(*args)
-    numpy_ans = numpy_reference_op(*args)
-    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
-                        atol=tol, rtol=tol,
-                        canonicalize_dtypes=canonicalize_dtypes)
+    numpy_ans = numpy_reference_op(*args)      
+    try:
+      self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
+                          atol=tol, rtol=tol,
+                          canonicalize_dtypes=canonicalize_dtypes)
+    except:
+      import pdb; pdb.set_trace()
 
 
 @contextmanager
