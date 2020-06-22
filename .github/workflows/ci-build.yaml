@@ -87,7 +87,7 @@ jobs:
         sudo apt install -y pandoc
         python -m pip install --upgrade pip
         pip install -r docs/requirements.txt
-    - name: Build and test documentation
+    - name: Test documentation
       run: |
         pytest docs
         pytest --doctest-modules jax/api.py
