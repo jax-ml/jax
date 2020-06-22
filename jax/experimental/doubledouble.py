@@ -229,6 +229,15 @@ def _sqrt2(x):
   return y, yy
 doubling_rules[lax.sqrt_p] = _sqrt2
 
+def _round2(x):
+  # TODO(vanderplas): round to even?
+  x, xx = x
+  x1 = jnp.floor(x)
+  x2 = x - x1
+  xx1 = jnp.floor(xx)
+  xx2 = xx - xx1
+  return _add2(_normalize(x1, xx1), (jnp.round(x2 + xx2), 0))
+doubling_rules[lax.round_p] = _round2
 
 def _def_inequality(prim, op):
   def transformed(x, y):

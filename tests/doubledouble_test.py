@@ -17,6 +17,7 @@ import operator
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental.doubledouble import doubledouble, _DoubleDouble
@@ -33,12 +34,13 @@ class DoubleDoubleTest(jtu.JaxTestCase):
         "dtype": dtype, "shape": shape, "op": op}
     for dtype in (jnp.float16, jnp.float32, jnp.float64)
     for shape in ((), (5,), (2, 3), (2, 3, 4))
-    for op in (abs, operator.neg, operator.pos, jnp.sqrt)))
+    for op in (abs, operator.neg, operator.pos, lax.sqrt, lax.round)))
   def testUnaryOp(self, dtype, shape, op):
     rng = jtu.rand_default(self.rng())
     op_doubled = doubledouble(op)
     args = (rng(shape, dtype),)
     self.assertAllClose(op(*args), op_doubled(*args))
+
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_{}".format(
         op.__name__, jtu.format_shape_dtype_string(shape, dtype)),
