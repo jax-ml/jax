@@ -89,6 +89,24 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "shape={}_axis={}_type={}_bp={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, type, bp),
+       "shape": shape, "dtype": dtype, "axis": axis, "type": type, "bp": bp}
+      for shape in [(5,), (4, 5), (3, 4, 5)]
+      for dtype in default_dtypes
+      for axis in [0, -1]
+      for type in ['constant', 'linear']
+      for bp in [0, [0, 2]]))
+  def testDetrend(self, shape, dtype, axis, type, bp):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    osp_fun = partial(osp_signal.detrend, axis=axis, type=type, bp=bp)
+    jsp_fun = partial(jsp_signal.detrend, axis=axis, type=type, bp=bp)
+    tol = {onp.float32: 1e-5, onp.float64: 1e-12}
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
 
 if __name__ == "__main__":
     absltest.main()
