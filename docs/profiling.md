@@ -4,9 +4,9 @@
 
 [TensorBoard's
 profiler](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras>)
-can be used to profile JAX programs. This is a great way to easily time and
-visualize different parts of your program, including what's happening on GPU or
-TPU. The end result looks something like this:
+can be used to profile JAX programs. Tensorboard is a great way to acquire and
+visualize performance traces and profiles of your program, including activity on
+GPU and TPU. The end result looks something like this:
 
 ![TensorBoard profiler example](_static/tensorboard_profiler.png)
 
@@ -18,6 +18,9 @@ pip install --upgrade tensorflow tensorboard_plugin_profile
 ```
 
 ### Usage
+
+The following are instructions for capturing a manually-triggered N-second trace
+from a running program.
 
 1. Start a TensorBoard server:
 
@@ -110,6 +113,10 @@ sudo update-initramfs -u
 sudo reboot now
 ```
 
+See (Nvidia's documentation on this
+error)[https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-cupti]
+for more information.
+
 (remote_profiling)=
 #### Profiling on a remote machine
 
@@ -126,8 +133,9 @@ ssh -L 6006:localhost:6006 <remote server address>
 
 ## Nsight
 
-Nvidia's `Nsight` tool can be used to trace and profile JAX code on GPU. For
-details, see the `Nsight` documentation.
+Nvidia's `Nsight` tools can be used to trace and profile JAX code on GPU. For
+details, see the (`Nsight`
+documentation)[https://developer.nvidia.com/tools-overview].
 
 ## XLA profiling
 
