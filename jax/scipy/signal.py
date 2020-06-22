@@ -135,5 +135,5 @@ def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=None):
       ]).T
       sl = slice(bp[m], bp[m + 1])
       coef, *_ = linalg.lstsq(A, data[sl])
-      data = data.at[sl].add(-jnp.matmul(A, coeff, precision=lax.Precision.HIGHEST))
+      data = data.at[sl].add(-jnp.matmul(A, coef, precision=lax.Precision.HIGHEST))
     return jnp.moveaxis(data.reshape(shape), 0, axis)
