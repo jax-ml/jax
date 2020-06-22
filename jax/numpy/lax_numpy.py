@@ -1844,6 +1844,22 @@ nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
                                         fill_nan=True, fill_value=1)
 
 
+@_wraps(np.unwrap)
+def unwrap(p, discont=pi, axis=-1):
+  dd = diff(p, axis=axis)
+  ddmod = mod(dd + pi, 2 * pi) - pi
+  ddmod = where(isclose(ddmod, -pi) & (dd > 0), pi, ddmod)
+
+  ph_correct = where(abs(dd) < discont, 0, ddmod - dd)
+
+  up = concatenate((
+    lax.slice_in_dim(p, 0, 1, axis=axis),
+    lax.slice_in_dim(p, 1, None, axis=axis) + cumsum(ph_correct, axis=axis)
+  ), axis=axis)
+
+  return up
+
+
 ### Array-creation functions
 
 def _check_no_padding(axis_padding, mode):
