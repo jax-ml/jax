@@ -129,8 +129,11 @@ def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=None):
     data = data.reshape(N, -1)
     for m in range(len(bp) - 1):
       Npts = bp[m + 1] - bp[m]
-      A = jnp.vstack([jnp.ones(Npts), jnp.arange(1, Npts + 1) / Npts]).T
+      A = jnp.vstack([
+        jnp.ones(Npts, dtype=data.dtype),
+        jnp.arange(1, Npts + 1, dtype=data.dtype) / Npts
+      ]).T
       sl = slice(bp[m], bp[m + 1])
       coef, *_ = linalg.lstsq(A, data[sl])
-      data = data.at[sl].add(-jnp.dot(A, coef))
+      data = data.at[sl].add(-jnp.matmul(A, coeff, precision=lax.Precision.HIGHEST))
     return jnp.moveaxis(data.reshape(shape), 0, axis)

@@ -44,7 +44,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_xshape=[{}]_yshape=[{}]_mode={}".format(
+      {"testcase_name": "_op={}_xshape={}_yshape={}_mode={}".format(
           op,
           jtu.format_shape_dtype_string(xshape, dtype),
           jtu.format_shape_dtype_string(yshape, dtype),
@@ -67,7 +67,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "op={}_xshape=[{}]_yshape=[{}]_mode={}".format(
+      {"testcase_name": "op={}_xshape={}_yshape={}_mode={}".format(
           op,
           jtu.format_shape_dtype_string(xshape, dtype),
           jtu.format_shape_dtype_string(yshape, dtype),
@@ -90,7 +90,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "shape={}_axis={}_type={}_bp={}".format(
+      {"testcase_name": "_shape={}_axis={}_type={}_bp={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, type, bp),
        "shape": shape, "dtype": dtype, "axis": axis, "type": type, "bp": bp}
       for shape in [(5,), (4, 5), (3, 4, 5)]
@@ -105,7 +105,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     jsp_fun = partial(jsp_signal.detrend, axis=axis, type=type, bp=bp)
     tol = {onp.float32: 1e-5, onp.float64: 1e-12}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
 
 if __name__ == "__main__":
