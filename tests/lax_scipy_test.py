@@ -95,8 +95,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape_group={}_axis={}_keepdims={}_return_sign={}_use_b_{}".format(
-          jtu.format_shape_dtype_string(shape_group, dtype),
+       "_shapes={}_axis={}_keepdims={}_return_sign={}_use_b_{}".format(
+          jtu.format_shape_dtype_string(shapes, dtype),
           axis, keepdims, return_sign, use_b),
        # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
        "shapes": shapes, "dtype": dtype,
