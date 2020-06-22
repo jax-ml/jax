@@ -141,13 +141,21 @@ def _mul_const(dtype):
   return jnp.array((2 << (_nmant - _nmant // 2)) + 1, dtype=dtype)
 
 def _normalize(x, y):
+<<<<<<< HEAD
   z = jnp.where(jnp.isinf(x), x, x + y)
+=======
+  z = x + y
+>>>>>>> b66fdf70... Add class wrapper for double-double arithmetic
   zz = jnp.where(
     lax.abs(x) > lax.abs(y),
     x - z + y,
     y - z + x,
   )
+<<<<<<< HEAD
   return z, jnp.where(jnp.isinf(z), 0, zz)
+=======
+  return z, zz
+>>>>>>> b66fdf70... Add class wrapper for double-double arithmetic
 
 def _abs2(x):
   x, xx = x

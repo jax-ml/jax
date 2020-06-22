@@ -119,7 +119,11 @@ class DoubleDoubleTest(jtu.JaxTestCase):
   def testClassUnaryOp(self, dtype, shape, op):
     rng = jtu.rand_default(self.rng())
     args = (rng(shape, dtype),)
+<<<<<<< HEAD
     class_op = lambda x: op(_DoubleDouble(x)).to_array()
+=======
+    class_op = lambda x: op(DoubleDouble(x)).to_array()
+>>>>>>> b66fdf70... Add class wrapper for double-double arithmetic
     self.assertAllClose(op(*args), class_op(*args))
 
   @parameterized.named_parameters(jtu.cases_from_list(
