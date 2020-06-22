@@ -137,6 +137,15 @@ def _mul_const(dtype):
   _nmant = jnp.finfo(dtype).nmant
   return jnp.array((2 << (_nmant - _nmant // 2)) + 1, dtype=dtype)
 
+def _normalize(x, y):
+  z = x + y
+  zz = jnp.where(
+    lax.abs(x) > lax.abs(y),
+    x - z + y,
+    y - z + x,
+  )
+  return z, zz
+
 def _abs2(x):
   x, xx = x
   sign = jnp.where(lax.sign(x) == lax.sign(xx), 1, -1)
@@ -262,3 +271,99 @@ _def_passthrough(lax.select_p, (0, 1, 2))
 _def_passthrough(lax.broadcast_in_dim_p)
 _def_passthrough(xla.device_put_p)
 _def_passthrough(lax.tie_in_p, (0, 1))
+
+
+class DoubleDouble:
+  """DoubleDouble class with overloaded operators."""
+  __slots__ = ["head", "tail"]
+
+  def __init__(self, val, dtype=None):
+    if isinstance(val, tuple):
+      head, tail = val
+    elif isinstance(val, str):
+      raise NotImplementedError('string input')
+    elif isinstance(val, int):
+      dtype = jnp.dtype(dtype or 'float64').type
+      head = jnp.array(val, dtype=dtype)
+      tail = jnp.array(val - int(head), dtype=dtype)
+    elif isinstance(val, DoubleDouble):
+      head, tail = val.head, val.tail
+    else:
+      head, tail = val, jnp.zeros_like(val)
+    dtype = dtype or jnp.result_type(head, tail)
+    head = jnp.asarray(head, dtype=dtype)
+    tail = jnp.asarray(tail, dtype=dtype)
+    self.head, self.tail = _normalize(head, tail)
+
+  def normalize(self):
+    """Return a normalized copy of self."""
+    return self._wrap(_normalize(self.head, self.tail))
+
+  @property
+  def dtype(self):
+    return self.head.dtype
+
+  def to_array(self, dtype=None):
+    head, tail = self._tup
+    if dtype is not None:
+      head = head.astype(dtype)
+      tail = tail.astype(dtype)
+    return head + tail
+
+  def __repr__(self):
+    return f"{self.__class__.__name__}({self.head}, {self.tail})"
+
+  @property
+  def _tup(self):
+    return self.head, self.tail
+
+  def _wrap(self, other):
+    return self.__class__(other, dtype=self.dtype)
+
+  def __abs__(self):
+    return self._wrap(_abs2(self._tup))
+
+  def __neg__(self):
+    return self._wrap(_neg2(self._tup))
+
+  def __add__(self, other):
+    return self._wrap(_add2(self._tup, self._wrap(other)._tup))
+
+  def __sub__(self, other):
+    return self._wrap(_sub2(self._tup, self._wrap(other)._tup))
+
+  def __mul__(self, other):
+    return self._wrap(_mul2(self._tup, self._wrap(other)._tup))
+
+  def __truediv__(self, other):
+    return self._wrap(_div2(self._tup, self._wrap(other)._tup))
+
+  def __radd__(self, other):
+    return self._wrap(_add2(self._wrap(other)._tup, self._tup))
+
+  def __rsub__(self, other):
+    return self._wrap(_sub2(self._wrap(other)._tup, self._tup))
+
+  def __rmul__(self, other):
+    return self._wrap(_mul2(self._wrap(other)._tup, self._tup))
+
+  def __rtruediv__(self, other):
+    return self._wrap(_div2(self._wrap(other)._tup, self._tup))
+
+  def __lt__(self, other):
+    return (self - other).to_array() < 0
+
+  def __le__(self, other):
+    return (self - other).to_array() <= 0
+
+  def __gt__(self, other):
+    return (self - other).to_array() > 0
+
+  def __ge__(self, other):
+    return (self - other).to_array() >= 0
+
+  def __eq__(self, other):
+    return (self - other).to_array() == 0
+
+  def __ne__(self, other):
+    return (self - other).to_array() != 0
