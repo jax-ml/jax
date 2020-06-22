@@ -124,10 +124,10 @@ machine. Use the following SSH command to forward the default TensorBoard port
 ssh -L 6006:localhost:6006 <remote server address>
 ```
 
-## nvprof
+## Nsight
 
-Nvidia's `nvprof` tool can be used to trace and profile JAX code on GPU. For
-details, see the `nvprof` documentation.
+Nvidia's `Nsight` tool can be used to trace and profile JAX code on GPU. For
+details, see the `Nsight` documentation.
 
 ## XLA profiling
 
