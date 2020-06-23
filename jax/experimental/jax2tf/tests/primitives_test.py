@@ -81,6 +81,10 @@ LAX_ELEMENTWISE_BINARY = (
     lax.sub,
 )
 
+LAX_LOGICAL_ELEMENTWISE_UNARY = (
+    lax.bitwise_not,
+)
+
 LAX_LOGICAL_ELEMENTWISE_BINARY = (
     lax.bitwise_and,
     lax.bitwise_or,
@@ -222,6 +226,32 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     r_tf = f_tf(a, b)
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
                         r_tf[np.isfinite(r_tf)], atol=1e-4)
+    # Checks support for bools.
+    if f_jax in (lax.bitwise_and, lax.bitwise_or, lax.bitwise_xor):
+        a = np.array([True, True, False, False])
+        b = np.array([True, False, True, False])
+        f_tf = tf.function(jax2tf.convert(f_jax))
+        r_jax = f_jax(a, b)
+        r_tf = f_tf(a, b)
+        self.assertArraysEqual(r_jax, np.asarray(r_tf))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_{f_jax.__name__}",
+         f_jax=f_jax)
+    for f_jax in LAX_LOGICAL_ELEMENTWISE_UNARY))
+  def test_unary_logical_elementwise(self, f_jax):
+    a = np.array([1, 3, 2, 0, 0, 2, 1, 3], dtype=np.uint32)
+    f_tf = tf.function(jax2tf.convert(f_jax))
+    r_jax = f_jax(a)
+    r_tf = f_tf(a)
+    self.assertAllClose(r_jax[np.isfinite(r_jax)],
+                        r_tf[np.isfinite(r_tf)], atol=1e-4)
+    # Checks support for bools.
+    a = np.array([True, False])
+    f_tf = tf.function(jax2tf.convert(f_jax))
+    r_jax = f_jax(a)
+    r_tf = f_tf(a)
+    self.assertArraysEqual(r_jax, np.asarray(r_tf))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",

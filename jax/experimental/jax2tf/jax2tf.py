@@ -496,6 +496,24 @@ tf_impl[lax.shift_right_logical_p] = _shift_right_logical
 
 tf_impl[lax.shift_left_p] = tf.bitwise.left_shift
 
+def _not(x):
+  """Computes bitwise not with support for booleans.
+
+  Numpy and JAX support bitwise not for booleans by applying a logical not!
+  This means that applying bitwise_not yields an unexected result:
+    jnp.bitwise_not(jnp.array([True, False]))
+    >> DeviceArray([False,  True], dtype=bool)
+
+  if you assume that booleans are simply casted to integers.
+    jnp.bitwise_not(jnp.array([True, False]).astype(np.int32)).astype(bool)
+    >> DeviceArray([True,  True], dtype=bool)
+  """
+  if x.dtype == tf.bool:
+    return tf.logical_not(x)
+  else:
+    return tf.bitwise.invert(x)
+
+tf_impl[lax.not_p] = _not
 
 def bool_to_int8(f, argnums):
   """Computes bool valued functions using int8."""
@@ -513,7 +531,6 @@ def bool_to_int8(f, argnums):
 tf_impl[lax.or_p] = bool_to_int8(tf.bitwise.bitwise_or, argnums=(0, 1))
 tf_impl[lax.and_p] = bool_to_int8(tf.bitwise.bitwise_and, argnums=(0, 1))
 tf_impl[lax.xor_p] = bool_to_int8(tf.bitwise.bitwise_xor, argnums=(0, 1))
-tf_impl[lax.not_p] = bool_to_int8(tf.bitwise.invert, argnums=(0,))
 
 tf_impl[lax.eq_p] = wrap_binary_op(tf.math.equal)
 tf_impl[lax.ne_p] = wrap_binary_op(tf.math.not_equal)
