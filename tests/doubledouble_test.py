@@ -34,7 +34,7 @@ class DoubleDoubleTest(jtu.JaxTestCase):
         "dtype": dtype, "shape": shape, "op": op}
     for dtype in (jnp.float16, jnp.float32, jnp.float64)
     for shape in ((), (5,), (2, 3), (2, 3, 4))
-    for op in (abs, operator.neg, operator.pos, lax.sqrt, lax.round)))
+    for op in (abs, operator.neg, operator.pos, lax.sqrt, lax.round, lax.exp)))
   def testUnaryOp(self, dtype, shape, op):
     rng = jtu.rand_default(self.rng())
     op_doubled = doubledouble(op)

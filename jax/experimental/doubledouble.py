@@ -239,6 +239,36 @@ def _round2(x):
   return _add2(_normalize(x1, xx1), (jnp.round(x2 + xx2), 0))
 doubling_rules[lax.round_p] = _round2
 
+def _exp2(x):
+  # TODO(vanderplas): make this more efficient.
+  # - use mul12 where possible
+  # - avoid re-instantiation of constants
+  # -
+  x = _DoubleDouble(x)
+  log2 = _DoubleDouble("0.6931471805599453094172321214581765680755", x.dtype)
+  m = _DoubleDouble(_round2((x / log2)._tup))
+  r = (x - m * log2) / 256.
+  exp_r = _DoubleDouble(0.0, x.dtype)
+  numerator = _DoubleDouble(1.0, x.dtype)
+  denominator = 1.0
+  n_iter = {
+    16: 6,
+    32: 12,
+    64: 18,
+  }[np.finfo(x.dtype).bits]
+  # TODO(vanderplas): use lax.scan?
+  for n in range(n_iter):
+    exp_r += numerator / denominator
+    numerator *= r
+    denominator *= (n + 1)
+  x = exp_r
+  for i in range(8):
+    x = x * x
+  # TODO(vanderplas): does this cause issues for float16?
+  result = 2 ** m.to_array() * x
+  return result._tup
+doubling_rules[lax.exp_p] = _exp2
+
 def _def_inequality(prim, op):
   def transformed(x, y):
     z, zz = _sub2(x, y)
