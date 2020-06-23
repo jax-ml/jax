@@ -574,8 +574,6 @@ def choice(key, a, shape=(), replace=True, p=None):
     p = jnp.asarray(p)
     if p.shape != (n_inputs,):
       raise ValueError("p must be None or match the shape of a")
-    if jnp.any(p < 0):
-      raise ValueError("entries of p must be non-negative.")
     if replace:
       p_cuml = jnp.cumsum(p)
       r = p_cuml[-1] * (1 - uniform(key, shape))
