@@ -112,6 +112,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
                                      _constant_like(a, 0), lax.add, dims)), amax)
     sign = jnp.where(jnp.isnan(out), np.nan, 1.0).astype(out.dtype)
+    sign = jnp.where(jnp.isinf(out), 0.0, sign)
   else:
     sumexp = lax.reduce(lax.mul(lax.exp(lax.sub(a, amax_singletons)), b),
                         _constant_like(a, 0), lax.add, dims)
