@@ -191,17 +191,24 @@ def fori_loop(lower, upper, body_fun, init_val):
            "got {} and {}")
     raise TypeError(msg.format(lower_dtype.name, upper_dtype.name))
 
-  # If we can specialize on the trip count, call scan instead of a while_loop
-  # to enable efficient reverse-mode differentiation.
   try:
     lower_ = int(lower)
     upper_ = int(upper)
   except TypeError:
-    use_scan = False
+    static_trip_count = False
   else:
-    use_scan = False  # TODO(mattjj): re-enable this
+    static_trip_count = True
 
-  if use_scan:
+  if static_trip_count and lower_ == upper_:
+    # When we know the trip count is zero, we skip the loop entirely. As one
+    # consequence, in this case like Python we allow `body_fun` to be any
+    # syntactically correct Python function, rather than requiring it pass our
+    # abstract evaluation type checking. See this issue as an example:
+    # https://github.com/google/jax/issues/3285.
+    result = init_val
+  elif static_trip_count and False:  # TODO(mattjj): re-enable this
+    # If we can specialize on the trip count, call scan instead of a while_loop
+    # to enable efficient reverse-mode differentiation.
     (_, _, result), _ = scan(_fori_scan_body_fun(body_fun),
                              (lower, upper, init_val), None,
                              length=upper_ - lower_)
