@@ -1848,7 +1848,7 @@ nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
 def unwrap(p, discont=pi, axis=-1):
   dd = diff(p, axis=axis)
   ddmod = mod(dd + pi, 2 * pi) - pi
-  ddmod = where(isclose(ddmod, -pi) & (dd > 0), pi, ddmod)
+  ddmod = where((ddmod == -pi) & (dd > 0), pi, ddmod)
 
   ph_correct = where(abs(dd) < discont, 0, ddmod - dd)
 
