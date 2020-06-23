@@ -1196,13 +1196,13 @@ def cumprod(operand: Array, axis: int) -> Array:
   """Computes a cumulative product along `axis`."""
   return cumprod_p.bind(operand, axis=int(axis))
 
-def sort(operand: Union[Array, Tuple[Array, ...]], dimension: int = -1
+def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1
          ) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_
   operator.
   """
-  if isinstance(operand, tuple):
+  if isinstance(operand, Sequence):
     if len(operand) == 0:
       raise TypeError("Sort requires at least one operand")
     dimension = _canonicalize_axis(dimension, len(operand[0].shape))
