@@ -16,6 +16,17 @@ jax 0.1.71 (Unreleased)
 * The minimum jaxlib version is now 0.1.48.
 
 
+jaxlib 0.1.50 (Unreleased)
+------------------------------
+
+jaxlib 0.1.49 (June 19, 2020)
+------------------------------
+
+* Bug fixes:
+
+  * Fix build issue that could result in slow compiles
+    (https://github.com/tensorflow/tensorflow/commit/f805153a25b00d12072bd728e91bb1621bfcf1b1)
+
 jaxlib 0.1.48 (June 12, 2020)
 ------------------------------
 

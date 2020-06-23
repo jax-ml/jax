@@ -373,6 +373,7 @@ tf_not_yet_impl = [
   custom_derivatives.custom_vjp_call_jaxpr_p,
 
   random.random_gamma_p,
+  lax.random_gamma_grad_p,
   pe.remat_call_p,
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
@@ -514,7 +515,6 @@ def _not(x):
 
 tf_impl[lax.not_p] = _not
 
-
 def bool_to_int8(f, argnums):
   """Computes bool valued functions using int8."""
   argnums = tf.nest.flatten(argnums)
@@ -531,6 +531,7 @@ def bool_to_int8(f, argnums):
 tf_impl[lax.or_p] = bool_to_int8(tf.bitwise.bitwise_or, argnums=(0, 1))
 tf_impl[lax.and_p] = bool_to_int8(tf.bitwise.bitwise_and, argnums=(0, 1))
 tf_impl[lax.xor_p] = bool_to_int8(tf.bitwise.bitwise_xor, argnums=(0, 1))
+tf_impl[lax.not_p] = bool_to_int8(tf.bitwise.invert, argnums=(0,))
 
 tf_impl[lax.eq_p] = wrap_binary_op(tf.math.equal)
 tf_impl[lax.ne_p] = wrap_binary_op(tf.math.not_equal)

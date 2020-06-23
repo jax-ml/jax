@@ -838,7 +838,7 @@ def _reconstruct_pval(pval1: PartialVal, const2: core.Value):
     return pval1
   else:
     if type(pv1) is ConcreteArray:
-      return PartialVal.known(pv1.val)
+      return PartialVal.known(pv1.val)  # pytype: disable=attribute-error
     else:
       return PartialVal.known(const2)
 

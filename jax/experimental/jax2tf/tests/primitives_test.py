@@ -253,6 +253,20 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     r_tf = f_tf(a)
     self.assertArraysEqual(r_jax, np.asarray(r_tf))
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_{f_jax.__name__}",
+         f_jax=f_jax)
+    for f_jax in LAX_LOGICAL_ELEMENTWISE_BINARY))
+  def test_binary_logical_elementwise_bool(self, f_jax):
+    if f_jax == lax.shift_left:
+      self.skipTest("Shift of bool not supported")
+    a = np.array([0, 0, 1, 1, 0, 0, 1, 1], dtype=np.bool_)
+    b = np.array([0, 1, 0, 1, 0, 1, 0, 1], dtype=np.bool_)
+    f_tf = tf.function(jax2tf.convert(f_jax))
+    r_jax = f_jax(a, b)
+    r_tf = f_tf(a, b)
+    self.assertAllClose(r_jax, r_tf)
+
   # TODO(necula): combine tests that are identical except for the harness
   # wait until we get more experience with using harnesses.
   @primitive_harness.parameterized(primitive_harness.lax_shift_left)
@@ -316,7 +330,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
-                      dtype=np.bool)
+                      dtype=np.bool_)
     indices = np.array([0, 1], dtype=np.int32)
     for axis in [0, 1]:
       f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))  # pylint: disable=cell-var-from-loop
@@ -353,7 +367,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
          f_jax=f_jax)
     for f_jax in REDUCE))
   def test_reduce_ops_with_boolean_input(self, f_jax):
-    values = [np.array([True, False, True], dtype=np.bool)]
+    values = [np.array([True, False, True], dtype=np.bool_)]
     self.ConvertAndCompare(f_jax, values, with_function=True)
 
   def test_gather_rank_change(self):

@@ -166,7 +166,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
       for dtype in float_dtypes))
   def testRngUniform(self, dtype):
-    if jtu.device_under_test() == "tpu" and dtype.itemsize < 3:
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
       raise SkipTest("random.uniform() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
@@ -200,9 +200,11 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertTrue(np.all(samples < hi))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.float32, np.float64]))
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      for dtype in [np.float16, np.float32, np.float64]))
   def testNormal(self, dtype):
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+      raise SkipTest("random.normal() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -230,6 +232,34 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(perm1, perm2)
     self.assertFalse(np.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(np.sort(perm1), x, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_shape={}_replace={}_weighted={}_array_input={}".format(
+          np.dtype(dtype).name, shape, replace, weighted, array_input),
+        "dtype": np.dtype(dtype).name, "shape": shape, "replace": replace,
+        "weighted": weighted, "array_input": array_input}
+      for dtype in [np.float32, np.float64, np.int32, np.int64]
+      for shape in [(), (5,), (4, 5)]
+      for replace in [True, False]
+      for weighted in [True, False]
+      for array_input in [True, False]))
+  def testChoice(self, dtype, shape, replace, weighted, array_input):
+    N = 100
+    key = random.PRNGKey(0)
+    x = N if not array_input else jnp.arange(N, dtype=dtype)
+    p = None if not weighted else jnp.arange(N)
+    rand = lambda key: random.choice(key, x, shape, p=p, replace=replace)
+    crand = api.jit(rand)
+
+    sample1 = rand(key)
+    sample2 = crand(key)
+
+    self.assertEqual(shape, sample1.shape)
+    if array_input:
+      self.assertEqual(x.dtype, sample1.dtype)
+    if not replace:
+      assert len(np.unique(sample1)) == len(np.ravel(sample1))
+    self.assertAllClose(sample1, sample2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -350,9 +380,11 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.float32, np.float64]))
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      for dtype in [np.float16, np.float32, np.float64]))
   def testCauchy(self, dtype):
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+      raise SkipTest("random.cauchy() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -385,9 +417,11 @@ class LaxRandomTest(jtu.JaxTestCase):
         self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.float32, np.float64]))
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      for dtype in float_dtypes))
   def testExponential(self, dtype):
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+      raise SkipTest("random.exponential() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.exponential(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -434,8 +468,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     pdf = scipy.stats.gamma.pdf(z, alpha)
     expected_grad = -cdf_dot / pdf
 
-    self.assertAllClose(actual_grad, expected_grad,
-                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 5e-4)
+    self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
+                        rtol=2e-2 if jtu.device_under_test() == "tpu" else 7e-4)
 
   def testGammaGradType(self):
     # Regression test for https://github.com/google/jax/issues/2130
@@ -448,10 +482,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lam={}_{}".format(lam, dtype),
-       "lam": lam, "dtype": np.dtype(dtype).name}
+       "lam": lam, "dtype": np.dtype(dtype)}
       for lam in [0.5, 3, 9, 11, 50, 500]
-      for dtype in [np.int32, np.int64]))
+      for dtype in [np.int16, np.int32, np.int64]))
   def testPoisson(self, lam, dtype):
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+      raise SkipTest("random.poisson() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
     crand = api.jit(rand)
@@ -493,9 +529,11 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.float32, np.float64]))
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      for dtype in float_dtypes))
   def testLaplace(self, dtype):
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+      raise SkipTest("random.laplace() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.laplace(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -507,9 +545,11 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
-      for dtype in [np.float32, np.float64]))
+      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      for dtype in float_dtypes))
   def testLogistic(self, dtype):
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+      raise SkipTest("random.logistic() not supported on TPU for 16-bit types.")
     key = random.PRNGKey(0)
     rand = lambda key: random.logistic(key, (10000,), dtype)
     crand = api.jit(rand)
@@ -559,11 +599,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}D_{}".format(dim, np.dtype(dtype).name),
+      {"testcase_name": "_{}D_{}".format(dim, np.dtype(dtype)),
        "dim": dim, "dtype": dtype}
       for dim in [1, 3, 5]
-      for dtype in [np.float32, np.float64]))
+      for dtype in float_dtypes))
   def testMultivariateNormal(self, dim, dtype):
+    if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
+      raise SkipTest("random.multivariate_normal() not supported on TPU for 16-bit types.")
     r = np.random.RandomState(dim)
     mean = r.randn(dim)
     cov_factor = r.randn(dim, dim)

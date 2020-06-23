@@ -663,24 +663,34 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   inner_pmap = len(_thread_local_state.dynamic_axis_env) > 0
 
   # Determine global_axis_size for use in AxisEnv.
-  must_run_on_all_devices = True
-  if devices:
-    assert global_axis_size is None  # Checked in api.py
-    global_axis_size = len(devices)
-    must_run_on_all_devices = False
-  elif xb.host_count() > 1:
-    if global_axis_size is None:
-      if inner_pmap:
-        raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
-      global_axis_size = axis_size * xb.host_count()
-  else:
-    if global_axis_size is not None:
-      if global_axis_size != axis_size:
-        raise ValueError(
-            "Specified axis_size {} doesn't match received axis_size {}.".format(
-                global_axis_size, axis_size))
-    else:
+  if xb.host_count() > 1 and global_axis_size is None and inner_pmap:
+    raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
+  if (xb.host_count() == 1 and global_axis_size is not None and
+      global_axis_size != axis_size):
+    raise ValueError(
+        f"Specified axis_size {global_axis_size} doesn't match received "
+        f"axis_size {axis_size}.")
+
+  must_run_on_all_devices = False
+  no_nested_sharding = False
+  if global_axis_size is None:
+    if xb.host_count() == 1:
       global_axis_size = axis_size
+    elif devices:
+      # This allows each host in a multi-host pmap to run on a different number
+      # of devices, but precludes nested sharding (i.e. inner pmaps or
+      # sharded_jits).
+      global_axis_size = len(devices)
+      no_nested_sharding = True
+    else:
+      # This assumes all hosts run on the same number of devices. We make sure
+      # this assumption is true by requiring that the pmap is run on all devices
+      # (and making the further assumption that each host has the same number of
+      # devices). Nested sharding is ok in this case.
+      global_axis_size = axis_size * xb.host_count()
+      assert all(len(xb.local_devices(host_id)) == xb.local_device_count()
+                 for host_id in xb.host_ids())
+      must_run_on_all_devices = True
 
   if devices:
     local_devices = [d for d in devices if d.host_id == xb.host_id()]
@@ -738,7 +748,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   num_local_shards = num_local_replicas * num_partitions
   num_global_shards = num_global_replicas * num_partitions
 
-  if (xb.host_count() > 1 and not inner_pmap and
+  # This error checking logic is all screwed up for nested pmaps, luckily we
+  # won't have to handle this case with omnistaging.
+  if (not inner_pmap and
       must_run_on_all_devices and num_local_shards != xb.local_device_count()):
     if num_local_shards == axis_size:
       raise ValueError(
@@ -753,6 +765,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
         f"number of local devices. Got num_replicas={num_local_replicas}, "
         f"num_partitions={num_partitions}, and "
         f"num_local_devices={xb.local_device_count()}")
+
+  if (not inner_pmap and
+      no_nested_sharding and (jaxpr_replicas > 1 or num_partitions > 1)):
+    raise ValueError(
+      f"On multi-host platforms, pmapped functions that both have `devices` "
+      f"specified and contain an inner_pmap or sharded_jit must specify an "
+      f"`axis_size` (or remove the `devices` argument). Got nested_replicas="
+      f"{jaxpr_replicas} and nested_partitions={num_partitions}")
 
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
@@ -1113,8 +1133,8 @@ def _pmap_translation_rule(c, axis_env,
                      "or another pmap is not supported.")
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  if axis_env.devices is not None or (axis_env.names and devices is not None):
-    raise ValueError("Nested pmaps with explicit devices argument.")
+  if axis_env.names and devices is not None:
+    raise ValueError("Nested pmap with explicit devices argument.")
   if global_axis_size is None:
     global_axis_size = axis_size
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)
