@@ -16,10 +16,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import itertools as it
+import gc
 import os
 from random import shuffle
 from unittest import SkipTest
 import warnings
+import weakref
 
 import numpy as np
 from absl.testing import absltest
@@ -1237,6 +1239,18 @@ class PmapTest(jtu.JaxTestCase):
 
       out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
       self.assertEqual(list(out), [1])
+
+  def testPsumWithNoAxisDoesntLeakFunctions(self):
+    x = jnp.ones((1, 1024), dtype=np.float32)
+    f = lambda _: x
+    w = weakref.ref(f)
+    g = pmap(f)
+    g(np.ones((1,), dtype=np.float32)).block_until_ready()
+    del f, g
+    gc.collect()
+    # 'f' should not be alive at this point; in particular the pmap cache must
+    # not keep it alive.
+    self.assertTrue(w() is None)
 
   def testJitOfPmapWarningMessage(self):
     device_count = xla_bridge.device_count()

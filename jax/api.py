@@ -1166,13 +1166,14 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
 
 class _TempAxisName:
   def __init__(self, obj):
-    self.obj = obj
+    self.obj = id(obj)
+    self.hash = hash(obj)
   def __repr__(self):
-    return '<axis {}>'.format(hex(id(self.obj)))
+    return '<axis {}>'.format(hex(self.obj))
   def __hash__(self):
-    return hash(self.obj)
+    return self.hash
   def __eq__(self, other):
-    return type(other) is _TempAxisName and self.obj is other.obj
+    return type(other) is _TempAxisName and self.obj == other.obj
 
 
 def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
