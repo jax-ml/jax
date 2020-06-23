@@ -64,9 +64,6 @@ def _invertible_call_make_output_tracers(trace, in_tracers, out_tracers, params)
 pe.call_partial_eval_rules[invertible_call_p] = partial(
     pe._remat_partial_eval, _invertible_call_make_output_tracers)
 
-# TODO(mattjj): remove this when #3370 lands
-core.skip_check_primitives.add(invertible_call_p)
-
 @cache()
 def _append_invars(jaxpr, avals):
   newvar = core.gensym([jaxpr])

@@ -36,7 +36,7 @@ from . import source_info_util
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
 
-# TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
+# TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
 check_leaks = False
 
 """Disables internal invariant checks."""
@@ -1101,7 +1101,7 @@ def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
   else:
     tracers = map(top_trace.full_raise, args)
     outs = primitive.process(top_trace, fun, tracers, params)
-  return apply_todos(env_trace_todo(), outs)
+  return apply_todos(env_trace_todo(), map(full_lower, outs))
 
 class CallPrimitive(Primitive):
   multiple_results = True
@@ -1220,11 +1220,6 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(write, jaxpr.invars, in_avals)
 
   for eqn in jaxpr.eqns:
-
-    if eqn.primitive in skip_check_primitives:
-      map(write, eqn.outvars, [v.aval for v in eqn.outvars])  # skip checking
-      continue
-
     in_avals = map(read, eqn.invars)
     if eqn.primitive.call_primitive:
       out_avals = check_call(eqn.primitive, in_avals, eqn.params)
@@ -1239,8 +1234,6 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
       raise TypeError(msg + f" in '{eqn}'") from None
 
   map(read, jaxpr.outvars)
-
-skip_check_primitives: Set[Primitive] = set()
 
 def check_eqn(prim, in_avals, params):
   for jaxpr in jaxprs_in_params(params):
