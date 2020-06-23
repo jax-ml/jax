@@ -259,7 +259,7 @@ class APITest(jtu.JaxTestCase):
                      "Abstract evaluation for 'foo' not implemented")
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
-                     "Forward-mode differentiation rule for 'foo' not implemented")
+                     "Differentiation rule for 'foo' not implemented")
 
     foo_p.def_abstract_eval(lambda x: x)
 
@@ -1759,7 +1759,9 @@ class RematTest(jtu.JaxTestCase):
 
     @jax.util.curry
     def call(f, *args):
-      return jax.core.call(jax.linear_util.wrap_init(lambda *args: [f(*args)]), *args)[0]
+      return jax.core.call(
+          jax.linear_util.wrap_init(lambda *args: [f(*args)]),
+          *args, name='foo')[0]
 
     f = call(add_one)
     g = jax.remat(lambda x: add_one(f(x)))
@@ -3198,8 +3200,12 @@ class BufferDonationTest(jtu.JaxTestCase):
   def test_jit_nested_donate_ignored(self):
     jit_fun = jit(lambda x: jit(lambda y: y ** 2, donate_argnums=0)(x))
     a = jax.device_put(jnp.array(1))
-    with self.assertRaisesRegex(ValueError, "nested.*not supported"):
-      jit_fun(a)
+
+    # NOTE(mattjj): stopped raising error here and instead just ignored
+    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+    #   jit_fun(a)
+
+    jit_fun(a)  # doesn't crash
 
   def test_jnp_array_copy(self):
     # https://github.com/google/jax/issues/3412
@@ -3232,8 +3238,12 @@ class BufferDonationTest(jtu.JaxTestCase):
   def test_pmap_nested_donate_raises(self):
     pmap_fun = jit(lambda x: api.pmap(lambda y: y ** 2, donate_argnums=0)(x))
     a = api.pmap(lambda x: x)(jnp.array([1]))
-    with self.assertRaisesRegex(ValueError, "nested.*not supported"):
-      pmap_fun(a)
+
+    # NOTE(mattjj): stopped raising error here and instead just ignored
+    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+    #   pmap_fun(a)
+
+    pmap_fun(a)  # doesn't crash
 
   assertDeleted = lambda self, x: self._assertDeleted(x, True)
   assertNotDeleted = lambda self, x: self._assertDeleted(x, False)

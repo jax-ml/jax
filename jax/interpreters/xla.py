@@ -35,12 +35,15 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
 from ..core import Literal, pp_eqn_compact
 from ..pprint_util import pp
 from ..util import (partial, partialmethod, cache, prod, unzip2, memoize,
-                    extend_name_stack, wrap_name, safe_zip)
+                    extend_name_stack, wrap_name, safe_zip, safe_map)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from . import partial_eval as pe
 from . import ad
 from . import masking
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 xe = xc._xla
 xops = xc._xla.ops
@@ -63,7 +66,6 @@ flags.DEFINE_bool('jax_log_compiles',
                   bool_env('JAX_LOG_COMPILES', False),
                   'Print a message each time a `jit` computation is compiled.')
 
-def _map(f, *xs): return tuple(map(f, *xs))
 def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
@@ -199,7 +201,7 @@ def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
     return True
   for param in params.values():
     if isinstance(param, tuple):
-      if any(_map(_param_uses_outfeed, param)):
+      if any(unsafe_map(_param_uses_outfeed, param)):
         return True
     elif _param_uses_outfeed(param):
       return True
@@ -223,7 +225,7 @@ def arg_spec(x):
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = xla_primitive_callable(prim, *map(arg_spec, args), **params)
+  compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args), **params)
   return compiled_fun(*args)
 
 @cache()
@@ -243,8 +245,8 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
   if not prim.multiple_results:
     handle_result = aval_to_result_handler(device, aval_out)
   else:
-    handlers = tuple(map(partial(aval_to_result_handler, device), aval_out))
-    handle_result = lambda xs: tuple(h(x) for h, x in zip(handlers, xs))
+    handlers = map(partial(aval_to_result_handler, device), aval_out)
+    handle_result = lambda xs: tuple(h(x) for h, x in unsafe_zip(handlers, xs))
   tuple_args = len(avals) > 100
   if prim in initial_style_translations:
     nreps = initial_style_primitive_replicas(params)
@@ -386,8 +388,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
 
   env = {}
   write(core.unitvar, _make_unit(c))
-  _map(write, jaxpr.constvars, consts)
-  _map(write, jaxpr.invars, args)
+  map(write, jaxpr.constvars, consts)
+  map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     frame = source_info_util.user_frame(eqn.source_info)
     c.set_op_metadata(xc.OpMetadata(
@@ -396,7 +398,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
             eqn.primitive.name, eqn.params)),
         source_file=frame.file_name if frame else None,
         source_line=frame.line_num if frame else None))
-    in_nodes = list(map(read, eqn.invars))
+    in_nodes = map(read, eqn.invars)
     if eqn.primitive in backend_specific_translations[platform]:
       rule = backend_specific_translations[platform][eqn.primitive]
       ans = rule(c, *in_nodes, **eqn.params)
@@ -432,8 +434,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     c.get_shape(ans)  # force xla to do shape error checking
     out_nodes = xla_destructure(c, ans) if eqn.primitive.multiple_results else [ans]
     c.clear_op_metadata()
-    _map(write, eqn.outvars, out_nodes)
-  return _map(read, jaxpr.outvars)
+    map(write, eqn.outvars, out_nodes)
+  return map(read, jaxpr.outvars)
 
 def xla_destructure(c, ans):
   num_elements = len(c.get_shape(ans).tuple_shapes())
@@ -470,7 +472,7 @@ def axis_read(axis_env, axis_name):
 
 def axis_groups(axis_env, name):
   if isinstance(name, (list, tuple)):
-    mesh_axes = tuple(map(partial(axis_read, axis_env), name))
+    mesh_axes = tuple(unsafe_map(partial(axis_read, axis_env), name))
   else:
     mesh_axes = (axis_read(axis_env, name),)
   return _axis_groups(axis_env.nreps, axis_env.sizes, mesh_axes)
@@ -483,7 +485,7 @@ def _axis_groups(nrep, mesh_spec, mesh_axes):
   groups = onp.reshape(
       onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
       (prod(onp.take(full_spec, mesh_axes)), -1))
-  return tuple(map(tuple, groups.T))
+  return tuple(unsafe_map(tuple, groups.T))
 
 def jaxpr_replicas(jaxpr):
   """The number of replicas needed for a jaxpr.
@@ -536,7 +538,8 @@ def jaxpr_collectives(jaxpr):
 ### xla_call underlying jit
 
 def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_invars):
-  compiled_fun = _xla_callable(fun, device, backend, name, donated_invars, *map(arg_spec, args))
+  compiled_fun = _xla_callable(fun, device, backend, name, donated_invars,
+                               *unsafe_map(arg_spec, args))
   try:
     return compiled_fun(*args)
   except FloatingPointError:
@@ -597,8 +600,8 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   pvals: Sequence[pe.PartialVal] = [pe.PartialVal.unknown(aval) for aval in abstract_args]
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
       fun, pvals, instantiate=False, stage_out=True, bottom=True)
+  map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
   jaxpr, uses_outfeed = apply_outfeed_rewriter(jaxpr)
-  _map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
@@ -635,7 +638,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   tuple_args = len(abstract_args) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
-  xla_consts = _map(partial(xb.constant, c), consts)
+  xla_consts = map(partial(xb.constant, c), consts)
   xla_args = _xla_callable_args(c, abstract_args, tuple_args)
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
@@ -779,8 +782,8 @@ def _execute_replicated(compiled: XlaExecutable, uses_outfeed: bool,
 
 def _execute_trivial(jaxpr, device: Optional[Device], consts, handlers, *args):
   env = {core.unitvar: core.unit}
-  _map(env.setdefault, jaxpr.invars, args)
-  _map(env.setdefault, jaxpr.constvars, consts)
+  map(env.setdefault, jaxpr.invars, args)
+  map(env.setdefault, jaxpr.constvars, consts)
   outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
           for v in jaxpr.outvars]
   return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
@@ -800,24 +803,43 @@ def _get_device(device, backend):
   out, = compiled.local_devices()
   return out
 
-xla_call_p = core.Primitive('xla_call')
-xla_call_p.call_primitive = True
-xla_call_p.multiple_results = True
-xla_call = partial(core.call_bind, xla_call_p)
-xla_call_p.def_custom_bind(xla_call)
+xla_call_p = core.CallPrimitive('xla_call')
+xla_call = xla_call_p.bind
 xla_call_p.def_impl(_xla_call_impl)
 pe.staged_out_calls.add(xla_call_p)
 
+def _xla_call_partial_eval_update_params(params, in_unknowns):
+  call_jaxpr = params['call_jaxpr']
+  donated_invars = params['donated_invars']
+  if not in_unknowns and donated_invars:
+    # JaxprTrace.post_process_call creates a call with no input tracers
+    new_donated_invars = (False,) * len(call_jaxpr.invars)
+  else:
+    # JaxprTrace.process_call drops known input tracers
+    donated_invars = [d for d, uk in zip(donated_invars, in_unknowns) if uk]
+    new_donated_invars = ((False,) * (len(call_jaxpr.invars) - len(donated_invars))
+                          + tuple(donated_invars))
+  return dict(params, donated_invars=new_donated_invars)
+pe.call_param_updaters[xla_call_p] = _xla_call_partial_eval_update_params
+
+def _xla_call_jvp_update_params(params, nz_tangents):
+  donated_invars = params['donated_invars']
+  donated_tangents = [d for d, nz in zip(donated_invars, nz_tangents) if nz]
+  new_donated_invars = (*donated_invars, *donated_tangents)
+  return dict(params, donated_invars=new_donated_invars)
+ad.call_param_updaters[xla_call_p] = _xla_call_jvp_update_params
+
+def _xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
+  donated_invars = params['donated_invars']
+  donated_primals = [d for d, u in zip(donated_invars, undef_primals) if not u]
+  donated_cotangents = [False for nz in nonzero_cts if nz]
+  return dict(params, donated_invars=(*donated_primals, *donated_cotangents))
+ad.call_transpose_param_updaters[xla_call_p] = _xla_call_transpose_update_params
+
 def _xla_call_translation_rule(c, axis_env,
                                in_nodes, name_stack, backend, name,
-                               call_jaxpr, device=None, donated_invars=None):
-  del device  # Ignored.
-  if donated_invars is None:
-    donated_invars = (False,) * len(in_nodes)
-  elif any(donated_invars):
-    raise ValueError("Donating buffers passed to a jit nested inside a jit or "
-                     "pmap is not supported.")
-
+                               call_jaxpr, donated_invars, device=None):
+  del device, donated_invars  # Ignored.
   subc = xb.make_computation_builder(f"jit_{name}")
   args = [xb.parameter(subc, i, c.get_shape(n)) for i, n in enumerate(in_nodes)]
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
@@ -874,7 +896,7 @@ def lower_fun(fun, multiple_results):
       wrapped_fun = _tuple_output(wrapped_fun)
     jaxpr, _, consts = pe.trace_to_jaxpr(wrapped_fun, pvals, instantiate=True,
                                          stage_out=True)
-    consts = _map(partial(xb.constant, c), consts)
+    consts = map(partial(xb.constant, c), consts)
     outs = jaxpr_subcomp(c, jaxpr, None, AxisEnv(1), consts, '', *xla_args)
     if multiple_results:
       return xops.Tuple(c, outs)
@@ -895,7 +917,7 @@ def lower_fun_initial_style(fun):
     pvals = [pe.PartialVal.unknown(a) for a in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(
         lu.wrap_init(fun, params), pvals, instantiate=True, stage_out=True)
-    consts = _map(partial(xb.constant, c), consts)
+    consts = map(partial(xb.constant, c), consts)
     outs = jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack,
                          *xla_args)
     return xops.Tuple(c, outs)

@@ -1150,16 +1150,11 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = pxla.xla_pmap(
-        flat_fun,
-        *args,
-        backend=backend,
-        axis_name=axis_name,
-        axis_size=local_axis_size,
-        global_axis_size=axis_size,
-        devices=tuple(devices) if devices is not None else devices,
-        name=flat_fun.__name__,
+        flat_fun, *args, backend=backend, axis_name=axis_name,
+        axis_size=local_axis_size, global_axis_size=axis_size,
+        devices=None if devices is None else tuple(devices),
         mapped_invars=tuple(axis is not None for axis in in_axes_flat),
-        donated_invars=tuple(donated_invars))
+        name=flat_fun.__name__, donated_invars=tuple(donated_invars))
     return tree_unflatten(out_tree(), out)
 
   return f_pmapped
