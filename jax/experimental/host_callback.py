@@ -729,7 +729,7 @@ _CODE_TO_DTYPE = {
   5: np.dtype(np.uint16),
   6: np.dtype(np.uint32),
   7: np.dtype(np.uint64),
-  8: np.dtype(np.bool),
+  8: np.dtype(np.bool_),
   9: np.dtype(np.float16),
   10: np.dtype(np.float32),
   11: np.dtype(np.float64),

@@ -373,6 +373,7 @@ tf_not_yet_impl = [
   custom_derivatives.custom_vjp_call_jaxpr_p,
 
   random.random_gamma_p,
+  lax.random_gamma_grad_p,
   pe.remat_call_p,
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
@@ -513,7 +514,6 @@ def _not(x):
     return tf.bitwise.invert(x)
 
 tf_impl[lax.not_p] = _not
-
 
 def bool_to_int8(f, argnums):
   """Computes bool valued functions using int8."""

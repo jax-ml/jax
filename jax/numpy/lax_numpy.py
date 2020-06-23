@@ -628,7 +628,7 @@ def signbit(x):
         "jax.numpy.signbit only supports 16, 32, and 64-bit types.")
 
   x = lax.bitcast_convert_type(x, int_type)
-  return lax.convert_element_type(x >> (info.nexp + info.nmant), np.bool)
+  return lax.convert_element_type(x >> (info.nexp + info.nmant), np.bool_)
 
 
 
@@ -1006,7 +1006,7 @@ def ediff1d(ary, to_end=None, to_begin=None):
   return result
 
 
-@partial(jit, static_argnums=(1, 2))
+@partial(jit, static_argnums=2)
 def _gradient(a, varargs, axis):
   def gradient_along_axis(a, h, axis):
     sliced = partial(lax.slice_in_dim, a, axis=axis)

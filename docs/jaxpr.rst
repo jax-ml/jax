@@ -169,7 +169,7 @@ before (with two input vars, one for each element of the input tuple)
 Constant Vars
 --------------
 
-ConstVars arise when the computation ontains array constants, either
+ConstVars arise when the computation contains array constants, either
 from the Python program, or from constant-folding. For example, the function
 ``func6`` below
 

@@ -1111,6 +1111,10 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   >>> print(f2(np.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
+  # axis_size is an optional integer representing the global axis size.
+  # The aggregate size (across all hosts) size of the mapped axis must match
+  # the given value.
+
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
   static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums)
@@ -1119,13 +1123,6 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
 
   if any(axis != 0 for axis in tree_leaves(in_axes)):
     raise ValueError(f"pmap in_axes leaves must be 0 or None, got {in_axes}")
-
-  # axis_size is an optional integer representing the global axis size.
-  # The aggregate size (across all hosts) size of the mapped axis must match
-  # the given value. This argument is mutually exclusive with ``devices``.
-  if axis_size is not None and devices is not None:
-    msg = "pmap got devices and axis_size. They're mutually exclusive."
-    raise ValueError(msg)
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
@@ -1856,7 +1853,7 @@ def custom_transforms(fun):
   fun_p.def_abstract_eval(fun_abstract_eval)
 
   def fun_translation(c, *xla_args, **params):
-    return xla.lower_fun(fun_impl)(c, *xla_args, **params)
+    return xla.lower_fun(fun_impl, multiple_results=True)(c, *xla_args, **params)
   xla.translations[fun_p] = fun_translation
 
   return CustomTransformsFunction(fun, fun_p)

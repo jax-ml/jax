@@ -69,3 +69,25 @@ jobs:
           pytest -n auto jax/experimental/jax2tf/tests
         fi
         pytest -n auto tests examples
+
+
+  documentation:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        sudo apt install -y pandoc
+        python -m pip install --upgrade pip
+        pip install -r docs/requirements.txt
+    - name: Test documentation
+      run: |
+        pytest docs
+        pytest --doctest-modules jax/api.py

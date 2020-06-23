@@ -645,7 +645,7 @@ lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.translations[lu_p] = xla.lower_fun(_lu_python)
+xla.translations[lu_p] = xla.lower_fun(_lu_python, multiple_results=True)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
