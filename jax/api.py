@@ -42,7 +42,7 @@ from . import dtypes
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial, flatten_axes,
-                       donation_vector, rebase_donate_argnums)
+                       donation_vector, rebase_donate_argnums, argnames_partial)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf)
@@ -90,6 +90,7 @@ class _ThreadLocalState(threading.local):
 _thread_local_state = _ThreadLocalState()
 
 def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
+        static_argnames: Union[str, Iterable[str]] = (),
         device=None, backend: Optional[str] = None,
         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """Sets up ``fun`` for just-in-time compilation with XLA.
@@ -142,6 +143,10 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
+  # TODO(shoyer): combine static_argnums and static_argnames into static_args?
+  # TODO(shoyer): validation of static_argnames
+  # TODO(shoyer): update donated_argnums to handle names?
+  # TODO(shoyer): allow omitting static args when calling f_jitted?
   _check_callable(fun)
   static_argnums = _ensure_tuple(static_argnums)
   donate_argnums = _ensure_tuple(donate_argnums)
@@ -156,13 +161,21 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
              "was called with only {} positional arguments.")
       raise ValueError(msg.format(static_argnums, donate_argnums, len(args)))
     f = lu.wrap_init(fun)
+
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f, dyn_args = argnums_partial(f, dyn_argnums, args)
     else:
       dyn_args = args
-    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
-    donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
+
+    if static_argnames:
+      dyn_argnames = [k for k in kwargs if k not in static_argnames]
+      f, dyn_kwargs = argnames_partial(f, dyn_argnames, kwargs)
+    else:
+      dyn_kwargs = kwargs
+
+    args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+    donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
     for arg in args_flat: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = xla.xla_call(flat_fun, *args_flat, device=device, backend=backend,

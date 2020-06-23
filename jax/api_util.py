@@ -79,10 +79,20 @@ def argnums_partial(f, dyn_argnums, args):
     dyn_argnums = (dyn_argnums,)
   else:
     dyn_argnums = tuple(dyn_argnums)
-  fixed_args = tuple([unit if i in dyn_argnums else wrap_hashably(arg)
-                      for i, arg in enumerate(args)])
+  fixed_args = tuple(unit if i in dyn_argnums else wrap_hashably(arg)
+                     for i, arg in enumerate(args))
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
+
+def argnames_partial(f, dyn_argnames, kwargs):
+  if isinstance(dyn_argnames, str):
+    dyn_argnames = (dyn_argnames,)
+  else:
+    dyn_argnames = tuple(dyn_argnames)
+  fixed_kwargs = tuple((k, unit if k in dyn_argnames else wrap_hashably(v))
+                       for k, v in kwargs.items())
+  dyn_kwargs = {k: kwargs[k] for k in dyn_argnames}
+  return _argnames_partial(f, fixed_kwargs), dyn_kwargs
 
 def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args."""
@@ -140,6 +150,13 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
   args = [None if arg is unit else arg.val for arg in fixed_args]
   for i, arg in zip(dyn_argnums, dyn_args):
     args[i] = arg
+  ans = yield args, kwargs
+  yield ans
+
+@lu.transformation
+def _argnames_partial(fixed_kwargs, *args, **dyn_kwargs):
+  kwargs = {k: None if arg is unit else arg.val for k, arg in fixed_kwargs}
+  kwargs.update(dyn_kwargs)
   ans = yield args, kwargs
   yield ans
 
