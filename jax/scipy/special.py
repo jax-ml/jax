@@ -118,6 +118,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     sign = lax.stop_gradient(lax.sign(sumexp))
     out = lax.add(lax.log(lax.abs(sumexp)), amax)
   if return_sign:
+    sign = jnp.where(jnp.isnan(out), np.nan, sign)
     return (dimadd(out), dimadd(sign)) if keepdims else (out, sign)
   if b is not None:
     out = jnp.where(sign < 0, np.nan, out)
