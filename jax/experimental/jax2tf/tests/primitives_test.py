@@ -286,7 +286,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
-                      dtype=np.bool)
+                      dtype=np.bool_)
     indices = np.array([0, 1], dtype=np.int32)
     for axis in [0, 1]:
       f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))  # pylint: disable=cell-var-from-loop
@@ -323,7 +323,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
          f_jax=f_jax)
     for f_jax in REDUCE))
   def test_reduce_ops_with_boolean_input(self, f_jax):
-    values = [np.array([True, False, True], dtype=np.bool)]
+    values = [np.array([True, False, True], dtype=np.bool_)]
     self.ConvertAndCompare(f_jax, values, with_function=True)
 
   def test_gather_rank_change(self):
