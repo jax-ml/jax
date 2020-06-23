@@ -1006,7 +1006,7 @@ def ediff1d(ary, to_end=None, to_begin=None):
   return result
 
 
-@partial(jit, static_argnums=(1, 2))
+@partial(jit, static_argnums=2)
 def _gradient(a, varargs, axis):
   def gradient_along_axis(a, h, axis):
     sliced = partial(lax.slice_in_dim, a, axis=axis)
