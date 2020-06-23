@@ -61,6 +61,7 @@ extensions = [
     'sphinx.ext.viewcode',
     'nbsphinx',
     'sphinx_autodoc_typehints',
+    'recommonmark'
 ]
 
 intersphinx_mapping = {
