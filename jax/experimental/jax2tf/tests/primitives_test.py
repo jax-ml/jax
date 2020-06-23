@@ -223,6 +223,20 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(r_jax[np.isfinite(r_jax)],
                         r_tf[np.isfinite(r_tf)], atol=1e-4)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_{f_jax.__name__}",
+         f_jax=f_jax)
+    for f_jax in LAX_LOGICAL_ELEMENTWISE_BINARY))
+  def test_binary_logical_elementwise_bool(self, f_jax):
+    if f_jax == lax.shift_left:
+      self.skipTest("Shift of bool not supported")
+    a = np.array([0, 0, 1, 1, 0, 0, 1, 1], dtype=np.bool_)
+    b = np.array([0, 1, 0, 1, 0, 1, 0, 1], dtype=np.bool_)
+    f_tf = tf.function(jax2tf.convert(f_jax))
+    r_jax = f_jax(a, b)
+    r_tf = f_tf(a, b)
+    self.assertAllClose(r_jax, r_tf)
+
   # TODO(necula): combine tests that are identical except for the harness
   # wait until we get more experience with using harnesses.
   @primitive_harness.parameterized(primitive_harness.lax_shift_left)
