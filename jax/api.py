@@ -42,8 +42,9 @@ from . import ad_util
 from . import dtypes
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, argnums_partial, flatten_axes,
-                       donation_vector, rebase_donate_argnums, argnames_partial)
+                       flatten_fun_nokwargs2, flatten_axes, argnums_partial,
+                       apply_argnums, apply_argnames, donation_vector,
+                       rebase_donate_argnums)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf)
@@ -84,7 +85,6 @@ def _check_callable(fun):
   if inspect.isgeneratorfunction(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
 
-
 _POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 def _infer_argnums_and_argnames(
@@ -92,6 +92,7 @@ def _infer_argnums_and_argnames(
     argnums: Union[int, Iterable[int], None],
     argnames: Union[str, Iterable[str], None],
 ) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
+  """Infer missing argnums and argnames for a function with inspect."""
   if argnums is None and argnames is None:
     argnums = ()
     argnames = ()
@@ -124,10 +125,14 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = None,
-        static_argnames: Union[str, Iterable[str]] = None,
-        device=None, backend: Optional[str] = None,
-        donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
+def jit(
+    fun: Callable,
+    static_argnums: Union[int, Iterable[int]] = None,
+    static_argnames: Union[str, Iterable[str]] = None,
+    device=None,
+    backend: Optional[str] = None,
+    donate_argnums: Union[int, Iterable[int]] = (),
+) -> Callable:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -198,19 +203,8 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = None,
           f"but was called with only {len(args)} positional arguments.")
 
     f = lu.wrap_init(fun)
-
-    if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      f, dyn_args = argnums_partial(f, dyn_argnums, args)
-    else:
-      dyn_args = args
-
-    if static_argnames:
-      dyn_argnames = [k for k in kwargs if k not in static_argnames]
-      f, dyn_kwargs = argnames_partial(f, dyn_argnames, kwargs)
-    else:
-      dyn_kwargs = kwargs
-
+    f, dyn_args = apply_argnums(f, static_argnums, args)
+    f, dyn_kwargs = apply_argnames(f, static_argnames, kwargs)
     args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
     donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
     for arg in args_flat: _check_arg(arg)
@@ -272,17 +266,21 @@ def _jit_is_disabled():
   return _thread_local_state.jit_is_disabled or config.read('jax_disable_jit')
 
 
-def xla_computation(fun: Callable,
-                    static_argnums: Union[int, Iterable[int]] = (),
-                    axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
-                    backend: Optional[str] = None,
-                    tuple_args: bool = False,
-                    instantiate_const_outputs: bool = True) -> Callable:
+def xla_computation(
+    fun: Callable,
+    static_argnums: Union[int, Iterable[int]] = None,
+    static_argnames: Union[str, Iterable[str]] = None,
+    axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+    backend: Optional[str] = None,
+    tuple_args: bool = False,
+    instantiate_const_outputs: bool = True,
+) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
   Args:
     fun: Function from which to form XLA computations.
     static_argnums: See the :py:func:`jax.jit` docstring.
+    static_argnames: See the :py:func:`jax.jit` docstring.
     axis_env: Optional, a sequence of pairs where the first element is an axis
       name and the second element is a positive integer representing the size of
       the mapped axis with that name. This parameter is useful when lowering
@@ -375,8 +373,8 @@ def xla_computation(fun: Callable,
   }
   """
   _check_callable(fun)
-  if isinstance(static_argnums, int):
-    static_argnums = (static_argnums,)
+  static_argnums, static_argnames = _infer_argnums_and_argnames(
+      fun, static_argnums, static_argnames)
   fun_name = getattr(fun, '__name__', 'unknown')
 
   def make_axis_env(nreps):
@@ -392,12 +390,11 @@ def xla_computation(fun: Callable,
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
-    wrapped = lu.wrap_init(fun)
-    if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
+    f = lu.wrap_init(fun)
+    f, _ = apply_argnums(f, static_argnums, args)
+    f, _ = apply_argnames(f, static_argnames, kwargs)
     jax_args, in_tree = tree_flatten((args, kwargs))
-    jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
+    jaxtree_fun, out_tree = flatten_fun(f, in_tree)
     avals = map(abstractify, jax_args)
     pvals = [pe.PartialVal.unknown(aval) for aval in avals]
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
@@ -1613,9 +1610,11 @@ def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
-def make_jaxpr(fun: Callable,
-               static_argnums: Union[int, Iterable[int]] = ()
-               ) -> Callable[..., core.TypedJaxpr]:
+def make_jaxpr(
+    fun: Callable,
+    static_argnums: Union[int, Iterable[int]] = None,
+    static_argnames: Union[str, Iterable[str]] = None,
+) -> Callable[..., core.TypedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
@@ -1623,6 +1622,7 @@ def make_jaxpr(fun: Callable,
       arguments and return value should be arrays, scalars, or standard Python
       containers (tuple/list/dict) thereof.
     static_argnums: See the :py:func:`jax.jit` docstring.
+    static_argnames: See the :py:func:`jax.jit` docstring.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
@@ -1659,8 +1659,8 @@ def make_jaxpr(fun: Callable,
     in (g,) }
   """
   _check_callable(fun)
-  if isinstance(static_argnums, int):
-    static_argnums = (static_argnums,)
+  static_argnums, static_argnames = _infer_argnums_and_argnames(
+      fun, static_argnums, static_argnames)
 
   def pv_like(x):
     aval = xla.abstractify(x)
@@ -1668,12 +1668,11 @@ def make_jaxpr(fun: Callable,
 
   @wraps(fun)
   def jaxpr_maker(*args, **kwargs):
-    wrapped = lu.wrap_init(fun)
-    if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
+    f = lu.wrap_init(fun)
+    f, _ = apply_argnums(f, static_argnums, args)
+    f, _ = apply_argnames(f, static_argnames, kwargs)
     jax_args, in_tree = tree_flatten((args, kwargs))
-    jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
+    jaxtree_fun, out_tree = flatten_fun(f, in_tree)
     in_pvals = map(pv_like, jax_args)
     jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
         jaxtree_fun, in_pvals, instantiate=True, stage_out=True)

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
 from . import linear_util as lu
@@ -93,6 +92,22 @@ def argnames_partial(f, dyn_argnames, kwargs):
                        for k, v in kwargs.items())
   dyn_kwargs = {k: kwargs[k] for k in dyn_argnames}
   return _argnames_partial(f, fixed_kwargs), dyn_kwargs
+
+def apply_argnums(f, static_argnums, args):
+  if static_argnums:
+    dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+  else:
+    dyn_args = args
+  return f, dyn_args
+
+def apply_argnames(f, static_argnames, kwargs):
+  if static_argnames:
+    dyn_argnames = [k for k in kwargs if k not in static_argnames]
+    f, dyn_kwargs = argnames_partial(f, dyn_argnames, kwargs)
+  else:
+    dyn_kwargs = kwargs
+  return f, dyn_kwargs
 
 def donation_vector(donate_argnums, args, kwargs) -> Tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args."""
