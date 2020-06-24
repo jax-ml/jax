@@ -1792,6 +1792,87 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
 
 def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
+  """Make ``fun`` recompute internal linearization points when differentiated.
+
+  The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
+  way to trade off computation time and memory cost in the context of automatic
+  differentiation, especially with reverse-mode autodiff like :func:`jax.grad`
+  and :func:`jax.vjp` but also with :func:`jax.linearize`.
+
+  When differentiating a function in reverse-mode, by default all the
+  linearization points (e.g. inputs to elementwise nonlinear primitive
+  operations) are stored when evaluating the forward pass so that they can be
+  reused on the backward pass. This evaluation strategy can lead to a high
+  memory cost, or even to poor performance on hardware acceleartors where memory
+  access is much more expensive than FLOPs.
+
+  An alternative evaluation strategy is for some of the linearization points to
+  be recomputed (i.e. rematerialized) rather than stored. This approach can
+  reduce memory usage at the cost of increased computation.
+
+  This function decorator produces a new version of ``fun`` which follows
+  the rematerialization strategy rather than the default store-everything
+  strategy. That is, it returns a new version of ``fun`` which, when
+  differentiated, doesn't store any of its intermediate linearization points.
+  Instead, these linearization points are recomputed from the function's saved
+  inputs.
+
+  See the examples below.
+
+  Args:
+    fun: Function for which the autodiff evaluation strategy is to be changed
+      from the default of storing all intermediate linearization points to
+      recomputing them. Its arguments and return value should be arrays,
+      scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
+    concrete: Optional, boolean indicating whether ``fun`` may involve
+      value-dependent Python control flow (default False). Support for such
+      control flow is optional, and disabled by default, because in some
+      edge-case compositions with :func:`jax.jit` it can lead to some extra
+      computation.
+
+  Returns:
+    A function (callable) with the same input/output behavior as ``fun`` but
+    which, when differentiated using e.g. :func:`jax.grad`, :func:`jax.vjp`, or
+    :func:`jax.linearize`, recomputes rather than stores intermediate
+    linearization points, thus potentially saving memory at the cost of extra
+    computation.
+
+  Here is a simple example:
+
+  >>> import jax
+  >>> import jax.numpy as jnp
+
+  >>> @jax.checkpoint
+  ... def g(x):
+  ...   y = jnp.sin(x)
+  ...   z = jnp.sin(y)
+  ...   return z
+  ...
+  >>> jax.grad(g)(2.0)
+  DeviceArray(-0.25563914, dtype=float32)
+
+  Here, the same value is produced whether or not the :func:`jax.checkpoint`
+  decorator is present. But when using :func:`jax.checkpoint`, the value
+  ``jnp.sin(2.0)`` is computed twice: once on the forward pass, and once on the
+  backward pass. The values ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))`` are
+  also computed twice. Without using the decorator, both ``jnp.cos(2.0)`` and
+  ``jnp.cos(jnp.sin(2.0))`` would be stored and reused.
+
+  The :func:`jax.checkpoint` decorator can be applied recursively to express
+  sophisticated autodiff rematerialization strategies. For example:
+
+  >>> def recursive_checkpoint(funs):
+  ...   if len(funs) == 1:
+  ...     return funs[0]
+  ...   elif len(funs) == 2:
+  ...     f1, f2 = funs
+  ...     return lambda x: f1(f2(x))
+  ...   else:
+  ...     f1 = recursive_checkpoint(funs[:len(funs)//2])
+  ...     f2 = recursive_checkpoint(funs[len(funs)//2:])
+  ...     return lambda x: f1(jax.checkpoint(f2)(x))
+  ...
+  """
   @wraps(fun)
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
@@ -1828,7 +1909,7 @@ class CustomTransformsFunction(object):
     return tree_unflatten(out_tree(), outs)
 
 def custom_transforms(fun):
-  """This API is deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp` instead."""
+  """Deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp`."""
 
   name = getattr(fun, '__name__', '<unnamed custom_transforms primitive>')
   fun_p = core.Primitive(name)
