@@ -3835,6 +3835,13 @@ class NumpyGradTests(jtu.JaxTestCase):
 
     check_grads(f, (1.,), order=1)
 
+  def testSetPrintOptions(self):
+    np.set_printoptions(floatmode="unique")
+    jnp.set_printoptions(floatmode="unique")
+    y = str(np.array(0.2 + 0.1))
+    z = str(jnp.array(0.2 + 0.1))
+
+    self.assertEqual(y,z)
 
 if __name__ == "__main__":
   absltest.main()

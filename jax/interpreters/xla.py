@@ -940,6 +940,7 @@ class DeviceValue(object):
     return self
 
 def _forward_method(attrname, self, fun, *args):
+  print(attrname,fun,*args)
   return fun(getattr(self, attrname), *args)
 _forward_to_value = partial(_forward_method, "_value")
 
