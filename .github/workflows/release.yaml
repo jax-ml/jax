@@ -1,0 +1,46 @@
+name: Jaxlib release
+
+on:
+  release:
+    types: [published, unpublished]
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  runs-on: macos-latest
+  strategy:
+    matrix:
+      python-version: [3.8] 
+  steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ ${{ matrix.python-version == 3.6 }} ];
+          pip install numpy==1.15.4 scipy==1.2.0 cython six wheel future pytest-xdist
+        elif [ ${{ matrix.python-version == 3.7 }} ];
+          pip install numpy==1.15.4 scipy==1.2.0 cython six wheel future pytest-xdist
+        elif [ ${{ matrix.python-version == 3.8 }} ];
+          pip install numpy==1.17.4 scipy== cython six wheel future pytest-xdist
+        fi
+    - name: Build jaxlib
+      run: |
+        PY_TAG=`echo cp${{ matrix.python-version }} | tr -d '.'`
+        python build/build.py
+        python setup.py bdist_wheel --python-tag "${PY_TAG}" --plat-name "macosx_10_9_x86_64"
+    - name: Test new jaxlib
+      run: |
+        pip install build/dist/*.whl
+        pip install -e .
+        pytest -n auto tests
+    - uses: actions/upload-artifact@v2
+      with:
+        name: jaxlib
+        path: build/dist/*.whl
+
+
