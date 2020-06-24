@@ -16,6 +16,7 @@
 from absl.testing import absltest
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client as xc
+from jax import test_util as jtu
 
 
 class XlaBridgeTest(absltest.TestCase):

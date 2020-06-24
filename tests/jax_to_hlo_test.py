@@ -17,6 +17,7 @@ from absl.testing import absltest
 import jax.numpy as jnp
 from jax.tools.jax_to_hlo import jax_to_hlo
 from jax.lib import xla_client
+from jax import test_util as jtu
 
 
 class JaxToHloTest(absltest.TestCase):

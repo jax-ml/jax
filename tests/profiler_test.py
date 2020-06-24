@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 import jax.profiler
 from jax.config import config
-import jax.test_util
+import jax.test_util as jtu
 
 try:
   import portpicker
