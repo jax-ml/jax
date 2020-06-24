@@ -240,33 +240,29 @@ def _round2(x):
 doubling_rules[lax.round_p] = _round2
 
 def _exp2(x):
-  # TODO(vanderplas): make this more efficient.
-  # - use mul12 where possible
-  # - avoid re-instantiation of constants
-  # -
-  x = _DoubleDouble(x)
-  log2 = _DoubleDouble("0.6931471805599453094172321214581765680755", x.dtype)
-  m = _DoubleDouble(_round2((x / log2)._tup))
-  r = (x - m * log2) / 256.
-  exp_r = _DoubleDouble(0.0, x.dtype)
-  numerator = _DoubleDouble(1.0, x.dtype)
-  denominator = 1.0
+  dtype = x[0].dtype
+  log2 = _DoubleDouble("0.6931471805599453094172321214581765680755", dtype)._tup
+  m = _round2(_div2(x, log2))
+  r = _div2(_sub2(x, _mul2(m, log2)), (dtype.type(256), dtype.type(0)))
+  exp_r = (jnp.zeros_like(x[0]), jnp.zeros_like(x[0]))
+  numerator = (jnp.ones_like(x[0]), jnp.zeros_like(x[0]))
+  denominator = (jnp.array(1, dtype=dtype), jnp.array(0, dtype=dtype))
   n_iter = {
     16: 6,
     32: 12,
     64: 18,
-  }[np.finfo(x.dtype).bits]
-  # TODO(vanderplas): use lax.scan?
-  for n in range(n_iter):
-    exp_r += numerator / denominator
-    numerator *= r
-    denominator *= (n + 1)
-  x = exp_r
-  for i in range(8):
-    x = x * x
-  # TODO(vanderplas): does this cause issues for float16?
-  result = 2 ** m.to_array() * x
-  return result._tup
+  }[np.finfo(dtype).bits]
+  init_val = (exp_r, numerator, denominator)
+  def body_fun(n, val):
+    exp_r, numerator, denominator = val
+    return (
+      _add2(exp_r, _div2(numerator, denominator)),
+      _mul2(numerator, r),
+      (denominator[0] * (n + 1), denominator[1])
+    )
+  result = lax.fori_loop(0, n_iter, body_fun, init_val)
+  x = lax.fori_loop(0, 8, lambda n, x: _mul2(x, x), result[0])
+  return _mul2((2.0 ** (m[0] + m[1]), 0.), x)
 doubling_rules[lax.exp_p] = _exp2
 
 def _def_inequality(prim, op):

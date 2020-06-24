@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import operator
+import os
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import lax
+from jax.lib import xla_bridge
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.experimental.doubledouble import doubledouble, _DoubleDouble
@@ -26,6 +28,27 @@ from jax.config import config, flags
 config.parse_flags_with_absl()
 
 FLAGS = flags.FLAGS
+
+prev_xla_flags = None
+
+# Fast math breaks compiled doubledouble
+def setUpModule():
+  global prev_xla_flags
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_cpu_enable_fast_math" not in flags_str:
+    os.environ["XLA_FLAGS"] = flags_str + " --xla_cpu_enable_fast_math=false"
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xla_bridge.get_backend.cache_clear()
+
+# Reset to previous configuration in case other test modules will be run.
+def tearDownModule():
+  if prev_xla_flags is None:
+    del os.environ["XLA_FLAGS"]
+  else:
+    os.environ["XLA_FLAGS"] = prev_xla_flags
+  xla_bridge.get_backend.cache_clear()
 
 class DoubleDoubleTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
