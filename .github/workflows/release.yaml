@@ -1,8 +1,8 @@
 name: Jaxlib release
 
 on:
-  release:
-    types: [published, unpublished]
+  # release:
+  #   types: [published, unpublished]
   pull_request:
     branches:
       - master
