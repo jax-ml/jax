@@ -2873,8 +2873,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for q_dtype in [np.float32]
         for q_shape in scalar_shapes + [(4,)]
         for keepdims in [False, True]
-        for interpolation in (['linear'] if 'nan' in op else
-            ['linear', 'lower', 'higher', 'nearest', 'midpoint'])))
+        for interpolation in ['linear', 'lower', 'higher', 'nearest',
+                              'midpoint']))
   def testQuantile(self, op, a_rng, q_rng, a_shape, a_dtype, q_shape, q_dtype,
                    axis, keepdims, interpolation):
     if "quantile" in op and numpy_version < (1, 15):
