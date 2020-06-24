@@ -1217,7 +1217,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "shape": shape, "dtype": dtype, "axis": axis}
-      for shape in all_shapes
+      for shape in array_shapes
       for dtype in all_dtypes
       for axis in [None] + list(range(len(shape)))))
   def testCompressMethod(self, shape, dtype, axis):
