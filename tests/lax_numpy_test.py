@@ -3287,6 +3287,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testVar(self, shape, dtype, out_dtype, axis, ddof, keepdims, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom < 0 for slice")
     def np_fun(x):
       out = np.var(x.astype(jnp.promote_types(np.float32, dtype)),
                     axis=axis, ddof=ddof, keepdims=keepdims)
@@ -3320,6 +3322,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testNanVar(self, shape, dtype, out_dtype, axis, ddof, keepdims, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom < 0 for slice")
     def np_fun(x):
       out = np.nanvar(x.astype(jnp.promote_types(np.float32, dtype)),
                     axis=axis, ddof=ddof, keepdims=keepdims)
