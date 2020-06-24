@@ -4120,6 +4120,93 @@ def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
     return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                     keepdims=keepdims, interpolation='midpoint')
 
+
+@_wraps(getattr(np, "nanquantile", None))
+def nanquantile(a, q, axis=None, out=None, overwrite_input=False,
+                interpolation="linear", keepdims=False):
+  if overwrite_input or out is not None:
+    msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
+           "out != None")
+    raise ValueError(msg)
+  if interpolation != "linear":
+    raise NotImplementedError("Only interpolation='linear' is implemented")
+  return _nanquantile(a, q, axis, keepdims)
+
+
+@partial(jit, static_argnums=(2, 3))
+def _nanquantile(a, q, axis, keepdims):
+  a = asarray(a, dtype=promote_types(_dtype(a), float32))
+  q = asarray(q, dtype=promote_types(_dtype(q), float32))
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  elif isinstance(axis, tuple):
+    raise NotImplementedError("Tuple values for axis are not implemented")
+  else:
+    axis = _canonicalize_axis(axis, ndim(a))
+
+  q_ndim = ndim(q)
+  if q_ndim > 1:
+    raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
+
+  q = asarray(q)
+  q = atleast_1d(q)
+
+  if not issubdtype(a.dtype, floating) or not issubdtype(q.dtype, floating):
+    msg = ("q and a arguments to nanquantile must be of float type"
+           ", got {} and {}")
+    raise TypeError(msg.format(a.dtype, q.dtype))
+
+  # Promote q to at least float32 for precise interpolation.
+  q = lax.convert_element_type(q, promote_types(q.dtype, float32))
+
+  a_shape = shape(a)
+  a = lax.sort(a, dimension=axis)
+
+  n = a_shape[axis]
+  idx_bound = sum(logical_not(isnan(a)), axis=axis, dtype=q.dtype)
+  q_new_shape = (q.shape[0],) + (1,) * len(idx_bound.shape)
+  q = lax.mul(q.reshape(q_new_shape), expand_dims(idx_bound, 0) - 1)
+  low = lax.floor(q)
+  high = where(low < idx_bound - 1, lax.add(low, _constant_like(low, 1)), low)
+  high_weight = lax.sub(q, low)
+  low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
+
+  low = lax.clamp(_constant_like(low, 0), low, _constant_like(low, n - 1))
+  high = lax.clamp(_constant_like(high, 0), high, _constant_like(high, n - 1))
+  low = lax.convert_element_type(low, int64)
+  high = lax.convert_element_type(high, int64)
+
+  a = expand_dims(a, 0)
+  low, high = expand_dims(low, axis + 1), expand_dims(high, axis + 1)
+  low_value = take_along_axis(a, low, axis=axis + 1)
+  high_value = take_along_axis(a, high, axis=axis + 1)
+  low_weight = expand_dims(low_weight, axis=axis + 1)
+  high_weight = expand_dims(high_weight, axis=axis + 1)
+  res = lax.convert_element_type(
+    lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
+            lax.mul(high_value.astype(q.dtype), high_weight)), a.dtype)
+  if not keepdims:
+    res = squeeze(res, axis + 1)
+  if not q_ndim:
+    res = squeeze(res, 0)
+  return res
+
+
+@_wraps(np.nanpercentile)
+def nanpercentile(a, q, axis=None, out=None, overwrite_input=False,
+                  interpolation="linear", keepdims=False):
+  q = true_divide(asarray(q), float32(100.0))
+  return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                     interpolation=interpolation, keepdims=keepdims)
+
+
+@_wraps(np.nanmedian)
+def nanmedian(a, axis=None, out=None, overwrite_input=False, keepdims=False):
+  q = 0.5
+  return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                     keepdims=keepdims)
+
 def _astype(arr, dtype):
   lax._check_user_dtype_supported(dtype, "astype")
   return lax.convert_element_type(arr, dtype)

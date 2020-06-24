@@ -45,6 +45,7 @@ from .lax_numpy import (
     logical_not, logical_or, logical_xor, logspace, mask_indices, matmul, max,
     maximum, mean, median, meshgrid, min, minimum, mod, moveaxis, msort,
     multiply, nan, nan_to_num, nanargmax, nanargmin, nancumprod, nancumsum,
+    nanmedian, nanpercentile, nanquantile,
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
     negative, newaxis, nextafter, nonzero, not_equal, number, numpy_version,
     object_, ones, ones_like, operator_name, outer, packbits, pad, percentile,
