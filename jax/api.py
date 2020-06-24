@@ -1790,10 +1790,10 @@ def eval_shape(fun: Callable, *args, **kwargs):
 def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
-  The ``jax.checkpoint`` decorator, aliased to ``jax.remat``, provides a way to
-  trade off computation time and memory cost in the context of automatic
-  differentiation, especially with reverse-mode autodiff like ``jax.grad`` and
-  `jax.vjp`` but also with ``jax.linearize``.
+  The :func:`jax.checkpoint` decorator, aliased to :func:`jax.remat`, provides a
+  way to trade off computation time and memory cost in the context of automatic
+  differentiation, especially with reverse-mode autodiff like :func:`jax.grad`
+  and :func:`jax.vjp` but also with :func:`jax.linearize`.
 
   When differentiating a function in reverse-mode, by default all the
   linearization points (e.g. inputs to elementwise nonlinear primitive
@@ -1806,11 +1806,12 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   be recomputed (i.e. rematerialized) rather than stored. This approach can
   reduce memory usage at the cost of increased computation.
 
-  This function decorator produces a new version of ``fun`` which follows the
-  rematerialization strategy rather than the default store-eveything strategy.
-  That is, it returns a new version of ``fun`` which, when differentiated,
-  doesn't store any of its intermediate linearization points. Instead, these
-  linearization points are recomputed from the function's saved inputs.
+  This function decorator produces a new version of :func:`fun` which follows
+  the rematerialization strategy rather than the default store-everything
+  strategy. That is, it returns a new version of :func:`fun` which, when
+  differentiated, doesn't store any of its intermediate linearization points.
+  Instead, these linearization points are recomputed from the function's saved
+  inputs.
 
   See the examples below.
 
@@ -1819,17 +1820,18 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
       from the default of storing all intermediate linearization points to
       recomputing them. Its arguments and return value should be arrays,
       scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
-    concrete: Optional, boolean indicating whether ``fun`` may involve
+    concrete: Optional, boolean indicating whether :func:`fun` may involve
       value-dependent Python control flow (default False). Support for such
       control flow is optional, and disabled by default, because in some
-      edge-case compositions with ``jax.jit`` it can lead to some extra
+      edge-case compositions with :func:`jax.jit` it can lead to some extra
       computation.
 
   Returns:
-    A function (callable) with the same input/output behavior as ``fun`` but
-    which, when differentiated using e.g. ``jax.grad``, ``jax.vjp``, or
-    ``jax.linearize``, recomputes rather than stores intermediate linearization
-    points, thus potentially saving memory at the cost of extra computation.
+    A function (callable) with the same input/output behavior as :func:`fun` but
+    which, when differentiated using e.g. :func:`jax.grad`, :func:`jax.vjp`, or
+    :func:`jax.linearize`, recomputes rather than stores intermediate
+    linearization points, thus potentially saving memory at the cost of extra
+    computation.
 
   Here is a simple example:
 
@@ -1845,14 +1847,14 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   >>> jax.grad(g)(2.0)
   DeviceArray(-0.25563914, dtype=float32)
 
-  Here, the same value is produced whether or not the ``jax.checkpoint``
-  decorator is present. But when using ``jax.checkpoint``, the value
+  Here, the same value is produced whether or not the :func:`jax.checkpoint`
+  decorator is present. But when using :func:`jax.checkpoint`, the value
   ``jnp.sin(2.0)`` is computed twice: once on the forward pass, and once on the
   backward pass. The values ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))`` are
   also computed twice. Without using the decorator, both ``jnp.cos(2.0)`` and
   ``jnp.cos(jnp.sin(2.0))`` would be stored and reused.
 
-  The ``jax.checkpoint`` decorator can be applied recursively to express
+  The :func:`jax.checkpoint` decorator can be applied recursively to express
   sophisticated autodiff rematerialization strategies. For example:
 
   >>> def recursive_checkpoint(funs):
@@ -1903,7 +1905,7 @@ class CustomTransformsFunction(object):
     return tree_unflatten(out_tree(), outs)
 
 def custom_transforms(fun):
-  """This API is deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp` instead."""
+  """Deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp`."""
 
   name = getattr(fun, '__name__', '<unnamed custom_transforms primitive>')
   fun_p = core.Primitive(name)
