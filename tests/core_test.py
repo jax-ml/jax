@@ -329,17 +329,19 @@ class CoreTest(jtu.JaxTestCase):
 
     jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(2)   # int, not float!
-    jtu.check_raises_regexp(
-        lambda: core.check_jaxpr(jaxpr),
-        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
-                    r"bound as ShapedArray(.*) in '. = sin .'"))
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.' inconsistently typed as ShapedArray(.*), "
+        r"bound as ShapedArray(.*)\n\nin equation:\n\n  . = sin .",
+        lambda: core.check_jaxpr(jaxpr))
 
     jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(np.ones((2, 3)))
-    jtu.check_raises_regexp(
-        lambda: core.check_jaxpr(jaxpr),
-        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
-                    r"bound as ShapedArray(.*) in '. = sin .'"))
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.' inconsistently typed as ShapedArray(.*), "
+        r"bound as ShapedArray(.*)\n\nin equation:\n\n  . = sin .",
+        lambda: core.check_jaxpr(jaxpr))
 
   def test_jaxpr_dropvar_from_jit_call(self):
     def inner(x):
