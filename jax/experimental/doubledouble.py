@@ -24,6 +24,7 @@ from typing import Any, Callable, Dict, Sequence
 
 import numpy as np
 
+from jax.numpy.lax_numpy import _promote_dtypes_inexact
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax.api_util import flatten_fun_nokwargs
 from jax import ad_util, core, lax, xla
@@ -149,6 +150,26 @@ def _normalize(x, y):
   )
   return z, jnp.where(jnp.isinf(z), 0, zz)
 
+def _make_doubledouble(val, dtype=None):
+  if isinstance(val, tuple):
+    head, tail = _promote_dtypes_inexact(*val)
+    if dtype is not None:
+      head, tail = head.astype(dtype), tail.astype(dtype)
+  elif isinstance(val, str):
+    dtype = jnp.dtype(dtype or jnp.zeros(())).type
+    val = decimal.Decimal(val)
+    head = dtype(val)
+    tail = dtype(0 if np.isinf(head) else val - decimal.Decimal(float(head)))
+  elif isinstance(val, int):
+    dtype = jnp.dtype(dtype or jnp.zeros(())).type
+    head = dtype(val)
+    tail = dtype(0 if np.isinf(head) else val - int(head))
+  else:
+    val, = _promote_dtypes_inexact(jnp.asarray(val))
+    head = jnp.asarray(val, dtype=dtype)
+    tail = (val - head.astype(val.dtype)).astype(head.dtype)
+  return _normalize(head, tail)
+
 def _abs2(x):
   x, xx = x
   sign = jnp.where(lax.sign(x) == lax.sign(xx), 1, -1)
@@ -241,7 +262,7 @@ doubling_rules[lax.round_p] = _round2
 
 def _exp2(x):
   dtype = x[0].dtype
-  log2 = _DoubleDouble("0.6931471805599453094172321214581765680755", dtype)._tup
+  log2 = _make_doubledouble("0.6931471805599453094172321214581765680755", dtype)
   m = _round2(_div2(x, log2))
   r = _div2(_sub2(x, _mul2(m, log2)), (dtype.type(256), dtype.type(0)))
   exp_r = (jnp.zeros_like(x[0]), jnp.zeros_like(x[0]))
@@ -316,25 +337,10 @@ class _DoubleDouble:
   __slots__ = ["head", "tail"]
 
   def __init__(self, val, dtype=None):
-    if isinstance(val, tuple):
-      head, tail = val
-    elif isinstance(val, str):
-      dtype = jnp.dtype(dtype or 'float64').type
-      val = decimal.Decimal(val)
-      head = dtype(val)
-      tail = 0 if np.isinf(head) else dtype(val - decimal.Decimal(float(head)))
-    elif isinstance(val, int):
-      dtype = jnp.dtype(dtype or 'float64').type
-      head = dtype(val)
-      tail = 0 if np.isinf(head) else dtype(val - int(head))
-    elif isinstance(val, _DoubleDouble):
-      head, tail = val.head, val.tail
+    if isinstance(val, _DoubleDouble):
+      self.head, self.tail = val.head.astype(dtype), val.tail.astype(dtype)
     else:
-      head, tail = val, jnp.zeros_like(val)
-    dtype = dtype or jnp.result_type(head, tail)
-    head = jnp.asarray(head, dtype=dtype)
-    tail = jnp.asarray(tail, dtype=dtype)
-    self.head, self.tail = _normalize(head, tail)
+      self.head, self.tail = _make_doubledouble(val, dtype)
 
   def normalize(self):
     """Return a normalized copy of self."""
