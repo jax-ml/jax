@@ -1521,6 +1521,10 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
 
+    if isinstance(a, (list, tuple)):
+      msg = "Reductions won't accept lists and tuples" + \
+          "in future versions, only scalars and ndarrays"
+      warnings.warn(msg, category=FutureWarning)
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
