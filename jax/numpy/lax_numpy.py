@@ -4117,7 +4117,6 @@ def nanquantile(a, q, axis=None, out=None, overwrite_input=False,
 def _nanquantile(a, q, axis, keepdims):
   a = asarray(a, dtype=promote_types(_dtype(a), float32))
   q = asarray(q, dtype=promote_types(_dtype(q), float32))
-  axis_is_none = False
   if axis is None:
     a = ravel(a)
     axis = 0
