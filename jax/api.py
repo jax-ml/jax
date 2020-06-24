@@ -147,12 +147,13 @@ def jit(
       arguments to treat as static (compile-time constant). Operations that only
       depend on static arguments will be constant-folded. Calling the jitted
       function with different values for these constants will trigger
-      recompilation. If not provided but ``static_argnames`` is set, default is
-      based on inspecting ``fun`` to find corresponding positions.
+      recompilation. If not provided but ``static_argnames`` is set, the
+      default is based on calling ``inspect.signature(fun)`` to find
+      corresponding positional arguments.
     static_argnames: A str or collection of strings specifying which named
       arguments to treat as static (compile-time constant). If not provided but
-      ``static_argnums`` is set, default is based on inspecting ``fun`` to
-      find corresponding names.
+      ``static_argnums`` is set, the default is based on calling
+      ``inspect.signature(fun)`` to find corresponding named arguments.
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via :py:func:`jax.devices`.) The default is inherited from
