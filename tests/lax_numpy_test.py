@@ -260,6 +260,12 @@ JAX_COMPOUND_OP_RECORDS = [
               ["rev"], inexact=True),
     op_record("diff", 1, number_dtypes, nonzerodim_shapes, jtu.rand_default, ["rev"]),
     op_record("ediff1d", 3, [np.int32], all_shapes, jtu.rand_default, []),
+    op_record("unwrap", 1, float_dtypes, nonempty_nonscalar_array_shapes,
+              jtu.rand_default, ["rev"],
+              # numpy.unwrap always returns float64
+              check_dtypes=False,
+              # numpy cumsum is inaccurate, see issue #3517
+              tolerance={dtypes.bfloat16: 1e-1, np.float16: 1e-1})
 ]
 
 JAX_BITWISE_OP_RECORDS = [
