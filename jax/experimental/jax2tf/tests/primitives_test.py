@@ -341,7 +341,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
          f_jax=f_jax)
     for f_jax in REDUCE))
   def test_reduce_ops_with_numerical_input(self, f_jax):
-    values = [np.array([1, 2, 3], dtype=np.float32)]
+    values = np.array([1, 2, 3], dtype=np.float32)
     self.ConvertAndCompare(f_jax, values, with_function=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -367,7 +367,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
          f_jax=f_jax)
     for f_jax in REDUCE))
   def test_reduce_ops_with_boolean_input(self, f_jax):
-    values = [np.array([True, False, True], dtype=np.bool_)]
+    values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values, with_function=True)
 
   def test_gather_rank_change(self):
