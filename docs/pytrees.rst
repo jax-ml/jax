@@ -55,8 +55,8 @@ to only map over the dictionary argument, we can use::
 
   (None, 0)  # equivalent to (None, {"k1": 0, "k2": 0})
 
-Or, if want every argument to be mapped, we can simply write a single leaf value
-that is applied over the entire argument tuple pytree::
+Or, if we want every argument to be mapped, we can simply write a single leaf 
+value that is applied over the entire argument tuple pytree::
 
   0
 
@@ -103,7 +103,7 @@ Here is a simple example::
   value_flat, value_tree = tree_flatten(value_structured)
   print("value_flat={}\nvalue_tree={}".format(value_flat, value_tree))
 
-  # Transform the flt value list using an element-wise numeric transformer
+  # Transform the flat value list using an element-wise numeric transformer
   transformed_flat = list(map(lambda v: v * 2., value_flat))
   print("transformed_flat={}".format(transformed_flat))
 
