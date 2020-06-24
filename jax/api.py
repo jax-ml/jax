@@ -85,7 +85,8 @@ def _check_callable(fun):
   if inspect.isgeneratorfunction(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
 
-_POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
+def _is_positional(param: inspect.Parameter):
+  return param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 def _infer_argnums_and_argnames(
     fun: Callable,
@@ -102,7 +103,7 @@ def _infer_argnums_and_argnames(
     argnames = _ensure_tuple(argnames, str)
     argnums = tuple(
         i for i, (k, param) in enumerate(parameters.items())
-        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
+        if _is_positional(param) and k in argnames
     )
   elif argnames is None:
     assert argnums is not None
@@ -110,7 +111,7 @@ def _infer_argnums_and_argnames(
     argnums = _ensure_tuple(argnums, int)
     argnames = tuple(
         k for i, (k, param) in enumerate(parameters.items())
-        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+        if _is_positional(param) and i in argnums
     )
   else:
     assert argnums is not None
