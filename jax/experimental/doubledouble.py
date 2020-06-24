@@ -279,7 +279,7 @@ def _exp2(x):
     return (
       _add2(exp_r, _div2(numerator, denominator)),
       _mul2(numerator, r),
-      (denominator[0] * (n + 1), denominator[1])
+      _mul2(denominator, (jnp.array(n + 1, dtype=dtype), jnp.array(0, dtype=dtype)))
     )
   result = lax.fori_loop(0, n_iter, body_fun, init_val)
   x = lax.fori_loop(0, 8, lambda n, x: _mul2(x, x), result[0])
