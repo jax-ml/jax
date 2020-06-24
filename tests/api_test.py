@@ -3267,4 +3267,4 @@ class BufferDonationTest(jtu.JaxTestCase):
         self.assertEqual(buffer.is_deleted(), deleted)
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

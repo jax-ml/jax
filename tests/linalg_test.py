@@ -1321,4 +1321,4 @@ class ScipyLinalgTest(jtu.JaxTestCase):
      jtu.check_grads(jsp.linalg.expm, (a,), modes=["fwd"], order=1)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

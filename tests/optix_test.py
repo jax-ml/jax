@@ -148,4 +148,4 @@ class OptixTest(absltest.TestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

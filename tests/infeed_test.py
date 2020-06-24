@@ -92,4 +92,4 @@ class InfeedTest(jax.test_util.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -143,6 +143,5 @@ class DoubleDoubleTest(jtu.JaxTestCase):
       return result
     self.assertAllClose(op(*args), class_op(*args))
 
-
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

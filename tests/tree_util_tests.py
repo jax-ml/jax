@@ -167,4 +167,4 @@ class TreeTest(jtu.JaxTestCase):
     self.assertTrue(tree_util.all_leaves([leaf]))
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())
