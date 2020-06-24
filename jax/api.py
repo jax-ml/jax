@@ -29,7 +29,8 @@ import functools
 import inspect
 import itertools as it
 import threading
-from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
+from typing import (Any, Callable, Iterable, Optional, Sequence, Tuple,
+                    TypeVar, Type, Union)
 from warnings import warn
 
 import numpy as onp
@@ -83,14 +84,48 @@ def _check_callable(fun):
   if inspect.isgeneratorfunction(fun):
     raise TypeError(f"Expected a function, got a generator function: {fun}")
 
+
+_POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+def _infer_argnums_and_argnames(
+    fun: Callable,
+    argnums: Union[int, Iterable[int], None],
+    argnames: Union[str, Iterable[str], None],
+) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
+  if argnums is None and argnames is None:
+    argnums = ()
+    argnames = ()
+  elif argnums is None:
+    assert argnames is not None
+    parameters = inspect.signature(fun).parameters
+    argnames = _ensure_tuple(argnames, str)
+    argnums = tuple(
+        i for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
+    )
+  elif argnames is None:
+    assert argnums is not None
+    parameters = inspect.signature(fun).parameters
+    argnums = _ensure_tuple(argnums, int)
+    argnames = tuple(
+        k for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+    )
+  else:
+    assert argnums is not None
+    assert argnames is not None
+    argnums = _ensure_tuple(argnums, int)
+    argnames = _ensure_tuple(argnames, str)
+  return argnums, argnames
+
 class _ThreadLocalState(threading.local):
   def __init__(self):
     self.jit_is_disabled = False
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
-        static_argnames: Union[str, Iterable[str]] = (),
+def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = None,
+        static_argnames: Union[str, Iterable[str]] = None,
         device=None, backend: Optional[str] = None,
         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """Sets up ``fun`` for just-in-time compilation with XLA.
@@ -107,9 +142,12 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
       arguments to treat as static (compile-time constant). Operations that only
       depend on static arguments will be constant-folded. Calling the jitted
       function with different values for these constants will trigger
-      recompilation. If the jitted function is called with fewer positional
-      arguments than indicated by ``static_argnums`` then an error is raised.
-      Defaults to ().
+      recompilation. If not provided but ``static_argnames`` is set, default is
+      based on inspecting ``fun`` to find corresponding positions.
+    static_argnames: A str or collection of strings specifying which named
+      arguments to treat as static (compile-time constant). If not provided but
+      ``static_argnums`` is set, default is based on inspecting ``fun`` to
+      find corresponding names.
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via :py:func:`jax.devices`.) The default is inherited from
@@ -143,23 +181,22 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
-  # TODO(shoyer): combine static_argnums and static_argnames into static_args?
-  # TODO(shoyer): validation of static_argnames
-  # TODO(shoyer): update donated_argnums to handle names?
-  # TODO(shoyer): allow omitting static args when calling f_jitted?
   _check_callable(fun)
-  static_argnums = _ensure_tuple(static_argnums)
-  donate_argnums = _ensure_tuple(donate_argnums)
+  static_argnums, static_argnames = _infer_argnums_and_argnames(
+      fun, static_argnums, static_argnames)
+  donate_argnums = _ensure_tuple(donate_argnums, int)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   @wraps(fun)
   def f_jitted(*args, **kwargs):
     if _jit_is_disabled():
       return fun(*args, **kwargs)
-    if max(static_argnums + donate_argnums, default=-1) >= len(args):
-      msg = ("jitted function has static_argnums={}, donate_argnums={} but "
-             "was called with only {} positional arguments.")
-      raise ValueError(msg.format(static_argnums, donate_argnums, len(args)))
+
+    if max(donate_argnums, default=-1) >= len(args):
+      raise ValueError(
+          f"jitted function has donate_argnums={donate_argnums} "
+          f"but was called with only {len(args)} positional arguments.")
+
     f = lu.wrap_init(fun)
 
     if static_argnums:
@@ -1130,8 +1167,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
 
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
-  static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums)
-  donate_tuple = rebase_donate_argnums(_ensure_tuple(donate_argnums),
+  static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums, int)
+  donate_tuple = rebase_donate_argnums(_ensure_tuple(donate_argnums, int),
                                        static_broadcasted_tuple)
 
   if any(axis != 0 for axis in tree_leaves(in_axes)):
@@ -1967,8 +2004,10 @@ def custom_gradient(fun):
   defvjp_all(primal_fun, fun)
   return primal_fun
 
-def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
-  return (x,) if isinstance(x, int) else tuple(x)
+T = TypeVar('T', int, str)
+
+def _ensure_tuple(x: Union[T, Iterable[T]], type_: Type[T]) -> Tuple[T, ...]:
+  return (x,) if isinstance(x, type_) else tuple(x)  # type: ignore
 
 def invertible(fun: Callable, concrete: bool = False) -> Callable:
   """Asserts that the decorated function is invertible.

@@ -95,6 +95,34 @@ class APITest(jtu.JaxTestCase):
     assert f2(2, 5, 3, True, True) == 253
     assert len(side) == 3
 
+  def test__infer_argnums_and_argnames(self):
+    def f(x, y=1):
+      pass
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=0, argnames=None)
+    assert argnums == (0,)
+    assert argnames == ('x',)
+
+    argnums, argnames = api._infer_argnums_and_argnames(
+        f, argnums=None, argnames='y')
+    assert argnums == (1,)
+    assert argnames == ('y',)
+
+  def test_jit_static_args_and_kwargs(self):
+
+    def f(x):
+      assert x == 'foo'
+      return 1
+
+    f_nums = jit(f, static_argnums=0)
+    assert f_nums('foo') == 1
+    assert f_nums(x='foo') == 1
+
+    f_names = jit(f, static_argnames='x')
+    assert f_names('foo') == 1
+    assert f_names(x='foo') == 1
+
   def test_jit_kwargs(self):
     side = []
 
