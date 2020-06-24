@@ -1806,9 +1806,9 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   be recomputed (i.e. rematerialized) rather than stored. This approach can
   reduce memory usage at the cost of increased computation.
 
-  This function decorator produces a new version of :func:`fun` which follows
+  This function decorator produces a new version of ``fun`` which follows
   the rematerialization strategy rather than the default store-everything
-  strategy. That is, it returns a new version of :func:`fun` which, when
+  strategy. That is, it returns a new version of ``fun`` which, when
   differentiated, doesn't store any of its intermediate linearization points.
   Instead, these linearization points are recomputed from the function's saved
   inputs.
@@ -1820,14 +1820,14 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
       from the default of storing all intermediate linearization points to
       recomputing them. Its arguments and return value should be arrays,
       scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
-    concrete: Optional, boolean indicating whether :func:`fun` may involve
+    concrete: Optional, boolean indicating whether ``fun`` may involve
       value-dependent Python control flow (default False). Support for such
       control flow is optional, and disabled by default, because in some
       edge-case compositions with :func:`jax.jit` it can lead to some extra
       computation.
 
   Returns:
-    A function (callable) with the same input/output behavior as :func:`fun` but
+    A function (callable) with the same input/output behavior as ``fun`` but
     which, when differentiated using e.g. :func:`jax.grad`, :func:`jax.vjp`, or
     :func:`jax.linearize`, recomputes rather than stores intermediate
     linearization points, thus potentially saving memory at the cost of extra
