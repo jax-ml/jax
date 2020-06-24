@@ -1797,7 +1797,7 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
 
   When differentiating a function in reverse-mode, by default all the
   linearization points (e.g. inputs to elementwise nonlinear primitive
-  operations) are stored when evaluating the forward-pass so that they can be
+  operations) are stored when evaluating the forward pass so that they can be
   reused on the backward pass. This evaluation strategy can lead to a high
   memory cost, or even to poor performance on hardware acceleartors where memory
   access is much more expensive than FLOPs.
