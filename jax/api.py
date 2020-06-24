@@ -1790,7 +1790,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
 def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   """Make ``fun`` recompute internal linearization points when differentiated.
 
-  The :func:`jax.checkpoint` decorator, aliased to :func:`jax.remat`, provides a
+  The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
   way to trade off computation time and memory cost in the context of automatic
   differentiation, especially with reverse-mode autodiff like :func:`jax.grad`
   and :func:`jax.vjp` but also with :func:`jax.linearize`.
