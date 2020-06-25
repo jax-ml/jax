@@ -16,8 +16,13 @@ jax 0.1.71 (Unreleased)
 * The minimum jaxlib version is now 0.1.48.
 
 
-jaxlib 0.1.50 (Unreleased)
+jaxlib 0.1.50 (June 25, 2020)
 ------------------------------
+
+* Add support for CUDA 11.0.
+* Drop support for CUDA 9.2 (we only maintain support for the last four CUDA
+  versions.)
+* Update XLA.
 
 jaxlib 0.1.49 (June 19, 2020)
 ------------------------------
