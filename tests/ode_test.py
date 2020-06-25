@@ -18,7 +18,6 @@ from absl.testing import absltest
 import numpy as np
 
 import jax
-from jax import dtypes
 from jax import test_util as jtu
 import jax.numpy as jnp
 from jax.experimental.ode import odeint
@@ -28,10 +27,6 @@ import scipy.integrate as osp_integrate
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
-def num_float_bits(dtype):
-  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
 
 
 class ODETest(jtu.JaxTestCase):
@@ -56,7 +51,7 @@ class ODETest(jtu.JaxTestCase):
     y0 = [np.pi - 0.1, 0.0]
     ts = np.linspace(0., 1., 11)
     args = (0.25, 9.8)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(pend, y0, ts, *args, tol=tol)
 
@@ -72,7 +67,7 @@ class ODETest(jtu.JaxTestCase):
 
     y0 = (np.array(-0.1), np.array([[[0.1]]]))
     ts = np.linspace(0., 1., 11)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     integrate = partial(odeint, dynamics)
     jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
@@ -86,7 +81,7 @@ class ODETest(jtu.JaxTestCase):
 
     y0 = [np.pi - 0.1, 0.0]
     ts = np.linspace(0., 1., 11)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(dynamics, y0, ts, tol=tol)
 
@@ -104,7 +99,7 @@ class ODETest(jtu.JaxTestCase):
     args = (rng.randn(3), rng.randn(3))
     y0 = rng.randn(3)
     ts = np.linspace(0.1, 0.2, 4)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(decay, y0, ts, *args, tol=tol)
 
@@ -118,7 +113,7 @@ class ODETest(jtu.JaxTestCase):
       return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
 
     ts = np.array([0.1, 0.2])
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
     y0 = np.linspace(0.1, 0.9, 10)
     args = (0.1, 0.2)
 
@@ -134,7 +129,7 @@ class ODETest(jtu.JaxTestCase):
       return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
 
     ts = np.array([0.1, 0.2])
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
     big_y0 = np.linspace(1.1, 10.9, 10)
     args = (0.1, 0.3)
 

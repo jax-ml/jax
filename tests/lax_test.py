@@ -38,10 +38,6 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-def num_float_bits(dtype):
-  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
-
-
 ### lax tests
 
 # For standard unops and binops, we can generate a large number of tests on

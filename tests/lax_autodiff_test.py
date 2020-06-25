@@ -31,7 +31,7 @@ from jax import lax
 from jax import test_util as jtu
 from jax.test_util import check_grads
 
-from tests.lax_test import compatible_shapes, num_float_bits
+from tests.lax_test import compatible_shapes
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -189,7 +189,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     if jtu.device_under_test() == "tpu" and op is lax.pow:
       raise SkipTest("pow grad imprecise on tpu")
-    tol = jtu.join_tolerance(1e-1, tol) if num_float_bits(dtype) == 32 else tol
+    tol = jtu.join_tolerance(1e-1, tol) if jtu.num_float_bits(dtype) == 32 else tol
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 
@@ -1015,14 +1015,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = rng.uniform(-0.9, 9, size=(3, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 1))
     assert not set(onp.unique(x)) & set(onp.unique(y))
-    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(onp.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
     rng = onp.random.RandomState(0)
     x = rng.uniform(-0.9, 9, size=(1, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 4))
     assert not set(onp.unique(x)) & set(onp.unique(y))
-    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(onp.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
   def testHigherOrderGradientOfReciprocal(self):

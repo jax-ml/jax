@@ -188,6 +188,10 @@ def rand_like(rng, x):
     return randn()
 
 
+def num_float_bits(dtype):
+  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
+
+
 def numerical_jvp(f, primals, tangents, eps=EPS):
   delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
