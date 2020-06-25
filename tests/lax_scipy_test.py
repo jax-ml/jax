@@ -122,6 +122,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
       args_maker = lambda: [rng(shapes[0], dtype), rng(shapes[1], dtype)]
     else:
+      axis = int(onp.clip(axis, -len(shapes[0]), len(shapes[0]) - 1))
       def scipy_fun(array_to_reduce):
         return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
                                      return_sign=return_sign)
@@ -131,8 +132,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                                      return_sign=return_sign)
 
       args_maker = lambda: [rng(shapes[0], dtype)]
+    tol = {onp.float32: 1E-5}
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
-    self._CompileAndCheck(lax_fun, args_maker)
+    self._CompileAndCheck(lax_fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
     jtu.cases_from_list(
