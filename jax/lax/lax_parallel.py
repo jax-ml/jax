@@ -288,6 +288,38 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
                              axis_name=axis_name)
   return tree_util.tree_map(bind, x)
 
+def all_gather(x, axis_name, *, all_gather_dimension: int = 0):
+  """Gather values of x across all replicas.
+
+  If ``x`` is a pytree then the result is equivalent to mapping this function to
+  each leaf in the tree.
+
+  This is equivalent to, but faster than, all_to_all(broadcast(x)).
+
+  Args:
+    x: array(s) with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      :func:`jax.pmap` documentation for more details).
+
+  Returns:
+    Array(s) representing the result of an all-gather along the axis
+    ``axis_name``. Shapes are the same as ``x.shape``, but with a leading
+    dimension of the axis_size.
+
+  For example, with 2 XLA devices available:
+
+  >>> x = np.arange(4)
+  >>> y = jax.pmap(lambda x: jax.lax.all_gather(x, 'i'), axis_name='i')(x)
+  >>> print(y)
+  [[0 1 2 3]
+   [0 1 2 3]
+   [0 1 2 3]
+   [0 1 2 3]]
+  """
+  return all_gather_p.bind(x, axis_name=axis_name, axis_size=psum(1, axis_name),
+                           all_gather_dimension=all_gather_dimension)
+
+
 ### parallel primitives
 
 def standard_pmap_primitive(name, multiple_results=False):
@@ -449,7 +481,29 @@ xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
 
+def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_size,
+                                 replica_groups, platform=None):
+  new_shape = list(c.get_shape(x).dimensions())
+  new_shape.insert(all_gather_dimension, 1)
+  broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
+  x_singleton = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
+  return xops.AllGather(x_singleton, all_gather_dimension=all_gather_dimension,
+                        shard_count=axis_size,
+                        replica_groups=replica_groups)
+
+def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_size, axis_name):
+  shape, dtype = x.shape, x.dtype
+  new_shape = list(shape)
+  new_shape.insert(all_gather_dimension, axis_size)
+  return ShapedArray(new_shape, dtype)
+
+all_gather_p = standard_pmap_primitive('all_gather')
+all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
+xla.parallel_translations[all_gather_p] = _all_gather_translation_rule
+
+
 ### papply rules
+
 # TODO(skye): it would be nice if we could put these with their corresponding
 # primitives, but that currently causes circular dependencies. More refactoring
 # might fix this.
@@ -467,36 +521,6 @@ def _expand(dim, size, axis_name, x):
 def _allgather(x, dim, size, axis_name):
   outs = tree_util.tree_map(partial(_expand, dim, size, axis_name), x)
   return psum(outs, axis_name)
-
-def all_gather(x, axis_name):
-  """Gather values of x across all replicas.
-
-  If ``x`` is a pytree then the result is equivalent to mapping this function to
-  each leaf in the tree.
-
-  This is equivalent to, but faster than, all_to_all(broadcast(x)).
-
-  Args:
-    x: array(s) with a mapped axis named ``axis_name``.
-    axis_name: hashable Python object used to name a pmapped axis (see the
-      :func:`jax.pmap` documentation for more details).
-
-  Returns:
-    Array(s) representing the result of an all-gather along the axis
-    ``axis_name``. Shapes are the same as ``x.shape``, but with a leading
-    dimension of the axis_size.
-
-  For example, with 2 XLA devices available:
-
-  >>> x = np.arange(4)
-  >>> y = jax.pmap(lambda x: jax.lax.all_gather(x, 'i'), axis_name='i')(x)
-  >>> print(y)
-  [[0 1 2 3]
-   [0 1 2 3]
-   [0 1 2 3]
-   [0 1 2 3]]
-  """
-  return _allgather(x, 0, psum(1, axis_name), axis_name)
 
 def _broadcasting_papply(prim, name, size, vals, axes, **params):
   x, y = vals

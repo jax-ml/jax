@@ -1179,7 +1179,7 @@ def _xla_unshard(c, aval, axis_env, x, backend):
     xla_shape = c.get_shape(x)
     dims = list(xla_shape.dimensions())
     padded = xops.Broadcast(xb.constant(c, onp.array(0, xla_shape.numpy_dtype())),
-                         [axis_env.sizes[-1]] + dims)
+                            [axis_env.sizes[-1]] + dims)
     zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
     padded = xops.DynamicUpdateSlice(padded, xops.Reshape(x, [1] + dims), idxs)
