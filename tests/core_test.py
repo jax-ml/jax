@@ -310,6 +310,29 @@ class CoreTest(jtu.JaxTestCase):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
     core.check_jaxpr(jaxpr)
 
+  def test_check_jaxpr_cond_correct(self):
+    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+    core.check_jaxpr(jaxpr)
+
+  def test_check_jaxpr_cond_invalid(self):
+    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+    jaxpr.eqns[0].params['branches'][0].in_avals = ()
+    jaxpr.eqns[0].params['branches'][0].jaxpr.invars = ()
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        "cond branch 0 takes 0 inputs, branch 1 takes 1",
+        lambda: core.check_jaxpr(jaxpr))
+
+  def test_check_jaxpr_scan_correct(self):
+    def f(c, x):
+      b = jnp.cos(jnp.sum(jnp.sin(x)) + jnp.sum(jnp.cos(c)))
+      c = jnp.sin(c * b)
+      return c, b
+    xs = jnp.ones((5, 3))
+    c = jnp.ones(4)
+    jaxpr = make_jaxpr(partial(lax.scan, f))(c, xs).jaxpr
+    core.check_jaxpr(jaxpr)
+
   def test_check_jaxpr_eqn_mismatch(self):
     def f(x):
       return jnp.sin(x) + jnp.cos(x)

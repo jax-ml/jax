@@ -1179,6 +1179,8 @@ def typecheck_assert(pred, msg):
   if not pred:
     raise JaxprTypeError(msg)
 
+custom_typechecks: Dict[Primitive, Callable] = {}
+
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
 
@@ -1220,13 +1222,16 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
   for eqn in jaxpr.eqns:
     in_avals = map(read, eqn.invars)
-    if eqn.primitive.call_primitive:
-      out_avals = check_call(eqn.primitive, in_avals, eqn.params)
-    elif eqn.primitive.map_primitive:
-      out_avals = check_map(eqn.primitive, in_avals, eqn.params)
-    else:
-      out_avals = check_eqn(eqn.primitive, in_avals, eqn.params)
+    prim = eqn.primitive
     try:
+      if prim in custom_typechecks:
+        custom_typechecks[prim](*in_avals, **eqn.params)
+      if prim.call_primitive:
+        out_avals = check_call(prim, in_avals, eqn.params)
+      elif prim.map_primitive:
+        out_avals = check_map(prim, in_avals, eqn.params)
+      else:
+        out_avals = check_eqn(prim, in_avals, eqn.params)
       map(write, eqn.outvars, out_avals)
     except JaxprTypeError as e:
       msg, = e.args
