@@ -130,10 +130,10 @@ pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@local_config_cuda//cuda:cublas",
         "@local_config_cuda//cuda:cublas_headers",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cublas_lib",
         "@pybind11",
     ],
 )
@@ -160,8 +160,8 @@ pybind_extension(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart",
-        "@local_config_cuda//cuda:cusolver",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cusolver_lib",
         "@pybind11",
     ],
 )
@@ -190,7 +190,7 @@ pybind_extension(
         ":cuda_prng_kernels_lib",
         ":kernel_pybind11_helpers",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@pybind11",
     ],
 )
