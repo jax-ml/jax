@@ -50,31 +50,31 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), t
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    op_record("betaln", 2, jtu.float_dtypes, jtu.rand_positive, False),
-    op_record("betainc", 3, jtu.float_dtypes, jtu.rand_positive, False),
-    op_record("digamma", 1, jtu.float_dtypes, jtu.rand_positive, True),
-    op_record("gammainc", 2, jtu.float_dtypes, jtu.rand_positive, True),
-    op_record("gammaincc", 2, jtu.float_dtypes, jtu.rand_positive, True),
-    op_record("erf", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
-    op_record("erfc", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
-    op_record("erfinv", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
-    op_record("expit", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
+    op_record("betaln", 2, jtu.basic_float_dtypes, jtu.rand_positive, False),
+    op_record("betainc", 3, jtu.basic_float_dtypes, jtu.rand_positive, False),
+    op_record("digamma", 1, jtu.basic_float_dtypes, jtu.rand_positive, True),
+    op_record("gammainc", 2, jtu.basic_float_dtypes, jtu.rand_positive, True),
+    op_record("gammaincc", 2, jtu.basic_float_dtypes, jtu.rand_positive, True),
+    op_record("erf", 1, jtu.basic_float_dtypes, jtu.rand_small_positive, True),
+    op_record("erfc", 1, jtu.basic_float_dtypes, jtu.rand_small_positive, True),
+    op_record("erfinv", 1, jtu.basic_float_dtypes, jtu.rand_small_positive, True),
+    op_record("expit", 1, jtu.basic_float_dtypes, jtu.rand_small_positive, True),
     # TODO: gammaln has slightly high error.
-    op_record("gammaln", 1, jtu.float_dtypes, jtu.rand_positive, False),
-    op_record("logit", 1, jtu.float_dtypes, jtu.rand_uniform, True),
-    op_record("log_ndtr", 1, jtu.float_dtypes, jtu.rand_default, True),
-    op_record("ndtri", 1, jtu.float_dtypes, partial(jtu.rand_uniform, low=0.05,
+    op_record("gammaln", 1, jtu.basic_float_dtypes, jtu.rand_positive, False),
+    op_record("logit", 1, jtu.basic_float_dtypes, jtu.rand_uniform, True),
+    op_record("log_ndtr", 1, jtu.basic_float_dtypes, jtu.rand_default, True),
+    op_record("ndtri", 1, jtu.basic_float_dtypes, partial(jtu.rand_uniform, low=0.05,
                                                 high=0.95),
               True),
-    op_record("ndtr", 1, jtu.float_dtypes, jtu.rand_default, True),
+    op_record("ndtr", 1, jtu.basic_float_dtypes, jtu.rand_default, True),
     # TODO(phawkins): gradient of entr yields NaNs.
-    op_record("entr", 1, jtu.float_dtypes, jtu.rand_default, False),
-    op_record("polygamma", 2, (jtu.int_dtypes, jtu.float_dtypes), jtu.rand_positive, True, (0,)),
-    op_record("xlogy", 2, jtu.float_dtypes, jtu.rand_default, True),
-    op_record("xlog1py", 2, jtu.float_dtypes, jtu.rand_default, True),
+    op_record("entr", 1, jtu.basic_float_dtypes, jtu.rand_default, False),
+    op_record("polygamma", 2, (jtu.int_dtypes, jtu.basic_float_dtypes), jtu.rand_positive, True, (0,)),
+    op_record("xlogy", 2, jtu.basic_float_dtypes, jtu.rand_default, True),
+    op_record("xlog1py", 2, jtu.basic_float_dtypes, jtu.rand_default, True),
     # TODO: enable gradient test for zeta by restricting the domain of
     # of inputs to some reasonable intervals
-    op_record("zeta", 2, jtu.float_dtypes, jtu.rand_positive, False),
+    op_record("zeta", 2, jtu.basic_float_dtypes, jtu.rand_positive, False),
 ]
 
 
@@ -175,7 +175,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_positive, "shape": shape, "dtype": dtype,
        "d": d}
       for shape in all_shapes
-      for dtype in jtu.float_dtypes
+      for dtype in jtu.basic_float_dtypes
       for d in [1, 2, 5]))
   def testMultigammaln(self, rng_factory, shape, dtype, d):
     def scipy_fun(a):
