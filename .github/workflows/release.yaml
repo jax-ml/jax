@@ -22,12 +22,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install --upgrade wheel
           if [ ${{ matrix.python-version == 3.6 }} ]; then
-            pip install numpy==1.15.4 scipy==1.2.0 cython six wheel future pytest-xdist
+            pip install numpy==1.15.4 scipy==1.2.0 cython six future pytest-xdist
           elif [ ${{ matrix.python-version == 3.7 }} ]; then
-            pip install numpy==1.15.4 scipy==1.2.0 cython six wheel future pytest-xdist
+            pip install numpy==1.15.4 scipy==1.2.0 cython six future pytest-xdist
           elif [ ${{ matrix.python-version == 3.8 }} ]; then
-            pip install numpy==1.17.4 scipy== cython six wheel future pytest-xdist
+            pip install numpy==1.17.4 scipy== cython six future pytest-xdist
           else
             echo "Unknown Python version ${{ matrix.python-version }}"
             exit 1
@@ -36,7 +37,9 @@ jobs:
         run: |
           PY_TAG=`echo cp${{ matrix.python-version }} | tr -d '.'`
           python build/build.py
+          cd build
           python setup.py bdist_wheel --python-tag "${PY_TAG}" --plat-name "macosx_10_9_x86_64"
+          cd ..
       - name: Test new jaxlib
         run: |
           pip install build/dist/*.whl
