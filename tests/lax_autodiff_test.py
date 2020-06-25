@@ -749,33 +749,38 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axis={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis),
-       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis}
+      {"testcase_name": "_shape={}_axis={}_isstable={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
+       "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis,
+       "is_stable": is_stable}
       for dtype in [onp.float32]
       for shape in [(5,), (5, 7)]
       for axis in [len(shape) - 1]
+      for is_stable in [False, True]
       for rng_factory in [jtu.rand_default]))
-  def testSortGrad(self, shape, dtype, axis, rng_factory):
+  def testSortGrad(self, shape, dtype, axis, is_stable, rng_factory):
     rng = rng_factory(self.rng())
     operand = rng(shape, dtype)
-    sort = lambda x: lax.sort(x, dimension=axis)
+    sort = lambda x: lax.sort(x, dimension=axis, is_stable=is_stable)
     check_grads(sort, (operand,), 2, ["fwd", "rev"], eps=1e-2)
 
   # TODO(b/205052657): enable more tests when supported
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_keyshape={}_valshape={}_axis={}".format(
+      {"testcase_name": "_keyshape={}_valshape={}_axis={}_isstable={}".format(
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
-          axis),
+          axis, is_stable),
        "rng_factory": rng_factory, "shape": shape,
-       "key_dtype": key_dtype, "val_dtype": val_dtype, "axis": axis}
+       "key_dtype": key_dtype, "val_dtype": val_dtype, "axis": axis,
+       "is_stable": is_stable}
       for key_dtype in [onp.float32]
       for val_dtype in [onp.float32]
       for shape in [(3,), (5, 3)]
       for axis in [len(shape) - 1]
+      for is_stable in [False, True]
       for rng_factory in [jtu.rand_default]))
-  def testSortKeyValGrad(self, shape, key_dtype, val_dtype, axis, rng_factory):
+  def testSortKeyValGrad(self, shape, key_dtype, val_dtype, axis, is_stable,
+                         rng_factory):
     rng = rng_factory(self.rng())
     # This test relies on the property that wherever keys are tied, values are
     # too, since we don't guarantee the same ordering of values with equal keys.
@@ -787,7 +792,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       return keys, values
     keys, values = args_maker()
 
-    fun = lambda keys, values: lax.sort_key_val(keys, values, axis)
+    fun = lambda keys, values: lax.sort_key_val(keys, values, axis, is_stable)
     check_grads(fun, (keys, values), 2, ["fwd", "rev"], 1e-2, 1e-2, 1e-2)
 
   @parameterized.named_parameters(jtu.cases_from_list(

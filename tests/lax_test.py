@@ -1338,8 +1338,8 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(fun, onp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axis={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis),
+      {"testcase_name": "_shape={}_axis={}_isstable={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
        "shape": shape, "dtype": dtype, "axis": axis, "is_stable": is_stable}
       for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
@@ -1357,8 +1357,8 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axis={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis),
+      {"testcase_name": "_shape={}_axis={}_isstable={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
         "shape": shape, "dtype": dtype, "axis": axis, "is_stable": is_stable}
       for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
@@ -1378,10 +1378,10 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_keyshape={}_valshape={}_axis={}".format(
+      {"testcase_name": "_keyshape={}_valshape={}_axis={}_isstable={}".format(
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
-          axis),
+          axis, is_stable),
        "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
        "axis": axis, "is_stable": is_stable}
       for key_dtype in float_dtypes + complex_dtypes + int_dtypes + uint_dtypes

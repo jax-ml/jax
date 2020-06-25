@@ -655,15 +655,17 @@ class LaxVmapTest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_dimension={}_arity={}_bdims={}"
+      {"testcase_name": "_shape={}_dimension={}_arity={}_bdims={}_isstable={}"
        .format(jtu.format_shape_dtype_string(shape, onp.float32), dimension,
-               arity, bdims),
-       "shape": shape, "dimension": dimension, "arity": arity, "bdims": bdims}
+               arity, bdims, is_stable),
+       "shape": shape, "dimension": dimension, "arity": arity, "bdims": bdims,
+       "is_stable": is_stable}
       for shape in [(2, 3)]
       for dimension in [0, 1]
       for arity in range(3)
-      for bdims in all_bdims(*((shape,) * arity))))
-  def testSort(self, shape, dimension, arity, bdims):
+      for bdims in all_bdims(*((shape,) * arity))
+      for is_stable in [False, True]))
+  def testSort(self, shape, dimension, arity, bdims, is_stable):
     rng = jtu.rand_default(self.rng())
     if arity == 1:
       fun = partial(lax.sort, dimension=dimension)
@@ -671,7 +673,9 @@ class LaxVmapTest(jtu.JaxTestCase):
                           rng)
     else:
       for i in range(arity):
-        fun = lambda *args, i=i: lax.sort(args, dimension=dimension)[i]
+        fun = lambda *args, i=i: lax.sort(args,
+                                          dimension=dimension,
+                                          is_stable=is_stable)[i]
         self._CheckBatching(fun, 5, bdims, (shape,) * arity,
                             (onp.float32,) * arity, rng)
 
