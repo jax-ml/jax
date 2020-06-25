@@ -489,7 +489,7 @@ def _all_gather_translation_rule(c, x, *, all_gather_dimension, axis_size,
   x_singleton = xops.BroadcastInDim(x, new_shape, broadcast_dimensions)
   return xops.AllGather(x_singleton, all_gather_dimension=all_gather_dimension,
                         shard_count=axis_size,
-                        replica_groups=replica_groups)
+                        replica_groups=xc.make_replica_groups(replica_groups))
 
 def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_size, axis_name):
   shape, dtype = x.shape, x.dtype
