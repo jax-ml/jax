@@ -30,6 +30,11 @@ config.parse_flags_with_absl()
 
 FLAGS = flags.FLAGS
 
+float_dtypes = jtu.basic_float_dtypes
+inexact_dtypes = float_dtypes + jtu.complex_dtypes
+real_dtypes = float_dtypes + jtu.int_dtypes + jtu.bool_dtypes
+all_dtypes = real_dtypes + jtu.complex_dtypes
+
 
 def _get_fftn_test_axes(shape):
   axes = [[]]
@@ -88,7 +93,7 @@ class FftTest(jtu.JaxTestCase):
       for inverse in [False, True]
       for real in [False, True]
       for rng_factory in [jtu.rand_default]
-      for dtype in (jtu.real_dtypes if real and not inverse else jtu.all_dtypes)
+      for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
       for axes in _get_fftn_test_axes(shape)))
   def testFftn(self, inverse, real, shape, dtype, axes, rng_factory):
@@ -104,7 +109,7 @@ class FftTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
     if (FLAGS.jax_enable_x64 and
-        dtype in (jtu.float_dtypes if real and not inverse else jtu.inexact_dtypes)):
+        dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
       tol = 0.15
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
@@ -144,7 +149,7 @@ class FftTest(jtu.JaxTestCase):
       for inverse in [False, True]
       for real in [False, True]
       for rng_factory in [jtu.rand_default]
-      for dtype in (jtu.real_dtypes if real and not inverse else jtu.all_dtypes)
+      for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(10,)]
       for axis in [-1, 0]))
   def testFft(self, inverse, real, shape, dtype, axis, rng_factory):
@@ -205,7 +210,7 @@ class FftTest(jtu.JaxTestCase):
       for inverse in [False, True]
       for real in [False, True]
       for rng_factory in [jtu.rand_default]
-      for dtype in (jtu.real_dtypes if real and not inverse else jtu.all_dtypes)
+      for dtype in (real_dtypes if real and not inverse else all_dtypes)
       for shape in [(16, 8, 4, 8), (16, 8, 4, 8, 4)]
       for axes in [(-2, -1), (0, 1), (1, 3), (-1, 2)]))
   def testFft2(self, inverse, real, shape, dtype, axes, rng_factory):
@@ -259,7 +264,7 @@ class FftTest(jtu.JaxTestCase):
       jtu.format_shape_dtype_string([size], dtype), d),
       "dtype": dtype, "size": size, "rng_factory": rng_factory, "d": d}
     for rng_factory in [jtu.rand_default]
-    for dtype in jtu.all_dtypes
+    for dtype in all_dtypes
     for size in [9, 10, 101, 102]
     for d in [0.1, 2.]))
   def testFftfreq(self, size, d, dtype, rng_factory):
@@ -274,7 +279,7 @@ class FftTest(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
-    if dtype in jtu.inexact_dtypes:
+    if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
@@ -303,7 +308,7 @@ class FftTest(jtu.JaxTestCase):
       jtu.format_shape_dtype_string([size], dtype), d),
       "dtype": dtype, "size": size, "rng_factory": rng_factory, "d": d}
     for rng_factory in [jtu.rand_default]
-    for dtype in jtu.all_dtypes
+    for dtype in all_dtypes
     for size in [9, 10, 101, 102]
     for d in [0.1, 2.]))
   def testRfftfreq(self, size, d, dtype, rng_factory):
@@ -318,7 +323,7 @@ class FftTest(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
-    if dtype in jtu.inexact_dtypes:
+    if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
 
@@ -347,7 +352,7 @@ class FftTest(jtu.JaxTestCase):
       jtu.format_shape_dtype_string(shape, dtype), axes),
       "dtype": dtype, "shape": shape, "rng_factory": rng_factory, "axes": axes}
     for rng_factory in [jtu.rand_default]
-    for dtype in jtu.all_dtypes
+    for dtype in all_dtypes
     for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
     for axes in _get_fftn_test_axes(shape)))
   def testFftshift(self, shape, dtype, rng_factory, axes):
@@ -362,7 +367,7 @@ class FftTest(jtu.JaxTestCase):
       jtu.format_shape_dtype_string(shape, dtype), axes),
       "dtype": dtype, "shape": shape, "rng_factory": rng_factory, "axes": axes}
     for rng_factory in [jtu.rand_default]
-    for dtype in jtu.all_dtypes
+    for dtype in all_dtypes
     for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
     for axes in _get_fftn_test_axes(shape)))
   def testIfftshift(self, shape, dtype, rng_factory, axes):
