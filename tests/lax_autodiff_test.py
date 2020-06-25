@@ -45,11 +45,6 @@ def grad_test_spec(op, nargs, order, rng_factory, dtypes, name=None, tol=None):
   return GradTestSpec(
       op, nargs, order, rng_factory, dtypes, name or op.__name__, tol)
 
-jtu.float_dtypes = list(jtu.supported_dtypes().intersection(
-  {onp.float32, onp.float64}))
-jtu.complex_dtypes = list(jtu.supported_dtypes().intersection(
-  {onp.complex64, onp.complex128}))
-jtu.inexact_dtypes = jtu.float_dtypes + jtu.complex_dtypes
 
 LAX_GRAD_OPS = [
     grad_test_spec(lax.neg, nargs=1, order=2, rng_factory=jtu.rand_default,
