@@ -496,7 +496,7 @@ def recipe_to_eqn(getvar: Callable[[JaxprTracer], core.Atom],
   _, in_tracers, out_tracer_refs, primitive, params, source_info = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
-  outvars = [core.dropvar if t is None else cast(core.Var, getvar(t))
+  outvars = [core.DropVar() if t is None else cast(core.Var, getvar(t))
              for t in out_tracers]
   return new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
 
