@@ -38,6 +38,10 @@ FLAGS = config.FLAGS
 # makes the test name formatting unwieldy.
 # pylint: disable=bad-continuation
 
+
+default_dtypes = jtu.basic_float_dtypes + jtu.int_dtypes
+all_dtypes = jtu.basic_float_dtypes + jtu.int_dtypes + jtu.bool_dtypes
+
 IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
 
 
@@ -389,7 +393,7 @@ class IndexingTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory, "indexer": indexer
   } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
-    for dtype in jtu.all_dtypes
+    for dtype in all_dtypes
     for rng_factory in [jtu.rand_default]))
   def testStaticIndexing(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -405,7 +409,7 @@ class IndexingTest(jtu.JaxTestCase):
       "shape": shape, "dtype": dtype, "rng_factory": rng_factory, "indexer": indexer
   } for name, index_specs in STATIC_INDEXING_GRAD_TESTS
     for shape, indexer in index_specs
-    for dtype in jtu.float_dtypes
+    for dtype in jtu.basic_float_dtypes
     for rng_factory in [jtu.rand_default])
   def testStaticIndexingGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -452,7 +456,7 @@ class IndexingTest(jtu.JaxTestCase):
           ]),
       ]
       for shape, indexer in index_specs
-      for dtype in jtu.all_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithSlicesErrors(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -485,7 +489,7 @@ class IndexingTest(jtu.JaxTestCase):
            [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
       ]
       for shape, indexer in index_specs
-      for dtype in jtu.all_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithIntegers(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -519,7 +523,7 @@ class IndexingTest(jtu.JaxTestCase):
            [IndexSpec((3, 4, 5), indexer=(1, 2, 3))]),
       ]
       for shape, indexer in index_specs
-      for dtype in jtu.float_dtypes
+      for dtype in jtu.basic_float_dtypes
       for rng_factory in [jtu.rand_default])
   def testDynamicIndexingWithIntegersGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -540,7 +544,7 @@ class IndexingTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory, "indexer": indexer}
       for name, index_specs in ADVANCED_INDEXING_TESTS
       for shape, indexer in index_specs
-      for dtype in jtu.all_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testAdvancedIntegerIndexing(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -599,7 +603,7 @@ class IndexingTest(jtu.JaxTestCase):
             ]),
       ]
       for shape, indexer in index_specs
-      for dtype in jtu.float_dtypes
+      for dtype in jtu.basic_float_dtypes
       for rng_factory in [jtu.rand_default])
   def testAdvancedIntegerIndexingGrads(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -614,7 +618,7 @@ class IndexingTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory, "indexer": indexer}
       for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS
       for shape, indexer in index_specs
-      for dtype in jtu.all_dtypes
+      for dtype in all_dtypes
       for rng_factory in [jtu.rand_default])
   def testMixedAdvancedIntegerIndexing(self, shape, dtype, rng_factory, indexer):
     rng = rng_factory(self.rng())
@@ -856,9 +860,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
     for op in UpdateOps
-    for dtype in (jtu.all_dtypes if op == UpdateOps.UPDATE else jtu.default_dtypes)
+    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else jtu.all_dtypes)
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for sugared in [True, False]
     for rng_factory in [jtu.rand_default]))
   def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
@@ -883,9 +887,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   } for name, index_specs in ADVANCED_INDEXING_TESTS_NO_REPEATS
     for shape, indexer in index_specs
     for op in UpdateOps
-    for dtype in (jtu.all_dtypes if op == UpdateOps.UPDATE else jtu.default_dtypes)
+    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else jtu.all_dtypes)
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for sugared in [True, False]
     for rng_factory in [jtu.rand_default]))
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
@@ -910,9 +914,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   } for name, index_specs in MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS
     for shape, indexer in index_specs
     for op in UpdateOps
-    for dtype in (jtu.all_dtypes if op == UpdateOps.UPDATE else jtu.default_dtypes)
+    for dtype in (all_dtypes if op == UpdateOps.UPDATE else default_dtypes)
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else jtu.all_dtypes)
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else all_dtypes)
     for sugared in [True, False]
     for rng_factory in [jtu.rand_default]))
   def testMixedAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
@@ -937,9 +941,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
   } for name, index_specs in STATIC_INDEXING_TESTS
     for shape, indexer in index_specs
     for op in [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE]
-    for dtype in jtu.float_dtypes
+    for dtype in jtu.basic_float_dtypes
     for update_shape in _broadcastable_shapes(_update_shape(shape, indexer))
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else jtu.float_dtypes)
+    for update_dtype in ([dtype] if op == UpdateOps.ADD else jtu.basic_float_dtypes)
     for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj,phawkins): tpu issues
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
