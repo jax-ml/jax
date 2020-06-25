@@ -36,7 +36,7 @@ def genNamedParametersNArgs(n, rng_factory):
           {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
             "rng_factory": rng_factory, "shapes": shapes, "dtypes": dtypes}
           for shapes in itertools.combinations_with_replacement(all_shapes, n)
-          for dtypes in itertools.combinations_with_replacement(jtu.float_dtypes, n)))
+          for dtypes in itertools.combinations_with_replacement(jtu.basic_float_dtypes, n)))
 
 
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
@@ -429,7 +429,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           # [(5, 3, 2), (3, 2,), (5, 3, 2, 2)],
           # [(5, 3, 2), (3, 2,), (2, 2)],
       ]
-      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.float_dtypes, 3)
+      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.basic_float_dtypes, 3)
       if (mean_shape is not None or mean_dtype == onp.float32)
       and (cov_shape is not None or cov_dtype == onp.float32)
       for rng_factory in [jtu.rand_default]))

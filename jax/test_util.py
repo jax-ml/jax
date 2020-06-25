@@ -349,6 +349,7 @@ def supported_dtypes():
 def _supported(dtypes):
   return [t for t in dtypes if t in supported_dtypes()]
 
+basic_float_dtypes = _supported([np.float32, np.float64])
 float_dtypes = _supported([dtypes.bfloat16, np.float16, np.float32, np.float64])
 complex_elem_dtypes = _supported([np.float32, np.float64])
 complex_dtypes = _supported([np.complex64, np.complex128])
