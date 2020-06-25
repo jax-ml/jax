@@ -24,16 +24,7 @@ from jax import test_util as jtu, jit
 from jax.config import config
 config.parse_flags_with_absl()
 
-
-float_dtypes = [np.float32, np.float64]
-# implementation casts to complex64.
-complex_dtypes = [np.complex64]
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [np.int32, np.int64]
-real_dtypes = float_dtypes + int_dtypes
-all_dtypes = real_dtypes + complex_dtypes
-
-
+all_dtypes = [t for t in jtu.all_dtypes if t not in (jnp.bfloat16, np.float16, np.bool_)]
 # TODO: these tests fail without fixed PRNG seeds.
 
 

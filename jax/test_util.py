@@ -335,13 +335,34 @@ def if_device_under_test(device_type: Union[str, Sequence[str]],
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    return {np.bool_, np.int32, np.uint32, dtypes.bfloat16, np.float32,
-            np.complex64}
+    types = {np.bool_, np.int32, np.uint32, dtypes.bfloat16, np.float32,
+             np.complex64}
   else:
-    return {np.bool_, np.int8, np.int16, np.int32, np.int64,
-            np.uint8, np.uint16, np.uint32, np.uint64,
-            dtypes.bfloat16, np.float16, np.float32, np.float64,
-            np.complex64, np.complex128}
+    types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
+             np.uint8, np.uint16, np.uint32, np.uint64,
+             dtypes.bfloat16, np.float16, np.float32, np.float64,
+             np.complex64, np.complex128}
+  if not FLAGS.jax_enable_x64:
+    types -= {np.uint64, np.int64, np.float64, np.complex128}
+  return types
+
+def _supported(dtypes):
+  return [t for t in dtypes if t in supported_dtypes()]
+
+float_dtypes = _supported([dtypes.bfloat16, np.float16, np.float32, np.float64])
+complex_elem_dtypes = _supported([np.float32, np.float64])
+complex_dtypes = _supported([np.complex64, np.complex128])
+inexact_dtypes = float_dtypes + complex_dtypes
+int_dtypes = _supported([np.int32, np.int64])
+all_int_dtypes = _supported([np.int8, np.int16, np.int32, np.int64])
+uint_dtypes = _supported([np.uint32, np.uint64])
+all_uint_dtypes = _supported([np.uint8, np.uint16, np.uint32, np.uint64])
+bool_dtypes = _supported([np.bool_])
+default_dtypes = float_dtypes + int_dtypes
+real_dtypes = float_dtypes + int_dtypes + uint_dtypes
+number_dtypes = float_dtypes + complex_dtypes + int_dtypes
+all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+python_scalar_dtypes = [np.bool_, np.int_, np.float_, np.complex_]
 
 def skip_if_unsupported_type(dtype):
   if dtype not in supported_dtypes():

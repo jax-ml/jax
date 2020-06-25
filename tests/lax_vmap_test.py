@@ -30,9 +30,7 @@ from jax import test_util as jtu
 from jax.lib import xla_client
 from jax.util import safe_map, safe_zip
 
-from tests.lax_test import (all_dtypes, CombosWithReplacement,
-                            compatible_shapes, default_dtypes, float_dtypes,
-                            int_dtypes, LAX_OPS)
+from tests.lax_test import LAX_OPS
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -40,6 +38,8 @@ FLAGS = config.FLAGS
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+
+compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 
 def all_bdims(*shapes):
@@ -82,7 +82,7 @@ class LaxVmapTest(jtu.JaxTestCase):
          "op_name": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes,
          "dtype": dtype, "bdims": bdims, "tol": rec.tol}
         for shape_group in compatible_shapes
-        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
         for bdims in all_bdims(*shapes)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
@@ -198,7 +198,7 @@ class LaxVmapTest(jtu.JaxTestCase):
           [(), (2, 3), (2, 3)],
           [(2, 3), (2, 3), (2, 3)],
       ]
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for bdims in all_bdims(min_shape, operand_shape, max_shape)
       for rng_factory in [jtu.rand_default]))
   def testClamp(self, min_shape, operand_shape, max_shape, dtype, bdims, rng_factory):
@@ -216,7 +216,7 @@ class LaxVmapTest(jtu.JaxTestCase):
        "bdims": bdims, "rng_factory": rng_factory}
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
       for bdims in all_bdims(lhs_shape, rhs_shape)
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for rng_factory in [jtu.rand_default]))
   def testDot(self, lhs_shape, rhs_shape, dtype, bdims, rng_factory):
     rng = rng_factory(self.rng())
@@ -242,7 +242,7 @@ class LaxVmapTest(jtu.JaxTestCase):
           [(3, 2), (2, 4), [1], [0]],
       ]
       for bdims in all_bdims(lhs_shape, rhs_shape)
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for rng_factory in [jtu.rand_small]))
   def testDotGeneralContractOnly(self, lhs_shape, rhs_shape, dtype,
                                  lhs_contracting, rhs_contracting, bdims, rng_factory):
@@ -265,7 +265,7 @@ class LaxVmapTest(jtu.JaxTestCase):
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
       for bdims in all_bdims(lhs_shape, rhs_shape)
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for rng_factory in [jtu.rand_small]))
   def testDotGeneralContractAndBatch(self, lhs_shape, rhs_shape, dtype,
                                      dimension_numbers, bdims, rng_factory):
@@ -280,7 +280,7 @@ class LaxVmapTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "broadcast_sizes": broadcast_sizes,
        "bdims": bdims, "rng_factory": rng_factory}
       for shape in [(), (2, 3)]
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for broadcast_sizes in [(), (2,), (1, 2)]
       for bdims in all_bdims(shape)
       for rng_factory in [jtu.rand_default]))
@@ -302,7 +302,7 @@ class LaxVmapTest(jtu.JaxTestCase):
           ([2], [2, 3], [0]),
           ([], [2, 3], []),
       ]
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for bdims in all_bdims(inshape)
       for rng_factory in [jtu.rand_default]))
   def testBroadcastInDim(self, inshape, dtype, outshape, dimensions, bdims, rng_factory):
@@ -342,7 +342,7 @@ class LaxVmapTest(jtu.JaxTestCase):
           dimensions, bdims),
        "arg_shape": arg_shape, "out_shape": out_shape, "dtype": dtype,
        "dimensions": dimensions, "bdims": bdims, "rng_factory": rng_factory}
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for arg_shape, dimensions, out_shape in [
           [(3, 4), None, (12,)],
           [(2, 1, 4), None, (8,)],
@@ -365,7 +365,7 @@ class LaxVmapTest(jtu.JaxTestCase):
        "rng_factory": jtu.rand_small, "bdims": bdims}
       for shape in [(2, 3)]
       for bdims in all_bdims(shape)
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for pads in [[(1, 2, 1), (0, 1, 0)]]))
   def testPad(self, shape, dtype, pads, bdims, rng_factory):
     rng = rng_factory(self.rng())
@@ -382,7 +382,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       for arg_shape in [(), (3,), (2, 3)]
       for pred_shape in ([(), arg_shape] if arg_shape else [()])
       for bdims in all_bdims(pred_shape, arg_shape, arg_shape)
-      for arg_dtype in default_dtypes
+      for arg_dtype in jtu.default_dtypes
       for rng_factory in [jtu.rand_default]))
   def testSelect(self, pred_shape, arg_shape, arg_dtype, bdims, rng_factory):
     rng = rng_factory(self.rng())
@@ -409,7 +409,7 @@ class LaxVmapTest(jtu.JaxTestCase):
         [(5, 3), (1, 1), (5, 3), (2, 1)],
       ]
       for bdims in all_bdims(shape)
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for rng_factory in [jtu.rand_default]))
   def testSlice(self, shape, dtype, starts, limits, strides, bdims, rng_factory):
     rng = rng_factory(self.rng())
@@ -427,7 +427,7 @@ class LaxVmapTest(jtu.JaxTestCase):
         [(3, 4, 5), (1, 0, 2)],
       ]
       for bdims in all_bdims(shape)
-      for dtype in default_dtypes
+      for dtype in jtu.default_dtypes
       for rng_factory in [jtu.rand_default]))
   def testTranspose(self, shape, dtype, perm, bdims, rng_factory):
     rng = rng_factory(self.rng())
@@ -441,15 +441,15 @@ class LaxVmapTest(jtu.JaxTestCase):
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "bdims": bdims, "rng_factory": rng_factory}
       for init_val, op, dtypes in [
-          (0, lax.add, default_dtypes),
-          (1, lax.mul, default_dtypes),
-          (0, lax.max, all_dtypes), # non-monoidal
-          (-onp.inf, lax.max, float_dtypes),
+          (0, lax.add, jtu.default_dtypes),
+          (1, lax.mul, jtu.default_dtypes),
+          (0, lax.max, jtu.all_dtypes), # non-monoidal
+          (-onp.inf, lax.max, jtu.float_dtypes),
           (dtypes.iinfo(onp.int32).min, lax.max, [onp.int32]),
           (dtypes.iinfo(onp.int64).min, lax.max, [onp.int64]),
           (dtypes.iinfo(onp.uint32).min, lax.max, [onp.uint32]),
           (dtypes.iinfo(onp.uint64).min, lax.max, [onp.uint64]),
-          (onp.inf, lax.min, float_dtypes),
+          (onp.inf, lax.min, jtu.float_dtypes),
           (dtypes.iinfo(onp.int32).max, lax.min, [onp.int32]),
           (dtypes.iinfo(onp.int64).max, lax.min, [onp.int64]),
           (dtypes.iinfo(onp.uint32).max, lax.min, [onp.uint32]),
@@ -527,7 +527,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       {"testcase_name": "_dtype={}_padding={}".format(onp.dtype(dtype).name,
                                                       padding),
        "dtype": dtype, "padding": padding, "rng_factory": rng_factory}
-      for dtype in float_dtypes
+      for dtype in jtu.float_dtypes
       for padding in ["VALID", "SAME"]
       for rng_factory in [jtu.rand_small]))
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
@@ -576,7 +576,7 @@ class LaxVmapTest(jtu.JaxTestCase):
                slice_sizes, bdims),
        "shape": shape, "dtype": dtype, "idxs": idxs, "dnums": dnums,
        "slice_sizes": slice_sizes, "bdims": bdims}
-      for dtype in all_dtypes
+      for dtype in jtu.all_dtypes
       for shape, idxs, dnums, slice_sizes in [
           ((5,), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
             offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
@@ -603,7 +603,7 @@ class LaxVmapTest(jtu.JaxTestCase):
           idxs, update_shape, dnums, bdims),
        "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
        "update_shape": update_shape, "dnums": dnums, "bdims": bdims}
-      for dtype in float_dtypes
+      for dtype in jtu.float_dtypes
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
@@ -640,11 +640,11 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(shape)
       # TODO(b/155170120): test with repeats once the XLA:CPU stable top_k bug is fixed:
       # The top_k indices for integer arrays with identical entries won't match between
-      # vmap'd version and manual reference, so only test unique integer arrays for int_dtypes.
+      # vmap'd version and manual reference, so only test unique integer arrays for jtu.int_dtypes.
       # Note also that we chose 3 * 5 * 3 * 5 such that it fits in the range of
       # values a bfloat16 can represent exactly to avoid ties.
       for dtype, rng_factory in itertools.chain(
-        unsafe_zip(float_dtypes + int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
+        unsafe_zip(jtu.float_dtypes + jtu.int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
   def testTopK(self, shape, dtype, k, bdims, rng_factory):
     rng = rng_factory(self.rng())
     # _CheckBatching doesn't work with tuple outputs, so test outputs separately.

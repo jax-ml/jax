@@ -30,14 +30,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-float_dtypes = [onp.float32, onp.float64]
-complex_dtypes = [onp.complex64, onp.complex128]
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [onp.int32, onp.int64]
-bool_dtypes = [onp.bool_]
-all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
-
-
 def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
   # SciPy's implementation of map_coordinates handles boundaries incorrectly,
   # unless mode='reflect'. For order=1, this only affects interpolation outside
@@ -73,8 +65,8 @@ class NdimageTest(jtu.JaxTestCase):
        "cval": cval, "impl": impl, "round_": round_}
       for shape in [(5,), (3, 4), (3, 4, 5)]
       for coords_shape in [(7,), (2, 3, 4)]
-      for dtype in float_dtypes + int_dtypes
-      for coords_dtype in float_dtypes
+      for dtype in jtu.float_dtypes + jtu.int_dtypes
+      for coords_dtype in jtu.float_dtypes
       for order in [0, 1]
       for mode in ['wrap', 'constant', 'nearest']
       for cval in ([0, -1] if mode == 'constant' else [0])
@@ -99,7 +91,7 @@ class NdimageTest(jtu.JaxTestCase):
     impl_fun = (osp_ndimage.map_coordinates if impl == "original"
                 else _fixed_ref_map_coordinates)
     osp_op = lambda x, c: impl_fun(x, c, order=order, mode=mode, cval=cval)
-    if dtype in float_dtypes:
+    if dtype in jtu.float_dtypes:
       epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
                      for d in [dtype, coords_dtype]])
       self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon)
@@ -124,7 +116,7 @@ class NdimageTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_order={}".format(onp.dtype(dtype), order),
        "dtype": dtype, "order": order}
-      for dtype in float_dtypes + int_dtypes
+      for dtype in jtu.float_dtypes + jtu.int_dtypes
       for order in [0, 1]))
   def testMapCoordinatesRoundHalf(self, dtype, order):
     x = onp.arange(-3, 3, dtype=dtype)

@@ -38,13 +38,6 @@ compatible_shapes = [[(), ()],
                      [(3, 1), (1, 4)],
                      [(2, 3, 4), (2, 1, 4)]]
 
-float_dtypes = [onp.float32, onp.float64]
-complex_dtypes = [onp.complex64]
-int_dtypes = [onp.int32, onp.int64]
-bool_dtypes = [onp.bool_]
-default_dtypes = float_dtypes + int_dtypes
-numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
-
 
 OpRecord = collections.namedtuple(
     "OpRecord",
@@ -57,34 +50,32 @@ def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), t
   return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
-    op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
-    op_record("digamma", 1, float_dtypes, jtu.rand_positive, True),
-    op_record("gammainc", 2, float_dtypes, jtu.rand_positive, True),
-    op_record("gammaincc", 2, float_dtypes, jtu.rand_positive, True),
-    op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
-    op_record("erfc", 1, float_dtypes, jtu.rand_small_positive, True),
-    op_record("erfinv", 1, float_dtypes, jtu.rand_small_positive, True),
-    op_record("expit", 1, float_dtypes, jtu.rand_small_positive, True),
+    op_record("betaln", 2, jtu.float_dtypes, jtu.rand_positive, False),
+    op_record("betainc", 3, jtu.float_dtypes, jtu.rand_positive, False),
+    op_record("digamma", 1, jtu.float_dtypes, jtu.rand_positive, True),
+    op_record("gammainc", 2, jtu.float_dtypes, jtu.rand_positive, True),
+    op_record("gammaincc", 2, jtu.float_dtypes, jtu.rand_positive, True),
+    op_record("erf", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
+    op_record("erfc", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
+    op_record("erfinv", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
+    op_record("expit", 1, jtu.float_dtypes, jtu.rand_small_positive, True),
     # TODO: gammaln has slightly high error.
-    op_record("gammaln", 1, float_dtypes, jtu.rand_positive, False),
-    op_record("logit", 1, float_dtypes, jtu.rand_uniform, True),
-    op_record("log_ndtr", 1, float_dtypes, jtu.rand_default, True),
-    op_record("ndtri", 1, float_dtypes, partial(jtu.rand_uniform, low=0.05,
+    op_record("gammaln", 1, jtu.float_dtypes, jtu.rand_positive, False),
+    op_record("logit", 1, jtu.float_dtypes, jtu.rand_uniform, True),
+    op_record("log_ndtr", 1, jtu.float_dtypes, jtu.rand_default, True),
+    op_record("ndtri", 1, jtu.float_dtypes, partial(jtu.rand_uniform, low=0.05,
                                                 high=0.95),
               True),
-    op_record("ndtr", 1, float_dtypes, jtu.rand_default, True),
+    op_record("ndtr", 1, jtu.float_dtypes, jtu.rand_default, True),
     # TODO(phawkins): gradient of entr yields NaNs.
-    op_record("entr", 1, float_dtypes, jtu.rand_default, False),
-    op_record("polygamma", 2, (int_dtypes, float_dtypes), jtu.rand_positive, True, (0,)),
-    op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
-    op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
+    op_record("entr", 1, jtu.float_dtypes, jtu.rand_default, False),
+    op_record("polygamma", 2, (jtu.int_dtypes, jtu.float_dtypes), jtu.rand_positive, True, (0,)),
+    op_record("xlogy", 2, jtu.float_dtypes, jtu.rand_default, True),
+    op_record("xlog1py", 2, jtu.float_dtypes, jtu.rand_default, True),
     # TODO: enable gradient test for zeta by restricting the domain of
     # of inputs to some reasonable intervals
-    op_record("zeta", 2, float_dtypes, jtu.rand_positive, False),
+    op_record("zeta", 2, jtu.float_dtypes, jtu.rand_positive, False),
 ]
-
-CombosWithReplacement = itertools.combinations_with_replacement
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -152,8 +143,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
          "nondiff_argnums": rec.nondiff_argnums,
          "scipy_op": getattr(osp_special, rec.name),
          "lax_op": getattr(lsp_special, rec.name)}
-        for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-        for dtypes in (CombosWithReplacement(rec.dtypes, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(all_shapes, rec.nargs)
+        for dtypes in (itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
           if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)))
       for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
@@ -184,7 +175,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "rng_factory": jtu.rand_positive, "shape": shape, "dtype": dtype,
        "d": d}
       for shape in all_shapes
-      for dtype in float_dtypes
+      for dtype in jtu.float_dtypes
       for d in [1, 2, 5]))
   def testMultigammaln(self, rng_factory, shape, dtype, d):
     def scipy_fun(a):
