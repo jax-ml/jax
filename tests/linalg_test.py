@@ -405,6 +405,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # evaluate eigenvector gradient and groundtruth eigensystem for perturbed input matrix
     f = partial(jnp.linalg.eigh, UPLO=uplo)
     (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(a_dot,))
+    self.assertTrue(jnp.issubdtype(w.dtype, jnp.floating))
+    self.assertTrue(jnp.issubdtype(dw.dtype, jnp.floating))
     new_a = a + a_dot
     new_w, new_v = f(new_a)
     new_a = (new_a + np.conj(new_a.T)) / 2
