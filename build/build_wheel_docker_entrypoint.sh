@@ -49,7 +49,7 @@ case $2 in
     ;;
   cuda)
     python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root"
-    PLAT_NAME="linux_x86_64"
+    PLAT_NAME="manylinux2010_x86_64"
     ;;
   nocuda)
     python build.py --bazel_startup_options="--output_user_root=/build/root"
