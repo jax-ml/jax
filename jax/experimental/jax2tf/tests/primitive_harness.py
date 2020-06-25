@@ -23,7 +23,6 @@ from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence
 from absl import testing
 from jax import config
 from jax import test_util as jtu
-from jax import dtypes
 from jax import lax
 
 import numpy as np
