@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from functools import wraps
-from typing import Callable
+from typing import Callable, Optional
 
+from .lib import xla_bridge
 from .lib import xla_client
 
 
@@ -86,3 +87,48 @@ def trace_function(func: Callable, name: str = None, **kwargs):
       return func(*args, **kwargs)
     return wrapper
   return wrapper
+
+
+def heap_profile(backend: Optional[str] = None) -> bytes:
+  """Captures a JAX heap profile as ``pprof``-format protocol buffer.
+
+  A heap profile is a snapshot of the state of memory, that describes the JAX
+  :class:`jax.DeviceArray` and executable objects present in memory and their
+  allocation sites.
+
+  For more information how to use the heap profiler, see :doc:`/heap_profiling`.
+
+  The profiling system works by instrumenting JAX on-device allocations,
+  capturing a Python stack trace for each allocation. The
+  instrumentation is always enabled; :func:`heap_profile` provides an API to
+  capture it.
+
+  The output of :func:`heap_profile` is a binary protocol buffer that can be
+  interpreted and visualized by the `pprof tool
+  <https://github.com/google/pprof>`_.
+
+  Args:
+    backend: optional; the name of the JAX backend for which the heap profile
+      should be collected.
+
+  Returns:
+    A byte string containing a binary `pprof`-format protocol buffer.
+  """
+  return xla_client.heap_profile(xla_bridge.get_backend(backend))
+
+
+def save_heap_profile(filename, backend: Optional[str] = None):
+  """Collects a heap profile and writes it to a file.
+
+  :func:`save_heap_profile` is a convenience wrapper around :func:`heap_profile`
+  that saves its output to a ``filename``. See the
+  :func:`heap_profile` documentation for more information.
+
+  Args:
+    filename: the filename to which the profile should be written.
+    backend: optional; the name of the JAX backend for which the heap profile
+      should be collected.  
+  """
+  profile = heap_profile(backend)
+  with open(filename, "wb") as f:
+    f.write(profile)
