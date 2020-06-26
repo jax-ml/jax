@@ -1196,8 +1196,8 @@ def cumprod(operand: Array, axis: int) -> Array:
   """Computes a cumulative product along `axis`."""
   return cumprod_p.bind(operand, axis=int(axis))
 
-def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1
-         ) -> Union[Array, Tuple[Array, ...]]:
+def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
+         is_stable: bool = False) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_
   operator.
@@ -1206,16 +1206,17 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1
     if len(operand) == 0:
       raise TypeError("Sort requires at least one operand")
     dimension = _canonicalize_axis(dimension, len(operand[0].shape))
-    return tuple(sort_p.bind(*operand, dimension=dimension))
+    return tuple(sort_p.bind(*operand, dimension=dimension,
+                             is_stable=is_stable))
   else:
     dimension = _canonicalize_axis(dimension, len(operand.shape))
-    return sort_p.bind(operand, dimension=dimension)[0]
+    return sort_p.bind(operand, dimension=dimension, is_stable=is_stable)[0]
 
-def sort_key_val(keys: Array, values: Array,
-                 dimension: int = -1) -> Tuple[Array, Array]:
+def sort_key_val(keys: Array, values: Array, dimension: int = -1,
+                 is_stable: bool = False) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
   dimension = _canonicalize_axis(dimension, len(keys.shape))
-  k, v = sort_p.bind(keys, values, dimension=dimension)
+  k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable)
   return k, v
 
 def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
@@ -4937,7 +4938,7 @@ def _sort_lt_comparator(*operands):
          else lt(xk, yk))
   return p
 
-def _sort_translation_rule(c, *operands, dimension):
+def _sort_translation_rule(c, *operands, dimension, is_stable):
   types = [c.get_shape(x).xla_element_type() for x in operands]
   subc = xla_bridge.make_computation_builder("sort_lt_comparator")
   params = [xb.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
@@ -4945,23 +4946,24 @@ def _sort_translation_rule(c, *operands, dimension):
   result = xla.lower_fun(_sort_lt_comparator,
                          multiple_results=False)(subc, *params)
   comparator = subc.build(result)
-  out = xops.Sort(c, operands, dimension=dimension, is_stable=True,
+  out = xops.Sort(c, operands, dimension=dimension, is_stable=is_stable,
                   comparator=comparator)
   return out if len(operands) != 1 else xops.Tuple(c, [out])
 
-def _sort_jvp(primals, tangents, *, dimension):
+def _sort_jvp(primals, tangents, *, dimension, is_stable):
   shape = primals[0].shape
   iotas = []
   for dim, size in enumerate(shape):
     dtype = onp.int32 if size < onp.iinfo(onp.int32).max else onp.int64
     iotas.append(broadcasted_iota(dtype, shape, dim))
-  primals = sort_p.bind(*(primals + (iotas[dimension],)), dimension=dimension)
+  primals = sort_p.bind(*(primals + (iotas[dimension],)), dimension=dimension,
+                        is_stable=is_stable)
   idx = tuple(primals[-1] if i == dimension else iotas[i]
               for i in range(len(shape)))
   tangents_out = tuple(t if type(t) is ad_util.Zero else t[idx] for t in tangents)
   return tuple(primals[:-1]), tangents_out
 
-def _sort_batch_rule(batched_args, batch_dims, *, dimension):
+def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable):
   prototype_arg, new_bdim = next(
     (a, b) for a, b in zip(batched_args, batch_dims) if b is not None)
   new_args = []
@@ -4973,7 +4975,8 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension):
       new_args.append(batching.moveaxis(arg, bdim, new_bdim))
   new_dimension = dimension + (new_bdim <= dimension)
   bdims = (new_bdim,) * len(new_args)
-  return sort_p.bind(*new_args, dimension=new_dimension), bdims
+  return (sort_p.bind(*new_args, dimension=new_dimension, is_stable=is_stable),
+          bdims)
 
 
 sort_p = Primitive('sort')

@@ -1338,13 +1338,14 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(fun, onp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axis={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis),
-       "shape": shape, "dtype": dtype, "axis": axis}
+      {"testcase_name": "_shape={}_axis={}_isstable={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
+       "shape": shape, "dtype": dtype, "axis": axis, "is_stable": is_stable}
       for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
-      for axis in [-1, len(shape) - 1]))
-  def testSort(self, shape, dtype, axis):
+      for axis in [-1, len(shape) - 1]
+      for is_stable in [False, True]))
+  def testSort(self, shape, dtype, axis, is_stable):
     # TODO(b/141131288): enable complex-valued sorts on TPU.
     if (onp.issubdtype(dtype, onp.complexfloating) and (
         (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
@@ -1352,17 +1353,18 @@ class LaxTest(jtu.JaxTestCase):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    fun = lambda x: lax.sort(x, dimension=axis)
+    fun = lambda x: lax.sort(x, dimension=axis, is_stable=is_stable)
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axis={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis),
-        "shape": shape, "dtype": dtype, "axis": axis}
+      {"testcase_name": "_shape={}_axis={}_isstable={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
+        "shape": shape, "dtype": dtype, "axis": axis, "is_stable": is_stable}
       for dtype in all_dtypes
       for shape in [(5,), (5, 7)]
-      for axis in [-1, len(shape) - 1]))
-  def testSortAgainstNumpy(self, shape, dtype, axis):
+      for axis in [-1, len(shape) - 1]
+      for is_stable in [False, True]))
+  def testSortAgainstNumpy(self, shape, dtype, axis, is_stable):
     # TODO(b/141131288): enable complex-valued sorts on TPU.
     if (onp.issubdtype(dtype, onp.complexfloating) and (
         (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
@@ -1370,22 +1372,27 @@ class LaxTest(jtu.JaxTestCase):
       raise SkipTest("Complex-valued sort not implemented")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    op = lambda x: lax.sort(x, dimension=axis)
-    numpy_op = lambda x: lax_reference.sort(x, axis)
+    op = lambda x: lax.sort(x, dimension=axis, is_stable=is_stable)
+    def numpy_op(x):
+      if is_stable:
+        return lax_reference.sort(x, axis, kind='stable')
+      else:
+        return lax_reference.sort(x, axis)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_keyshape={}_valshape={}_axis={}".format(
+      {"testcase_name": "_keyshape={}_valshape={}_axis={}_isstable={}".format(
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
-          axis),
+          axis, is_stable),
        "shape": shape, "key_dtype": key_dtype, "val_dtype": val_dtype,
-       "axis": axis}
+       "axis": axis, "is_stable": is_stable}
       for key_dtype in float_dtypes + complex_dtypes + int_dtypes + uint_dtypes
       for val_dtype in [onp.float32, onp.int32, onp.uint32]
       for shape in [(3,), (5, 3)]
-      for axis in [-1, len(shape) - 1]))
-  def testSortKeyVal(self, shape, key_dtype, val_dtype, axis):
+      for axis in [-1, len(shape) - 1]
+      for is_stable in [False, True]))
+  def testSortKeyVal(self, shape, key_dtype, val_dtype, axis, is_stable):
     # TODO(b/141131288): enable complex-valued sorts on TPU.
     if (onp.issubdtype(key_dtype, onp.complexfloating) and (
         (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
@@ -1401,7 +1408,7 @@ class LaxTest(jtu.JaxTestCase):
       values = rng(shape, val_dtype)
       return keys, values
 
-    fun = lambda keys, values: lax.sort_key_val(keys, values, axis)
+    fun = lambda keys, values: lax.sort_key_val(keys, values, axis, is_stable)
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
