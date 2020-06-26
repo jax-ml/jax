@@ -212,6 +212,15 @@ class ODETest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False, atol=1e-2, rtol=1e-2)
 
+  def test_forward_mode_error(self):
+    # https://github.com/google/jax/issues/3558
+
+    def f(k):
+      return odeint(lambda x, t: k*x, 1.,  jnp.linspace(0, 1., 50)).sum()
+
+    with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
+      jax.jacfwd(f)(3.)
+
 
 if __name__ == '__main__':
   absltest.main()
