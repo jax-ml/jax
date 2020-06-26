@@ -8,8 +8,8 @@ GPU or TPU memory. For example, it can be used to:
 
 ## Installation
 
-The JAX heap profiler emits output that can be interpreted using the
-[`pprof`](https://github.com/google/pprof) tool. Start by installing `pprof`,
+The JAX heap profiler emits output that can be interpreted using
+pprof (<https://github.com/google/pprof>). Start by installing `pprof`,
 by following its
 [installation instructions](https://github.com/google/pprof#building-pprof).
 At the time of writing, installing `pprof` requires first installing
@@ -22,6 +22,12 @@ go get -u github.com/google/pprof
 
 which installs `pprof` as `$GOPATH/bin/pprof`, where `GOPATH` defaults to
 `~/go`.
+
+```{note}
+The version of `pprof` from <https://github.com/google/pprof> is not the same as
+the older tool of the same name distributed as part of the `gperftools` package.
+The `gperftools` version of `pprof` will not work with JAX.
+```
 
 ## Understanding how a JAX program is using GPU or TPU memory
 
