@@ -93,7 +93,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "shapes": shapes, "dtype": dtype,
        "axis": axis, "keepdims": keepdims,
        "return_sign": return_sign, "use_b": use_b}
-      for shape_group in compatible_shapes for dtype in float_dtypes
+      for shape_group in compatible_shapes for dtype in jtu.basic_float_dtypes
       for use_b in [False, True]
       for shapes in itertools.product(*(
         (shape_group, shape_group) if use_b else (shape_group,)))
