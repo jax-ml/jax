@@ -64,7 +64,7 @@ class ProfilerTest(unittest.TestCase):
 
   def testDeviceMemoryProfile(self):
     x = jnp.ones((20,)) + 7.
-    self.assertTrue(isinstance(jax.profiler.device_memory_profile(), bytes))
+    self.assertIsInstance(jax.profiler.device_memory_profile(), bytes)
     del x
 
 if __name__ == "__main__":
