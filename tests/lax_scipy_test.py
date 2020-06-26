@@ -103,12 +103,13 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
        "axis": axis, "keepdims": keepdims,
        "return_sign": return_sign, "use_b": use_b}
       for shape_group in compatible_shapes for dtype in float_dtypes
-      for shapes in itertools.product(shape_group, shape_group)
+      for use_b in [False, True]
+      for shapes in itertools.product(*(
+        (shape_group, shape_group) if use_b else (shape_group,)))
       for axis in range(-max(len(shape) for shape in shapes),
                          max(len(shape) for shape in shapes))
       for keepdims in [False, True]
-      for return_sign in [False, True]
-      for use_b in [False, True]))
+      for return_sign in [False, True]))
   @jtu.skip_on_flag("jax_xla_backend", "xrt")
   @jtu.ignore_warning(category=RuntimeWarning,
                       message="invalid value encountered in log.*")
