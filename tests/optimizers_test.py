@@ -118,6 +118,20 @@ class OptimizerTests(jtu.JaxTestCase):
     step_size = 0.1
     self._CheckOptimizer(optimizers.adam, loss, x0, num_iters, step_size)
 
+  def testQHMVector(self):
+    def loss(x): return jnp.dot(x, x)
+    x0 = jnp.ones(2)
+    num_iters = 100
+    step_size = 0.1
+    self._CheckOptimizer(optimizers.qhm, loss, x0, num_iters, step_size)
+
+  def testQHAdamVector(self):
+    def loss(x): return jnp.dot(x, x)
+    x0 = jnp.ones(2)
+    num_iters = 100
+    step_size = 0.1
+    self._CheckOptimizer(optimizers.qhadam, loss, x0, num_iters, step_size)
+
   def testSgdClosure(self):
     def loss(y, x): return y**2 * x**2
     x0 = 1.

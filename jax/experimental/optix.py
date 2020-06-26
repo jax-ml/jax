@@ -19,8 +19,9 @@ typically used in the context of optimizing neural nets.
 
 Each transformation defines:
 
-* ``init_fn``, to initialize (possibly empty) sets of statistics (aka ``state``)
-* ``update_fn`` to transform a parameter update or gradient and update the state
+* ``init_fn``: Params -> OptState, to initialize (possibly empty) sets of statistics (aka ``state``)
+* ``update_fn``: (Updates, OptState, Optional[Params]) -> (Updates, OptState)
+    to transform a parameter update or gradient and update the state
 
 An (optional) ``chain`` utility can be used to build custom optimizers by
 chaining arbitrary sequences of transformations. For any sequence of
@@ -36,10 +37,26 @@ different tasks may benefit from different sets of gradient transformations).
 
 Many popular optimizers can be implemented using ``optix`` as one-liners, and,
 for convenience, we provide aliases for some of the most popular ones.
+
+Example Usage:
+
+  opt = optix.sgd(learning_rate)
+  OptData = collections.namedtuple('OptData', 'step state params')
+  data = OptData(0, opt.init(params), params)
+
+  def step(opt_data):
+    step, state, params = opt_data
+    value, grads = jax.value_and_grad(loss_fn)(params)
+    updates, state = opt.update(grads, state, params)
+    params = optix.apply_updates(updates, params)
+    return value, OptData(step+1, state, params)
+
+  for step in range(steps):
+    value, opt_data = step(opt_data)
 """
 
 
-from typing import Any, Callable, NamedTuple, Sequence, Tuple, Union
+from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
 
 from jax import numpy as jnp
 from jax import random as jrandom
@@ -60,7 +77,8 @@ Params = Any  # Parameters are arbitrary nests of `jnp.ndarrays`.
 Updates = Params  # Gradient updates are of the same type as parameters.
 
 InitFn = Callable[[Params], Union[OptState, Sequence[OptState]]]
-UpdateFn = Callable[[Updates, OptState], Tuple[Updates, OptState]]
+UpdateFn = Callable[[Updates, OptState, Optional[Params]],
+                    Tuple[Updates, Union[OptState, Sequence[OptState]]]]
 
 
 ###
@@ -435,10 +453,12 @@ def chain(*args: GradientTransformation) -> GradientTransformation:
 
   init_fns, update_fns = zip(*args)
 
-  def init_fn(params):
+  def init_fn(params: Params) -> Sequence[OptState]:
     return [fn(params) for fn in init_fns]
 
-  def update_fn(updates, state, params=None):
+  def update_fn(
+    updates: Updates, state: OptState, params: Params = None
+    ) -> Tuple[Updates, Sequence[OptState]]:
     new_state = []
     for s, fn in zip(state, update_fns):
       updates, new_s = fn(updates, s, params)
