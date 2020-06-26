@@ -181,6 +181,46 @@ class ODETest(jtu.JaxTestCase):
       f = lambda x0: odeint(lambda x, _t: x, x0, t)
       jax.vmap(f)(x0_eval)  # doesn't crash
 
+  @jtu.skip_on_devices("tpu")
+  def test_grad_closure(self):
+    # simplification of https://github.com/google/jax/issues/2718
+    def experiment(x):
+      def model(y, t):
+        return -x * y
+      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      return history[-1]
+    jtu.check_grads(experiment, (0.01,), modes=["rev"], order=1)
+
+  @jtu.skip_on_devices("tpu")
+  def test_grad_closure_with_vmap(self):
+    # https://github.com/google/jax/issues/2718
+    @jax.jit
+    def experiment(x):
+      def model(y, t):
+        return -x * y
+      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      return history[-1]
+
+    gradfun = jax.value_and_grad(experiment)
+    t = np.arange(0., 1., 0.01)
+    h, g = jax.vmap(gradfun)(t)  # doesn't crash
+    ans = h[11], g[11]
+
+    expected_h = experiment(t[11])
+    expected_g = (experiment(t[11] + 1e-5) - expected_h) / 1e-5
+    expected = expected_h, expected_g
+
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=1e-2, rtol=1e-2)
+
+  def test_forward_mode_error(self):
+    # https://github.com/google/jax/issues/3558
+
+    def f(k):
+      return odeint(lambda x, t: k*x, 1.,  jnp.linspace(0, 1., 50)).sum()
+
+    with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
+      jax.jacfwd(f)(3.)
+
 
 if __name__ == '__main__':
   absltest.main()

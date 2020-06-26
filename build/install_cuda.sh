@@ -3,10 +3,14 @@ set -xe
 
 CUDA_VERSION=$1
 
-if [ $CUDA_VERSION = "10.2" ]
-then
+LIBCUDNN=libcudnn7
+if [ $CUDA_VERSION = "10.2" ]; then
   NCCL_VERSION=2.5.6
   CUDNN_VERSION=7.6.5.32
+elif [ $CUDA_VERSION = "11.0" ]; then
+  NCCL_VERSION=2.7.3
+  CUDNN_VERSION=8.0.0.180
+  LIBCUDNN=libcudnn8
 fi
 
 echo "Installing cuda version $CUDA_VERSION"
@@ -22,7 +26,7 @@ apt-get install -y --no-install-recommends \
   cuda-minimal-build-$CUDA_VERSION \
   libnccl2=$NCCL_VERSION-1+cuda$CUDA_VERSION \
   libnccl-dev=$NCCL_VERSION-1+cuda$CUDA_VERSION \
-  libcudnn7=$CUDNN_VERSION-1+cuda$CUDA_VERSION \
-  libcudnn7-dev=$CUDNN_VERSION-1+cuda$CUDA_VERSION
+  $LIBCUDNN=$CUDNN_VERSION-1+cuda$CUDA_VERSION \
+  $LIBCUDNN-dev=$CUDNN_VERSION-1+cuda$CUDA_VERSION
 rm -f /usr/local/cuda
 ln -s /usr/local/cuda-$CUDA_VERSION /usr/local/cuda

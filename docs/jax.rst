@@ -48,6 +48,7 @@ Automatic differentiation
     vjp
     custom_jvp
     custom_vjp
+    checkpoint
 
 
 Vectorization (:code:`vmap`)
