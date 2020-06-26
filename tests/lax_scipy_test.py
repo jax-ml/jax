@@ -133,7 +133,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
       args_maker = lambda: [rng(shapes[0], dtype)]
     tol = {onp.float32: 1E-5}
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, atol=tol, rtol=tol)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
