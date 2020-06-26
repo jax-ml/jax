@@ -2777,7 +2777,8 @@ ad.deflinear(broadcast_p, lambda t, sizes: [_reduce_sum(t, range(len(sizes)))])
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
-  if type(operand) is xla.DeviceArray:
+  if type(operand) is xla.DeviceArray and onp.all(
+      onp.equal(operand.shape, onp.take(shape, broadcast_dimensions))):
     shape = _broadcast_in_dim_shape_rule(
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))

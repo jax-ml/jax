@@ -139,7 +139,7 @@ class _ScalarMeta(type):
     return hash(self.dtype.type)
 
   def __eq__(self, other):
-    return id(self) == id(other) or self.dtype == other
+    return id(self) == id(other) or self.dtype.type == other
 
   def __ne__(self, other):
     return not (self == other)
@@ -1521,6 +1521,10 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
 
+    if isinstance(a, (list, tuple)):
+      msg = ("jax.numpy reductions won't accept lists and tuples in future "
+             "versions, only scalars and ndarrays")
+      warnings.warn(msg, category=FutureWarning)
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
@@ -2588,6 +2592,16 @@ def diag_indices(n, ndim=2):
     raise ValueError("ndim argument to diag_indices must be nonnegative, got {}"
                      .format(ndim))
   return (lax.iota(int_, n),) * ndim
+
+@_wraps(np.diag_indices_from)
+def diag_indices_from(arr):
+  if not arr.ndim >= 2:
+    raise ValueError("input array must be at least 2-d")
+
+  if len(set(arr.shape)) != 1:
+    raise ValueError("All dimensions of input must be of equal length")
+
+  return diag_indices(arr.shape[0], ndim=arr.ndim)
 
 @_wraps(np.diagonal)
 def diagonal(a, offset=0, axis1=0, axis2=1):
@@ -3983,12 +3997,23 @@ def quantile(a, q, axis=None, out=None, overwrite_input=False,
     msg = ("jax.numpy.quantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
-    raise ValueError("interpolation can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
-  return _quantile(a, q, axis, interpolation, keepdims)
+  return _quantile(a, q, axis, interpolation, keepdims, False)
 
-@partial(jit, static_argnums=(2, 3, 4))
-def _quantile(a, q, axis, interpolation, keepdims):
+@_wraps(getattr(np, "nanquantile", None))
+def nanquantile(a, q, axis=None, out=None, overwrite_input=False,
+                interpolation="linear", keepdims=False):
+  if overwrite_input or out is not None:
+    msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
+           "out != None")
+    raise ValueError(msg)
+  return _quantile(a, q, axis, interpolation, keepdims, True)
+
+
+@partial(jit, static_argnums=(2, 3, 4, 5))
+def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
+  if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
+    raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
+                     "'midpoint', or 'nearest'")
   a = asarray(a, dtype=promote_types(_dtype(a), float32))
   q = asarray(q, dtype=promote_types(_dtype(q), float32))
   if axis is None:
@@ -3999,6 +4024,7 @@ def _quantile(a, q, axis, interpolation, keepdims):
   else:
     axis = _canonicalize_axis(axis, ndim(a))
 
+  q_shape = shape(q)
   q_ndim = ndim(q)
   if q_ndim > 1:
     raise ValueError("q must be have rank <= 1, got shape {}".format(shape(q)))
@@ -4006,38 +4032,63 @@ def _quantile(a, q, axis, interpolation, keepdims):
   a_shape = shape(a)
   a = lax.sort(a, dimension=axis)
 
-  n = a_shape[axis]
-  q = lax.mul(q, _constant_like(q, n - 1))
-  low = lax.floor(q)
-  high = lax.ceil(q)
-  high_weight = lax.sub(q, low)
-  low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
+  if squash_nans:
+    counts = sum(logical_not(isnan(a)), axis=axis, dtype=q.dtype,
+                 keepdims=keepdims)
+    shape_after_reduction = counts.shape
+    q = lax.expand_dims(
+      q, tuple(range(q_ndim, len(shape_after_reduction) + q_ndim)))
+    counts = lax.expand_dims(counts, tuple(range(q_ndim)))
+    q = lax.mul(q, lax.sub(counts, _constant_like(q, 1)))
+    low = lax.floor(q)
+    high = lax.ceil(q)
+    high_weight = lax.sub(q, low)
+    low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
 
-  low = lax.clamp(_constant_like(low, 0), low, _constant_like(low, n - 1))
-  high = lax.clamp(_constant_like(high, 0), high, _constant_like(high, n - 1))
-  low = lax.convert_element_type(low, int64)
-  high = lax.convert_element_type(high, int64)
+    low = lax.max(_constant_like(low, 0), lax.min(low, counts - 1))
+    high = lax.max(_constant_like(high, 0), lax.min(high, counts - 1))
+    low = lax.convert_element_type(low, int64)
+    high = lax.convert_element_type(high, int64)
+    out_shape = q_shape + shape_after_reduction
+    index = [lax.broadcasted_iota(int64, out_shape, dim + q_ndim)
+             for dim in range(len(shape_after_reduction))]
+    if keepdims:
+      index[axis] = low
+    else:
+      index.insert(axis, low)
+    low_value = a[tuple(index)]
+    index[axis] = high
+    high_value = a[tuple(index)]
+  else:
+    n = a_shape[axis]
+    q = lax.mul(q, _constant_like(q, n - 1))
+    low = lax.floor(q)
+    high = lax.ceil(q)
+    high_weight = lax.sub(q, low)
+    low_weight = lax.sub(_constant_like(high_weight, 1), high_weight)
 
-  slice_sizes = list(a_shape)
-  slice_sizes[axis] = 1
+    low = lax.clamp(_constant_like(low, 0), low, _constant_like(low, n - 1))
+    high = lax.clamp(_constant_like(high, 0), high, _constant_like(high, n - 1))
+    low = lax.convert_element_type(low, int64)
+    high = lax.convert_element_type(high, int64)
 
-  dnums = lax.GatherDimensionNumbers(
-    offset_dims=tuple(range(
-      q_ndim,
-      len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
-    collapsed_slice_dims=() if keepdims else (axis,),
-    start_index_map=(axis,))
-  low = low[..., None]
-  high = high[..., None]
-  low_value = lax.gather(a, low, dimension_numbers=dnums,
-                         slice_sizes=slice_sizes)
-  high_value = lax.gather(a, high, dimension_numbers=dnums,
-                          slice_sizes=slice_sizes)
-  if q_ndim == 1:
-    low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
-                                      broadcast_dimensions=(0,))
-    high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
-                                      broadcast_dimensions=(0,))
+    slice_sizes = list(a_shape)
+    slice_sizes[axis] = 1
+    dnums = lax.GatherDimensionNumbers(
+      offset_dims=tuple(range(
+        q_ndim,
+        len(a_shape) + q_ndim if keepdims else len(a_shape) + q_ndim - 1)),
+      collapsed_slice_dims=() if keepdims else (axis,),
+      start_index_map=(axis,))
+    low_value = lax.gather(a, low[..., None], dimension_numbers=dnums,
+                           slice_sizes=slice_sizes)
+    high_value = lax.gather(a, high[..., None], dimension_numbers=dnums,
+                            slice_sizes=slice_sizes)
+    if q_ndim == 1:
+      low_weight = lax.broadcast_in_dim(low_weight, low_value.shape,
+                                        broadcast_dimensions=(0,))
+      high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
+                                        broadcast_dimensions=(0,))
 
   if interpolation == "linear":
     result = lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
@@ -4109,12 +4160,24 @@ def percentile(a, q, axis=None, out=None, overwrite_input=False,
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
 
+@_wraps(np.nanpercentile)
+def nanpercentile(a, q, axis=None, out=None, overwrite_input=False,
+                  interpolation="linear", keepdims=False):
+  q = true_divide(asarray(q), float32(100.0))
+  return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
+                     interpolation=interpolation, keepdims=keepdims)
 
 @_wraps(np.median)
 def median(a, axis=None, out=None, overwrite_input=False, keepdims=False):
-    q = 0.5
-    return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                    keepdims=keepdims, interpolation='midpoint')
+  return quantile(a, 0.5, axis=axis, out=out, overwrite_input=overwrite_input,
+                  keepdims=keepdims, interpolation='midpoint')
+
+@_wraps(np.nanmedian)
+def nanmedian(a, axis=None, out=None, overwrite_input=False, keepdims=False):
+  return nanquantile(a, 0.5, axis=axis, out=out,
+                     overwrite_input=overwrite_input, keepdims=keepdims,
+                     interpolation='midpoint')
+
 
 def _astype(arr, dtype):
   lax._check_user_dtype_supported(dtype, "astype")
@@ -4248,7 +4311,7 @@ _operators = {
 # These numpy.ndarray methods are just refs to an equivalent numpy function
 _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
                     "nonzero", "searchsorted", "round"]
-_diff_methods = ["clip", "compress", "conj", "conjugate", "cumprod", "cumsum",
+_diff_methods = ["clip", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "tile", "trace", "transpose", "var"]
@@ -4298,6 +4361,12 @@ setattr(ShapedArray, "split", core.aval_method(split))
 setattr(DeviceArray, "broadcast", lax.broadcast)
 setattr(DeviceArray, "broadcast_in_dim", lax.broadcast_in_dim)
 setattr(DeviceArray, "split", split)
+
+def _compress_method(a, condition, axis=None, out=None):
+  return compress(condition, a, axis, out)
+
+setattr(ShapedArray, "compress", _compress_method)
+setattr(DeviceArray, "compress", _compress_method)
 
 @partial(jit, static_argnums=(1,2,3))
 def _multi_slice(arr: DeviceArray,

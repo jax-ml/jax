@@ -5,5 +5,5 @@ mypy==0.770
 pytest-benchmark
 pytest-xdist
 # jax2tf needs some fixes that are not in tensorflow==2.2.0
-tf-nightly==2.3.0.dev20200525
+tf-nightly==2.3.0.dev20200624
 wheel

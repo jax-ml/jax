@@ -1791,6 +1791,13 @@ class LazyConstantTest(jtu.JaxTestCase):
     expected = onp.asarray(make_const())
     self._Check(make_const, expected)
 
+  def testBroadcastInDim(self):
+    arr = lax.full((2, 1), 1.) + 1.
+    arr_onp = onp.full((2, 1), 1.) + 1.
+    expected = lax_reference.broadcast_in_dim(arr_onp, (2, 1, 3), (0, 2))
+    make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
+    self._Check(make_const, expected)
+
 
 if __name__ == '__main__':
   absltest.main()
