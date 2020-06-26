@@ -65,6 +65,7 @@ class ProfilerTest(unittest.TestCase):
   def testHeapProfile(self):
     x = jnp.ones((20,)) + 7.
     self.assertTrue(isinstance(jax.profiler.heap_profile(), bytes))
+    del x
 
 if __name__ == "__main__":
   absltest.main()

@@ -127,7 +127,7 @@ def save_heap_profile(filename, backend: Optional[str] = None):
   Args:
     filename: the filename to which the profile should be written.
     backend: optional; the name of the JAX backend for which the heap profile
-      should be collected.  
+      should be collected.
   """
   profile = heap_profile(backend)
   with open(filename, "wb") as f:
