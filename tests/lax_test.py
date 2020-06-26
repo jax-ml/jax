@@ -1374,7 +1374,10 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     op = lambda x: lax.sort(x, dimension=axis, is_stable=is_stable)
     def numpy_op(x):
-      return lax_reference.sort(x, axis, kind='stable' if is_stable else None)
+      if is_stable:
+        return lax_reference.sort(x, axis, kind='stable')
+      else:
+        return lax_reference.sort(x, axis)
     self._CheckAgainstNumpy(op, numpy_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
