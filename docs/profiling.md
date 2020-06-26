@@ -113,7 +113,7 @@ sudo update-initramfs -u
 sudo reboot now
 ```
 
-See [Nvidia's documentation on this
+See [NVIDIA's documentation on this
 error](https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-cupti)
 for more information.
 
@@ -133,7 +133,7 @@ ssh -L 6006:localhost:6006 <remote server address>
 
 ## Nsight
 
-Nvidia's `Nsight` tools can be used to trace and profile JAX code on GPU. For
+NVIDIA's `Nsight` tools can be used to trace and profile JAX code on GPU. For
 details, see the [`Nsight`
 documentation](https://developer.nvidia.com/tools-overview).
 

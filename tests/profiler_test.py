@@ -18,6 +18,7 @@ import unittest
 from absl.testing import absltest
 
 import jax
+import jax.numpy as jnp
 import jax.profiler
 from jax.config import config
 import jax.test_util
@@ -61,6 +62,10 @@ class ProfilerTest(unittest.TestCase):
       return x + 2
     self.assertEqual(h(7), 9)
 
+  def testDeviceMemoryProfile(self):
+    x = jnp.ones((20,)) + 7.
+    self.assertTrue(isinstance(jax.profiler.device_memory_profile(), bytes))
+    del x
 
 if __name__ == "__main__":
   absltest.main()
