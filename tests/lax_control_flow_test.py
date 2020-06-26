@@ -1408,7 +1408,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         rtol={np.float32: 2e-5, np.float64: 1e-13})
 
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
-                    atol=1e-3, rtol=2e-3)
+                    atol=1e-3, rtol=5e-3)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testScanRnn(self):

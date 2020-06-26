@@ -110,9 +110,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                          max(len(shape) for shape in shapes))
       for keepdims in [False, True]
       for return_sign in [False, True]))
-  @jtu.skip_on_flag("jax_xla_backend", "xrt")
   @jtu.ignore_warning(category=RuntimeWarning,
-                      message="invalid value encountered in log.*")
+                      message="invalid value encountered in .*")
   def testLogSumExp(self, shapes, dtype, axis,
                     keepdims, return_sign, use_b):
     if jtu.device_under_test() != "cpu":
