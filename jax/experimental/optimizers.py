@@ -78,8 +78,7 @@ Example Usage:
     value, opt_state = step(step, opt_state)
 """
 
-from jax.experimental.optix import InitFn, UpdateFn
-from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, NamedTuple, Tuple, Union
 
 from collections import namedtuple
 import functools

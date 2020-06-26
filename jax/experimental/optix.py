@@ -456,8 +456,7 @@ def chain(*args: GradientTransformation) -> GradientTransformation:
   def init_fn(params: Params) -> Sequence[OptState]:
     return [fn(params) for fn in init_fns]
 
-  def update_fn(
-    updates: Updates, state: OptState, params: Params = None
+  def update_fn(updates: Updates, state: OptState, params: Params = None
     ) -> Tuple[Updates, Sequence[OptState]]:
     new_state = []
     for s, fn in zip(state, update_fns):
