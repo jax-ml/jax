@@ -1194,8 +1194,14 @@ def check_jaxpr(jaxpr: Jaxpr):
   try:
     _check_jaxpr(jaxpr, [v.aval for v in jaxpr.invars])
   except JaxprTypeError as e:
-    msg, = e.args
-    raise JaxprTypeError(f"{msg}\n\nwhile checking jaxpr:\n\n{jaxpr}") from None
+    if len(e.args) == 2:
+      msg, eqn_idx = e.args
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, eqn_idx - 10, eqn_idx + 10))
+    else:
+      msg, = e.args
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, 0, 20))
+    raise JaxprTypeError(
+        f"{msg}\n\nwhile checking jaxpr:\n\n{jaxpr_str}") from None
 
 def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
@@ -1220,7 +1226,7 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(write, jaxpr.constvars, [v.aval for v in jaxpr.constvars])
   map(write, jaxpr.invars, in_avals)
 
-  for eqn in jaxpr.eqns:
+  for eqn_idx, eqn in enumerate(jaxpr.eqns):
     in_avals = map(read, eqn.invars)
     prim = eqn.primitive
     try:
@@ -1235,7 +1241,9 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
       map(write, eqn.outvars, out_avals)
     except JaxprTypeError as e:
       msg, = e.args
-      raise JaxprTypeError(f"{msg}\n\nin equation:\n\n  {eqn}") from None
+      eqn_str = str(pp_eqn(eqn).indent(2))
+      raise JaxprTypeError(
+          f"{msg}\n\nin equation:\n\n{eqn_str}", eqn_idx) from None
 
   map(read, jaxpr.outvars)
 
@@ -1318,19 +1326,43 @@ def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   else:
     return pp_lhs + pp_rhs.indent(2)
 
-def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
-  pp_outvars = str(tuple(jaxpr.outvars))
-  pp_eqns = map(pp_eqn, jaxpr.eqns)
+def pp_eqns(eqns: Sequence[JaxprEqn],
+            source_info: bool = False) -> Sequence[PrettyPrint]:
+  pps = map(pp_eqn, eqns)
   if source_info:
-    l = max(i + len(s) for x in pp_eqns for i, s in x.lines)
-    pp_eqns = [pp_eqn(e).annotate(l, source_info_util.summarize(e.source_info))
-               for e in jaxpr.eqns]
+    l = max(i + len(s) for x in pps for i, s in x.lines)
+    return [pp_eqn(e).annotate(l, source_info_util.summarize(e.source_info))
+            for e in eqns]
   else:
-    pp_eqns = [pp_eqn(e) for e in jaxpr.eqns]
+    return pps
+
+def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
+  pps = pp_eqns(jaxpr.eqns, source_info=source_info)
+  str_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
-          ((pp('let ') >> vcat(pp_eqns))
-           + pp('in {} }}'.format(pp_outvars))).indent(2))
+          ((pp('let ') >> vcat(pps))
+           + pp('in {} }}'.format(str_outvars))).indent(2))
+
+def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
+                       source_info: bool = False) -> PrettyPrint:
+  lo = max(lo, 0)
+  hi = max(lo, min(hi, len(jaxpr.eqns)))
+  eqns = jaxpr.eqns[lo:hi]
+  pps = []
+  if len(eqns) == 0 and len(jaxpr.eqns) != 0:
+      pps.append(pp('...'))
+  else:
+    if lo != 0:
+      pps.append(pp('...'))
+    pps.extend(pp_eqns(eqns, source_info=source_info))
+    if hi != len(jaxpr.eqns):
+      pps.append(pp('...'))
+  str_outvars = str(tuple(jaxpr.outvars))
+  return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
+                                         pp_vars(jaxpr.invars))) +
+          ((pp('let ') >> vcat(pps))
+           + pp('in {} }}'.format(str_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
   jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]
