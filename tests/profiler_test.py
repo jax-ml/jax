@@ -62,9 +62,9 @@ class ProfilerTest(unittest.TestCase):
       return x + 2
     self.assertEqual(h(7), 9)
 
-  def testHeapProfile(self):
+  def testDeviceMemoryProfile(self):
     x = jnp.ones((20,)) + 7.
-    self.assertTrue(isinstance(jax.profiler.heap_profile(), bytes))
+    self.assertTrue(isinstance(jax.profiler.device_memory_profile(), bytes))
     del x
 
 if __name__ == "__main__":

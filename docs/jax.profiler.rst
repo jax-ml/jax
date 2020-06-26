@@ -16,12 +16,12 @@ Tracing and time profiling
   TraceContext
 
 
-Heap profiling
---------------
+Device memory profiling
+-----------------------
 
 .. autosummary::
   :toctree: _autosummary
 
-  heap_profile
-  save_heap_profile
+  device_memory_profile
+  save_device_memory_profile
   
