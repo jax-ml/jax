@@ -429,7 +429,6 @@ class FlatTreeTest(jtu.JaxTestCase):
     @tree_vectorize
     def f(g, x, y):
       z, dz = jax.jvp(g, (x,), (y,))
-      # print(z, dz)
       return z, dz
 
     actual = f(g, {'a': 2.0}, {'a': 3.0})

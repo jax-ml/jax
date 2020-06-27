@@ -303,7 +303,7 @@ tree_rules: Dict[core.Primitive, Callable] = {}
 def tree_callable(fun):
   def wrapper(*args):
     f = _flatten_fun_one_output(lu.wrap_init(fun))
-    y, = tree_call(f, *args)
+    y, = tree_call(f, *args, name=fun.__name__)
     return y
   return wrapper
 
