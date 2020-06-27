@@ -315,11 +315,8 @@ def _flatten_fun_one_output(*args):
 def _tree_call_impl(fun: lu.WrappedFun, *args, **params):
   return fun.call_wrapped(*args)
 
-tree_call_p = core.Primitive('tree_call')
-tree_call_p.call_primitive = True
-tree_call_p.multiple_results = True
-tree_call = partial(core.call_bind, tree_call_p)
-tree_call_p.def_custom_bind(tree_call)
+tree_call_p = core.CallPrimitive('tree_call')
+tree_call = tree_call_p.bind
 tree_call_p.def_impl(_tree_call_impl)
 
 
