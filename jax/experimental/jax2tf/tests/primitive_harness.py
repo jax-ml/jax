@@ -25,6 +25,7 @@ from jax import config
 from jax import test_util as jtu
 from jax import dtypes
 from jax import lax
+from jax import numpy as jnp
 
 import numpy as np
 
@@ -136,8 +137,52 @@ def parameterized(harness_group: Iterable[Harness],
     for harness in harness_group
     if one_containing is None or one_containing in harness.name)
   if one_containing is not None:
+    if not cases:
+      raise ValueError(f"Cannot find test case with name containing {one_containing}."
+                       "Names are:"
+                       "\n".join([harness.name for harness in harness_group]))
     cases = cases[0:1]
   return testing.parameterized.named_parameters(*cases)
+
+
+_gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
+lax_gather = jtu.cases_from_list(
+  # Construct gather harnesses using take
+  [Harness(f"from_take_indices_shape={indices.shape}_axis={axis}",
+           lambda a, i, axis: jnp.take(a, i, axis=axis),
+           [_gather_input,
+            indices,
+            StaticArg(axis)])
+   for indices in [
+     np.array(2, dtype=np.int32),
+     np.array([2], dtype=np.int32),
+     np.array([2, 4], dtype=np.int32),
+     np.array([[2, 4], [5, 6]], dtype=np.int32)
+   ]
+   for axis in [0, 1, 2]] +
+
+  # Directly from lax.gather in lax_test.py.
+  [Harness(
+    f"_shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}",
+    lambda op, idxs, dnums, slice_sizes: lax.gather(op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
+    [RandArg(shape, np.float32),
+     idxs, StaticArg(dnums), StaticArg(slice_sizes)])
+    for shape, idxs, dnums, slice_sizes in [
+    ((5,), np.array([[0], [2]]), lax.GatherDimensionNumbers(
+      offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+     (1,)),
+    ((10,), np.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
+      offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+     (2,)),
+    ((10, 5,), np.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
+      offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
+     (1, 3)),
+    ((10, 5), np.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
+      offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
+     (1, 3)),
+    ]
+  ]
+)
 
 
 lax_pad = jtu.cases_from_list(

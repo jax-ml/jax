@@ -902,19 +902,58 @@ def _gather_shape(operand, start_indices, dimension_numbers, slice_sizes):
   return out.shape
 
 
+def _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes):
+  # Handle only the case when batch_dims=0.
+
+  # Find axis to match the tf.gather semantics
+  # Let I = len(indices_shape)
+  # let O = len(op_shape)
+  # slice_sizes == op_shape[:axis] + (1,) + op_shape[axis+1:]
+  # collapsed_slice_dims == (axis,)
+  # start_index_map == (axis,)
+  # offset_dims == (0, 1, ..., axis - 1, axis + I, ..., O + I - 1)
+  op_shape = np.shape(operand)
+  assert len(op_shape) == len(slice_sizes)
+  if not (len(op_shape) >= 1 and
+          len(dimension_numbers.start_index_map) == 1 and
+          len(dimension_numbers.collapsed_slice_dims) == 1 and
+          dimension_numbers.collapsed_slice_dims[0] == dimension_numbers.start_index_map[0] and
+          len(dimension_numbers.offset_dims) == len(op_shape) - 1):
+    return None
+  # We added a trailing dimension of size 1
+  if start_indices.shape[-1] != 1:
+    return None
+  # Guess the axis
+  axis = dimension_numbers.collapsed_slice_dims[0]
+  index_dims = len(np.shape(start_indices)) - 1
+  expected_offset_dims = tuple(
+      list(range(axis)) +
+      list(range(axis + index_dims, len(op_shape) + index_dims - 1)))
+  if dimension_numbers.offset_dims != expected_offset_dims:
+    return None
+  expected_slice_sizes = op_shape[:axis] + (1,) + op_shape[axis + 1:]
+  if slice_sizes != expected_slice_sizes:
+    return None
+  # TODO: should we allow ourselves to add a reshape, or should we strictly
+  #  convert 1:1, or go to TFXLA when not possible?
+  start_indices = tf.reshape(start_indices, start_indices.shape[0:-1])
+  return tf.gather(operand, start_indices, axis=axis, batch_dims=0)
+
+
 @functools.partial(bool_to_int8, argnums=0)
-def _gather(operand, start_indices, dimension_numbers, slice_sizes,
-            indices_are_sorted=False):
+def _gather(operand, start_indices, dimension_numbers, slice_sizes):
   """Tensorflow implementation of gather."""
+  res = _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes)
+  if res is not None:
+    return res
   out_shape = _gather_shape(
       operand, start_indices, dimension_numbers, slice_sizes)
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
   out, = tf.xla.experimental.compile(
-      lambda o, s: tfxla.gather(o, s, proto, slice_sizes, indices_are_sorted),
+      lambda o, s: tfxla.gather(o, s, proto, slice_sizes, False),
       [operand, start_indices])
   out.set_shape(out_shape)
   return out
-
 tf_impl[lax.gather_p] = _gather
 
 

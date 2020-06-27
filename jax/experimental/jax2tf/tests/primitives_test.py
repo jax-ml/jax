@@ -321,12 +321,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            with_function=True)
 
-  def test_gather(self):
-    values = np.array([[1, 2], [3, 4], [5, 6]], dtype=np.float32)
-    indices = np.array([0, 1], dtype=np.int32)
-    for axis in (0, 1):
-      f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))  # pylint: disable=cell-var-from-loop
-      self.ConvertAndCompare(f_jax, values, indices, with_function=True)
+  @primitive_harness.parameterized(primitive_harness.lax_gather)
+  def test_gather(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=False)
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
@@ -335,6 +333,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for axis in [0, 1]:
       f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))  # pylint: disable=cell-var-from-loop
       self.ConvertAndCompare(f_jax, values, indices, with_function=True)
+
+  def test_gather_rank_change(self):
+    params = jnp.array([[1.0, 1.5, 2.0], [2.0, 2.5, 3.0], [3.0, 3.5, 4.0]])
+    indices = jnp.array([[1, 1, 2], [0, 1, 0]])
+    f_jax = jax.jit(lambda i: params[i])
+    self.ConvertAndCompare(f_jax, indices, with_function=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
@@ -370,11 +374,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values, with_function=True)
 
-  def test_gather_rank_change(self):
-    params = jnp.array([[1.0, 1.5, 2.0], [2.0, 2.5, 3.0], [3.0, 3.5, 4.0]])
-    indices = jnp.array([[1, 1, 2], [0, 1, 0]])
-    f_jax = jax.jit(lambda i: params[i])
-    self.ConvertAndCompare(f_jax, indices, with_function=True)
 
   def test_prngsplit(self):
     f_jax = jax.jit(lambda key: jax.random.split(key, 2))
