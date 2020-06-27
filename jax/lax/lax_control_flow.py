@@ -2120,33 +2120,28 @@ def associative_scan(fn, elems):
 
   Args:
     fn: Python callable implementing an associative binary operation with
-      signature `r = fn(a, b)`. This must satisfy associativity:
-      `fn(a, fn(b, c)) == fn(fn(a, b), c)`. The inputs and result are
-      (possibly nested structures of) `Tensor`(s), matching `elems`. Each
-      `Tensor` has a leading batch dimension in place of `num_elems`; the `fn`
-      is expected to map over this dimension. The result `r` has the same shape
-      (and structure) as the two inputs `a` and `b`.
-    elems: A (possibly nested structure of) `Tensor`(s), each with leading
-      dimension `num_elems`, which must be known statically.
+      signature ``r = fn(a, b)``. This must satisfy associativity:
+      ``fn(a, fn(b, c)) == fn(fn(a, b), c)``. The inputs and result are
+      (possibly nested structures of) array(s) matching ``elems``. Each
+      array has a leading dimension in place of ``num_elems``; the `fn`
+      is expected to reduce over this dimension. The result `r` has the same shape
+      (and structure) as the two inputs ``a`` and ``b``.
+    elems: A (possibly nested structure of) array(s), each with leading
+      dimension ``num_elems``.
+
   Returns:
-    result: A (possibly nested structure of) `Tensor`(s) of the same shape
-      and structure as `elems`, in which the `k`th element is the result of
-      recursively applying `fn` to combine the first `k` elements of
-      `elems`. For example, given `elems = [a, b, c, ...]`, the result
-      would be `[a, fn(a, b), fn(fn(a, b), c), ...]`.
+    result: A (possibly nested structure of) array(s) of the same shape
+      and structure as ``elems``, in which the ``k``th element is the result of
+      recursively applying ``fn`` to combine the first ``k`` elements of
+      ``elems``. For example, given ``elems = [a, b, c, ...]``, the result
+      would be ``[a, fn(a, b), fn(fn(a, b), c), ...]``.
 
-  #### Examples
+  For example:
 
-  ```python
-  # Example 1: Partials sums of numbers.
+    np.associative_scan(operator.add, np.arange(0, 4))
+    # ==> [ 0, 1, 3, 6]
 
-  np.associative_scan(operator.add, np.arange(0, 4))
-  # ==> [ 0, 1, 3, 6]
-
-  # Example 2: Partial products of random matrices.
-
-  np.associative_scan(np.matmul, matrices)
-  ```
+    np.associative_scan(np.matmul, matrices)  # partial products of matrices
   """
   elems_flat, tree = tree_flatten(elems)
 

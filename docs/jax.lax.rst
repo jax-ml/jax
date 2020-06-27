@@ -140,6 +140,7 @@ Control flow operators
     fori_loop
     map
     scan
+    associative_scan
     while_loop
 
 Custom gradient operators
