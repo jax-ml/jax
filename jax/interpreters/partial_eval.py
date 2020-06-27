@@ -27,10 +27,11 @@ from .. import linear_util as lu
 from ..abstract_arrays import ConcreteArray, raise_to_shaped
 from ..ad_util import Zero
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
-                    cache, curry)
+                    cache)
 from ..core import (Trace, Tracer, new_master, Jaxpr, Literal, get_aval,
                     AbstractValue, unit, unitvar, abstract_unit,
                     TypedJaxpr, new_jaxpr_eqn)
+from .. import source_info_util
 
 map = safe_map
 zip = safe_zip
@@ -72,7 +73,7 @@ class PartialVal(tuple):
     return self[1] if self[0] is None else None
 
   def get_aval(self) -> AbstractValue:
-    """Get the AbstractValue either directly for unknown values, or from the known constant."""
+    """Get AbstractValue directly (if unknown) or from the constant (known)."""
     known = self.get_known()
     if known is not None:
       return get_aval(known)
@@ -155,47 +156,43 @@ class JaxprTrace(Trace):
     tracers = map(self.instantiate_const, tracers)
     avals = [t.aval for t in tracers]
     out_aval = primitive.abstract_eval(*avals, **params)
+    source = source_info_util.current()
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
-      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params)
+      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, source)
       for t in out_tracers: t.recipe = eqn
       return out_tracers
     else:
       out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
-      out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive, params)
+      out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive,
+                                         params, source)
       return out_tracer
 
   def process_call(self, primitive, f: lu.WrappedFun, tracers, params):
-    name = params.get('name', f.__name__)
     if (self.master.trace_type is StagingJaxprTrace
         and primitive in staged_out_calls):
       tracers = map(self.instantiate_const_abstracted, tracers)
-    params = dict(params, name=name)
 
     if primitive in call_partial_eval_rules:
       return call_partial_eval_rules[primitive](self, primitive, f, tracers, params)
 
-    @curry
-    def modify_aval(modify, args):
-      pval, is_mapped = args
-      if pval.is_known() or not is_mapped:
-        return pval
-      return PartialVal((modify(params['axis_size'], pval[0]), pval[1]))
-
     in_pvals = [t.pval for t in tracers]
     if primitive.map_primitive:
-      in_pvals = map(modify_aval(core.mapped_aval), zip(in_pvals, params['mapped_invars']))
+      mapped_aval = partial(core.mapped_aval, params['axis_size'])
+      in_pvals = [pval if pval.is_known() or not is_mapped
+                  else PartialVal.unknown(mapped_aval(pval[0]))
+                  for pval, is_mapped in zip(in_pvals, params['mapped_invars'])]
     jaxpr, out_pvals, consts, env_tracers = self.partial_eval(
         f, in_pvals, partial(primitive.bind, **params))
     if primitive.map_primitive:
-      out_pvals = map(modify_aval(core.unmapped_aval),
-                      [(pval, True) for pval in out_pvals])
+      unmapped_aval = partial(core.unmapped_aval, params['axis_size'])
+      out_pvals = [pval if pval.is_known()
+                   else PartialVal.unknown(unmapped_aval(pval[0]))
+                   for pval in out_pvals]
 
-    # Don't bother if the traced jaxpr is trivial. Simply evaluate it in here.
-    # XXX: We don't allow this fast path for map primitives, because this simplification might
-    #      e.g. reduce the number of required devices if someone pmaps an identity function.
-    if not primitive.map_primitive and not jaxpr.eqns:
+    # Avoid staging out trivial calls, but maps may involve broadcasting.
+    if not jaxpr.eqns and not primitive.map_primitive:
       env = {core.unitvar: core.unit}
       map(env.setdefault, jaxpr.invars, (*env_tracers, *tracers))
       map(env.setdefault, jaxpr.constvars, consts)
@@ -209,91 +206,76 @@ class JaxprTrace(Trace):
     out_unknowns = tuple(not pval.is_known() for pval in out_pvals)
     jaxpr = _drop_invars(jaxpr, in_knowns)
     jaxpr = _dce_untyped_jaxpr(jaxpr, out_unknowns, drop_outputs=True)
-    lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
 
     # Known tracers get propagated as if they were constants
-    known_tracers_out = [self.new_const(pval.get_known()) for pval in out_pvals if pval.is_known()]
+    known_tracers_out = [self.new_const(pval.get_known()) for pval in out_pvals
+                         if pval.is_known()]
 
     # Unknown tracers need to have the jaxpr set up as their recipe
-    unknown_tracers_out = [JaxprTracer(self, pval, None) for pval in out_pvals if not pval.is_known()]
+    unknown_tracers_out = [JaxprTracer(self, pval, None) for pval in out_pvals
+                           if not pval.is_known()]
     unknown_tracers_in = [t for t in tracers if not t.pval.is_known()]
     const_tracers = map(self.new_instantiated_const, consts)
-    new_params = dict(params, call_jaxpr=lifted_jaxpr)
-    if 'donated_invars' in params:
-      new_donated_invars = ((False,) * len(const_tracers) +
-                            (False,) * len(env_tracers) +
-                            tuple(v for v, t in zip(params['donated_invars'], tracers) if not t.pval.is_known()))
-      new_params['donated_invars'] = new_donated_invars
+    in_tracers = (*const_tracers, *env_tracers, *unknown_tracers_in)
+
+    # Set up new params
+    new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
     if primitive.map_primitive:
+      mapped_invars = params['mapped_invars']
       new_mapped_invars = ((True,) * len(const_tracers) +
                            (False,) * len(env_tracers) +
-                           tuple(v for v, t in zip(params['mapped_invars'], tracers) if not t.pval.is_known()))
-      new_params['mapped_invars'] = new_mapped_invars
-    eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, unknown_tracers_in)),
-                         unknown_tracers_out, primitive, new_params)
-    for t in unknown_tracers_out:
-      t.recipe = eqn
+                           tuple(v for v, t in zip(mapped_invars, tracers)
+                                 if not t.pval.is_known()))
+      new_params = dict(new_params, mapped_invars=new_mapped_invars)
+    update_params = call_param_updaters.get(primitive)
+    if update_params:
+      new_params = update_params(new_params, [not t.pval.is_known() for t in tracers])
 
+    eqn = new_eqn_recipe(in_tracers, unknown_tracers_out, primitive, new_params,
+                         source_info_util.current())
+    for t in unknown_tracers_out: t.recipe = eqn
     return _zip_knowns(known_tracers_out, unknown_tracers_out, out_unknowns)
 
-  def post_process_call(self, call_primitive, out_tracers, params):
+  process_map = process_call
+
+  # We use post_process_call to handle both call and map primitives.
+  def post_process_call(self, primitive, out_tracers, params):
     jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
     out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
     out = out_pv_consts + consts
     del consts, out_pv_consts
     master = self.master
+
+    if primitive.map_primitive:
+      sz = params['axis_size']
+      out_pvs = [None if pv is None else core.unmapped_aval(sz, pv)
+                 for pv in out_pvs]
+
     def todo(x):
       n = len(jaxpr.outvars)
       out_pv_consts, consts = x[:n], x[n:]
       trace = JaxprTrace(master, core.cur_sublevel())
       const_tracers = map(trace.new_instantiated_const, consts)
-      env_tracers = map(trace.full_raise, env)
-      lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-      invars = tuple(it.chain(const_tracers, env_tracers))
-      new_params = dict(params, call_jaxpr=lifted_jaxpr)
-      if 'donated_invars' in params:
-        new_params['donated_invars'] = (False,) * len(invars)
-      # The `jaxpr` already contains the env_vars at start of invars
-      eqn = new_eqn_recipe(invars, out_tracers, call_primitive, new_params)
+      in_tracers = (*const_tracers, *map(trace.full_raise, env))
+
+      new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
+      if primitive.map_primitive:
+        new_mapped_invars = (True,) * len(const_tracers) + (False,) * len(env)
+        new_params = dict(new_params, mapped_invars=new_mapped_invars)
+      update_params = call_param_updaters.get(primitive)
+      if update_params:
+        new_params = update_params(new_params, [])
+
+      eqn = new_eqn_recipe(in_tracers, out_tracers, primitive, new_params,
+                           source_info_util.current())
       for t in out_tracers:
         t.recipe = eqn
       return out_tracers
     return out, todo
 
-  process_map = process_call
-
-  def post_process_map(self, map_primitive, out_tracers, params):
-    jaxpr, consts, env = tracers_to_jaxpr([], out_tracers)
-    out_pvs_reduced, out_pv_consts = unzip2(t.pval for t in out_tracers)
-    out_pvs = [None if pv is None
-               else core.unmapped_aval(params['axis_size'], pv)
-               for pv in out_pvs_reduced]
-    out = out_pv_consts + consts
-    del consts, out_pv_consts
-    master = self.master
-    def todo(x):
-      n = len(jaxpr.outvars)
-      out_pv_consts, consts = x[:n], x[n:]
-      trace = JaxprTrace(master, core.cur_sublevel())
-      const_tracers = map(trace.new_instantiated_const, consts)
-      # The `jaxpr` already contains the env_vars at start of invars
-      lifted_jaxpr = convert_constvars_jaxpr(jaxpr)
-      out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
-                     for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
-      new_donated_invars = (False,) * (len(const_tracers) + len(env))
-      new_mapped_invars = (True,) * len(const_tracers) + (False,) * len(env)
-      new_params = dict(params, donated_invars=tuple(new_donated_invars),
-                        mapped_invars=tuple(new_mapped_invars),
-                        call_jaxpr=lifted_jaxpr)
-      env_tracers = map(trace.full_raise, env)
-      eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers)),
-                           out_tracers, map_primitive, new_params)
-      for t in out_tracers:
-        t.recipe = eqn
-      return out_tracers
-    return out, todo
+  post_process_map = post_process_call
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
     # See comment at top of `JaxprTrace`. This method should be reachable
@@ -327,23 +309,24 @@ class StagingJaxprTrace(JaxprTrace):
 
 
 @lu.transformation_with_aux
-def partial_eval_wrapper(avals: Sequence[Optional[AbstractValue]], *consts):
-  py_args = (map(PartialVal, zip(avals, consts)),)
-  jaxpr, (out_pvals, consts, env) = yield py_args, {}
+def partial_eval_wrapper(pvs: Sequence[Optional[AbstractValue]], *consts):
+  py_args = map(PartialVal, zip(pvs, consts))
+  jaxpr, (out_pvals, consts, env) = yield (py_args,), {}
   out_pvs, out_consts = unzip2(out_pvals)
-  out = tuple(out_consts) + tuple(consts)  # TODO: can consts be traced?
+  out = tuple(out_consts) + tuple(consts)
   yield out, (out_pvs, jaxpr, env)
 
 
 custom_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 call_partial_eval_rules: Dict[core.Primitive, Callable] = {}
 staged_out_calls: Set[core.Primitive] = set()
+call_param_updaters: Dict[core.Primitive, Callable] = {}
 
 
 def abstract_eval_fun(fun, *avals, **params):
   pvals_in = [PartialVal.unknown(a) for a in avals]
   _, pvals_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
-                                  instantiate=True, stage_out=True)
+                                   instantiate=True, stage_out=True)
   avals_out, _ = unzip2(pvals_out)
   for aval_out in avals_out:
     assert isinstance(aval_out, AbstractValue)  # instantiate=True
@@ -400,15 +383,12 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
     -> Tuple[Jaxpr, Tuple[PartialVal, ...], Tuple[core.Value, ...]]:
   """Traces a function into a Jaxpr, given PartialVals for inputs.
 
-  `trace_type` can be one of `StagingJaxprTrace` or `JaxprTrace` (see
-  comments for that class).
-
-  Returns (`jaxpr`, `out_pvals`, `consts`).
-  The `jaxpr` contains only the computation that depends on unknown inputs.
-  The `out_pvals` are the PartialVal for the outputs. The intermediate
-  values that depend only on known inputs and are needed to compute the output
-  of `jaxpr` are in `consts` and are passed in as the constvars of
-  the `jaxpr`. The handling of the known outputs depends on `instantiate`.
+  Returns (`jaxpr`, `out_pvals`, `consts`). The `jaxpr` contains only the
+  computation that depends on unknown inputs. The `out_pvals` are the PartialVal
+  for the outputs. The intermediate values that depend only on known inputs and
+  are needed to compute the output of `jaxpr` are in `consts` and are passed in
+  as the constvars of the `jaxpr`. The handling of the known outputs depends on
+  `instantiate`.
 
   For example, given `fun` defined as follows::
 
@@ -419,11 +399,11 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
 
   with `ki` the known PartialVal `1.`, and `ui` an unknown PartialVal. The only
   computation that depends on unknown inputs is `ui + ka` and will be the only
-  computation in the body of the `jaxpr`. This computation depends on the
-  known intermediate value `ka`, which will be computed statically. Currently,
-  such constants are either embedded in the Jaxpr if they are scalars, or
-  passed as a constvar to `jaxpr`, and then the value of the actual constant
-  will be in `consts`:
+  computation in the body of the `jaxpr`. This computation depends on the known
+  intermediate value `ka`, which will be computed statically. Currently, such
+  constants are either embedded in the Jaxpr if they are scalars, or passed as a
+  constvar to `jaxpr`, and then the value of the actual constant will be in
+  `consts`:
 
   When `instantiate=False` we get::
 
@@ -431,7 +411,7 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
       { lambda ka ; ki ui.
         let c = add ui ka
         in (*, c) }   # known outputs are `*`
-     out_pvals = [known(6), unknown(ShapedArray)]  # the known outputs are known PartialVal
+     out_pvals = [PartialVal.known(6), PartialVal.unknown(ShapedArray)]
      consts = [3]  # the constant for `ka`
 
   When `instantiate=True` we get::
@@ -440,7 +420,7 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
       { lambda ka kb ; ki ui.
         let c = add ui ka
         in (kb, c) }   # known output are explicit
-     out_pvals = [abstract(ConcreteArray(6)), abstract(ShapedArray)]  # all are unknown PartialVal
+     out_pvals = [PartialVal.unknown(ConcreteArray(6)), PartialVal.unknown(ShapedArray)]
      consts = [3, 6]  # values for `ka` and `kb` constvars
   """
   trace_type = trace_type or (StagingJaxprTrace if stage_out else JaxprTrace)
@@ -483,11 +463,14 @@ class JaxprEqnRecipe(NamedTuple):
   outvars: 'Sequence[ref[JaxprTracer]]'
   primitive: core.Primitive
   params: Dict[str, Any]
+  source_info: Optional[source_info_util.Traceback]
 
 def new_eqn_recipe(invars: Sequence[JaxprTracer],
                    outvars: Sequence[JaxprTracer],
                    primitive: core.Primitive,
-                   params: Dict[str, Any]) -> JaxprEqnRecipe:
+                   params: Dict[str, Any],
+                   source_info: Optional[source_info_util.Traceback]
+                  ) -> JaxprEqnRecipe:
   """Constructs a new JaxEqnRecipe.
 
   Params:
@@ -500,21 +483,22 @@ def new_eqn_recipe(invars: Sequence[JaxprTracer],
   if primitive.call_primitive or primitive.map_primitive:
     assert "call_jaxpr" in params
   if primitive.map_primitive:
-    assert "mapped_invars" in params
-    assert "donated_invars" in params
+    assert ("mapped_invars" in params and
+            len(params["mapped_invars"]) == len(params["call_jaxpr"].invars))
+    assert ("donated_invars" in params and
+            len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   return JaxprEqnRecipe(object(), tuple(invars), map(ref, outvars), primitive,
-                        params)
+                        params, source_info)
 
 
-def recipe_to_eqn(unused_var: Callable[[], core.Var],
-                  getvar: Callable[[JaxprTracer], core.Atom],
+def recipe_to_eqn(getvar: Callable[[JaxprTracer], core.Atom],
                   recipe: JaxprEqnRecipe) -> core.JaxprEqn:
-  _, in_tracers, out_tracer_refs, primitive, params = recipe
+  _, in_tracers, out_tracer_refs, primitive, params, source_info = recipe
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   invars  = [getvar(t) for t in in_tracers]
-  outvars = [unused_var() if t is None else cast(core.Var, getvar(t))
+  outvars = [core.dropvar if t is None else cast(core.Var, getvar(t))
              for t in out_tracers]
-  return new_jaxpr_eqn(invars, outvars, primitive, params)
+  return new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
 
 def tracers_to_jaxpr(
   in_tracers: List[JaxprTracer],
@@ -555,7 +539,7 @@ def tracers_to_jaxpr(
     recipe = t.recipe
     if isinstance(recipe, JaxprEqnRecipe):
       if recipe.eqn_id not in processed_eqn_ids:
-        eqns.append(recipe_to_eqn(lambda: core.dropvar, getvar, recipe))
+        eqns.append(recipe_to_eqn(getvar, recipe))
         processed_eqn_ids.add(recipe.eqn_id)
     elif isinstance(recipe, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):
@@ -577,7 +561,7 @@ def tracers_to_jaxpr(
   env_vars, env_vals = unzip2(env.items())
   const_vars, const_vals = unzip2(consts.items())
   # The env_vars are pre-pended to the invars
-  jaxpr = Jaxpr(const_vars, list(it.chain(env_vars, invars)), list(map(getvar, out_tracers)), eqns)
+  jaxpr = Jaxpr(const_vars, [*env_vars, *invars], map(getvar, out_tracers), eqns)
   core.skip_checks or core.check_jaxpr(jaxpr)
   return jaxpr, const_vals, env_vals
 
@@ -673,14 +657,16 @@ def _split_aval(unknown: bool, aval: AbstractValue) -> Tuple[AbstractValue, Abst
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
 
-remat_call_p = core.Primitive('remat_call')
-remat_call_p.call_primitive = True
-remat_call = partial(core.call_bind, remat_call_p)
-remat_call_p.def_custom_bind(remat_call)
+remat_call_p = core.CallPrimitive('remat_call')
+remat_call = remat_call_p.bind
 remat_call_p.def_impl(core.call_impl)
-remat_call_p.multiple_results = True
 
-def _remat_partial_eval(trace, _, f, tracers, params):
+# We reuse the _remat_partial_eval function both for remat_call and for
+# invertible_call, both of which in a sense stage out operations to
+# rematerialize values. The two usages differ only in details of what jaxpr eqn
+# and output tracers are formed. As a result we parameterize _remat_partial_eval
+# by a `process_out` function.
+def _remat_partial_eval(process_out, trace, _, f, tracers, params):
   concrete = params['concrete']
 
   # Unlike JaxprTrace.process_call, we want to form a jaxpr for the entirety of
@@ -703,25 +689,25 @@ def _remat_partial_eval(trace, _, f, tracers, params):
     jaxpr, eval_out_pvals, consts, env_tracers = trace.partial_eval(
       f, in_pvals, partial(remat_call_p.bind, **params))
 
+  # Convert consts to inputs, since they may contain Tracer instances.
+  jaxpr = convert_constvars_jaxpr(jaxpr)
+  const_tracers = map(trace.new_instantiated_const, consts)
+
   # Since we traced with everything marked as unknown, but we need to know which
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
-
-  in_avals = ([raise_to_shaped(t.pval.get_aval()) for t in env_tracers]
-              + [raise_to_shaped(pval.get_aval()) for pval in in_pvals])
+  in_avals = ([raise_to_shaped(t.pval.get_aval()) for t in const_tracers] +
+              [raise_to_shaped(t.pval.get_aval()) for t in env_tracers] +
+              [raise_to_shaped(pval.get_aval()) for pval in in_pvals])
   out_avals = [raise_to_shaped(abstract_unit if var is unitvar
                                else get_aval(var.val) if type(var) is Literal
                                else pval.get_aval())
                for var, pval in zip(jaxpr.outvars, eval_out_pvals)]
-  typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
-  in_unknowns = [not t.is_known() for t in it.chain(env_tracers, tracers)]
-  jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(typed_jaxpr, in_unknowns,
-                                                                instantiate=False,
-                                                                trace_type=trace.master.trace_type)
+  typed_jaxpr = core.TypedJaxpr(jaxpr, (), in_avals, out_avals)
+  in_unknowns = ([False] * len(consts) +
+                 [not t.is_known() for t in it.chain(env_tracers, tracers)])
+  jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
+      typed_jaxpr, in_unknowns, instantiate=False, trace_type=trace.master.trace_type)
   out_knowns = [not b for b in out_unknowns]
-
-  # First, we prune the jaxpr to be staged out not to have too many outputs.
-  typed_jaxpr = _dce_jaxpr(typed_jaxpr, out_unknowns, drop_outputs=True)
-
   out_known_pvals, out_unknown_pvals = _partition_knowns(eval_out_pvals, out_unknowns)
 
   # Next, we need values for the outputs that should be known. Since consts
@@ -732,43 +718,53 @@ def _remat_partial_eval(trace, _, f, tracers, params):
   # values. For the use case of inverse-mode ad in op-by-op ("eager mode")
   # evaluation, all the primal outputs should be concrete (thus not recomputed).
   to_compute = [type(pval[0]) is not ConcreteArray
-                for uk, pval in zip(out_unknowns, eval_out_pvals)
-                if not uk]
+                for uk, pval in zip(out_unknowns, eval_out_pvals) if not uk]
   num_outputs = len(jaxpr_unknown.out_avals)
   num_res = len(jaxpr_known.out_avals) - num_outputs
   jaxpr_known_nores = _dce_jaxpr(jaxpr_known, out_knowns + [False] * num_res, drop_outputs=True)
   jaxpr_known_comp = _dce_jaxpr(jaxpr_known_nores, to_compute)
   _, in_consts = unzip2(t.pval for t in it.chain(env_tracers, tracers))
-  reconstructed_consts = core.jaxpr_as_fun(jaxpr_known_comp)(*in_consts)
+  reconstructed_consts = core.jaxpr_as_fun(jaxpr_known_comp)(*consts, *in_consts)
   out_known_pvals = map(_reconstruct_pval, out_known_pvals, reconstructed_consts)
 
-  # Now that we have out_pvals, the rest is similar to JaxprTrace.process_call.
   # Known outputs should keep propagating as constants
   assert all(pv.is_known() for pv in out_known_pvals)
-  known_output_tracers = [trace.new_const(pval.get_known()) for pval in  out_known_pvals]
+  known_output_tracers = [trace.new_const(pval.get_known())
+                          for pval in out_known_pvals]
+  # Unknown outputs get wrapped in tracers with the appropriate recipe
+  unknown_output_tracers = [JaxprTracer(trace, out_pval, None)
+                            for out_pval in out_unknown_pvals]
+  out_tracers = _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
 
-  # Unknown outputs get wrapped in tracers with the appropriate recipe, as in JaxprTrace.process_call
-  const_tracers = map(trace.new_instantiated_const, consts)
-  unknown_output_tracers = [JaxprTracer(trace, out_pval, None) for out_pval in out_unknown_pvals]
-  lifted_jaxpr = convert_constvars_jaxpr(typed_jaxpr.jaxpr)
-  new_params = dict(params, call_jaxpr=lifted_jaxpr)
-  eqn = new_eqn_recipe(tuple(it.chain(const_tracers, env_tracers, instantiated_tracers)),
-                       unknown_output_tracers,
-                       remat_call_p,
-                       new_params)
-  for t in unknown_output_tracers: t.recipe = eqn
+  in_tracers = (*const_tracers, *env_tracers, *instantiated_tracers)
+  new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(typed_jaxpr.jaxpr))
+  return process_out(trace, in_tracers, out_tracers, new_params)
 
-  return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
-call_partial_eval_rules[remat_call_p] = _remat_partial_eval
+def _remat_make_output_tracers(_, in_tracers, out_tracers, params):
+  # dce jaxpr outputs
+  jaxpr = params['call_jaxpr']
+  out_unknowns = [not t.pval.is_known() for t in out_tracers]
+  typed_jaxpr = core.TypedJaxpr(jaxpr, (), [v.aval for v in jaxpr.invars],
+                                [v.aval for v in jaxpr.outvars])
+  new_jaxpr = _dce_jaxpr(typed_jaxpr, out_unknowns, drop_outputs=True).jaxpr
+  new_params = dict(params, call_jaxpr=new_jaxpr)
 
-def _partition_knowns(l, unknowns):
-  return ([e for e, unknown in zip(l, unknowns) if not unknown],
-          [e for e, unknown in zip(l, unknowns) if unknown])
+  # set up eqn for unknown outputs
+  unknown_out_tracers = [t for t in out_tracers if not t.pval.is_known()]
+  eqn = new_eqn_recipe(in_tracers, unknown_out_tracers, remat_call_p, new_params,
+                       source_info_util.current())
+  for t in unknown_out_tracers: t.recipe = eqn
+  return out_tracers
+call_partial_eval_rules[remat_call_p] = partial(
+    _remat_partial_eval, _remat_make_output_tracers)
 
-def _zip_knowns(kl, ul, unknowns):
-  ul_it = iter(ul)
-  kl_it = iter(kl)
-  return [next(ul_it) if unknown else next(kl_it) for unknown in unknowns]
+def _partition_knowns(pvals, unknowns: Sequence[bool]):
+  return ([e for e, unknown in zip(pvals, unknowns) if not unknown],
+          [e for e, unknown in zip(pvals, unknowns) if unknown])
+
+def _zip_knowns(known_list, unknown_list, which_unknown: Sequence[bool]):
+  known_iter, unknown_iter = iter(known_list), iter(unknown_list)
+  return [next(unknown_iter) if uk else next(known_iter) for uk in which_unknown]
 
 
 def _dce_jaxpr(typed_jaxpr: TypedJaxpr, outputs: Sequence[bool], drop_outputs=False) -> TypedJaxpr:
@@ -814,7 +810,7 @@ def _reconstruct_pval(pval1: PartialVal, const2: core.Value):
     return pval1
   else:
     if type(pv1) is ConcreteArray:
-      return PartialVal.known(pv1.val)
+      return PartialVal.known(pv1.val)  # pytype: disable=attribute-error
     else:
       return PartialVal.known(const2)
 

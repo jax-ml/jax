@@ -36,6 +36,7 @@ from ..interpreters import partial_eval as pe
 from ..interpreters import xla
 from ..interpreters import pxla
 from ..interpreters import ad
+from ..interpreters import invertible_ad as iad
 from ..interpreters import batching
 from ..interpreters import masking
 from ..util import cache, safe_zip, partial, prod, safe_map
@@ -194,6 +195,10 @@ def igammac(a: Array, x: Array) -> Array:
 def igamma_grad_a(a: Array, x: Array) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
   return igamma_grad_a_p.bind(a, x)
+
+def random_gamma_grad(a: Array, x: Array) -> Array:
+  r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
+  return random_gamma_grad_p.bind(a, x)
 
 def bessel_i0e(x: Array) -> Array:
   r"""Exponentially scaled modified Bessel function of order 0:
@@ -497,8 +502,9 @@ def conv_general_dilated(
       of length `n+2`.
     feature_group_count: integer, default 1. See XLA HLO docs.
     batch_group_count: integer, default 1. See XLA HLO docs.
-    precision: Optional. Either `None`, which means the default precision for
-      the backend, or a `Precision` enum value.
+    precision: Optional. Either ``None``, which means the default precision for
+      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
 
   Returns:
     An array containing the convolution result.
@@ -566,8 +572,9 @@ def dot(lhs: Array, rhs: Array, precision: Optional[PrecisionType] = None) -> Ar
   Args:
     lhs: an array of rank 1 or 2.
     rhs: an array of rank 1 or 2.
-    precision: Optional. Either `None`, which means the default precision for
-      the backend, or a `Precision` enum value.
+    precision: Optional. Either ``None``, which means the default precision for
+      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
 
   Returns:
     An array containing the product.
@@ -597,8 +604,9 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
     dimension_numbers: a tuple of tuples of the form
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`
-    precision: Optional. Either `None`, which means the default precision for
-      the backend, or a `Precision` enum value.
+    precision: Optional. Either ``None``, which means the default precision for
+      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
 
   Returns:
     An array containing the result.
@@ -1046,17 +1054,17 @@ def _get_monoid_reducer(monoid_op: Callable, x: Array) -> Optional[Callable]:
   dtype = _dtype(x)
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is add:
-      return aval.val == 0 and _reduce_sum
+      return onp.equal(aval.val, 0) and _reduce_sum
     if monoid_op is mul:
-      return aval.val == 1 and _reduce_prod
+      return onp.equal(aval.val, 1) and _reduce_prod
     elif monoid_op is bitwise_or and dtype == onp.bool_:
-      return aval.val == _get_max_identity(dtype) and _reduce_or
+      return onp.equal(aval.val, _get_max_identity(dtype)) and _reduce_or
     elif monoid_op is bitwise_and and dtype == onp.bool_:
-      return aval.val == _get_min_identity(dtype) and _reduce_and
+      return onp.equal(aval.val, _get_min_identity(dtype)) and _reduce_and
     elif monoid_op is max:
-      return aval.val == _get_max_identity(dtype) and _reduce_max
+      return onp.equal(aval.val, _get_max_identity(dtype)) and _reduce_max
     elif monoid_op is min:
-      return aval.val == _get_min_identity(dtype) and _reduce_min
+      return onp.equal(aval.val, _get_min_identity(dtype)) and _reduce_min
   return None
 
 def _get_max_identity(dtype: DType) -> Array:
@@ -1188,26 +1196,27 @@ def cumprod(operand: Array, axis: int) -> Array:
   """Computes a cumulative product along `axis`."""
   return cumprod_p.bind(operand, axis=int(axis))
 
-def sort(operand: Union[Array, Tuple[Array, ...]], dimension: int = -1
-         ) -> Union[Array, Tuple[Array, ...]]:
+def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
+         is_stable: bool = True) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_
   operator.
   """
-  if isinstance(operand, tuple):
+  if isinstance(operand, Sequence):
     if len(operand) == 0:
       raise TypeError("Sort requires at least one operand")
     dimension = _canonicalize_axis(dimension, len(operand[0].shape))
-    return tuple(sort_p.bind(*operand, dimension=dimension))
+    return tuple(sort_p.bind(*operand, dimension=dimension,
+                             is_stable=is_stable))
   else:
     dimension = _canonicalize_axis(dimension, len(operand.shape))
-    return sort_p.bind(operand, dimension=dimension)[0]
+    return sort_p.bind(operand, dimension=dimension, is_stable=is_stable)[0]
 
-def sort_key_val(keys: Array, values: Array,
-                 dimension: int = -1) -> Tuple[Array, Array]:
+def sort_key_val(keys: Array, values: Array, dimension: int = -1,
+                 is_stable: bool = True) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
   dimension = _canonicalize_axis(dimension, len(keys.shape))
-  k, v = sort_p.bind(keys, values, dimension=dimension)
+  k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable)
   return k, v
 
 def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
@@ -1345,8 +1354,9 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
-    precision: Optional. Either `None`, which means the default precision for
-      the backend, or a `Precision` enum value.
+    precision: Optional. Either ``None``, which means the default precision for
+      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
 
   Returns:
     An array containing the convolution result.
@@ -1376,8 +1386,9 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
     rhs_dilation: `None`, or a sequence of `n` integers, giving the
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
-    precision: Optional. Either `None`, which means the default precision for
-      the backend, or a `Precision` enum value.
+    precision: Optional. Either ``None``, which means the default precision for
+      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
 
   Returns:
     An array containing the convolution result.
@@ -1448,8 +1459,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       to the gradient-derived functions like keras.layers.Conv2DTranspose
       applied to the same kernel. For typical use in neural nets this is completely
       pointless and just makes input/output channel specification confusing.
-    precision: Optional. Either `None`, which means the default precision for
-      the backend, or a `Precision` enum value.
+    precision: Optional. Either ``None``, which means the default precision for
+      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
 
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
@@ -1895,9 +1907,14 @@ ad.defjvp_zero(is_finite_p)
 
 exp_p = standard_unop(_float | _complex, 'exp')
 ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
+iad.definverse(exp_p, lambda r, x: log(r))
+# For exp_p it is more efficient to use the reconstructed output for the vjp
+# rule instead of computing it again from the input.
+iad.primitive_ivjps[exp_p] = lambda x, y, ct: [[log(y[0])], [ct[0] * y[0]]]
 
 log_p = standard_unop(_float | _complex, 'log')
 ad.defjvp(log_p, lambda g, x: div(g, x))
+iad.definverse(log_p, lambda r, x: exp(r))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
 ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
@@ -1986,6 +2003,10 @@ def igammac_grada(g, a, x):
   return -igamma_grada(g, a, x)
 
 ad.defjvp(igammac_p, igammac_grada, igammac_gradx)
+
+random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad',
+  translation_rule=_broadcast_translate(partial(standard_translate,
+                                               'random_gamma_grad')))
 
 bessel_i0e_p = standard_unop(_float, 'bessel_i0e')
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
@@ -2104,6 +2125,7 @@ ad.defjvp(integer_pow_p, _integer_pow_jvp)
 _replace_zero = lambda x: select(eq(x, _const(x, 0)), _ones(x), x)
 
 not_p = standard_unop(_bool_or_int, 'not')
+ad.defjvp_zero(not_p)
 
 and_p = standard_naryop([_bool_or_int, _bool_or_int], 'and')
 ad.defjvp_zero(and_p)
@@ -2125,7 +2147,11 @@ def _add_transpose(t, x, y):
 add_p = standard_naryop([_num, _num], 'add')
 ad.defjvp(add_p, lambda g, x, y: _brcast(g, y), lambda g, x, y: _brcast(g, x))
 ad.primitive_transposes[add_p] = _add_transpose
-
+def _add_inverse(r, x, y):
+  xr = r - y
+  yr = r - x
+  return xr, yr
+iad.definverse(add_p, _add_inverse)
 
 def _sub_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases
@@ -2141,7 +2167,11 @@ ad.primitive_transposes[sub_p] = _sub_transpose
 
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defbilinear_broadcasting(_brcast, mul_p, mul, mul)
-
+def _mul_inverse(r, x, y):
+  xr = r / y
+  yr = r / x
+  return xr, yr
+iad.definverse(mul_p, _mul_inverse)
 
 def _div_transpose_rule(cotangent, x, y):
   assert ad.is_undefined_primal(x) and not ad.is_undefined_primal(y)
@@ -2747,7 +2777,8 @@ ad.deflinear(broadcast_p, lambda t, sizes: [_reduce_sum(t, range(len(sizes)))])
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
-  if type(operand) is xla.DeviceArray:
+  if type(operand) is xla.DeviceArray and onp.all(
+      onp.equal(operand.shape, onp.take(shape, broadcast_dimensions))):
     shape = _broadcast_in_dim_shape_rule(
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
@@ -4907,7 +4938,7 @@ def _sort_lt_comparator(*operands):
          else lt(xk, yk))
   return p
 
-def _sort_translation_rule(c, *operands, dimension):
+def _sort_translation_rule(c, *operands, dimension, is_stable):
   types = [c.get_shape(x).xla_element_type() for x in operands]
   subc = xla_bridge.make_computation_builder("sort_lt_comparator")
   params = [xb.parameter(subc, 2 * i + j, xc.Shape.array_shape(typ, ()))
@@ -4915,23 +4946,24 @@ def _sort_translation_rule(c, *operands, dimension):
   result = xla.lower_fun(_sort_lt_comparator,
                          multiple_results=False)(subc, *params)
   comparator = subc.build(result)
-  out = xops.Sort(c, operands, dimension=dimension, is_stable=True,
+  out = xops.Sort(c, operands, dimension=dimension, is_stable=is_stable,
                   comparator=comparator)
   return out if len(operands) != 1 else xops.Tuple(c, [out])
 
-def _sort_jvp(primals, tangents, *, dimension):
+def _sort_jvp(primals, tangents, *, dimension, is_stable):
   shape = primals[0].shape
   iotas = []
   for dim, size in enumerate(shape):
     dtype = onp.int32 if size < onp.iinfo(onp.int32).max else onp.int64
     iotas.append(broadcasted_iota(dtype, shape, dim))
-  primals = sort_p.bind(*(primals + (iotas[dimension],)), dimension=dimension)
+  primals = sort_p.bind(*(primals + (iotas[dimension],)), dimension=dimension,
+                        is_stable=is_stable)
   idx = tuple(primals[-1] if i == dimension else iotas[i]
               for i in range(len(shape)))
   tangents_out = tuple(t if type(t) is ad_util.Zero else t[idx] for t in tangents)
   return tuple(primals[:-1]), tangents_out
 
-def _sort_batch_rule(batched_args, batch_dims, *, dimension):
+def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable):
   prototype_arg, new_bdim = next(
     (a, b) for a, b in zip(batched_args, batch_dims) if b is not None)
   new_args = []
@@ -4943,7 +4975,8 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension):
       new_args.append(batching.moveaxis(arg, bdim, new_bdim))
   new_dimension = dimension + (new_bdim <= dimension)
   bdims = (new_bdim,) * len(new_args)
-  return sort_p.bind(*new_args, dimension=new_dimension), bdims
+  return (sort_p.bind(*new_args, dimension=new_dimension, is_stable=is_stable),
+          bdims)
 
 
 sort_p = Primitive('sort')

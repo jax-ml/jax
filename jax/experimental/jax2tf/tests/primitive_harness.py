@@ -17,7 +17,7 @@ Used to test various implementations of JAX primitives, e.g., against
 NumPy (lax_reference) or TensorFlow.
 """
 
-
+import operator
 from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence, Tuple, Union
 
 from absl import testing
@@ -25,6 +25,7 @@ from jax import config
 from jax import test_util as jtu
 from jax import dtypes
 from jax import lax
+from jax import numpy as jnp
 
 import numpy as np
 
@@ -136,8 +137,52 @@ def parameterized(harness_group: Iterable[Harness],
     for harness in harness_group
     if one_containing is None or one_containing in harness.name)
   if one_containing is not None:
+    if not cases:
+      raise ValueError(f"Cannot find test case with name containing {one_containing}."
+                       "Names are:"
+                       "\n".join([harness.name for harness in harness_group]))
     cases = cases[0:1]
   return testing.parameterized.named_parameters(*cases)
+
+
+_gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
+lax_gather = jtu.cases_from_list(
+  # Construct gather harnesses using take
+  [Harness(f"from_take_indices_shape={indices.shape}_axis={axis}",
+           lambda a, i, axis: jnp.take(a, i, axis=axis),
+           [_gather_input,
+            indices,
+            StaticArg(axis)])
+   for indices in [
+     np.array(2, dtype=np.int32),
+     np.array([2], dtype=np.int32),
+     np.array([2, 4], dtype=np.int32),
+     np.array([[2, 4], [5, 6]], dtype=np.int32)
+   ]
+   for axis in [0, 1, 2]] +
+
+  # Directly from lax.gather in lax_test.py.
+  [Harness(
+    f"_shape={shape}_idxs_shape={idxs.shape}_dnums={dnums}_slice_sizes={slice_sizes}",
+    lambda op, idxs, dnums, slice_sizes: lax.gather(op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
+    [RandArg(shape, np.float32),
+     idxs, StaticArg(dnums), StaticArg(slice_sizes)])
+    for shape, idxs, dnums, slice_sizes in [
+    ((5,), np.array([[0], [2]]), lax.GatherDimensionNumbers(
+      offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
+     (1,)),
+    ((10,), np.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
+      offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
+     (2,)),
+    ((10, 5,), np.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
+      offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
+     (1, 3)),
+    ((10, 5), np.array([[0, 2], [1, 0]]), lax.GatherDimensionNumbers(
+      offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1)),
+     (1, 3)),
+    ]
+  ]
+)
 
 
 lax_pad = jtu.cases_from_list(
@@ -150,13 +195,66 @@ lax_pad = jtu.cases_from_list(
   for dtype in default_dtypes
   for pads in [
     [(0, 0, 0), (0, 0, 0)],  # no padding
-    [(1, 1, 0), (2, 2, 0)],  # edge padding
+    [(1, 1, 0), (2, 2, 0)],  # only positive edge padding
     [(1, 2, 1), (0, 1, 0)],  # edge padding and interior padding
     [(0, 0, 0), (-1, -1, 0)],  # negative padding
     [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
     [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
   ]
 )
+
+lax_slice = jtu.cases_from_list(
+  Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
+          lax.slice,
+          [RandArg(shape, dtype),  # type: ignore
+           StaticArg(start_indices),  # type: ignore
+           StaticArg(limit_indices),  # type: ignore
+           StaticArg(strides)],  # type: ignore
+          start_indices=start_indices,  # type: ignore
+          limit_indices=limit_indices)  # type: ignore
+  for shape, start_indices, limit_indices, strides in [
+    [(3,), (1,), (2,), None],
+    [(7,), (4,), (7,), None],
+    [(5,), (1,), (5,), (2,)],
+    [(8,), (1,), (6,), (2,)],
+    [(5, 3), (1, 1), (3, 2), None],
+    [(5, 3), (1, 1), (3, 1), None],
+    [(7, 5, 3), (4, 0, 1), (7, 1, 3), None],
+    [(5, 3), (1, 1), (2, 1), (1, 1)],
+    [(5, 3), (1, 1), (5, 3), (2, 1)],
+  ]
+  for dtype in [np.float32]
+)
+
+# Like lax_slice, but (a) make the start_indices dynamic arg, and no strides.
+lax_dynamic_slice = [
+  Harness(harness.name,
+          lax.dynamic_slice,
+          [harness.arg_descriptors[0],
+           np.array(list(start_indices)),
+           StaticArg(tuple(map(operator.sub, limit_indices, start_indices)))])
+  for harness in lax_slice
+  for start_indices in [harness.params["start_indices"]]
+  for limit_indices in [harness.params["limit_indices"]]
+]
+
+lax_dynamic_update_slice = jtu.cases_from_list(
+  Harness((f"_operand={jtu.format_shape_dtype_string(shape, dtype)}"  # type: ignore
+           f"_update={jtu.format_shape_dtype_string(update_shape, update_dtype)}"
+           f"_start_indices={start_indices}"),
+          lax.dynamic_update_slice,
+          [RandArg(shape, dtype),  # type: ignore
+           RandArg(update_shape, update_dtype),  # type: ignore
+           np.array(start_indices)])  # type: ignore
+  for shape, start_indices, update_shape in [
+    [(3,), (1,), (1,)],
+    [(5, 3), (1, 1), (3, 1)],
+    [(7, 5, 3), (4, 1, 0), (2, 0, 1)],
+  ]
+  for dtype, update_dtype in [
+    (np.float32, np.float32),
+    (np.float64, np.float32)
+  ])
 
 lax_squeeze = jtu.cases_from_list(
   Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_dimensions={dimensions}",  # type: ignore

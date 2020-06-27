@@ -190,6 +190,8 @@ from .lax import (
   pow,
   pow_p,
   prod,
+  random_gamma_grad,
+  random_gamma_grad_p,
   real,
   real_p,
   reciprocal,

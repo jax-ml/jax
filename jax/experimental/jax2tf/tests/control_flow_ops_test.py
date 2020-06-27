@@ -55,6 +55,13 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
       self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
 
+  def test_cond_partial_eval(self):
+    def f(x):
+      res = lax.cond(True, lambda op: op * x, lambda op: op + x, x)
+      return res
+    with jax2tf.enable_jit():
+      self.ConvertAndCompare(jax.grad(f), 1.)
+
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
          with_function=with_function)
@@ -101,12 +108,11 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     with jax2tf.enable_jit():
       self.ConvertAndCompare(func, cond_const, with_function=with_function)
 
-
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
          with_function=with_function)
     for with_function in [False, True]))
-  def test_while_batched(self, with_function=True):
+  def test_while_batched_cond(self, with_function=True):
     """A while with a single carry"""
     def product(x, y):
       # Equivalent to "x * y" implemented as:
@@ -145,6 +151,20 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     arg = np.arange(10, dtype=np.float32)
     with jax2tf.enable_jit():
       self.ConvertAndCompare(f_jax, arg, arg, with_function=with_function)
+
+  def test_scan_partial_eval(self, with_function=False):
+    def f_jax(xs, ys):
+      body_const = np.ones((2, ), dtype=np.float32)  # Test constant capture
+      def body(res0, inputs):
+        x, y = inputs
+        return res0 + x * y, body_const
+      c_out, _ = lax.scan(body, 0., (xs, ys))
+      return c_out
+
+    arg = np.arange(10, dtype=np.float32)
+    print(jax.make_jaxpr(jax.grad(f_jax))(arg, arg))
+    with jax2tf.enable_jit():
+      self.ConvertAndCompare(jax.grad(f_jax), arg, arg, with_function=with_function)
 
 
 if __name__ == "__main__":

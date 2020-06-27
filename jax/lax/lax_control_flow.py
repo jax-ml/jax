@@ -29,6 +29,7 @@ import numpy as onp
 import jax
 from jax import core
 from jax import dtypes
+from jax import source_info_util
 from jax import util
 from jax.lax import lax
 from jax import linear_util as lu
@@ -620,6 +621,17 @@ def cond(*args, **kwargs):
 
   Pred must be a scalar type.
 
+  Note that true_fun/false_fun may not need to refer to an `operand` to compute
+  their result, but one must still be provided to the `cond` call and be
+  accepted by both the branch functions, e.g.:
+
+      jax.lax.cond(
+          get_predicate_value(),
+          lambda _: 23,
+          lambda _: 42,
+          operand=None)
+
+
   Arguments:
     pred: Boolean scalar type, indicating which branch function to
       apply. Collections (list, tuple) are not supported.
@@ -884,7 +896,8 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   linear_2 = (False,) * num_res + linear
   params = dict(branches=branches_2, linear=linear_2)
   eqn = pe.new_eqn_recipe(
-      [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params)
+      [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
+      source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1011,21 +1024,60 @@ def _cond_transpose(cts, *args, branches, linear):
   assert next(out_iter, None) is None
   return [None] + out
 
+def _avals_short(avals):
+  to_str = lambda aval: getattr(aval, 'str_short', partial(str, aval))()
+  return ' '.join(_map(to_str, avals))
+
+def _cond_typecheck(*avals, branches, linear):
+  core.typecheck_assert(
+      len(branches) > 0,
+      'cond requires at least one branch function')
+  core.typecheck_assert(
+      len(linear) + 1 == len(avals),
+      f'cond called with {len(linear)} linear flags for '
+      f'{len(avals) - 1} non-predicate operands')
+
+  jaxpr0 = branches[0]
+  jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
+  jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
+
+  for i, jaxpr in enumerate(branches[1:]):
+    core.typecheck_assert(
+        len(jaxpr0.in_avals) == len(jaxpr.in_avals),
+        f'cond branch 0 takes {len(jaxpr0.in_avals)} inputs, '
+        f'branch {i+1} takes {len(jaxpr.in_avals)}')
+    core.typecheck_assert(
+        len(jaxpr0.out_avals) == len(jaxpr.out_avals),
+        f'cond branch 0 outputs {len(jaxpr0.out_avals)} values, '
+        f'branch {i+1} outputs {len(jaxpr.out_avals)}')
+    core.typecheck_assert(
+        all(_map(core.typematch, jaxpr0.in_avals, jaxpr.in_avals)),
+        f'cond branches 0 and {i+1} have mismatching input types: '
+        f'{jaxpr0_in_avals_str} vs {_avals_short(jaxpr.in_avals)}')
+    core.typecheck_assert(
+        all(_map(core.typematch, jaxpr0.out_avals, jaxpr.out_avals)),
+        f'cond branches 0 and {i+1} have mismatching output types: '
+        f'{jaxpr0_out_avals_str} vs {_avals_short(jaxpr.out_avals)}')
+
+  core.typecheck_assert(
+      len(avals) == 1 + len(jaxpr0.in_avals),
+      f'cond called with {len(avals) - 1} non-predicate operands, '
+      f'but branches take {len(jaxpr0.in_avals)} inputs')
+
+  index_aval, *op_avals = avals
+  core.typecheck_assert(
+      index_aval.dtype == onp.int32,
+      f'cond called with index of type {index_aval.dtype} instead of int32')
+  core.typecheck_assert(
+      all(_map(core.typecompat, jaxpr0.in_avals, op_avals)),
+      f'cond branches take input types {jaxpr0_in_avals_str}, '
+      f'called with operands of type {_avals_short(op_avals)}')
+
 def cond_bind(*args, branches, linear):
   if not core.skip_checks:
-    assert len(branches) > 0
-    assert len(linear) + 1 == len(args)
-    assert len(args) == 1 + len(branches[0].in_avals)
-    jaxpr0 = branches[0]
-    for jaxpr in branches[1:]:
-      assert len(jaxpr0.in_avals) == len(jaxpr.in_avals)
-      assert len(jaxpr0.out_avals) == len(jaxpr.out_avals)
-      assert all(_map(typematch, jaxpr0.in_avals, jaxpr.in_avals))
-      assert all(_map(typematch, jaxpr0.out_avals, jaxpr.out_avals))
-    index, *ops = args
-    assert dtypes.result_type(index) == onp.int32
+    avals = _map(core.get_aval, args)
+    _cond_typecheck(*avals, branches=branches, linear=linear)
     for jaxpr in branches:
-      assert all(_map(typecheck, jaxpr.in_avals, ops))
       core.check_jaxpr(jaxpr.jaxpr)
   return core.Primitive.bind(cond_p, *args, branches=branches, linear=linear)
 
@@ -1039,6 +1091,7 @@ ad.primitive_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.primitive_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
+core.custom_typechecks[cond_p] = _cond_typecheck
 
 
 ### scan
@@ -1374,7 +1427,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                           out_tracers, scan_p,
                           dict(reverse=reverse, length=length, jaxpr=jaxpr_2_opt,
                                num_consts=num_consts_2,
-                               num_carry=num_carry, linear=tuple(linear_2)))
+                               num_carry=num_carry, linear=tuple(linear_2)),
+                          source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers
 
@@ -1498,18 +1552,9 @@ def _scan_batching_rule(args, dims, reverse, length, jaxpr, num_consts,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-def _scan_shape_rule(shapes, reverse, length, jaxpr,
-                     num_consts, num_carry, linear):
-  const_shexprs, init_shexprs, xs_shexprs = split_list(shapes, [num_consts, num_carry])
-  _, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  ys_shapes = [(length,) + tuple(y_aval.shape) for y_aval in y_avals]
-  return init_shexprs + ys_shapes
-
-def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, reverse, length,
+def _scan_masking_rule(padded_vals, logical_shapes, reverse, length,
                        jaxpr, num_consts, num_carry, linear):
-  out_shape = _scan_shape_rule(shape_exprs, reverse, length, jaxpr,
-                               num_consts, num_carry, linear)
-  dynamic_length = length.evaluate(shape_envs.logical)
+  dynamic_length, = masking.shape_as_value((length,))
   masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
   max_length, = {x.shape[0] for x in xs}
@@ -1519,7 +1564,7 @@ def _scan_masking_rule(shape_envs, padded_vals, shape_exprs, reverse, length,
       reverse=reverse, length=max_length, jaxpr=masked_jaxpr,
       num_consts=1 + num_consts, num_carry=1 + num_carry,
       linear=tuple([False] + const_linear + [False] + init_linear + xs_linear))
-  return out_vals[1:], out_shape
+  return out_vals[1:]
 
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   fun = core.jaxpr_as_fun(jaxpr)
@@ -1538,19 +1583,41 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
-def scan_bind(*args, reverse, length, num_consts, num_carry, jaxpr, linear):
+def _scan_typecheck(*avals, reverse, length, num_consts, num_carry, jaxpr,
+                    linear):
+  core.typecheck_assert(
+      len(linear) == len(avals),
+      f'scan called with {len(linear)} linear flags for {len(avals)} operands')
+
+  const_avals, init_avals, x_avals = split_list(avals, [num_consts, num_carry])
+  const_avals_jaxpr, init_avals_jaxpr, x_avals_jaxpr = split_list(
+      jaxpr.in_avals, [num_consts, num_carry])
+  carry_avals_jaxpr, _ = split_list(jaxpr.out_avals, [num_carry])
+  x_avals_mapped = _map(partial(core.mapped_aval, length), x_avals)
+
+  core.typecheck_assert(
+      all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)),
+      f'scan input carry input and output types mismatch: '
+      f'{_avals_short(init_avals_jaxpr)} vs {_avals_short(carry_avals_jaxpr)}')
+  core.typecheck_assert(
+      all(_map(core.typecompat, const_avals_jaxpr, const_avals)),
+      f'scan jaxpr takes input const types {_avals_short(const_avals_jaxpr)}, '
+      f'called with consts of type {_avals_short(const_avals)}')
+  core.typecheck_assert(
+      all(_map(core.typecompat, init_avals_jaxpr, init_avals)),
+      f'scan jaxpr takes input carry types {_avals_short(init_avals_jaxpr)}, '
+      f'called with initial carry of type {_avals_short(init_avals)}')
+  core.typecheck_assert(
+      all(_map(core.typecompat, x_avals_jaxpr, x_avals_mapped)),
+      f'scan jaxpr takes input sequence types {_avals_short(x_avals_jaxpr)}, '
+      f'called with sequence of type {_avals_short(x_avals)}')
+
+def scan_bind(*args, **params):
   if not core.skip_checks:
-    assert len(linear) == len(args)
-    consts, init, xs = split_list(args, [num_consts, num_carry])
-    consts_avals, init_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
-    assert all(_map(typecheck, consts_avals, consts)), (consts, consts_avals)
-    assert all(_map(typecheck, init_avals, init))
-    carry_avals, _ = split_list(jaxpr.out_avals, [num_carry])
-    assert all(_map(typematch, init_avals, carry_avals))
-    core.check_jaxpr(jaxpr.jaxpr)
-  return core.Primitive.bind(scan_p, *args, reverse=reverse, length=length,
-                             jaxpr=jaxpr, num_consts=num_consts,
-                             num_carry=num_carry, linear=linear)
+    avals = _map(core.get_aval, args)
+    _scan_typecheck(*avals, **params)
+    core.check_jaxpr(params['jaxpr'].jaxpr)
+  return core.Primitive.bind(scan_p, *args, **params)
 
 scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
@@ -1564,7 +1631,8 @@ pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.initial_style_translations[scan_p] = \
     xla.lower_fun_initial_style(_scan_impl)
 batching.primitive_batchers[scan_p] = _scan_batching_rule
-masking.shape_parameterized_primitive_rules[scan_p] = _scan_masking_rule
+masking.masking_rules[scan_p] = _scan_masking_rule
+core.custom_typechecks[scan_p] = _scan_typecheck
 
 
 def map(f, xs):

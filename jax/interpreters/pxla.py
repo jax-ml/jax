@@ -11,24 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Implementation of pmap and related functionality.
+"""Implementation of pmap and related functionality."""
 
-Note on ShardingSpecs and spec_to_indices():
-A ShardingSpec describes at a high level how a logical array is sharded across
-devices (each ShardedDeviceArray has a ShardingSpec, and ShardingSpecs also
-describe how to shard inputs to a parallel computation). spec_to_indices()
-encodes exactly how a given ShardingSpec is translated to device buffers,
-i.e. how the sharded array is "laid out" across devices. Given a sequence of
-devices, we shard the data across the devices in row-major order, with
-replication treated as an extra inner dimension.
-
-For example, given the logical data array [1, 2, 3, 4], if we were to partition
-this array 4 ways with a replication factor of 2, for a total of 8 devices, the
-data on each device would be: [1, 1], [2, 2], [3, 3], [4, 4].
-
-This encoding is assumed by various parts of the system, e.g. generating
-replica groups for collective operations.
-"""
+# A ShardingSpec describes at a high level how a logical array is sharded across
+# devices (each ShardedDeviceArray has a ShardingSpec, and ShardingSpecs also
+# describe how to shard inputs to a parallel computation). spec_to_indices()
+# encodes exactly how a given ShardingSpec is translated to device buffers, i.e.
+# how the sharded array is "laid out" across devices. Given a sequence of
+# devices, we shard the data across the devices in row-major order, with
+# replication treated as an extra inner dimension.
+#
+# For example, given the logical data array [1, 2, 3, 4], if we were to
+# partition this array 4 ways with a replication factor of 2, for a total of 8
+# devices, the data on each device would be: [1, 1], [2, 2], [3, 3], [4, 4].
+#
+# This encoding is assumed by various parts of the system, e.g. generating
+# replica groups for collective operations.
 
 from collections import defaultdict
 from contextlib import contextmanager
@@ -45,6 +43,7 @@ from ..config import flags
 from .. import core
 from .. import linear_util as lu
 from .. import lazy
+from .. import source_info_util
 from ..abstract_arrays import (ConcreteArray, ShapedArray, array_types,
                                raise_to_shaped)
 from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
@@ -63,7 +62,7 @@ xops = xc.ops
 
 FLAGS = flags.FLAGS
 
-_map = safe_map
+unsafe_map, map = map, safe_map
 
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
@@ -119,7 +118,7 @@ class ShardingSpec:
 
   def __repr__(self):
     return ("ShardingSpec(shards_per_axis=%s, is_axis_materialized=%s, "
-            "replication_factor=%s)" %
+            "replication_factors=%s)" %
             (self.shards_per_axis, self.is_axis_materialized,
              self.replication_factors))
 
@@ -185,7 +184,7 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def _axis_indices(axis_size, num_shards, is_materialized):
   if not is_materialized:
-    assert axis_size == num_shards
+    assert axis_size == num_shards, f'{axis_size} != {num_shards}'
     return list(range(axis_size))
   if num_shards == 1:
     return [slice(None)]
@@ -470,7 +469,8 @@ def _axis_index_bind(*, axis_name):
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
   eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
                           dict(nreps=nreps, sizes=sizes,
-                               soft_size=frame.soft_size, axis_name=axis_name))
+                               soft_size=frame.soft_size, axis_name=axis_name),
+                          source_info_util.current())
   out_tracer.recipe = eqn
 
   if not frame.soft_trace:
@@ -661,24 +661,34 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   inner_pmap = len(_thread_local_state.dynamic_axis_env) > 0
 
   # Determine global_axis_size for use in AxisEnv.
-  must_run_on_all_devices = True
-  if devices:
-    assert global_axis_size is None  # Checked in api.py
-    global_axis_size = len(devices)
-    must_run_on_all_devices = False
-  elif xb.host_count() > 1:
-    if global_axis_size is None:
-      if inner_pmap:
-        raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
-      global_axis_size = axis_size * xb.host_count()
-  else:
-    if global_axis_size is not None:
-      if global_axis_size != axis_size:
-        raise ValueError(
-            "Specified axis_size {} doesn't match received axis_size {}.".format(
-                global_axis_size, axis_size))
-    else:
+  if xb.host_count() > 1 and global_axis_size is None and inner_pmap:
+    raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
+  if (xb.host_count() == 1 and global_axis_size is not None and
+      global_axis_size != axis_size):
+    raise ValueError(
+        f"Specified axis_size {global_axis_size} doesn't match received "
+        f"axis_size {axis_size}.")
+
+  must_run_on_all_devices = False
+  no_nested_sharding = False
+  if global_axis_size is None:
+    if xb.host_count() == 1:
       global_axis_size = axis_size
+    elif devices:
+      # This allows each host in a multi-host pmap to run on a different number
+      # of devices, but precludes nested sharding (i.e. inner pmaps or
+      # sharded_jits).
+      global_axis_size = len(devices)
+      no_nested_sharding = True
+    else:
+      # This assumes all hosts run on the same number of devices. We make sure
+      # this assumption is true by requiring that the pmap is run on all devices
+      # (and making the further assumption that each host has the same number of
+      # devices). Nested sharding is ok in this case.
+      global_axis_size = axis_size * xb.host_count()
+      assert all(len(xb.local_devices(host_id)) == xb.local_device_count()
+                 for host_id in xb.host_ids())
+      must_run_on_all_devices = True
 
   if devices:
     local_devices = [d for d in devices if d.host_id == xb.host_id()]
@@ -736,7 +746,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   num_local_shards = num_local_replicas * num_partitions
   num_global_shards = num_global_replicas * num_partitions
 
-  if (xb.host_count() > 1 and not inner_pmap and
+  # This error checking logic is all screwed up for nested pmaps, luckily we
+  # won't have to handle this case with omnistaging.
+  if (not inner_pmap and
       must_run_on_all_devices and num_local_shards != xb.local_device_count()):
     if num_local_shards == axis_size:
       raise ValueError(
@@ -752,6 +764,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
         f"num_partitions={num_partitions}, and "
         f"num_local_devices={xb.local_device_count()}")
 
+  if (not inner_pmap and
+      no_nested_sharding and (jaxpr_replicas > 1 or num_partitions > 1)):
+    raise ValueError(
+      f"On multi-host platforms, pmapped functions that both have `devices` "
+      f"specified and contain an inner_pmap or sharded_jit must specify an "
+      f"`axis_size` (or remove the `devices` argument). Got nested_replicas="
+      f"{jaxpr_replicas} and nested_partitions={num_partitions}")
+
   log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
               f"Compiling {fun.__name__} for {num_global_shards} devices with "
@@ -763,7 +783,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   tuple_args = len(sharded_avals) > 100  # pass long arg lists as tuple for TPU
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
-  xla_consts = _map(partial(xb.constant, c), consts)
+  xla_consts = map(partial(xb.constant, c), consts)
   replicated = [not m for m in mapped_invars]
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args, replicated,
                                     arg_parts)
@@ -1093,26 +1113,27 @@ def execute_replicated(compiled,
   return out_handler(out_bufs)
 
 
-xla_pmap_p = core.Primitive('xla_pmap')
-xla_pmap_p.map_primitive = True
-xla_pmap_p.multiple_results = True
-xla_pmap = partial(core.map_bind, xla_pmap_p)
-xla_pmap_p.def_custom_bind(xla_pmap)
+xla_pmap_p = core.MapPrimitive('xla_pmap')
+xla_pmap = xla_pmap_p.bind
 xla_pmap_p.def_impl(xla_pmap_impl)
 pe.staged_out_calls.add(xla_pmap_p)
+
+# Set param update handlers to update `donated_invars` just like xla_call_p
+pe.call_param_updaters[xla_pmap_p] = pe.call_param_updaters[xla.xla_call_p]
+ad.call_param_updaters[xla_pmap_p] = ad.call_param_updaters[xla.xla_call_p]
+ad.call_transpose_param_updaters[xla_pmap_p] = \
+    ad.call_transpose_param_updaters[xla.xla_call_p]
 
 def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name,
                            call_jaxpr, *, backend=None, mapped_invars,
                            donated_invars):
-  if any(donated_invars):
-    raise ValueError("Donating buffers passed to a a pmap nested inside a jit "
-                     "or another pmap is not supported.")
+  del donated_invars  # Unused.
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  if axis_env.devices is not None or (axis_env.names and devices is not None):
-    raise ValueError("Nested pmaps with explicit devices argument.")
+  if axis_env.names and devices is not None:
+    raise ValueError("Nested pmap with explicit devices argument.")
   if global_axis_size is None:
     global_axis_size = axis_size
   new_env = xla.extend_axis_env(axis_env, axis_name, global_axis_size)

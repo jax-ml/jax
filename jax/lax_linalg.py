@@ -265,10 +265,10 @@ def eigh_jvp_rule(primals, tangents, lower):
   a, = primals
   a_dot, = tangents
 
-  v, w = eigh_p.bind(symmetrize(a), lower=lower)
+  v, w_real = eigh_p.bind(symmetrize(a), lower=lower)
 
   # for complex numbers we need eigenvalues to be full dtype of v, a:
-  w = w.astype(a.dtype)
+  w = w_real.astype(a.dtype)
   eye_n = jnp.eye(a.shape[-1], dtype=a.dtype)
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
   Fmat = jnp.reciprocal(eye_n + w[..., jnp.newaxis, :] - w[..., jnp.newaxis]) - eye_n
@@ -277,8 +277,8 @@ def eigh_jvp_rule(primals, tangents, lower):
                 precision=lax.Precision.HIGHEST)
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
   dv = dot(v, jnp.multiply(Fmat, vdag_adot_v))
-  dw = jnp.diagonal(vdag_adot_v, axis1=-2, axis2=-1)
-  return (v, w), (dv, dw)
+  dw = jnp.real(jnp.diagonal(vdag_adot_v, axis1=-2, axis2=-1))
+  return (v, w_real), (dv, dw)
 
 def eigh_batching_rule(batched_args, batch_dims, lower):
   x, = batched_args
@@ -645,7 +645,7 @@ lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.translations[lu_p] = xla.lower_fun(_lu_python)
+xla.translations[lu_p] = xla.lower_fun(_lu_python, multiple_results=True)
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 

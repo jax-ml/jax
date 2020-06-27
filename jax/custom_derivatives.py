@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial, update_wrapper, reduce
+from functools import update_wrapper, reduce
 import inspect
 import operator as op
 
@@ -262,25 +262,30 @@ def _flatten_jvp(in_tree, *args):
       raise TypeError(msg.format('\n'.join(disagreements)))
   yield primals_out + tangents_out, out_tree
 
-def _custom_jvp_call_bind(prim, fun, jvp, *args):
-  args = map(core.full_lower, args)
-  top_trace = core.find_top_trace(args)
-  if top_trace is None:
-    with core.new_sublevel():
-      outs = prim.impl(fun, jvp, *args)
-  else:
-    tracers = map(top_trace.full_raise, args)
-    outs = top_trace.process_custom_jvp_call(prim, fun, jvp, tracers)
-  return map(core.full_lower, outs)
+class CustomJVPCallPrimitive(core.CallPrimitive):
+  def bind(self, fun, jvp, *args):
+    args = map(core.full_lower, args)
+    top_trace = core.find_top_trace(args)
+    fun, env_trace_todo1 = core.process_env_traces(
+        fun, self, top_trace and top_trace.level, ())
+    jvp, env_trace_todo2 = core.process_env_traces(
+        jvp, self, top_trace and top_trace.level, ())
+    if top_trace is None:
+      with core.new_sublevel():
+        outs = self.impl(fun, jvp, *args)
+    else:
+      tracers = map(top_trace.full_raise, args)
+      outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)
+    _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
+    if env_trace_todo:
+      raise core.UnexpectedTracerError
+    return map(core.full_lower, outs)
 
-def _custom_jvp_call_impl(fun, _, *args):
-  return fun.call_wrapped(*args)
+  def impl(self, fun, _, *args):
+    return fun.call_wrapped(*args)
 
-custom_jvp_call_p = core.Primitive('custom_jvp_call')
-custom_jvp_call_p.multiple_results = True
-custom_jvp_call = partial(_custom_jvp_call_bind, custom_jvp_call_p)
-custom_jvp_call_p.def_custom_bind(custom_jvp_call)
-custom_jvp_call_p.def_impl(_custom_jvp_call_impl)
+custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
+custom_jvp_call = custom_jvp_call_p.bind
 
 
 def custom_jvp_call_jaxpr(fun, jvp, *args):
@@ -501,28 +506,25 @@ def _flatten_bwd(in_tree, out_trees, *args):
     raise TypeError(msg.format(in_tree2, in_tree)) from None
   yield cts_in
 
-def _custom_vjp_call_bind(prim, fun, fwd, bwd, *args, out_trees):
-  args = map(core.full_lower, args)
-  top_trace = core.find_top_trace(args)
-  if top_trace is None:
-    with core.new_sublevel():
-      outs = prim.impl(fun, fwd, bwd, *args, out_trees=out_trees)
-  else:
-    tracers = map(top_trace.full_raise, args)
-    outs = top_trace.process_custom_vjp_call(prim, fun, fwd, bwd, tracers,
-                                             out_trees=out_trees)
-    outs = map(core.full_lower, outs)
-  return map(core.full_lower, outs)
 
-def _custom_vjp_call_impl(fun, fwd, bwd, *args, out_trees):
-  del fwd, bwd, out_trees  # Unused.
-  return fun.call_wrapped(*args)
+class CustomVJPCallPrimitive(core.CallPrimitive):
+  def bind(self, fun, fwd, bwd, *args, out_trees):
+    args = map(core.full_lower, args)
+    top_trace = core.find_top_trace(args)
+    if top_trace is None:
+      outs = fun.call_wrapped(*args)
+    else:
+      tracers = map(top_trace.full_raise, args)
+      outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers,
+                                               out_trees=out_trees)
+    return map(core.full_lower, outs)
 
-custom_vjp_call_p = core.Primitive('custom_vjp_call')
-custom_vjp_call_p.multiple_results = True
-custom_vjp_call = partial(_custom_vjp_call_bind, custom_vjp_call_p)
-custom_vjp_call_p.def_custom_bind(custom_vjp_call)
-custom_vjp_call_p.def_impl(_custom_vjp_call_impl)
+  def impl(self, fun, fwd, bwd, *args, out_trees):
+    del fwd, bwd, out_trees
+    return fun.call_wrapped(*args)
+
+custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
+custom_vjp_call = custom_vjp_call_p.bind
 
 def custom_vjp_call_jaxpr(fun, fwd, bwd, *args, out_trees):
   in_avals = [raise_to_shaped(core.get_aval(x)) for x in args]
@@ -588,3 +590,5 @@ batching.primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vm
 
 xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_vjp_call_jaxpr_impl)
+
+batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp

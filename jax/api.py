@@ -61,6 +61,8 @@ from .interpreters import ad
 from .interpreters import batching
 from .interpreters import parallel
 from .interpreters import masking
+from .interpreters import invertible_ad as iad
+from .interpreters.invertible_ad import custom_ivjp
 from .custom_derivatives import custom_jvp, custom_vjp
 from .config import flags, config, bool_env
 
@@ -106,7 +108,8 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
       function with different values for these constants will trigger
       recompilation. If the jitted function is called with fewer positional
       arguments than indicated by ``static_argnums`` then an error is raised.
-      Defaults to ().
+      Arguments that are not arrays or containers thereof must be marked as
+      static. Defaults to ().
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via :py:func:`jax.devices`.) The default is inherited from
@@ -167,8 +170,6 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
                        name=flat_fun.__name__, donated_invars=donated_invars)
     return tree_unflatten(out_tree(), out)
 
-  jitted_name = "jit({}, static_argnums={})"
-  f_jitted.__name__ = jitted_name.format(f_jitted.__name__, static_argnums)
   return f_jitted
 
 @contextmanager
@@ -957,7 +958,9 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   Args:
     fun: Function to be mapped over argument axes. Its arguments and return
       value should be arrays, scalars, or (nested) standard Python containers
-      (tuple/list/dict) thereof.
+      (tuple/list/dict) thereof. Positional arguments indicated by
+      ``static_broadcasted_argnums`` can be anything at all, provided they are
+      hashable and have an equality operation defined.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
     in_axes: A nonnegative integer, None, or nested Python container thereof
@@ -970,7 +973,8 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
       trigger recompilation. If the pmaped function is called with fewer
       positional arguments than indicated by ``static_argnums`` then an error is
       raised. Each of the static arguments will be broadcasted to all devices.
-      Defaults to ().
+      Arguments that are not arrays or containers thereof must be marked as
+      static. Defaults to ().
     devices: This is an experimental feature and the API is likely to change.
       Optional, a sequence of Devices to map over. (Available devices can be
       retrieved via jax.devices()). If specified, the size of the mapped axis
@@ -1111,6 +1115,10 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   >>> print(f2(np.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
+  # axis_size is an optional integer representing the global axis size.
+  # The aggregate size (across all hosts) size of the mapped axis must match
+  # the given value.
+
   _check_callable(fun)
   axis_name = _TempAxisName(fun) if axis_name is None else axis_name
   static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums)
@@ -1119,13 +1127,6 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
 
   if any(axis != 0 for axis in tree_leaves(in_axes)):
     raise ValueError(f"pmap in_axes leaves must be 0 or None, got {in_axes}")
-
-  # axis_size is an optional integer representing the global axis size.
-  # The aggregate size (across all hosts) size of the mapped axis must match
-  # the given value. This argument is mutually exclusive with ``devices``.
-  if axis_size is not None and devices is not None:
-    msg = "pmap got devices and axis_size. They're mutually exclusive."
-    raise ValueError(msg)
 
   @wraps(fun)
   def f_pmapped(*args, **kwargs):
@@ -1153,31 +1154,25 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     out = pxla.xla_pmap(
-        flat_fun,
-        *args,
-        backend=backend,
-        axis_name=axis_name,
-        axis_size=local_axis_size,
-        global_axis_size=axis_size,
-        devices=tuple(devices) if devices is not None else devices,
-        name=flat_fun.__name__,
+        flat_fun, *args, backend=backend, axis_name=axis_name,
+        axis_size=local_axis_size, global_axis_size=axis_size,
+        devices=None if devices is None else tuple(devices),
         mapped_invars=tuple(axis is not None for axis in in_axes_flat),
-        donated_invars=tuple(donated_invars))
+        name=flat_fun.__name__, donated_invars=tuple(donated_invars))
     return tree_unflatten(out_tree(), out)
 
-  namestr = "pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 class _TempAxisName:
   def __init__(self, obj):
-    self.obj = obj
+    self.obj = id(obj)
+    self.hash = hash(obj)
   def __repr__(self):
-    return '<axis {}>'.format(hex(id(self.obj)))
+    return '<axis {}>'.format(hex(self.obj))
   def __hash__(self):
-    return hash(self.obj)
+    return self.hash
   def __eq__(self, other):
-    return type(other) is _TempAxisName and self.obj is other.obj
+    return type(other) is _TempAxisName and self.obj == other.obj
 
 
 def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
@@ -1221,9 +1216,6 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
                                   donated_invars=donated_invars)
     outs = [_reshape_merge(out) for out in reshaped_outs]
     return tree_unflatten(out_tree(), outs)
-
-  namestr = "soft_pmap({}, axis_name={})".format
-  f_pmapped.__name__ = namestr(f_pmapped.__name__, axis_name)
   return f_pmapped
 
 def _reshape_split(num_chunks, x):
@@ -1800,6 +1792,87 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
 
 def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
+  """Make ``fun`` recompute internal linearization points when differentiated.
+
+  The :func:`jax.checkpoint` decorator, aliased to ``jax.remat``, provides a
+  way to trade off computation time and memory cost in the context of automatic
+  differentiation, especially with reverse-mode autodiff like :func:`jax.grad`
+  and :func:`jax.vjp` but also with :func:`jax.linearize`.
+
+  When differentiating a function in reverse-mode, by default all the
+  linearization points (e.g. inputs to elementwise nonlinear primitive
+  operations) are stored when evaluating the forward pass so that they can be
+  reused on the backward pass. This evaluation strategy can lead to a high
+  memory cost, or even to poor performance on hardware acceleartors where memory
+  access is much more expensive than FLOPs.
+
+  An alternative evaluation strategy is for some of the linearization points to
+  be recomputed (i.e. rematerialized) rather than stored. This approach can
+  reduce memory usage at the cost of increased computation.
+
+  This function decorator produces a new version of ``fun`` which follows
+  the rematerialization strategy rather than the default store-everything
+  strategy. That is, it returns a new version of ``fun`` which, when
+  differentiated, doesn't store any of its intermediate linearization points.
+  Instead, these linearization points are recomputed from the function's saved
+  inputs.
+
+  See the examples below.
+
+  Args:
+    fun: Function for which the autodiff evaluation strategy is to be changed
+      from the default of storing all intermediate linearization points to
+      recomputing them. Its arguments and return value should be arrays,
+      scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
+    concrete: Optional, boolean indicating whether ``fun`` may involve
+      value-dependent Python control flow (default False). Support for such
+      control flow is optional, and disabled by default, because in some
+      edge-case compositions with :func:`jax.jit` it can lead to some extra
+      computation.
+
+  Returns:
+    A function (callable) with the same input/output behavior as ``fun`` but
+    which, when differentiated using e.g. :func:`jax.grad`, :func:`jax.vjp`, or
+    :func:`jax.linearize`, recomputes rather than stores intermediate
+    linearization points, thus potentially saving memory at the cost of extra
+    computation.
+
+  Here is a simple example:
+
+  >>> import jax
+  >>> import jax.numpy as jnp
+
+  >>> @jax.checkpoint
+  ... def g(x):
+  ...   y = jnp.sin(x)
+  ...   z = jnp.sin(y)
+  ...   return z
+  ...
+  >>> jax.grad(g)(2.0)
+  DeviceArray(-0.25563914, dtype=float32)
+
+  Here, the same value is produced whether or not the :func:`jax.checkpoint`
+  decorator is present. But when using :func:`jax.checkpoint`, the value
+  ``jnp.sin(2.0)`` is computed twice: once on the forward pass, and once on the
+  backward pass. The values ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))`` are
+  also computed twice. Without using the decorator, both ``jnp.cos(2.0)`` and
+  ``jnp.cos(jnp.sin(2.0))`` would be stored and reused.
+
+  The :func:`jax.checkpoint` decorator can be applied recursively to express
+  sophisticated autodiff rematerialization strategies. For example:
+
+  >>> def recursive_checkpoint(funs):
+  ...   if len(funs) == 1:
+  ...     return funs[0]
+  ...   elif len(funs) == 2:
+  ...     f1, f2 = funs
+  ...     return lambda x: f1(f2(x))
+  ...   else:
+  ...     f1 = recursive_checkpoint(funs[:len(funs)//2])
+  ...     f2 = recursive_checkpoint(funs[len(funs)//2:])
+  ...     return lambda x: f1(jax.checkpoint(f2)(x))
+  ...
+  """
   @wraps(fun)
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
@@ -1836,7 +1909,7 @@ class CustomTransformsFunction(object):
     return tree_unflatten(out_tree(), outs)
 
 def custom_transforms(fun):
-  """This API is deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp` instead."""
+  """Deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp`."""
 
   name = getattr(fun, '__name__', '<unnamed custom_transforms primitive>')
   fun_p = core.Primitive(name)
@@ -1861,7 +1934,7 @@ def custom_transforms(fun):
   fun_p.def_abstract_eval(fun_abstract_eval)
 
   def fun_translation(c, *xla_args, **params):
-    return xla.lower_fun(fun_impl)(c, *xla_args, **params)
+    return xla.lower_fun(fun_impl, multiple_results=True)(c, *xla_args, **params)
   xla.translations[fun_p] = fun_translation
 
   return CustomTransformsFunction(fun, fun_p)
@@ -1968,3 +2041,24 @@ def custom_gradient(fun):
 
 def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
   return (x,) if isinstance(x, int) else tuple(x)
+
+def invertible(fun: Callable, concrete: bool = False) -> Callable:
+  """Asserts that the decorated function is invertible.
+
+  Applying reverse-mode AD to a decorated function will use a more memory efficient
+  procedure than usual, which will reconstruct the necessary intermediate values
+  by inverting the function. Note that this might degrade the numerical accuracy of
+  obtained gradients if the inverse is unstable.
+
+  Args:
+    fun: The function assumed to be invertible.
+    concrete: See the documentation of checkpoint.
+  """
+  @wraps(fun)
+  def fun_invertible(*args, **kwargs):
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+    out_flat = iad.invertible_call(flat_fun, *args_flat, name=flat_fun.__name__,
+                                   concrete=concrete)
+    return tree_unflatten(out_tree(), out_flat)
+  return fun_invertible

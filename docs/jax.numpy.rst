@@ -97,6 +97,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     degrees
     diag
     diag_indices
+    diag_indices_from
     diagflat
     diagonal
     digitize
@@ -198,8 +199,11 @@ Not every function in NumPy is implemented; contributions are welcome!
     nancumprod
     nancumsum
     nanmax
+    nanmedian
     nanmin
+    nanpercentile
     nanprod
+    nanquantile
     nansum
     negative
     nextafter
@@ -212,6 +216,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     pad
     percentile
     polyadd
+    polyder
     polymul
     polysub
     polyval
@@ -277,6 +282,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     unique
     unpackbits
     unravel_index
+    unwrap
     vander
     var
     vdot

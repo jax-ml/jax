@@ -33,6 +33,10 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
+compatible_shapes = [[(), ()],
+                     [(4,), (3, 4)],
+                     [(3, 1), (1, 4)],
+                     [(2, 3, 4), (2, 1, 4)]]
 
 float_dtypes = [onp.float32, onp.float64]
 complex_dtypes = [onp.complex64]
@@ -44,18 +48,18 @@ numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
 
 OpRecord = collections.namedtuple(
     "OpRecord",
-    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "test_name"])
+    ["name", "nargs", "dtypes", "rng_factory", "test_autodiff", "nondiff_argnums", "test_name"])
 
 
-def op_record(name, nargs, dtypes, rng_factory, test_grad, test_name=None):
+def op_record(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums=(), test_name=None):
   test_name = test_name or name
-  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, test_name)
+  nondiff_argnums = tuple(sorted(set(nondiff_argnums)))
+  return OpRecord(name, nargs, dtypes, rng_factory, test_grad, nondiff_argnums, test_name)
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
-    # TODO: digamma has no JVP implemented.
     op_record("betaln", 2, float_dtypes, jtu.rand_positive, False),
     op_record("betainc", 3, float_dtypes, jtu.rand_positive, False),
-    op_record("digamma", 1, float_dtypes, jtu.rand_positive, False),
+    op_record("digamma", 1, float_dtypes, jtu.rand_positive, True),
     op_record("gammainc", 2, float_dtypes, jtu.rand_positive, True),
     op_record("gammaincc", 2, float_dtypes, jtu.rand_positive, True),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
@@ -72,8 +76,12 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("ndtr", 1, float_dtypes, jtu.rand_default, True),
     # TODO(phawkins): gradient of entr yields NaNs.
     op_record("entr", 1, float_dtypes, jtu.rand_default, False),
+    op_record("polygamma", 2, (int_dtypes, float_dtypes), jtu.rand_positive, True, (0,)),
     op_record("xlogy", 2, float_dtypes, jtu.rand_default, True),
     op_record("xlog1py", 2, float_dtypes, jtu.rand_default, True),
+    # TODO: enable gradient test for zeta by restricting the domain of
+    # of inputs to some reasonable intervals
+    op_record("zeta", 2, float_dtypes, jtu.rand_positive, False),
 ]
 
 CombosWithReplacement = itertools.combinations_with_replacement
@@ -86,28 +94,51 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_axis={}_keepdims={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
+      {"testcase_name":
+       "_shapes={}_axis={}_keepdims={}_return_sign={}_use_b_{}".format(
+          jtu.format_shape_dtype_string(shapes, dtype),
+          axis, keepdims, return_sign, use_b),
        # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
-       "rng_factory": jtu.rand_some_inf_and_nan
-                      if jtu.device_under_test() != "cpu"
-                      else jtu.rand_default,
-       "shape": shape, "dtype": dtype,
-       "axis": axis, "keepdims": keepdims}
-      for shape in all_shapes for dtype in float_dtypes
-      for axis in range(-len(shape), len(shape))
-      for keepdims in [False, True]))
-  @jtu.skip_on_flag("jax_xla_backend", "xrt")
-  def testLogSumExp(self, rng_factory, shape, dtype, axis, keepdims):
-    rng = rng_factory(self.rng())
+       "shapes": shapes, "dtype": dtype,
+       "axis": axis, "keepdims": keepdims,
+       "return_sign": return_sign, "use_b": use_b}
+      for shape_group in compatible_shapes for dtype in float_dtypes
+      for use_b in [False, True]
+      for shapes in itertools.product(*(
+        (shape_group, shape_group) if use_b else (shape_group,)))
+      for axis in range(-max(len(shape) for shape in shapes),
+                         max(len(shape) for shape in shapes))
+      for keepdims in [False, True]
+      for return_sign in [False, True]))
+  @jtu.ignore_warning(category=RuntimeWarning,
+                      message="invalid value encountered in .*")
+  def testLogSumExp(self, shapes, dtype, axis,
+                    keepdims, return_sign, use_b):
+    if jtu.device_under_test() != "cpu":
+      rng = jtu.rand_some_inf_and_nan(self.rng())
+    else:
+      rng = jtu.rand_default(self.rng())
     # TODO(mattjj): test autodiff
-    def scipy_fun(array_to_reduce):
-      return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims)
+    if use_b:
+      def scipy_fun(array_to_reduce, scale_array):
+        return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign, b=scale_array)
 
-    def lax_fun(array_to_reduce):
-      return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims)
+      def lax_fun(array_to_reduce, scale_array):
+        return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign, b=scale_array)
 
-    args_maker = lambda: [rng(shape, dtype)]
+      args_maker = lambda: [rng(shapes[0], dtype), rng(shapes[1], dtype)]
+    else:
+      def scipy_fun(array_to_reduce):
+        return osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign)
+
+      def lax_fun(array_to_reduce):
+        return lsp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
+                                     return_sign=return_sign)
+
+      args_maker = lambda: [rng(shapes[0], dtype)]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
 
@@ -117,22 +148,32 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
             rec.test_name, shapes, dtypes),
          "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
          "test_autodiff": rec.test_autodiff,
+         "nondiff_argnums": rec.nondiff_argnums,
          "scipy_op": getattr(osp_special, rec.name),
          "lax_op": getattr(lsp_special, rec.name)}
         for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-        for dtypes in CombosWithReplacement(rec.dtypes, rec.nargs))
+        for dtypes in (CombosWithReplacement(rec.dtypes, rec.nargs)
+          if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)))
       for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
-                          test_autodiff):
+                          test_autodiff, nondiff_argnums):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
     self.assertAllClose(scipy_op(*args), lax_op(*args), atol=1e-3, rtol=1e-3,
                         check_dtypes=False)
-    self._CompileAndCheck(lax_op, args_maker, rtol=1e-5)
+    self._CompileAndCheck(lax_op, args_maker, rtol=1e-4)
 
     if test_autodiff:
-      jtu.check_grads(lax_op, args, order=1,
+      def partial_lax_op(*vals):
+        list_args = list(vals)
+        for i in nondiff_argnums:
+          list_args.insert(i, args[i])
+        return lax_op(*list_args)
+
+      assert list(nondiff_argnums) == sorted(set(nondiff_argnums))
+      diff_args = [x for i, x in enumerate(args) if i not in nondiff_argnums]
+      jtu.check_grads(partial_lax_op, diff_args, order=1,
                       atol=jtu.if_device_under_test("tpu", .1, 1e-3),
                       rtol=.1, eps=1e-3)
 

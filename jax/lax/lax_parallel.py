@@ -107,7 +107,8 @@ def pmean(x, axis_name, *, axis_index_groups=None):
   >>> print(y)
   [ 0.          0.66666667  1.33333334  2.0       ]
   """
-  x, n = psum((x, 1), axis_name=axis_name, axis_index_groups=axis_index_groups)
+  x = psum(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
+  n = psum(1, axis_name=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(lambda v: v / n, x)
 
 def pmax(x, axis_name, *, axis_index_groups=None):

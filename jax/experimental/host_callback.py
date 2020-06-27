@@ -129,6 +129,7 @@ from jax.lib import pytree
 from jax.interpreters import ad, xla, batching, masking
 from jax.interpreters import partial_eval as pe
 from jax import pprint_util as ppu
+from jax import source_info_util
 from jax import util
 from jaxlib import xla_client
 from jaxlib import version as jaxlib_version
@@ -514,7 +515,8 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr,
   else:
     invars = jaxpr.invars
     eqns.append(core.new_jaxpr_eqn([jaxpr.invars[0]], [last_token_var],
-                                   lax.create_token_p, {}))
+                                   lax.create_token_p, {},
+                                   source_info_util.current()))
 
   for eqn in jaxpr.eqns:
     if not xla.primitive_uses_outfeed(eqn.primitive, eqn.params):
@@ -539,7 +541,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
   if eqn.primitive is id_tap_p:
     eqns.append(core.new_jaxpr_eqn(eqn.invars + [input_token_var],
                                    eqn.outvars + [output_token_var],
-                                   eqn.primitive, eqn.params))
+                                   eqn.primitive, eqn.params, eqn.source_info))
   elif eqn.primitive is lax.while_p:
     cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
       eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
@@ -554,7 +556,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
       eqn.primitive,
       dict(eqn.params,
            body_jaxpr=_rewrite_typed_jaxpr(body_jaxpr, True, True)[0],
-           cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True, False)[0])))
+           cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True, False)[0]),
+      eqn.source_info))
   elif eqn.primitive is lax.cond_p:
     branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
     index, *operands = eqn.invars
@@ -566,7 +569,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
            branches=tuple(
                _rewrite_typed_jaxpr(jaxpr, True, True)[0]
                for jaxpr in branches),
-           linear=(*linear, False))))
+           linear=(*linear, False)),
+      eqn.source_info))
   elif eqn.primitive is lax.scan_p:
     num_consts, num_carry, carry_jaxpr, linear, _, _ = util.split_dict(
       eqn.params, ["num_consts", "num_carry", "jaxpr", "linear",
@@ -597,22 +601,24 @@ def _rewrite_eqn(eqn: core.JaxprEqn,
       dict(eqn.params,
            jaxpr=new_jaxpr,
            num_carry=num_carry + 1,
-           linear=linear + (False,))))
+           linear=linear + (False,)),
+      eqn.source_info))
   elif eqn.primitive is xla.xla_call_p:
     call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
     eqns.append(core.new_jaxpr_eqn(
       eqn.invars + [input_token_var],
       eqn.outvars + [output_token_var],
       eqn.primitive,
-      dict(eqn.params, call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True)[0])))
+      dict(eqn.params, call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True)[0]),
+      eqn.source_info))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 
 def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn,
-                 eqns: List[core.JaxprEqn],
-                 input_token_var: core.Var,
-                 output_token_var: core.Var,
-                 mk_new_var: Callable):
+                                eqns: List[core.JaxprEqn],
+                                input_token_var: core.Var,
+                                output_token_var: core.Var,
+                                mk_new_var: Callable):
   """Rewrite a while whose cond has outfeed"""
   cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
     eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
@@ -626,7 +632,9 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn,
     pred1_and_token1,
     xla.xla_call_p,
     dict(call_jaxpr=transformed_cond_jaxpr.jaxpr,
-         name="cond_before")))
+         name="cond_before",
+         donated_invars=(False,) * (cond_nconsts + len(carry_invars) + 1)),
+    eqn.source_info))
   # Make a new cond "lambda pred, carry, token: pred"
   new_cond_pred_invar = mk_new_var(cond_jaxpr.out_avals[0])
   new_cond_invars = (
@@ -660,13 +668,20 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn,
       new_body_carry2 + [new_body_token2],
       xla.xla_call_p,
       dict(call_jaxpr=transformed_body_jaxpr.jaxpr,
-           name="body")),
+           name="body",
+           donated_invars=(False,) * (len(new_body_invars_body_constvars) +
+                                      len(new_body_invars_carry) +
+                                      1 + len(new_body_carry2) + 1)),
+      eqn.source_info),
     core.new_jaxpr_eqn(
       new_body_invars_cond_constvars + new_body_carry2 + [new_body_token2],
       [new_body_pred2, new_body_token3],
       xla.xla_call_p,
       dict(call_jaxpr=transformed_cond_jaxpr.jaxpr,
-           name="cond_body"))
+           name="cond_body",
+           donated_invars=(False,) * (len(new_body_invars_cond_constvars) +
+                                      len(new_body_carry2) + 1 + 2)),
+      eqn.source_info)
   ]
   new_body_jaxpr = _mk_typed_jaxpr(
     core.Jaxpr([],
@@ -682,7 +697,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn,
     ([pred_out] + eqn.outvars + [output_token_var]),
     lax.while_p,
     dict(cond_jaxpr=new_cond_jaxpr, cond_nconsts=0,
-         body_jaxpr=new_body_jaxpr, body_nconsts=cond_nconsts + body_nconsts))
+         body_jaxpr=new_body_jaxpr, body_nconsts=cond_nconsts + body_nconsts),
+    eqn.source_info)
   )
 
 
@@ -719,7 +735,7 @@ _CODE_TO_DTYPE = {
   5: np.dtype(np.uint16),
   6: np.dtype(np.uint32),
   7: np.dtype(np.uint64),
-  8: np.dtype(np.bool),
+  8: np.dtype(np.bool_),
   9: np.dtype(np.float16),
   10: np.dtype(np.float32),
   11: np.dtype(np.float64),

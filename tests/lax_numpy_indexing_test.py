@@ -418,7 +418,7 @@ class IndexingTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
-    fun = lambda x: x[indexer]**2
+    fun = lambda x: jnp.asarray(x)[indexer]**2
     check_grads(fun, (arg,), 2, tol, tol, tol)
 
   def _ReplaceSlicesWithTuples(self, idx):

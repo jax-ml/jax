@@ -9,10 +9,33 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.71 (Unreleased)
+jax 0.1.71 (June 25, 2020)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...jax-v0.1.71>`_.
+* The minimum jaxlib version is now 0.1.48.
+
+* Bug fixes:
+
+  * Allow ``jax.experimental.ode.odeint`` dynamics functions to close over
+    values with respect to which we're differentiating
+    `#3562 <https://github.com/google/jax/pull/3562>`_.
+
+jaxlib 0.1.50 (June 25, 2020)
+------------------------------
+
+* Add support for CUDA 11.0.
+* Drop support for CUDA 9.2 (we only maintain support for the last four CUDA
+  versions.)
+* Update XLA.
+
+jaxlib 0.1.49 (June 19, 2020)
+------------------------------
+
+* Bug fixes:
+
+  * Fix build issue that could result in slow compiles
+    (https://github.com/tensorflow/tensorflow/commit/f805153a25b00d12072bd728e91bb1621bfcf1b1)
 
 jaxlib 0.1.48 (June 12, 2020)
 ------------------------------

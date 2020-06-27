@@ -19,6 +19,7 @@ import scipy.special as osp_special
 
 from .. import lax
 from .. import api
+from ..interpreters import ad
 from ..numpy import lax_numpy as jnp
 from ..numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
                                _promote_args_inexact)
@@ -47,6 +48,7 @@ def betainc(a, b, x):
 def digamma(x):
   x, = _promote_args_inexact("digamma", x)
   return lax.digamma(x)
+ad.defjvp(lax.digamma_p, lambda g, x: lax.mul(g, polygamma(1, x)))
 
 
 @_wraps(osp_special.gammainc, update_doc=False)
@@ -99,15 +101,27 @@ expit.defjvps(lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
 
 @_wraps(osp_special.logsumexp)
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
-  if b is not None or return_sign:
-    raise NotImplementedError("Only implemented for b=None, return_sign=False")
+  if b is not None:
+    a, b = jnp.broadcast_arrays(a, b)
   dims = _reduction_dims(a, axis)
   dimadd = lambda x: lax.expand_dims(x, dims)
   amax = lax.reduce(a, _constant_like(a, -np.inf), lax.max, dims)
   amax = lax.stop_gradient(lax.select(lax.is_finite(amax), amax, lax.full_like(amax, 0)))
   amax_singletons = dimadd(amax)
-  out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
-                                   _constant_like(a, 0), lax.add, dims)), amax)
+  if b is None:
+    out = lax.add(lax.log(lax.reduce(lax.exp(lax.sub(a, amax_singletons)),
+                                     _constant_like(a, 0), lax.add, dims)), amax)
+    sign = jnp.where(jnp.isnan(out), np.nan, 1.0).astype(out.dtype)
+    sign = jnp.where(out == -np.inf, 0.0, sign)
+  else:
+    sumexp = lax.reduce(lax.mul(lax.exp(lax.sub(a, amax_singletons)), b),
+                        _constant_like(a, 0), lax.add, dims)
+    sign = lax.stop_gradient(lax.sign(sumexp))
+    out = lax.add(lax.log(lax.abs(sumexp)), amax)
+  if return_sign:
+    return (dimadd(out), dimadd(sign)) if keepdims else (out, sign)
+  if b is not None:
+    out = jnp.where(sign < 0, np.nan, out)
   return dimadd(out) if keepdims else out
 
 
@@ -148,6 +162,71 @@ def multigammaln(a, d):
                         lax.div(jnp.arange(d), _constant_like(a, 2))),
                axis=-1)
   return res + constant
+
+
+# coefs of (2k)! / B_{2k} where B are bernoulli numbers
+# those numbers are obtained using https://www.wolframalpha.com
+_BERNOULLI_COEFS = [
+    12,
+    -720,
+    30240,
+    -1209600,
+    47900160,
+    -1307674368000 / 691,
+    74724249600,
+    -10670622842880000 / 3617,
+    5109094217170944000 / 43867,
+    -802857662698291200000 / 174611,
+    14101100039391805440000 / 77683,
+    -1693824136731743669452800000 / 236364091,
+    186134520519971831808000000 / 657931,
+    -37893265687455865519472640000000 / 3392780147,
+    759790291646040068357842010112000000 / 1723168255201,
+    -134196726836183700385281186201600000000 / 7709321041217,
+]
+
+
+@_wraps(osp_special.zeta)
+def zeta(x, q=None):
+  assert q is not None, "Riemann zeta function is not implemented yet."
+  # Reference: Johansson, Fredrik.
+  # "Rigorous high-precision computation of the Hurwitz zeta function and its derivatives."
+  # Numerical Algorithms 69.2 (2015): 253-270.
+  # https://arxiv.org/abs/1309.2877 - formula (5)
+  # here we keep the same notation as in reference
+  s, a = _promote_args_inexact("zeta", x, q)
+  dtype = lax.dtype(a).type
+  s_, a_ = jnp.expand_dims(s, -1), jnp.expand_dims(a, -1)
+  # precision ~ N, M
+  N = M = dtype(8) if lax.dtype(a) == jnp.float32 else dtype(16)
+  assert M <= len(_BERNOULLI_COEFS)
+  k = np.arange(N, dtype=N.dtype)
+  S = jnp.sum((a_ + k) ** -s_, -1)
+  I = lax.div((a + N) ** (dtype(1) - s), s - dtype(1))
+  T0 = (a + N) ** -s
+  s_over_a = (s_ + np.arange(2 * M, dtype=M.dtype)) / (a_ + N)
+  T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
+  coefs = np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype)
+  T1 = T1 / coefs
+  T = T0 * (dtype(0.5) + T1.sum(-1))
+  return S + I + T
+
+
+@_wraps(osp_special.polygamma, update_doc=False)
+def polygamma(n, x):
+  assert jnp.issubdtype(lax.dtype(n), jnp.integer)
+  n, x = _promote_args_inexact("polygamma", n, x)
+  shape = lax.broadcast_shapes(n.shape, x.shape)
+  return _polygamma(jnp.broadcast_to(n, shape), jnp.broadcast_to(x, shape))
+
+
+@api.custom_jvp
+def _polygamma(n, x):
+  dtype = lax.dtype(n).type
+  n_plus = n + dtype(1)
+  sign = dtype(1) - (n_plus % dtype(2)) * dtype(2)
+  return jnp.where(n == 0, digamma(x), sign * jnp.exp(gammaln(n_plus)) * zeta(n_plus, x))
+_polygamma.defjvps(None, lambda g, ans, n, x: lax.mul(g, _polygamma(n + 1, x)))
 
 
 # Normal distributions

@@ -310,6 +310,61 @@ class CoreTest(jtu.JaxTestCase):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
     core.check_jaxpr(jaxpr)
 
+  def test_check_jaxpr_cond_correct(self):
+    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+    core.check_jaxpr(jaxpr)
+
+  def test_check_jaxpr_cond_invalid(self):
+    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+    cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
+    cond.params['branches'][0].in_avals = ()
+    cond.params['branches'][0].jaxpr.invars = ()
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        'cond branch 0 takes 0 inputs, branch 1 takes 1',
+        lambda: core.check_jaxpr(jaxpr))
+
+  def test_check_jaxpr_scan_correct(self):
+    def f(c, x):
+      b = jnp.cos(jnp.sum(jnp.sin(x)) + jnp.sum(jnp.cos(c)))
+      c = jnp.sin(c * b)
+      return c, b
+    xs = jnp.ones((5, 3))
+    c = jnp.ones(4)
+    jaxpr = make_jaxpr(partial(lax.scan, f))(c, xs).jaxpr
+    core.check_jaxpr(jaxpr)
+
+  def test_check_jaxpr_invalid_long(self):
+    # jaxprs can be large, and this tests that when large ones are printed for
+    # context in jaxpr typechecking errors, they're not printed entirely
+
+    def enlarge(f, n):
+      def g(x):
+        for _ in range(n):
+          x = x + x
+        x = f(x)
+        for _ in range(n):
+          x = x + x
+        return x
+      return g
+
+    jaxpr = make_jaxpr(enlarge(
+        lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.).jaxpr
+
+    cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
+    cond.params['branches'][0].in_avals = ()
+    cond.params['branches'][0].jaxpr.invars = ()
+    msg = ''
+    try:
+      core.check_jaxpr(jaxpr)
+    except core.JaxprTypeError as e:
+      msg, = e.args
+
+    self.assertIn('cond branch 0 takes 0 inputs, branch 1 takes 1', msg)
+    self.assertIn('in equation:', msg)
+    self.assertIn('while checking jaxpr:', msg)
+    self.assertLess(msg.count('\n'), 200)
+
   def test_check_jaxpr_eqn_mismatch(self):
     def f(x):
       return jnp.sin(x) + jnp.cos(x)
@@ -329,17 +384,19 @@ class CoreTest(jtu.JaxTestCase):
 
     jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(2)   # int, not float!
-    jtu.check_raises_regexp(
-        lambda: core.check_jaxpr(jaxpr),
-        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
-                    r"bound as ShapedArray(.*) in '. = sin .'"))
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.' inconsistently typed as ShapedArray(.*), "
+        r"bound as ShapedArray(.*)\n\nin equation:\n\n  . = sin .",
+        lambda: core.check_jaxpr(jaxpr))
 
     jaxpr = new_jaxpr()
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(np.ones((2, 3)))
-    jtu.check_raises_regexp(
-        lambda: core.check_jaxpr(jaxpr),
-        TypeError, (r"Variable '.' inconsistently typed as ShapedArray(.*), "
-                    r"bound as ShapedArray(.*) in '. = sin .'"))
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.' inconsistently typed as ShapedArray(.*), "
+        r"bound as ShapedArray(.*)\n\nin equation:\n\n  . = sin .",
+        lambda: core.check_jaxpr(jaxpr))
 
   def test_jaxpr_dropvar_from_jit_call(self):
     def inner(x):

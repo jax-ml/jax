@@ -28,30 +28,14 @@
 #
 import os
 import sys
-import typing
 
 sys.path.insert(0, os.path.abspath('..'))
 
 
-# Workaround to avoid expanding type aliases. See:
+# Currently type aliases are expanded. We tried a workaround along the lines of:
 # https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
-
-# When building docs, enable `from __future__ import annotations` everywhere.
-def _rewrite(p):
-  with open(p) as f:
-    contents = f.read()
-  with open(p, 'w') as f:
-    f.write('from __future__ import annotations\n')
-    f.write(contents)
-
-if 'READTHEDOCS' in os.environ:
-  for path, dirs, files in os.walk('../jax/'):
-    for file in files:
-      if file.endswith('.py'):
-        _rewrite(os.path.abspath(os.path.join(path, file)))
-
-# Monkey patch for the typing module to prevent it from expanding type aliases.
-typing.get_type_hints = lambda obj, *unused: obj.__annotations__
+# Unfortunately, this workaround makes Sphinx drop module-level documentation.
+# See https://github.com/google/jax/issues/3452.
 
 # -- Project information -----------------------------------------------------
 
@@ -69,7 +53,7 @@ release = ''
 
 # If your documentation needs a minimal Sphinx version, state it here.
 #
-# needs_sphinx = '1.0'
+needs_sphinx = '2.1'
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -83,6 +67,7 @@ extensions = [
     'sphinx.ext.viewcode',
     'nbsphinx',
     'sphinx_autodoc_typehints',
+    'myst_parser',
 ]
 
 intersphinx_mapping = {

@@ -1,5 +1,5 @@
-JAX Frequently Asked Questions
-==============================
+JAX Frequently Asked Questions (FAQ)
+====================================
 
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
 .. comment Some links referenced here. Use JAX_sharp_bits_ (underscore at the end) to reference
@@ -10,25 +10,6 @@ JAX Frequently Asked Questions
 
 We are collecting here answers to frequently asked questions.
 Contributions welcome!
-
-Creating arrays with `jax.numpy.array` is slower than with `numpy.array`
-------------------------------------------------------------------------
-
-The following code is relatively fast when using NumPy, and slow when using
-JAX's NumPy::
-
-  import numpy as np
-  np.array([0] * int(1e6))
-
-The reason is that in NumPy the ``numpy.array`` function is implemented in C, while
-the :func:`jax.numpy.array` is implemented in Python, and it needs to iterate over a long
-list to convert each list element to an array element.
-
-An alternative would be to create the array with original NumPy and then convert
-it to a JAX array::
-
-  from jax import numpy as jnp
-  jnp.array(np.array([0] * int(1e6)))
 
 `jit` changes the behavior of my function
 -----------------------------------------
@@ -64,7 +45,7 @@ and with ``jit`` it is::
     Result: 2
 
 For :func:`jax.jit`, the function is executed once using the Python interpreter, at which time the
-``Inside`` printing happens, and the first value of ``y`` is observed. Then the function
+``Inside`` printing happens, and the first value of ``y`` is observed. Then, the function
 is compiled and cached, and executed multiple times with different values of ``x``, but
 with the same first value of ``y``.
 
@@ -78,13 +59,12 @@ Additional reading:
 Controlling data and computation placement on devices
 -----------------------------------------------------
 
-We describe first the principles of data and computation placement
-in JAX.
+Let's first look at the principles of data and computation placement in JAX.
 
-In JAX the computation follows the data placement. JAX arrays
-have two placement properties: the device where the data resides,
-and whether it is **committed** to the device or not (we sometimes
-say that the data is *sticky* to the device).
+In JAX, the computation follows data placement. JAX arrays
+have two placement properties: 1) the device where the data resides;
+and 2) whether it is **committed** to the device or not (the data is sometimes 
+referred to as being *sticky* to the device).
 
 By default, JAX arrays are placed uncommitted on the default device
 (``jax.devices()[0]``).
@@ -97,31 +77,29 @@ Computations involving uncommitted data are performed on the default
 device and the results are uncommitted on the default device.
 
 Data can also be placed explicitly on a device using :func:`jax.device_put`
-with a ``device`` parameter, in which case if becomes **committed** to the device:
+with a ``device`` parameter, in which case the data becomes **committed** to the device:
 
 >>> import jax
 >>> from jax import device_put
 >>> print(device_put(1, jax.devices()[2]).device_buffer.device())  # doctest: +SKIP
 gpu:2
 
-Computations involving some committed inputs, will happen on the
-committed device, and the result will be committed on the
-same device. It is an error to invoke an operation on
-arguments that are committed to more than one device.
+Computations involving some committed inputs will happen on the
+committed device and the result will be committed on the
+same device. Invoking an operation on arguments that are committed 
+to more than one device will raise an error.
 
-You can also use :func:`jax.device_put` without a ``device`` parameter,
-in which case the data is left as is if already on a device (whether
-committed or not), or a Python value that is not on any device is
-placed uncommitted on the default device.
+You can also use :func:`jax.device_put` without a ``device`` parameter. If the data 
+is already on a device (committed or not), it's left as-is. If the data isn't on any 
+device—that is, it's a regular Python or NumPy value—it's placed uncommitted on the default 
+device. You can also use :func:`jax.device_put` without a `device` parameter. 
 
-Jitted functions behave as any other primitive operation
-(will follow the data and will error if invoked on data
-committed on more than one device).
+Jitted functions behave like any other primitive operations—they will follow the 
+data and will show errors if invoked on data committed on more than one device.
 
-(As of April 2020, :func:`jax.jit` has a `device` parameter
-that affects slightly the device placement. That parameter
-is experimental, is likely to be removed or changed, and
-its use is not recommended.)
+(As of April 2020, :func:`jax.jit` has a `device` parameter that affects the device 
+placement. That parameter is experimental, is likely to be removed or changed, 
+and its use is not recommended.)
 
 For a worked-out example, we recommend reading through
 ``test_computation_follows_data`` in
@@ -134,12 +112,12 @@ For a worked-out example, we recommend reading through
 
 If you are getting an error that a library function is called with
 *"Abstract tracer value encountered where concrete value is expected"*, you may need to
-change how you invoke JAX transformations. We give first an example, and
-a couple of solutions, and then we explain in more detail what is actually
-happening, if you are curious or the simple solution does not work for you.
+change how you invoke JAX transformations. Below is an example and a couple of possible 
+solutions, followed by the details of what is actually happening, if you are curious 
+or the simple solution does not work for you.
 
 Some library functions take arguments that specify shapes or axes,
-such as the 2nd and 3rd arguments for :func:`jax.numpy.split`::
+such as the second and third arguments for :func:`jax.numpy.split`::
 
   # def np.split(arr, num_sections: Union[int, Sequence[int]], axis: int):
   np.split(np.zeros(2), 2, 0)  # works
@@ -155,7 +133,7 @@ you will get the following error::
     See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-where-concrete-value-is-expected-error`.
     Encountered value: Traced<ShapedArray(int32[], weak_type=True):JaxprTrace(level=-1/1)>
 
-We must change the way we use :func:`jax.jit` to ensure that the ``num_sections``
+You must change the way you use :func:`jax.jit` to ensure that the ``num_sections``
 and ``axis`` arguments use their concrete values (``2`` and ``0`` respectively).
 The best mechanism is to use special transformation parameters
 to declare some arguments to be static, e.g., ``static_argnums`` for :func:`jax.jit`::
@@ -177,8 +155,9 @@ concrete vs. abstract values, you may want to read `Different kinds of JAX value
 Different kinds of JAX values
 ------------------------------
 
-In the process of transforming functions, JAX replaces some some function
+In the process of transforming functions, JAX replaces some function
 arguments with special tracer values.
+
 You could see this if you use a ``print`` statement::
 
   def func(x):
@@ -295,20 +274,3 @@ Additional reading:
 
   * `Issue: gradients through np.where when one of branches is nan <https://github.com/google/jax/issues/1052#issuecomment-514083352>`_.
   * `How to avoid NaN gradients when using where <https://github.com/tensorflow/probability/blob/master/discussion/where-nan.pdf>`_.
-
-Why do I get forward-mode differentiation error when I am trying to do reverse-mode differentiation?
------------------------------------------------------------------------------------------------------
-
-JAX implements reverse-mode differentiation as a composition of two operations:
-linearization and transposition. The linearization step (see :func:`jax.linearize`)
-uses the JVP rules to form the forward-computation of tangents along with the intermediate
-forward computations of intermediate values on which the tangents depend.
-The transposition step will turn the forward-computation of tangents
-into a reverse-mode computation.
-
-If the JVP rule is not implemented for a primitive, then neither the forward-mode
-nor the reverse-mode differentiation will work, but the error given will refer
-to the forward-mode because that is the one that fails.
-
-You can read more details at How_JAX_primitives_work_.
-

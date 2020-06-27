@@ -216,9 +216,11 @@ threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
 xla.translations[threefry2x32_p] = xla.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=False))
+    partial(_threefry2x32_lowering, use_rolled_loops=False),
+    multiple_results=True)
 xla.backend_specific_translations['cpu'][threefry2x32_p] = xla.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=True))
+    partial(_threefry2x32_lowering, use_rolled_loops=True),
+    multiple_results=True)
 if cuda_prng:
   xla.backend_specific_translations['gpu'][threefry2x32_p] = \
       _threefry2x32_gpu_translation_rule
@@ -528,6 +530,61 @@ def _shuffle(key, x, axis):
     _, x = lax.sort_key_val(sort_keys, x, axis)
 
   return x
+
+
+def choice(key, a, shape=(), replace=True, p=None):
+  """Generates a random sample from a given 1-D array.
+
+  Args:
+    key: a PRNGKey used as the random key.
+    a : 1D array or int. If an ndarray, a random sample is generated from
+      its elements. If an int, the random sample is generated as if a were
+      arange(a).
+    shape : tuple of ints, optional. Output shape.  If the given shape is,
+      e.g., ``(m, n)``, then ``m * n`` samples are drawn.  Default is (),
+      in which case a single value is returned.
+    replace : boolean.  Whether the sample is with or without replacement.
+      default is True.
+    p : 1-D array-like, The probabilities associated with each entry in a.
+      If not given the sample assumes a uniform distribution over all
+      entries in a.
+
+  Returns:
+    An array of shape `shape` containing samples from `a`.
+  """
+  a = jnp.asarray(a)
+  if a.ndim not in [0, 1]:
+    raise ValueError("a must be an integer or 1-dimensional")
+  n_inputs = int(a) if a.ndim == 0 else len(a)
+  n_draws = np.prod(shape).astype(int)
+  if n_draws == 0:
+    return jnp.zeros(shape, dtype=a.dtype)
+  if n_inputs <= 0:
+    raise ValueError("a must be greater than 0 unless no samples are taken")
+  if not replace and n_draws > n_inputs:
+    raise ValueError("Cannot take a larger sample than population when 'replace=False'")
+
+  if p is None:
+    if replace:
+      ind = randint(key, shape, 0, n_inputs)
+      result = ind if a.ndim == 0 else a[ind]
+    else:
+      result = permutation(key, a)[:n_draws]
+  else:
+    p = jnp.asarray(p)
+    if p.shape != (n_inputs,):
+      raise ValueError("p must be None or match the shape of a")
+    if replace:
+      p_cuml = jnp.cumsum(p)
+      r = p_cuml[-1] * (1 - uniform(key, shape))
+      ind = jnp.searchsorted(p_cuml, r)
+      result = ind if a.ndim == 0 else a[ind]
+    else:
+      # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
+      g = -gumbel(key, (n_inputs,)) - jnp.log(p)
+      ind = jnp.argsort(g)[:n_draws]
+      result = ind if a.ndim == 0 else a[ind]
+  return result.reshape(shape)
 
 
 def normal(key: jnp.ndarray,
@@ -904,115 +961,14 @@ def _gamma_one(key, alpha):
   z = lax.mul(lax.mul(d, V), boost)
   return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)
 
-_bivariate_coef = [[0.16009398, -0.094634816, 0.025146379, -0.0030648348,
-                    1, 0.3266811, 0.10406087, 0.0014179033],
-                   [0.53487893, 0.12980707, 0.06573594, -0.0015649787,
-                    0.16639465, 0.020070098, -0.0035938937, -0.00058392601],
-                   [0.040121005, -0.0065914079, -0.002628604, -0.0013441777,
-                    0.017050642, -0.0021309345, 0.00085092385, -1.5248239e-07]]
-
-def _gamma_grad_one(z, alpha):
-  # Ref 1: Pathwise Derivatives Beyond the Reparameterization Trick, Martin & Fritz
-  # Ref 2: Case 4 follows https://github.com/fritzo/notebooks/blob/master/gamma-reparameterized.ipynb
-
-  # TODO: use lax.cond instead of lax.while_loop when its batching rule is available
-  # See https://github.com/google/jax/issues/490
-  def _case1(zagf):
-    z, alpha, _, flag = zagf
-
-    # dz = - dCDF(z; a) / pdf(z; a)
-    # pdf = z^(a-1) * e^(-z) / Gamma(a)
-    # CDF(z; a) = IncompleteGamma(a, z) / Gamma(a)
-    # dCDF(z; a) = (dIncompleteGamma - IncompleteGamma * Digamma(a)) / Gamma(a)
-    #            =: unnormalized_dCDF / Gamma(a)
-    # IncompleteGamma ~ z^a [ 1/a - z/(a+1) + z^2/2!(a+2) - z^3/3!(a+3) + z^4/4!(a+4) - z^5/5!(a+5) ]
-    #                 =: z^a * term1
-    # dIncompleteGamma ~ z^a * log(z) * term1 - z^a [1/a^2 - z/(a+1)^2 + z^2/2!(a+2)^2
-    #                                                - z^3/3!(a+3)^2 + z^4/4!(a+4)^2 - z^5/5!(a+5)^2 ]
-    #                  =: z^a * log(z) * term1 - z^a * term2
-    # unnormalized_dCDF = z^a { [log(z) - Digamma(a)] * term1 - term2 }
-    zi = 1.0
-    update = zi / alpha
-    term1 = update
-    term2 = update / alpha
-    for i in range(1, 6):
-        zi = -zi * z / i
-        update = zi / (alpha + i)
-        term1 = term1 + update
-        term2 = term2 + update / (alpha + i)
-
-    unnormalized_cdf_dot = jnp.power(z, alpha) * ((jnp.log(z) - lax.digamma(alpha)) * term1 - term2)
-    unnormalized_pdf = jnp.power(z, alpha - 1) * jnp.exp(-z)
-    grad = -unnormalized_cdf_dot / unnormalized_pdf
-
-    return z, alpha, grad, ~flag
-
-  def _cond2(zagf):
-    z, alpha, _, flag = zagf
-    return (~flag) & (alpha > 8.0) & ((z < 0.9 * alpha) | (z > 1.1 * alpha))
-
-  def _case2(zagf):
-    z, alpha, _, flag = zagf
-
-    # Formula 58 of [1]
-    sqrt_8a = jnp.sqrt(8 * alpha)
-    z_minus_a = z - alpha
-    log_z_div_a = jnp.log(z / alpha)
-    sign = jnp.where(z < alpha, lax._const(z, 1.0), lax._const(z, -1.0))
-    term1 = 4 * (z + alpha) / (sqrt_8a * z_minus_a * z_minus_a)
-    term2 = log_z_div_a * (sqrt_8a / z_minus_a + sign * jnp.power(z_minus_a - alpha * log_z_div_a, -1.5))
-    term3 = z * (1.0 + 1.0 / (12 * alpha) + 1.0 / (288 * alpha * alpha)) / sqrt_8a
-    grad = (term1 + term2) * term3
-
-    return z, alpha, grad, ~flag
-
-  def _cond3(zagf):
-    z, alpha, _, flag = zagf
-    return (~flag) & (alpha > 8.0) & (z >= 0.9 * alpha) & (z <= 1.1 * alpha)
-
-  def _case3(zagf):
-    z, alpha, _, flag = zagf
-
-    # Formula 59 of [1]
-    z_div_a = jnp.divide(z, alpha)
-    aa = alpha * alpha
-    term1 = 1440 * alpha + 6 * z_div_a * (53 - 120 * z) - 65 * z_div_a * z_div_a + 3600 * z + 107
-    term2 = 1244160 * alpha * aa
-    term3 = 1 + 24 * alpha + 288 * aa
-    grad = term1 * term3 / term2
-
-    return z, alpha, grad, ~flag
-
-  def _case4(zagf):
-    z, alpha, _, flag = zagf
-
-    # Ref [2]
-    u = jnp.log(z / alpha)
-    v = jnp.log(alpha)
-    c = []
-    for i in range(8):
-        c.append(_bivariate_coef[0][i] + u * (_bivariate_coef[1][i] + u * _bivariate_coef[2][i]))
-    p = c[0] + v * (c[1] + v * (c[2] + v * c[3]))
-    q = c[4] + v * (c[5] + v * (c[6] + v * c[7]))
-    grad = jnp.exp(p / jnp.maximum(q, 0.01))
-
-    return z, alpha, grad, ~flag
-
-  _, _, grad, flag = lax.while_loop(lambda zagf: (~zagf[3]) & (zagf[0] < 0.8),
-                                    _case1,
-                                    (z, alpha, lax._const(alpha, 0.0), False))
-  _, _, grad, flag = lax.while_loop(_cond2, _case2, (z, alpha, grad, flag))
-  _, _, grad, flag = lax.while_loop(_cond3, _case3, (z, alpha, grad, flag))
-  _, _, grad, flag = lax.while_loop(lambda zagf: ~zagf[3], _case4, (z, alpha, grad, flag))
-  return grad
 
 def _gamma_grad(sample, a):
   samples = jnp.reshape(sample, -1)
   alphas = jnp.reshape(a, -1)
   if xla_bridge.get_backend().platform == 'cpu':
-    grads = lax.map(lambda args: _gamma_grad_one(*args), (samples, alphas))
+    grads = lax.map(lambda args: lax.random_gamma_grad(*args), (alphas, samples))
   else:
-    grads = vmap(_gamma_grad_one)(samples, alphas)
+    grads = vmap(lax.random_gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
 def _gamma_impl(key, a):

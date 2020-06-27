@@ -107,7 +107,7 @@ def matrix_rank(M, tol=None):
     return jnp.any(M != 0).astype(jnp.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if tol is None:
-    tol = S.max() * jnp.max(M.shape) * jnp.finfo(S.dtype).eps
+    tol = S.max() * np.max(M.shape) * jnp.finfo(S.dtype).eps
   return jnp.sum(S > tol)
 
 

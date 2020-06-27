@@ -26,7 +26,7 @@ from . import xla
 from .. import linear_util as lu
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..api_util import flatten_axes, flatten_fun
+from ..api_util import flatten_axes, flatten_fun, wraps
 from ..tree_util import tree_flatten, tree_unflatten
 from ..util import extend_name_stack, wrap_name, safe_zip
 
@@ -187,11 +187,8 @@ def _sharded_call_impl(fun, *args, num_partitions, in_parts, out_parts_thunk,
   return compiled_fun(*args)
 
 
-sharded_call_p = core.Primitive("sharded_call")
-sharded_call_p.call_primitive = True
-sharded_call_p.multiple_results = True
-sharded_call = partial(core.call_bind, sharded_call_p)
-sharded_call_p.def_custom_bind(sharded_call)
+sharded_call_p = core.CallPrimitive("sharded_call")
+sharded_call = sharded_call_p.bind
 sharded_call_p.def_impl(_sharded_call_impl)
 xla.call_translations[sharded_call_p] = _sharded_jit_translation_rule
 
@@ -264,6 +261,7 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None):
   else:
     num_parts = pxla.get_num_partitions(in_parts, out_parts)
 
+  @wraps(fun)
   def wrapped(*args, **kwargs):
     if kwargs:
       raise NotImplementedError("sharded_jit over kwargs not yet supported")

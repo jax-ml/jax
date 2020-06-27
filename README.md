@@ -11,8 +11,6 @@
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 | [**Code search**](https://cs.opensource.google/jax/jax)
 
-**Announcement:** JAX has dropped Python 2 support, and requires Python 3.6 or newer. See [docs/CHANGELOG.rst](https://jax.readthedocs.io/en/latest/CHANGELOG.html).
-
 ## What is JAX?
 
 JAX is [Autograd](https://github.com/hips/autograd) and
@@ -409,19 +407,19 @@ cloud VM), you can run
 ```bash
 # install jaxlib
 PYTHON_VERSION=cp37  # alternatives: cp36, cp37, cp38
-CUDA_VERSION=cuda92  # alternatives: cuda92, cuda100, cuda101, cuda102
-PLATFORM=linux_x86_64  # alternatives: linux_x86_64
+CUDA_VERSION=cuda100  # alternatives: cuda100, cuda101, cuda102, cuda110
+PLATFORM=manylinux2010_x86_64  # alternatives: manylinux2010_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.47-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.50-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
 
 The library package name must correspond to the version of the existing CUDA
-installation you want to use, with `cuda102` for CUDA 10.2, `cuda101` for CUDA
-10.1, `cuda100` for CUDA 10.0, and `cuda92` for CUDA 9.2. To find your CUDA and
-CUDNN versions, you can run commands like these, depending on your CUDNN install
-path:
+installation you want to use, with `cuda110` for CUDA 11.0, `cuda102` for CUDA
+10.2, `cuda101` for CUDA 10.1, and `cuda100` for CUDA 10.0. To find your CUDA
+and CUDNN versions, you can run commands like these, depending on your CUDNN
+install path:
 
 ```bash
 nvcc --version
@@ -450,7 +448,7 @@ requires Python 3.6 or above. Jax does not support Python 2 any more.
 To try automatic detection of the correct version for your system, you can run:
 
 ```bash
-pip install --upgrade https://storage.googleapis.com/jax-releases/`nvidia-smi | sed -En "s/.* CUDA Version: ([0-9]*)\.([0-9]*).*/cuda\1\2/p"`/jaxlib-0.1.47-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
+pip install --upgrade https://storage.googleapis.com/jax-releases/`nvidia-smi | sed -En "s/.* CUDA Version: ([0-9]*)\.([0-9]*).*/cuda\1\2/p"`/jaxlib-0.1.50-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-manylinux2010_x86_64.whl jax
 ```
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)

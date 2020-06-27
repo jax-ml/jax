@@ -61,7 +61,7 @@ jobs:
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
       run: |
-        [ ${{ matrix.enable-x64 }} = enable-x64 ] && JAX_ENABLE_X64=1 || JAX_ENABLE_X64=0 
+        [ ${{ matrix.enable-x64 }} = enable-x64 ] && JAX_ENABLE_X64=1 || JAX_ENABLE_X64=0
         pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
@@ -87,9 +87,7 @@ jobs:
         sudo apt install -y pandoc
         python -m pip install --upgrade pip
         pip install -r docs/requirements.txt
-    - name: Build and test documentation
+    - name: Test documentation
       run: |
-        sphinx-build -b html -D nbsphinx_execute=always docs docs/build/html
         pytest docs
         pytest --doctest-modules jax/api.py
-

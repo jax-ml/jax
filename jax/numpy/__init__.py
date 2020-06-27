@@ -29,7 +29,7 @@ from .lax_numpy import (
     complex128, complex64, complex_, complexfloating, compress, concatenate,
     conj, conjugate, convolve, copysign, corrcoef, correlate, cos, cosh,
     count_nonzero, cov, cross, csingle, cumprod, cumproduct, cumsum, deg2rad,
-    degrees, diag, diagflat, diag_indices, diagonal, diff, digitize, divide, divmod, dot,
+    degrees, diag, diagflat, diag_indices, diag_indices_from, diagonal, diff, digitize, divide, divmod, dot,
     double, dsplit, dstack, dtype, e, ediff1d, einsum, einsum_path, empty,
     empty_like, equal, euler_gamma, exp, exp2, expand_dims, expm1, extract, eye,
     fabs, finfo, fix, flatnonzero, flexible, flip, fliplr, flipud, float16, float32,
@@ -45,10 +45,11 @@ from .lax_numpy import (
     logical_not, logical_or, logical_xor, logspace, mask_indices, matmul, max,
     maximum, mean, median, meshgrid, min, minimum, mod, moveaxis, msort,
     multiply, nan, nan_to_num, nanargmax, nanargmin, nancumprod, nancumsum,
+    nanmedian, nanpercentile, nanquantile,
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
     negative, newaxis, nextafter, nonzero, not_equal, number, numpy_version,
     object_, ones, ones_like, operator_name, outer, packbits, pad, percentile,
-    pi, polyadd, polymul, polysub, polyval, positive, power, prod, product, promote_types, ptp, quantile,
+    pi, polyadd, polyder, polymul, polysub, polyval, positive, power, prod, product, promote_types, ptp, quantile,
     rad2deg, radians, ravel, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
     save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
@@ -56,7 +57,7 @@ from .lax_numpy import (
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
     triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
-    unpackbits, unravel_index, unsignedinteger, vander, var, vdot, vsplit,
+    unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
     vstack, where, zeros, zeros_like)
 
 from .polynomial import roots

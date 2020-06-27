@@ -31,11 +31,12 @@ import numpy as onp
 from . import dtypes
 from .config import FLAGS
 from . import linear_util as lu
+from . import source_info_util
 
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
 
-# TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
+# TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
 check_leaks = False
 
 """Disables internal invariant checks."""
@@ -141,12 +142,12 @@ def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
 
 
-
 class JaxprEqn(NamedTuple):
   invars: List['Atom']
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
+  source_info: Optional[source_info_util.Traceback]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
@@ -341,7 +342,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
+    with source_info_util.user_context(eqn.source_info):
+      ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -1060,7 +1062,7 @@ def canonicalize_shape(shape):
   raise TypeError(msg.format(shape))
 
 
-# ------------------- Call and map -------------------
+# ------------------- Call -------------------
 
 def apply_todos(todos, outs):
   todos_list = list(todos)
@@ -1069,7 +1071,7 @@ def apply_todos(todos, outs):
   return outs
 
 @lu.transformation_with_aux
-def process_env_traces(post_processor: str, primitive: Primitive,
+def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
                        level: int, params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
@@ -1082,41 +1084,59 @@ def process_env_traces(post_processor: str, primitive: Primitive,
       break
     trace = type(ans._trace)(ans._trace.master, cur_sublevel())
     outs = map(trace.full_raise, outs)
-    post_process = getattr(trace, post_processor)
-    outs, cur_todo = post_process(primitive, outs, params)
+    outs, cur_todo = primitive.post_process(trace, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def _call_bind(processor: str, post_processor: str, primitive: Primitive,
-               f: lu.WrappedFun, *args, **params):
+def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
+              fun: lu.WrappedFun, *args, **params):
+  params_tuple = tuple(params.items())
   top_trace = find_top_trace(args)
   level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
   params_tuple = tuple(params.items())
-  f, env_trace_todo = process_env_traces(f, post_processor, primitive, level, params_tuple)
+  fun, env_trace_todo = process_env_traces(fun, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
-      outs = primitive.impl(f, *args, **params)
+      outs = primitive.impl(fun, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    process = getattr(top_trace, processor)
-    outs = map(full_lower, process(primitive, f, tracers, params))
-  return apply_todos(env_trace_todo(), outs)
+    outs = primitive.process(top_trace, fun, tracers, params)
+  return apply_todos(env_trace_todo(), map(full_lower, outs))
 
-call_bind = partial(_call_bind, 'process_call', 'post_process_call')
-map_bind = partial(_call_bind, 'process_map', 'post_process_map')
+class CallPrimitive(Primitive):
+  multiple_results = True
+  call_primitive = True
+  bind = call_bind
 
+  def process(self, trace, fun, tracers, params):
+    return trace.process_call(self, fun, tracers, params)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_call(self, out_tracers, params)
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
 
-call_p = Primitive('call')
-call_p.multiple_results = True
-call_p.call_primitive = True
-call = partial(call_bind, call_p)
-call_p.def_custom_bind(call)
+call_p = CallPrimitive('call')
+call = call_p.bind
 call_p.def_impl(call_impl)
 
+# ------------------- Map -------------------
+
+class MapPrimitive(Primitive):
+  multiple_results = True
+  map_primitive = True
+
+  def bind(self, fun, *args, **params):
+    assert len(params['mapped_invars']) == len(args)
+    return call_bind(self, fun, *args, **params)
+
+  def process(self, trace, fun, tracers, params):
+    return trace.process_map(self, fun, tracers, params)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_map(self, out_tracers, params)
 
 # ------------------- Jaxpr checking -------------------
 
@@ -1153,6 +1173,14 @@ def typematch(aval1: UnshapedArray, aval2: UnshapedArray) -> bool:
   return (raise_to_shaped(aval1).strip_weak_type() ==
           raise_to_shaped(aval2).strip_weak_type())
 
+class JaxprTypeError(TypeError): pass
+
+def typecheck_assert(pred, msg):
+  if not pred:
+    raise JaxprTypeError(msg)
+
+custom_typechecks: Dict[Primitive, Callable] = {}
+
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
 
@@ -1165,15 +1193,15 @@ def check_jaxpr(jaxpr: Jaxpr):
   """
   try:
     _check_jaxpr(jaxpr, [v.aval for v in jaxpr.invars])
-  except Exception as e:
-    exception_type = type(e)
-    msg_context = f"while checking jaxpr:\n\n{jaxpr}\n"
-    if len(e.args) == 0:
-      exception_args = [msg_context]
+  except JaxprTypeError as e:
+    if len(e.args) == 2:
+      msg, eqn_idx = e.args
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, eqn_idx - 10, eqn_idx + 10))
     else:
-      msg = f"{e.args[0]}\n\n" + msg_context
-      exception_args = [msg, *e.args[1:]]
-    raise exception_type(*exception_args) from e
+      msg, = e.args
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, 0, 20))
+    raise JaxprTypeError(
+        f"{msg}\n\nwhile checking jaxpr:\n\n{jaxpr_str}") from None
 
 def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
@@ -1181,17 +1209,15 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
     if isinstance(v, Literal):
       return get_aval(v.val)
     else:
-      if v not in env:
-        raise TypeError(f"Variable '{v}' not defined")
+      typecheck_assert(v in env, f"Variable '{v}' not defined")
       return env[v]
 
   def write(v: Var, a: AbstractValue) -> None:
-    if v in env:
-      raise TypeError(f"Variable '{v}' already bound")
+    typecheck_assert(v not in env, f"Variable '{v}' already bound")
     if v is not dropvar:
-      if not typecompat(v.aval, a):
-        raise TypeError(f"Variable '{v}' inconsistently typed as {a}, "
-                        f"bound as {v.aval}")
+      typecheck_assert(typecompat(v.aval, a),
+                       f"Variable '{v}' inconsistently typed as {a}, "
+                       f"bound as {v.aval}")
       env[v] = a
 
   env : Dict[Var, AbstractValue] = {}
@@ -1200,19 +1226,24 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(write, jaxpr.constvars, [v.aval for v in jaxpr.constvars])
   map(write, jaxpr.invars, in_avals)
 
-  for eqn in jaxpr.eqns:
+  for eqn_idx, eqn in enumerate(jaxpr.eqns):
     in_avals = map(read, eqn.invars)
-    if eqn.primitive.call_primitive:
-      out_avals = check_call(eqn.primitive, in_avals, eqn.params)
-    elif eqn.primitive.map_primitive:
-      out_avals = check_map(eqn.primitive, in_avals, eqn.params)
-    else:
-      out_avals = check_eqn(eqn.primitive, in_avals, eqn.params)
+    prim = eqn.primitive
     try:
+      if prim in custom_typechecks:
+        custom_typechecks[prim](*in_avals, **eqn.params)
+      if prim.call_primitive:
+        out_avals = check_call(prim, in_avals, eqn.params)
+      elif prim.map_primitive:
+        out_avals = check_map(prim, in_avals, eqn.params)
+      else:
+        out_avals = check_eqn(prim, in_avals, eqn.params)
       map(write, eqn.outvars, out_avals)
-    except TypeError as e:
+    except JaxprTypeError as e:
       msg, = e.args
-      raise TypeError(msg + f" in '{eqn}'") from None
+      eqn_str = str(pp_eqn(eqn).indent(2))
+      raise JaxprTypeError(
+          f"{msg}\n\nin equation:\n\n{eqn_str}", eqn_idx) from None
 
   map(read, jaxpr.outvars)
 
@@ -1226,21 +1257,20 @@ def check_eqn(prim, in_avals, params):
   return out_avals
 
 def check_call(prim, in_avals, params):
-  if "call_jaxpr" not in params:
-    raise TypeError(f"Call primitive {prim} missing 'call_jaxpr' parameter")
+  typecheck_assert("call_jaxpr" in params,
+                   f"Call primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
 
   # These checks also happen in recursive call, but give better errors here.
-  if len(in_avals) != len(call_jaxpr.invars):
-    raise TypeError(f"Call primitive {prim} with {len(call_jaxpr.invars)} "
-                    f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
-                    f"inputs")
+  typecheck_assert(len(in_avals) == len(call_jaxpr.invars),
+                   f"Call primitive {prim} with {len(call_jaxpr.invars)} "
+                   f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
+                   f"inputs")
   binder_avals = [v.aval for v in call_jaxpr.invars]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
-    if not typecompat(binder_aval, in_aval):
-      raise TypeError(
-          f"Call primitive {prim} passes operand {in_aval} "
-          f"to jaxpr expecting {binder_aval}")
+    typecheck_assert(typecompat(binder_aval, in_aval),
+                     f"Call primitive {prim} passes operand {in_aval} "
+                     f"to jaxpr expecting {binder_aval}")
 
   _check_jaxpr(call_jaxpr, in_avals)
 
@@ -1248,22 +1278,22 @@ def check_call(prim, in_avals, params):
   return out_avals
 
 def check_map(prim, in_avals, params):
-  if "call_jaxpr" not in params:
-    raise TypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
+  typecheck_assert("call_jaxpr" in params,
+                   f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-  if "axis_size" not in params:
-    raise TypeError(f"Map primitive {prim} missing 'axis_size' parameter")
+  typecheck_assert("axis_size" in params,
+                   f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
-  if "mapped_invars" not in params:
-    raise TypeError(f"Map primitive {prim} missing 'mapped_invars' parameter")
+  typecheck_assert("mapped_invars" in params,
+                   f"Map primitive {prim} missing 'mapped_invars' parameter")
   mapped_invars = params["mapped_invars"]
 
   binder_avals = [unmapped_aval(axis_size, v.aval) if mapped else v.aval
                   for v, mapped in zip(call_jaxpr.invars, mapped_invars)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
-    if not typecompat(binder_aval, in_aval):
-      raise TypeError(f"Call primitive {prim} passes operand {in_aval} "
-                      f"to jaxpr expecting {binder_aval}")
+    typecheck_assert(typecompat(binder_aval, in_aval),
+                     f"Call primitive {prim} passes operand {in_aval} "
+                     f"to jaxpr expecting {binder_aval}")
 
   mapped_avals = [mapped_aval(axis_size, aval) if mapped else aval
                   for aval, mapped in zip(in_avals, mapped_invars)]
@@ -1287,18 +1317,52 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
 
 def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars)
-  pp_subexpr = pp('')
-  return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
-          >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+  pp_lhs = pp(f'{lhs} =')
+  pp_rhs = (pp(eqn.primitive.name) >>
+            pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
+            pp(pp_vars(eqn.invars)))
+  if len(lhs) <= 6:
+    return pp_lhs >> pp(' ') >> pp_rhs
+  else:
+    return pp_lhs + pp_rhs.indent(2)
 
-def pp_jaxpr(jaxpr: Jaxpr) -> PrettyPrint:
-  pp_outvars = str(tuple(jaxpr.outvars))
+def pp_eqns(eqns: Sequence[JaxprEqn],
+            source_info: bool = False) -> Sequence[PrettyPrint]:
+  pps = map(pp_eqn, eqns)
+  if source_info:
+    l = max(i + len(s) for x in pps for i, s in x.lines)
+    return [pp_eqn(e).annotate(l, source_info_util.summarize(e.source_info))
+            for e in eqns]
+  else:
+    return pps
+
+def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
+  pps = pp_eqns(jaxpr.eqns, source_info=source_info)
+  str_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
-          ((pp('let ') >>
-            vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(pp_outvars))).indent(2))
+          ((pp('let ') >> vcat(pps))
+           + pp('in {} }}'.format(str_outvars))).indent(2))
+
+def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
+                       source_info: bool = False) -> PrettyPrint:
+  lo = max(lo, 0)
+  hi = max(lo, min(hi, len(jaxpr.eqns)))
+  eqns = jaxpr.eqns[lo:hi]
+  pps = []
+  if len(eqns) == 0 and len(jaxpr.eqns) != 0:
+      pps.append(pp('...'))
+  else:
+    if lo != 0:
+      pps.append(pp('...'))
+    pps.extend(pp_eqns(eqns, source_info=source_info))
+    if hi != len(jaxpr.eqns):
+      pps.append(pp('...'))
+  str_outvars = str(tuple(jaxpr.outvars))
+  return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
+                                         pp_vars(jaxpr.invars))) +
+          ((pp('let ') >> vcat(pps))
+           + pp('in {} }}'.format(str_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
   jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]

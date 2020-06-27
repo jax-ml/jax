@@ -22,7 +22,7 @@ __all__ = [
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 47)
+_minimum_jaxlib_version = (0, 1, 48)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:

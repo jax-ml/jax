@@ -23,12 +23,12 @@ from absl.testing import parameterized
 
 import numpy as onp
 
-import jax
 from jax import api
 from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax.lib import xla_client
+from jax.util import safe_map, safe_zip
 
 from tests.lax_test import (all_dtypes, CombosWithReplacement,
                             compatible_shapes, default_dtypes, float_dtypes,
@@ -37,6 +37,10 @@ from tests.lax_test import (all_dtypes, CombosWithReplacement,
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
+
 
 def all_bdims(*shapes):
   bdims = (itertools.chain([cast(Optional[int], None)],
@@ -56,17 +60,15 @@ def slicer(x, bdim):
     return lambda i: lax.index_in_dim(x, i, bdim, keepdims=False)
 
 def args_slicer(args, bdims):
-  slicers = list(map(slicer, args, bdims))
+  slicers = map(slicer, args, bdims)
   return lambda i: [sl(i) for sl in slicers]
 
 class LaxVmapTest(jtu.JaxTestCase):
 
   def _CheckBatching(self, op, bdim_size, bdims, shapes, dtypes, rng,
                      rtol=None, atol=None):
-    batched_shapes = list(jax.util.safe_map(partial(add_bdim, bdim_size),
-                                            bdims, shapes))
-    args = [rng(shape, dtype)
-            for shape, dtype in jax.util.safe_zip(batched_shapes, dtypes)]
+    batched_shapes = map(partial(add_bdim, bdim_size), bdims, shapes)
+    args = [rng(shape, dtype) for shape, dtype in zip(batched_shapes, dtypes)]
     args_slice = args_slicer(args, bdims)
     ans = api.vmap(op, bdims)(*args)
     expected = onp.stack([op(*args_slice(i)) for i in range(bdim_size)])
@@ -642,7 +644,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       # Note also that we chose 3 * 5 * 3 * 5 such that it fits in the range of
       # values a bfloat16 can represent exactly to avoid ties.
       for dtype, rng_factory in itertools.chain(
-        zip(float_dtypes + int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
+        unsafe_zip(float_dtypes + int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
   def testTopK(self, shape, dtype, k, bdims, rng_factory):
     rng = rng_factory(self.rng())
     # _CheckBatching doesn't work with tuple outputs, so test outputs separately.
@@ -653,15 +655,17 @@ class LaxVmapTest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_dimension={}_arity={}_bdims={}"
+      {"testcase_name": "_shape={}_dimension={}_arity={}_bdims={}_isstable={}"
        .format(jtu.format_shape_dtype_string(shape, onp.float32), dimension,
-               arity, bdims),
-       "shape": shape, "dimension": dimension, "arity": arity, "bdims": bdims}
+               arity, bdims, is_stable),
+       "shape": shape, "dimension": dimension, "arity": arity, "bdims": bdims,
+       "is_stable": is_stable}
       for shape in [(2, 3)]
       for dimension in [0, 1]
       for arity in range(3)
-      for bdims in all_bdims(*((shape,) * arity))))
-  def testSort(self, shape, dimension, arity, bdims):
+      for bdims in all_bdims(*((shape,) * arity))
+      for is_stable in [False, True]))
+  def testSort(self, shape, dimension, arity, bdims, is_stable):
     rng = jtu.rand_default(self.rng())
     if arity == 1:
       fun = partial(lax.sort, dimension=dimension)
@@ -669,7 +673,9 @@ class LaxVmapTest(jtu.JaxTestCase):
                           rng)
     else:
       for i in range(arity):
-        fun = lambda *args, i=i: lax.sort(args, dimension=dimension)[i]
+        fun = lambda *args, i=i: lax.sort(args,
+                                          dimension=dimension,
+                                          is_stable=is_stable)[i]
         self._CheckBatching(fun, 5, bdims, (shape,) * arity,
                             (onp.float32,) * arity, rng)
 

@@ -154,6 +154,15 @@ def check_close(xs, ys, atol=None, rtol=None):
   assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol)
   tree_all(tree_multimap(assert_close, xs, ys))
 
+def _check_dtypes_match(xs, ys):
+  def _assert_dtypes_match(x, y):
+    if FLAGS.jax_enable_x64:
+      assert _dtype(x) == _dtype(y)
+    else:
+      assert (dtypes.canonicalize_dtype(_dtype(x)) ==
+              dtypes.canonicalize_dtype(_dtype(y)))
+  tree_all(tree_multimap(_assert_dtypes_match, xs, ys))
+
 
 def inner_prod(xs, ys):
   def contract(x, y):
@@ -202,7 +211,9 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
   rng = np.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
   v_out, t_out = f_jvp(args, tangent)
+  _check_dtypes_match(v_out, t_out)
   v_out_expected = f(*args)
+  _check_dtypes_match(v_out, v_out_expected)
   t_out_expected = numerical_jvp(f, args, tangent, eps=eps)
   # In principle we should expect exact equality of v_out and v_out_expected,
   # but due to nondeterminism especially on GPU (e.g., due to convolution
