@@ -1197,7 +1197,7 @@ def cumprod(operand: Array, axis: int) -> Array:
   return cumprod_p.bind(operand, axis=int(axis))
 
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
-         is_stable: bool = False) -> Union[Array, Tuple[Array, ...]]:
+         is_stable: bool = True) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
   <https://www.tensorflow.org/xla/operation_semantics#sort>`_
   operator.
@@ -1213,7 +1213,7 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable)[0]
 
 def sort_key_val(keys: Array, values: Array, dimension: int = -1,
-                 is_stable: bool = False) -> Tuple[Array, Array]:
+                 is_stable: bool = True) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
   dimension = _canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable)
