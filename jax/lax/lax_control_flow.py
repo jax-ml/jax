@@ -2124,8 +2124,8 @@ def associative_scan(fn, elems):
       ``fn(a, fn(b, c)) == fn(fn(a, b), c)``. The inputs and result are
       (possibly nested structures of) array(s) matching ``elems``. Each
       array has a leading dimension in place of ``num_elems``; the `fn`
-      is expected to reduce over this dimension. The result `r` has the same shape
-      (and structure) as the two inputs ``a`` and ``b``.
+      is expected to be scanned over this dimension. The result `r` has the same
+      shape (and structure) as the two inputs ``a`` and ``b``.
     elems: A (possibly nested structure of) array(s), each with leading
       dimension ``num_elems``.
 
