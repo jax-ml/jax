@@ -1338,6 +1338,39 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(fun, onp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_shape={}_axis={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
+       "op": op, "onp_op": onp_op, "shape": shape, "dtype": dtype,
+       "axis": axis, "rng_factory": rng_factory}
+      for op, onp_op, types in [
+          (lax.cummax, onp.cummax, default_dtypes),
+          (lax.cummin, onp.cummin, default_dtypes),
+      ]
+      for dtype in types
+      for shape in [[10], [3, 4, 5]]
+      for axis in range(len(shape))
+      for rng_factory in [
+          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          else jtu.rand_small]))
+  def testCumulativeReduceMaxMin(self, op, onp_op, shape, dtype, axis, rng_factory):
+    rng = rng_factory(self.rng())
+    fun = partial(op, axis=axis)
+    if onp.issubdtype(dtype, onp.integer):
+      if op == lax.cummax:
+        unit = onp.iinfo(dtype).min
+      else:
+        unit = onp.iinfo(dtype).max
+    else:
+      if op == lax.cummax:
+        unit = onp.finfo(dtype).min
+      else:
+        unit = onp.finfo(dtype).max
+    onp_fun = partial(onp_op, axis=axis, dtype=dtype, unit=unit)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker)
+    self._CheckAgainstNumpy(fun, onp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}_isstable={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
        "shape": shape, "dtype": dtype, "axis": axis, "is_stable": is_stable}
