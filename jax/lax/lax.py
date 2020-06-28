@@ -4875,12 +4875,12 @@ def _cumred_tpu_translation_rule(window_reduce: Callable, unit, x, *,
                                  axis: int):
   # On TPU, an implementation using reduce_window is handled specially by the
   # compiler and is efficient. On other backends, it is O(n^2).
-  if not unit and op is max:
+  if not unit and window_reduce is _reduce_window_max:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).min
     else:
       unit = dtypes.finfo(x.dtype).min
-  elif not unit and op is min:
+  elif not unit and op is _reduce_window_min:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).max
     else:
