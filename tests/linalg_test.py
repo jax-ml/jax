@@ -25,7 +25,7 @@ from absl.testing import parameterized
 
 import jax
 import jax.lib
-from jax import jit, grad, jvp, vmap, api
+from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import lax_linalg
 from jax import numpy as jnp
@@ -1293,7 +1293,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype), rng((n, n), dtype),]
-    
+
     #compute_expm is True
     osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=True)
     jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=True)
