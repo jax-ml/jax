@@ -4817,12 +4817,12 @@ def _parallel_prefix_scan(x, axis: int, op: Callable, unit=None):
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).min
     else:
-      unit = onp.finfo(x.dtype).min
+      unit = dtypes.finfo(x.dtype).min
   elif not unit and op is min:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).max
     else:
-      unit = onp.finfo(x.dtype).max
+      unit = dtypes.finfo(x.dtype).max
   n = x.shape[axis]
   if n == 0:
     return x
