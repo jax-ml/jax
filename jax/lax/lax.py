@@ -4918,7 +4918,7 @@ cummax_p = standard_primitive(
   'cummax', xla.lower_fun(_cummax_prefix_scan, multiple_results=False))
 ad.primitive_jvps[cummax_p] = _cummax_jvp_rule
 xla.backend_specific_translations['tpu'][cummax_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_max),
+  partial(_cumred_tpu_translation_rule, _reduce_window_max, None),
   multiple_results=False)
 batching.primitive_batchers[cummax_p] = partial(_cumred_batch_rule, cummax_p)
 
@@ -4928,7 +4928,7 @@ cummin_p = standard_primitive(
   'cummin', xla.lower_fun(_cummin_prefix_scan, multiple_results=False))
 ad.primitive_jvps[cummin_p] = _cummin_jvp_rule
 xla.backend_specific_translations['tpu'][cummin_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_min),
+  partial(_cumred_tpu_translation_rule, _reduce_window_min, None),
   multiple_results=False)
 batching.primitive_batchers[cummin_p] = partial(_cumred_batch_rule, cummin_p)
 
