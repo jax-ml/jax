@@ -1112,6 +1112,8 @@ class DeviceArray(DeviceValue):
   __hex__ = partialmethod(_forward_to_value, hex)
   __oct__ = partialmethod(_forward_to_value, oct)
   __index__ = partialmethod(_forward_to_value, op.index)
+  def tobytes(self, order='C'): return self._value.tobytes(order)
+  def tolist(self): return self._value.tolist()
 
   # pickle saves and loads just like an ndarray
   __reduce__ = partialmethod(_forward_to_value, op.methodcaller("__reduce__"))
