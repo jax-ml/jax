@@ -357,7 +357,7 @@ for unexpected in [
 tf_not_yet_impl = [
   ad.custom_lin_p,
 
-  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax, lax.cummin,
+  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
   lax_fft.fft_p, lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p,
   lax.outfeed_p, lax.sort_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
   lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
