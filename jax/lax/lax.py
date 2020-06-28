@@ -4925,34 +4925,25 @@ xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
 batching.primitive_batchers[cumsum_p] = partial(_cumred_batch_rule, cumsum_p)
 
 
-cumprod_p = standard_primitive(
-  _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cumprod"),
-  'cumprod', xla.lower_fun(_cumprod_prefix_scan, multiple_results=False))
-ad.primitive_jvps[cumprod_p] = _cumprod_jvp_rule
-xla.backend_specific_translations['tpu'][cumprod_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_prod),
-  multiple_results=False)
-batching.primitive_batchers[cumprod_p] = partial(_cumred_batch_rule, cumprod_p)
+def _generic_reducer_primitive(name, prefix_scan_fn, jvp_rule, reduce_window_fn):
+  reducer_p = standard_primitive(
+    _cumred_shape_rule, partial(_reduce_number_dtype_rule, name),
+    name, xla.lower_fun(prefix_scan_fn, multiple_results=False))
+  ad.primitive_jvps[reducer_p] = jvp_rule 
+  xla.backend_specific_translations['tpu'][reducer_p] = xla.lower_fun(
+    partial(_cumred_tpu_translation_rule, reduce_window_fn),
+    multiple_results=False)
+  batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule, reducer_p)
 
 
-cummax_p = standard_primitive(
-  _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cummax"),
-  'cummax', xla.lower_fun(_cummax_prefix_scan, multiple_results=False))
-ad.primitive_jvps[cummax_p] = _cummax_jvp_rule
-xla.backend_specific_translations['tpu'][cummax_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_max),
-  multiple_results=False)
-batching.primitive_batchers[cummax_p] = partial(_cumred_batch_rule, cummax_p)
+cumprod_p = _generic_reducer_primitive("cumprod", _cumprod_prefix_scan,
+                                      _cumprod_jvp_rule, _reduce_window_prod)
 
+cummax_p = _generic_reducer_primitive("cummax", _cummax_prefix_scan,
+                                      _cummax_jvp_rule, _reduce_window_max)
 
-cummin_p = standard_primitive(
-  _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cummin"),
-  'cummin', xla.lower_fun(_cummin_prefix_scan, multiple_results=False))
-ad.primitive_jvps[cummin_p] = _cummin_jvp_rule
-xla.backend_specific_translations['tpu'][cummin_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_min),
-  multiple_results=False)
-batching.primitive_batchers[cummin_p] = partial(_cumred_batch_rule, cummin_p)
+cummin_p = _generic_reducer_primitive("cummin", _cummin_prefix_scan,
+                                      _cummin_jvp_rule, _reduce_window_min)
 
 
 def _sort_abstract_eval(*args, **kwargs):
