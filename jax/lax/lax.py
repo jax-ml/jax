@@ -4880,7 +4880,7 @@ def _cumred_tpu_translation_rule(window_reduce: Callable, unit, x, *,
       unit = onp.iinfo(x.dtype).min
     else:
       unit = dtypes.finfo(x.dtype).min
-  elif not unit and op is _reduce_window_min:
+  elif not unit and window_reduce is _reduce_window_min:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).max
     else:
