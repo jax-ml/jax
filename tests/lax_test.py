@@ -1322,27 +1322,6 @@ class LaxTest(jtu.JaxTestCase):
       for op, onp_op, types in [
           (lax.cumsum, onp.cumsum, default_dtypes),
           (lax.cumprod, onp.cumprod, default_dtypes),
-      ]
-      for dtype in types
-      for shape in [[10], [3, 4, 5]]
-      for axis in range(len(shape))
-      for rng_factory in [
-          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
-          else jtu.rand_small]))
-  def testCumulativeReduce(self, op, onp_op, shape, dtype, axis, rng_factory):
-    rng = rng_factory(self.rng())
-    fun = partial(op, axis=axis)
-    onp_fun = partial(onp_op, axis=axis, dtype=dtype)
-    args_maker = lambda: [rng(shape, dtype)]
-    self._CompileAndCheck(fun, args_maker)
-    self._CheckAgainstNumpy(fun, onp_fun, args_maker)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_shape={}_axis={}"
-       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
-       "op": op, "onp_op": onp_op, "shape": shape, "dtype": dtype,
-       "axis": axis, "rng_factory": rng_factory}
-      for op, onp_op, types in [
           (lax.cummax, onp.maximum.accumulate, default_dtypes),
           (lax.cummin, onp.minimum.accumulate, default_dtypes),
       ]
@@ -1352,7 +1331,7 @@ class LaxTest(jtu.JaxTestCase):
       for rng_factory in [
           jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
           else jtu.rand_small]))
-  def testCumulativeReduceMaxMin(self, op, onp_op, shape, dtype, axis, rng_factory):
+  def testCumulativeReduce(self, op, onp_op, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
     fun = partial(op, axis=axis)
     onp_fun = partial(onp_op, axis=axis, dtype=dtype)
