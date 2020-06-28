@@ -4815,14 +4815,14 @@ def _prescan_power_of_two(x, axis: int, op: Callable, unit):
 def _parallel_prefix_scan(x, axis: int, op: Callable, unit=None):
   if not unit and op is max:
     if onp.issubdtype(x.dtype, onp.integer):
-      unit = onp.iint(x.dtype).min
+      unit = onp.iinfo(x.dtype).min
     else:
-      unit = onp.fint(x.dtype).min
+      unit = onp.finfo(x.dtype).min
   elif not unit and op is min:
     if onp.issubdtype(x.dtype, onp.integer):
-      unit = onp.iint(x.dtype).max
+      unit = onp.iinfo(x.dtype).max
     else:
-      unit = onp.fint(x.dtype).max
+      unit = onp.finfo(x.dtype).max
   n = x.shape[axis]
   if n == 0:
     return x
