@@ -4915,7 +4915,7 @@ def _cumulative_reduction_primitive(name, prefix_scan_fn, jvp_rule, reduce_windo
   reducer_p = standard_primitive(
     _cumred_shape_rule, partial(_reduce_number_dtype_rule, name),
     name, xla.lower_fun(prefix_scan_fn, multiple_results=False))
-  ad.primitive_jvps[reducer_p] = jvp_rule 
+  ad.primitive_jvps[reducer_p] = jvp_rule
   xla.backend_specific_translations['tpu'][reducer_p] = xla.lower_fun(
     partial(_cumred_tpu_translation_rule, reduce_window_fn),
     multiple_results=False)
