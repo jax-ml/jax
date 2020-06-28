@@ -25,7 +25,7 @@ from absl.testing import parameterized
 
 import jax
 import jax.lib
-from jax import jit, grad, jvp, vmap
+from jax import jit, grad, jvp, vmap, api
 from jax import lax
 from jax import lax_linalg
 from jax import numpy as jnp
@@ -1233,10 +1233,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
     self._CompileAndCheck(jsp_fun, args_maker)
 
-    args_maker_triu = lambda: [np.triu(rng((n, n), dtype))]
-    jsp_fun_triu = lambda a: jsp.linalg.expm(a, upper_triangular=True)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu)
-    self._CompileAndCheck(jsp_fun_triu, args_maker_triu)
+    # args_maker_triu = lambda: [np.triu(rng((n, n), dtype))]
+    # jsp_fun_triu = lambda a: jsp.linalg.expm(a, upper_triangular=True)
+    # self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu)
+    # self._CompileAndCheck(jsp_fun_triu, args_maker_triu)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name":
@@ -1281,6 +1281,44 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp.linalg.cho_solve, jsp.linalg.cho_solve,
                             args_maker, tol=1e-3)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       "n": n, "dtype": dtype, "rng_factory": rng_factory}
+      for n in [1, 4, 5, 20, 50, 100]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_small]))
+  def testExpmFrechet(self, n, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng((n, n), dtype), rng((n, n), dtype),]
+    
+    #compute_expm is True
+    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=True)
+    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+    #compute_expm is False
+    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=False)
+    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=False)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name":
+       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+      "n": n, "dtype": dtype, "rng_factory": rng_factory}
+     for n in [1, 4, 5, 20, 50]
+     for dtype in float_types + complex_types
+     for rng_factory in [jtu.rand_small]))
+  def testExpmGrad(self, n, dtype, rng_factory):
+     rng = rng_factory(self.rng())
+     _skip_if_unsupported_type(dtype)
+     a = rng((n, n), dtype)
+     jtu.check_grads(jsp.linalg.expm, (a,), modes=["fwd"], order=1)
 
 if __name__ == "__main__":
   absltest.main()

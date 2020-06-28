@@ -16,6 +16,7 @@ jax.scipy.linalg
    det
    eigh
    expm
+   expm_frechet
    inv
    lu
    lu_factor
