@@ -103,43 +103,19 @@ def _tfval_add_unit(vals: Sequence[TfValOrUnit],
 tf_impl: Dict[core.Primitive,
               Callable[..., Any]] = {}
 
-def disable_gradient(fun):
-  """Prevents the wrapped function from being differentiated."""
-
-  def grad_disabled(*dy, variables=None):
-    raise ValueError("jax2tf currently does not support gradients. Please "
-                     "reach out to jax-core@ if this feature is a blocker "
-                     "for you, we are working on it!")
-
-  is_tensor = lambda t: isinstance(t, (tf.Tensor, tf.Variable))
-
-  def wrapper(*args, **kwargs):
-    flat_args, treedef = jax.tree_flatten((args, kwargs))
-    tensor_idxs = [i for i, t in enumerate(flat_args) if is_tensor(t)]
-    tensor_args = [t for t in flat_args if is_tensor(t)]
-
-    @tf.custom_gradient
-    def inner_wrapper(*tensor_args):
-      flat_copy = list(flat_args)
-      for i, t in zip(tensor_idxs, tensor_args):
-        flat_copy[i] = t
-
-      args, kwargs = jax.tree_unflatten(treedef, flat_copy)
-      out = fun(*args, **kwargs)
-      return out, grad_disabled
-
-    return inner_wrapper(*tensor_args)
-
-  return wrapper
-
-
-def convert(fun):
+def convert(fun,
+            with_gradient=False):
   """Transforms `fun` to be executed by TensorFlow.
 
   Args:
     fun: Function to be transformed. Its arguments and return value should be
       JAX arrays, or (nested) standard Python containers (tuple/list/dict)
       thereof.
+    with_gradient: if set, will add a tf.custom_gradient to the converted
+      function, by converting the ``jax.vjp(fun)``. Only first-order
+      differentiation is supported for now. If the converted function is
+      saved in a SavedModel, the custom gradients are currently lost and
+      an error will be raised if a gradient computation is attempted.
 
   Returns:
     A version of `fun` that expects TfVals as arguments (or
@@ -147,23 +123,59 @@ def convert(fun):
   """
   api._check_callable(fun)
 
-  @disable_gradient
-  def wrapped_fun(*args: TfValOrUnit) -> TfValOrUnit:
-    # TODO(necula): remove the jit disabling once we handle all control-flow.
-    # Disabling the jit helps to avoid some unsupported jax primitives.
-    # E.g. scan will be statically unrolled.
-    f = lu.wrap_init(fun)
+  def converted_fun(*args: TfVal) -> TfVal:
+    # This function may take pytrees of TfVals. We can only set
+    # tf.custom_gradient on functions that take a flat argument list.
     args_flat, in_tree = tree_util.tree_flatten((args, {}))
     for a in args_flat:
       if not _is_tfvalorunit(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
                "be NumPy array, scalar, tf.Variable, or tf.Tensor")
         raise TypeError(msg)
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    out_flat = _interpret_fun(flat_fun, args_flat)
-    return tree_util.tree_unflatten(out_tree(), out_flat)
 
-  return wrapped_fun
+    f = lu.wrap_init(fun)
+    # out_tree_thunk() will be the output tree, after running _interpret_fun.
+    flat_fun, out_tree_thunk = flatten_fun(f, in_tree)
+
+    # Prepare the grad_fn for tf.custom_gradient.
+    def converted_grad_fn(*out_cts_flat: TfVal, **kwargs):
+      # TODO(cl/318778369): change **kwargs with variables=None
+      variables = kwargs.get("variables", [])
+      if variables:
+        raise ValueError("Unexpected variables used in forward pass. "
+                         "This should not happen for first-order differentiation. "
+                         f"variables={variables}")
+
+      def fun_vjp_jax(args_jax, out_cts_jax):
+        # One may think that we can get the pullback while we are converting
+        # the main function in the first place. That is problematic, because the
+        # pullback may contain captured tracers from the conversion of the
+        # main function. Those tracers will confuse the conversion of the
+        # pullback. So, we construct the vjp anew.
+        _, pullback_jax = jax.vjp(fun, *args_jax)
+        return pullback_jax(out_cts_jax)
+      out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
+      in_cts = convert(fun_vjp_jax, with_gradient=False)(args, out_cts)
+      return in_cts
+
+    if with_gradient:
+      @tf.custom_gradient
+      def converted_fun_flat_with_custom_gradient(*args_flat: TfVal) -> TfVal:
+        return _interpret_fun(flat_fun, args_flat), converted_grad_fn
+
+      out_flat = converted_fun_flat_with_custom_gradient(*args_flat)
+    else:
+      out_flat_raw = _interpret_fun(flat_fun, args_flat)
+      message = ("The jax2tf-converted function does not support gradients. "
+                 "Use `with_gradient` parameter to enable gradients")
+      # We use PreventGradient, which is propagated through a SavedModel.
+      out_flat = [tf.raw_ops.PreventGradient(input=o, message=message)
+                  for o in out_flat_raw]
+
+    out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
+    return out
+
+  return converted_fun
 
 # Internals
 
