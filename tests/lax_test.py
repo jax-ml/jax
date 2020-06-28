@@ -1355,17 +1355,7 @@ class LaxTest(jtu.JaxTestCase):
   def testCumulativeReduceMaxMin(self, op, onp_op, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
     fun = partial(op, axis=axis)
-    if onp.issubdtype(dtype, onp.integer):
-      if op == lax.cummax:
-        unit = onp.iinfo(dtype).min
-      else:
-        unit = onp.iinfo(dtype).max
-    else:
-      if op == lax.cummax:
-        unit = onp.finfo(dtype).min
-      else:
-        unit = onp.finfo(dtype).max
-    onp_fun = partial(onp_op, axis=axis, dtype=dtype, unit=unit)
+    onp_fun = partial(onp_op, axis=axis, dtype=dtype)
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
     self._CheckAgainstNumpy(fun, onp_fun, args_maker)
