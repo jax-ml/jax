@@ -3811,6 +3811,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertAllClose(x.astype(jnp.float32) ** i, x ** i,
                           check_dtypes=False)
 
+  def testToBytes(self):
+    v = np.arange(12, dtype=np.int32).reshape(3, 4)
+    for order in ['C', 'F']:
+      self.assertEqual(jnp.asarray(v).tobytes(order), v.tobytes(order))
+
+  def testToList(self):
+    v = np.arange(12, dtype=np.int32).reshape(3, 4)
+    self.assertEqual(jnp.asarray(v).tolist(), v.tolist())
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

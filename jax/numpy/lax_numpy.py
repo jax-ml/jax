@@ -4350,7 +4350,6 @@ setattr(DeviceArray, "T", property(transpose))
 setattr(DeviceArray, "real", property(real))
 setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", _astype)
-setattr(DeviceArray, "tolist", lambda x: np.array(x).tolist())
 setattr(DeviceArray, "view", _view)
 
 
