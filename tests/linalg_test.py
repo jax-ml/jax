@@ -1233,10 +1233,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
     self._CompileAndCheck(jsp_fun, args_maker)
 
-    # args_maker_triu = lambda: [np.triu(rng((n, n), dtype))]
-    # jsp_fun_triu = lambda a: jsp.linalg.expm(a, upper_triangular=True)
-    # self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu)
-    # self._CompileAndCheck(jsp_fun_triu, args_maker_triu)
+    args_maker_triu = lambda: [np.triu(rng((n, n), dtype))]
+    jsp_fun_triu = lambda a: jsp.linalg.expm(a, upper_triangular=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu)
+    self._CompileAndCheck(jsp_fun_triu, args_maker_triu)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name":
