@@ -2184,8 +2184,12 @@ def _can_call_numpy_array(x):
 
 # TODO(mattjj): maybe move these two functions into xla.py
 def _device_put_raw(x):
-  return array_result_handler(None, abstractify(x))(device_put(x))
-
+  try:
+    result = array_result_handler(None, abstractify(x))(device_put(x))
+  except (RuntimeError, TypeError, ValueError):
+    raise TypeError("Unexpected input type for array: {}".format(type(x))) from None
+  else:
+    return result
 
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):

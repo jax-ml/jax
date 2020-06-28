@@ -3268,6 +3268,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jnp.ones((3, 4))
     self.assertRaises(ValueError, lambda: jnp.sum(x, axis=2))
 
+  @jtu.ignore_warning(category=FutureWarning, message="jax.numpy reductions won't accept lists and tuples in future versions, only scalars and ndarrays")
+  def testErrorMessageForTuples(self):
+    self.assertRaisesRegex(
+        TypeError, "Unexpected input type for array: <class 'numpy.ndarray'>",
+        lambda: jnp.sum((jnp.zeros(1), {})))
+
   def testIssue956(self):
     self.assertRaises(TypeError, lambda: jnp.ndarray((1, 1)))
 
