@@ -4854,7 +4854,7 @@ def _cummax_jvp_rule(primals, tangents, *, axis: int, unit: Number):
   return api.jvp(partial(_cummax_prefix_scan, axis=axis, unit=unit), primals, tangents)
 
 
-def _cummin_jvp_rule(primals, tangents, *, axis: int, unit=unit):
+def _cummin_jvp_rule(primals, tangents, *, axis: int, unit: Number):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
