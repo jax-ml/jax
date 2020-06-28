@@ -57,7 +57,6 @@ _reduce = functools.reduce
 
 Array = Any
 DType = Any
-Number = Union[int, float]
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
