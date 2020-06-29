@@ -500,7 +500,7 @@ def _diff_pade7(args):
   M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
   A6 = _precise_dot(A2, A4)
   M6 = _precise_dot(A4, M2) + _precise_dot(M4, A2)
-  U = _precise_dot(A, dot(b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+  U = _precise_dot(A, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
   V = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   Lu = (_precise_dot(A, b[7]*M6 + b[5]*M4 + b[3]*M2) +
           _precise_dot(E, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident))
