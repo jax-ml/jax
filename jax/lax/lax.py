@@ -1196,6 +1196,14 @@ def cumprod(operand: Array, axis: int) -> Array:
   """Computes a cumulative product along `axis`."""
   return cumprod_p.bind(operand, axis=int(axis))
 
+def cummax(operand: Array, axis: int) -> Array:
+  """Computes a cumulative maximum along `axis`."""
+  return cummax_p.bind(operand, axis=int(axis))
+
+def cummin(operand: Array, axis: int) -> Array:
+  """Computes a cumulative minimum along `axis`."""
+  return cummin_p.bind(operand, axis=int(axis))
+
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
          is_stable: bool = True) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
@@ -4803,7 +4811,27 @@ def _prescan_power_of_two(x, axis: int, op: Callable, unit):
   return x, total
 
 
-def _parallel_prefix_scan(x, axis: int, op: Callable, unit):
+def _parallel_prefix_scan(x, axis: int, op: Callable):
+  if op is max:
+    if onp.issubdtype(x.dtype, onp.integer):
+      unit = onp.iinfo(x.dtype).min
+    elif onp.issubdtype(x.dtype, onp.bool_):
+      unit = False
+    else:  # inexact
+      unit = -onp.inf
+  elif op is min:
+    if onp.issubdtype(x.dtype, onp.integer):
+      unit = onp.iinfo(x.dtype).max
+    elif onp.issubdtype(x.dtype, onp.bool_):
+      unit = True
+    else:  # inexact
+      unit = onp.inf
+  elif op is add:
+    unit = 0
+  elif op is mul:
+    unit = 1
+  else:
+    raise ValueError("Unknown type of reducer, got {}".format(op))
   n = x.shape[axis]
   if n == 0:
     return x
@@ -4817,8 +4845,10 @@ def _parallel_prefix_scan(x, axis: int, op: Callable, unit):
   x, total = _prescan_power_of_two(x, axis, op, unit)
   return concatenate((slice_in_dim(x, 1, n, axis=axis), total), dimension=axis)
 
-_cumsum_prefix_scan = partial(_parallel_prefix_scan, op=add, unit=0)
-_cumprod_prefix_scan = partial(_parallel_prefix_scan, op=mul, unit=1)
+_cumsum_prefix_scan = partial(_parallel_prefix_scan, op=add)
+_cumprod_prefix_scan = partial(_parallel_prefix_scan, op=mul)
+_cummax_prefix_scan = partial(_parallel_prefix_scan, op=max)
+_cummin_prefix_scan = partial(_parallel_prefix_scan, op=min)
 
 def _cumred_shape_rule(x, *, axis: int):
   if axis < 0 or axis >= x.ndim:
@@ -4829,17 +4859,38 @@ def _cumred_shape_rule(x, *, axis: int):
 def _cumsum_transpose_rule(t, *, axis: int):
   return [rev(cumsum(rev(t, (axis,)), axis=axis), (axis,))]
 
-def _cumprod_jvp_rule(primals, tangents, *, axis: int):
+def _cumulative_jvp_rule(primals, tangents, *, axis: int,
+                         prefix_scan: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return api.jvp(partial(_cumprod_prefix_scan, axis=axis), primals, tangents)
+  return api.jvp(partial(prefix_scan, axis=axis), primals, tangents)
 
 
-def _cumred_tpu_translation_rule(window_reduce: Callable, unit, x, *,
+def _cumred_tpu_translation_rule(window_reduce: Callable, x, *,
                                  axis: int):
   # On TPU, an implementation using reduce_window is handled specially by the
   # compiler and is efficient. On other backends, it is O(n^2).
+  if window_reduce is _reduce_window_max:
+    if onp.issubdtype(x.dtype, onp.integer):
+      unit = onp.iinfo(x.dtype).min
+    elif onp.issubdtype(x.dtype, onp.bool_):
+      unit = False
+    else:  # inexact
+      unit = -onp.inf
+  elif window_reduce is _reduce_window_min:
+    if onp.issubdtype(x.dtype, onp.integer):
+      unit = onp.iinfo(x.dtype).max
+    elif onp.issubdtype(x.dtype, onp.bool_):
+      unit = True
+    else:  # inexact
+      unit = onp.inf
+  elif window_reduce is _reduce_window_sum:
+    unit = 0
+  elif window_reduce is _reduce_window_prod:
+    unit = 1
+  else:
+    raise ValueError("Unknown type of reducer, get {}".format(window_reduce))
   n = x.shape[axis]
   if n == 0:
     return x
@@ -4863,19 +4914,37 @@ cumsum_p = standard_primitive(
   'cumsum', xla.lower_fun(_cumsum_prefix_scan, multiple_results=False))
 ad.deflinear(cumsum_p, _cumsum_transpose_rule)
 xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_sum, 0),
+  partial(_cumred_tpu_translation_rule, _reduce_window_sum),
   multiple_results=False)
 batching.primitive_batchers[cumsum_p] = partial(_cumred_batch_rule, cumsum_p)
 
 
-cumprod_p = standard_primitive(
-  _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cumprod"),
-  'cumprod', xla.lower_fun(_cumprod_prefix_scan, multiple_results=False))
-ad.primitive_jvps[cumprod_p] = _cumprod_jvp_rule
-xla.backend_specific_translations['tpu'][cumprod_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_prod, 1),
-  multiple_results=False)
-batching.primitive_batchers[cumprod_p] = partial(_cumred_batch_rule, cumprod_p)
+def _cumulative_reduction_primitive(name, prefix_scan_fn, jvp_rule, reduce_window_fn):
+  reducer_p = standard_primitive(
+    _cumred_shape_rule, partial(_reduce_number_dtype_rule, name),
+    name, xla.lower_fun(prefix_scan_fn, multiple_results=False))
+  ad.primitive_jvps[reducer_p] = jvp_rule
+  xla.backend_specific_translations['tpu'][reducer_p] = xla.lower_fun(
+    partial(_cumred_tpu_translation_rule, reduce_window_fn),
+    multiple_results=False)
+  batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule, reducer_p)
+  return reducer_p
+
+
+cumprod_p = _cumulative_reduction_primitive("cumprod", _cumprod_prefix_scan,
+                                            partial(_cumulative_jvp_rule,
+                                                    prefix_scan=_cumprod_prefix_scan),
+                                            _reduce_window_prod)
+
+cummax_p = _cumulative_reduction_primitive("cummax", _cummax_prefix_scan,
+                                           partial(_cumulative_jvp_rule,
+                                                   prefix_scan=_cummax_prefix_scan),
+                                           _reduce_window_max)
+
+cummin_p = _cumulative_reduction_primitive("cummin", _cummin_prefix_scan,
+                                           partial(_cumulative_jvp_rule,
+                                                   prefix_scan=_cummin_prefix_scan),
+                                           _reduce_window_min)
 
 
 def _sort_abstract_eval(*args, **kwargs):

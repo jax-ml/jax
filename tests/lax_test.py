@@ -1322,6 +1322,8 @@ class LaxTest(jtu.JaxTestCase):
       for op, onp_op, types in [
           (lax.cumsum, onp.cumsum, default_dtypes),
           (lax.cumprod, onp.cumprod, default_dtypes),
+          (lax.cummax, onp.maximum.accumulate, default_dtypes),
+          (lax.cummin, onp.minimum.accumulate, default_dtypes),
       ]
       for dtype in types
       for shape in [[10], [3, 4, 5]]
