@@ -1197,11 +1197,11 @@ def cumprod(operand: Array, axis: int) -> Array:
   return cumprod_p.bind(operand, axis=int(axis))
 
 def cummax(operand: Array, axis: int) -> Array:
-  """Computes a cumulative maximum along `axis'."""
+  """Computes a cumulative maximum along `axis`."""
   return cummax_p.bind(operand, axis=int(axis))
 
 def cummin(operand: Array, axis: int) -> Array:
-  """Computes a cumulative minimum along `axis'."""
+  """Computes a cumulative minimum along `axis`."""
   return cummin_p.bind(operand, axis=int(axis))
 
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
