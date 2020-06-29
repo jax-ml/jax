@@ -221,6 +221,19 @@ class ODETest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
       jax.jacfwd(f)(3.)
 
+  @jtu.skip_on_devices("tpu")
+  def test_closure_nondiff(self):
+    # https://github.com/google/jax/issues/3584
+
+    def dz_dt(z, t):
+      return jnp.stack([z[0], z[1]])
+
+    def f(z):
+      y = odeint(dz_dt, z, jnp.arange(10.))
+      return jnp.sum(y)
+
+    jax.grad(f)(jnp.ones(2))  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main()
