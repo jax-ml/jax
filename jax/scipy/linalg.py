@@ -296,7 +296,7 @@ def _solve_P_Q(P, Q, upper_triangular=False):
 def _squaring(R, n_squarings):
   # squaring step to undo scaling
   def my_body_fun(i,R):
-    return jnp.dot(R,R)
+    return jnp.dot(R,R,precision=lax.Precision.HIGHEST)
   lower = jnp.zeros(1, dtype=n_squarings.dtype)
   R = lax.fori_loop(lower[0], n_squarings, my_body_fun, R)
   return R
@@ -378,7 +378,6 @@ def _expm_frechet(A, E, method=None, compute_expm=True):
     expm_A, expm_frechet_AE = expm_frechet_algo_64(A, E)
   else:
     raise ValueError('only method=\'SPS\' is supported')
-  expm_A, expm_frechet_AE = expm_frechet_algo_64(A, E)
   if compute_expm:
     return expm_A, expm_frechet_AE
   else:
@@ -446,8 +445,8 @@ def expm_frechet_algo_64(A, E):
   # squaring
   def my_body_fun(i,my_arg):
     R, L = my_arg
-    L = jnp.dot(R, L) + jnp.dot(L, R)
-    R = jnp.dot(R, R)
+    L = jnp.dot(R, L, precision=lax.Precision.HIGHEST) + jnp.dot(L, R, precision=lax.Precision.HIGHEST)
+    R = jnp.dot(R, R, precision=lax.Precision.HIGHEST)
     return R, L
   lower = jnp.zeros(1, dtype=s.dtype)
   R, L = lax.fori_loop(lower[0], s, my_body_fun, (R, L))
