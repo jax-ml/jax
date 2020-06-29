@@ -718,7 +718,8 @@ class JaxTestLoader(absltest.TestLoader):
     names = super().getTestCaseNames(testCaseClass)
     if FLAGS.test_targets:
       pattern = re.compile(FLAGS.test_targets)
-      names = [name for name in names if pattern.match(name)]
+      names = [name for name in names
+               if pattern.search(f"{testCaseClass.__name__}.{name}")]
     return names
 
 
