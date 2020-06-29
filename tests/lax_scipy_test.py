@@ -84,8 +84,6 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("zeta", 2, float_dtypes, jtu.rand_positive, False),
 ]
 
-itertools.combinations_with_replacement = itertools.combinations_with_replacement
-
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Scipy implementation."""

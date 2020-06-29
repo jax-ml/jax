@@ -388,8 +388,6 @@ if numpy_version >= (1, 15):
       op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
   ]
 
-itertools.combinations_with_replacement = itertools.combinations_with_replacement
-
 
 def _dtypes_are_compatible_for_bitwise_ops(args):
   if len(args) <= 1:

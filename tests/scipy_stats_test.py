@@ -31,8 +31,6 @@ all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 
 float_dtypes = [onp.float32, onp.float64]
 
-itertools.combinations_with_replacement = itertools.combinations_with_replacement
-
 def genNamedParametersNArgs(n, rng_factory):
     return parameterized.named_parameters(
         jtu.cases_from_list(
