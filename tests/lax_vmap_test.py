@@ -30,17 +30,31 @@ from jax import test_util as jtu
 from jax.lib import xla_client
 from jax.util import safe_map, safe_zip
 
-from tests.lax_test import (all_dtypes, CombosWithReplacement,
-                            compatible_shapes, default_dtypes, float_dtypes,
-                            int_dtypes, LAX_OPS)
+from tests.lax_test import LAX_OPS
 
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
+                                 onp.float64])
+complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
+complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
+inexact_dtypes = float_dtypes + complex_dtypes
+int_dtypes = supported_dtypes([onp.int32, onp.int64])
+uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
+bool_dtypes = [onp.bool_]
+default_dtypes = float_dtypes + int_dtypes
+all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+# TODO(jakevdp): move the following to test_util.py
+compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 def all_bdims(*shapes):
   bdims = (itertools.chain([cast(Optional[int], None)],
@@ -82,7 +96,7 @@ class LaxVmapTest(jtu.JaxTestCase):
          "op_name": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes,
          "dtype": dtype, "bdims": bdims, "tol": rec.tol}
         for shape_group in compatible_shapes
-        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
         for bdims in all_bdims(*shapes)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))

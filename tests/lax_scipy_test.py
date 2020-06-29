@@ -84,8 +84,6 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("zeta", 2, float_dtypes, jtu.rand_positive, False),
 ]
 
-CombosWithReplacement = itertools.combinations_with_replacement
-
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Scipy implementation."""
@@ -151,8 +149,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
          "nondiff_argnums": rec.nondiff_argnums,
          "scipy_op": getattr(osp_special, rec.name),
          "lax_op": getattr(lsp_special, rec.name)}
-        for shapes in CombosWithReplacement(all_shapes, rec.nargs)
-        for dtypes in (CombosWithReplacement(rec.dtypes, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(all_shapes, rec.nargs)
+        for dtypes in (itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
           if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)))
       for rec in JAX_SPECIAL_FUNCTION_RECORDS))
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,

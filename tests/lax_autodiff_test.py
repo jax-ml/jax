@@ -31,13 +31,26 @@ from jax import lax
 from jax import test_util as jtu
 from jax.test_util import check_grads
 
-from tests.lax_test import (CombosWithReplacement, compatible_shapes,
-                            complex_dtypes, float_dtypes, inexact_dtypes,
-                            num_float_bits)
-
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
+
+
+def supported_dtypes(dtypes):
+  return [t for t in dtypes if t in jtu.supported_dtypes()]
+
+float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
+                                 onp.float64])
+complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
+complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
+inexact_dtypes = float_dtypes + complex_dtypes
+int_dtypes = supported_dtypes([onp.int32, onp.int64])
+uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
+bool_dtypes = [onp.bool_]
+default_dtypes = float_dtypes + int_dtypes
+all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+
+compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 
 GradTestSpec = collections.namedtuple(
@@ -188,14 +201,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
          "op": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes, "dtype": dtype,
          "order": rec.order, "tol": rec.tol}
         for shape_group in compatible_shapes
-        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
         for dtype in rec.dtypes)
       for rec in LAX_GRAD_OPS))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
     if jtu.device_under_test() == "tpu" and op is lax.pow:
       raise SkipTest("pow grad imprecise on tpu")
-    tol = jtu.join_tolerance(1e-1, tol) if num_float_bits(dtype) == 32 else tol
+    tol = jtu.join_tolerance(1e-1, tol) if jtu.num_float_bits(dtype) == 32 else tol
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 
@@ -1026,14 +1039,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = rng.uniform(-0.9, 9, size=(3, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 1))
     assert not set(onp.unique(x)) & set(onp.unique(y))
-    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(onp.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
     rng = onp.random.RandomState(0)
     x = rng.uniform(-0.9, 9, size=(1, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 4))
     assert not set(onp.unique(x)) & set(onp.unique(y))
-    tol = 1e-1 if num_float_bits(onp.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(onp.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
   def testHigherOrderGradientOfReciprocal(self):

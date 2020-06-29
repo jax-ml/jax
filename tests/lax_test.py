@@ -38,10 +38,6 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-def num_float_bits(dtype):
-  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
-
-
 ### lax tests
 
 # For standard unops and binops, we can generate a large number of tests on
@@ -165,8 +161,6 @@ LAX_OPS = [
     op_record("lt", 2, default_dtypes, jtu.rand_small),
 ]
 
-CombosWithReplacement = itertools.combinations_with_replacement
-
 
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
@@ -178,7 +172,7 @@ class LaxTest(jtu.JaxTestCase):
          "op_name": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes,
          "dtype": dtype}
         for shape_group in compatible_shapes
-        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
   def testOp(self, op_name, rng_factory, shapes, dtype):
@@ -194,7 +188,7 @@ class LaxTest(jtu.JaxTestCase):
          "op_name": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes,
          "dtype": dtype, "tol": rec.tol}
         for shape_group in compatible_shapes
-        for shapes in CombosWithReplacement(shape_group, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(shape_group, rec.nargs)
         for dtype in rec.dtypes)
       for rec in LAX_OPS))
   def testOpAgainstNumpy(self, op_name, rng_factory, shapes, dtype, tol):
