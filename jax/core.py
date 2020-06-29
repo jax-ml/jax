@@ -1200,8 +1200,8 @@ def check_jaxpr(jaxpr: Jaxpr):
     else:
       msg, = e.args
       jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, 0, 20))
-    raise JaxprTypeError(
-        f"{msg}\n\nwhile checking jaxpr:\n\n{jaxpr_str}") from None
+    msg = "\n\n".join([msg, "while checking jaxpr:", jaxpr_str])
+    raise JaxprTypeError(msg) from None
 
 def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
@@ -1241,9 +1241,10 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
       map(write, eqn.outvars, out_avals)
     except JaxprTypeError as e:
       msg, = e.args
-      eqn_str = str(pp_eqn(eqn).indent(2))
-      raise JaxprTypeError(
-          f"{msg}\n\nin equation:\n\n{eqn_str}", eqn_idx) from None
+      src = source_info_util.summarize(eqn.source_info)
+      msg = "\n\n".join([msg, "in equation:", str(pp_eqn(eqn).indent(2)),
+                         f"from source: {src}"])
+      raise JaxprTypeError(msg, eqn_idx) from None
 
   map(read, jaxpr.outvars)
 
