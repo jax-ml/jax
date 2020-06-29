@@ -90,4 +90,4 @@ class CallbackTest(jtu.JaxTestCase):
         jnp.array([4.0, 6.0]))
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

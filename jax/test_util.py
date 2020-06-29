@@ -22,6 +22,7 @@ import unittest
 import warnings
 import zlib
 
+from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
@@ -56,6 +57,12 @@ flags.DEFINE_bool(
     bool_env('JAX_SKIP_SLOW_TESTS', False),
     help=
     'Skip tests marked as slow (> 5 sec).'
+)
+
+flags.DEFINE_string(
+  'test_targets', '',
+  'Regular expression specifying which tests to run, called via re.match on '
+  'the test name. If empty or unspecified, run all tests.'
 )
 
 EPS = 1e-4
@@ -704,6 +711,16 @@ def cases_from_gens(*gens):
   for size in sizes:
     for i in range(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
+
+
+class JaxTestLoader(absltest.TestLoader):
+  def getTestCaseNames(self, testCaseClass):
+    names = super().getTestCaseNames(testCaseClass)
+    if FLAGS.test_targets:
+      pattern = re.compile(FLAGS.test_targets)
+      names = [name for name in names
+               if pattern.search(f"{testCaseClass.__name__}.{name}")]
+    return names
 
 
 class JaxTestCase(parameterized.TestCase):

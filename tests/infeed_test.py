@@ -20,13 +20,13 @@ import jax
 from jax import lax, numpy as np
 from jax.config import config
 from jax.lib import xla_client
-import jax.test_util
+import jax.test_util as jtu
 import numpy as onp
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-class InfeedTest(jax.test_util.JaxTestCase):
+class InfeedTest(jtu.JaxTestCase):
 
   def testInfeed(self):
     @jax.jit
@@ -92,4 +92,4 @@ class InfeedTest(jax.test_util.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1651,4 +1651,4 @@ class ShardArgsTest(jtu.JaxTestCase):
       self.assertAllClose(buf[0].to_py(), x[idx], check_dtypes=False)
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

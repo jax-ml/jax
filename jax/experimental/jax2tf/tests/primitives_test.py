@@ -396,4 +396,4 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(f(tf.ones([])), 1.)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

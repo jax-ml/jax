@@ -258,4 +258,4 @@ class StaxTest(jtu.JaxTestCase):
     self.assertEqual(out_shape, out.shape)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

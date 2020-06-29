@@ -58,4 +58,4 @@ class StaxTest(tf_test_util.JaxToTfTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())
