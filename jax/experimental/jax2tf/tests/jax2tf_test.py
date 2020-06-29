@@ -127,6 +127,48 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertLen(jax.tree_leaves(m.b), 2)
     self.assertLen(jax.tree_leaves(m.c), 2)
 
+  def test_custom_jvp(self):
+    """Conversion of function with custom JVP"""
+    @jax.custom_jvp
+    def f(x):
+      return x * x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * x_dot
+      return primal_out, tangent_out
+
+    arg = 0.7
+    self.TransformConvertAndCompare(f, arg, None, with_function=True)
+    self.TransformConvertAndCompare(f, arg, "jvp", with_function=True)
+    self.TransformConvertAndCompare(f, arg, "vmap", with_function=True)
+    self.TransformConvertAndCompare(f, arg, "jvp_vmap", with_function=True)
+    self.TransformConvertAndCompare(f, arg, "grad", with_function=True)
+    self.TransformConvertAndCompare(f, arg, "grad_vmap", with_function=True)
+
+  def test_custom_vjp(self):
+    """Conversion of function with custom VJP"""
+    @jax.custom_vjp
+    def f(x):
+      return x * x
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), 3. * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * ct_b,
+
+    f.defvjp(f_fwd, f_bwd)
+    arg = 0.7
+    self.TransformConvertAndCompare(f, arg, None, with_function=True)
+    self.TransformConvertAndCompare(f, arg, "vmap", with_function=True)
+    self.TransformConvertAndCompare(f, arg, "grad", with_function=True)
+    self.TransformConvertAndCompare(f, arg, "grad_vmap", with_function=True)
+
 
 if __name__ == "__main__":
   absltest.main()

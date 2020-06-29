@@ -9,6 +9,17 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.1.72 (June 28, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.71...jax-v0.1.72>`_.
+
+* Bug fixes:
+
+  * Fix an odeint bug introduced in the previous release, see
+    `#3587 <https://github.com/google/jax/pull/3587>`_.
+
+
 jax 0.1.71 (June 25, 2020)
 ---------------------------
 
