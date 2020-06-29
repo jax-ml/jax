@@ -293,7 +293,7 @@ def _solve_P_Q(P, Q, upper_triangular=False):
     return np_linalg.solve(Q, P)
 
 def _precise_dot(A, B):
-  return jnp.dot(A, B, precision=lax.Precision.HIGHEST)  
+  return jnp.dot(A, B, precision=lax.Precision.HIGHEST)
 
 @jit
 def _squaring(R, n_squarings):
