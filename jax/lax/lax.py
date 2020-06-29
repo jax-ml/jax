@@ -4815,12 +4815,16 @@ def _parallel_prefix_scan(x, axis: int, op: Callable):
   if op is max:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).min
-    else:
+    elif onp.issubdtype(x.dtype, onp.bool):
+      unit = False
+    else:  # inexact
       unit = -onp.inf
   elif op is min:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).max
-    else:
+    elif onp.issubdtype(x.dtype, onp.bool):
+      unit = True
+    else:  # inexact
       unit = onp.inf
   elif op is add:
     unit = 0
@@ -4870,12 +4874,16 @@ def _cumred_tpu_translation_rule(window_reduce: Callable, x, *,
   if window_reduce is _reduce_window_max:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).min
-    else:
+    elif onp.issubdtype(x.dtype, onp.bool):
+      unit = False
+    else:  # inexact
       unit = -onp.inf
   elif window_reduce is _reduce_window_min:
     if onp.issubdtype(x.dtype, onp.integer):
       unit = onp.iinfo(x.dtype).max
-    else:
+    elif onp.issubdtype(x.dtype, onp.bool):
+      unit = True
+    else:  # inexact
       unit = onp.inf
   elif window_reduce is _reduce_window_sum:
     unit = 0
