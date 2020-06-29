@@ -839,6 +839,9 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   _check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
+  if fun.__doc__:
+    docstr += "\n\nOriginal documentation:\n\n"
+    docstr += fun.__doc__
 
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
