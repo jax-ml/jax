@@ -80,13 +80,20 @@ def _tfval_remove_unit(args: Sequence[TfValOrUnit]) -> Sequence[TfVal]:
 def _tfval_add_unit(vals: Sequence[TfValOrUnit],
                     avals: Sequence[core.AbstractValue]) -> Sequence[TfValOrUnit]:
   """Turn regular TfVals into TfValOrUnit, based on expected abstract values.
-  This function is sometimes called with a mix of core.unit and tf.nan in places
-  of units.
+  When the aval is a unit, the corresponding value is either core.unit,
+  or an EagerTensor with the value NaN (we use tf.nan as a concrete TF value
+  for units, see _tfval_remove_unit) or may even be a Tensor if we are building
+  graphs and the NaN value is abstracted.
   """
   def add_unit(v: TfValOrUnit, aval: core.AbstractValue):
     if not core.skip_checks:
-      assert ((v is core.unit or tf.math.is_nan(v))
-              if aval is core.abstract_unit else _is_tfval(v))
+      if aval is core.abstract_unit:
+        if v is not core.unit:
+          assert isinstance(v, tf.Tensor)
+          if v.device:  # Only for EagerTensor
+            assert tf.math.is_nan(v)
+      else:
+        assert _is_tfval(v)
     return core.unit if aval is core.abstract_unit else v
   return util.safe_map(add_unit, vals, avals)
 
@@ -124,7 +131,7 @@ def disable_gradient(fun):
 
   def grad_disabled(*dy, variables=None):
     raise ValueError("jax2tf currently does not support gradients. Please "
-                     "reach out to tomhennigan@ if this feature is a blocker "
+                     "reach out to jax-core@ if this feature is a blocker "
                      "for you, we are working on it!")
 
   is_tensor = lambda t: isinstance(t, (tf.Tensor, tf.Variable))
@@ -355,8 +362,6 @@ for unexpected in [
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  ad.custom_lin_p,
-
   lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax_fft.fft_p,
   lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p, lax.outfeed_p,
   lax.sort_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
@@ -368,9 +373,6 @@ tf_not_yet_impl = [
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
   lax_linalg.lu_p, lax_linalg.qr_p, lax_linalg.svd_p,
   lax_linalg.triangular_solve_p,
-
-  custom_derivatives.custom_jvp_call_jaxpr_p,
-  custom_derivatives.custom_vjp_call_jaxpr_p,
 
   random.random_gamma_p,
   lax.random_gamma_grad_p,
@@ -1090,6 +1092,30 @@ def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
 
 tf_impl[lax.scan_p] = _scan
 
+def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
+                           fun_jaxpr: core.TypedJaxpr,
+                           jvp_jaxpr_thunk: Callable) -> Sequence[TfValOrUnit]:
+  # TODO(necula): ensure that there is no AD transformation in scope
+  res = _interpret_jaxpr(fun_jaxpr, *args)
+  return _tfval_add_unit(res, fun_jaxpr.out_avals)
+
+tf_impl[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr
+
+
+def _custom_vjp_call_jaxpr(*args: TfValOrUnit,
+                           fun_jaxpr: core.TypedJaxpr,
+                           **_) -> Sequence[TfValOrUnit]:
+  # TODO(necula): ensure that there is no AD transformation in scope
+  res = _interpret_jaxpr(fun_jaxpr, *args)
+  return _tfval_add_unit(res, fun_jaxpr.out_avals)
+
+tf_impl[custom_derivatives.custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr
+
+def _custom_lin(*args: TfValOrUnit, **_) -> Sequence[TfValOrUnit]:
+  raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
+                  "function.")
+
+tf_impl[ad.custom_lin_p] = _custom_lin
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""

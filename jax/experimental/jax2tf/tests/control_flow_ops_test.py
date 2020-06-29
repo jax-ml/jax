@@ -66,6 +66,72 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     dict(testcase_name=f"_function={with_function}",
          with_function=with_function)
     for with_function in [False, True]))
+  def test_cond_units(self, with_function=True):
+    def g(x):
+      return lax.cond(True, lambda x: x, lambda y: y, x)
+
+    with jax2tf.enable_jit():
+      self.ConvertAndCompare(g, 0.7, with_function=with_function)
+      self.ConvertAndCompare(jax.grad(g), 0.7, with_function=with_function)
+
+
+  def test_cond_custom_jvp(self):
+    """Conversion of function with custom JVP, inside cond.
+    This exercises the custom_jvp_call_jaxpr primitives."""
+    @jax.custom_jvp
+    def f(x):
+      return x * x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * x_dot
+      return primal_out, tangent_out
+
+    def g(x):
+      return lax.cond(True, f, lambda y: y, x)
+
+    with jax2tf.enable_jit():
+      arg = 0.7
+      self.TransformConvertAndCompare(g, arg, None)
+      self.TransformConvertAndCompare(g, arg, "jvp")
+      self.TransformConvertAndCompare(g, arg, "vmap")
+      self.TransformConvertAndCompare(g, arg, "jvp_vmap")
+      self.TransformConvertAndCompare(g, arg, "grad")
+      self.TransformConvertAndCompare(g, arg, "grad_vmap")
+
+
+  def test_cond_custom_vjp(self):
+    """Conversion of function with custom VJP, inside cond.
+    This exercises the custom_vjp_call_jaxpr primitives."""
+    @jax.custom_vjp
+    def f(x):
+      return x * x
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), 3. * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * ct_b,
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      return lax.cond(True, f, lambda y: y, x)
+
+    with jax2tf.enable_jit():
+      arg = 0.7
+      self.TransformConvertAndCompare(g, arg, None)
+      self.TransformConvertAndCompare(g, arg, "vmap")
+      self.TransformConvertAndCompare(g, arg, "grad_vmap")
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_function={with_function}",
+         with_function=with_function)
+    for with_function in [False, True]))
   def test_while_single_carry(self, with_function=False):
     """A while with a single carry"""
     def func(x):
@@ -136,6 +202,34 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     with jax2tf.enable_jit():
       self.ConvertAndCompare(product_xs_ys, xs, ys, with_function=with_function)
 
+  def test_while_custom_jvp(self):
+    """Conversion of function with custom JVP, inside while.
+    This exercises the custom_jvp_call_jaxpr primitives."""
+    @jax.custom_jvp
+    def f(x):
+      return x * x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * x_dot
+      return primal_out, tangent_out
+
+    def g(x):
+      return lax.while_loop(lambda carry: carry[0] < 10,
+                            lambda carry: (carry[0] + 1, f(carry[1])),
+                            (0, x))
+
+    with jax2tf.enable_jit():
+      arg = 0.7
+      self.TransformConvertAndCompare(g, arg, None)
+      self.TransformConvertAndCompare(g, arg, "jvp")
+      self.TransformConvertAndCompare(g, arg, "vmap")
+      self.TransformConvertAndCompare(g, arg, "jvp_vmap")
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
          with_function=with_function)
@@ -165,6 +259,64 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     print(jax.make_jaxpr(jax.grad(f_jax))(arg, arg))
     with jax2tf.enable_jit():
       self.ConvertAndCompare(jax.grad(f_jax), arg, arg, with_function=with_function)
+
+
+  def test_scan_custom_jvp(self):
+    """Conversion of function with custom JVP, inside scan.
+    This exercises the custom_jvp_call_jaxpr primitives."""
+    @jax.custom_jvp
+    def f(x):
+      return x * x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * x_dot
+      return primal_out, tangent_out
+
+    def g(x):
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    with jax2tf.enable_jit():
+      arg = np.full((5,), 0.7)
+      self.TransformConvertAndCompare(g, arg, None)
+      self.TransformConvertAndCompare(g, arg, "jvp")
+      self.TransformConvertAndCompare(g, arg, "vmap")
+      self.TransformConvertAndCompare(g, arg, "jvp_vmap")
+      self.TransformConvertAndCompare(g, arg, "grad")
+      self.TransformConvertAndCompare(g, arg, "grad_vmap")
+
+  def test_scan_custom_vjp(self):
+    """Conversion of function with custom VJP, inside scan.
+    This exercises the custom_vjp_call_jaxpr primitives."""
+    @jax.custom_vjp
+    def f(x):
+      return x * x
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), 3. * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * ct_b,
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    with jax2tf.enable_jit():
+      arg = np.full((5,), 0.7)
+      self.TransformConvertAndCompare(g, arg, None)
+      self.TransformConvertAndCompare(g, arg, "vmap")
+      self.TransformConvertAndCompare(g, arg, "grad")
+      self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
 
 if __name__ == "__main__":

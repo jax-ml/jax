@@ -15,13 +15,15 @@
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Optional, Tuple
 import tensorflow as tf  # type: ignore[import]
 
+import jax
 from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
 from jax import test_util as jtu
+from jax import numpy as jnp
 
 class JaxToTfTestCase(jtu.JaxTestCase):
 
@@ -64,10 +66,47 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     """Compares jax_func(*args) with convert(jax_func)(*args)."""
     func_tf = jax2tf.convert(func_jax)
     if with_function:
-      func_tf = tf.function(func_tf)
+      func_tf = tf.function(func_tf, autograph=False)
     res_jax = func_jax(*args)
     #logging.info(f"res_jax is {res_jax} on {res_jax.device_buffer.device()}")
     res_tf = func_tf(*args)
     #logging.info(f"res_tf is {res_tf} on {res_tf.backing_device}")
     self.assertAllClose(res_jax, res_tf, atol=atol, rtol=rtol)
     return (res_jax, res_tf)
+
+  def TransformConvertAndCompare(self, func: Callable,
+                                 arg,
+                                 transform: Optional[str],
+                                 with_function: bool = False):
+    """Like ConvertAndCompare but first applies a transformation.
+
+    `func` must be a function from one argument to one result. `arg` is
+    the argument before the transformation.
+
+    `transform` can be None, "jvp", "grad", "vmap", "jvp_vmap", "grad_vmap"
+    """
+    if transform is None:
+      return self.ConvertAndCompare(func, arg, with_function=with_function)
+    if transform == "jvp":
+      t_func = lambda x, xt: jax.jvp(func, (x,), (xt,))
+      return self.ConvertAndCompare(t_func, arg, np.full_like(arg, 0.1),
+                                    with_function=with_function)
+    if transform == "grad":
+      return self.ConvertAndCompare(jax.grad(func), arg,
+                                    with_function=with_function)
+    if transform == "vmap":
+      t_arg = np.stack([arg] * 4)
+      return self.ConvertAndCompare(jax.vmap(func),
+                                    t_arg, with_function=with_function)
+    if transform == "jvp_vmap":
+      jvp_func = lambda x, xt: jax.jvp(jax.vmap(func), (x,), (xt,))
+      t_arg = np.stack([arg] * 4)
+      return self.ConvertAndCompare(jvp_func, t_arg,
+                                    np.full_like(t_arg, 0.1),
+                                    with_function=with_function)
+    if transform == "grad_vmap":
+      grad_func = jax.grad(lambda x: jnp.sum(jax.vmap(func)(x)))
+      t_arg = np.stack([arg] * 4)
+      return self.ConvertAndCompare(grad_func, t_arg,
+                                    with_function=with_function)
+    assert False, transform
