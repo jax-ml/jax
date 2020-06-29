@@ -71,21 +71,19 @@ class TestBFGS(jtu.JaxTestCase):
 
     func, x0 = func_and_init
 
-    def compare(func, x0):
 
-      @jit
-      def min_op(x0):
-        result = fmin_bfgs(func(jnp), x0,
-                           options=dict(ls_maxiter=100, maxiter=maxiter, gtol=1e-6))
-        return result
+    @jit
+    def min_op(x0):
+      result = fmin_bfgs(func(jnp), x0,
+                         options=dict(ls_maxiter=100, maxiter=maxiter, gtol=1e-6))
+      return result
 
-      jax_res = min_op(x0)
+    jax_res = min_op(x0)
 
-      scipy_res = smin(func(onp), x0, method='BFGS')
+    scipy_res = smin(func(onp), x0, method='BFGS')
 
-      self.assertAllClose(scipy_res.x, jax_res.x_k, atol=2e-5, check_dtypes=False)
+    self.assertAllClose(scipy_res.x, jax_res.x_k, atol=2e-5, check_dtypes=False)
 
-    compare(func, x0)
 
 
 if __name__ == "__main__":
