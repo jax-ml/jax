@@ -292,11 +292,14 @@ def _solve_P_Q(P, Q, upper_triangular=False):
   else:
     return np_linalg.solve(Q, P)
 
+def _precise_dot(A, B):
+  return jnp.dot(A, B, precision=lax.Precision.HIGHEST)  
+
 @jit
 def _squaring(R, n_squarings):
   # squaring step to undo scaling
   def my_body_fun(i,R):
-    return jnp.dot(R,R,precision=lax.Precision.HIGHEST)
+    return _precise_dot(R, R)
   lower = jnp.zeros(1, dtype=n_squarings.dtype)
   R = lax.fori_loop(lower[0], n_squarings, my_body_fun, R)
   return R
@@ -304,27 +307,27 @@ def _squaring(R, n_squarings):
 def _pade3(A):
   b = (120., 60., 12., 1.)
   ident = jnp.eye(*A.shape, dtype=A.dtype)
-  A2 = jnp.dot(A, A)
-  U = jnp.dot(A, (b[3]*A2 + b[1]*ident))
+  A2 = _precise_dot(A, A)
+  U = _precise_dot(A, (b[3]*A2 + b[1]*ident))
   V = b[2]*A2 + b[0]*ident
   return U, V
 
 def _pade5(A):
   b = (30240., 15120., 3360., 420., 30., 1.)
   ident = jnp.eye(*A.shape, dtype=A.dtype)
-  A2 = jnp.dot(A, A)
-  A4 = jnp.dot(A2, A2)
-  U = jnp.dot(A, b[5]*A4 + b[3]*A2 + b[1]*ident)
+  A2 = _precise_dot(A, A)
+  A4 = _precise_dot(A2, A2)
+  U = _precise_dot(A, b[5]*A4 + b[3]*A2 + b[1]*ident)
   V = b[4]*A4 + b[2]*A2 + b[0]*ident
   return U, V
 
 def _pade7(A):
   b = (17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.)
   ident = jnp.eye(*A.shape, dtype=A.dtype)
-  A2 = jnp.dot(A, A)
-  A4 = jnp.dot(A2, A2)
-  A6 = jnp.dot(A4, A2)
-  U = jnp.dot(A, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+  A2 = _precise_dot(A, A)
+  A4 = _precise_dot(A2, A2)
+  A6 = _precise_dot(A4, A2)
+  U = _precise_dot(A, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
   V = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   return U,V
 
@@ -332,11 +335,11 @@ def _pade9(A):
   b = (17643225600., 8821612800., 2075673600., 302702400., 30270240.,
        2162160., 110880., 3960., 90., 1.)
   ident = jnp.eye(*A.shape, dtype=A.dtype)
-  A2 = jnp.dot(A, A)
-  A4 = jnp.dot(A2, A2)
-  A6 = jnp.dot(A4, A2)
-  A8 = jnp.dot(A6, A2)
-  U = jnp.dot(A, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+  A2 = _precise_dot(A, A)
+  A4 = _precise_dot(A2, A2)
+  A6 = _precise_dot(A4, A2)
+  A8 = _precise_dot(A6, A2)
+  U = _precise_dot(A, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
   V = b[8]*A8 + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   return U,V
 
@@ -345,11 +348,11 @@ def _pade13(A):
        1187353796428800., 129060195264000., 10559470521600., 670442572800.,
        33522128640., 1323241920., 40840800., 960960., 16380., 182., 1.)
   ident = jnp.eye(*A.shape, dtype=A.dtype)
-  A2 = jnp.dot(A, A)
-  A4 = jnp.dot(A2, A2)
-  A6 = jnp.dot(A4, A2)
-  U = jnp.dot(A, jnp.dot(A6, b[13]*A6 + b[11]*A4 + b[9]*A2) + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
-  V = jnp.dot(A6, b[12]*A6 + b[10]*A4 + b[8]*A2) + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
+  A2 = _precise_dot(A, A)
+  A4 = _precise_dot(A2, A2)
+  A6 = _precise_dot(A4, A2)
+  U = _precise_dot(A, _precise_dot(A6, b[13]*A6 + b[11]*A4 + b[9]*A2) + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+  V = _precise_dot(A6, b[12]*A6 + b[10]*A4 + b[8]*A2) + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
   return U,V
 
 
@@ -441,12 +444,12 @@ def expm_frechet_algo_64(A, E):
 
   lu_piv = lu_factor(-U + V)
   R = lu_solve(lu_piv, U + V)
-  L = lu_solve(lu_piv, Lu + Lv + jnp.dot((Lu - Lv), R))
+  L = lu_solve(lu_piv, Lu + Lv + _precise_dot((Lu - Lv), R))
   # squaring
   def my_body_fun(i,my_arg):
     R, L = my_arg
-    L = jnp.dot(R, L, precision=lax.Precision.HIGHEST) + jnp.dot(L, R, precision=lax.Precision.HIGHEST)
-    R = jnp.dot(R, R, precision=lax.Precision.HIGHEST)
+    L = _precise_dot(R, L) + _precise_dot(L, R)
+    R = _precise_dot(R, R)
     return R, L
   lower = jnp.zeros(1, dtype=s.dtype)
   R, L = lax.fori_loop(lower[0], s, my_body_fun, (R, L))
@@ -463,10 +466,10 @@ def _diff_pade3(args):
   s = 0
   b = (120., 60., 12., 1.)
   A2 = A.dot(A)
-  M2 = jnp.dot(A, E) + jnp.dot(E, A)
-  U = A.dot(b[3]*A2 + b[1]*ident)
+  M2 = _precise_dot(A, E) + _precise_dot(E, A)
+  U = _precise_dot(A, b[3]*A2 + b[1]*ident)
   V = b[2]*A2 + b[0]*ident
-  Lu = A.dot(b[3]*M2) + E.dot(b[3]*A2 + b[1]*ident)
+  Lu = _precise_dot(A, b[3]*M2) + _precise_dot(E, b[3]*A2 + b[1]*ident)
   Lv = b[2]*M2
   return U, V, Lu, Lv, s
 
@@ -475,14 +478,14 @@ def _diff_pade5(args):
   A,E,ident,_ = args
   s = 0
   b = (30240., 15120., 3360., 420., 30., 1.)
-  A2 = A.dot(A)
-  M2 = jnp.dot(A, E) + jnp.dot(E, A)
-  A4 = jnp.dot(A2, A2)
-  M4 = jnp.dot(A2, M2) + jnp.dot(M2, A2)
-  U = A.dot(b[5]*A4 + b[3]*A2 + b[1]*ident)
+  A2 = _precise_dot(A, A)
+  M2 = _precise_dot(A, E) + _precise_dot(E, A)
+  A4 = _precise_dot(A2, A2)
+  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
+  U = _precise_dot(A, b[5]*A4 + b[3]*A2 + b[1]*ident)
   V = b[4]*A4 + b[2]*A2 + b[0]*ident
-  Lu = (A.dot(b[5]*M4 + b[3]*M2) +
-          E.dot(b[5]*A4 + b[3]*A2 + b[1]*ident))
+  Lu = (_precise_dot(A, b[5]*M4 + b[3]*M2) +
+          _precise_dot(E, b[5]*A4 + b[3]*A2 + b[1]*ident))
   Lv = b[4]*M4 + b[2]*M2
   return U, V, Lu, Lv, s
 
@@ -491,16 +494,16 @@ def _diff_pade7(args):
   A, E, ident, _ = args
   s = 0
   b = (17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.)
-  A2 = A.dot(A)
-  M2 = jnp.dot(A, E) + jnp.dot(E, A)
-  A4 = jnp.dot(A2, A2)
-  M4 = jnp.dot(A2, M2) + jnp.dot(M2, A2)
-  A6 = jnp.dot(A2, A4)
-  M6 = jnp.dot(A4, M2) + jnp.dot(M4, A2)
-  U = A.dot(b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+  A2 = _precise_dot(A, A)
+  M2 = _precise_dot(A, E) + _precise_dot(E, A)
+  A4 = _precise_dot(A2, A2)
+  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
+  A6 = _precise_dot(A2, A4)
+  M6 = _precise_dot(A4, M2) + _precise_dot(M4, A2)
+  U = _precise_dot(A, dot(b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
   V = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
-  Lu = (A.dot(b[7]*M6 + b[5]*M4 + b[3]*M2) +
-          E.dot(b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident))
+  Lu = (_precise_dot(A, b[7]*M6 + b[5]*M4 + b[3]*M2) +
+          _precise_dot(E, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident))
   Lv = b[6]*M6 + b[4]*M4 + b[2]*M2
   return U, V, Lu, Lv, s
 
@@ -510,18 +513,18 @@ def _diff_pade9(args):
   s = 0
   b = (17643225600., 8821612800., 2075673600., 302702400., 30270240., 2162160.,
        110880., 3960., 90., 1.)
-  A2 = A.dot(A)
-  M2 = jnp.dot(A, E) + jnp.dot(E, A)
-  A4 = jnp.dot(A2, A2)
-  M4 = jnp.dot(A2, M2) + jnp.dot(M2, A2)
-  A6 = jnp.dot(A2, A4)
-  M6 = jnp.dot(A4, M2) + jnp.dot(M4, A2)
-  A8 = jnp.dot(A4, A4)
-  M8 = jnp.dot(A4, M4) + jnp.dot(M4, A4)
-  U = A.dot(b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
+  A2 = _precise_dot(A, A)
+  M2 = _precise_dot(A, E) + _precise_dot(E, A)
+  A4 = _precise_dot(A2, A2)
+  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
+  A6 = _precise_dot(A2, A4)
+  M6 = _precise_dot(A4, M2) + _precise_dot(M4, A2)
+  A8 = _precise_dot(A4, A4)
+  M8 = _precise_dot(A4, M4) + _precise_dot(M4, A4)
+  U = _precise_dot(A, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
   V = b[8]*A8 + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
-  Lu = (A.dot(b[9]*M8 + b[7]*M6 + b[5]*M4 + b[3]*M2) +
-          E.dot(b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident))
+  Lu = (_precise_dot(A, b[9]*M8 + b[7]*M6 + b[5]*M4 + b[3]*M2) +
+          _precise_dot(E, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident))
   Lv = b[8]*M8 + b[6]*M6 + b[4]*M4 + b[2]*M2
   return U, V, Lu, Lv, s
 
@@ -533,12 +536,12 @@ def _diff_pade13(args):
   A = A * two[0]**-s
   E = E * two[0]**-s
   # pade order 13
-  A2 = jnp.dot(A, A)
-  M2 = jnp.dot(A, E) + jnp.dot(E, A)
-  A4 = jnp.dot(A2, A2)
-  M4 = jnp.dot(A2, M2) + jnp.dot(M2, A2)
-  A6 = jnp.dot(A2, A4)
-  M6 = jnp.dot(A4, M2) + jnp.dot(M4, A2)
+  A2 = _precise_dot(A, A)
+  M2 = _precise_dot(A, E) + _precise_dot(E, A)
+  A4 = _precise_dot(A2, A2)
+  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
+  A6 = _precise_dot(A2, A4)
+  M6 = _precise_dot(A4, M2) + _precise_dot(M4, A2)
   b = (64764752532480000., 32382376266240000., 7771770303897600.,
        1187353796428800., 129060195264000., 10559470521600.,
        670442572800., 33522128640., 1323241920., 40840800., 960960.,
@@ -547,16 +550,16 @@ def _diff_pade13(args):
   W2 = b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident
   Z1 = b[12]*A6 + b[10]*A4 + b[8]*A2
   Z2 = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
-  W = jnp.dot(A6, W1) + W2
-  U = jnp.dot(A, W)
-  V = jnp.dot(A6, Z1) + Z2
+  W = _precise_dot(A6, W1) + W2
+  U = _precise_dot(A, W)
+  V = _precise_dot(A6, Z1) + Z2
   Lw1 = b[13]*M6 + b[11]*M4 + b[9]*M2
   Lw2 = b[7]*M6 + b[5]*M4 + b[3]*M2
   Lz1 = b[12]*M6 + b[10]*M4 + b[8]*M2
   Lz2 = b[6]*M6 + b[4]*M4 + b[2]*M2
-  Lw = jnp.dot(A6, Lw1) + jnp.dot(M6, W1) + Lw2
-  Lu = jnp.dot(A, Lw) + jnp.dot(E, W)
-  Lv = jnp.dot(A6, Lz1) + jnp.dot(M6, Z1) + Lz2
+  Lw = _precise_dot(A6, Lw1) + _precise_dot(M6, W1) + Lw2
+  Lu = _precise_dot(A, Lw) + _precise_dot(E, W)
+  Lv = _precise_dot(A6, Lz1) + _precise_dot(M6, Z1) + Lz2
   return U, V, Lu, Lv, s
 
 @_expm.defjvp
