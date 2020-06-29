@@ -362,6 +362,7 @@ class CoreTest(jtu.JaxTestCase):
 
     self.assertIn('cond branch 0 takes 0 inputs, branch 1 takes 1', msg)
     self.assertIn('in equation:', msg)
+    self.assertIn('from source:', msg)
     self.assertIn('while checking jaxpr:', msg)
     self.assertLess(msg.count('\n'), 200)
 
