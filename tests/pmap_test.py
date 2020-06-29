@@ -19,6 +19,7 @@ import itertools as it
 import gc
 import os
 from random import shuffle
+from typing import Optional, cast
 from unittest import SkipTest
 import warnings
 import weakref
@@ -37,17 +38,38 @@ from jax.abstract_arrays import ShapedArray
 from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                      linearize, device_put)
 from jax.lib import xla_bridge
-from jax.util import prod
+from jax.util import prod, safe_map
 from jax.interpreters import pxla
 from jax.interpreters import xla
-
-from tests.lax_test import compatible_shapes
-from tests.lax_vmap_test import all_bdims, add_bdim, args_slicer
 
 from jax.config import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
+
+# TODO(jakevdp): move the following to test_util.py
+compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
+
+def all_bdims(*shapes):
+  bdims = (it.chain([cast(Optional[int], None)],
+                     range(len(shape) + 1)) for shape in shapes)
+  return (t for t in it.product(*bdims) if not all(e is None for e in t))
+
+def add_bdim(bdim_size, bdim, shape):
+  shape = list(shape)
+  if bdim is not None:
+    shape.insert(bdim, bdim_size)
+  return tuple(shape)
+
+def slicer(x, bdim):
+  if bdim is None:
+    return lambda _: x
+  else:
+    return lambda i: lax.index_in_dim(x, i, bdim, keepdims=False)
+
+def args_slicer(args, bdims):
+  slicers = safe_map(slicer, args, bdims)
+  return lambda i: [sl(i) for sl in slicers]
 
 # Run all tests with 8 CPU devices.
 def setUpModule():

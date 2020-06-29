@@ -72,6 +72,11 @@ def _dtype(x):
           np.dtype(dtypes.python_scalar_dtypes.get(type(x), None)) or
           np.asarray(x).dtype)
 
+
+def num_float_bits(dtype):
+  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
+
+
 def is_sequence(x):
   try:
     iter(x)

@@ -388,7 +388,7 @@ if numpy_version >= (1, 15):
       op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
   ]
 
-CombosWithReplacement = itertools.combinations_with_replacement
+itertools.combinations_with_replacement = itertools.combinations_with_replacement
 
 
 def _dtypes_are_compatible_for_bitwise_ops(args):
@@ -461,7 +461,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "inexact": rec.inexact}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
-          CombosWithReplacement(rec.shapes, rec.nargs))
+          itertools.combinations_with_replacement(rec.shapes, rec.nargs))
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
       for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
@@ -489,7 +489,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "tol": rec.tolerance}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
-          CombosWithReplacement(rec.shapes, rec.nargs))
+          itertools.combinations_with_replacement(rec.shapes, rec.nargs))
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
       for rec in JAX_OPERATOR_OVERLOADS))
@@ -509,7 +509,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "op_tolerance": rec.tolerance}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
-          CombosWithReplacement(rec.shapes, rec.nargs))
+          itertools.combinations_with_replacement(rec.shapes, rec.nargs))
         for dtypes in itertools.product(
           *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
       for rec in JAX_RIGHT_OPERATOR_OVERLOADS))
@@ -559,10 +559,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
          "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name)}
         for shapes in filter(
           _shapes_are_broadcast_compatible,
-          CombosWithReplacement(rec.shapes, rec.nargs))
+          itertools.combinations_with_replacement(rec.shapes, rec.nargs))
         for dtypes in filter(
           _dtypes_are_compatible_for_bitwise_ops,
-          CombosWithReplacement(rec.dtypes, rec.nargs)))
+          itertools.combinations_with_replacement(rec.dtypes, rec.nargs)))
       for rec in JAX_BITWISE_OP_RECORDS))
   def testBitwiseOp(self, np_op, jnp_op, rng_factory, shapes, dtypes):
     rng = rng_factory(self.rng())
@@ -774,7 +774,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           [(4, 5, 2), (4, 5, 2), (-1, -1, 0, None)], # axisc should do nothing
           [(4, 5, 2), (4, 5, 2), (-1, -1, -1, None)] # same as before
       ]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in itertools.combinations_with_replacement(number_dtypes, 2)))
   def testCross(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -813,7 +813,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (4, 3, 2), (2, 5)),
           ("matrix-tensor", (5, 2), (3, 2, 4)),
           ("tensor-tensor", (2, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in itertools.combinations_with_replacement(number_dtypes, 2)))
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -850,7 +850,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("tensor-matrix", (5, 2, 3), (3, 2)),
           ("tensor-tensor", (5, 3, 4), (5, 4, 1)),
           ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1))]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in itertools.combinations_with_replacement(number_dtypes, 2)))
   def testMatmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, rng_factory):
     rng = rng_factory(self.rng())
     def np_fun(x, y):
@@ -881,7 +881,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           [(2, 3, 4), (5, 4, 3, 6), [[1, 2], [2, 1]]],
           [(1, 2, 3, 4), (4, 5, 3, 6), [[2, 3], [2, 0]]],
       ]
-      for lhs_dtype, rhs_dtype in CombosWithReplacement(number_dtypes, 2)))
+      for lhs_dtype, rhs_dtype in itertools.combinations_with_replacement(number_dtypes, 2)))
   def testTensordot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -1242,7 +1242,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "axis": axis, "base_shape": base_shape, "arg_dtypes": arg_dtypes,
        "rng_factory": jtu.rand_default}
       for num_arrs in [3]
-      for arg_dtypes in CombosWithReplacement(default_dtypes, num_arrs)
+      for arg_dtypes in itertools.combinations_with_replacement(default_dtypes, num_arrs)
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
       for axis in range(-len(base_shape)+1, len(base_shape))))
   def testConcatenate(self, axis, base_shape, arg_dtypes, rng_factory):
@@ -1275,7 +1275,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ",".join(np.dtype(dtype).name for dtype in arg_dtypes)),
        "axis": axis, "base_shape": base_shape, "arg_dtypes": arg_dtypes,
        "rng_factory": jtu.rand_default}
-      for arg_dtypes in CombosWithReplacement(default_dtypes, 2)
+      for arg_dtypes in itertools.combinations_with_replacement(default_dtypes, 2)
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
       for axis in range(-len(base_shape)+1, len(base_shape))))
   def testAppend(self, axis, base_shape, arg_dtypes, rng_factory):
@@ -1702,7 +1702,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         enumerate([jtu.rand_some_inf_and_nan, jtu.rand_some_zero])
       for x2_rng_factory in [partial(jtu.rand_int, low=-1075, high=1024)]
       for x1_shape, x2_shape in filter(_shapes_are_broadcast_compatible,
-                                       CombosWithReplacement(array_shapes, 2))
+                                       itertools.combinations_with_replacement(array_shapes, 2))
       for x1_dtype in default_dtypes))
   @jtu.skip_on_devices("tpu")  # TODO(b/153053081)
   def testLdexp(self, x1_shape, x1_dtype, x2_shape, x1_rng_factory, x2_rng_factory):
@@ -2744,7 +2744,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for x_shape, i_shape in filter(
         _shapes_are_equal_length,
         filter(_shapes_are_broadcast_compatible,
-               CombosWithReplacement(nonempty_nonscalar_array_shapes, 2)))
+               itertools.combinations_with_replacement(nonempty_nonscalar_array_shapes, 2)))
       for axis in itertools.chain(range(len(x_shape)), [-1],
                                   [cast(Optional[int], None)])
       for dtype in default_dtypes
@@ -2976,8 +2976,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for shape, dtype in zip(shapes, dtypes))),
      "rng_factory": jtu.rand_default, "shapes": shapes, "dtypes": dtypes}
     for shapes in filter(_shapes_are_broadcast_compatible,
-                         CombosWithReplacement(all_shapes, 3))
-    for dtypes in CombosWithReplacement(all_dtypes, 3)))
+                         itertools.combinations_with_replacement(all_shapes, 3))
+    for dtypes in itertools.combinations_with_replacement(all_dtypes, 3)))
   def testWhereThreeArgument(self, rng_factory, shapes, dtypes):
     args_maker = self._GetArgsMaker(rng_factory(self.rng()), shapes, dtypes)
     def np_fun(cond, x, y):
@@ -2997,8 +2997,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for n in range(0, 3)
         for shapes in filter(
           _shapes_are_broadcast_compatible,
-          CombosWithReplacement(all_shapes, 2 * n + 1))
-        for dtypes in CombosWithReplacement(all_dtypes, n + 1)))
+          itertools.combinations_with_replacement(all_shapes, 2 * n + 1))
+        for dtypes in itertools.combinations_with_replacement(all_dtypes, n + 1)))
   def testSelect(self, rng_factory, shapes, dtypes):
     rng = rng_factory(self.rng())
     n = len(dtypes) - 1
@@ -3862,9 +3862,6 @@ GRAD_SPECIAL_VALUE_TEST_RECORDS = [
     GradSpecialValuesTestSpec(jnp.sinc, [0.], 1),
 ]
 
-def num_float_bits(dtype):
-  return jnp.finfo(dtypes.canonicalize_dtype(dtype)).bits
-
 class NumpyGradTests(jtu.JaxTestCase):
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
@@ -3872,7 +3869,7 @@ class NumpyGradTests(jtu.JaxTestCase):
             rec.name, shapes, itertools.repeat(dtype)),
          "op": rec.op, "rng_factory": rec.rng_factory, "shapes": shapes, "dtype": dtype,
          "order": rec.order, "tol": rec.tol}
-        for shapes in CombosWithReplacement(nonempty_shapes, rec.nargs)
+        for shapes in itertools.combinations_with_replacement(nonempty_shapes, rec.nargs)
         for dtype in rec.dtypes)
       for rec in GRAD_TEST_RECORDS))
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
