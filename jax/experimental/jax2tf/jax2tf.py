@@ -13,10 +13,8 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 
-import contextlib
 import functools
 import string
-import threading
 from typing import Any, Callable, Dict, Iterable, Sequence, Union
 
 import jax
@@ -105,27 +103,6 @@ def _tfval_add_unit(vals: Sequence[TfValOrUnit],
 tf_impl: Dict[core.Primitive,
               Callable[..., Any]] = {}
 
-# TODO(necula): used for tests, until we handle all control-flow primitives
-class _JitState(threading.local):
-
-  def __init__(self):
-    super().__init__()
-    self.disable_jit = True
-
-_jit_state = _JitState()
-
-
-@contextlib.contextmanager
-def enable_jit():
-  """Temporarily allow JAX jit."""
-  old_state = _jit_state.disable_jit
-  _jit_state.disable_jit = False
-  try:
-    yield
-  finally:
-    _jit_state.disable_jit = old_state
-
-
 def disable_gradient(fun):
   """Prevents the wrapped function from being differentiated."""
 
@@ -175,23 +152,16 @@ def convert(fun):
     # TODO(necula): remove the jit disabling once we handle all control-flow.
     # Disabling the jit helps to avoid some unsupported jax primitives.
     # E.g. scan will be statically unrolled.
-    def doit():
-      f = lu.wrap_init(fun)
-      args_flat, in_tree = tree_util.tree_flatten((args, {}))
-      for a in args_flat:
-        if not _is_tfvalorunit(a):
-          msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
-                 "be NumPy array, scalar, tf.Variable, or tf.Tensor")
-          raise TypeError(msg)
-      flat_fun, out_tree = flatten_fun(f, in_tree)
-      out_flat = _interpret_fun(flat_fun, args_flat)
-      return tree_util.tree_unflatten(out_tree(), out_flat)
-
-    if _jit_state.disable_jit:
-      with jax.disable_jit():
-        return doit()
-    else:
-      return doit()
+    f = lu.wrap_init(fun)
+    args_flat, in_tree = tree_util.tree_flatten((args, {}))
+    for a in args_flat:
+      if not _is_tfvalorunit(a):
+        msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
+               "be NumPy array, scalar, tf.Variable, or tf.Tensor")
+        raise TypeError(msg)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out_flat = _interpret_fun(flat_fun, args_flat)
+    return tree_util.tree_unflatten(out_tree(), out_flat)
 
   return wrapped_fun
 

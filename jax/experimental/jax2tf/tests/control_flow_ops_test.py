@@ -22,7 +22,6 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 import numpy as np
 
-from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 
 from jax.config import config
@@ -39,9 +38,8 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: t + 1., lambda f: f, x)
 
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
-      self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
+    self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
+    self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
@@ -51,16 +49,14 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: (t + 1., 1.), lambda f: (f + 2., 2.), x)
 
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
-      self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
+    self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
+    self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
 
   def test_cond_partial_eval(self):
     def f(x):
       res = lax.cond(True, lambda op: op * x, lambda op: op + x, x)
       return res
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(jax.grad(f), 1.)
+    self.ConvertAndCompare(jax.grad(f), 1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
@@ -70,9 +66,8 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def g(x):
       return lax.cond(True, lambda x: x, lambda y: y, x)
 
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(g, 0.7, with_function=with_function)
-      self.ConvertAndCompare(jax.grad(g), 0.7, with_function=with_function)
+    self.ConvertAndCompare(g, 0.7, with_function=with_function)
+    self.ConvertAndCompare(jax.grad(g), 0.7, with_function=with_function)
 
 
   def test_cond_custom_jvp(self):
@@ -93,14 +88,13 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def g(x):
       return lax.cond(True, f, lambda y: y, x)
 
-    with jax2tf.enable_jit():
-      arg = 0.7
-      self.TransformConvertAndCompare(g, arg, None)
-      self.TransformConvertAndCompare(g, arg, "jvp")
-      self.TransformConvertAndCompare(g, arg, "vmap")
-      self.TransformConvertAndCompare(g, arg, "jvp_vmap")
-      self.TransformConvertAndCompare(g, arg, "grad")
-      self.TransformConvertAndCompare(g, arg, "grad_vmap")
+    arg = 0.7
+    self.TransformConvertAndCompare(g, arg, None)
+    self.TransformConvertAndCompare(g, arg, "jvp")
+    self.TransformConvertAndCompare(g, arg, "vmap")
+    self.TransformConvertAndCompare(g, arg, "jvp_vmap")
+    self.TransformConvertAndCompare(g, arg, "grad")
+    self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
 
   def test_cond_custom_vjp(self):
@@ -122,11 +116,10 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def g(x):
       return lax.cond(True, f, lambda y: y, x)
 
-    with jax2tf.enable_jit():
-      arg = 0.7
-      self.TransformConvertAndCompare(g, arg, None)
-      self.TransformConvertAndCompare(g, arg, "vmap")
-      self.TransformConvertAndCompare(g, arg, "grad_vmap")
+    arg = 0.7
+    self.TransformConvertAndCompare(g, arg, None)
+    self.TransformConvertAndCompare(g, arg, "vmap")
+    self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
@@ -139,8 +132,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       #      for(i=x; i < 4; i++);
       return lax.while_loop(lambda c: c < 4, lambda c: c + 1, x)
 
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(func, 0, with_function=with_function)
+    self.ConvertAndCompare(func, 0, with_function=with_function)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
@@ -171,8 +163,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
       return lax.while_loop(cond, body, (0, x))
 
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(func, cond_const, with_function=with_function)
+    self.ConvertAndCompare(func, cond_const, with_function=with_function)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_function={with_function}",
@@ -199,8 +190,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def product_xs_ys(xs, ys):
       return jax.vmap(product_xs_y, in_axes=(None, 0))(xs, ys)
 
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(product_xs_ys, xs, ys, with_function=with_function)
+    self.ConvertAndCompare(product_xs_ys, xs, ys, with_function=with_function)
 
   def test_while_custom_jvp(self):
     """Conversion of function with custom JVP, inside while.
@@ -221,13 +211,11 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       return lax.while_loop(lambda carry: carry[0] < 10,
                             lambda carry: (carry[0] + 1, f(carry[1])),
                             (0, x))
-
-    with jax2tf.enable_jit():
-      arg = 0.7
-      self.TransformConvertAndCompare(g, arg, None)
-      self.TransformConvertAndCompare(g, arg, "jvp")
-      self.TransformConvertAndCompare(g, arg, "vmap")
-      self.TransformConvertAndCompare(g, arg, "jvp_vmap")
+    arg = 0.7
+    self.TransformConvertAndCompare(g, arg, None)
+    self.TransformConvertAndCompare(g, arg, "jvp")
+    self.TransformConvertAndCompare(g, arg, "vmap")
+    self.TransformConvertAndCompare(g, arg, "jvp_vmap")
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -243,8 +231,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       return lax.scan(body, 0., (xs, ys))
 
     arg = np.arange(10, dtype=np.float32)
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(f_jax, arg, arg, with_function=with_function)
+    self.ConvertAndCompare(f_jax, arg, arg, with_function=with_function)
 
   def test_scan_partial_eval(self, with_function=False):
     def f_jax(xs, ys):
@@ -257,8 +244,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
     arg = np.arange(10, dtype=np.float32)
     print(jax.make_jaxpr(jax.grad(f_jax))(arg, arg))
-    with jax2tf.enable_jit():
-      self.ConvertAndCompare(jax.grad(f_jax), arg, arg, with_function=with_function)
+    self.ConvertAndCompare(jax.grad(f_jax), arg, arg, with_function=with_function)
 
 
   def test_scan_custom_jvp(self):
@@ -281,14 +267,13 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
                       np.full(x.shape[1:], 0.),  # Like x w/o leading dim
                       x)[0]
 
-    with jax2tf.enable_jit():
-      arg = np.full((5,), 0.7)
-      self.TransformConvertAndCompare(g, arg, None)
-      self.TransformConvertAndCompare(g, arg, "jvp")
-      self.TransformConvertAndCompare(g, arg, "vmap")
-      self.TransformConvertAndCompare(g, arg, "jvp_vmap")
-      self.TransformConvertAndCompare(g, arg, "grad")
-      self.TransformConvertAndCompare(g, arg, "grad_vmap")
+    arg = np.full((5,), 0.7)
+    self.TransformConvertAndCompare(g, arg, None)
+    self.TransformConvertAndCompare(g, arg, "jvp")
+    self.TransformConvertAndCompare(g, arg, "vmap")
+    self.TransformConvertAndCompare(g, arg, "jvp_vmap")
+    self.TransformConvertAndCompare(g, arg, "grad")
+    self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
   def test_scan_custom_vjp(self):
     """Conversion of function with custom VJP, inside scan.
@@ -311,12 +296,11 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
                       np.full(x.shape[1:], 0.),  # Like x w/o leading dim
                       x)[0]
 
-    with jax2tf.enable_jit():
-      arg = np.full((5,), 0.7)
-      self.TransformConvertAndCompare(g, arg, None)
-      self.TransformConvertAndCompare(g, arg, "vmap")
-      self.TransformConvertAndCompare(g, arg, "grad")
-      self.TransformConvertAndCompare(g, arg, "grad_vmap")
+    arg = np.full((5,), 0.7)
+    self.TransformConvertAndCompare(g, arg, None)
+    self.TransformConvertAndCompare(g, arg, "vmap")
+    self.TransformConvertAndCompare(g, arg, "grad")
+    self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
 
 if __name__ == "__main__":
