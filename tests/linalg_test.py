@@ -42,6 +42,29 @@ T = lambda x: np.swapaxes(x, -1, -2)
 float_types = [np.float32, np.float64]
 complex_types = [np.complex64, np.complex128]
 
+
+# Used in tests for det and lu
+singular_mats = [
+  jnp.array([[ 50, -30,  45],  # rank-2, corank-1
+             [-30,  90, -81],
+             [ 45, -81,  81]], dtype=jnp.float32),
+  jnp.array([[ 36, -42,  18],  # rank-1, corank-2
+             [-42,  49, -21],
+             [ 18, -21,   9]], dtype=jnp.float32),
+]
+
+
+nonsquare_singular_mats = [
+  jnp.array([[-35,   7,  27, -17],
+             [ 11, -13,  -9,  11],
+             [ 19, -11, -15,  13]], dtype=jnp.float32),
+  jnp.array([[-35,  11,  19],
+             [  7, -13, -11],
+             [ 27,  -9, -15],
+             [-17,  11,  13]], dtype=np.float32)
+]
+
+
 def _skip_if_unsupported_type(dtype):
   dtype = np.dtype(dtype)
   if (not FLAGS.jax_enable_x64 and
@@ -129,17 +152,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   def testDetGradOfSingularMatrixCorank1(self):
     # Rank 2 matrix with nonzero gradient
-    a = jnp.array([[ 50, -30,  45],
-                  [-30,  90, -81],
-                  [ 45, -81,  81]], dtype=jnp.float32)
+    a = singular_mats[0]
     jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
 
   @jtu.skip_on_devices("tpu")  # TODO(mattjj,pfau): nan on tpu, investigate
   def testDetGradOfSingularMatrixCorank2(self):
     # Rank 1 matrix with zero gradient
-    b = jnp.array([[ 36, -42,  18],
-                  [-42,  49, -21],
-                  [ 18, -21,   9]], dtype=jnp.float32)
+    b = singular_mats[1]
     jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
