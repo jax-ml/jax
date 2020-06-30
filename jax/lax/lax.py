@@ -4322,7 +4322,7 @@ def _argminmax_translation_rule(value_comparator, identity,
   dtype = shape.numpy_dtype()
   index_dtype = _int_dtype_for_dim_index(shape.dimensions()[axis])
 
-  subc = xb.make_computation_builder("argmax_comparator")
+  subc = xb.make_computation_builder("argminmax_comparator")
   value_shape = xc.Shape.array_shape(shape.xla_element_type(), ())
   index_shape = xc.Shape.array_shape(index_dtype, ())
   x_value = xb.parameter(subc, 0, value_shape)
