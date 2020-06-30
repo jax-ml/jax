@@ -612,13 +612,29 @@ def _lu_jvp_rule(primals, tangents):
   u_padding[-2] = (0, n - k, 0)
   u = lax.pad(jnp.triu(lu[..., :k, :]), zero, u_padding) + u_eye
 
-  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
-                        unit_diagonal=True)
-  lau = triangular_solve(u, la, left_side=False, transpose_a=False,
-                         lower=False)
+  # dummy calculation to figure out which matrices u are low-rank
+  d = triangular_solve(
+      u, jnp.ones(tuple(a_shape[:-2]) + (1, a_shape[-1])),
+      left_side=False, transpose_a=False, lower=False)
+  # TODO(pfau): make it so NaN/Inf due to low rank can be distinguished from
+  # NaN/Inf in the original data.
+  mask = jnp.tile(jnp.isinf(d) | jnp.isnan(d),
+                  (a.ndim-2)*[1] + [a_shape[-2], 1])
+
+  la = triangular_solve(
+      l, x, left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
+  lau = triangular_solve(
+      u, la, left_side=False, transpose_a=False, lower=False)
+  lau = jnp.where(mask, 0.0, lau)
 
   l_dot = jnp.matmul(l, jnp.tril(lau, -1))
   u_dot = jnp.matmul(jnp.triu(lau), u)
+  # Correction for low-rank matrices
+  u_masked = jnp.where(jnp.swapaxes(mask, -1, -2), 0.0, u)
+  u_fix = la - triangular_solve(
+      l, l_dot @ u_masked,
+      left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
+  u_dot = jnp.where(mask, u_fix, u_dot)
   lu_dot = l_dot + u_dot
   return (lu, pivots), (lu_dot, ad_util.Zero.from_value(pivots))
 
