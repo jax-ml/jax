@@ -1851,7 +1851,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = _promote_like_jnp(partial(np.stack, axis=axis))
     jnp_fun = partial(jnp.stack, axis=axis)
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
-
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_{}".format(
@@ -1873,6 +1873,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = _promote_like_jnp(getattr(np, op))
     jnp_fun = getattr(jnp, op)
     self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outdtype={}".format(
@@ -2492,8 +2493,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ([0, 1, 2], (2, 2)),
     ([[[0, 1], [2, 3]]], (2, 2)))
   def testUnravelIndex(self, flat_index, shape):
+    args_maker = lambda: (flat_index, shape)
     self._CheckAgainstNumpy(np.unravel_index, jnp.unravel_index,
-                            lambda: (flat_index, shape))
+                            args_maker)
+    self._CompileAndCheck(jnp.unravel_index, args_maker)
 
   def testUnravelIndexOOB(self):
     self.assertEqual(jnp.unravel_index(2, (2,)), (1,))
