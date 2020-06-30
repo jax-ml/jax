@@ -39,6 +39,7 @@ from . import core
 from . import linear_util as lu
 from . import ad_util
 from . import dtypes
+from . import gmap as general_map
 from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial, flatten_axes,
@@ -1187,6 +1188,28 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
     return tree_unflatten(out_tree(), outs)
   return f_pmapped
 
+def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
+  warn("gmap is an experimental feature and probably has bugs!")
+  _check_callable(fun)
+
+  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+
+  @wraps(fun)
+  def f_gmapped(*args, **kwargs):
+    f = lu.wrap_init(fun)
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    mapped_invars = (True,) * len(args_flat)
+    axis_size = _mapped_axis_size(in_tree, args_flat, (0,) * len(args_flat), "gmap")
+    for arg in args_flat: _check_arg(arg)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    outs = general_map.gmap(
+        flat_fun, *args_flat,
+        axis_name=axis_name,
+        axis_size=axis_size,
+        mapped_invars=mapped_invars,
+        schedule=tuple(schedule))
+    return tree_unflatten(out_tree(), outs)
+  return f_gmapped
 
 def _papply(fun):
   # This function is for testing purposes.
