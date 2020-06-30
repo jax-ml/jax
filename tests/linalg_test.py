@@ -993,6 +993,32 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     jtu.check_grads(lu, (a,), 2, atol=5e-2, rtol=3e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_corank={}".format(corank), "corank": corank}
+      for corank in [1, 2]))
+  @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
+  def testLuGradOfSingularMatrix(self, corank):
+    def _lu(a):
+      p, l, u = jsp.linalg.lu(a)
+      return p, l[:, :-corank], u
+    mat = singular_mats[corank-1]
+    # Check forward mode gradients
+    jtu.check_grads(_lu, (mat,), 1, modes=['fwd'], atol=1e-1, rtol=1e-1)
+    # Something is causing tests to fail for reverse-mode.
+    # So let's just compare forward-mode and reverse-mode Jacobians
+    jfwd = jax.jacfwd(jsp.linalg.lu)(mat)
+    jrev = jax.jacrev(jsp.linalg.lu)(mat)
+    for jf, jr in zip(jfwd, jrev):
+      np.testing.assert_allclose(jf, jr)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_matidx={}".format(matidx), "matidx": matidx}
+      for matidx in range(2)))
+  @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
+  def testLuGradOfNonSquareSingularMatrix(self, matidx):
+    mat = nonsquare_singular_mats[matidx]
+    jtu.check_grads(jsp.linalg.lu, (mat,), 1, modes=['fwd'], atol=1e-1, rtol=1e-1)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
