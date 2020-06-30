@@ -26,6 +26,8 @@ Operators
     abs
     add
     acos
+    argmax
+    argmin
     asin
     atan
     atan2

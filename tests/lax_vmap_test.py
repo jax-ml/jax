@@ -483,6 +483,22 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_op={}_inshape={}_reducedims={}_bdims={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dim,
+               bdims),
+       "op": op, "shape": shape, "dtype": dtype,
+       "dim": dim, "bdims": bdims}
+      for op in [lax.argmin, lax.argmax]
+      for dtype in default_dtypes
+      for shape in [(3, 4, 5)]
+      for dim in range(len(shape))
+      for bdims in all_bdims(shape)))
+  def testArgminmax(self, op, shape, dtype, dim, bdims):
+    rng = jtu.rand_default(self.rng())
+    fun = lambda operand: op(operand, dim)
+    self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"
        .format(op.__name__, onp.dtype(dtype).name, padding),
        "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,

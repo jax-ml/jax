@@ -34,6 +34,8 @@ from .lax import (
   after_all,
   after_all_p,
   and_p,
+  argmax,
+  argmin,
   asin,
   asinh,
   asinh_p,
