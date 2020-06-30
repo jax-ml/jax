@@ -25,7 +25,6 @@ from jax import random
 from jax import jacfwd, jit
 from jax.experimental import stax
 from jax.experimental.jet import jet, fact, zero_series
-from jax.tree_util import tree_map
 from jax import lax
 
 from jax.config import config
@@ -37,7 +36,7 @@ def jvp_taylor(fun, primals, series):
   def composition(eps):
     taylor_terms = [sum([eps ** (i+1) * terms[i] / fact(i + 1)
                          for i in range(len(terms))]) for terms in series]
-    nudged_args = [x + t for x, t in zip(primals, taylor_terms)]
+    nudged_args = [(x + t).astype(x.dtype) for x, t in zip(primals, taylor_terms)]
     return fun(*nudged_args)
   primal_out = fun(*primals)
   terms_out = [repeated(jacfwd, i+1)(composition)(0.) for i in range(order)]
@@ -123,24 +122,36 @@ class JetTest(jtu.JaxTestCase):
 
     self.check_jet(f, primals, series_in, check_dtypes=False)
 
-  def unary_check(self, fun, lims=[-2, 2], order=3):
+  def unary_check(self, fun, lims=[-2, 2], order=3, dtype=None):
     dims = 2, 3
     rng = np.random.RandomState(0)
-    primal_in = transform(lims, rng.rand(*dims))
-    terms_in = [rng.randn(*dims) for _ in range(order)]
+    if dtype is None:
+      primal_in = transform(lims, rng.rand(*dims))
+      terms_in = [rng.randn(*dims) for _ in range(order)]
+    else:
+      rng = jtu.rand_uniform(rng, *lims)
+      primal_in = rng(dims, dtype)
+      terms_in = [rng(dims, dtype) for _ in range(order)]
     self.check_jet(fun, (primal_in,), (terms_in,), atol=1e-4, rtol=1e-4)
 
-  def binary_check(self, fun, lims=[-2, 2], order=3, finite=True):
+  def binary_check(self, fun, lims=[-2, 2], order=3, finite=True, dtype=None):
     dims = 2, 3
     rng = np.random.RandomState(0)
     if isinstance(lims, tuple):
       x_lims, y_lims = lims
     else:
       x_lims, y_lims = lims, lims
-    primal_in = (transform(x_lims, rng.rand(*dims)),
-                 transform(y_lims, rng.rand(*dims)))
-    series_in = ([rng.randn(*dims) for _ in range(order)],
-                 [rng.randn(*dims) for _ in range(order)])
+    if dtype is None:
+      primal_in = (transform(x_lims, rng.rand(*dims)),
+                   transform(y_lims, rng.rand(*dims)))
+      series_in = ([rng.randn(*dims) for _ in range(order)],
+                   [rng.randn(*dims) for _ in range(order)])
+    else:
+      rng = jtu.rand_uniform(rng, *lims)
+      primal_in = (rng(dims, dtype),
+                   rng(dims, dtype))
+      series_in = ([rng(dims, dtype) for _ in range(order)],
+                   [rng(dims, dtype) for _ in range(order)])
     if finite:
       self.check_jet(fun, primal_in, series_in, atol=1e-4, rtol=1e-4)
     else:
@@ -160,11 +171,15 @@ class JetTest(jtu.JaxTestCase):
 
     atol = 1e-4
     rtol = 1e-4
-    self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
-                        check_dtypes=True)
+    self.assertAllClose(y, expected_y, atol=atol, rtol=rtol)
 
-    self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol,
-                        check_dtypes=True)
+    self.assertAllClose(terms, expected_terms, atol=atol, rtol=rtol)
+
+  @jtu.skip_on_devices("tpu")
+  def test_int_pow(self):
+    for p in range(6):
+      self.unary_check(lambda x: x ** p, lims=[-2, 2])
+    self.unary_check(lambda x: x ** 10, lims=[0, 0])
 
 
   @jtu.skip_on_devices("tpu")
@@ -176,9 +191,19 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_ceil(self):       self.unary_check(jnp.ceil)
   @jtu.skip_on_devices("tpu")
-  def test_round(self):      self.unary_check(jnp.round)
+  def test_round(self):      self.unary_check(lax.round)
   @jtu.skip_on_devices("tpu")
-  def test_sign(self):       self.unary_check(jnp.sign)
+  def test_sign(self):       self.unary_check(lax.sign)
+  @jtu.skip_on_devices("tpu")
+  def test_real(self):       self.unary_check(lax.real, dtype=np.complex64)
+  @jtu.skip_on_devices("tpu")
+  def test_conj(self):       self.unary_check(lax.conj, dtype=np.complex64)
+  @jtu.skip_on_devices("tpu")
+  def test_imag(self):       self.unary_check(lax.imag, dtype=np.complex64)
+  @jtu.skip_on_devices("tpu")
+  def test_not(self):        self.unary_check(lax.bitwise_not, dtype=np.bool_)
+  @jtu.skip_on_devices("tpu")
+  def test_is_finite(self):  self.unary_check(lax.is_finite)
   @jtu.skip_on_devices("tpu")
   def test_log(self):        self.unary_check(jnp.log, lims=[0.8, 4.0])
   @jtu.skip_on_devices("tpu")
@@ -225,38 +250,73 @@ class JetTest(jtu.JaxTestCase):
   def test_acosh(self):      self.unary_check(lax.acosh, lims=[-100, 100])
   @jtu.skip_on_devices("tpu")
   def test_atanh(self):      self.unary_check(lax.atanh, lims=[-1, 1])
+  @jtu.skip_on_devices("tpu")
+  def test_erf(self):        self.unary_check(lax.erf)
+  @jtu.skip_on_devices("tpu")
+  def test_erfc(self):       self.unary_check(lax.erfc)
+  @jtu.skip_on_devices("tpu")
+  def test_erf_inv(self):    self.unary_check(lax.erf_inv, lims=[-1, 1])
 
   @jtu.skip_on_devices("tpu")
-  def test_div(self):   self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
+  def test_div(self):         self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
   @jtu.skip_on_devices("tpu")
-  def test_sub(self):   self.binary_check(lambda x, y: x - y)
+  def test_rem(self):         self.binary_check(lax.rem, lims=[0.8, 4.0])
   @jtu.skip_on_devices("tpu")
-  def test_add(self):   self.binary_check(lambda x, y: x + y)
+  def test_complex(self):     self.binary_check(lax.complex)
   @jtu.skip_on_devices("tpu")
-  def test_mul(self):   self.binary_check(lambda x, y: x * y)
+  def test_sub(self):         self.binary_check(lambda x, y: x - y)
   @jtu.skip_on_devices("tpu")
-  def test_le(self):    self.binary_check(lambda x, y: x <= y)
+  def test_add(self):         self.binary_check(lambda x, y: x + y)
   @jtu.skip_on_devices("tpu")
-  def test_gt(self):    self.binary_check(lambda x, y: x > y)
+  def test_mul(self):         self.binary_check(lambda x, y: x * y)
   @jtu.skip_on_devices("tpu")
-  def test_lt(self):    self.binary_check(lambda x, y: x < y)
+  def test_le(self):          self.binary_check(lambda x, y: x <= y)
   @jtu.skip_on_devices("tpu")
-  def test_ge(self):    self.binary_check(lambda x, y: x >= y)
+  def test_gt(self):          self.binary_check(lambda x, y: x > y)
   @jtu.skip_on_devices("tpu")
-  def test_eq(self):    self.binary_check(lambda x, y: x == y)
+  def test_lt(self):          self.binary_check(lambda x, y: x < y)
   @jtu.skip_on_devices("tpu")
-  def test_ne(self):    self.binary_check(lambda x, y: x != y)
+  def test_ge(self):          self.binary_check(lambda x, y: x >= y)
   @jtu.skip_on_devices("tpu")
-  def test_and(self):   self.binary_check(lambda x, y: jnp.logical_and(x, y))
+  def test_eq(self):          self.binary_check(lambda x, y: x == y)
   @jtu.skip_on_devices("tpu")
-  def test_or(self):    self.binary_check(lambda x, y: jnp.logical_or(x, y))
+  def test_ne(self):          self.binary_check(lambda x, y: x != y)
   @jtu.skip_on_devices("tpu")
-  def test_xor(self):   self.binary_check(lambda x, y: jnp.logical_xor(x, y))
+  def test_max(self):         self.binary_check(lax.max)
+  @jtu.skip_on_devices("tpu")
+  def test_min(self):         self.binary_check(lax.min)
+  @jtu.skip_on_devices("tpu")
+  def test_and(self):         self.binary_check(lax.bitwise_and, dtype=np.bool_)
+  @jtu.skip_on_devices("tpu")
+  def test_or(self):          self.binary_check(lax.bitwise_or, dtype=np.bool_)
+  @jtu.skip_on_devices("tpu")
+  def test_xor(self):         self.binary_check(jnp.bitwise_xor, dtype=np.bool_)
+  @jtu.skip_on_devices("tpu")
+  def test_shift_left(self):  self.binary_check(lax.shift_left, dtype=np.int32)
+  @jtu.skip_on_devices("tpu")
+  def test_shift_right_a(self):  self.binary_check(lax.shift_right_arithmetic, dtype=np.int32)
+  @jtu.skip_on_devices("tpu")
+  def test_shift_right_l(self):  self.binary_check(lax.shift_right_logical, dtype=np.int32)
   @jtu.skip_on_devices("tpu")
   @jtu.ignore_warning(message="overflow encountered in power")
-  def test_pow(self):  self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
+  def test_pow(self):         self.binary_check(lambda x, y: x ** y, lims=([0.2, 500], [-500, 500]), finite=False)
   @jtu.skip_on_devices("tpu")
-  def test_atan2(self):      self.binary_check(lax.atan2, lims=[-40, 40])
+  def test_atan2(self):       self.binary_check(lax.atan2, lims=[-40, 40])
+
+  @jtu.skip_on_devices("tpu")
+  def test_clamp(self):
+    lims = [-2, 2]
+    order = 3
+    dims = 2, 3
+    rng = np.random.RandomState(0)
+    primal_in = (transform(lims, rng.rand(*dims)),
+                 transform(lims, rng.rand(*dims)),
+                 transform(lims, rng.rand(*dims)))
+    series_in = ([rng.randn(*dims) for _ in range(order)],
+                 [rng.randn(*dims) for _ in range(order)],
+                 [rng.randn(*dims) for _ in range(order)])
+
+    self.check_jet(lax.clamp, primal_in, series_in, atol=1e-4, rtol=1e-4)
 
   def test_process_call(self):
     def f(x):
@@ -300,4 +360,4 @@ class JetTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

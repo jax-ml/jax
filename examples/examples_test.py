@@ -77,9 +77,7 @@ class ExamplesTest(jtu.JaxTestCase):
   def testKernelRegressionGram(self):
     n, d = 100, 20
     rng = np.random.RandomState(0)
-    truth = rng.randn(d)
     xs = rng.randn(n, d)
-    ys = jnp.dot(xs, truth)
     kernel = lambda x, y: jnp.dot(x, y)
     self.assertAllClose(kernel_lsq.gram(kernel, xs), jnp.dot(xs, xs.T),
                         check_dtypes=False)
@@ -97,4 +95,4 @@ class ExamplesTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

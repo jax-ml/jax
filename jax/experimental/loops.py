@@ -107,7 +107,7 @@ For usage example, see tests/loops_test.py.
 import copy
 from functools import partial
 import itertools
-import numpy as onp
+import numpy as np
 import traceback
 from typing import Any, List, cast
 
@@ -179,12 +179,12 @@ class Scope(object):
         s.field = - s.field
     """
     # TODO: share these checks with lax_control_flow.cond
-    if len(onp.shape(pred)) != 0:
+    if len(np.shape(pred)) != 0:
       raise TypeError(
-        "Pred must be a scalar, got {} of shape {}.".format(pred, onp.shape(pred)))
+        "Pred must be a scalar, got {} of shape {}.".format(pred, np.shape(pred)))
 
     try:
-      pred_dtype = onp.result_type(pred)
+      pred_dtype = np.result_type(pred)
     except TypeError as err:
       msg = ("Pred type must be either boolean or number, got {}.")
       raise TypeError(msg.format(pred)) from err
@@ -500,7 +500,7 @@ class _CondBuilder(_LoopBuilder):
   """Builds a lax.cond operation."""
 
   def __init__(self, pred):
-    self.pred = pred
+    self.index = lax.convert_element_type(pred, np.int32)
 
   def can_use_index_var(self):
     return False
@@ -508,17 +508,19 @@ class _CondBuilder(_LoopBuilder):
   def build_output_vals(self, scope, carried_state_names, carried_tree,
                         init_vals, body_typed_jaxpr, body_const_vals):
     # Simulate a pass-through false branch
-    init_avals = safe_map(_BodyTracer.abstractify, init_vals)
-    false_body_typed_jaxpr, false_body_const_vals, _ = (
-      lax_control_flow._initial_style_jaxpr(lambda *args: args,
-                                            carried_tree,
-                                            tuple(init_avals)))
-    args = list(itertools.chain(body_const_vals, init_vals,
-                                false_body_const_vals, init_vals))
+    in_vals, in_tree = tree_util.tree_flatten(
+        (body_const_vals, tree_util.tree_unflatten(carried_tree, init_vals)))
+    in_avals = safe_map(_BodyTracer.abstractify, in_vals)
+    pass_through_typed_jaxpr, pass_through_const_vals, _ = (
+      lax_control_flow._initial_style_jaxpr(
+          lambda *args: args[1],
+          in_tree,
+          tuple(in_avals)))
+    assert len(pass_through_const_vals) == 0
+    args = list(itertools.chain(body_const_vals, init_vals))
     return lax_control_flow.cond_p.bind(
-        self.pred, *args,
-        true_jaxpr=body_typed_jaxpr,
-        false_jaxpr=false_body_typed_jaxpr,
+        self.index, *args,
+        branches=(pass_through_typed_jaxpr, body_typed_jaxpr),
         linear=(False,) * len(args))
 
 
@@ -560,7 +562,7 @@ class _WhileBuilder(_LoopBuilder):
     if not tree_util.treedef_is_leaf(cond_tree):
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), onp.bool_)]:
+    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), np.bool_)]:
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
 

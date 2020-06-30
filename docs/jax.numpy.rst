@@ -54,6 +54,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     argmax
     argmin
     argsort
+    argwhere
     around
     array
     array_repr
@@ -76,6 +77,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     ceil
     clip
     column_stack
+    compress
     concatenate
     conj
     conjugate
@@ -95,6 +97,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     degrees
     diag
     diag_indices
+    diag_indices_from
+    diagflat
     diagonal
     digitize
     divide
@@ -111,9 +115,11 @@ Not every function in NumPy is implemented; contributions are welcome!
     exp2
     expand_dims
     expm1
+    extract
     eye
     fabs
     fix
+    flatnonzero
     flip
     fliplr
     flipud
@@ -133,16 +139,20 @@ Not every function in NumPy is implemented; contributions are welcome!
     hamming
     hanning
     heaviside
+    histogram
+    histogram_bin_edges
     hsplit
     hstack
     hypot
     identity
     imag
+    in1d
     indices
     inner
     isclose
     iscomplex
     isfinite
+    isin
     isinf
     isnan
     isneginf
@@ -189,8 +199,11 @@ Not every function in NumPy is implemented; contributions are welcome!
     nancumprod
     nancumsum
     nanmax
+    nanmedian
     nanmin
+    nanpercentile
     nanprod
+    nanquantile
     nansum
     negative
     nextafter
@@ -202,6 +215,10 @@ Not every function in NumPy is implemented; contributions are welcome!
     packbits
     pad
     percentile
+    polyadd
+    polyder
+    polymul
+    polysub
     polyval
     power
     positive
@@ -256,13 +273,16 @@ Not every function in NumPy is implemented; contributions are welcome!
     tri
     tril
     tril_indices
+    tril_indices_from
     triu
     triu_indices
+    triu_indices_from
     true_divide
     trunc
     unique
     unpackbits
     unravel_index
+    unwrap
     vander
     var
     vdot

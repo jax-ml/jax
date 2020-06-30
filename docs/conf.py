@@ -28,8 +28,14 @@
 #
 import os
 import sys
+
 sys.path.insert(0, os.path.abspath('..'))
 
+
+# Currently type aliases are expanded. We tried a workaround along the lines of:
+# https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
+# Unfortunately, this workaround makes Sphinx drop module-level documentation.
+# See https://github.com/google/jax/issues/3452.
 
 # -- Project information -----------------------------------------------------
 
@@ -47,7 +53,7 @@ release = ''
 
 # If your documentation needs a minimal Sphinx version, state it here.
 #
-# needs_sphinx = '1.0'
+needs_sphinx = '2.1'
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -61,6 +67,7 @@ extensions = [
     'sphinx.ext.viewcode',
     'nbsphinx',
     'sphinx_autodoc_typehints',
+    'myst_parser',
 ]
 
 intersphinx_mapping = {
@@ -295,3 +302,7 @@ epub_exclude_files = ['search.html']
 
 
 # -- Extension configuration -------------------------------------------------
+
+# Tell sphinx-autodoc-typehints to generate stub parameter annotations including
+# types, even if the parameters aren't explicitly documented.
+always_document_param_types = True

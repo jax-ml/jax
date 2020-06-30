@@ -16,8 +16,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import test_util as jtu
-from jax.experimental.callback import (
-    callback_transform, find_by_value, rewrite, FoundValue)
+from jax.experimental.callback import find_by_value, rewrite, FoundValue
 import jax.numpy as jnp
 from jax import lax
 from jax import jit
@@ -70,11 +69,11 @@ class CallbackTest(jtu.JaxTestCase):
       return x * 2
 
     x = jnp.array([2.0, 4.0])
-    self.assertAllClose(f(x), jnp.array([4.0, 8.0]), True)
+    self.assertAllClose(f(x), jnp.array([4.0, 8.0]))
 
     self.assertAllClose(
         rewrite(f, {lax.mul_p: lambda x, y: x + y})(x),
-        jnp.array([4.0, 6.0]), True)
+        jnp.array([4.0, 6.0]))
 
   def testRewriteJIT(self):
     def f(x):
@@ -84,11 +83,11 @@ class CallbackTest(jtu.JaxTestCase):
       return g(x)
 
     x = jnp.array([2.0, 4.0])
-    self.assertAllClose(f(x), jnp.array([4.0, 8.0]), True)
+    self.assertAllClose(f(x), jnp.array([4.0, 8.0]))
 
     self.assertAllClose(
         rewrite(f, {lax.mul_p: lambda x, y: x + y})(x),
-        jnp.array([4.0, 6.0]), True)
+        jnp.array([4.0, 6.0]))
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

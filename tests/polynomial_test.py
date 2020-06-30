@@ -132,6 +132,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for rng_factory in [jtu.rand_default]
     for zeros in [1, 2, 5]
     for nonzeros in [0, 3]))
+  @jtu.skip_on_devices("gpu")
   def testRootsInvalid(self, zeros, nonzeros, dtype, rng_factory):
     rng = rng_factory(np.random.RandomState(0))
 
@@ -149,4 +150,4 @@ class TestPolynomial(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

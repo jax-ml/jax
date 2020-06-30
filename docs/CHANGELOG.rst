@@ -9,10 +9,97 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.68 (unreleased)
+jax 0.1.72 (June 28, 2020)
 ---------------------------
 
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.67...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.71...jax-v0.1.72>`_.
+
+* Bug fixes:
+
+  * Fix an odeint bug introduced in the previous release, see
+    `#3587 <https://github.com/google/jax/pull/3587>`_.
+
+
+jax 0.1.71 (June 25, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.70...jax-v0.1.71>`_.
+* The minimum jaxlib version is now 0.1.48.
+
+* Bug fixes:
+
+  * Allow ``jax.experimental.ode.odeint`` dynamics functions to close over
+    values with respect to which we're differentiating
+    `#3562 <https://github.com/google/jax/pull/3562>`_.
+
+jaxlib 0.1.50 (June 25, 2020)
+------------------------------
+
+* Add support for CUDA 11.0.
+* Drop support for CUDA 9.2 (we only maintain support for the last four CUDA
+  versions.)
+* Update XLA.
+
+jaxlib 0.1.49 (June 19, 2020)
+------------------------------
+
+* Bug fixes:
+
+  * Fix build issue that could result in slow compiles
+    (https://github.com/tensorflow/tensorflow/commit/f805153a25b00d12072bd728e91bb1621bfcf1b1)
+
+jaxlib 0.1.48 (June 12, 2020)
+------------------------------
+
+* New features:
+
+  * Adds support for fast traceback collection.
+  * Adds preliminary support for on-device heap profiling.
+  * Implements ``np.nextafter`` for ``bfloat16`` types.
+  * Complex128 support for FFTs on CPU and GPU.
+
+* Bugfixes:
+
+  * Improved float64 ``tanh`` accuracy on GPU.
+  * float64 scatters on GPU are much faster.
+  * Complex matrix multiplication on CPU should be much faster.
+  * Stable sorts on CPU should actually be stable now.
+  * Concurrency bug fix in CPU backend.
+
+
+jax 0.1.70 (June 8, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.69...jax-v0.1.70>`_.
+
+* New features:
+
+  * ``lax.switch`` introduces indexed conditionals with multiple
+    branches, together with a generalization of the ``cond``
+    primitive
+    `#3318 <https://github.com/google/jax/pull/3318>`_.
+
+jax 0.1.69 (June 3, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.68...jax-v0.1.69>`_.
+
+jax 0.1.68 (May 21, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.67...jax-v0.1.68>`_.
+
+* New features:
+
+  * `lax.cond` supports a single-operand form, taken as the argument
+    to both branches
+    `#2993 <https://github.com/google/jax/pull/2993>`_.
+
+* Notable changes:
+
+  * The format of the `transforms` keyword for the `lax.experimental.host_callback.id_tap`
+    primitive has changed `#3132 <https://github.com/google/jax/pull/3132>`_.
+
 
 jax 0.1.67 (May 12, 2020)
 ---------------------------

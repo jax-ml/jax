@@ -16,7 +16,6 @@
 import enum
 import itertools
 import operator
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -24,7 +23,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import core
 from jax import dtypes
 from jax import numpy as jnp
 from jax import test_util as jtu
@@ -71,9 +69,13 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
       self.assertEqual(y.dtype, dtypes.canonicalize_dtype(dtype), msg=(f, y))
 
+  def testUnsupportedType(self):
+    with self.assertRaisesRegex(TypeError, "nonsense.* not understood"):
+      dtypes.canonicalize_dtype("nonsense")
+
   @parameterized.named_parameters(
     {"testcase_name": "_swap={}_jit={}".format(swap, jit),
-     "swap": swap, "jit": jit} 
+     "swap": swap, "jit": jit}
     for swap in [False, True] for jit in [False, True])
   @jtu.skip_on_devices("tpu")  # F16 not supported on TPU
   def testBinaryPromotion(self, swap, jit):
@@ -104,7 +106,7 @@ class DtypesTest(jtu.JaxTestCase):
     op = jax.jit(operator.add) if jit else operator.add
     for x, y, dtype in testcases:
       x, y = (y, x) if swap else (x, y)
-      z = x + y
+      z = op(x, y)
       self.assertTrue(isinstance(z, jnp.ndarray), msg=(x, y, z))
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
@@ -173,5 +175,11 @@ class DtypesTest(jtu.JaxTestCase):
     np.testing.assert_equal(np.int32(101), np.int32(AnEnum.B))
     np.testing.assert_equal(jnp.int32(101), jnp.int32(AnEnum.B))
 
+  def testScalarCastInsideJitWorks(self):
+    # jnp.int32(tracer) should work.
+    self.assertEqual(jnp.int32(101),
+                     jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
+
+
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

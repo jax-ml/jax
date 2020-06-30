@@ -69,6 +69,7 @@ Operators
     erfc
     erf_inv
     exp
+    expand_dims
     expm1
     fft
     floor
@@ -121,6 +122,7 @@ Operators
     sort_key_val
     sqrt
     square
+    squeeze
     sub
     tan
     tie_in

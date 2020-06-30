@@ -67,7 +67,7 @@ class Config(object):
 
   def check_exists(self, name):
     if name not in self.values:
-      raise Exception("Unrecognized config option: {}".format(name))
+      raise AttributeError("Unrecognized config option: {}".format(name))
 
   def DEFINE_bool(self, name, default, *args, **kwargs):
     self.add_option(name, default, bool, args, kwargs)
@@ -83,7 +83,7 @@ class Config(object):
 
   def config_with_absl(self):
     # Run this before calling `app.run(main)` etc
-    import absl.flags as absl_FLAGS
+    import absl.flags as absl_FLAGS  # noqa: F401
     from absl import app, flags as absl_flags
 
     self.use_absl = True

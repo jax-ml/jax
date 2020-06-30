@@ -16,6 +16,7 @@
 from absl.testing import absltest
 from jax.lib import xla_bridge as xb
 from jax.lib import xla_client as xc
+from jax import test_util as jtu
 
 
 class XlaBridgeTest(absltest.TestCase):
@@ -35,19 +36,26 @@ class XlaBridgeTest(absltest.TestCase):
                                   "0 2 \nComputation 1: 1 3 \n")
     self.assertEqual(compile_options.device_assignment.__repr__(),
                      expected_device_assignment)
-    
+
   def test_parameter_replication_default(self):
     c = xb.make_computation_builder("test")
-    param = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
+    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()))
     built_c = c.Build()
-    assert "replication" not in built_c.GetHloText()
+    assert "replication" not in built_c.as_hlo_text()
 
   def test_parameter_replication(self):
     c = xb.make_computation_builder("test")
-    param = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "", False)
+    _ = xb.parameter(c, 0, xc.Shape.array_shape(xc.PrimitiveType.F32, ()), "", False)
     built_c = c.Build()
     assert "parameter_replication={false}" in built_c.as_hlo_text()
 
+  def test_local_devices(self):
+    self.assertNotEmpty(xb.local_devices())
+    with self.assertRaisesRegex(ValueError, "Unknown host_id 100"):
+      xb.local_devices(100)
+    with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
+      xb.local_devices(backend="foo")
+
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

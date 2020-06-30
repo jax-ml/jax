@@ -23,10 +23,12 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import core
+from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
-from jax.api import jvp, linearize, vjp, jit
-from jax.core import UnshapedArray, ShapedArray, ConcreteArray
+from jax.abstract_arrays import make_shaped_array
+from jax.api import jvp, linearize, vjp, jit, make_jaxpr
+from jax.core import UnshapedArray, ShapedArray
 from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
 from jax.util import partial
 from jax.interpreters import partial_eval as pe
@@ -274,7 +276,7 @@ class CoreTest(jtu.JaxTestCase):
       gc.set_debug(debug)
 
   def test_comparing_var(self):
-    newsym = core.gensym('')
+    newsym = core.gensym()
     a = newsym(core.abstract_unit)
     b = newsym(core.abstract_unit)
     c = newsym(core.abstract_unit)
@@ -283,7 +285,7 @@ class CoreTest(jtu.JaxTestCase):
     assert a != b and b != c and a != c
 
   def test_var_ordering(self):
-    newsym = core.gensym('')
+    newsym = core.gensym()
     a = newsym(core.abstract_unit)
     b = newsym(core.abstract_unit)
     c = newsym(core.abstract_unit)
@@ -291,18 +293,146 @@ class CoreTest(jtu.JaxTestCase):
       assert sorted(list(ordering)) == [a, b, c]
 
   def test_var_compared_by_identity(self):
-    a1 = core.gensym('')(core.abstract_unit)
-    a2 = core.gensym('')(core.abstract_unit)
+    a1 = core.gensym()(core.abstract_unit)
+    a2 = core.gensym()(core.abstract_unit)
     assert str(a1) == str(a2)
     assert a1 != a2
 
   def test_var_tree_flatten(self):
-    newsym = core.gensym('')
+    newsym = core.gensym()
     a, b, c, d = (
         newsym(core.abstract_unit), newsym(core.abstract_unit),
         newsym(core.abstract_unit), newsym(core.abstract_unit))
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
 
+  def test_check_jaxpr_correct(self):
+    jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
+    core.check_jaxpr(jaxpr)
+
+  def test_check_jaxpr_cond_correct(self):
+    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+    core.check_jaxpr(jaxpr)
+
+  def test_check_jaxpr_cond_invalid(self):
+    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+    cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
+    cond.params['branches'][0].in_avals = ()
+    cond.params['branches'][0].jaxpr.invars = ()
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        'cond branch 0 takes 0 inputs, branch 1 takes 1',
+        lambda: core.check_jaxpr(jaxpr))
+
+  def test_check_jaxpr_scan_correct(self):
+    def f(c, x):
+      b = jnp.cos(jnp.sum(jnp.sin(x)) + jnp.sum(jnp.cos(c)))
+      c = jnp.sin(c * b)
+      return c, b
+    xs = jnp.ones((5, 3))
+    c = jnp.ones(4)
+    jaxpr = make_jaxpr(partial(lax.scan, f))(c, xs).jaxpr
+    core.check_jaxpr(jaxpr)
+
+  def test_check_jaxpr_invalid_long(self):
+    # jaxprs can be large, and this tests that when large ones are printed for
+    # context in jaxpr typechecking errors, they're not printed entirely
+
+    def enlarge(f, n):
+      def g(x):
+        for _ in range(n):
+          x = x + x
+        x = f(x)
+        for _ in range(n):
+          x = x + x
+        return x
+      return g
+
+    jaxpr = make_jaxpr(enlarge(
+        lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.).jaxpr
+
+    cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
+    cond.params['branches'][0].in_avals = ()
+    cond.params['branches'][0].jaxpr.invars = ()
+    msg = ''
+    try:
+      core.check_jaxpr(jaxpr)
+    except core.JaxprTypeError as e:
+      msg, = e.args
+
+    self.assertIn('cond branch 0 takes 0 inputs, branch 1 takes 1', msg)
+    self.assertIn('in equation:', msg)
+    self.assertIn('from source:', msg)
+    self.assertIn('while checking jaxpr:', msg)
+    self.assertLess(msg.count('\n'), 200)
+
+  def test_check_jaxpr_eqn_mismatch(self):
+    def f(x):
+      return jnp.sin(x) + jnp.cos(x)
+
+    def new_jaxpr():
+      return make_jaxpr(f)(1.).jaxpr
+
+    # jaxpr is:
+    #
+    # { lambda  ; a.
+    #   let b = sin a
+    #       c = cos a
+    #       d = add b c
+    #   in (d,) }
+    #
+    # NB: eqns[0].outvars[0] and eqns[2].invars[0] are both 'b'
+
+    jaxpr = new_jaxpr()
+    jaxpr.eqns[0].outvars[0].aval = make_shaped_array(2)   # int, not float!
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.' inconsistently typed as ShapedArray(.*), "
+        r"bound as ShapedArray(.*)\n\nin equation:\n\n  . = sin .",
+        lambda: core.check_jaxpr(jaxpr))
+
+    jaxpr = new_jaxpr()
+    jaxpr.eqns[0].outvars[0].aval = make_shaped_array(np.ones((2, 3)))
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.' inconsistently typed as ShapedArray(.*), "
+        r"bound as ShapedArray(.*)\n\nin equation:\n\n  . = sin .",
+        lambda: core.check_jaxpr(jaxpr))
+
+  def test_jaxpr_dropvar_from_jit_call(self):
+    def inner(x):
+      return x + 1, x + 2
+
+    def f(x):
+      _, y = jit(inner)(x)
+      return y + 3
+
+    jaxpr = make_jaxpr(f)(1).jaxpr
+    assert jaxpr.eqns[0].outvars[0] is core.dropvar
+    core.check_jaxpr(jaxpr)
+
+  def test_jaxpr_dropvar_from_loop(self):
+    def f(x):
+      _, y = lax.while_loop(lambda s: s[0] < 0.,
+                            lambda s: (jnp.sin(s[0]), jnp.cos(s[1])),
+                            (x, x))
+      return y + 1.
+
+    jaxpr = make_jaxpr(f)(1.).jaxpr
+    assert jaxpr.eqns[0].outvars[0] is core.dropvar
+    core.check_jaxpr(jaxpr)
+
+  def test_jaxpr_dropvar_from_cond(self):
+    def f(x):
+      _, y = lax.cond(x < 0.,
+                      lambda x: (jnp.sin(x), x + 1.),
+                      lambda x: (jnp.cos(x), x + 2.),
+                      x)
+      return y
+
+    jaxpr = make_jaxpr(f)(1.).jaxpr
+    assert jaxpr.eqns[-1].outvars[0] is core.dropvar
+    core.check_jaxpr(jaxpr)
+
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

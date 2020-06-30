@@ -23,9 +23,9 @@ What is a gufunc?
 ("gufuncs") are one of my favorite abstractions from NumPy. They generalize
 NumPy's `broadcasting rules
 <https://docs.scipy.org/doc/numpy-1.15.0/user/basics.broadcasting.html>`_ to
-handle non-scalar operations. When a gufuncs is applied to arrays, there are: 
+handle non-scalar operations. When a gufuncs is applied to arrays, there are:
 
-* "core dimensions" over which an operation is defined.  
+* "core dimensions" over which an operation is defined.
 * "broadcast dimensions" over which operations can be automatically vectorized.
 
 A string `signature <https://docs.scipy.org/doc/numpy-1.15.0/reference/c-api.generalized-ufuncs.html#details-of-signature>`_
@@ -58,10 +58,13 @@ Unfortunately, writing NumPy gufuncs today is somewhat non-trivial. Your
 options today are:
 
 1. Write the inner loops yourself in C.
-2. `np.vectorize <https://docs.scipy.org/doc/numpy/reference/generated/numpy.vectorize.html>`_ creates something kind of like a gufunc, but it's painfully slow: the outer loop is performed in Python.
-3. `numba.guvectorize <https://numba.pydata.org/numba-doc/dev/user/vectorize.html>`_ can work well, if you don't need further code transformations like automatic differentiation.
+2. `np.vectorize <https://docs.scipy.org/doc/numpy/reference/generated/numpy.vectorize.html>`_
+   creates something kind of like a gufunc, but it's painfully slow: the outer loop is performed in Python.
+3. `numba.guvectorize <https://numba.pydata.org/numba-doc/dev/user/vectorize.html>`_ can work well,
+   if you don't need further code transformations like automatic differentiation.
 
-JAX's ``vmap`` contains all the core functionality we need to write functions that work like gufuncs. JAX gufuncs play nicely with other transformations like ``grad`` and ``jit``.
+JAX's ``vmap`` contains all the core functionality we need to write functions that work like gufuncs.
+JAX gufuncs play nicely with other transformations like ``grad`` and ``jit``.
 
 A simple example
 ================
@@ -87,17 +90,20 @@ And here's how we could write a vectorized version using JAX gufuncs::
 
 See the difference?
 
-* Instead of needing to think about broadcasting while writing the entire function, we can write the function assuming the input is always a vector.
+* Instead of needing to think about broadcasting while writing the entire function,
+  we can write the function assuming the input is always a vector.
 * We get the ``axis`` argument automatically, without needing to write it ourselves.
-* As a bonus, the decorator makes the function self-documenting: a reader immediately knows that it handles higher dimensional input and output correctly.
+* As a bonus, the decorator makes the function self-documenting: a reader immediately
+  knows that it handles higher dimensional input and output correctly.
 
 """
-
-from jax import grad, jit, vmap
-import jax.numpy as jnp
-import numpy as np
+import functools
 import re
 import warnings
+
+from jax import vmap
+import jax.numpy as jnp
+import numpy as np
 
 
 warnings.warn(
@@ -116,90 +122,90 @@ _SIGNATURE = '^{0:}->{0:}$'.format(_ARGUMENT_LIST)
 
 
 def _parse_gufunc_signature(signature):
-    """Parse string signatures for a generalized universal function.
+  """Parse string signatures for a generalized universal function.
 
-    Args:
-      signature : string
-	  Generalized universal function signature, e.g., ``(m,n),(n,p)->(m,p)``
-	  for ``np.matmul``.
+  Args:
+    signature : string
+      Generalized universal function signature, e.g., ``(m,n),(n,p)->(m,p)``
+      for ``np.matmul``.
 
-    Returns:
-      Tuple of input and output core dimensions parsed from the signature, each
-      of the form List[Tuple[str, ...]].
-    """
-    if not re.match(_SIGNATURE, signature):
-        raise ValueError(
-            'not a valid gufunc signature: {}'.format(signature))
-    return tuple([tuple(re.findall(_DIMENSION_NAME, arg))
-                  for arg in re.findall(_ARGUMENT, arg_list)]
-                 for arg_list in signature.split('->'))
+  Returns:
+    Tuple of input and output core dimensions parsed from the signature, each
+    of the form List[Tuple[str, ...]].
+  """
+  if not re.match(_SIGNATURE, signature):
+      raise ValueError(
+          'not a valid gufunc signature: {}'.format(signature))
+  return tuple([tuple(re.findall(_DIMENSION_NAME, arg))
+                for arg in re.findall(_ARGUMENT, arg_list)]
+                for arg_list in signature.split('->'))
 
 
 
 def _update_dim_sizes(dim_sizes, arg, core_dims):
-    """Incrementally check and update core dimension sizes for a single argument.
+  """Incrementally check and update core dimension sizes for a single argument.
 
-    Args:
-      dim_sizes : Dict[str, int]
-	  Sizes of existing core dimensions. Will be updated in-place.
-      arg : ndarray
-	  Argument to examine.
-      core_dims : Tuple[str, ...]
-	  Core dimensions for this argument.
-    """
-    if not core_dims:
-        return
+  Args:
+    dim_sizes : Dict[str, int]
+      Sizes of existing core dimensions. Will be updated in-place.
+    arg : ndarray
+      Argument to examine.
+    core_dims : Tuple[str, ...]
+      Core dimensions for this argument.
+  """
+  if not core_dims:
+    return
 
-    num_core_dims = len(core_dims)
-    if arg.ndim < num_core_dims:
+  num_core_dims = len(core_dims)
+  if arg.ndim < num_core_dims:
+    raise ValueError(
+        '%d-dimensional argument does not have enough '
+        'dimensions for all core dimensions %r'
+        % (arg.ndim, core_dims))
+
+  core_shape = arg.shape[-num_core_dims:]
+  for dim, size in zip(core_dims, core_shape):
+    if dim in dim_sizes:
+      if size != dim_sizes[dim]:
         raise ValueError(
-            '%d-dimensional argument does not have enough '
-            'dimensions for all core dimensions %r'
-            % (arg.ndim, core_dims))
-
-    core_shape = arg.shape[-num_core_dims:]
-    for dim, size in zip(core_dims, core_shape):
-        if dim in dim_sizes:
-            if size != dim_sizes[dim]:
-                raise ValueError(
-                    'inconsistent size for core dimension %r: %r vs %r'
-                    % (dim, size, dim_sizes[dim]))
-        else:
-            dim_sizes[dim] = size
+            'inconsistent size for core dimension %r: %r vs %r'
+            % (dim, size, dim_sizes[dim]))
+    else:
+      dim_sizes[dim] = size
 
 
 def _parse_input_dimensions(args, input_core_dims):
-    """Parse broadcast and core dimensions for vectorize with a signature.
+  """Parse broadcast and core dimensions for vectorize with a signature.
 
-    Args:
-      args : Tuple[ndarray, ...]
-	  Tuple of input arguments to examine.
-      input_core_dims : List[Tuple[str, ...]]
-	  List of core dimensions corresponding to each input.
+  Args:
+    args : Tuple[ndarray, ...]
+      Tuple of input arguments to examine.
+    input_core_dims : List[Tuple[str, ...]]
+      List of core dimensions corresponding to each input.
 
-    Returns:
-      broadcast_shape : Tuple[int, ...]
-	  Common shape to broadcast all non-core dimensions to.
-      dim_sizes : Dict[str, int]
-	  Common sizes for named core dimensions.
-    """
-    broadcast_args = []
-    dim_sizes = {}
-    for arg, core_dims in zip(args, input_core_dims):
-        _update_dim_sizes(dim_sizes, arg, core_dims)
-        ndim = arg.ndim - len(core_dims)
-        dummy_array = np.lib.stride_tricks.as_strided(0, arg.shape[:ndim])
-        broadcast_args.append(dummy_array)
-    broadcast_shape = np.lib.stride_tricks._broadcast_shape(*broadcast_args)
-    return broadcast_shape, dim_sizes
+  Returns:
+    broadcast_shape : Tuple[int, ...]
+      Common shape to broadcast all non-core dimensions to.
+    dim_sizes : Dict[str, int]
+      Common sizes for named core dimensions.
+  """
+  broadcast_args = []
+  dim_sizes = {}
+  for arg, core_dims in zip(args, input_core_dims):
+    _update_dim_sizes(dim_sizes, arg, core_dims)
+    ndim = arg.ndim - len(core_dims)
+    dummy_array = np.lib.stride_tricks.as_strided(0, arg.shape[:ndim])
+    broadcast_args.append(dummy_array)
+  broadcast_shape = np.lib.stride_tricks._broadcast_shape(*broadcast_args)
+  return broadcast_shape, dim_sizes
 
 
 def _calculate_shapes(broadcast_shape, dim_sizes, list_of_core_dims):
-    """Helper for calculating broadcast shapes with core dimensions."""
-    return [broadcast_shape + tuple(dim_sizes[dim] for dim in core_dims)
-            for core_dims in list_of_core_dims]
+  """Helper for calculating broadcast shapes with core dimensions."""
+  return [broadcast_shape + tuple(dim_sizes[dim] for dim in core_dims)
+          for core_dims in list_of_core_dims]
 
-  
+
 # adapted from np.vectorize (again authored by shoyer@)
 def broadcast_with_core_dims(args, input_core_dims, output_core_dims):
   if len(args) != len(input_core_dims):
@@ -238,27 +244,25 @@ def reorder_outputs(result, axis, output_core_dims):
     (result,) = result
   return result
 
-import functools
-
 
 def vectorize(signature):
   """Vectorize a function using JAX.
 
   Turns an arbitrary function into a numpy style "gufunc". Once
-  you specify the behavior of the core axis, the rest will be 
+  you specify the behavior of the core axis, the rest will be
   broadcast naturally.
 
   Args:
     signature: an einsum style signature that defines how the core dimensions are mapped between inputs and outputs.
 
   Returns:
-	The vectorized 'gufunc' that will automatically broadcast
-	while maintaining the specified core logic, the returned
-	function also has a new ``axis`` parameter for specifying
-	which axis should be treated as the core one.
+    The vectorized 'gufunc' that will automatically broadcast
+    while maintaining the specified core logic, the returned
+    function also has a new ``axis`` parameter for specifying
+    which axis should be treated as the core one.
   """
   input_core_dims, output_core_dims = _parse_gufunc_signature(signature)
-  
+
   def decorator(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):

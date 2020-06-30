@@ -18,7 +18,6 @@ from functools import partial
 import numpy.random as npr
 
 import jax.numpy as jnp
-from jax.config import config
 from jax.experimental import optimizers
 from jax import grad, jit, make_jaxpr, vmap
 

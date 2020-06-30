@@ -32,7 +32,13 @@ neg = np.negative
 sign = np.sign
 floor = np.floor
 ceil = np.ceil
-round = lambda x: np.trunc(x + np.copysign(.5, x))
+
+def round(x):
+  return np.trunc(
+    x + np.copysign(np.nextafter(np.array(.5, dtype=x.dtype),
+                                 np.array(0., dtype=x.dtype),
+                                 dtype=x.dtype), x)).astype(x.dtype)
+
 nextafter = np.nextafter
 
 is_finite = np.isfinite
@@ -47,7 +53,7 @@ cos = np.cos
 atan2 = np.arctan2
 
 sqrt = np.sqrt
-rsqrt = lambda x: 1. / np.sqrt(x)
+rsqrt = lambda x: np.ones_like(x) / np.sqrt(x)
 square = np.square
 reciprocal = np.reciprocal
 tan = np.tan
@@ -60,16 +66,17 @@ asinh = np.arcsinh
 acosh = np.arccosh
 atanh = np.arctanh
 
-betainc = scipy.special.betainc
-lgamma = scipy.special.gammaln
-digamma = scipy.special.digamma
+def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
+def lgamma(x): return scipy.special.gammaln(x).astype(x.dtype)
+def digamma(x): return scipy.special.digamma(x).astype(x.dtype)
 igamma = scipy.special.gammainc
 igammac = scipy.special.gammaincc
-erf = scipy.special.erf
-erfc = scipy.special.erfc
-erf_inv = scipy.special.erfinv
-bessel_i0e = scipy.special.i0e
-bessel_i1e = scipy.special.i1e
+def erf(x): return scipy.special.erf(x).astype(x.dtype)
+def erfc(x): return scipy.special.erfc(x).astype(x.dtype)
+def erf_inv(x): return scipy.special.erfinv(x).astype(x.dtype)
+
+def bessel_i0e(x): return scipy.special.i0e(x).astype(x.dtype)
+def bessel_i1e(x): return scipy.special.i1e(x).astype(x.dtype)
 
 real = np.real
 imag = np.imag
@@ -150,7 +157,7 @@ def bitcast_convert_type(operand, dtype):
   return np.asarray(operand).view(dtype)
 
 def clamp(min, operand, max):
-  return np.clip(operand, np.clip(min, None, max), max)
+  return np.clip(operand, np.clip(min, None, max), max).astype(operand.dtype)
 
 def concatenate(operands, dimension):
   return np.concatenate(operands, axis=dimension)
@@ -223,22 +230,27 @@ def broadcast_in_dim(operand, shape, broadcast_dimensions):
 
 sum = np.sum
 
+squeeze = np.squeeze
+
 def reshape(operand, new_sizes, dimensions=None):
   if dimensions is None:
     dimensions = range(len(np.shape(operand)))
   return np.reshape(np.transpose(operand, dimensions), new_sizes)
 
 def pad(operand, padding_value, padding_config):
+  # https://www.tensorflow.org/xla/operation_semantics#pad
   lo, hi, interior = zip(*padding_config)
-  outshape = np.add(np.add(np.add(lo, hi), operand.shape),
+  # Handle first the positive edge padding and interior
+  lo_pos, hi_pos = np.clip(lo, 0, None), np.clip(hi, 0, None)
+  outshape = np.add(np.add(np.add(lo_pos, hi_pos), operand.shape),
                      np.multiply(interior, np.subtract(operand.shape, 1)))
   out = np.full(outshape, padding_value, operand.dtype)
   lhs_slices = tuple(_slice(l if l > 0 else 0, -h if h > 0 else None, step)
-                     for l, h, step in zip(lo, hi, np.add(1, interior)))
-  rhs_slices = tuple(_slice(l if l < 0 else 0, -h if h < 0 else None)
+                     for l, h, step in zip(lo_pos, hi_pos, np.add(1, interior)))
+  out[lhs_slices] = operand
+  trim_slices = tuple(_slice(-l if l < 0 else 0, h if h < 0 else None)
                      for l, h in zip(lo, hi))
-  out[lhs_slices] = operand[rhs_slices]
-  return out
+  return out[trim_slices]
 
 def rev(operand, dimensions):
   dimensions = frozenset(dimensions)
@@ -292,8 +304,6 @@ def sort_key_val(keys, values, dimension=-1):
   idxs = list(np.ix_(*[np.arange(d) for d in keys.shape]))
   idxs[dimension] = np.argsort(keys, axis=dimension)
   return keys[tuple(idxs)], values[tuple(idxs)]
-
-# TODO untake
 
 ### conv util
 

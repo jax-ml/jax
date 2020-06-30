@@ -13,14 +13,12 @@
 # limitations under the License.
 import functools
 import re
-import textwrap
-from typing import Any, Callable, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from .. import api
 from .. import lax
 from . import lax_numpy as jnp
 from ..util import safe_map as map, safe_zip as zip
-from ._util import _wraps
 
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html
@@ -52,7 +50,7 @@ def _parse_gufunc_signature(
         'not a valid gufunc signature: {}'.format(signature))
   args, retvals = ([tuple(re.findall(_DIMENSION_NAME, arg))
                    for arg in re.findall(_ARGUMENT, arg_list)]
-                   for arg_list in signature.split('->')) 
+                   for arg_list in signature.split('->'))
   return args, retvals
 
 
@@ -182,19 +180,21 @@ def _apply_excluded(func, excluded, args):
 def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
   """Define a vectorized function with broadcasting.
 
-  ``vectorize`` is a convenience wrapper for defining vectorized functions with
-  broadcasting, in the style of NumPy's `generalized universal functions <https://numpy.org/doc/stable/reference/c-api/generalized-ufuncs.html>`_.
+  :func:`vectorize` is a convenience wrapper for defining vectorized
+  functions with broadcasting, in the style of NumPy's
+  `generalized universal functions <https://numpy.org/doc/stable/reference/c-api/generalized-ufuncs.html>`_.
   It allows for defining functions that are automatically repeated across
   any leading dimensions, without the implementation of the function needing to
   be concerned about how to handle higher dimensional inputs.
 
-  ``jax.numpy.vectorize`` has the same interface as ``numpy.vectorize``, but it
-  is syntactic sugar for an auto-batching transformation (``vmap``) rather
-  than a Python loop. This should be considerably more efficient, but the
-  implementation must be written in terms of functions that act on JAX arrays.
+  :func:`jax.numpy.vectorize` has the same interface as
+  :class:`numpy.vectorize`, but it is syntactic sugar for an auto-batching
+  transformation (:func:`vmap`) rather than a Python loop. This should be
+  considerably more efficient, but the implementation must be written in terms
+  of functions that act on JAX arrays.
 
   Args:
-    pyfunc: vectorized function.
+    pyfunc: function to vectorize.
     excluded: optional set of integers representing positional arguments for
       which the function will not be vectorized. These will be passed directly
       to ``pyfunc`` unmodified.
@@ -208,7 +208,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     Vectorized version of the given function.
 
   Here a few examples of how one could write vectorized linear algebra routines
-  using ``vectorize``::
+  using :func:`vectorize`::
 
     import jax.numpy as jnp
     from functools import partial

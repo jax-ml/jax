@@ -95,7 +95,7 @@ def elu(x, alpha=1.0):
   .. math::
     \mathrm{elu}(x) = \begin{cases}
       x, & x > 0\\
-      \alpha \exp(x - 1), & x \le 0
+      \alpha \left(\exp(x) - 1\right), & x \le 0
     \end{cases}
   """
   safe_x = jnp.where(x > 0, 0., x)
@@ -138,7 +138,7 @@ def celu(x, alpha=1.0):
   .. math::
     \mathrm{celu}(x) = \begin{cases}
       x, & x > 0\\
-      \alpha \exp(\frac{x}{\alpha} - 1), & x \le 0
+      \alpha \left(\exp(\frac{x}{\alpha}) - 1\right), & x \le 0
     \end{cases}
 
   For more information, see
@@ -182,10 +182,7 @@ def gelu(x):
   <https://arxiv.org/abs/1606.08415>`_, section 2.
   """
   sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
-  # Does not use the power operator here.
-  # See https://github.com/google/jax/pull/3036
-  x_cubed = x * x * x
-  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * x_cubed)))
+  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
   return x * cdf
 
 def glu(x, axis=-1):
@@ -211,7 +208,7 @@ def log_softmax(x, axis=-1):
     axis: the axis or axes along which the :code:`log_softmax` should be
       computed. Either an integer or a tuple of integers.
   """
-  shifted = x - x.max(axis, keepdims=True)
+  shifted = x - lax.stop_gradient(x.max(axis, keepdims=True))
   return shifted - jnp.log(jnp.sum(jnp.exp(shifted), axis, keepdims=True))
 
 def softmax(x, axis=-1):
@@ -228,7 +225,7 @@ def softmax(x, axis=-1):
       softmax output summed across these dimensions should sum to :math:`1`.
       Either an integer or a tuple of integers.
   """
-  unnormalized = jnp.exp(x - x.max(axis, keepdims=True))
+  unnormalized = jnp.exp(x - lax.stop_gradient(x.max(axis, keepdims=True)))
   return unnormalized / unnormalized.sum(axis, keepdims=True)
 
 def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):

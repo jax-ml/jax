@@ -112,7 +112,6 @@ def main(unused_argv):
   x = (random.uniform(key, shape=(numpts, 1)) * 4.) + 1
   y = y_fun(x)
   xtest = jnp.linspace(0, 6., 200)[:, None]
-  ytest = y_fun(xtest)
 
   for i in range(1000):
     params, momentums, scales = train_step(params, momentums, scales, x, y)

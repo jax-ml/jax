@@ -14,7 +14,7 @@
 
 
 from .core import (lattice_join, Primitive, Unit, unit, AbstractUnit,
-                   valid_jaxtype)
+                   valid_jaxtype, raise_to_shaped, get_aval)
 from .tree_util import register_pytree_node
 from typing import Any, Dict
 from .util import safe_map
@@ -58,13 +58,17 @@ def zeros_like_impl(example):
 
 zeros_like_p.def_abstract_eval(lambda x: x)
 
-class Zero(object):
+class Zero:
+  __slots__ = ['aval']
+  def __init__(self, aval):
+    self.aval = aval
   def __repr__(self):
-    return "Zero"
+    return 'Zero({})'.format(self.aval)
+  @staticmethod
+  def from_value(val):
+    return Zero(raise_to_shaped(get_aval(val)))
 
-zero = Zero()
-
-register_pytree_node(Zero, lambda z: ((), None), lambda _, xs: zero)
+register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
 
 
 def _stop_gradient_impl(x):

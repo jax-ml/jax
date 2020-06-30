@@ -15,9 +15,7 @@
 """Tests for the LAPAX linear algebra module."""
 
 from functools import partial
-import itertools
 import unittest
-import sys
 
 import numpy as np
 import scipy as osp
@@ -33,8 +31,6 @@ from jax import lax_linalg
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax import test_util as jtu
-from jax.lib import xla_bridge
-from jax.lib import lapack
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -75,8 +71,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       self.skipTest("Unimplemented case for complex Cholesky decomposition.")
 
     self._CheckAgainstNumpy(np.linalg.cholesky, jnp.linalg.cholesky, args_maker,
-                            check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.cholesky, args_maker, check_dtypes=True)
+                            tol=1e-3)
+    self._CompileAndCheck(jnp.linalg.cholesky, args_maker)
 
     if jnp.finfo(dtype).bits == 64:
       jtu.check_grads(jnp.linalg.cholesky, args_maker(), order=2)
@@ -100,15 +96,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
 
-    self._CheckAgainstNumpy(np.linalg.det, jnp.linalg.det, args_maker,
-                            check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.det, args_maker, check_dtypes=True,
+    self._CheckAgainstNumpy(np.linalg.det, jnp.linalg.det, args_maker, tol=1e-3)
+    self._CompileAndCheck(jnp.linalg.det, args_maker,
                           rtol={np.float64: 1e-13, np.complex128: 1e-13})
 
   def testDetOfSingularMatrix(self):
     x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
-    self.assertAllClose(np.float32(0), jsp.linalg.det(x), check_dtypes=True)
-    
+    self.assertAllClose(np.float32(0), jsp.linalg.det(x))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -179,12 +174,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     result = jnp.linalg.tensorsolve(*args_maker())
     self.assertEqual(result.shape, Q)
 
-    self._CheckAgainstNumpy(np.linalg.tensorsolve, 
+    self._CheckAgainstNumpy(np.linalg.tensorsolve,
                             jnp.linalg.tensorsolve, args_maker,
-                            check_dtypes=True,
                             tol={np.float32: 1e-2, np.float64: 1e-3})
-    self._CompileAndCheck(jnp.linalg.tensorsolve, 
-                          args_maker, check_dtypes=True,
+    self._CompileAndCheck(jnp.linalg.tensorsolve,
+                          args_maker,
                           rtol={np.float64: 1e-13})
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -202,8 +196,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(np.linalg.slogdet, jnp.linalg.slogdet, args_maker,
-                            check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.slogdet, args_maker, check_dtypes=True)
+                            tol=1e-3)
+    self._CompileAndCheck(jnp.linalg.slogdet, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -225,7 +219,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       mat = jnp.array([np.diag(np.ones([5], dtype=np.float32))*(-.01)] * 2)
       args_maker = lambda: [mat]
       self._CheckAgainstNumpy(np.linalg.slogdet, jnp.linalg.slogdet, args_maker,
-                              check_dtypes=True, tol=1e-3)
+                              tol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
@@ -253,7 +247,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertTrue(np.all(norm(np.matmul(a, v) - w[..., None, :] * v) < 100))
 
     self._CompileAndCheck(partial(jnp.linalg.eig), args_maker,
-                          check_dtypes=True, rtol=1e-3)
+                          rtol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
@@ -268,12 +262,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigvals(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
-    n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
     w1, _ = jnp.linalg.eig(a)
     w2 = jnp.linalg.eigvals(a)
-    self.assertAllClose(w1, w2, check_dtypes=True)
+    self.assertAllClose(w1, w2)
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testEigvalsInf(self):
@@ -332,7 +325,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertTrue(norm(np.matmul(a, v) - w * v) < tol)
 
     self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
-                          check_dtypes=True, rtol=1e-3)
+                          rtol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
@@ -353,7 +346,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = (a + np.conj(a.T)) / 2
       return [a]
     self._CheckAgainstNumpy(np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker,
-                            check_dtypes=True, tol=1e-3)
+                            tol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -412,6 +405,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # evaluate eigenvector gradient and groundtruth eigensystem for perturbed input matrix
     f = partial(jnp.linalg.eigh, UPLO=uplo)
     (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(a_dot,))
+    self.assertTrue(jnp.issubdtype(w.dtype, jnp.floating))
+    self.assertTrue(jnp.issubdtype(dw.dtype, jnp.floating))
     new_a = a + a_dot
     new_w, new_v = f(new_a)
     new_a = (new_a + np.conj(new_a.T)) / 2
@@ -482,9 +477,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     np_fn = partial(np.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
     np_fn = partial(jnp.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
-    self._CheckAgainstNumpy(np_fn, np_fn, args_maker,
-                            check_dtypes=False, tol=1e-3)
-    self._CompileAndCheck(np_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fn, np_fn, args_maker, check_dtypes=False,
+                            tol=1e-3)
+    self._CompileAndCheck(np_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}".format(
@@ -499,8 +494,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for full_matrices in [False, True]
       for compute_uv in [False, True]
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, rng_factory):
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(b + (m, n), dtype)]
@@ -537,7 +534,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       self.assertTrue(np.allclose(np.linalg.svd(a, compute_uv=False), np.asarray(out), atol=1e-4, rtol=1e-4))
 
     self._CompileAndCheck(partial(jnp.linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv),
-                          args_maker, check_dtypes=True)
+                          args_maker)
     if not (compute_uv and full_matrices):
       svd = partial(jnp.linalg.svd, full_matrices=full_matrices,
                     compute_uv=compute_uv)
@@ -625,10 +622,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 3, 5), (5, 5, 5), (20, 20), (5, 10)]
       for pnorm in [jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro']
       for dtype in float_types + complex_types))
-  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   @jtu.skip_on_devices("gpu")  # TODO(#2203): numerical errors
   def testCond(self, shape, pnorm, dtype):
     _skip_if_unsupported_type(dtype)
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
 
     def gen_mat():
       # arr_gen = jtu.rand_some_nan(self.rng())
@@ -702,8 +701,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
     self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker,
-                            check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.solve, args_maker, check_dtypes=True)
+                            tol=1e-3)
+    self._CompileAndCheck(jnp.linalg.solve, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -730,8 +729,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       return [a]
 
     self._CheckAgainstNumpy(np.linalg.inv, jnp.linalg.inv, args_maker,
-                            check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.inv, args_maker, check_dtypes=True)
+                            tol=1e-3)
+    self._CompileAndCheck(jnp.linalg.inv, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -740,33 +739,33 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   def testPinv(self, shape, dtype, rng_factory):
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
 
     self._CheckAgainstNumpy(np.linalg.pinv, jnp.linalg.pinv, args_maker,
-                            check_dtypes=True, tol=1e-2)
-    self._CompileAndCheck(jnp.linalg.pinv, args_maker, check_dtypes=True)
-    # TODO(phawkins): 1e-1 seems like a very loose tolerance.
-    jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
+                            tol=1e-2)
+    self._CompileAndCheck(jnp.linalg.pinv, args_maker)
+    if jtu.device_under_test() != "tpu":
+      # TODO(phawkins): 1e-1 seems like a very loose tolerance.
+      jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
 
-  @jtu.skip_on_devices("tpu")  # SVD is not implemented on the TPU backend
   def testPinvGradIssue2792(self):
     def f(p):
       a = jnp.array([[0., 0.],[-p, 1.]], jnp.float32) * 1 / (1 + p**2)
       return jnp.linalg.pinv(a)
     j = jax.jacobian(f)(jnp.float32(2.))
-    self.assertAllClose(jnp.array([[0., -1.], [ 0., 0.]], jnp.float32), j,
-                        check_dtypes=True)
+    self.assertAllClose(jnp.array([[0., -1.], [ 0., 0.]], jnp.float32), j)
 
     expected = jnp.array([[[[-1., 0.], [ 0., 0.]], [[0., -1.], [0.,  0.]]],
                          [[[0.,  0.], [-1., 0.]], [[0.,  0.], [0., -1.]]]],
                          dtype=jnp.float32)
     self.assertAllClose(
-      expected, jax.jacobian(jnp.linalg.pinv)(jnp.eye(2, dtype=jnp.float32)),
-      check_dtypes=True)
+      expected, jax.jacobian(jnp.linalg.pinv)(jnp.eye(2, dtype=jnp.float32)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_n={}".format(
@@ -785,9 +784,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     tol = 1e-1 if jtu.device_under_test() == "tpu" else 1e-3
     self._CheckAgainstNumpy(partial(np.linalg.matrix_power, n=n),
                             partial(jnp.linalg.matrix_power, n=n),
-                            args_maker, check_dtypes=True, tol=tol)
+                            args_maker, tol=tol)
     self._CompileAndCheck(partial(jnp.linalg.matrix_power, n=n), args_maker,
-                          check_dtypes=True, rtol=1e-3)
+                          rtol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
@@ -796,11 +795,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")
   def testMatrixRank(self, shape, dtype, rng_factory):
+    if (jnp.issubdtype(dtype, np.complexfloating) and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("No complex SVD implementation")
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
-    n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
     self._CheckAgainstNumpy(np.linalg.matrix_rank, jnp.linalg.matrix_rank,
@@ -829,9 +829,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     tol = {np.float32: 1e-4, np.float64: 1e-10,
            np.complex64: 1e-4, np.complex128: 1e-10}
 
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True, 
-                            tol=tol)
-    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True,
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker,
                           atol=tol, rtol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -869,7 +868,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       return [lhs, rng(rhs_shape, dtype)]
 
     self._CheckAgainstNumpy(onp_fun, jnp_fun_numpy_resid, args_maker, check_dtypes=False, tol=tol)
-    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True, atol=tol, rtol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
     # Disabled because grad is flaky for low-rank inputs.
     # TODO:
@@ -884,7 +883,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     grad_test_jc = jit(grad(jit(test)))
     xc = np.eye(3, dtype=np.complex)
-    self.assertAllClose(xc, grad_test_jc(xc), check_dtypes=True)
+    self.assertAllClose(xc, grad_test_jc(xc))
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testIssue1151(self):
@@ -892,12 +891,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     A = jnp.array(rng.randn(100, 3, 3), dtype=jnp.float32)
     b = jnp.array(rng.randn(100, 3), dtype=jnp.float32)
     x = jnp.linalg.solve(A, b)
-    self.assertAllClose(vmap(jnp.dot)(A, x), b, atol=2e-3, rtol=1e-2,
-                        check_dtypes=True)
-    jac0 = jax.jacobian(jnp.linalg.solve, argnums=0)(A, b)
-    jac1 = jax.jacobian(jnp.linalg.solve, argnums=1)(A, b)
-    jac0 = jax.jacobian(jnp.linalg.solve, argnums=0)(A[0], b[0])
-    jac1 = jax.jacobian(jnp.linalg.solve, argnums=1)(A[0], b[0])
+    self.assertAllClose(vmap(jnp.dot)(A, x), b, atol=2e-3, rtol=1e-2)
+
+    _ = jax.jacobian(jnp.linalg.solve, argnums=0)(A, b)
+    _ = jax.jacobian(jnp.linalg.solve, argnums=1)(A, b)
+
+    _ = jax.jacobian(jnp.linalg.solve, argnums=0)(A[0], b[0])
+    _ = jax.jacobian(jnp.linalg.solve, argnums=1)(A[0], b[0])
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testIssue1383(self):
@@ -930,8 +930,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testBlockDiag(self, args):
     args_maker = lambda: args
     self._CheckAgainstNumpy(osp.linalg.block_diag, jsp.linalg.block_diag,
-                            args_maker, check_dtypes=True)
-    self._CompileAndCheck(jsp.linalg.block_diag, args_maker, check_dtypes=True)
+                            args_maker)
+    self._CompileAndCheck(jsp.linalg.block_diag, args_maker)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -947,15 +947,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     x, = args_maker()
     p, l, u = jsp.linalg.lu(x)
-    self.assertAllClose(x, np.matmul(p, np.matmul(l, u)), check_dtypes=True,
+    self.assertAllClose(x, np.matmul(p, np.matmul(l, u)),
                         rtol={np.float32: 1e-3, np.float64: 1e-12,
                               np.complex64: 1e-3, np.complex128: 1e-12})
-    self._CompileAndCheck(jsp.linalg.lu, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp.linalg.lu, args_maker)
 
   def testLuOfSingularMatrix(self):
     x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
     p, l, u = jsp.linalg.lu(x)
-    self.assertAllClose(x, np.matmul(p, np.matmul(l, u)), check_dtypes=True)
+    self.assertAllClose(x, np.matmul(p, np.matmul(l, u)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -990,9 +990,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     us = np.stack([out[2] for out in expected])
 
     actual_ps, actual_ls, actual_us = vmap(jsp.linalg.lu)(jnp.stack(args))
-    self.assertAllClose(ps, actual_ps, check_dtypes=True)
-    self.assertAllClose(ls, actual_ls, check_dtypes=True)
-    self.assertAllClose(us, actual_us, check_dtypes=True)
+    self.assertAllClose(ps, actual_ps)
+    self.assertAllClose(ls, actual_ls)
+    self.assertAllClose(us, actual_us)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1012,9 +1012,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     u = np.triu(lu)
     for i in range(n):
       x[[i, piv[i]],] = x[[piv[i], i],]
-    self.assertAllClose(x, np.matmul(l, u), check_dtypes=True, rtol=1e-3,
+    self.assertAllClose(x, np.matmul(l, u), rtol=1e-3,
                         atol=1e-3)
-    self._CompileAndCheck(jsp.linalg.lu_factor, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jsp.linalg.lu_factor, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1044,9 +1044,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       lu, piv = osp.linalg.lu_factor(a)
       return [lu, piv, rng(rhs_shape, dtype)]
 
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=1e-3)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1085,9 +1084,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         a = np.tril(a) if lower else np.triu(a)
       return [a, rng(rhs_shape, dtype)]
 
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=True, tol=1e-3)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=1e-3)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1136,7 +1134,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         l if lower else T(l), b, trans=1 if transpose_a else 0, lower=lower,
         unit_diagonal=unit_diagonal)
 
-    self.assertAllClose(np_ans, ans, check_dtypes=True,
+    self.assertAllClose(np_ans, ans,
                         rtol={np.float32: 1e-4, np.float64: 1e-11})
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1232,15 +1230,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     osp_fun = lambda a: osp.linalg.expm(a)
     jsp_fun = lambda a: jsp.linalg.expm(a)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=True)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
     args_maker_triu = lambda: [np.triu(rng((n, n), dtype))]
-    jsp_fun_triu = lambda a: jsp.linalg.expm(a,upper_triangular=True)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu,
-                            check_dtypes=True)
-    self._CompileAndCheck(jsp_fun_triu, args_maker_triu, check_dtypes=True)
+    jsp_fun_triu = lambda a: jsp.linalg.expm(a, upper_triangular=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu)
+    self._CompileAndCheck(jsp_fun_triu, args_maker_triu)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name":
@@ -1253,9 +1249,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker_zeros = lambda: [np.zeros((n, n), dtype)]
     osp_fun = lambda a: osp.linalg.expm(a)
     jsp_fun = lambda a: jsp.linalg.expm(a)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker_zeros,
-                            check_dtypes=True)
-    self._CompileAndCheck(jsp_fun, args_maker_zeros, check_dtypes=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker_zeros)
+    self._CompileAndCheck(jsp_fun, args_maker_zeros)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs={}_rhs={}_lower={}".format(
@@ -1284,8 +1279,46 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         U = np.triu(rng(lhs_shape, dtype))
         return [(U, lower), b]
     self._CheckAgainstNumpy(osp.linalg.cho_solve, jsp.linalg.cho_solve,
-                            args_maker, check_dtypes=True, tol=1e-3)
+                            args_maker, tol=1e-3)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+        "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+       "n": n, "dtype": dtype, "rng_factory": rng_factory}
+      for n in [1, 4, 5, 20, 50, 100]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_small]))
+  def testExpmFrechet(self, n, dtype, rng_factory):
+    rng = rng_factory(self.rng())
+    _skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng((n, n), dtype), rng((n, n), dtype),]
+
+    #compute_expm is True
+    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=True)
+    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=True)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+    #compute_expm is False
+    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=False)
+    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=False)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+     {"testcase_name":
+       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
+      "n": n, "dtype": dtype, "rng_factory": rng_factory}
+     for n in [1, 4, 5, 20, 50]
+     for dtype in float_types + complex_types
+     for rng_factory in [jtu.rand_small]))
+  def testExpmGrad(self, n, dtype, rng_factory):
+     rng = rng_factory(self.rng())
+     _skip_if_unsupported_type(dtype)
+     a = rng((n, n), dtype)
+     jtu.check_grads(jsp.linalg.expm, (a,), modes=["fwd"], order=1)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -1,14 +1,16 @@
-sphinx
+sphinx>=2.1
 sphinx_rtd_theme
 jaxlib
 ipykernel
 nbsphinx
 sphinx-autodoc-typehints
+myst-parser[sphinx]
 # For host_callback.py
 msgpack
 # The next packages are for notebooks
 matplotlib
 sklearn
+# For CI tests.
+pytest
 # Must install jax itself for notebook execution to work
 .
-

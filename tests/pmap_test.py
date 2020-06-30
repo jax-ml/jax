@@ -15,10 +15,14 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import itertools as it
+import gc
 import os
 from random import shuffle
-import threading
+from typing import Optional, cast
 from unittest import SkipTest
+import warnings
+import weakref
 
 import numpy as np
 from absl.testing import absltest
@@ -28,14 +32,13 @@ import jax
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import tree_util
-from jax import core
 from jax import lax
 from jax import random
 from jax.abstract_arrays import ShapedArray
 from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                      linearize, device_put)
 from jax.lib import xla_bridge
-from jax.util import prod
+from jax.util import prod, safe_map
 from jax.interpreters import pxla
 from jax.interpreters import xla
 
@@ -43,6 +46,30 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
+
+# TODO(jakevdp): move the following to test_util.py
+compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
+
+def all_bdims(*shapes):
+  bdims = (it.chain([cast(Optional[int], None)],
+                     range(len(shape) + 1)) for shape in shapes)
+  return (t for t in it.product(*bdims) if not all(e is None for e in t))
+
+def add_bdim(bdim_size, bdim, shape):
+  shape = list(shape)
+  if bdim is not None:
+    shape.insert(bdim, bdim_size)
+  return tuple(shape)
+
+def slicer(x, bdim):
+  if bdim is None:
+    return lambda _: x
+  else:
+    return lambda i: lax.index_in_dim(x, i, bdim, keepdims=False)
+
+def args_slicer(args, bdims):
+  slicers = safe_map(slicer, args, bdims)
+  return lambda i: [sl(i) for sl in slicers]
 
 # Run all tests with 8 CPU devices.
 def setUpModule():
@@ -219,18 +246,18 @@ class PmapTest(jtu.JaxTestCase):
 
     f_expected = np.broadcast_to(x, mesh_shape)
     f_ans = f(x, y)
-    self.assertAllClose(f_ans, f_expected, check_dtypes=True)
+    self.assertAllClose(f_ans, f_expected)
     self.assertIsInstance(f_ans, pxla.ShardedDeviceArray)
     # the output is actually replicated (has the same values in each device buffer)
     # but out_axes is implicitly 0, so we shouldn't have replication in the
     # sharding spec.
-    self.assertEqual(f_ans.sharding_spec.replication_factor, 1)
+    self.assertEmpty(f_ans.sharding_spec.replication_factors)
 
     g_expected = np.broadcast_to(x - np.sum(y, 0, keepdims=True), shape)
     g_ans = g(x, y)
-    self.assertAllClose(g_ans, g_expected, check_dtypes=True)
+    self.assertAllClose(g_ans, g_expected)
     self.assertIsInstance(g_ans, pxla.ShardedDeviceArray)
-    self.assertEqual(g_ans.sharding_spec.replication_factor, 1)
+    self.assertEmpty(g_ans.sharding_spec.replication_factors)
 
   @parameterized.named_parameters(
       {"testcase_name": "_mesh={}".format(device_mesh_shape).replace(" ", ""),
@@ -304,7 +331,7 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = grad(lambda x: jnp.sum(splitjvp(x)))(x)
     expected = grad(fun)(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testTwoArgsGrad(self):
     def f(x, y):
@@ -354,7 +381,7 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = grad(lambda x: jnp.sum(test_fun(x)))(x)
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
-    self.assertAllClose(ans, expected, check_dtypes=True, atol=1e-3)
+    self.assertAllClose(ans, expected, atol=1e-3)
 
   def testShardedDeviceArrays(self):
     f = lambda x: 2 * x
@@ -468,11 +495,11 @@ class PmapTest(jtu.JaxTestCase):
     expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 1)
     expected = x - expected_psum
     ans = f1(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     expected = x - expected_psum + 1.
     ans = f2(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
     shape = (replicas // 2, 2, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -484,7 +511,7 @@ class PmapTest(jtu.JaxTestCase):
     expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
     expected = x - expected_psum
     ans = f3(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testAxisGroups(self):
     axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
@@ -570,7 +597,7 @@ class PmapTest(jtu.JaxTestCase):
       lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
     result = f(jnp.arange(num_devices, dtype=jnp.float32))
     expected = jnp.asarray(perm, dtype=jnp.float32)
-    self.assertAllClose(result, expected, check_dtypes=True)
+    self.assertAllClose(result, expected)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testRule30(self):
@@ -845,7 +872,7 @@ class PmapTest(jtu.JaxTestCase):
 
     @pmap
     def g(key):
-      params = random.normal(key, ())
+      _ = random.normal(key, ())
       return 0.
 
     @vmap
@@ -855,6 +882,29 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = s(keys)  # doesn't crash
     self.assertEqual(ans.shape, (13, N_DEVICES))
+
+  def testVmapOfPmap3(self):
+    # https://github.com/google/jax/issues/3399
+    device_count = xla_bridge.device_count()
+    if device_count < 2:
+      raise SkipTest("test requires at least two devices")
+
+    def map_version(qs, pts):
+      return jax.lax.map(lambda x: func(x, pts), qs)
+
+    def vmap_version(qs, pts):
+      return jax.vmap(func, in_axes=(0, None))(qs, pts)
+
+    def func(q, pts):
+      q_from_pmap = jax.pmap(lambda x, y: y, in_axes=(0, None))(pts, q)
+      return q, q_from_pmap
+
+    pts = jnp.ones(device_count)
+    qs = jnp.asarray(((0,0), (3,3), (2,2)))
+
+    _, expected = map_version(qs, pts)
+    _, ans = vmap_version(qs, pts)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testVmapOfPmapNonLeadingAxis(self):
     device_count = xla_bridge.device_count()
@@ -909,11 +959,11 @@ class PmapTest(jtu.JaxTestCase):
     sharding_spec = pxla.ShardingSpec(
         shards_per_axis=(2, 2),
         is_axis_materialized=(True, True),
-        replication_factor=2)
+        replication_factors=[])
     arr = pxla.ShardedDeviceArray(aval, sharding_spec, bufs)
 
     r = pmap(lambda x: x + 1)(arr)
-    self.assertAllClose(r, arr + 1, check_dtypes=True)
+    self.assertAllClose(r, arr + 1)
     self.assertEqual(len(r.device_buffers), 6)
 
   @ignore_soft_pmap_warning()
@@ -1116,10 +1166,9 @@ class PmapTest(jtu.JaxTestCase):
     vals = list(range(500))
     ndevices = xla_bridge.device_count()
     self.assertAllClose(f(jnp.array([vals] * ndevices)),
-                        jnp.array([sum(vals)] * ndevices),
-                        check_dtypes=True)
+                        jnp.array([sum(vals)] * ndevices))
 
-  def testPostProcessMap(self):
+  def testPostProcessMap2(self):
     # code from https://github.com/google/jax/issues/2787
     def vv(x, y):
       """Vector-vector multiply"""
@@ -1184,6 +1233,94 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-3, rtol=1e-3)
     self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-3, rtol=1e-3)
 
+  def testPmapAxisNameError(self):
+    # https://github.com/google/jax/issues/3120
+    a = np.arange(4)[np.newaxis,:]
+    def test(x):
+      return jax.lax.psum(x, axis_name='batch')
+
+    with self.assertRaisesRegex(NameError, "unbound axis name: batch"):
+      jax.pmap(test)(a)
+
+  def testPsumOnBooleanDtype(self):
+    # https://github.com/google/jax/issues/3123
+    n = xla_bridge.device_count()
+    if n > 1:
+      x = jnp.array([True, False])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1, 1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1/2, 1/2])
+    else:
+      x = jnp.array([True])
+
+      out = pmap(lambda x: jax.lax.psum(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
+      out = pmap(lambda x: jax.lax.pmean(x, 'i'), 'i')(x)
+      self.assertEqual(list(out), [1])
+
+  def testPsumWithNoAxisDoesntLeakFunctions(self):
+    x = jnp.ones((1, 1024), dtype=np.float32)
+    f = lambda _: x
+    w = weakref.ref(f)
+    g = pmap(f)
+    g(np.ones((1,), dtype=np.float32)).block_until_ready()
+    del f, g
+    gc.collect()
+    # 'f' should not be alive at this point; in particular the pmap cache must
+    # not keep it alive.
+    self.assertTrue(w() is None)
+
+  def testJitOfPmapWarningMessage(self):
+    device_count = xla_bridge.device_count()
+
+    if device_count == 1:
+      raise SkipTest("test requires at least two devices")
+
+    def foo(x): return x
+
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      jit(pmap(foo))(jnp.arange(device_count))
+
+      self.assertGreaterEqual(len(w), 1)
+      self.assertIn("The jitted function foo includes a pmap",
+                    str(w[-1].message))
+
+
+class VmapOfPmapTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"{shapes}_{vmap_bdims}_{pmap_bdims}",
+       "shapes": shapes, "vmap_bdims": vmap_bdims, "pmap_bdims": pmap_bdims}
+      for shape_group in compatible_shapes
+      for num_args in range(1, 4)
+      for shapes in it.combinations_with_replacement(shape_group, num_args)
+      for vmap_bdims in all_bdims(*shapes)
+      for pmap_bdims in it.product([0, None], repeat=num_args)
+      if not all(bd is None for bd in pmap_bdims)
+  ))
+  def testVmapOfPmap(self, shapes, vmap_bdims, pmap_bdims):
+    vmapped_size = 3
+    pmapped_size = xla_bridge.device_count()
+
+    rng = jtu.rand_default(self.rng())
+
+    def fun(*args):
+      return sum(args)
+
+    final_shapes = map(partial(add_bdim, vmapped_size), vmap_bdims,
+                       map(partial(add_bdim, pmapped_size), pmap_bdims, shapes))
+
+    args = [rng(shape, jnp.float32) for shape in final_shapes]
+    args_slice = args_slicer(args, vmap_bdims)
+    ans = vmap(pmap(fun, in_axes=pmap_bdims), vmap_bdims)(*args)
+    expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
+    self.assertAllClose(ans, expected)
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
@@ -1194,7 +1331,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.sum(x, 0)
     ans = f(x)
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testOneDevice(self):
     if xla_bridge.device_count() == 1:
@@ -1209,8 +1346,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     r0 = f0(x)
     r1 = f1(x)
     expected = np.expand_dims(np.dot(x.squeeze(), x.squeeze().T), 0)
-    self.assertAllClose(r0, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
-    self.assertAllClose(r1, expected, check_dtypes=True, atol=1e-6, rtol=1e-3)
+    self.assertAllClose(r0, expected, atol=1e-6, rtol=1e-3)
+    self.assertAllClose(r1, expected, atol=1e-6, rtol=1e-3)
 
   def testNoDevicesError(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
@@ -1238,8 +1375,11 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
         r"num_local_devices=\d."):
       f(jnp.ones(xla_bridge.device_count() + 1))
 
-  def testNestedPmapsError(self):
-    # Devices specified in outer pmap
+  def testNestedPmaps(self):
+    if xla_bridge.device_count() % 2 != 0:
+      raise SkipTest
+
+    # Devices specified in outer pmap are OK
     @partial(pmap, axis_name='i', devices=xla_bridge.devices())
     def foo(x):
       @partial(pmap, axis_name='j')
@@ -1247,12 +1387,13 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
         return lax.psum(y, 'j')
       return bar(x)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "Nested pmaps with explicit devices argument."):
-      foo(jnp.ones((xla_bridge.device_count(), 1)))
+    x = jnp.ones((xla_bridge.device_count() // 2, 2))
+    ans = foo(x)
+    expected = x * 2
+    self.assertAllClose(ans, expected)
 
-    # Devices specified in inner pmap
+  def testNestedPmapsError(self):
+    # Devices specified in inner pmap not OK
     @partial(pmap, axis_name='i')
     def foo(x):
       @partial(pmap, axis_name='j', devices=xla_bridge.devices())
@@ -1262,7 +1403,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "Nested pmaps with explicit devices argument."):
+        "Nested pmap with explicit devices argument."):
       foo(jnp.ones((xla_bridge.device_count(), 1)))
 
   def testJitInPmap(self):
@@ -1276,7 +1417,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     ndevices = xla_bridge.device_count()
     ans = foo(jnp.ones((ndevices, 1)))
     expected = np.ones((ndevices, 1), dtype=jnp.float_) * ndevices * 2
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testPmapInJit(self):
     @jit
@@ -1289,7 +1430,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     ndevices = xla_bridge.device_count()
     ans = foo(jnp.ones((ndevices, 1)))
     expected = np.ones((ndevices, 1), dtype=jnp.float_) * ndevices
-    self.assertAllClose(ans, expected, check_dtypes=True)
+    self.assertAllClose(ans, expected)
 
   def testGradBasic(self):
     @partial(pmap, axis_name='i', devices=xla_bridge.devices())
@@ -1353,7 +1494,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(shards_per_axis=(2, 2),
                              is_axis_materialized=(True, True),
-                             replication_factor=1)
+                             replication_factors=[])
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(0,2), slice(4,8)),
@@ -1364,7 +1505,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
                              is_axis_materialized=(True, True),
-                             replication_factor=1)
+                             replication_factors=[])
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      (slice(0,2), (slice(2,4))))
 
@@ -1372,7 +1513,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(shards_per_axis=(1, 1),
                              is_axis_materialized=(True, True),
-                             replication_factor=1)
+                             replication_factors=[])
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      (slice(None),))
 
@@ -1380,31 +1521,83 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(shards_per_axis=(4, 1),
                              is_axis_materialized=(False, True),
-                             replication_factor=1)
+                             replication_factors=[])
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      (0, 1, 2, 3))
 
     shape = (2, 2)
     spec = pxla.ShardingSpec(shards_per_axis=(1, 2),
                              is_axis_materialized=(True, False),
-                             replication_factor=1)
+                             replication_factors=[])
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      ((slice(None), 0),
                       (slice(None), 1)))
 
-  def testReplication(self):
+  def testReplicationAfterUnsharded(self):
     shape = (2, 8)
     spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
                              is_axis_materialized=(False, True),
-                             replication_factor=3)
+                             replication_factors=[(3, 2)])
     self.assertEqual(pxla.spec_to_indices(shape, spec),
                      (0, 0, 0, 1, 1, 1))
+
+  def testReplicationPosition2(self):
+    shape = (2, 8)
+    spec = pxla.ShardingSpec(shards_per_axis=(2, 2),
+                             is_axis_materialized=(False, True),
+                             replication_factors=[(3, 2)])
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     ((0, slice(0, 4)), (0, slice(0, 4)), (0, slice(0, 4)),
+                      (0, slice(4, 8)), (0, slice(4, 8)), (0, slice(4, 8)),
+                      (1, slice(0, 4)), (1, slice(0, 4)), (1, slice(0, 4)),
+                      (1, slice(4, 8)), (1, slice(4, 8)), (1, slice(4, 8))))
+
+  def testReplicationPosition1(self):
+    shape = (2, 8)
+    spec = pxla.ShardingSpec(shards_per_axis=(2, 2),
+                             is_axis_materialized=(False, True),
+                             replication_factors=[(3, 1)])
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     ((0, slice(0, 4)), (0, slice(4, 8)),
+                      (0, slice(0, 4)), (0, slice(4, 8)),
+                      (0, slice(0, 4)), (0, slice(4, 8)),
+                      (1, slice(0, 4)), (1, slice(4, 8)),
+                      (1, slice(0, 4)), (1, slice(4, 8)),
+                      (1, slice(0, 4)), (1, slice(4, 8))))
+
+  def testReplicationPosition0(self):
+    shape = (2, 8)
+    spec = pxla.ShardingSpec(shards_per_axis=(2, 1),
+                             is_axis_materialized=(False, True),
+                             replication_factors=[(3, 0)])
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     (0, 1, 0, 1, 0, 1))
+
+  def testMultipleReplications(self):
+    shape = (2, 7, 4)
+    spec = pxla.ShardingSpec(shards_per_axis=(2, 1, 2),
+                             is_axis_materialized=(False, True, True),
+                             replication_factors=[(3, 0), (2, 0), (2, 2)])
+    self.assertEqual(
+        pxla.spec_to_indices(shape, spec),
+        ((0, slice(None), slice(0, 2)), (0, slice(None), slice(2, 4)),
+         (0, slice(None), slice(0, 2)), (0, slice(None), slice(2, 4)),
+         (1, slice(None), slice(0, 2)), (1, slice(None), slice(2, 4)),
+         (1, slice(None), slice(0, 2)), (1, slice(None), slice(2, 4))) * 3 * 2)
+
+  def testReplicatedScalar(self):
+    shape = ()
+    spec = pxla.ShardingSpec(shards_per_axis=(),
+                             is_axis_materialized=(),
+                             replication_factors=[(3, 0)])
+    self.assertEqual(pxla.spec_to_indices(shape, spec),
+                     ((), (), ()))
 
 
 def _spec_str(spec):
   return (f"({spec.shards_per_axis},"
           f"{spec.is_axis_materialized},"
-          f"{spec.replication_factor})")
+          f"{spec.replication_factors})")
 
 
 class ShardArgsTest(jtu.JaxTestCase):
@@ -1426,32 +1619,44 @@ class ShardArgsTest(jtu.JaxTestCase):
       for shape, spec in [
           # pmap(in_axes=0)
           [(4, 8), pxla.ShardingSpec(shards_per_axis=(4, 1),
-                                    is_axis_materialized=(False, True),
-                                    replication_factor=1)],
+                                     is_axis_materialized=(False, True),
+                                     replication_factors=[])],
           # pmap(in_axes=1)
           [(2, 2), pxla.ShardingSpec(shards_per_axis=(1, 2),
-                                    is_axis_materialized=(True, False),
-                                    replication_factor=1)],
+                                     is_axis_materialized=(True, False),
+                                     replication_factors=[])],
           # unsharded
           [(4, 8), pxla.ShardingSpec(shards_per_axis=(1, 1),
-                                    is_axis_materialized=(True, True),
-                                    replication_factor=1)],
+                                     is_axis_materialized=(True, True),
+                                     replication_factors=[])],
           # partitioned, 1 axis
           [(4, 8), pxla.ShardingSpec(shards_per_axis=(2, 1),
-                                    is_axis_materialized=(True, True),
-                                    replication_factor=1)],
+                                     is_axis_materialized=(True, True),
+                                     replication_factors=[])],
           # partitioned, 2 axes
           [(4, 8), pxla.ShardingSpec(shards_per_axis=(2, 2),
-                                    is_axis_materialized=(True, True),
-                                    replication_factor=1)],
+                                     is_axis_materialized=(True, True),
+                                     replication_factors=[])],
+          # partitioned + sharding
+          [(2, 8), pxla.ShardingSpec(shards_per_axis=(2, 2),
+                                     is_axis_materialized=(False, True),
+                                     replication_factors=[])],
           # replication + sharding
           [(2, 8), pxla.ShardingSpec(shards_per_axis=(2, 1),
-                                    is_axis_materialized=(False, True),
-                                    replication_factor=3)],
+                                     is_axis_materialized=(False, True),
+                                     replication_factors=[(3, 2)])],
           # replication, no sharding
           [(2, 8), pxla.ShardingSpec(shards_per_axis=(1, 1),
-                                    is_axis_materialized=(True, True),
-                                    replication_factor=3)],
+                                     is_axis_materialized=(True, True),
+                                     replication_factors=[(3, 2)])],
+          # multiple replicated axes
+          [(1, 8), pxla.ShardingSpec(shards_per_axis=(1, 2),
+                                     is_axis_materialized=(False, True),
+                                     replication_factors=[(2, 0), (2, 1)])],
+          # replicated scalar
+          [(), pxla.ShardingSpec(shards_per_axis=(),
+                                 is_axis_materialized=(),
+                                 replication_factors=[(2, 0), (3, 0)])]
       ])
   def testShardArgs(self, shape, spec, make_arg):
     indices = pxla.spec_to_indices(shape, spec)
@@ -1468,4 +1673,4 @@ class ShardArgsTest(jtu.JaxTestCase):
       self.assertAllClose(buf[0].to_py(), x[idx], check_dtypes=False)
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

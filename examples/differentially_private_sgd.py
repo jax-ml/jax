@@ -18,7 +18,7 @@ This script contains a JAX implementation of Differentially Private Stochastic
 Gradient Descent (https://arxiv.org/abs/1607.00133). DPSGD requires clipping
 the per-example parameter gradients, which is non-trivial to implement
 efficiently for convolutional neural networks.  The JAX XLA compiler shines in
-this setting by optimizing the minibatch-vectorized computation for 
+this setting by optimizing the minibatch-vectorized computation for
 convolutional architectures. Train time takes a few seconds per epoch on a
 commodity GPU.
 
@@ -64,6 +64,7 @@ Example invocations:
    --learning_rate=.25 \
 """
 
+from functools import partial
 import itertools
 import time
 import warnings
@@ -73,7 +74,6 @@ from absl import flags
 
 from jax import grad
 from jax import jit
-from jax import partial
 from jax import random
 from jax import tree_util
 from jax import vmap

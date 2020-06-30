@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import functools
+import operator as op
 
 
-class PrettyPrint(object):
+class PrettyPrint:
   """Crude Hughes-inspired pretty printer."""
 
   def __init__(self, lines):
@@ -25,6 +25,10 @@ class PrettyPrint(object):
   def indent(self, indent):
     return PrettyPrint([(indent + orig_indent, s)
                         for orig_indent, s in self.lines])
+
+  def annotate(self, length, msg):
+    (i, s), *rest = self.lines
+    return PrettyPrint([(i, s.ljust(length) + f" [{msg}]")] + list(rest))
 
   def __add__(self, rhs):
     return PrettyPrint(self.lines + rhs.lines)
@@ -49,25 +53,8 @@ class PrettyPrint(object):
 def pp(s):
   return PrettyPrint([(0, line) for line in str(s).splitlines()])
 
-
 def hcat(ps):
-  return functools.reduce(lambda x, y: x >> y, ps)
-
+  return functools.reduce(op.rshift, ps)
 
 def vcat(ps):
-  if not ps:
-    return pp('')
-  else:
-    return functools.reduce(lambda x, y: x + y, ps)
-
-
-def pp_kv_pairs(kv_pairs):
-  if kv_pairs:
-    kv_pairs = vcat([pp('{}='.format(k)) >> pp(v) for k, v in kv_pairs])
-    return pp('[ ') >> kv_pairs >> pp(' ]')
-  else:
-    return pp('')
-
-
-def print_list(xs):
-  return ' '.join(map(str, xs))
+  return sum(ps, pp(''))

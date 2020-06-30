@@ -13,25 +13,20 @@
 # limitations under the License.
 
 from functools import partial
-import unittest
 
 from absl.testing import absltest
 import numpy as np
 
 import jax
-from jax import dtypes
 from jax import test_util as jtu
 import jax.numpy as jnp
 from jax.experimental.ode import odeint
+from jax.tree_util import tree_map
 
 import scipy.integrate as osp_integrate
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
-def num_float_bits(dtype):
-  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
 
 
 class ODETest(jtu.JaxTestCase):
@@ -42,7 +37,7 @@ class ODETest(jtu.JaxTestCase):
     scipy_result = jnp.asarray(osp_integrate.odeint(np_fun, y0, tspace, args))
 
     y0, tspace = jnp.array(y0), jnp.array(tspace)
-    jax_fun = partial(fun, np)
+    jax_fun = partial(fun, jnp)
     jax_result = odeint(jax_fun, y0, tspace, *args)
 
     self.assertAllClose(jax_result, scipy_result, check_dtypes=False, atol=tol, rtol=tol)
@@ -51,78 +46,96 @@ class ODETest(jtu.JaxTestCase):
   def test_pend_grads(self):
     def pend(_np, y, _, m, g):
       theta, omega = y
-      return [omega, -m * omega - g * jnp.sin(theta)]
+      return [omega, -m * omega - g * _np.sin(theta)]
 
-    integrate = partial(odeint, partial(pend, np))
-
-    y0 = [jnp.pi - 0.1, 0.0]
-    ts = jnp.linspace(0., 1., 11)
+    y0 = [np.pi - 0.1, 0.0]
+    ts = np.linspace(0., 1., 11)
     args = (0.25, 9.8)
-
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(pend, y0, ts, *args, tol=tol)
 
+    integrate = partial(odeint, partial(pend, jnp))
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
+                    atol=tol, rtol=tol)
+
+  @jtu.skip_on_devices("tpu")
+  def test_pytree_state(self):
+    """Test calling odeint with y(t) values that are pytrees."""
+    def dynamics(y, _t):
+      return tree_map(jnp.negative, y)
+
+    y0 = (np.array(-0.1), np.array([[[0.1]]]))
+    ts = np.linspace(0., 1., 11)
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+
+    integrate = partial(odeint, dynamics)
+    jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
                     atol=tol, rtol=tol)
 
   @jtu.skip_on_devices("tpu")
   def test_weird_time_pendulum_grads(self):
     """Test that gradients are correct when the dynamics depend on t."""
     def dynamics(_np, y, t):
-      return jnp.array([y[1] * -t, -1 * y[1] - 9.8 * jnp.sin(y[0])])
+      return _np.array([y[1] * -t, -1 * y[1] - 9.8 * _np.sin(y[0])])
 
-    integrate = partial(odeint, partial(dynamics, np))
-
-    y0 = [jnp.pi - 0.1, 0.0]
-    ts = jnp.linspace(0., 1., 11)
-
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    y0 = [np.pi - 0.1, 0.0]
+    ts = np.linspace(0., 1., 11)
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(dynamics, y0, ts, tol=tol)
 
+    integrate = partial(odeint, partial(dynamics, jnp))
     jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
   @jtu.skip_on_devices("tpu")
   def test_decay(self):
     def decay(_np, y, t, arg1, arg2):
-        return -jnp.sqrt(t) - y + arg1 - jnp.mean((y + arg2)**2)
+        return -_np.sqrt(t) - y + arg1 - _np.mean((y + arg2)**2)
 
-    integrate = partial(odeint, partial(decay, np))
 
     rng = np.random.RandomState(0)
     args = (rng.randn(3), rng.randn(3))
-
     y0 = rng.randn(3)
-    ts = jnp.linspace(0.1, 0.2, 4)
-
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    ts = np.linspace(0.1, 0.2, 4)
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(decay, y0, ts, *args, tol=tol)
 
+    integrate = partial(odeint, partial(decay, jnp))
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
   @jtu.skip_on_devices("tpu")
   def test_swoop(self):
     def swoop(_np, y, t, arg1, arg2):
-      return jnp.array(y - jnp.sin(t) - jnp.cos(t) * arg1 + arg2)
+      return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
 
-    integrate = partial(odeint, partial(swoop, np))
-
-    ts = jnp.array([0.1, 0.2])
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
-
-    y0 = jnp.linspace(0.1, 0.9, 10)
+    ts = np.array([0.1, 0.2])
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+    y0 = np.linspace(0.1, 0.9, 10)
     args = (0.1, 0.2)
+
     self.check_against_scipy(swoop, y0, ts, *args, tol=tol)
+
+    integrate = partial(odeint, partial(swoop, jnp))
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
-    big_y0 = jnp.linspace(1.1, 10.9, 10)
+  @jtu.skip_on_devices("tpu")
+  def test_swoop_bigger(self):
+    def swoop(_np, y, t, arg1, arg2):
+      return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
+
+    ts = np.array([0.1, 0.2])
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+    big_y0 = np.linspace(1.1, 10.9, 10)
     args = (0.1, 0.3)
-    self.check_against_scipy(swoop, y0, ts, *args, tol=tol)
+
+    self.check_against_scipy(swoop, big_y0, ts, *args, tol=tol)
+
+    integrate = partial(odeint, partial(swoop, jnp))
     jtu.check_grads(integrate, (big_y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
@@ -151,10 +164,71 @@ class ODETest(jtu.JaxTestCase):
     ans = jax.grad(g)(2.)  # don't crash
     expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
 
-    atol = {np.float64: 5e-15}
-    rtol = {np.float64: 2e-15}
+    atol = {jnp.float64: 5e-15}
+    rtol = {jnp.float64: 2e-15}
     self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
+
+  def test_disable_jit_odeint_with_vmap(self):
+    # https://github.com/google/jax/issues/2598
+    with jax.disable_jit():
+      t = jnp.array([0.0, 1.0])
+      x0_eval = jnp.zeros((5, 2))
+      f = lambda x0: odeint(lambda x, _t: x, x0, t)
+      jax.vmap(f)(x0_eval)  # doesn't crash
+
+  @jtu.skip_on_devices("tpu")
+  def test_grad_closure(self):
+    # simplification of https://github.com/google/jax/issues/2718
+    def experiment(x):
+      def model(y, t):
+        return -x * y
+      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      return history[-1]
+    jtu.check_grads(experiment, (0.01,), modes=["rev"], order=1)
+
+  @jtu.skip_on_devices("tpu")
+  def test_grad_closure_with_vmap(self):
+    # https://github.com/google/jax/issues/2718
+    @jax.jit
+    def experiment(x):
+      def model(y, t):
+        return -x * y
+      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      return history[-1]
+
+    gradfun = jax.value_and_grad(experiment)
+    t = np.arange(0., 1., 0.01)
+    h, g = jax.vmap(gradfun)(t)  # doesn't crash
+    ans = h[11], g[11]
+
+    expected_h = experiment(t[11])
+    expected_g = (experiment(t[11] + 1e-5) - expected_h) / 1e-5
+    expected = expected_h, expected_g
+
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=1e-2, rtol=1e-2)
+
+  def test_forward_mode_error(self):
+    # https://github.com/google/jax/issues/3558
+
+    def f(k):
+      return odeint(lambda x, t: k*x, 1.,  jnp.linspace(0, 1., 50)).sum()
+
+    with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
+      jax.jacfwd(f)(3.)
+
+  @jtu.skip_on_devices("tpu")
+  def test_closure_nondiff(self):
+    # https://github.com/google/jax/issues/3584
+
+    def dz_dt(z, t):
+      return jnp.stack([z[0], z[1]])
+
+    def f(z):
+      y = odeint(dz_dt, z, jnp.arange(10.))
+      return jnp.sum(y)
+
+    jax.grad(f)(jnp.ones(2))  # doesn't crash
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -15,8 +15,11 @@
 import scipy.signal as osp_signal
 import warnings
 
+import numpy as np
+
 from .. import lax
 from ..numpy import lax_numpy as jnp
+from ..numpy import linalg
 from ..numpy.lax_numpy import _promote_dtypes_inexact
 from ..numpy._util import _wraps
 
@@ -29,6 +32,8 @@ def _convolve_nd(in1, in2, mode, *, precision):
     raise ValueError("mode must be one of ['full', 'same', 'valid']")
   if in1.ndim != in2.ndim:
     raise ValueError("in1 and in2 must have the same number of dimensions")
+  if in1.size == 0 or in2.size == 0:
+    raise ValueError(f"zero-size arrays not supported in convolutions, got shapes {in1.shape} and {in2.shape}.")
   in1, in2 = _promote_dtypes_inexact(in1, in2)
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
@@ -102,3 +107,33 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0,
   if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
     raise ValueError("correlate2d() only supports {ndim}-dimensional inputs.")
   return _convolve_nd(in1[::-1, ::-1], in2, mode, precision=precision)[::-1, ::-1]
+
+
+@_wraps(osp_signal.detrend)
+def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=None):
+  if overwrite_data is not None:
+    raise NotImplementedError("overwrite_data argument not implemented.")
+  if type not in ['constant', 'linear']:
+    raise ValueError("Trend type must be 'linear' or 'constant'.")
+  data, = _promote_dtypes_inexact(jnp.asarray(data))
+  if type == 'constant':
+    return data - data.mean(axis, keepdims=True)
+  else:
+    N = data.shape[axis]
+    # bp is static, so we use np operations to avoid pushing to device.
+    bp = np.sort(np.unique(np.r_[0, bp, N]))
+    if bp[0] < 0 or bp[-1] > N:
+      raise ValueError("Breakpoints must be non-negative and less than length of data along given axis.")
+    data = jnp.moveaxis(data, axis, 0)
+    shape = data.shape
+    data = data.reshape(N, -1)
+    for m in range(len(bp) - 1):
+      Npts = bp[m + 1] - bp[m]
+      A = jnp.vstack([
+        jnp.ones(Npts, dtype=data.dtype),
+        jnp.arange(1, Npts + 1, dtype=data.dtype) / Npts
+      ]).T
+      sl = slice(bp[m], bp[m + 1])
+      coef, *_ = linalg.lstsq(A, data[sl])
+      data = data.at[sl].add(-jnp.matmul(A, coef, precision=lax.Precision.HIGHEST))
+    return jnp.moveaxis(data.reshape(shape), 0, axis)

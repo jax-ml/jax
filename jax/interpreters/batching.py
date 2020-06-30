@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import numpy as onp
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
+import jax
 from .. import core
-from .. import dtypes
 from ..core import Trace, Tracer, new_master
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
@@ -161,11 +161,12 @@ class BatchTrace(Trace):
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)
     else:
+      mapped_invars = params['mapped_invars']
       size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-      is_batched = tuple(d is not not_mapped for d in dims)
-      vals = [moveaxis(x, d, 1) if d is not not_mapped and d != 1 else x
-              for x, d in zip(vals, dims)]
-      dims = tuple(not_mapped if d is not_mapped else 0 for d in dims)
+      vals = [moveaxis(x, d, 1) if d == 0 and mapped_invar else x
+              for x, d, mapped_invar in zip(vals, dims, mapped_invars)]
+      dims = tuple(not_mapped if d is not_mapped else max(0, d - mapped_invar)
+                   for d, mapped_invar in zip(dims, mapped_invars))
       f, dims_out = batch_subtrace(f, self.master, dims)
       vals_out = map_primitive.bind(f, *vals, **params)
       dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
@@ -295,13 +296,6 @@ defvectorized(xla.device_put_p)
 
 ### util
 
-# These utilities depend on primitives for things like broadcasting, reshaping,
-# and transposition on arrays. To avoid a circular import from depending on
-# lax.py, these functions use method dispatch on their arguments, which could be
-# DeviceArrays, numpy.ndarrays, or traced versions of those. This strategy
-# almost works, except for broadcast, for which raw numpy.ndarrays don't have a
-# method. To handle that case, the `broadcast` function uses a try/except.
-
 class _Last(object): pass
 last = _Last()
 
@@ -312,11 +306,8 @@ def broadcast(x, sz, axis):
     axis = onp.ndim(x)
   shape = list(onp.shape(x))
   shape.insert(axis, sz)
-  if isinstance(x, onp.ndarray) or onp.isscalar(x):
-    return onp.broadcast_to(dtypes.coerce_to_array(x), shape)
-  else:
-    broadcast_dims = tuple(onp.delete(onp.arange(len(shape)), axis))
-    return x.broadcast_in_dim(shape, broadcast_dims)
+  broadcast_dims = tuple(onp.delete(onp.arange(len(shape)), axis))
+  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
 
 def moveaxis(x, src, dst):
   if core.get_aval(x) is core.abstract_unit:

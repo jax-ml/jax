@@ -1,0 +1,93 @@
+name: Continuous integration
+
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the master branch
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  lint_and_typecheck:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r build/test-requirements.txt
+    - name: Lint with flake8
+      run: |
+        flake8 .
+    - name: Type check with mypy
+      run: |
+        mypy jax
+
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - python-version: 3.6
+            os: ubuntu-latest
+            enable-x64: disable-x64
+            num_generated_cases: 25
+          - python-version: 3.7
+            os: ubuntu-latest
+            enable-x64: enable-x64
+            num_generated_cases: 25
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r build/test-requirements.txt
+    - name: Run tests
+      env:
+        JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
+      run: |
+        [ ${{ matrix.enable-x64 }} = enable-x64 ] && JAX_ENABLE_X64=1 || JAX_ENABLE_X64=0
+        pip install -e .
+        echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
+        echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+        if [ $JAX_ENABLE_X64 = 0 ]; then
+          pytest -n auto jax/experimental/jax2tf/tests
+        fi
+        pytest -n auto tests examples
+
+
+  documentation:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        sudo apt install -y pandoc
+        python -m pip install --upgrade pip
+        pip install -r docs/requirements.txt
+    - name: Test documentation
+      run: |
+        pytest docs
+        pytest --doctest-modules jax/api.py

@@ -14,25 +14,25 @@
 
 from contextlib import contextmanager
 from collections import Counter, namedtuple
-from functools import partial
+from functools import partial, reduce
 from itertools import chain, product
 import operator as op
 import string
-from typing import Callable, Dict
+from typing import Callable, Dict, Sequence, Union
 
 import numpy as onp
 
 from .. import abstract_arrays
-from .. import core
+from .. import core, dtypes
+from ..tree_util import tree_unflatten
 from ..core import Trace, Tracer
-from ..util import safe_map, safe_zip, unzip2, prod
+from ..util import safe_map, safe_zip, unzip2, prod, wrap_name
 from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
 
 map = safe_map
 zip = safe_zip
 
-shape_parameterized_primitive_rules: Dict[core.Primitive, Callable] = {}
 masking_rules: Dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
@@ -53,42 +53,59 @@ def naryop_masking_rule(prim, padded_vals, logical_shapes):
 ShapeEnvs = namedtuple("ShapeEnvs", ["logical", "padded"])
 shape_envs = ShapeEnvs({}, {})  # TODO(mattjj): make this a stack for efficiency
 
+def is_tracing():
+  return bool(shape_envs.padded)
+
 @contextmanager
 def extend_shape_envs(logical_env, padded_env):
   global shape_envs
   new_logical = dict(chain(shape_envs.logical.items(), logical_env.items()))
   new_padded = dict(chain(shape_envs.padded.items(), padded_env.items()))
   shape_envs, prev = ShapeEnvs(new_logical, new_padded), shape_envs
-  yield
-  shape_envs = prev
+  try:
+    yield
+  finally:
+    shape_envs = prev
 
 def shape_as_value(shape):
+  assert is_tracing() or not is_polymorphic(shape)
   return eval_polymorphic_shape(shape, shape_envs.logical)
 
 def padded_shape_as_value(shape):
+  assert is_tracing() or not is_polymorphic(shape)
   return eval_polymorphic_shape(shape, shape_envs.padded)
 
-def mask_fun(fun, logical_env, padded_env, in_vals, shape_exprs):
+def mask_fun(fun, logical_env, padded_env, in_vals, polymorphic_shapes):
+  env_keys, padded_env_vals = unzip2(sorted(padded_env.items()))
+  logical_env_vals = [logical_env[k] for k in env_keys]
+  # Make padded_env hashable
+  padded_env = (env_keys, padded_env_vals)
   with core.new_master(MaskTrace) as master:
-    fun, out_shapes = mask_subtrace(fun, master)
-    with extend_shape_envs(logical_env, padded_env):
-      out_vals = fun.call_wrapped(in_vals, shape_exprs)
+    fun, out_shapes = mask_subtrace(fun, master, polymorphic_shapes, padded_env)
+    out_vals = fun.call_wrapped(*(logical_env_vals + in_vals))
     del master
   return out_vals, out_shapes()
 
 @lu.transformation_with_aux
-def mask_subtrace(master, in_vals, shape_exprs):
+def mask_subtrace(master, shapes, padded_env, *in_vals):
+  env_keys, _ = padded_env
+  logical_env_vals, in_vals = in_vals[:len(env_keys)], in_vals[len(env_keys):]
+  logical_env = dict(zip(env_keys, logical_env_vals))
+  padded_env = dict(zip(*padded_env))
   trace = MaskTrace(master, core.cur_sublevel())
   in_tracers = [MaskTracer(trace, x, s).full_lower()
-                for x, s in zip(in_vals, shape_exprs)]
-  outs = yield in_tracers, {}
+                for x, s in zip(in_vals, shapes)]
+  with extend_shape_envs(logical_env, padded_env):
+    outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
-  out_vals, out_shapes = unzip2((t.val, t.shape_expr) for t in out_tracers)
+  out_vals, out_shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
   yield out_vals, out_shapes
 
 def eval_polymorphic_shape(shape, values_dict):
-  return tuple(dim.evaluate(values_dict) if type(dim) is Poly else dim
-               for dim in shape)
+  return tuple(eval_poly(dim, values_dict) for dim in shape)
+
+def eval_poly(poly, values_dict):
+  return poly.evaluate(values_dict) if type(poly) is Poly else poly
 
 def _ensure_poly(p):
   if type(p) is Poly:
@@ -96,12 +113,16 @@ def _ensure_poly(p):
 
   return Poly({Mon(): p})
 
+def is_polymorphic(shape: Sequence[Union[int, 'Poly']]):
+  return any(map(lambda d: type(d) is Poly, shape))
+
 class Poly(dict):
   """Polynomial with nonnegative integer coefficients for polymorphic shapes."""
 
   def __init__(self, coeffs):
     # Makes sure Polynomials are always in canonical form
-    coeffs = {mon: op.index(coeff) for mon, coeff in coeffs.items() if coeff != 0}
+    coeffs = {mon: op.index(coeff)
+              for mon, coeff in coeffs.items() if coeff != 0}
     coeffs = coeffs or {Mon(): 0}
     super().__init__(coeffs)
 
@@ -149,13 +170,14 @@ class Poly(dict):
       def divided(count):
         q, r = divmod(count, divisor)
         if r != 0:
-          raise ValueError('shapecheck currently only supports strides '
-                          'that exactly divide the strided axis length.')
+          raise ValueError('shapecheck  and masking currently only support '
+                           'strides that exactly divide the strided axis '
+                           'length.')
         return q
 
       return Poly(
         {k: coeff // divisor if k.degree == 0 else divided(coeff)
-        for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
+         for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
 
   def __hash__(self):
     return hash(tuple(sorted(self.items())))
@@ -196,24 +218,46 @@ class Poly(dict):
                       if (v != 1 or k.degree == 0) else str(k)
                       for k, v in sorted(self.items())).strip()
 
+  def __repr__(self):
+    return str(self)
+
   def __int__(self):
     assert self.is_constant
     return op.index(next(iter(self.values())))
 
-  def evaluate(self, values_dict):
-    return sum(coeff * prod([values_dict[id] ** deg for id, deg in mon.items()])
-               for mon, coeff in self.items())
+  def evaluate(self, env):
+    prod = lambda xs: reduce(op.mul, xs) if xs else 1
+    terms = [mul(coeff, prod([pow(env[id], deg) for id, deg in mon.items()]))
+             for mon, coeff in self.items()]
+    return sum(terms) if len(terms) > 1 else terms[0]
 
   @property
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
+
+def pow(x, deg):
+  try:
+    deg = int(deg)
+  except:
+    return x ** deg
+  else:
+    return 1 if deg == 0 else x if deg == 1 else x ** deg
+
+def mul(coeff, mon):
+  try:
+    coeff = int(coeff)
+  except:
+    return coeff * mon
+  else:
+    return  0 if coeff == 0 else mon if coeff == 1 else coeff * mon
+
 
 abstract_arrays._DIMENSION_TYPES.add(Poly)
 
 
 class Mon(dict):
   def __hash__(self):
-    return hash(tuple(self.items()))
+    return hash(frozenset(self.items()))
 
   def __str__(self):
     return ' '.join('{}**{}'.format(k, v) if v != 1 else str(k)
@@ -221,8 +265,8 @@ class Mon(dict):
 
   def __lt__(self, other):
     # sort by total degree, then lexicographically on indets
-    self_key = self.degree, tuple(sorted(self))
-    other_key = other.degree, tuple(sorted(other))
+    self_key = -self.degree, tuple(sorted(self))
+    other_key = -other.degree, tuple(sorted(other))
     return self_key < other_key
 
   def __mul__(self, other):
@@ -258,9 +302,9 @@ class ShapeSpec(tuple):
   def __str__(self):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
-def finalize_spec(spec, shape):
+def finalize_spec(polymorphic_shape, padded_shape):
   return tuple(_parse_lit(d) if e is _monomorphic_dim else e
-               for e, d in zip(spec, shape))
+               for e, d in zip(polymorphic_shape, padded_shape))
 
 def parse_spec(spec=''):
   if not spec:
@@ -311,19 +355,24 @@ def _shape_spec_consistent(spec, expr):
   return all(a == b for a, b in zip(spec, expr) if a is not _monomorphic_dim)
 
 class MaskTracer(Tracer):
-  __slots__ = ["val", "shape_expr"]
+  __slots__ = ["val", "polymorphic_shape"]
 
-  def __init__(self, trace, val, shape_expr):
-    self._trace = trace
+  def __init__(self, trace, val, polymorphic_shape):
+    super().__init__(trace)
     self.val = val
-    self.shape_expr = shape_expr
+    self.polymorphic_shape = polymorphic_shape
 
   @property
   def aval(self):
-    return ShapedArray(self.shape_expr, self.val.dtype)
+    return ShapedArray(self.polymorphic_shape, self.dtype)
+
+  @property
+  def dtype(self):
+    return dtypes.dtype(self.val)
 
   def is_pure(self):
-    return all(type(poly) is not Poly or poly.is_constant for poly in self.shape_expr)
+    return all(type(poly) is not Poly or poly.is_constant
+               for poly in self.polymorphic_shape)
 
   def full_lower(self):
     if self.is_pure():
@@ -340,23 +389,90 @@ class MaskTrace(Trace):
     return MaskTracer(self, val, onp.shape(val))
 
   def sublift(self, val):
-    return MaskTracer(self, val.val, val.shape_expr)
+    return MaskTracer(self, val.val, val.polymorphic_shape)
 
   def process_primitive(self, primitive, tracers, params):
-    vals, shape_exprs = unzip2((t.val, t.shape_expr) for t in tracers)
-    if primitive in shape_parameterized_primitive_rules:
-      rule = shape_parameterized_primitive_rules[primitive]
-      out, out_shape = rule(shape_envs, vals, shape_exprs, **params)
+    masking_rule = masking_rules.get(primitive)
+    if masking_rule is None:
+      raise NotImplementedError(
+        f'Masking rule for {primitive} not implemented yet.')
+    out_aval = primitive.abstract_eval(*(t.aval for t in tracers), **params)
+    vals, polymorphic_shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
+    logical_shapes = map(shape_as_value, polymorphic_shapes)
+    out = masking_rule(vals, logical_shapes, **params)
+    if primitive.multiple_results:
+      return map(partial(MaskTracer, self), out, (o.shape for o in out_aval))
     else:
-      avals = [t.aval for t in tracers]
-      out = primitive.abstract_eval(*avals, **params)
-      out_shape = [o.shape for o in out] if primitive.multiple_results else out.shape
-      logical_shapes = map(partial(eval_polymorphic_shape, values_dict=shape_envs.logical), shape_exprs)
-      out = masking_rules[primitive](vals, logical_shapes, **params)
-    if not primitive.multiple_results:
-      return MaskTracer(self, out, out_shape)
-    else:
-      return map(partial(MaskTracer, self), out, out_shape)
+      return MaskTracer(self, out, out_aval.shape)
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
-    raise NotImplementedError  # TODO mask-of-jit
+  def process_call(self, call_primitive, f, tracers, params):
+    assert call_primitive.multiple_results
+    params = dict(params, name=wrap_name(params.get('name', f.__name__), 'mask'))
+    vals, shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
+    if not any(is_polymorphic(s) for s in shapes):
+      return call_primitive.bind(f, *vals, **params)
+    else:
+      logical_env, padded_env = shape_envs
+      env_keys, padded_env_vals = unzip2(sorted(padded_env.items()))
+      logical_env_vals = tuple(logical_env[k] for k in env_keys)
+      # Make padded_env hashable
+      padded_env = (env_keys, padded_env_vals)
+      f, shapes_out = mask_subtrace(f, self.master, shapes, padded_env)
+      if 'donated_invars' in params:
+        params = dict(params, donated_invars=((False,) * len(logical_env_vals) +
+                                              params['donated_invars']))
+      vals_out = call_primitive.bind(f, *(logical_env_vals + vals), **params)
+      return [MaskTracer(self, v, s) for v, s in zip(vals_out, shapes_out())]
+
+  def post_process_call(self, call_primitive, out_tracers, params):
+    vals, shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
+    master = self.master
+    def todo(vals):
+      trace = MaskTrace(master, core.cur_sublevel())
+      return map(partial(MaskTracer, trace), vals, shapes)
+    return vals, todo
+
+class UniqueId:
+  def __init__(self, name):
+    self.name = name
+
+  def __repr__(self):
+    return self.name
+
+  def __lt__(self, other):
+    return self.name < other.name
+
+class UniqueIds(dict):
+  def __missing__(self, key):
+    unique_id = UniqueId(key)
+    self[key] = unique_id
+    return unique_id
+
+def remap_ids(names, shape_spec):
+  return ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
+                         : coeff for mon, coeff in poly.items()})
+                   if poly is not _monomorphic_dim else
+                   _monomorphic_dim for poly in shape_spec)
+
+def bind_shapes(polymorphic_shapes, padded_shapes):
+  env = {}
+  for polymorphic_shape, padded_shape in zip(polymorphic_shapes, padded_shapes):
+    for poly, d in zip(polymorphic_shape, padded_shape):
+      if type(poly) is not Poly or poly.is_constant:
+        if int(poly) != d: raise ShapeError
+      else:
+        poly = poly.copy()
+        const_coeff = poly.pop(Mon({}), 0)
+        (mon, linear_coeff), = poly.items()
+        (id, index), = mon.items()
+        if index != 1: raise ShapeError
+        d, r = divmod(d - const_coeff, linear_coeff)
+        assert r == 0
+        if env.setdefault(id, d) != d: raise ShapeError
+  return env
+
+def check_shapes(specs, spec_tree, shapes, tree, message_prefix="Output"):
+  if spec_tree != tree or not all(map(_shape_spec_consistent, specs, shapes)):
+    specs = tree_unflatten(spec_tree, specs)
+    shapes = tree_unflatten(tree, shapes)
+    raise ShapeError(f"{message_prefix} shapes should be {specs} but are {shapes}.")

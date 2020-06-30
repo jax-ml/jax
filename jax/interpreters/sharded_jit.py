@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
 from .. import core
+from . import ad
 from . import partial_eval as pe
 # TODO(skye): separate pmap into it's own module?
 from . import pxla
@@ -25,7 +26,7 @@ from . import xla
 from .. import linear_util as lu
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..api_util import flatten_axes, flatten_fun
+from ..api_util import flatten_axes, flatten_fun, wraps
 from ..tree_util import tree_flatten, tree_unflatten
 from ..util import extend_name_stack, wrap_name, safe_zip
 
@@ -63,7 +64,7 @@ def _pval_to_result_handler(npart, parts, pval):
     raise NotImplementedError  # TODO(skye): handle constant outputs
   else:
     if pv is not core.abstract_unit:
-      spec = _partitioned_sharding_spec(npart, parts, pv)
+      spec = pxla.partitioned_sharding_spec(npart, parts, pv)
       indices = pxla.spec_to_indices(pv.shape, spec)
     else:
       spec = indices = None
@@ -71,12 +72,11 @@ def _pval_to_result_handler(npart, parts, pval):
 
 
 @lu.cache
-def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
-                      *abstract_args):
-  if xb.get_backend().platform != "tpu":
-    # TODO(skye): fall back to regular jit?
-    raise ValueError("sharded_jit only works on TPU!")
-
+def _sharded_callable(
+    fun: lu.WrappedFun, num_partitions: Optional[int],
+    in_parts: Tuple[pxla.PartitionsOrReplicated, ...],
+    out_parts_thunk: Callable[[], Tuple[pxla.PartitionsOrReplicated, ...]],
+    name: str, *abstract_args):
   nrep = 1
   in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
@@ -87,6 +87,17 @@ def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
     return lambda *_: [
         const if pv is None else core.unit for pv, const in out_pvals
     ]
+
+  if xb.get_backend().platform != "tpu":
+    # TODO(skye): fall back to regular jit?
+    raise ValueError("sharded_jit only works on TPU!")
+
+  num_partitions = pxla.reconcile_num_partitions(jaxpr, num_partitions)
+  assert num_partitions is not None
+  if num_partitions > xb.local_device_count():
+    raise ValueError(
+        f"sharded_jit computation requires {num_partitions} devices, "
+        f"but only {xb.local_device_count()} devices are available.")
 
   out_parts = out_parts_thunk()
 
@@ -101,7 +112,6 @@ def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
   built = c.Build(out_tuple)
 
   devices = xb.local_devices()[:num_partitions]
-  assert len(devices) == num_partitions
   device_assignment = np.array([[d.id for d in devices]])
   device_assignment = np.reshape(device_assignment, (-1, num_partitions))
   # device_assignment = None  # TODO(skye): replace with default device assignment?
@@ -111,7 +121,7 @@ def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
           nrep, num_partitions, device_assignment))
 
   input_specs = [
-      _partitioned_sharding_spec(num_partitions, parts, aval)
+      pxla.partitioned_sharding_spec(num_partitions, parts, aval)
       for parts, aval in zip(in_parts, abstract_args)]
   input_indices = [pxla.spec_to_indices(aval.shape, spec)
                    if spec is not None else None
@@ -125,23 +135,33 @@ def _sharded_callable(fun, num_partitions, in_parts, out_parts_thunk, name,
                  handle_outs)
 
 
-def _partitioned_sharding_spec(num_partitions: int,
-                               partitions: Optional[Sequence[int]], aval):
-  if aval is core.abstract_unit:
-    return None
+def _sharded_jit_translation_rule(c, axis_env, in_nodes, name_stack,
+                                  in_parts, out_parts_thunk, num_partitions,
+                                  backend, name, call_jaxpr):
+  subc = xc.XlaBuilder(f"sharded_jit_{name}")
 
-  if partitions is None:
-    return pxla.ShardingSpec(
-        # int(1) because pytype is confused by 1 (???)
-        shards_per_axis=(int(1),) * len(aval.shape),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=num_partitions)
-  else:
-    assert len(partitions) == len(aval.shape)
-    return pxla.ShardingSpec(
-        shards_per_axis=tuple(partitions),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factor=1)
+  # We assume any extra leading in_nodes are constants and replicate them.
+  num_extra_nodes = len(in_nodes) - len(in_parts)
+  assert num_extra_nodes >= 0
+  in_parts = (None,) * num_extra_nodes + in_parts
+
+  args = []
+  for i, (n, sharding) in enumerate(safe_zip(in_nodes, in_parts)):
+    # We use xb.set_sharding instead of xb.with_sharding because inlined calls
+    # shouldn't have shardings set directly on the inputs or outputs.
+    arg = xb.parameter(subc, i, c.GetShape(n))
+    args.append(xb.set_sharding(subc, arg, sharding))
+
+  out_nodes = xla.jaxpr_subcomp(
+      subc, call_jaxpr, backend, axis_env, (),
+      extend_name_stack(name_stack, wrap_name(name, "sharded_jit")), *args)
+  out_parts = out_parts_thunk()
+  assert len(out_parts) == len(out_nodes)
+  out_nodes = [xb.set_sharding(subc, out, sharding)
+               for out, sharding in safe_zip(out_nodes, out_parts)]
+
+  subc = subc.build(xops.Tuple(subc, out_nodes))
+  return xops.Call(c, subc, list(in_nodes))
 
 
 def _execute_spatially_partitioned(compiled, in_handler, out_handler, *args):
@@ -159,22 +179,6 @@ def _xla_sharded_args(c, avals, in_parts):
   return xla_args
 
 
-def get_num_partitions(*partitions):
-  partition_specs = tree_flatten(partitions)[0]
-  if len(partition_specs) == 0:
-    # Everything is specified as replicated (all Nones).
-    return 1
-  num_partitions_set = set(np.prod(spec) for spec in partition_specs)
-  if len(num_partitions_set) > 1:
-    raise ValueError(
-        f"All partition specs must use the same number of total partitions, "
-        f"got {partitions}, with distinct number of partitions "
-        f"{num_partitions_set} (the total number of partitions is the product "
-        f"of a partition spec)")
-  assert len(num_partitions_set) == 1
-  return num_partitions_set.pop()
-
-
 def _sharded_call_impl(fun, *args, num_partitions, in_parts, out_parts_thunk,
                        name):
   compiled_fun = _sharded_callable(fun, num_partitions, in_parts,
@@ -183,12 +187,10 @@ def _sharded_call_impl(fun, *args, num_partitions, in_parts, out_parts_thunk,
   return compiled_fun(*args)
 
 
-sharded_call_p = core.Primitive("sharded_call")
-sharded_call_p.call_primitive = True
-sharded_call_p.multiple_results = True
-sharded_call = partial(core.call_bind, sharded_call_p)
-sharded_call_p.def_custom_bind(sharded_call)
+sharded_call_p = core.CallPrimitive("sharded_call")
+sharded_call = sharded_call_p.bind
 sharded_call_p.def_impl(_sharded_call_impl)
+xla.call_translations[sharded_call_p] = _sharded_jit_translation_rule
 
 
 class PartitionSpec(tuple):
@@ -205,7 +207,7 @@ class PartitionSpec(tuple):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
 
-def sharded_jit(fun: Callable, in_parts, out_parts):
+def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
   WARNING: this feature is still under active development! It may not work well,
@@ -244,12 +246,22 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
     out_parts: The output partitions, i.e. how each output of ``fun`` should be
       partitioned or replicated. This follows the same convention as
      ``in_parts``.
+    num_partitions: Optional. If set, explicitly specifies the number of devices
+      ``fun`` should partitioned across (rather than inferring it from
+      ``in_parts``, ``out_parts``, and/or any ``with_sharding_constraint``
+      calls).  Setting this should usually be unnecessary, but can be used to
+      maintain device persistence across multiple sharded_jit calls when some of
+      those calls only involve replicated values.
 
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
   """
-  num_parts = get_num_partitions(in_parts, out_parts)
+  if num_partitions != None:
+    num_parts = num_partitions
+  else:
+    num_parts = pxla.get_num_partitions(in_parts, out_parts)
 
+  @wraps(fun)
   def wrapped(*args, **kwargs):
     if kwargs:
       raise NotImplementedError("sharded_jit over kwargs not yet supported")
@@ -270,3 +282,62 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
     return tree_unflatten(out_tree(), out)
 
   return wrapped
+
+
+def _sharding_constraint_impl(x, partitions):
+  # TODO(skye): can we also prevent this from being called in other
+  # non-sharded_jit contexts? (e.g. pmap, control flow)
+  raise NotImplementedError(
+      "with_sharding_constraint() should only be called inside sharded_jit()")
+
+def _sharding_constraint_translation_rule(c, x_node, partitions):
+  return xb.set_sharding(c, x_node, partitions)
+
+sharding_constraint_p = core.Primitive("sharding_constraint")
+sharding_constraint_p.def_impl(_sharding_constraint_impl)
+sharding_constraint_p.def_abstract_eval(lambda x, partitions: x)
+ad.deflinear(sharding_constraint_p,
+             lambda ct, partitions: (with_sharding_constraint(ct, partitions),))
+xla.translations[sharding_constraint_p] = _sharding_constraint_translation_rule
+
+def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
+  """Identity-like function that specifies how ``x`` should be sharded.
+
+  WARNING: this feature is still under active development! It may not work well,
+  and may change without warning!
+
+  This should only be called inside a function transformed by ``sharded_jit``.
+  It constrains how the function is sharded: regardless of any other specified
+  partitions, the compiler will make sure that ``x`` is sharded according to
+  ``partitions``.  Note that a ``with_sharding_constraint`` call doesn't
+  necessarily correspond to a reshard, since the compiler is free to achieve
+  this sharding as long as the constraint is met, e.g. it might insert a reshard
+  earlier in the computation. Another way to think of this is that the
+  ``with_sharding_constraint`` call may flow "up" the function to preceding
+  operations as well as "down" to subsequent ones.
+
+  ``partitions`` must correspond to the same number of total partitions dictated
+  by the outer ``sharded_jit`` and any other ``with_sharding_constraint`` calls.
+  In the case where only replication has been specified, any ``partitions`` are
+  valid.
+
+  Example usage:
+    @partial(sharded_jit, in_parts=None, out_parts=None, num_shards=2
+    def f(x):
+      y = x + 1
+      y = with_sharding_constraint(y, PartitionSpec(2,1))
+      return y * 2
+
+  In this example, the inputs and outputs of ``f`` will be replicated, but the
+  inner value of ``y`` will be partitioned in half. ``f`` will run on two
+  devices due to the with_sharding_constraint call.
+
+  Args:
+    x: Array value
+    partitions: PartitionSpec indicating how ``x`` should be partitioned, or
+      None for replication.
+
+  Returns:
+    A new version of ``x`` with the specified sharding applied.
+  """
+  return sharding_constraint_p.bind(x, partitions=partitions)

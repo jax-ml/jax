@@ -14,7 +14,6 @@
 
 
 import itertools
-import unittest
 
 import numpy as np
 
@@ -26,13 +25,13 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 
 from jax.config import config
+from jax.config import flags
 config.parse_flags_with_absl()
 
+FLAGS = flags.FLAGS
 
 float_dtypes = [np.float32, np.float64]
-# TODO(b/144573940): np.complex128 isn't supported by XLA, and the JAX
-# implementation casts to complex64.
-complex_dtypes = [np.complex64]
+complex_dtypes = [np.complex64, np.complex128]
 inexact_dtypes = float_dtypes + complex_dtypes
 int_dtypes = [np.int32, np.int64]
 bool_dtypes = [np.bool_]
@@ -110,9 +109,10 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
-    if dtype in (float_dtypes if real and not inverse else inexact_dtypes):
+    if (FLAGS.jax_enable_x64 and
+        dtype in (float_dtypes if real and not inverse else inexact_dtypes)):
       # TODO(skye): can we be more precise?
       tol = 0.15
       jtu.check_grads(jnp_fn, args_maker(), order=2, atol=tol, rtol=tol)
@@ -168,9 +168,9 @@ class FftTest(jtu.JaxTestCase):
     jnp_fn = lambda a: jnp_op(a, axis=axis)
     np_fn = lambda a: np_op(a, axis=axis)
     # Numpy promotes to complex128 aggressively.
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False,
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}".format(inverse, real),
@@ -229,7 +229,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}".format(inverse, real),
@@ -280,7 +280,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
@@ -324,7 +324,7 @@ class FftTest(jtu.JaxTestCase):
     # Numpy promotes to complex128 aggressively.
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fn, args_maker)
     # Test gradient for differentiable types.
     if dtype in inexact_dtypes:
       tol = 0.15  # TODO(skye): can we be more precise?
@@ -363,7 +363,7 @@ class FftTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda arg: jnp.fft.fftshift(arg, axes=axes)
     np_fn = lambda arg: np.fft.fftshift(arg, axes=axes)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "dtype={}_axes={}".format(
@@ -378,7 +378,7 @@ class FftTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda arg: jnp.fft.ifftshift(arg, axes=axes)
     np_fn = lambda arg: np.fft.ifftshift(arg, axes=axes)
-    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

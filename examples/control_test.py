@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-from unittest import SkipTest
 
 from absl.testing import absltest
 import numpy as np
@@ -245,4 +244,4 @@ class ControlExampleTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())
