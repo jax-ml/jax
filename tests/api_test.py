@@ -1042,6 +1042,19 @@ class APITest(jtu.JaxTestCase):
     check_warning(lambda: jnp.tri(2, dtype="float64"),
                   lambda: jnp.tri(2, dtype="float32"))
 
+  def test_vmap_preserves_docstr(self):
+    def superfun(a):
+      """Does things with stuff."""
+      pass
+
+    self.assertRegex(api.vmap(superfun).__doc__, "\n".join([
+        "Vectorized version of superfun.*",
+        "",
+        "Original documentation:",
+        "",
+        superfun.__doc__,
+    ]))
+
   def test_vmap_in_axes_list(self):
     # https://github.com/google/jax/issues/2367
     dictionary = {'a': 5., 'b': jnp.ones(2)}
