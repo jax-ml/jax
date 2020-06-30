@@ -2950,8 +2950,9 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
   lo, hi, interior = zip(*padding_config)
-  out_shape = onp.add(onp.add(onp.add(lo, hi), operand.shape),
-                      onp.multiply(interior, onp.subtract(operand.shape, 1)))
+  out_shape = onp.add(
+    onp.add(onp.add(lo, hi), operand.shape),
+    onp.maximum(0, onp.multiply(interior, onp.subtract(operand.shape, 1))))
   return tuple(out_shape)
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
