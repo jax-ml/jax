@@ -153,13 +153,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testDetGradOfSingularMatrixCorank1(self):
     # Rank 2 matrix with nonzero gradient
     a = singular_mats[0]
-    jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(jnp.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
 
   @jtu.skip_on_devices("tpu")  # TODO(mattjj,pfau): nan on tpu, investigate
   def testDetGradOfSingularMatrixCorank2(self):
     # Rank 1 matrix with zero gradient
     b = singular_mats[1]
     jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(jnp.linalg.det, (b,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1002,7 +1003,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       return p, l[:, :-corank], u
     mat = singular_mats[corank-1]
     # Check forward mode gradients
-    jtu.check_grads(_lu, (mat,), 1, modes=['fwd'], atol=1e-1, rtol=1e-1)
+    jtu.check_grads(_lu, (mat,), 2, modes=['fwd'], atol=1e-1, rtol=1e-1)
     # Something is causing tests to fail for reverse-mode.
     # So let's just compare forward-mode and reverse-mode Jacobians
     jfwd = jax.jacfwd(jsp.linalg.lu)(mat)
@@ -1016,7 +1017,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
   def testLuGradOfNonSquareSingularMatrix(self, matidx):
     mat = nonsquare_singular_mats[matidx]
-    jtu.check_grads(jsp.linalg.lu, (mat,), 1, modes=['fwd'], atol=1e-1, rtol=1e-1)
+    jtu.check_grads(jsp.linalg.lu, (mat,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(jsp.linalg.lu, (mat,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
