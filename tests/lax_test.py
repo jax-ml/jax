@@ -955,7 +955,7 @@ class LaxTest(jtu.JaxTestCase):
       {"testcase_name": "_inshape={}_pads={}"
        .format(jtu.format_shape_dtype_string(shape, dtype), pads),
        "shape": shape, "dtype": dtype, "pads": pads, "rng_factory": jtu.rand_small}
-      for shape in [(2, 3)]
+      for shape in [(0, 2), (2, 3)]
       for dtype in default_dtypes
       for pads in [[(1, 2, 1), (0, 1, 0)]]))
   def testPad(self, shape, dtype, pads, rng_factory):
