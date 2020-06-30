@@ -938,9 +938,14 @@ def _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes):
     return None
   # TODO: should we allow ourselves to add a reshape, or should we strictly
   #  convert 1:1, or go to TFXLA when not possible?
-  start_indices = tf.reshape(start_indices, start_indices.shape[0:-1])
-  return tf.gather(operand, start_indices, axis=axis, batch_dims=0)
-
+  start_indices_reshaped = tf.reshape(start_indices, start_indices.shape[0:-1])
+  # We do not use tf.gather directly because in the non-compiled version it
+  # rejects indices that are out of bounds, while JAX and XLA clamps them.
+  # We fix this by ensuring that we always compile tf.gather, to use XLA.
+  out, = tf.xla.experimental.compile(
+    lambda o, s: tf.gather(o, s, axis=axis, batch_dims=0),
+    [operand, start_indices_reshaped])
+  return out
 
 @functools.partial(bool_to_int8, argnums=0)
 def _gather(operand, start_indices, dimension_numbers, slice_sizes):

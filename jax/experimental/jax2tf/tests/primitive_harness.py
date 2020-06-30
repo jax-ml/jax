@@ -153,13 +153,16 @@ lax_gather = jtu.cases_from_list(
            [_gather_input,
             indices,
             StaticArg(axis)])
-   for indices in [
-     np.array(2, dtype=np.int32),
-     np.array([2], dtype=np.int32),
-     np.array([2, 4], dtype=np.int32),
-     np.array([[2, 4], [5, 6]], dtype=np.int32)
-   ]
-   for axis in [0, 1, 2]] +
+  for indices in [
+    # Ensure each set of indices has a distinct shape
+    np.array(2, dtype=np.int32),
+    np.array([2], dtype=np.int32),
+    np.array([2, 4], dtype=np.int32),
+    np.array([[2, 4], [5, 6]], dtype=np.int32),
+    np.array([0, 1, 10], dtype=np.int32),  # Index out of bounds
+    np.array([0, 1, 2, -1], dtype=np.int32),  # Index out of bounds
+  ]
+  for axis in [0, 1, 2]] +
 
   # Directly from lax.gather in lax_test.py.
   [Harness(
