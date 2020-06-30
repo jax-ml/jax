@@ -725,7 +725,7 @@ def _dtype(x):
   return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
-def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
+def vmap(fun: Callable, in_axes=0, out_axes=0, axis_name=None) -> Callable:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -829,6 +829,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   _check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
+  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
 
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -857,7 +858,8 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     in_axes_flat = flatten_axes(in_tree, in_axes)
     _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap")
     out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
-                              lambda: flatten_axes(out_tree(), out_axes))
+                              lambda: flatten_axes(out_tree(), out_axes),
+                              axis_name=axis_name)
     return tree_unflatten(out_tree(), out_flat)
 
   return batched_fun

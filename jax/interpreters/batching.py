@@ -28,9 +28,9 @@ from . import partial_eval as pe
 map = safe_map
 
 
-def batch(fun : lu.WrappedFun, in_vals, in_dims, out_dim_dests):
+def batch(fun: lu.WrappedFun, in_vals, in_dims, out_dim_dests, axis_name):
   # executes a batched version of `fun` following out_dim_dests
-  batched_fun = batch_fun(fun, in_dims, out_dim_dests)
+  batched_fun = batch_fun(fun, in_dims, out_dim_dests, axis_name=axis_name)
   return batched_fun.call_wrapped(*in_vals)
 
 @lu.transformation_with_aux
@@ -44,17 +44,20 @@ def batch_subtrace(master, in_dims, *in_vals, **params):
   yield out_vals, out_dims
 
 
-def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, sum_match=False):
+def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, axis_name,
+              sum_match=False):
   # transformation version of batch, which doesn't call the function
   fun, out_dims = batch_subtrace(fun)
-  return _batch_fun(fun, sum_match, in_dims, out_dims, out_dim_dests)
+  return _batch_fun(fun, axis_name, sum_match, in_dims, out_dims, out_dim_dests)
 
 @lu.transformation
-def _batch_fun(sum_match, in_dims, out_dims_thunk, out_dim_dests, *in_vals, **params):
+def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
+               *in_vals, **params):
   in_dims = in_dims() if callable(in_dims) else in_dims
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   with new_master(BatchTrace) as master:
-    out_vals = yield (master, in_dims,) + in_vals, params
+    with core.extend_axis_env(axis_name, size, master):
+      out_vals = yield (master, in_dims,) + in_vals, params
     del master
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_dims = out_dims_thunk()
@@ -63,18 +66,6 @@ def _batch_fun(sum_match, in_dims, out_dims_thunk, out_dim_dests, *in_vals, **pa
       msg = f"vmap has mapped output but out_axes is {od_dest}"
       raise ValueError(msg)
   out_vals = map(partial(matchaxis, size, sum_match=sum_match), out_dims, out_dim_dests, out_vals)
-  yield out_vals
-
-def batch_fun2(fun : lu.WrappedFun, in_dims):
-  # like `batch_fun` but returns output batch dims (so no out_dim_dests)
-  fun, out_dims = batch_subtrace(fun)
-  return _batch_fun2(fun, in_dims), out_dims
-
-@lu.transformation
-def _batch_fun2(in_dims, *in_vals, **params):
-  with new_master(BatchTrace) as master:
-    out_vals = yield (master, in_dims,) + in_vals, params
-    del master
   yield out_vals
 
 
@@ -128,6 +119,15 @@ class BatchTrace(Trace):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
+    elif primitive in xla.parallel_translations:
+      assert not isinstance(params['axis_name'], (tuple, list))  # TODO tuples
+      assert primitive.name == 'psum'  # TODO other primitives
+      assert len(vals_in) == 1  # TODO multiple inputs
+      frame = core.axis_frame(params['axis_name'])
+      if frame.tag is self.master:
+        x, =  vals_in
+        bdim, = dims_in
+        return x.sum(bdim),
     else:
       # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
       batched_primitive = get_primitive_batcher(primitive)
@@ -403,3 +403,18 @@ def _merge_bdims(x, y):
     return x
   else:
     return x  # arbitrary
+
+
+# TODO(mattjj): delete these when custom_transforms is removed
+
+def batch_fun2(fun : lu.WrappedFun, in_dims):
+  # like `batch_fun` but returns output batch dims (so no out_dim_dests)
+  fun, out_dims = batch_subtrace(fun)
+  return _batch_fun2(fun, in_dims), out_dims
+
+@lu.transformation
+def _batch_fun2(in_dims, *in_vals, **params):
+  with new_master(BatchTrace) as master:
+    out_vals = yield (master, in_dims,) + in_vals, params
+    del master
+  yield out_vals

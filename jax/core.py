@@ -627,7 +627,7 @@ class TraceStack:
     return new
 
 class Sublevel(int): pass
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size'])
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'tag'])
 
 
 # The global state of the tracer is accessed by a thread-local object.
@@ -1171,9 +1171,9 @@ class MapPrimitive(Primitive):
     return trace.post_process_map(self, out_tracers, params)
 
 @contextmanager
-def extend_axis_env(axis_name, size):
+def extend_axis_env(axis_name, size, tag):
   assert type(size) is int
-  frame = AxisEnvFrame(axis_name, size)
+  frame = AxisEnvFrame(axis_name, size, tag)
   trace_state.axis_env.append(frame)
   try:
     yield

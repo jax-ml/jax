@@ -533,7 +533,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   sharded_avals = tuple(shard_aval(axis_size, aval) if m else aval
                         for m, aval in zip(mapped_invars, avals))
-  with core.extend_axis_env(axis_name, axis_size):
+  with core.extend_axis_env(axis_name, axis_size, None):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, sharded_avals)
   jaxpr, uses_outfeed = xla.apply_outfeed_rewriter(jaxpr)
 
@@ -947,7 +947,7 @@ def soft_pmap_impl(fun: lu.WrappedFun, *args, axis_name, axis_size, mapped_invar
 def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
   mapped_avals = [core.mapped_aval(axis_size, aval) if m else aval
                   for m, aval in zip(mapped_invars, avals)]
-  with core.extend_axis_env(axis_name, axis_size):
+  with core.extend_axis_env(axis_name, axis_size, None):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
   jaxpr, uses_outfeed = xla.apply_outfeed_rewriter(jaxpr)
 
