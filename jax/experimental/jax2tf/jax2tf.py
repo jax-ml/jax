@@ -721,6 +721,14 @@ tf_impl[lax.reduce_min_p] = (
 tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
 tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
+def _argminmax(fn, operand, axes):
+  axis, = axes
+  # TODO(phawkins): handle axes larger than 2^31.
+  return fn(operand, axis=axis, dtype=tf.int32)
+
+tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
+tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
+
 
 _add_fn = tf.function(tf.math.add)
 _ge_fn = tf.function(tf.math.greater_equal)
