@@ -54,15 +54,13 @@ def _apply_schedule(fun: lu.WrappedFun, axis_size, mapped_invars, schedule, *ava
   sched_fun = lambda *args: core.eval_jaxpr(jaxpr, consts, *args)
 
   if schedule[-1].type is LoopType.vectorized:
-    sched_fun = lambda *args, sched_fun=sched_fun: \
-        batching.batch(lu.wrap_init(sched_fun), args,
-                       (0,) * len(avals), (0,) * len(out_avals))
+    sched_fun = jax.vmap(sched_fun)
     nonvector_schedule = schedule[:-1]
   else:
     nonvector_schedule = schedule
   for (ltype, size) in nonvector_schedule[::-1]:
     if ltype is LoopType.parallel:
-      raise NotImplementedError
+      sched_fun = jax.pmap(sched_fun)
     elif ltype is LoopType.sequential:
       sched_fun = lambda *args, sched_fun=sched_fun: jax.lax.map(lambda xs: sched_fun(*xs), args)
 
