@@ -4352,10 +4352,12 @@ _argmax_translation_rule = partial(_argminmax_translation_rule, xops.Gt,
 argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmin', _argmin_translation_rule)
 batching.defreducer(argmin_p)
+ad.defjvp_zero(argmin_p)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', _argmax_translation_rule)
 batching.defreducer(argmax_p)
+ad.defjvp_zero(argmax_p)
 
 
 def _reduce_logical_shape_rule(operand, *, axes):
