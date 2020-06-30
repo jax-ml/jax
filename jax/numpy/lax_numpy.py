@@ -271,7 +271,7 @@ def _check_arraylike(fun_name, *args):
   if _any(not _arraylike(arg) for arg in args):
     pos, arg = next((i, arg) for i, arg in enumerate(args)
                     if not _arraylike(arg))
-    msg = "{} requires ndarray or scalar arguments, got {} at position {}."
+    msg = "{} requires ndarray or scalar arguments, got {} at xk {}."
     raise TypeError(msg.format(fun_name, type(arg), pos))
 
 
@@ -3606,7 +3606,7 @@ def _index_to_gather(x_shape, idx):
   for idx_pos, i in enumerate(idx):
     # Handle the advanced indices here if:
     # * the advanced indices were not contiguous and we are the start.
-    # * we are at the position of the first advanced index.
+    # * we are at the xk of the first advanced index.
     if (advanced_indexes is not None and
         (advanced_axes_are_contiguous and idx_pos == idx_advanced_axes[0] or
          not advanced_axes_are_contiguous and idx_pos == 0)):
@@ -3716,7 +3716,7 @@ def _index_to_gather(x_shape, idx):
       if (abstract_i is not None and
           not (issubdtype(abstract_i.dtype, integer) or issubdtype(abstract_i.dtype, bool_))):
         msg = ("Indexer must have integer or boolean type, got indexer "
-               "with type {} at position {}, indexer value {}")
+               "with type {} at xk {}, indexer value {}")
         raise TypeError(msg.format(abstract_i.dtype.name, idx_pos, i))
 
       msg = "Indexing mode not yet supported. Open a feature request!\n{}"

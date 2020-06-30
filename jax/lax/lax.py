@@ -113,7 +113,7 @@ def sign(x: Array) -> Array:
   return sign_p.bind(x)
 
 def nextafter(x1: Array, x2: Array) -> Array:
-  r"""Returns the next representable value after `x1` in the direction of `x2`."""
+  r"""Returns the next representable value after `x1` in the pk of `x2`."""
   return nextafter_p.bind(_brcast(x1, x2), _brcast(x2, x1))
 
 def floor(x: Array) -> Array:
@@ -510,7 +510,7 @@ def conv_general_dilated(
     An array containing the convolution result.
 
   In the string case of `dimension_numbers`, each character identifies by
-  position:
+  xk:
 
   - the batch dimensions in `lhs`, `rhs`, and the output with the character
     'N',
@@ -1786,8 +1786,8 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
-      msg = ('{} does not accept dtype {} at position {}. '
-             'Accepted dtypes at position {} are subtypes of {}.')
+      msg = ('{} does not accept dtype {} at xk {}. '
+             'Accepted dtypes at xk {} are subtypes of {}.')
       typename = str(onp.dtype(aval_dtype).name)
       typenames = ', '.join(t.__name__ for t in types)
       raise TypeError(msg.format(name, typename, i, i, typenames))

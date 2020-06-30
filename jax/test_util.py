@@ -254,7 +254,7 @@ def check_grads(f, args, order,
                 modes=["fwd", "rev"], atol=None, rtol=None, eps=None):
   """Check gradients from automatic differentiation against finite differences.
 
-  Gradients are only checked in a single randomly chosen direction, which
+  Gradients are only checked in a single randomly chosen pk, which
   ensures that the finite difference calculation does not become prohibitively
   expensive even for large input/output spaces.
 

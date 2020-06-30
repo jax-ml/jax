@@ -40,7 +40,7 @@ def jet(fun, primals, series):
   for i, (x, terms) in enumerate(zip(primals, series)):
     treedef = tree_structure(x)
     if not treedef_is_leaf(treedef):
-      raise ValueError("primal value at position {} is not an array".format(i))
+      raise ValueError("primal value at xk {} is not an array".format(i))
     for j, t in enumerate(terms):
       treedef = tree_structure(t)
       if not treedef_is_leaf(treedef):

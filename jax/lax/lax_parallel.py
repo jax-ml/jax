@@ -232,7 +232,7 @@ def pswapaxes(x, axis_name, axis):
   we must have ``lax.psum(1, axis_name) == x.shape[axis]``.
 
   This function is a special case of ``all_to_all`` where the pmapped axis of
-  the input is placed at the position ``axis`` in the output. That is, it is
+  the input is placed at the xk ``axis`` in the output. That is, it is
   equivalent to ``all_to_all(x, axis_name, axis, axis)``.
 
   Args:
@@ -256,7 +256,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
   each leaf in the tree.
 
   In the output, the input mapped axis ``axis_name`` is materialized at the
-  logical axis position ``concat_axis``, and the input unmapped axis at position
+  logical axis xk ``concat_axis``, and the input unmapped axis at xk
   ``split_axis`` is mapped with the name ``axis_name``.
 
   The input mapped axis size must be equal to the size of the axis to be mapped;
@@ -268,7 +268,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
       :func:`jax.pmap` documentation for more details).
     split_axis: int indicating the unmapped axis of ``x`` to map with the name
       ``axis_name``.
-    concat_axis: int indicating the position in the output to materialize the
+    concat_axis: int indicating the xk in the output to materialize the
       mapped axis of the input with the name ``axis_name``.
 
   Returns:
