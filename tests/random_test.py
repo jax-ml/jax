@@ -402,6 +402,7 @@ class LaxRandomTest(jtu.JaxTestCase):
           np.array([0.2, 1., 5.]),
       ]
       for dtype in [np.float32, np.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
@@ -437,6 +438,7 @@ class LaxRandomTest(jtu.JaxTestCase):
        "a": a, "dtype": np.dtype(dtype).name}
       for a in [0.1, 1., 10.]
       for dtype in [np.float32, np.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testGamma(self, a, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
