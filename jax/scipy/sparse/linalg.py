@@ -18,7 +18,8 @@ import operator
 import numpy as np
 import jax.numpy as jnp
 from jax import lax, device_put
-from jax.tree_util import tree_leaves, tree_map, tree_multimap
+from jax.tree_util import tree_leaves, tree_map, tree_multimap, tree_structure
+from jax.util import safe_map as map
 
 
 def _vdot_real_part(x, y):
@@ -83,6 +84,10 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
 
   return x_final
+
+
+def _shapes(pytree):
+  return map(jnp.shape, tree_leaves(pytree))
 
 
 def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
@@ -150,10 +155,15 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   if M is None:
     M = _identity
 
-  shape = partial(tree_map, lambda x: x.shape)
-  if shape(x0) != shape(b):
+  if tree_structure(x0) != tree_structure(b):
     raise ValueError(
-        f'x0 and b must have matching shape: {shape(x0)} vs {shape(b)}')
+        'x0 and b must have matching tree structure: '
+        f'{tree_structure(x0)} vs {tree_structure(b)}')
+
+  if _shapes(x0) != _shapes(b):
+    raise ValueError(
+        'arrays in x0 and b must have matching shapes: '
+        f'{_shapes(x0)} vs {_shapes(b)}')
 
   cg_solve = partial(
       _cg_solve, x0=x0, tol=tol, atol=atol, maxiter=maxiter, M=M)
