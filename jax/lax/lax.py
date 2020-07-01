@@ -4201,7 +4201,9 @@ _masking_defreducer(reduce_sum_p,
 
 
 def _reduce_op_shape_rule(operand, *, axes, input_shape=None):
-  del input_shape # unused.
+  del input_shape  # Unused.
+  if len(axes) != len(set(axes)):
+    raise ValueError(f"duplicate value in 'axes' of reduction: {axes}")
   return tuple(onp.delete(operand.shape, axes))
 
 def _reduce_prod_translation_rule(c, operand, *, axes):
