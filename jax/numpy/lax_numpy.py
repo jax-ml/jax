@@ -1965,6 +1965,27 @@ def _pad_edge(array, pad_width):
 
 @partial(jit, static_argnums=(1, 2))
 def _pad(array, pad_width, mode, constant_values):
+  pad_width_type_err = (
+      "jax.numpy.pad got an unexpected type for 'pad_width': got {} of type {}."
+      "\n\n"
+      "Unlike numpy, jax.numpy requires the 'pad_width' argument to "
+      "jax.numpy.pad to be an int, single-element tuple/list with an int "
+      "element, or tuple/list of int pairs (each pair a tuple or list); "
+      "in particular, 'pad_width' cannot be an array.")
+  if isinstance(pad_width, int):
+    pad_width = (pad_width,)
+  elif isinstance(pad_width, (list, tuple)):
+    if len(pad_width) == 1 and len(pad_width[0]) == 1:
+      (elt,), = pad_width
+      if not isinstance(elt, int):
+        raise TypeError(pad_width_type_err.format(pad_width, type(pad_width)))
+    else:
+      for elt in pad_width:
+        if len(elt) != 2 or not isinstance(elt[0], int) and isinstance(elt[1], int):
+          raise TypeError(pad_width_type_err.format(pad_width, type(pad_width)))
+  else:
+    raise TypeError(pad_width_type_err.format(pad_width, type(pad_width)))
+
   array = asarray(array)
   nd = ndim(array)
   pad_width = np.broadcast_to(np.asarray(pad_width), (nd, 2))
@@ -1989,8 +2010,6 @@ def _pad(array, pad_width, mode, constant_values):
 
 @_wraps(np.pad)
 def pad(array, pad_width, mode='constant', constant_values=0):
-  if isinstance(pad_width, list):
-    pad_width = tuple(pad_width)
   return _pad(array, pad_width, mode, constant_values)
 
 
