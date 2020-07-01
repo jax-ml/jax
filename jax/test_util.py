@@ -55,8 +55,7 @@ flags.DEFINE_integer(
 flags.DEFINE_bool(
     'jax_skip_slow_tests',
     bool_env('JAX_SKIP_SLOW_TESTS', False),
-    help=
-    'Skip tests marked as slow (> 5 sec).'
+    help='Skip tests marked as slow (> 5 sec).'
 )
 
 flags.DEFINE_string(
