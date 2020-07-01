@@ -16,6 +16,7 @@
 import collections
 import functools
 from functools import partial
+import inspect
 import itertools
 import operator
 from typing import cast, Optional
@@ -3903,6 +3904,40 @@ class NumpyGradTests(jtu.JaxTestCase):
       return jnp.take_along_axis(y, idx, -1).sum()
 
     check_grads(f, (1.,), order=1)
+
+
+  def testWrappedSignaturesMatch(self):
+    """Test that jax.numpy function signatures match numpy."""
+    # TODO(jakevdp): fix these signatures to match.
+    skip = {
+      'allclose', 'amax', 'amin', 'angle', 'argmax', 'argmin', 'around', 'broadcast_to',
+      'clip', 'convolve', 'corrcoef', 'correlate', 'cumprod', 'cumproduct', 'cumsum',
+      'diff', 'empty_like', 'eye', 'full', 'full_like', 'gradient', 'histogram',
+      'isposinf', 'isneginf', 'isscalar', 'max', 'min', 'nancumprod', 'nancumsum',
+      'nanprod', 'nansum', 'ones', 'ones_like', 'pad', 'polyadd', 'polyder', 'polysub',
+      'prod', 'product', 'round', 'stack', 'sum', 'tile', 'zeros_like'
+    }
+    jnp_funcs = {name: getattr(jnp, name) for name in dir(jnp) if name not in skip}
+    func_pairs = {name: (fun, fun.__np_wrapped__) for name, fun in jnp_funcs.items()
+                  if hasattr(fun, '__np_wrapped__')}
+    assert len(func_pairs) > 0
+
+    mismatches = {}
+
+    for name, (jnp_fun, np_fun) in func_pairs.items():
+      # Note: can't use inspect.getfullargspec due to numpy issue
+      # https://github.com/numpy/numpy/issues/12225
+      try:
+        np_params = list(inspect.signature(np_fun).parameters)
+      except ValueError:
+        # Some functions cannot be inspected
+        continue
+      jnp_params = list(inspect.signature(jnp_fun).parameters)
+      if not set(jnp_params) - {'args', 'kwargs'}:
+        continue
+      if set(np_params) - set(jnp_params):
+        mismatches[name] = {'np_params': np_params, 'jnp_params': jnp_params}
+    self.assertEqual(mismatches, {})
 
 
 if __name__ == "__main__":
