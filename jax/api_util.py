@@ -155,7 +155,7 @@ def flatten_axes(name, treedef, axis_tree):
   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
   try:
     tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
-  except ValueError as e:
+  except ValueError:
     raise ValueError(f"{name} specification must be a tree prefix of the "
                      f"corresponding value, got specification {axis_tree} "
                      f"for value tree {treedef}.") from None
