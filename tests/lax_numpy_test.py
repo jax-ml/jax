@@ -3822,7 +3822,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(jnp.asarray(v).tolist(), v.tolist())
 
   def testReductionWithRepeatedAxisError(self):
-    with self.assertRaisesRegex(ValueError, "duplicate value in 'axis': \(0, 0\)"):
+    with self.assertRaisesRegex(ValueError, r"duplicate value in 'axis': \(0, 0\)"):
       jnp.sum(jnp.arange(3), (0, 0))
 
 
