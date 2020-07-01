@@ -3912,7 +3912,8 @@ class NumpyGradTests(jtu.JaxTestCase):
     skip = {
       'allclose', 'amax', 'amin', 'angle', 'argmax', 'argmin', 'around', 'broadcast_to',
       'clip', 'convolve', 'corrcoef', 'correlate', 'cumprod', 'cumproduct', 'cumsum',
-      'diff', 'empty_like', 'eye', 'full', 'full_like', 'gradient', 'histogram',
+      'diff', 'empty_like', 'einsum', 'einsum_path',
+      'eye', 'full', 'full_like', 'gradient', 'histogram',
       'isposinf', 'isneginf', 'isscalar', 'max', 'min', 'nancumprod', 'nancumsum',
       'nanprod', 'nansum', 'ones', 'ones_like', 'pad', 'polyadd', 'polyder', 'polysub',
       'prod', 'product', 'round', 'stack', 'sum', 'tile', 'zeros_like'
