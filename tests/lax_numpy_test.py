@@ -3997,7 +3997,7 @@ class NumpyGradTests(jtu.JaxTestCase):
 
     for name, (jnp_fun, np_fun) in func_pairs.items():
       # Some signatures have changed; skip for older numpy versions.
-      if np.__version__ < "1.17" and name in ['einsum_path', 'gradient', 'isscalar']:
+      if np.__version__ < "1.19" and name in ['einsum_path', 'gradient', 'isscalar']:
         continue
       # Note: can't use inspect.getfullargspec due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
