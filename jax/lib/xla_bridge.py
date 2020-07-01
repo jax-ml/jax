@@ -62,7 +62,8 @@ flags.DEFINE_bool(
     'optimization is greater than that of running a less-optimized program.')
 
 
-def get_compile_options(num_replicas, num_partitions, device_assignment=None):
+def get_compile_options(num_replicas, num_partitions, device_assignment=None,
+                        use_spmd_partitioning=True):
   """Returns the compile options to use, as derived from flag values.
 
   Args:
@@ -72,10 +73,14 @@ def get_compile_options(num_replicas, num_partitions, device_assignment=None):
       logical replicas to physical devices (default inherited from
       xla_client.CompileOptions). Must be consistent with `num_replicas` and
       `num_partitions`.
+    use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
+      partitioning in XLA.
   """
   compile_options = xla_client.CompileOptions()
   compile_options.num_replicas = num_replicas
   compile_options.num_partitions = num_partitions
+  build_options = compile_options.executable_build_options
+  build_options.use_spmd_partitioning = use_spmd_partitioning
   if device_assignment is not None:
     logging.vlog(
         2,
