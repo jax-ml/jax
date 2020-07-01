@@ -42,11 +42,18 @@ jobs:
           - python-version: 3.6
             os: ubuntu-latest
             enable-x64: disable-x64
+            numpy-version: "default"
             num_generated_cases: 25
           - python-version: 3.7
             os: ubuntu-latest
             enable-x64: enable-x64
+            numpy-version: "default"
             num_generated_cases: 25
+          - python-version: 3.7
+            os: ubuntu-latest
+            enable-x64: enable-x64
+            numpy-version: "1.16.4"
+            num_generated_cases: 10
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
@@ -57,6 +64,10 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r build/test-requirements.txt
+        if [ ${{ matrix.numpy-version }} != default ]; then
+          pip install numpy==${{ matrix.numpy-version }}
+        fi
+
     - name: Run tests
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
