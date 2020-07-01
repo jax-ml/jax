@@ -3996,6 +3996,9 @@ class NumpyGradTests(jtu.JaxTestCase):
     mismatches = {}
 
     for name, (jnp_fun, np_fun) in func_pairs.items():
+      # Some signatures have changed; skip for older numpy versions.
+      if np.__version__ < "1.17" and name in ['einsum_path', 'gradient', 'isscalar']:
+        continue
       # Note: can't use inspect.getfullargspec due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
       try:
@@ -4009,16 +4012,15 @@ class NumpyGradTests(jtu.JaxTestCase):
 
       # Sanity checks to prevent tests from becoming out-of-date. If these fail,
       # it means that extra_params or unsupported_params need to be updated.
-      assert extra.issubset(jnp_params)
-      assert not unsupported.intersection(jnp_params)
+      assert extra.issubset(jnp_params), f"{name}: extra={extra} is not a subset of jnp_params={set(jnp_params)}."
+      assert not unsupported.intersection(jnp_params), f"{name}: unsupported={unsupported} overlaps with jnp_params={set(jnp_params)}."
 
       # Skip functions that only have *args and **kwargs; we can't introspect these further.
       var_args = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
       if all(p.kind in var_args for p in jnp_params.values()):
         continue
-
-      # Skip keyword-only arguments; these are used for jax-specific functionality.
-      jnp_params = {a: p for a, p in jnp_params.items() if p.kind != inspect.Parameter.KEYWORD_ONLY}
+      if all(p.kind in var_args for p in np_params.values()):
+        continue
 
       # Remove known extra parameters.
       jnp_params = {a: p for a, p in jnp_params.items() if a not in extra}
