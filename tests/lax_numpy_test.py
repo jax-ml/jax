@@ -3908,7 +3908,15 @@ class NumpyGradTests(jtu.JaxTestCase):
 
   def testWrappedSignaturesMatch(self):
     """Test that jax.numpy function signatures match numpy."""
-    # TODO(jakevdp): fix these signatures to match.
+    # Note: testing signatures for an exact match is problematic, because numpy's signatures
+    # evolve from release to release (mainly adding new parameters when necessary), and jax.numpy
+    # adds additional jax-specific parameters to some functions. Because of this, the test checks
+    # that jax.numpy function parameters are a superset of the wrapped numpy function parameters.
+    # That way, when tested against older numpy versions (where functions often have fewer parameters),
+    # the test should pass, and when run against new numpy releases, the tests will fail indicating
+    # where jax functionality must be upgraded to match.
+
+    # TODO(jakevdp): fix the following signatures.
     skip = {
       'allclose', 'amax', 'amin', 'angle', 'argmax', 'argmin', 'around', 'broadcast_to',
       'clip', 'convolve', 'corrcoef', 'correlate', 'cumprod', 'cumproduct', 'cumsum',
@@ -3934,10 +3942,11 @@ class NumpyGradTests(jtu.JaxTestCase):
         # Some functions cannot be inspected
         continue
       jnp_params = list(inspect.signature(jnp_fun).parameters)
-      if not set(jnp_params) - {'args', 'kwargs'}:
+      if set(jnp_params).issubset({'args', 'kwargs'}):
         continue
-      if set(np_params) - set(jnp_params):
-        mismatches[name] = {'np_params': np_params, 'jnp_params': jnp_params}
+      if set(np_params).issubset(jnp_params):
+        continue
+      mismatches[name] = {'np_params': np_params, 'jnp_params': jnp_params}
     self.assertEqual(mismatches, {})
 
 
