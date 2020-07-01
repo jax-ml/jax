@@ -3908,28 +3908,90 @@ class NumpyGradTests(jtu.JaxTestCase):
 
   def testWrappedSignaturesMatch(self):
     """Test that jax.numpy function signatures match numpy."""
-    # Note: testing signatures for an exact match is problematic, because numpy's signatures
-    # evolve from release to release (mainly adding new parameters when necessary), and jax.numpy
-    # adds additional jax-specific parameters to some functions. Because of this, the test checks
-    # that jax.numpy function parameters are a superset of the wrapped numpy function parameters.
-    # That way, when tested against older numpy versions (where functions often have fewer parameters),
-    # the test should pass, and when run against new numpy releases, the tests will fail indicating
-    # where jax functionality must be upgraded to match.
-
-    # TODO(jakevdp): fix the following signatures.
-    skip = {
-      'allclose', 'amax', 'amin', 'angle', 'argmax', 'argmin', 'around', 'broadcast_to',
-      'clip', 'convolve', 'corrcoef', 'correlate', 'cumprod', 'cumproduct', 'cumsum',
-      'diff', 'empty_like', 'einsum', 'einsum_path',
-      'eye', 'full', 'full_like', 'gradient', 'histogram',
-      'isposinf', 'isneginf', 'isscalar', 'max', 'min', 'nancumprod', 'nancumsum',
-      'nanprod', 'nansum', 'ones', 'ones_like', 'pad', 'polyadd', 'polyder', 'polysub',
-      'prod', 'product', 'round', 'stack', 'sum', 'tile', 'zeros_like'
-    }
-    jnp_funcs = {name: getattr(jnp, name) for name in dir(jnp) if name not in skip}
+    jnp_funcs = {name: getattr(jnp, name) for name in dir(jnp)}
     func_pairs = {name: (fun, fun.__np_wrapped__) for name, fun in jnp_funcs.items()
                   if hasattr(fun, '__np_wrapped__')}
     assert len(func_pairs) > 0
+
+    # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
+    unsupported_params = {
+      'allclose': ['equal_nan'],
+      'amax': ['initial', 'where'],
+      'amin': ['initial', 'where'],
+      'angle': ['deg'],
+      'argmax': ['out'],
+      'argmin': ['out'],
+      'around': ['out'],
+      'broadcast_to': ['subok', 'array'],
+      'clip': ['out', 'kwargs'],
+      'convolve': ['v', 'a'],
+      'corrcoef': ['ddof', 'bias'],
+      'correlate': ['v', 'a'],
+      'cumprod': ['out'],
+      'cumproduct': ['out'],
+      'cumsum': ['out'],
+      'diff': ['prepend', 'append'],
+      'einsum_path': ['einsum_call', 'optimize'],
+      'empty_like': ['shape', 'subok', 'a', 'order'],
+      'eye': ['order'],
+      'full': ['order'],
+      'full_like': ['shape', 'subok', 'order'],
+      'gradient': ['varargs', 'axis', 'f', 'edge_order'],
+      'histogram': ['normed'],
+      'isneginf': ['out'],
+      'isposinf': ['out'],
+      'isscalar': ['element'],
+      'max': ['initial', 'where'],
+      'min': ['initial', 'where'],
+      'nancumprod': ['out'],
+      'nancumsum': ['out'],
+      'nanprod': ['dtype'],
+      'nansum': ['dtype'],
+      'ones': ['order'],
+      'ones_like': ['shape', 'subok', 'a', 'order'],
+      'pad': ['kwargs'],
+      'polyadd': ['a1', 'a2'],
+      'polyder': ['p'],
+      'polysub': ['a1', 'a2'],
+      'prod': ['initial', 'where'],
+      'product': ['initial', 'where'],
+      'round': ['out'],
+      'stack': ['out'],
+      'sum': ['initial', 'where'],
+      'tile': ['A'],
+      'zeros_like': ['shape', 'subok', 'a', 'order']
+    }
+
+    extra_params = {
+      'all': ['dtype'],
+      'alltrue': ['dtype'],
+      'amax': ['dtype'],
+      'amin': ['dtype'],
+      'any': ['dtype'],
+      'broadcast_to': ['arr'],
+      'convolve': ['x', 'y'],
+      'correlate': ['x', 'y'],
+      'einsum_path': ['kwargs', 'subscripts'],
+      'empty_like': ['x'],
+      'gradient': ['kwargs', 'a', 'args'],
+      'isneginf': ['infinity'],
+      'isposinf': ['infinity'],
+      'isscalar': ['num'],
+      'max': ['dtype'],
+      'min': ['dtype'],
+      'nanmax': ['kwargs'],
+      'nanmin': ['kwargs'],
+      'nanprod': ['kwargs'],
+      'nansum': ['kwargs'],
+      'ones_like': ['x'],
+      'pad': ['constant_values'],
+      'polyadd': ['b', 'a'],
+      'polyder': ['a'],
+      'polysub': ['b', 'a'],
+      'sometrue': ['dtype'],
+      'tile': ['a'],
+      'zeros_like': ['x']
+    }
 
     mismatches = {}
 
@@ -3937,16 +3999,38 @@ class NumpyGradTests(jtu.JaxTestCase):
       # Note: can't use inspect.getfullargspec due to numpy issue
       # https://github.com/numpy/numpy/issues/12225
       try:
-        np_params = list(inspect.signature(np_fun).parameters)
+        np_params = inspect.signature(np_fun).parameters
       except ValueError:
         # Some functions cannot be inspected
         continue
-      jnp_params = list(inspect.signature(jnp_fun).parameters)
-      if set(jnp_params).issubset({'args', 'kwargs'}):
+      jnp_params = inspect.signature(jnp_fun).parameters
+      extra = set(extra_params.get(name, []))
+      unsupported = set(unsupported_params.get(name, []))
+
+      # Sanity checks to prevent tests from becoming out-of-date. If these fail,
+      # it means that extra_params or unsupported_params need to be updated.
+      assert extra.issubset(jnp_params)
+      assert not unsupported.intersection(jnp_params)
+
+      # Skip functions that only have *args and **kwargs; we can't introspect these further.
+      var_args = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+      if all(p.kind in var_args for p in jnp_params.values()):
         continue
-      if set(np_params).issubset(jnp_params):
-        continue
-      mismatches[name] = {'np_params': np_params, 'jnp_params': jnp_params}
+
+      # Skip keyword-only arguments; these are used for jax-specific functionality.
+      jnp_params = {a: p for a, p in jnp_params.items() if p.kind != inspect.Parameter.KEYWORD_ONLY}
+
+      # Remove known extra parameters.
+      jnp_params = {a: p for a, p in jnp_params.items() if a not in extra}
+
+      # Remove known unsupported parameters.
+      np_params = {a: p for a, p in np_params.items() if a not in unsupported}
+
+      # Older versions of numpy may have fewer parameters; to avoid extraneous errors on older numpy
+      # versions, we allow for jnp to have more parameters.
+      if list(jnp_params)[:len(np_params)] != list(np_params):
+        mismatches[name] = {'np_params': list(np_params), 'jnp_params': list(jnp_params)}
+
     self.assertEqual(mismatches, {})
 
 
