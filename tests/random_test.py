@@ -336,11 +336,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
     shape = sample_shape + out_shape
-    rand = lambda key, p: random.categorical(key, logits, shape=shape, axis=axis)
+    rand = partial(random.categorical, shape=shape, axis=axis)
     crand = api.jit(rand)
 
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key, logits)
+    compiled_samples = crand(key, logits)
 
     if axis < 0:
       axis += len(logits.shape)
@@ -438,7 +438,6 @@ class LaxRandomTest(jtu.JaxTestCase):
        "a": a, "dtype": np.dtype(dtype).name}
       for a in [0.1, 1., 10.]
       for dtype in [np.float32, np.float64]))
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testGamma(self, a, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
