@@ -1028,6 +1028,18 @@ def transpose(operand: Array, permutation: Sequence[int]) -> Array:
   else:
     return transpose_p.bind(operand, permutation=permutation)
 
+def argmin(operand: Array, axis: int,
+           index_dtype: DType) -> Tuple[Array, Array]:
+  """Computes the index of the minimum element along ``axis``."""
+  return argmin_p.bind(operand, axes=(axis,),
+                       index_dtype=dtypes.canonicalize_dtype(index_dtype))
+
+def argmax(operand: Array, axis: int,
+           index_dtype: DType) -> Tuple[Array, Array]:
+  """Computes the index of the maximum element along ``axis``."""
+  return argmax_p.bind(operand, axes=(axis,),
+                       index_dtype=dtypes.canonicalize_dtype(index_dtype))
+
 def reduce(operand: Array, init_value: Array, computation: Callable,
            dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Reduce
@@ -4292,6 +4304,73 @@ ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
 _masking_defreducer(reduce_min_p,
                     lambda shape, dtype: onp.broadcast_to(onp.array(onp.inf, dtype), shape))
+
+
+
+def _argminmax_shape_rule(operand, *, axes, index_dtype):
+  axis, = axes
+  return tuple(onp.delete(operand.shape, axis))
+
+def _argminmax_dtype_rule(operand, *, axes, index_dtype):
+  return index_dtype
+
+def _argminmax_translation_rule(value_comparator, identity,
+                                c, operand, *, axes, index_dtype):
+  axis, = axes
+  shape = c.get_shape(operand)
+  dtype = shape.numpy_dtype()
+
+  subc = xb.make_computation_builder("argminmax_comparator")
+  value_shape = xc.Shape.array_shape(shape.xla_element_type(), ())
+  index_shape = xc.Shape.array_shape(index_dtype, ())
+  x_value = xb.parameter(subc, 0, value_shape)
+  x_index = xb.parameter(subc, 1, index_shape)
+  y_value = xb.parameter(subc, 2, value_shape)
+  y_index = xb.parameter(subc, 3, index_shape)
+  which_value = value_comparator(x_value, y_value)
+  which_index = xops.Or(which_value, xops.And(xops.Eq(x_value, y_value),
+                                              xops.Lt(x_index, y_index)))
+  xops.Tuple(subc, [xops.Select(which_value, x_value, y_value),
+                    xops.Select(which_index, x_index, y_index)])
+  comparator = subc.build()
+
+  iota_shape = xc.Shape.array_shape(index_dtype, shape.dimensions())
+  iota = xc.ops.Iota(c, iota_shape, axis)
+  out = xops.Reduce(
+    c, [operand, iota],
+    [xb.constant(c, identity(dtype)),
+     xb.constant(c, onp.array(0, index_dtype))], comparator, [axis])
+  return xops.GetTupleElement(out, 1)
+
+def _argminmax_gpu_translation_rule(op, a, *, axes, index_dtype):
+  axis, = axes
+  idxs = tie_in(a, broadcasted_iota(index_dtype, a.shape, axis))
+  maxval = onp.array(dtypes.iinfo(index_dtype).max, dtype=index_dtype)
+  maxval = broadcast(tie_in(a, maxval), a.shape)
+  mask_idxs = select(eq(a, expand_dims(op(a, (axis,)), (axis,))), idxs,
+                     maxval)
+  return _reduce_min(mask_idxs, (axis,))
+
+_argmin_translation_rule = partial(_argminmax_translation_rule, xops.Lt,
+                                   _get_min_identity)
+_argmax_translation_rule = partial(_argminmax_translation_rule, xops.Gt,
+                                   _get_max_identity)
+
+argmin_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
+                              'argmin', _argmin_translation_rule)
+batching.defreducer(argmin_p)
+ad.defjvp_zero(argmin_p)
+xla.backend_specific_translations['gpu'][argmin_p] = xla.lower_fun(
+  partial(_argminmax_gpu_translation_rule, _reduce_min),
+  multiple_results=False)
+
+argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
+                              'argmax', _argmax_translation_rule)
+batching.defreducer(argmax_p)
+ad.defjvp_zero(argmax_p)
+xla.backend_specific_translations['gpu'][argmax_p] = xla.lower_fun(
+  partial(_argminmax_gpu_translation_rule, _reduce_max),
+  multiple_results=False)
 
 
 def _reduce_logical_shape_rule(operand, *, axes):

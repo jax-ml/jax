@@ -3094,7 +3094,18 @@ def argmax(a, axis=None):
   if axis is None:
     a = ravel(a)
     axis = 0
-  return _argminmax("argmax", max, a, axis)
+  if a.shape[axis] == 0:
+    raise ValueError("attempt to get argmax of an empty sequence")
+  return lax.argmax(a, _canonicalize_axis(axis, a.ndim), int64)
+
+@_wraps(np.argmin)
+def argmin(a, axis=None):
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  if a.shape[axis] == 0:
+    raise ValueError("attempt to get argmin of an empty sequence")
+  return lax.argmin(a, _canonicalize_axis(axis, a.ndim), int64)
 
 
 _NANARG_DOC = """\
@@ -3111,15 +3122,6 @@ def nanargmax(a, axis=None):
   res = argmax(a, axis=axis)
   return where(all(nan_mask, axis=axis), -1, res)
 
-
-@_wraps(np.argmin)
-def argmin(a, axis=None):
-  if axis is None:
-    a = ravel(a)
-    axis = 0
-  return _argminmax("argmin", min, a, axis)
-
-
 @_wraps(np.nanargmin, lax_description=_NANARG_DOC.format("min"))
 def nanargmin(a, axis=None):
   if not issubdtype(_dtype(a), inexact):
@@ -3128,19 +3130,6 @@ def nanargmin(a, axis=None):
   a = where(nan_mask, inf, a)
   res = argmin(a, axis=axis)
   return where(all(nan_mask, axis=axis), -1, res)
-
-
-# TODO(mattjj): redo this lowering with a call to variadic lax.reduce
-def _argminmax(name, op, a, axis):
-  if a.shape[axis] == 0:
-    raise ValueError("attempt to get {} of an empty sequence".format(name))
-  shape = [1] * a.ndim
-  shape[axis] = a.shape[axis]
-  idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
-  maxval = iinfo(dtypes.canonicalize_dtype(idxs.dtype)).max
-  maxval = lax.tie_in(a, maxval)
-  mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
-  return min(mask_idxs, axis)
 
 
 @_wraps(np.sort)

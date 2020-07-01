@@ -306,10 +306,10 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
 ]
 
 JAX_ARGMINMAX_RECORDS = [
-    op_record("argmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
-    op_record("argmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
-    op_record("nanargmin", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
-    op_record("nanargmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
+    op_record("argmin", 1, default_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
+    op_record("argmax", 1, default_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
+    op_record("nanargmin", 1, default_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
+    op_record("nanargmax", 1, default_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
 ]
 
 JAX_OPERATOR_OVERLOADS = [
