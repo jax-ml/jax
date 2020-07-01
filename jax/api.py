@@ -867,10 +867,11 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     args_flat, in_tree  = tree_flatten(args)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    in_axes_flat = flatten_axes(in_tree, in_axes)
+    in_axes_flat = flatten_axes("vmap in_axes", in_tree, in_axes)
     _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap")
     out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
-                              lambda: flatten_axes(out_tree(), out_axes))
+                              lambda: flatten_axes("vmap out_axes", out_tree(),
+                                                   out_axes))
     return tree_unflatten(out_tree(), out_flat)
 
   return batched_fun
@@ -1152,7 +1153,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
       dyn_args, dyn_in_axes = args, in_axes
     args, in_tree = tree_flatten((dyn_args, kwargs))
     donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
-    in_axes_flat = flatten_axes(in_tree, (dyn_in_axes, 0))
+    in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
@@ -1191,7 +1192,7 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    in_axes_flat = flatten_axes(in_tree, (in_axes, 0))
+    in_axes_flat = flatten_axes("soft_pmap in_axes", in_tree, (in_axes, 0))
     mapped_invars = tuple(axis is not None for axis in in_axes_flat)
     axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     for arg in args_flat: _check_arg(arg)
