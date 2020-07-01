@@ -495,7 +495,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       for bdims in all_bdims(shape)))
   def testArgminmax(self, op, shape, dtype, dim, bdims):
     rng = jtu.rand_default(self.rng())
-    fun = lambda operand: op(operand, dim)
+    fun = lambda operand: op(operand, dim, onp.int32)
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
