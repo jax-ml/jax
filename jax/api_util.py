@@ -143,7 +143,7 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
   ans = yield args, kwargs
   yield ans
 
-def flatten_axes(treedef, axis_tree):
+def flatten_axes(name, treedef, axis_tree):
   # given an axis spec tree axis_tree (a pytree with integers and Nones at the
   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
   # the given treedef, build a complete axis spec tree with the same structure
@@ -156,9 +156,9 @@ def flatten_axes(treedef, axis_tree):
   try:
     tree_multimap(add_leaves, _replace_nones(proxy, axis_tree), dummy)
   except ValueError as e:
-    msg = ("axes specification must be a tree prefix of the corresponding "
-           "value, got specification {} for value {}.")
-    raise ValueError(msg.format(axis_tree, treedef)) from e
+    raise ValueError(f"{name} specification must be a tree prefix of the "
+                     f"corresponding value, got specification {axis_tree} "
+                     f"for value tree {treedef}.") from None
   axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes

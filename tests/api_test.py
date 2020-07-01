@@ -1073,8 +1073,8 @@ class APITest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/795
     self.assertRaisesRegex(
         ValueError,
-        "axes specification must be a tree prefix of the corresponding "
-        r"value, got specification \(0, 0\) for value "
+        "vmap in_axes specification must be a tree prefix of the corresponding "
+        r"value, got specification \(0, 0\) for value tree "
         r"PyTreeDef\(tuple, \[\*\]\).",
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(jnp.ones(3))
     )
@@ -1148,7 +1148,9 @@ class APITest(jtu.JaxTestCase):
 
     # Error is: TypeError: only integer scalar arrays can be converted to a scalar index
     with self.assertRaisesRegex(
-        ValueError, "axes specification must be a tree prefix of the corresponding value"):
+        ValueError,
+        "vmap out_axes specification must be a tree prefix of the "
+        "corresponding value.*"):
       api.vmap(lambda x: x, in_axes=0, out_axes=(2, 3))(jnp.array([1., 2.]))
 
     with self.assertRaisesRegex(
