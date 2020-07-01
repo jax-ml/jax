@@ -3096,7 +3096,7 @@ def argmax(a, axis=None):
     axis = 0
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmax of an empty sequence")
-  return lax.argmax(a, _canonicalize_axis(axis, a.ndim)).astype(int64)
+  return lax.argmax(a, _canonicalize_axis(axis, a.ndim), int64)
 
 @_wraps(np.argmin)
 def argmin(a, axis=None):
@@ -3105,7 +3105,7 @@ def argmin(a, axis=None):
     axis = 0
   if a.shape[axis] == 0:
     raise ValueError("attempt to get argmin of an empty sequence")
-  return lax.argmin(a, _canonicalize_axis(axis, a.ndim)).astype(int64)
+  return lax.argmin(a, _canonicalize_axis(axis, a.ndim), int64)
 
 
 _NANARG_DOC = """\
