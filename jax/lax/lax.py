@@ -4363,12 +4363,20 @@ ad.defjvp_zero(argmin_p)
 xla.backend_specific_translations['gpu'][argmin_p] = xla.lower_fun(
   partial(_argminmax_gpu_translation_rule, _reduce_min),
   multiple_results=False)
+# TODO(mattjj,phawkins): remove this rule when TPU compile time issue resolved
+xla.backend_specific_translations['tpu'][argmin_p] = xla.lower_fun(
+  partial(_argminmax_gpu_translation_rule, _reduce_min),
+  multiple_results=False)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', _argmax_translation_rule)
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 xla.backend_specific_translations['gpu'][argmax_p] = xla.lower_fun(
+  partial(_argminmax_gpu_translation_rule, _reduce_max),
+  multiple_results=False)
+# TODO(mattjj,phawkins): remove this rule when TPU compile time issue resolved
+xla.backend_specific_translations['tpu'][argmax_p] = xla.lower_fun(
   partial(_argminmax_gpu_translation_rule, _reduce_max),
   multiple_results=False)
 

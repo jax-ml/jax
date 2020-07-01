@@ -336,11 +336,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
     shape = sample_shape + out_shape
-    rand = lambda key, p: random.categorical(key, logits, shape=shape, axis=axis)
+    rand = partial(random.categorical, shape=shape, axis=axis)
     crand = api.jit(rand)
 
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key, logits)
+    compiled_samples = crand(key, logits)
 
     if axis < 0:
       axis += len(logits.shape)
