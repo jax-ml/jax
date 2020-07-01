@@ -1550,6 +1550,8 @@ def _reduction_dims(a, axis):
   if axis is None:
     return tuple(range(ndim(a)))
   elif isinstance(axis, (np.ndarray, tuple, list)):
+    if len(axis) != len(set(axis)):
+      raise ValueError(f"duplicate value in 'axis': {axis}")
     return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
     return (_canonicalize_axis(axis, ndim(a)),)

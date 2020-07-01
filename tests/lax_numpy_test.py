@@ -3821,6 +3821,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     v = np.arange(12, dtype=np.int32).reshape(3, 4)
     self.assertEqual(jnp.asarray(v).tolist(), v.tolist())
 
+  def testReductionWithRepeatedAxisError(self):
+    with self.assertRaisesRegex(ValueError, r"duplicate value in 'axis': \(0, 0\)"):
+      jnp.sum(jnp.arange(3), (0, 0))
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.

@@ -1714,6 +1714,11 @@ class LaxTest(jtu.JaxTestCase):
           TypeError, "Argument .* of type .* is not a valid JAX type"):
         lax.add(1, 'hi')
 
+  def test_reduction_with_repeated_axes_error(self):
+    with self.assertRaisesRegex(ValueError, "duplicate value in 'axes' .*"):
+      lax.reduce(onp.arange(3), 0, lax.add, (0, 0))
+
+
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
     # check casting to ndarray works
