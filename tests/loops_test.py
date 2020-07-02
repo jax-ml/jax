@@ -353,9 +353,10 @@ class LoopsTest(jtu.JaxTestCase):
           s.out += i
         return s.out
 
-    with self.assertRaisesWithLiteralMatch(
+    with self.assertRaisesRegex(
         ValueError,
-        "Body of cond_range or while_range should not use the index variable returned by iterator."):
+        r"^Body of cond_range or while_range should not use the index variable "
+        r"returned by iterator\."):
       api.make_jaxpr(f_op)(2.)
 
   def test_while(self):
