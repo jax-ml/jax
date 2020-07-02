@@ -639,7 +639,7 @@ def _lu_jvp_rule(primals, tangents):
   # ==> [∂L_0, ∂L_1][U_0; 0] + [L_0, L_1][∂U_0; ∂U_1] = ∂A
   # ==> ∂L_0 U_0 + L_0 ∂U_0 + L_1 ∂U_1 = ∂A
   # ∂L_0 and ∂U_0 can be solved by the normal expression for ∂L and ∂U,
-  # while ∂U_1 can be solved from ∂L_0 and ∂U_0 as 
+  # while ∂U_1 can be solved from ∂L_0 and ∂U_0 as
   #     ∂U_1 = triu(inv(L) . (∂A - ∂L . U))[:-k]
   u_fix = la - triangular_solve(
       l, jnp.matmul(l_dot, u, precision=lax.Precision.HIGHEST),
