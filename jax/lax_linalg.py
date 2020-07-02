@@ -633,7 +633,7 @@ def _lu_jvp_rule(primals, tangents):
   u_dot = jnp.matmul(jnp.triu(lau), u)
   # Correction for low-rank matrices
   u_fix = la - triangular_solve(
-      l, l_dot @ u,
+      l, jnp.matmul(l_dot, u, precision=lax.Precision.HIGHEST),
       left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
   u_dot = jnp.where(mask, u_fix, u_dot)
   lu_dot = l_dot + u_dot
