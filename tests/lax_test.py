@@ -698,7 +698,7 @@ class LaxTest(jtu.JaxTestCase):
 
     # NB: below just checks for agreement, we're not calling numpy.
     self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
-    
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_precision={}".format(
           jtu.format_shape_dtype_string(lhs_shape, dtype),
