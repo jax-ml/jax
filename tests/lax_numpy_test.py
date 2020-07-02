@@ -1942,8 +1942,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for shape, axis, num_sections in [
           ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((12, 4), 1, 2),
           ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
-      for dtype in default_dtypes)
+      for dtype in default_dtypes
       for split_fun_name in ("split", "array_split"))
+      )
   def testSplitStaticInt(self, shape, num_sections, axis, dtype, rng_factory, split_fun_name):
     rng = rng_factory(self.rng())
     np_fun = lambda x: getattr(np, split_fun_name)(x, num_sections, axis=axis)
