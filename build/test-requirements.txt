@@ -1,5 +1,5 @@
 flake8
-jaxlib==0.1.48
+jaxlib==0.1.51
 msgpack
 mypy==0.770
 pytest-benchmark
