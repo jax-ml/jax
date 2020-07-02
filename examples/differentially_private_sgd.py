@@ -147,7 +147,7 @@ def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
                  batch_size):
   """Return differentially private gradients for params, evaluated on batch."""
   clipped_grads = vmap(clipped_grad, (None, None, 0))(params, l2_norm_clip, batch)
-  clipped_grads_flat, params_tree = tree_flatten(clipped_grads)
+  clipped_grads_flat, grads_treedef = tree_flatten(clipped_grads)
   aggregated_clipped_grads = [g.sum(0) for g in clipped_grads_flat]
   rngs = random.split(rng, len(aggregated_clipped_grads))
   noised_aggregated_clipped_grads = [
@@ -155,7 +155,7 @@ def private_grad(params, batch, rng, l2_norm_clip, noise_multiplier,
       for r, g in zip(rngs, aggregated_clipped_grads)]
   normalized_noised_aggregated_clipped_grads = [
       g / batch_size for g in noised_aggregated_clipped_grads]
-  return tree_unflatten(params_tree, normalized_noised_aggregated_clipped_grads)
+  return tree_unflatten(grads_treedef, normalized_noised_aggregated_clipped_grads)
 
 
 def shape_as_image(images, labels, dummy_dim=False):
