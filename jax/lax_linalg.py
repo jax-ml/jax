@@ -594,10 +594,10 @@ def _lu_jvp_rule(primals, tangents):
   # F. R. De Hoog, R. S. Anderssen, and M. A. Lukas
   #
   #     LU = A
-  # ==> L'U + LU' = A'
-  # ==> inv(L) . L' + U' . inv(U) = inv(L) A' inv(U)
-  # ==> L' = L . tril(inv(L) . A' . inv(U), -1)
-  #     U' = triu(inv(L) . A' . inv(U)) . U
+  # ==> ∂LU + L∂U = ∂A
+  # ==> inv(L) . ∂L + ∂U . inv(U) = inv(L) ∂A inv(U)
+  # ==> ∂L = L . tril(inv(L) . ∂A . inv(U), -1)
+  #     ∂U = triu(inv(L) . ∂A . inv(U)) . U
 
   ndims = len(a_shape)
   l_padding = [(0, 0, 0)] * ndims
@@ -632,6 +632,15 @@ def _lu_jvp_rule(primals, tangents):
   l_dot = jnp.matmul(l, jnp.tril(lau, -1))
   u_dot = jnp.matmul(jnp.triu(lau), u)
   # Correction for low-rank matrices
+  # If A has corank k, then the last k rows of U will be 0, and the last
+  # k columns of L will have undefined behavior.
+  # Let U = [U_0; 0], L = [L_0, L_1], ∂U = [∂U_0; ∂U_1], ∂L = [∂L_0, ∂L_1]
+  #     ∂LU + L∂U = ∂A
+  # ==> [∂L_0, ∂L_1][U_0; 0] + [L_0, L_1][∂U_0; ∂U_1] = ∂A
+  # ==> ∂L_0 U_0 + L_0 ∂U_0 + L_1 ∂U_1 = ∂A
+  # ∂L_0 and ∂U_0 can be solved by the normal expression for ∂L and ∂U,
+  # while ∂U_1 can be solved from ∂L_0 and ∂U_0 as 
+  #     ∂U_1 = triu(inv(L) . (∂A - ∂L . U))[:-k]
   u_fix = la - triangular_solve(
       l, jnp.matmul(l_dot, u, precision=lax.Precision.HIGHEST),
       left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
