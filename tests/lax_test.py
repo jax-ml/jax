@@ -663,6 +663,43 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_rhs_dilation={}".format(
+            jtu.format_shape_dtype_string(lhs_shape, dtype),
+            jtu.format_shape_dtype_string(rhs_shape, dtype), strides, padding, rhs_dilation),
+          "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
+          "strides": strides, "padding": padding, "rhs_dilation": rhs_dilation,
+          "rng_factory": rng_factory, 'dspec': dspec}
+      for lhs_shape, rhs_shape in [
+          ((b, i), (i, j))
+          for b, i, j in itertools.product([2,3],[2,3],[2,3])]
+      for dtype in float_dtypes
+      for strides in [()]
+      for padding in ["VALID", "SAME"]
+      for dspec in [('NC', 'IO', 'NC'),]
+      for rhs_dilation in [None, ()]
+      for rng_factory in [jtu.rand_small]))
+  def testConvTranspose0D(self, lhs_shape, rhs_shape, dtype, strides,
+                          padding, dspec, rhs_dilation, rng_factory):
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    def fun(lhs, rhs):
+      return lax.conv_transpose(lhs, rhs, strides, padding,
+                                dimension_numbers=dspec,
+                                rhs_dilation=rhs_dilation,
+                                transpose_kernel=False)
+
+    def fun_via_grad(lhs, rhs):
+      rhs_t = self._transpose_conv_kernel(lhs, rhs, dimension_numbers=dspec)
+      return self._conv_transpose_via_grad(lhs, rhs_t, strides, padding,
+                                           rhs_dilation=rhs_dilation,
+                                           dimension_numbers=dspec)
+
+    # NB: below just checks for agreement, we're not calling numpy.
+    self._CheckAgainstNumpy(fun, fun_via_grad, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_lhs_shape={}_rhs_shape={}_precision={}".format(
           jtu.format_shape_dtype_string(lhs_shape, dtype),
           jtu.format_shape_dtype_string(rhs_shape, dtype),
