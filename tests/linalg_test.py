@@ -54,6 +54,17 @@ singular_mats = [
 ]
 
 
+nonsquare_singular_mats = [
+  jnp.array([[-35,   7,  27, -17],
+             [ 11, -13,  -9,  11],
+             [ 19, -11, -15,  13]], dtype=jnp.float32),
+  jnp.array([[-35,  11,  19],
+             [  7, -13, -11],
+             [ 27,  -9, -15],
+             [-17,  11,  13]], dtype=np.float32)
+]
+
+
 def _skip_if_unsupported_type(dtype):
   dtype = np.dtype(dtype)
   if (not FLAGS.jax_enable_x64 and
@@ -1000,22 +1011,12 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     for jf, jr in zip(jfwd, jrev):
       np.testing.assert_allclose(jf, jr)
 
-  self._nonsquare_singular_mats = [
-    jnp.array([[-35,   7,  27, -17],
-               [ 11, -13,  -9,  11],
-               [ 19, -11, -15,  13]], dtype=jnp.float32),
-    jnp.array([[-35,  11,  19],
-               [  7, -13, -11],
-               [ 27,  -9, -15],
-               [-17,  11,  13]], dtype=np.float32)
-  ]
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_matidx={}".format(matidx), "matidx": matidx}
       for matidx in range(2)))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
   def testLuGradOfNonSquareSingularMatrix(self, matidx):
-    mat = self._nonsquare_singular_mats[matidx]
+    mat = nonsquare_singular_mats[matidx]
     jtu.check_grads(jsp.linalg.lu, (mat,), 1, atol=1e-1, rtol=1e-1)
     jtu.check_grads(jsp.linalg.lu, (mat,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
 
