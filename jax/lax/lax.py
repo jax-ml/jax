@@ -1487,12 +1487,14 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
     Transposed N-d convolution, with output padding following the conventions of
     keras.layers.Conv2DTranspose.
   """
-  assert len(lhs.shape) == len(rhs.shape) and len(lhs.shape) > 2
+  assert len(lhs.shape) == len(rhs.shape) and len(lhs.shape) >= 2
   ndims = len(lhs.shape)
   one = (1,) * (ndims - 2)
   # Set dimensional layout defaults if not specified.
   if dimension_numbers is None:
-    if ndims == 3:
+    if ndims == 2:
+      dimension_numbers = ('NC', 'IO', 'NC')
+    elif ndims == 3:
       dimension_numbers = ('NHC', 'HIO', 'NHC')
     elif ndims == 4:
       dimension_numbers = ('NHWC', 'HWIO', 'NHWC')
