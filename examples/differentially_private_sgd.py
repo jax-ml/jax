@@ -64,7 +64,6 @@ Example invocations:
    --learning_rate=.25 \
 """
 
-from functools import partial
 import itertools
 import time
 import warnings
