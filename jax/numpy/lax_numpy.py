@@ -1374,6 +1374,29 @@ def split(ary, indices_or_sections, axis=0):
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
+
+@_wraps(np.array_split)
+def array_split(ary, indices_or_sections, axis=0):
+  axis = core.concrete_or_error(int, axis, "in jax.numpy.array_split argument `axis`")
+  size = ary.shape[axis]
+  if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
+    indices_or_sections = [core.concrete_or_error(int, i_s, "in jax.numpy.array_split argument 1")
+                           for i_s in indices_or_sections]
+    split_indices = np.concatenate([[0], indices_or_sections, [size]])
+  else:
+    indices_or_sections = core.concrete_or_error(int, indices_or_sections,
+                                                 "in jax.numpy.array_split argument 1")
+    if indices_or_sections <= 0:
+      raise ValueError('number of sections must be larger than 0.')
+    part_size, r = _divmod(size, indices_or_sections)
+    split_indices = np.concatenate([[0], r * [part_size + 1], (indices_or_sections - r) * [part_size]])
+
+  starts, ends = [0] * ndim(ary), shape(ary)
+  _subval = lambda x, i, v: subvals(x, [(i, v)])
+  return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
+          for start, end in zip(split_indices[:-1], split_indices[1:])]
+
+
 def _split_on_axis(np_fun, axis):
   @_wraps(np_fun, update_doc=False)
   def f(ary, indices_or_sections):

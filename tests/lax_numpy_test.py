@@ -1937,15 +1937,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_{}_axis={}_{}sections".format(
           jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
        "shape": shape, "num_sections": num_sections, "axis": axis,
-       "dtype": dtype, "rng_factory": jtu.rand_default}
+       "dtype": dtype, "rng_factory": jtu.rand_default,
+       "split_fun_name": split_fun_name}
       for shape, axis, num_sections in [
           ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((12, 4), 1, 2),
           ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
-      for dtype in default_dtypes))
-  def testSplitStaticInt(self, shape, num_sections, axis, dtype, rng_factory):
+      for dtype in default_dtypes)
+      for split_fun_name in ("split", "array_split"))
+  def testSplitStaticInt(self, shape, num_sections, axis, dtype, rng_factory, split_fun_name):
     rng = rng_factory(self.rng())
-    np_fun = lambda x: np.split(x, num_sections, axis=axis)
-    jnp_fun = lambda x: jnp.split(x, num_sections, axis=axis)
+    np_fun = lambda x: getattr(np, split_fun_name)(x, num_sections, axis=axis)
+    jnp_fun = lambda x: getattr(jnp, split_fun_name)(x, num_sections, axis=axis)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
