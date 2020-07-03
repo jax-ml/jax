@@ -27,7 +27,6 @@ from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters import xla
-from jax import util
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 

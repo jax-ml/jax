@@ -254,7 +254,7 @@ lax_dynamic_update_slice = jtu.cases_from_list(
           lax.dynamic_update_slice,
           [RandArg(shape, dtype),  # type: ignore
            RandArg(update_shape, update_dtype),  # type: ignore
-           np.array(start_indices)],
+           np.array(start_indices)],  # type: ignore
           shape=shape,  # type: ignore
           start_indices=start_indices,  # type: ignore
           update_shape=update_shape)  # type: ignore
