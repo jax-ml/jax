@@ -1309,7 +1309,7 @@ class PmapTest(jtu.JaxTestCase):
       return jax.grad(inner)(meta_params, params)
 
     params = (jnp.array([2.0]), jnp.array([3.0]))
-    learner_output = jax.pmap(outer, axis_name='i')(params)  # doesn't crash
+    jax.pmap(outer, axis_name='i')(params)  # doesn't crash
 
     f = jax.pmap(outer, axis_name='i')
     jtu.check_grads(f, (params,), 2, ["fwd", "rev"], 1e-3, 1e-3)
