@@ -3827,7 +3827,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.sum(jnp.arange(3), (0, 0))
 
   def testArangeConcretizationError(self):
-    msg = "Abstract tracer.*\(in jax.numpy.arange argument `{}`\).*".format
+    msg = r"Abstract tracer.*\(in jax.numpy.arange argument `{}`\).*".format
     with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('stop')):
       jax.jit(jnp.arange)(3)
 

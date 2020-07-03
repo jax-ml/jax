@@ -150,7 +150,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testOneHotConcretizationError(self):
     # https://github.com/google/jax/issues/3654
-    msg = "Abstract tracer.*\(in jax.nn.one_hot argument `num_classes`\).*"
+    msg = r"Abstract tracer.*\(in jax.nn.one_hot argument `num_classes`\).*"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       jax.jit(nn.one_hot)(3, 5)
 
