@@ -364,6 +364,12 @@ def _notuple_psum_translation_rule(c, *args, replica_groups):
       return psum(val)
   return xops.Tuple(c, list(map(_translate, args)))
 
+def _psum_transpose_rule(cts, axis_name, axis_index_groups):
+  nonzero_out_cts, treedef = tree_util.tree_flatten(cts)
+  nonzero_in_cts = psum_p.bind(*nonzero_out_cts, axis_name=axis_name,
+                               axis_index_groups=axis_index_groups)
+  return tree_util.tree_unflatten(treedef, nonzero_in_cts)
+
 psum_p = standard_pmap_primitive('psum', multiple_results=True)
 psum_p.def_abstract_eval(
     lambda *args, **params: tuple(map(raise_to_shaped, args)))
@@ -371,8 +377,7 @@ pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
-ad.deflinear(psum_p, lambda ts, axis_name, axis_index_groups: psum_p.bind(
-    *ts, axis_name=axis_name, axis_index_groups=axis_index_groups))
+ad.deflinear(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 
 

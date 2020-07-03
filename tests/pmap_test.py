@@ -1290,6 +1290,27 @@ class PmapTest(jtu.JaxTestCase):
       self.assertIn("The jitted function foo includes a pmap",
                     str(w[-1].message))
 
+  def testPsumZeroCotangents(self):
+    # https://github.com/google/jax/issues/3651
+    def loss(params, meta_params):
+      (net, mpo) = params
+      return meta_params * mpo * net
+
+    def inner(meta_params, params):
+      grads = jax.grad(loss)(params, meta_params)
+      grads = lax.psum(grads, axis_name="i")
+      net_grads, mpo_grads = grads
+      net = params[0] + net_grads
+      mpo = params[1]                           # Does not work!
+      return mpo * net
+
+    def outer(params):
+      meta_params = jnp.array(1.0)
+      return jax.grad(inner)(meta_params, params)
+
+    params = (jnp.array([1.0]), jnp.array([1.0]))
+    learner_output = jax.pmap(outer, axis_name='i')(params)
+
 
 class VmapOfPmapTest(jtu.JaxTestCase):
 
