@@ -103,8 +103,7 @@ def _tfval_add_unit(vals: Sequence[TfValOrUnit],
 tf_impl: Dict[core.Primitive,
               Callable[..., Any]] = {}
 
-def convert(fun,
-            with_gradient=False):
+def convert(fun, with_gradient=False):
   """Transforms `fun` to be executed by TensorFlow.
 
   Args:
