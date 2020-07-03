@@ -27,6 +27,7 @@ from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters import xla
+from jax import util
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -286,18 +287,41 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_slice)
   def test_slice(self, harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           with_function=True)
+    # JAX.slice rejects negative indices; check, and skip jax2tf
+    if any(si < 0 or si >= sh or li < 0 or li > sh
+           for sh, si, li in zip(harness.params["shape"],
+                                harness.params["start_indices"],
+                                harness.params["limit_indices"])):
+      with self.assertRaisesRegex(TypeError, ""):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    else:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             with_function=True)
 
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
   def test_dynamic_slice(self, harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           with_function=True)
+    # JAX.dynamic_slice rejects slice sizes too big; check, and skip jax2tf
+    if any(li - si < 0 or li - si >= sh
+           for sh, si, li in zip(harness.params["shape"],
+                                harness.params["start_indices"],
+                                harness.params["limit_indices"])):
+      with self.assertRaisesRegex(TypeError, ""):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    else:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             with_function=True)
 
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_update_slice)
   def test_dynamic_update_slice(self, harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           with_function=True)
+    # JAX.dynamic_update_slice rejects update slices too big; check, and skip jax2tf
+    if any(ush > sh
+           for sh, ush in zip(harness.params["shape"],
+                             harness.params["update_shape"])):
+      with self.assertRaisesRegex(TypeError, ""):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    else:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             with_function=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
