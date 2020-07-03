@@ -831,17 +831,15 @@ def concretization_function_error(fun, context=""):
   return error
 
 
-def concrete_or_error(typ: Type, val: Any, context=""):
-  """Like typ(val), but gives the context in the error message.
-  Use with typ either `int`, or `bool`.
-  """
+def concrete_or_error(force: Any, val: Any, context=""):
+  """Like force(val), but gives the context in the error message."""
   if isinstance(val, Tracer):
     if isinstance(val.aval, ConcreteArray):
-      return typ(val.aval.val)
+      return force(val.aval.val)
     else:
       raise_concretization_error(val, context)
   else:
-    return typ(val)
+    return force(val)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']

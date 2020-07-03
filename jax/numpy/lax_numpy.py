@@ -2282,10 +2282,15 @@ def identity(n, dtype=None):
 @_wraps(np.arange)
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
+  require = partial(core.concrete_or_error, np.asarray)
   if stop is None and step is None:
+    start = require(start, "in jax.numpy.arange argument `stop`")
     dtype = dtype or _dtype(start)
     return lax.iota(dtype, np.ceil(start)) # avoids materializing
   else:
+    start = require(start, "in jax.numpy.arange argument `start`")
+    stop = require(stop, "in jax.numpy.arange argument `stop`")
+    step = require(step, "in jax.numpy.arange argument `step`")
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 
