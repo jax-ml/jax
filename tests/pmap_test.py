@@ -1301,15 +1301,18 @@ class PmapTest(jtu.JaxTestCase):
       grads = lax.psum(grads, axis_name="i")
       net_grads, mpo_grads = grads
       net = params[0] + net_grads
-      mpo = params[1]                           # Does not work!
+      mpo = params[1]
       return mpo * net
 
     def outer(params):
-      meta_params = jnp.array(1.0)
+      meta_params = jnp.array(4.0)
       return jax.grad(inner)(meta_params, params)
 
-    params = (jnp.array([1.0]), jnp.array([1.0]))
-    learner_output = jax.pmap(outer, axis_name='i')(params)
+    params = (jnp.array([2.0]), jnp.array([3.0]))
+    learner_output = jax.pmap(outer, axis_name='i')(params)  # doesn't crash
+
+    f = jax.pmap(outer, axis_name='i')
+    jtu.check_grads(f, (params,), 2, ["fwd", "rev"], 1e-3, 1e-3)
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):
