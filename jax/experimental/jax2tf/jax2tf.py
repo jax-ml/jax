@@ -705,7 +705,11 @@ tf_impl[lax.slice_p] = _slice
 
 
 def _dynamic_slice(operand, *start_indices, slice_sizes=None):
-  return tf.slice(operand, tf.stack(start_indices), slice_sizes)
+  # See out-of-bounds index clamping comment for tf.gather
+  out, = tf.xla.experimental.compile(
+    lambda o, s: tf.slice(o, s, slice_sizes),
+    [operand, tf.stack(start_indices)])
+  return out
 tf_impl[lax.dynamic_slice_p] = _dynamic_slice
 
 

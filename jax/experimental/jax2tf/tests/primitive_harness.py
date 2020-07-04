@@ -213,6 +213,7 @@ lax_slice = jtu.cases_from_list(
            StaticArg(start_indices),  # type: ignore
            StaticArg(limit_indices),  # type: ignore
            StaticArg(strides)],  # type: ignore
+          shape=shape,  # type: ignore
           start_indices=start_indices,  # type: ignore
           limit_indices=limit_indices)  # type: ignore
   for shape, start_indices, limit_indices, strides in [
@@ -225,17 +226,22 @@ lax_slice = jtu.cases_from_list(
     [(7, 5, 3), (4, 0, 1), (7, 1, 3), None],
     [(5, 3), (1, 1), (2, 1), (1, 1)],
     [(5, 3), (1, 1), (5, 3), (2, 1)],
+    [(5, 3), (-1, 0), (1, 1), None],  # out-of-bounds
+    [(5, 3), (-100, 0), (-99, 1), None],  # out-of-bounds
+    [(5, 3), (10, 0), (11, 1), None],  # out-of-bounds
+    [(5, 3), (0, 0), (100, 100), None],  # out-of-bounds
   ]
   for dtype in [np.float32]
 )
 
-# Like lax_slice, but (a) make the start_indices dynamic arg, and no strides.
+# Use lax_slice, but (a) make the start_indices dynamic arg, and (b) no strides.
 lax_dynamic_slice = [
   Harness(harness.name,
           lax.dynamic_slice,
           [harness.arg_descriptors[0],
            np.array(list(start_indices)),
-           StaticArg(tuple(map(operator.sub, limit_indices, start_indices)))])
+           StaticArg(tuple(map(operator.sub, limit_indices, start_indices)))],
+          **harness.params)
   for harness in lax_slice
   for start_indices in [harness.params["start_indices"]]
   for limit_indices in [harness.params["limit_indices"]]
@@ -248,11 +254,18 @@ lax_dynamic_update_slice = jtu.cases_from_list(
           lax.dynamic_update_slice,
           [RandArg(shape, dtype),  # type: ignore
            RandArg(update_shape, update_dtype),  # type: ignore
-           np.array(start_indices)])  # type: ignore
+           np.array(start_indices)],  # type: ignore
+          shape=shape,  # type: ignore
+          start_indices=start_indices,  # type: ignore
+          update_shape=update_shape)  # type: ignore
   for shape, start_indices, update_shape in [
     [(3,), (1,), (1,)],
     [(5, 3), (1, 1), (3, 1)],
     [(7, 5, 3), (4, 1, 0), (2, 0, 1)],
+    [(3,), (-1,), (1,)],  # out-of-bounds
+    [(3,), (10,), (1,)],  # out-of-bounds
+    [(3,), (10,), (4,)],  # out-of-bounds shape too big
+    [(3,), (10,), (2,)],  # out-of-bounds
   ]
   for dtype, update_dtype in [
     (np.float32, np.float32),
