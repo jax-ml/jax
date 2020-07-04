@@ -3826,6 +3826,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r"duplicate value in 'axis': \(0, 0\)"):
       jnp.sum(jnp.arange(3), (0, 0))
 
+  def testArangeConcretizationError(self):
+    msg = r"Abstract tracer.*\(in jax.numpy.arange argument `{}`\).*".format
+    with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('stop')):
+      jax.jit(jnp.arange)(3)
+
+    with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('start')):
+      jax.jit(lambda start: jnp.arange(start, 3))(0)
+
+    with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('stop')):
+      jax.jit(lambda stop: jnp.arange(0, stop))(3)
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
