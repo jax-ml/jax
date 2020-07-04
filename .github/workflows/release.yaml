@@ -12,7 +12,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        python-version: [3.7, 3.8]
+        python-version: [3.7]
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python ${{ matrix.python-version }}
@@ -44,6 +44,7 @@ jobs:
         run: |
           pip install build/dist/*.whl
           pip install -e .
+          # Disabled the tests, as an experiment
           echo JAX_SKIP_SLOW_TESTS=1 pytest -n auto tests
       - uses: actions/upload-artifact@v2
         with:
