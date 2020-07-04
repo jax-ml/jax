@@ -80,6 +80,20 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_tf(mk_sharded(jnp.ones)).numpy(),
                         np.ones([n]))
 
+  @jtu.skip_on_devices("gpu")
+  def test_bfloat16_passed_by_tf(self):
+    f_jax = lambda a, b: a + b
+    f_tf = tf.function(jax2tf.convert(f_jax),
+                       input_signature=[tf.TensorSpec([512, 512], tf.bfloat16),
+                                        tf.TensorSpec([512, 512], tf.bfloat16)])
+    self.assertIsNotNone(f_tf.get_concrete_function())
+
+  @jtu.skip_on_devices("gpu")
+  def test_bfloat16_returned_by_jax(self):
+    f_jax = lambda a, b: (a + b).astype(jnp.bfloat16)
+    f_tf = jax2tf.convert(f_jax)
+    self.assertEqual(f_tf(1., 2.).dtype, tf.bfloat16)
+
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_dtype={dtype.__name__}_function={with_function}",
          with_function=with_function,

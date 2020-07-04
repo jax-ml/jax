@@ -215,7 +215,7 @@ def _interpret_jaxpr(jaxpr: core.TypedJaxpr, *args: TfValOrUnit) -> Sequence[TfV
 
 
 def abstractify(t: Union[tf.Tensor, tf.Variable]):
-  return abstract_arrays.ShapedArray(tuple(t.shape), t.dtype.as_numpy_dtype)
+  return abstract_arrays.ShapedArray(tuple(t.shape), to_jax_dtype(t.dtype))
 
 # TODO(b/26854495): pylint doesn't understand slots and inheritance.
 # pylint: disable=assigning-non-slot
@@ -232,7 +232,7 @@ class TensorFlowTracer(core.Tracer):
       self.val = val
     elif isinstance(val, (tf.Tensor, tf.Variable)):
       aval: core.ShapedArray = abstractify(val)
-      if np.dtype(aval.dtype) != val.dtype.as_numpy_dtype:  # type: ignore
+      if np.dtype(aval.dtype) != to_jax_dtype(val.dtype):  # type: ignore
         # This is expected when JAX 64-bit is not enabled
         self.val = tf.cast(val, dtype=aval.dtype)
       else:
@@ -319,11 +319,19 @@ class TensorFlowTrace(core.Trace):
       msg = "TensorFlow interpretation rule for '{}' not implemented"
       raise NotImplementedError(msg.format(p))
 
+def to_tf_dtype(jax_dtype):
+  if jax_dtype == jnp.bfloat16:
+    return tf.bfloat16
+  else:
+    return tf.dtypes.as_dtype(jax_dtype)
+
+def to_jax_dtype(tf_dtype):
+  return jnp.bfloat16 if tf_dtype == tf.bfloat16 else tf_dtype.as_numpy_dtype
 
 def promote_types(*values):
   """Returns values casted to a common type using jnp.promote_types."""
-  dtype = tf.dtypes.as_dtype(functools.reduce(
-      jnp.promote_types, (v.dtype.as_numpy_dtype for v in values)))
+  dtype = to_tf_dtype(functools.reduce(
+      jnp.promote_types, (to_jax_dtype(v.dtype) for v in values)))
   return tuple(tf.cast(v, dtype) for v in values)
 
 
@@ -525,7 +533,7 @@ tf_impl[lax.lt_p] = wrap_binary_op(tf.math.less)
 
 def _convert_element_type(operand, new_dtype, old_dtype):
   del old_dtype
-  return tf.dtypes.cast(operand, new_dtype)
+  return tf.dtypes.cast(operand, to_tf_dtype(new_dtype))
 tf_impl[lax.convert_element_type_p] = _convert_element_type
 
 
@@ -739,7 +747,7 @@ tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 def _argminmax(fn, operand, axes, index_dtype):
   axis, = axes
   # TODO(phawkins): handle axes larger than 2^31.
-  return fn(operand, axis=axis, output_type=tf.dtypes.as_dtype(index_dtype))
+  return fn(operand, axis=axis, output_type=to_tf_dtype(index_dtype))
 
 tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
 tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
