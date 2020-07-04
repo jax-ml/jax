@@ -3059,6 +3059,30 @@ class CustomJVPTest(jtu.JaxTestCase):
         ),
         lambda: api.jvp(f, (2.,), (1.,)))
 
+  def test_jvp_method(self):
+    class C:
+
+      def __init__(self, z):
+        self.z = z
+
+      @partial(api.custom_jvp, nondiff_argnums=(0,))
+      def f(self, x):
+        return np.square(x) * self.z
+
+      def f_prime(self, x):
+        return x * self.z + 0.1
+
+      @f.defjvp
+      def f_jvp(self, primals, tangents):
+        x, = primals
+        x_dot, = tangents
+        y = self.f(x)
+        y_dot = self.f_prime(x) * x_dot
+        return y, y_dot
+
+    c = C(5.0)
+    assert api.value_and_grad(c.f)(3.0) == (45.0, 15.1)
+
   def test_primal_tangent_aval_disagreement_error_message(self):
     @api.custom_jvp
     def f(x):
@@ -3818,6 +3842,31 @@ class CustomVJPTest(jtu.JaxTestCase):
                 tree_util.tree_structure((1,)))
         ),
         lambda: api.grad(f)(2.))
+
+  def test_vjp_method(self):
+    class D:
+
+      def __init__(self, f):
+        self.f = f
+
+      @partial(api.custom_vjp, nondiff_argnums=(0,))
+      def app(self, x):
+          return self.f(x)
+
+      def app_fwd(self, x):
+          return self.app(x), np.cos(x)
+
+      def app_rev(self, cos_x, g):
+          return (cos_x * g,)
+
+      app.defvjp(app_fwd, app_rev)
+
+    d = D(lambda x: 2 * x)
+    self.assertAllClose(d.app(1), 2, check_dtypes=False)
+
+    ans = api.value_and_grad(lambda x: d.app(x))(1.)
+    expected = (2., np.cos(1.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_issue2511(self):
     arr = jnp.ones((5, 2, 2))
