@@ -174,12 +174,12 @@ pytype_aval_mappings.update(
 # We can optionally set a Jaxpr rewriter that can be applied just before
 # compilation. This mechanism is used for compiling id_tap, we can
 # remove it once we bring the id_tap implementation into the core.
-outfeed_rewriter: Optional[Callable[[core.Jaxpr], Tuple[core.Jaxpr, bool]]] = None
-def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, bool]:
+outfeed_rewriter: Optional[Callable[[core.Jaxpr], core.Jaxpr]] = None
+def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> core.Jaxpr:
   if outfeed_rewriter is not None:
     return outfeed_rewriter(jaxpr)
   else:
-    return jaxpr, False
+    return jaxpr
 
 outfeed_primitives: Set[core.Primitive] = set()
 def jaxpr_uses_outfeed(jaxpr: core.Jaxpr) -> bool:
@@ -206,13 +206,6 @@ def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
     elif _param_uses_outfeed(param):
       return True
   return False
-
-# TODO(necula): remove this when we start the outfeed receiver automatically.
-can_execute_outfeed_computations: bool = False  # Set by outfeed_receiver
-def check_before_outfeed_execution(uses_outfeed: bool):
-  if uses_outfeed and not can_execute_outfeed_computations:
-    raise ValueError("Attempting to execute compiled code using outfeed, "
-                     "but outfeed_receiver is not started.")
 
 ### op-by-op execution
 
@@ -607,7 +600,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
       fun, pvals, instantiate=False, stage_out=True, bottom=True)
   map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
-  jaxpr, uses_outfeed = apply_outfeed_rewriter(jaxpr)
+  jaxpr = apply_outfeed_rewriter(jaxpr)
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
@@ -667,9 +660,9 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   options.parameter_is_tupled_arguments = tuple_args
   compiled = backend.compile(built, compile_options=options)
   if nreps == 1:
-    return partial(_execute_compiled, compiled, uses_outfeed, result_handlers)
+    return partial(_execute_compiled, compiled, result_handlers)
   else:
-    return partial(_execute_replicated, compiled, uses_outfeed, result_handlers)
+    return partial(_execute_replicated, compiled, result_handlers)
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   """Configures input/output "must" aliasing based on `donated_args`."""
@@ -767,18 +760,14 @@ def _pval_to_result_handler(device, pval):
   else:
     return aval_to_result_handler(device, pv)
 
-def _execute_compiled(compiled: XlaExecutable, uses_outfeed: bool,
-                      handlers, *args):
-  check_before_outfeed_execution(uses_outfeed)
+def _execute_compiled(compiled: XlaExecutable, handlers, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   out_bufs = compiled.execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled: XlaExecutable, uses_outfeed: bool,
-                        handlers, *args):
-  check_before_outfeed_execution(uses_outfeed)
+def _execute_replicated(compiled: XlaExecutable, handlers, *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]

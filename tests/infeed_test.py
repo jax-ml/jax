@@ -19,6 +19,7 @@ from absl.testing import absltest
 import jax
 from jax import lax, numpy as np
 from jax.config import config
+from jax.experimental import host_callback as hcb
 from jax.lib import xla_client
 import jax.test_util as jtu
 import numpy as onp
@@ -47,6 +48,7 @@ class InfeedTest(jtu.JaxTestCase):
     self.assertAllClose(f(x), x + y + z)
 
   def testInfeedThenOutfeed(self):
+    hcb.stop_outfeed_receiver()
     @jax.jit
     def f(x):
       token = lax.create_token(x)
@@ -67,6 +69,7 @@ class InfeedTest(jtu.JaxTestCase):
     self.assertAllClose(out, y + onp.float32(1))
 
   def testInfeedThenOutfeedInALoop(self):
+    hcb.stop_outfeed_receiver()
     def doubler(_, token):
       y, token = lax.infeed(
           token, shape=jax.ShapedArray((3, 4), np.float32))

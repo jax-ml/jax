@@ -709,7 +709,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
       dynamic_fun, [pval] + pvals, instantiate=False, stage_out=True, bottom=True)
   jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
-  jaxpr, uses_outfeed = xla.apply_outfeed_rewriter(jaxpr)
+  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
 
   out_pvs, out_consts = unzip2(out_pvals)
 
@@ -862,7 +862,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
                                           num_partitions, out_parts,
                                           out_pvals, compiled.local_devices(),
                                           backend)
-  return partial(execute_replicated, compiled, uses_outfeed, backend, handle_args,
+  return partial(execute_replicated, compiled, backend, handle_args,
                  handle_outs)
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
@@ -1105,9 +1105,7 @@ def partitioned_sharding_spec(num_partitions: int,
         replication_factors=[])
 
 
-def execute_replicated(compiled,
-                       uses_outfeed, backend, in_handler, out_handler, *args):
-  xla.check_before_outfeed_execution(uses_outfeed)
+def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.execute_on_local_devices(list(input_bufs))
   return out_handler(out_bufs)

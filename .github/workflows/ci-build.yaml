@@ -101,5 +101,5 @@ jobs:
         pip install -r docs/requirements.txt
     - name: Test documentation
       run: |
-        pytest docs
-        pytest --doctest-modules jax/api.py
+        pytest -n 1 docs
+        pytest -n 1 --doctest-modules jax/api.py
