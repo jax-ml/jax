@@ -69,6 +69,39 @@ class Special:
   def __eq__(self, other):
     return type(self) is type(other) and (self.x, self.y) == (other.x, other.y)
 
+@tree_util.register_pytree_node_class
+class FlatCache:
+  def __init__(self, structured, *, leaves=None, treedef=None):
+    if treedef is None:
+      leaves, treedef = tree_util.tree_flatten(structured)
+    self._structured = structured
+    self.treedef = treedef
+    self.leaves = leaves
+
+  def __hash__(self):
+    return hash(self.structured)
+
+  def __eq__(self, other):
+    return self.structured == other.structured
+
+  def __repr__(self):
+    return f"FlatCache({self.structured!r})"
+
+  @property
+  def structured(self):
+    if self._structured is None:
+      self._structured = tree_util.tree_unflatten(self.treedef, self.leaves)
+    return self._structured
+
+  def tree_flatten(self):
+    return self.leaves, self.treedef
+
+  @classmethod
+  def tree_unflatten(cls, meta, data):
+    if not tree_util.all_leaves(data):
+      data, meta = tree_util.tree_flatten(tree_util.tree_unflatten(meta, data))
+    return FlatCache(None, leaves=data, treedef=meta)
+
 TREES = (
     (None,),
     ((),),
@@ -84,6 +117,9 @@ TREES = (
     (collections.defaultdict(dict,
                              [("foo", 34), ("baz", 101), ("something", -42)]),),
     (ANamedTupleSubclass(foo="hello", bar=3.5),),
+    (FlatCache(None),),
+    (FlatCache(1),),
+    (FlatCache({"a": [1, 2]}),),
 )
 
 LEAVES = (
@@ -165,6 +201,52 @@ class TreeTest(jtu.JaxTestCase):
   @parameterized.parameters(*LEAVES)
   def testAllLeavesWithLeaves(self, leaf):
     self.assertTrue(tree_util.all_leaves([leaf]))
+
+  @parameterized.parameters(*TREES)
+  def testCompose(self, tree):
+    treedef = tree_util.tree_structure(tree)
+    inner_treedef = tree_util.tree_structure(["*", "*", "*"])
+    composed_treedef = treedef.compose(inner_treedef)
+    expected_leaves = treedef.num_leaves * inner_treedef.num_leaves
+    self.assertEqual(composed_treedef.num_leaves, expected_leaves)
+    expected_nodes = ((treedef.num_nodes - treedef.num_leaves) +
+                      (inner_treedef.num_nodes * treedef.num_leaves))
+    self.assertEqual(composed_treedef.num_nodes, expected_nodes)
+    leaves = [1] * expected_leaves
+    composed = tree_util.tree_unflatten(composed_treedef, leaves)
+    self.assertEqual(leaves, tree_util.tree_leaves(composed))
+
+  @parameterized.parameters(*TREES)
+  def testTranspose(self, tree):
+    outer_treedef = tree_util.tree_structure(tree)
+    if not outer_treedef.num_leaves:
+      self.skipTest("Skipping empty tree")
+    inner_treedef = tree_util.tree_structure([1, 1, 1])
+    nested = tree_util.tree_map(lambda x: [x, x, x], tree)
+    actual = tree_util.tree_transpose(outer_treedef, inner_treedef, nested)
+    self.assertEqual(actual, [tree, tree, tree])
+
+  def testTransposeMismatchOuter(self):
+    tree = {"a": [1, 2], "b": [3, 4]}
+    outer_treedef = tree_util.tree_structure({"a": 1, "b": 2, "c": 3})
+    inner_treedef = tree_util.tree_structure([1, 2])
+    with self.assertRaisesRegex(TypeError, "Mismatch"):
+      tree_util.tree_transpose(outer_treedef, inner_treedef, tree)
+
+  def testTransposeMismatchInner(self):
+    tree = {"a": [1, 2], "b": [3, 4]}
+    outer_treedef = tree_util.tree_structure({"a": 1, "b": 2})
+    inner_treedef = tree_util.tree_structure([1, 2, 3])
+    with self.assertRaisesRegex(TypeError, "Mismatch"):
+      tree_util.tree_transpose(outer_treedef, inner_treedef, tree)
+
+  def testTransposeWithCustomObject(self):
+    outer_treedef = tree_util.tree_structure(FlatCache({"a": 1, "b": 2}))
+    inner_treedef = tree_util.tree_structure([1, 2])
+    expected = [FlatCache({"a": 3, "b": 5}), FlatCache({"a": 4, "b": 6})]
+    actual = tree_util.tree_transpose(outer_treedef, inner_treedef,
+                                      FlatCache({"a": [3, 4], "b": [5, 6]}))
+    self.assertEqual(expected, actual)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
