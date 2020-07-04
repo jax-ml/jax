@@ -82,6 +82,7 @@ jobs:
         fi
         pytest -n auto tests examples
 
+
   documentation:
     runs-on: ubuntu-latest
     strategy:
