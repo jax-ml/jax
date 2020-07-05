@@ -31,7 +31,7 @@ The primary purpose of this module is to enable the interoperability between
 user defined data structures and JAX transformations (e.g. `jit`). This is not
 meant to be a general purpose tree-like data structure handling library.
 
-See the `JAX pytrees notebook <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html>`_
+See the `JAX pytrees note <pytrees.html>`_
 for examples.
 """
 
@@ -112,7 +112,7 @@ def all_leaves(iterable):
 def register_pytree_node(nodetype, flatten_func, unflatten_func):
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See `example usage <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html#Pytrees-are-extensible>`_.
+  See `example usage <pytrees.html>`_.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node.
