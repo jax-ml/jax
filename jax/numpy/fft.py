@@ -123,6 +123,20 @@ def irfft(a, n=None, axis=-1, norm=None):
   return _fft_core_1d('irfft', xla_client.FftType.IRFFT, a, s=n, axis=axis,
                       norm=norm)
 
+@_wraps(np.fft.hfft)
+def hfft(a, n=None, axis=-1, norm=None):
+  conj_a = lax.conj(a)
+  nn = (a.shape[axis] - 1) * 2 if n is None else n
+  return _fft_core_1d('irfft', xla_client.FftType.IRFFT, conj_a, s=n, axis=axis,
+                      norm=norm) * nn
+
+@_wraps(np.fft.ihfft)
+def ihfft(a, n=None, axis=-1, norm=None):
+  nn = a.shape[axis] if n is None else n
+  output = _fft_core_1d('rfft', xla_client.FftType.RFFT, a, s=n, axis=axis,
+                      norm=norm)
+  return lax.conj(output) * (1 / nn)
+
 
 def _fft_core_2d(func_name, fft_type, a, s, axes, norm):
   full_name = "jax.numpy.fft." + func_name
