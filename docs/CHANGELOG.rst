@@ -8,6 +8,7 @@ Change Log
 .. PLEASE REMEMBER TO CHANGE THE '..master' WITH AN ACTUAL TAG in GITHUB LINK.
 
 These are the release notes for JAX.
+
 jaxlib 0.1.51 (July 2, 2020)
 ------------------------------
 
