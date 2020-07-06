@@ -68,15 +68,17 @@ def sigmoid(x):
   """
   return expit(x)
 
-def swish(x):
-  r"""Swish activation function.
+def silu(x):
+  r"""SiLU activation function.
 
   Computes the element-wise function:
 
   .. math::
-    \mathrm{swish}(x) = x \cdot \mathrm{sigmoid}(x) = \frac{x}{1 + e^{-x}}
+    \mathrm{silu}(x) = x \cdot \mathrm{sigmoid}(x) = \frac{x}{1 + e^{-x}}
   """
   return x * sigmoid(x)
+
+swish = silu
 
 def log_sigmoid(x):
   r"""Log-sigmoid activation function.
@@ -292,12 +294,14 @@ def hard_sigmoid(x):
   """
   return relu6(x + 3.) / 6.
 
-def hard_swish(x):
-  r"""Hard Swish activation function
+def hard_silu(x):
+  r"""Hard SiLU activation function
 
   Computes the element-wise function
 
   .. math::
-    \mathrm{hard\_swish}(x) = x \cdot \mathrm{hard\_sigmoid}(x)
+    \mathrm{hard\_silu}(x) = x \cdot \mathrm{hard\_sigmoid}(x)
   """
   return x * hard_sigmoid(x)
+
+hard_swish = hard_silu
