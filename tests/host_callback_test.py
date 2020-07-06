@@ -41,15 +41,6 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-def skip_if_jit_not_enabled():
-  if os.getenv("JAX_ENABLE_JIT_PRINT", "false") == "false":
-    raise SkipTest("print jit not enabled yet; use JAX_ENABLE_JIT_PRINT env.")
-
-
-def supported_dtypes():
-  return sorted(jtu.supported_dtypes(), key=lambda x: np.dtype(x).name)
-
-
 class _TestingOutputStream(object):
   """Use as `output_stream` for tests."""
 
@@ -520,7 +511,7 @@ where: 10
               dtype=dtype,
               nr_args=nr_args) for nr_args in [1, 2]
           for shape in [(), (2,), (2, 3), (2, 3, 4)]
-          for dtype in supported_dtypes()))
+          for dtype in jtu.dtypes.all))
   def test_jit_types(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
     if dtype in (jnp.complex64, jnp.complex128, jnp.bool_):
       raise SkipTest(f"id_print jit not implemented for {dtype}.")

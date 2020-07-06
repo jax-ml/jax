@@ -36,20 +36,6 @@ config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
-                                 onp.float64])
-complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
-complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = supported_dtypes([onp.int32, onp.int64])
-uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
-bool_dtypes = [onp.bool_]
-default_dtypes = float_dtypes + int_dtypes
-all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
-
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 
@@ -60,11 +46,11 @@ def grad_test_spec(op, nargs, order, rng_factory, dtypes, name=None, tol=None):
   return GradTestSpec(
       op, nargs, order, rng_factory, dtypes, name or op.__name__, tol)
 
-grad_float_dtypes = list(jtu.supported_dtypes().intersection(
-  {onp.float32, onp.float64}))
-grad_complex_dtypes = list(jtu.supported_dtypes().intersection(
-  {onp.complex64, onp.complex128}))
-grad_inexact_dtypes = grad_float_dtypes + grad_complex_dtypes
+float_dtypes = jtu.dtypes.all_floating
+inexact_dtypes = jtu.dtypes.all_inexact
+grad_float_dtypes = jtu.dtypes.floating
+grad_complex_dtypes = jtu.dtypes.complex
+grad_inexact_dtypes = jtu.dtypes.inexact
 
 LAX_GRAD_OPS = [
     grad_test_spec(lax.neg, nargs=1, order=2, rng_factory=jtu.rand_default,
@@ -225,8 +211,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       {"testcase_name": "_from_dtype={}_to_dtype={}".format(
           jtu.dtype_str(from_dtype), jtu.dtype_str(to_dtype)),
        "from_dtype": from_dtype, "to_dtype": to_dtype, "rng_factory": rng_factory}
-      for from_dtype, to_dtype in itertools.product(
-          float_dtypes + complex_dtypes, repeat=2)
+      for from_dtype, to_dtype in itertools.product(inexact_dtypes, repeat=2)
       for rng_factory in [jtu.rand_default]))
   def testConvertElementTypeGrad(self, from_dtype, to_dtype, rng_factory):
     rng = rng_factory(self.rng())
@@ -653,7 +638,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "op": op, "init_val": init_val, "shape": shape, "dtype": dtype,
        "dims": dims, "rng_factory": rng_factory}
       for init_val, op, dtypes, rng_factory in [
-          (0, lax.add, inexact_dtypes, jtu.rand_default),
+          (0, lax.add, float_dtypes + jtu.dtypes.complex, jtu.rand_default),
           (-onp.inf, lax.max, grad_inexact_dtypes, jtu.rand_unique_int),
           (onp.inf, lax.min, grad_inexact_dtypes, jtu.rand_unique_int),
           (1, lax.mul, grad_float_dtypes, partial(jtu.rand_default, scale=1)),

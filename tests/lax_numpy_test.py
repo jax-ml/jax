@@ -56,16 +56,11 @@ nonzerodim_shapes = nonempty_nonscalar_array_shapes + empty_array_shapes
 nonempty_shapes = scalar_shapes + nonempty_array_shapes
 all_shapes =  scalar_shapes + array_shapes
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-float_dtypes = supported_dtypes([jnp.bfloat16, np.float16, np.float32,
-                                 np.float64])
-complex_dtypes = [np.complex64, np.complex128]
-int_dtypes = [np.int32, np.int64]
-uint_dtypes = [np.uint32, np.uint64]
-unsigned_dtypes = [np.uint32, np.uint64]
-bool_dtypes = [np.bool_]
+float_dtypes = jtu.dtypes.all_floating
+complex_dtypes = jtu.dtypes.complex
+int_dtypes = jtu.dtypes.integer
+unsigned_dtypes = jtu.dtypes.unsigned
+bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 inexact_dtypes = float_dtypes + complex_dtypes
 number_dtypes = float_dtypes + complex_dtypes + int_dtypes
@@ -195,7 +190,7 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("fix", 1, float_dtypes, all_shapes, jtu.rand_default, []),
     op_record("floor_divide", 2, number_dtypes, all_shapes,
               jtu.rand_nonzero, ["rev"]),
-    op_record("floor_divide", 2, uint_dtypes, all_shapes,
+    op_record("floor_divide", 2, unsigned_dtypes, all_shapes,
               jtu.rand_nonzero, ["rev"]),
     op_record("fmin", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("fmax", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
@@ -242,9 +237,9 @@ JAX_COMPOUND_OP_RECORDS = [
     op_record("remainder", 2, default_dtypes, all_shapes, jtu.rand_nonzero, [],
               tolerance={np.float16: 1e-2}),
     op_record("mod", 2, default_dtypes, all_shapes, jtu.rand_nonzero, []),
-    op_record("rint", 1, number_dtypes + uint_dtypes, all_shapes,
+    op_record("rint", 1, number_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, []),
-    op_record("sign", 1, supported_dtypes(number_dtypes + uint_dtypes),
+    op_record("sign", 1, number_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, []),
     op_record('copysign', 2, default_dtypes, all_shapes, jtu.rand_some_inf_and_nan, [],
               check_dtypes=False),
@@ -603,8 +598,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    tol_spec = {np.float16: 1e-2, np.float32: 1e-3, np.complex64: 1e-3,
-                np.float64: 1e-5, np.complex128: 1e-5}
+    tol_spec = {np.float16: 1e-2, np.int32: 1E-3, np.float32: 1e-3,
+                np.complex64: 1e-3, np.float64: 1e-5, np.complex128: 1e-5}
     tol = jtu.tolerance(dtype, tol_spec)
     tol = max(tol, jtu.tolerance(out_dtype, tol_spec)) if out_dtype else tol
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
@@ -3547,8 +3542,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for axis in range(-ndim, ndim):
       jnp_op = lambda start, stop: jnp.logspace(
         start, stop, num, endpoint=endpoint, base=base, dtype=dtype, axis=axis)
-      np_op = lambda start, stop: np.logspace(
-        start, stop, num, endpoint=endpoint, base=base, dtype=dtype, axis=axis)
+      @jtu.ignore_warning(category=RuntimeWarning,
+                          message="overflow encountered in power")
+      def np_op(start, stop):
+        return np.logspace(start, stop, num, endpoint=endpoint,
+                           base=base, dtype=dtype, axis=axis)
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
                               check_dtypes=False, tol=tol)
       if dtype in (inexact_dtypes + [None,]):

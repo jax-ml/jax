@@ -23,7 +23,6 @@ from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence
 from absl import testing
 from jax import config
 from jax import test_util as jtu
-from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 
@@ -34,19 +33,14 @@ FLAGS = config.FLAGS
 # TODO: these are copied from tests/lax_test.py (make this source of truth)
 # Do not run int64 tests unless FLAGS.jax_enable_x64, otherwise we get a
 # mix of int32 and int64 operations.
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if
-          t in jtu.supported_dtypes() and
-          (FLAGS.jax_enable_x64 or np.dtype(t).itemsize != 8)]
 
-float_dtypes = supported_dtypes([dtypes.bfloat16, np.float16, np.float32,
-                                 np.float64])
-complex_elem_dtypes = supported_dtypes([np.float32, np.float64])
-complex_dtypes = supported_dtypes([np.complex64, np.complex128])
+float_dtypes = jtu.dtypes.all_floating
+complex_elem_dtypes = jtu.dtypes.floating
+complex_dtypes = jtu.dtypes.complex
 inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = supported_dtypes([np.int8, np.int16, np.int32, np.int64])
-uint_dtypes = supported_dtypes([np.uint8, np.uint16, np.uint32, np.uint64])
-bool_dtypes = [np.bool_]
+int_dtypes = jtu.dtypes.all_integer
+uint_dtypes = jtu.dtypes.all_unsigned
+bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
 
@@ -292,7 +286,7 @@ lax_squeeze = jtu.cases_from_list(
 
 shift_inputs = [
   (arg, dtype, shift_amount)
-  for dtype in supported_dtypes(uint_dtypes + int_dtypes)
+  for dtype in uint_dtypes + int_dtypes
   for arg in [
     np.array([-250, -1, 0, 1, 250], dtype=dtype),
   ]
