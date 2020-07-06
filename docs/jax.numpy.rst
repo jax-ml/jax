@@ -312,6 +312,8 @@ jax.numpy.fft
   irfft2
   rfftn
   irfftn
+  hfft
+  ihfft
   fftfreq
   rfftfreq
   fftshift
