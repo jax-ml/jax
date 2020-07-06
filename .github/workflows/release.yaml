@@ -45,7 +45,7 @@ jobs:
           pip install build/dist/*.whl
           pip install -e .
           # Disabled the tests, as an experiment
-          echo JAX_SKIP_SLOW_TESTS=1 pytest -n auto tests
+          JAX_SKIP_SLOW_TESTS=1 pytest -n auto tests
       - uses: actions/upload-artifact@v2
         with:
           name: jaxlib
