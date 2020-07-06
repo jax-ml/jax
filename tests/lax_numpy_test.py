@@ -1319,24 +1319,58 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+
+  def _compute_total_repeat_length(self, shape, axis, repeats):
+    # Calculate expected size of the repeated axis.
+    if jnp.ndim(shape) == 0 :
+      return repeats
+    shape = jnp.array(shape)
+    if shape.size == 0:
+      return repeats
+    if axis is None:
+      axis = 0
+      if jnp.ndim(shape) != 0:
+        shape = jnp.array([jnp.product(shape)])
+    # Broadcasting the repeats if a scalar value.
+    expected_repeats = jnp.broadcast_to(jnp.ravel(repeats),
+                                        [shape[axis]])
+    # Total size will be num_repeats X axis length.
+    total_repeat_length = jnp.sum(expected_repeats)
+    return total_repeat_length
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape=[{}]_axis={}_repeats={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, repeats),
+      {"testcase_name": "_shape=[{}]_axis={}_repeats={}_fixed_size={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          axis, repeats, fixed_size),
        "axis": axis, "shape": shape, "dtype": dtype, "repeats": repeats,
-       "rng_factory": jtu.rand_default}
+       "rng_factory": jtu.rand_default, 'fixed_size': fixed_size}
       for repeats in [0, 1, 2]
       for shape, dtype in _shape_and_dtypes(all_shapes, default_dtypes)
-      for axis in [None] + list(range(-len(shape), max(1, len(shape))))))
-  def testRepeat(self, axis, shape, dtype, repeats, rng_factory):
+      for axis in [None] + list(range(-len(shape), max(1, len(shape))))
+      for fixed_size in [True, False]))
+  def testRepeat(self, axis, shape, dtype, repeats, rng_factory, fixed_size):
     rng = rng_factory(self.rng())
     np_fun = lambda arg: np.repeat(arg, repeats=repeats, axis=axis)
     np_fun = _promote_like_jnp(np_fun)
-    jnp_fun = lambda arg: jnp.repeat(arg, repeats=repeats, axis=axis)
+    if fixed_size:
+      total_repeat_length = self._compute_total_repeat_length(
+          shape, axis, repeats)
+      jnp_fun = lambda arg, rep: jnp.repeat(arg, repeats=rep, axis=axis,
+                                     total_repeat_length=total_repeat_length)
+      jnp_args_maker = lambda: [rng(shape, dtype), repeats]
+      clo_fun = lambda arg: jnp.repeat(arg, repeats=repeats, axis=axis,
+                                       total_repeat_length=total_repeat_length)
+      clo_fun_args_maker = lambda: [rng(shape, dtype)]
+      self._CompileAndCheck(jnp_fun, jnp_args_maker)
+      self._CheckAgainstNumpy(np_fun, clo_fun, clo_fun_args_maker)
+    else:
+      # Now repeats is in a closure, so a constant.
+      jnp_fun = lambda arg: jnp.repeat(arg, repeats=repeats, axis=axis)
+      args_maker = lambda: [rng(shape, dtype)]
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker)
 
-    args_maker = lambda: [rng(shape, dtype)]
-
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_ind={}_inv={}_count={}".format(
@@ -1357,7 +1391,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
-  def testIssue1233(self):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_fixed_size={}".format(fixed_size),
+      "fixed_size": fixed_size}
+      for fixed_size in [True, False]))
+  def testNonScalarRepeats(self, fixed_size):
     '''
     Following numpy test suite from `test_repeat` at
     https://github.com/numpy/numpy/blob/master/numpy/core/tests/test_multiarray.py
@@ -1369,18 +1407,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       numpy_ans = np.repeat(m, repeats, axis)
 
       self.assertAllClose(lax_ans, numpy_ans, rtol=tol, atol=tol)
+      if fixed_size:
 
-      jnp_fun = lambda arg: jnp.repeat(arg, repeats = repeats, axis=axis)
+        # Calculate expected size of the repeated axis.
+        rep_length = self._compute_total_repeat_length(m.shape, axis, repeats)
+        jnp_fun = lambda arg, rep: jnp.repeat(
+            arg, repeats = rep, axis=axis, total_repeat_length=rep_length)
+      else:
+        jnp_fun = lambda arg: jnp.repeat(arg, repeats = repeats, axis=axis)
       self._CompileAndCheck(jnp_fun, args_maker)
 
     m = jnp.array([1,2,3,4,5,6])
-    args_maker = lambda: [m]
+    if fixed_size:
+      args_maker = lambda: [m, repeats]
+    else:
+      args_maker = lambda: [m]
 
     for repeats in [2, [1,3,2,1,1,2], [1,3,0,1,1,2], [2], jnp.array([1,3,2,1,1,2]), jnp.array([2])]:
       test_single(m, args_maker, repeats, None)
 
     m_rect = m.reshape((2,3))
-    args_maker = lambda: [m_rect]
+    if fixed_size:
+      args_maker = lambda: [m_rect, repeats]
+    else:
+      args_maker = lambda: [m_rect]
 
     for repeats in [2, [2,1], [2], jnp.array([2,1]), jnp.array([2])]:
       test_single(m_rect, args_maker, repeats, axis=0)
