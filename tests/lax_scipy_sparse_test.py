@@ -23,6 +23,7 @@ from jax import jit
 import jax.numpy as jnp
 from jax import lax
 from jax import test_util as jtu
+from jax.tree_util import register_pytree_node_class
 import jax.scipy.sparse.linalg
 
 from jax.config import config
@@ -151,11 +152,31 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   def test_cg_errors(self):
     A = lambda x: x
-    b = jnp.zeros((2, 1))
-    x0 = jnp.zeros((2,))
+    b = jnp.zeros((2,))
+    with self.assertRaisesRegex(
+        ValueError, "x0 and b must have matching tree structure"):
+      jax.scipy.sparse.linalg.cg(A, {'x': b}, {'y': b})
     with self.assertRaisesRegex(
         ValueError, "x0 and b must have matching shape"):
-      jax.scipy.sparse.linalg.cg(A, b, x0)
+      jax.scipy.sparse.linalg.cg(A, b, b[:, np.newaxis])
+
+  def test_cg_without_pytree_equality(self):
+
+    @register_pytree_node_class
+    class MinimalPytree:
+      def __init__(self, value):
+        self.value = value
+      def tree_flatten(self):
+        return [self.value], None
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+    A = lambda x: MinimalPytree(2 * x.value)
+    b = MinimalPytree(jnp.arange(5.0))
+    expected = b.value / 2
+    actual, _ = jax.scipy.sparse.linalg.cg(A, b)
+    self.assertAllClose(expected, actual.value)
 
 
 if __name__ == "__main__":
