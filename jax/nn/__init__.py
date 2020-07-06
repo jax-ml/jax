@@ -22,6 +22,7 @@ from .functions import (
   gelu,
   glu,
   hard_sigmoid,
+  hard_silu,
   hard_swish,
   hard_tanh,
   leaky_relu,
@@ -36,5 +37,6 @@ from .functions import (
   soft_sign,
   softmax,
   softplus,
+  silu,
   swish,
 )
