@@ -593,7 +593,7 @@ class PmapTest(jtu.JaxTestCase):
     f = lambda x: lax.pshuffle(x, perm=bad_perm, axis_name='i')
     g = lambda: pmap(f, "i")(np.arange(device_count))
     self.assertRaisesRegex(
-      AssertionError,
+      ValueError,
       "`perm` does not represent a permutation: \\[1.*\\]", g)
 
   @jtu.skip_on_devices("cpu", "gpu")
