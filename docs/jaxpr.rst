@@ -3,9 +3,6 @@ Understanding Jaxprs
 
 Updated: May 3, 2020 (for commit f1a46fe).
 
-(Note: the code examples in this file can be seed also in
-``jax/tests/api_test::JaxprTest.testExamplesJaxprDoc``.)
-
 Conceptually, one can think of JAX transformations as first tracing the Python
 function to be transformed into a small and well-behaved intermediate form,
 the jaxpr, that is then transformed accordingly, and ultimately compiled and executed.
