@@ -876,6 +876,8 @@ def _initialize_outfeed_receiver(
         max_callback_queue_size_bytes)
 
     def exit_handler():
+      # Prevent logging usage during compilation, gives errors under pytest
+      xla._on_exit = True
       logging.vlog(2, "Barrier wait atexit")
       barrier_wait()
 

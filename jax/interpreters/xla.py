@@ -66,6 +66,9 @@ flags.DEFINE_bool('jax_log_compiles',
                   bool_env('JAX_LOG_COMPILES', False),
                   'Print a message each time a `jit` computation is compiled.')
 
+# This flag is set on exit; no logging should be attempted
+_on_exit = False
+
 def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
@@ -613,8 +616,9 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   if not jaxpr.eqns:
     return partial(_execute_trivial, jaxpr, device, consts, result_handlers)
 
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority, "Compiling %s for args %s.", fun.__name__, abstract_args)
+  if not _on_exit:
+    log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+    logging.log(log_priority, "Compiling %s for args %s.", fun.__name__, abstract_args)
 
   if nreps > 1:
     warn(f"The jitted function {fun.__name__} includes a pmap. Using "
