@@ -563,9 +563,17 @@ class PmapTest(jtu.JaxTestCase):
     g = lambda x: jnp.sum(y * pmap(f, 'i')(x))
 
     x = np.arange(device_count, dtype=np.float32)
-    ans = grad(g)(x)
+
+    ans = g(x)
     expected = np.roll(np.pi + np.arange(device_count), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = grad(g)(x)
+    expected = np.roll(np.pi + np.arange(device_count), -1)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
+    jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
   @jtu.skip_on_devices("cpu")
   def testCollectivePermuteCyclicWithPShuffle(self):
@@ -573,7 +581,7 @@ class PmapTest(jtu.JaxTestCase):
     values = np.arange(device_count)
     shift_right = [(i - 1) % device_count for i in range(device_count)]
     f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
-    expected = np.roll(values, -1)
+    expected = np.roll(values, 1)
     ans = np.asarray(pmap(f, "i")(values))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -593,8 +601,7 @@ class PmapTest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/1703
     num_devices = xla_bridge.device_count()
     perm = [num_devices - 1] + list(range(num_devices - 1))
-    f = pmap(
-      lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
+    f = pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
     result = f(jnp.arange(num_devices, dtype=jnp.float32))
     expected = jnp.asarray(perm, dtype=jnp.float32)
     self.assertAllClose(result, expected)
