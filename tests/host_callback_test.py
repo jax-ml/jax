@@ -124,10 +124,6 @@ class HostCallbackTest(jtu.JaxTestCase):
       xla_bridge.get_backend.cache_clear()
     hcb.barrier_wait()
 
-  @classmethod
-  def tearDownClass(cls):
-    hcb.stop_outfeed_receiver()
-
   def helper_set_devices(self, nr_devices):
     flags_str = os.getenv("XLA_FLAGS", "")
     os.environ["XLA_FLAGS"] = (
@@ -962,6 +958,7 @@ what: x times i
     Check that we get the proper error from the runtime."""
     comp = xla_bridge.make_computation_builder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
+    hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
     with self.assertRaisesRegex(RuntimeError,
                                 "Consumer ID cannot be a reserved value: 0"):
       hcb._outfeed_receiver.receiver.add_outfeed(
@@ -972,6 +969,7 @@ what: x times i
     """Try to register different shapes for the same consumer ID."""
     comp = xla_bridge.make_computation_builder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
+    hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
     hcb._outfeed_receiver.receiver.add_outfeed(
         comp, token, 123,
         [xla_bridge.constant(comp, np.zeros((2, 3), dtype=np.float32))])
