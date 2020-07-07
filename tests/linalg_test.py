@@ -44,27 +44,25 @@ complex_types = [np.complex64, np.complex128]
 
 
 # Used in tests for det and lu
-def _singular_mats():
-  return [
-    jnp.array([[ 50, -30,  45],  # rank-2, corank-1
-              [-30,  90, -81],
-              [ 45, -81,  81]], dtype=jnp.float32),
-    jnp.array([[ 36, -42,  18],  # rank-1, corank-2
-              [-42,  49, -21],
-              [ 18, -21,   9]], dtype=jnp.float32),
-  ]
+singular_mats = [
+  jnp.array([[ 50, -30,  45],  # rank-2, corank-1
+             [-30,  90, -81],
+             [ 45, -81,  81]], dtype=jnp.float32),
+  jnp.array([[ 36, -42,  18],  # rank-1, corank-2
+             [-42,  49, -21],
+             [ 18, -21,   9]], dtype=jnp.float32),
+]
 
 
-def _nonsquare_singular_mats():
-  return [
-    jnp.array([[-35,   7,  27, -17],
-              [ 11, -13,  -9,  11],
-              [ 19, -11, -15,  13]], dtype=jnp.float32),
-    jnp.array([[-35,  11,  19],
-              [  7, -13, -11],
-              [ 27,  -9, -15],
-              [-17,  11,  13]], dtype=np.float32)
-  ]
+nonsquare_singular_mats = [
+  jnp.array([[-35,   7,  27, -17],
+             [ 11, -13,  -9,  11],
+             [ 19, -11, -15,  13]], dtype=jnp.float32),
+  jnp.array([[-35,  11,  19],
+             [  7, -13, -11],
+             [ 27,  -9, -15],
+             [-17,  11,  13]], dtype=np.float32)
+]
 
 
 def _skip_if_unsupported_type(dtype):
@@ -154,13 +152,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   def testDetGradOfSingularMatrixCorank1(self):
     # Rank 2 matrix with nonzero gradient
-    a = _singular_mats()[0]
+    a = singular_mats[0]
     jtu.check_grads(jnp.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
 
   @jtu.skip_on_devices("tpu")  # TODO(mattjj,pfau): nan on tpu, investigate
   def testDetGradOfSingularMatrixCorank2(self):
     # Rank 1 matrix with zero gradient
-    b = _singular_mats()[1]
+    b = singular_mats[1]
     jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1)
     jtu.check_grads(jnp.linalg.det, (b,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
 
@@ -1003,7 +1001,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     def _lu(a):
       p, l, u = jsp.linalg.lu(a)
       return p, l[:, :-corank], u
-    mat = _singular_mats()[corank-1]
+    mat = singular_mats[corank-1]
     # Check forward mode gradients
     jtu.check_grads(_lu, (mat,), 2, modes=['fwd'], atol=1e-1, rtol=1e-1)
     # Something is causing tests to fail for reverse-mode.
@@ -1018,7 +1016,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for matidx in range(2)))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
   def testLuGradOfNonSquareSingularMatrix(self, matidx):
-    mat = _nonsquare_singular_mats()[matidx]
+    mat = nonsquare_singular_mats[matidx]
     jtu.check_grads(jsp.linalg.lu, (mat,), 1, atol=1e-1, rtol=1e-1)
     jtu.check_grads(jsp.linalg.lu, (mat,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
 
