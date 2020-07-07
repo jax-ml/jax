@@ -564,15 +564,10 @@ class PmapTest(jtu.JaxTestCase):
 
     x = np.arange(device_count, dtype=np.float32)
 
-    ans = g(x)
-    expected = np.roll(np.pi + np.arange(device_count), 1)
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
     ans = grad(g)(x)
     expected = np.roll(np.pi + np.arange(device_count), -1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
     jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
   @jtu.skip_on_devices("cpu")
