@@ -594,7 +594,7 @@ class PmapTest(jtu.JaxTestCase):
     g = lambda: pmap(f, "i")(np.arange(device_count))
     self.assertRaisesRegex(
       AssertionError,
-      "Given `perm` does not represent a real permutation: \\[1.*\\]", g)
+      "`perm` does not represent a permutation: \\[1.*\\]", g)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testPpermuteWithZipObject(self):
