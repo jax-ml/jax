@@ -36,19 +36,9 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
-                                 onp.float64])
-complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
-complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = supported_dtypes([onp.int32, onp.int64])
-uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
-bool_dtypes = [onp.bool_]
-default_dtypes = float_dtypes + int_dtypes
-all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+float_dtypes = jtu.dtypes.all_floating
+default_dtypes = jtu.dtypes.all_floating + jtu.dtypes.integer
+all_dtypes = jtu.dtypes.all
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -674,7 +664,7 @@ class LaxVmapTest(jtu.JaxTestCase):
       # Note also that we chose 3 * 5 * 3 * 5 such that it fits in the range of
       # values a bfloat16 can represent exactly to avoid ties.
       for dtype, rng_factory in itertools.chain(
-        unsafe_zip(float_dtypes + int_dtypes, itertools.repeat(jtu.rand_unique_int)))))
+        unsafe_zip(default_dtypes, itertools.repeat(jtu.rand_unique_int)))))
   def testTopK(self, shape, dtype, k, bdims, rng_factory):
     rng = rng_factory(self.rng())
     # _CheckBatching doesn't work with tuple outputs, so test outputs separately.

@@ -43,17 +43,13 @@ FLAGS = config.FLAGS
 # For standard unops and binops, we can generate a large number of tests on
 # arguments of appropriate shapes and dtypes using the following table.
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-float_dtypes = supported_dtypes([dtypes.bfloat16, onp.float16, onp.float32,
-                                 onp.float64])
-complex_elem_dtypes = supported_dtypes([onp.float32, onp.float64])
-complex_dtypes = supported_dtypes([onp.complex64, onp.complex128])
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = supported_dtypes([onp.int32, onp.int64])
-uint_dtypes = supported_dtypes([onp.uint32, onp.uint64])
-bool_dtypes = [onp.bool_]
+float_dtypes = jtu.dtypes.all_floating
+complex_elem_dtypes = jtu.dtypes.floating
+complex_dtypes = jtu.dtypes.complex
+inexact_dtypes = jtu.dtypes.all_inexact
+int_dtypes = jtu.dtypes.integer
+uint_dtypes = jtu.dtypes.unsigned
+bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
 

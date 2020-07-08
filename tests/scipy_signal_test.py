@@ -31,13 +31,7 @@ onedim_shapes = [(1,), (2,), (5,), (10,)]
 twodim_shapes = [(1, 1), (2, 2), (2, 3), (3, 4), (4, 4)]
 
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-
-float_dtypes = supported_dtypes([onp.float32, onp.float64])
-int_dtypes = [onp.int32, onp.int64]
-default_dtypes = float_dtypes + int_dtypes
+default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):

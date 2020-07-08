@@ -38,12 +38,9 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-float_dtypes = supported_dtypes([jnp.bfloat16, np.float16, np.float32, np.float64])
-int_dtypes = supported_dtypes([np.int8, np.int16, np.int32, np.int64])
-uint_dtypes = supported_dtypes([np.uint8, np.uint16, np.uint32, np.uint64])
+float_dtypes = jtu.dtypes.all_floating
+int_dtypes = jtu.dtypes.all_integer
+uint_dtypes = jtu.dtypes.all_unsigned
 
 class LaxRandomTest(jtu.JaxTestCase):
 
