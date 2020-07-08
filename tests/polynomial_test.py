@@ -25,13 +25,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-float_dtypes = [np.float32, np.float64]
-# implementation casts to complex64.
-complex_dtypes = [np.complex64]
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [np.int32, np.int64]
-real_dtypes = float_dtypes + int_dtypes
-all_dtypes = real_dtypes + complex_dtypes
+all_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 
 
 # TODO: these tests fail without fixed PRNG seeds.

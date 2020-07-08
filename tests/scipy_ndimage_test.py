@@ -30,12 +30,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-float_dtypes = [onp.float32, onp.float64]
-complex_dtypes = [onp.complex64, onp.complex128]
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [onp.int32, onp.int64]
-bool_dtypes = [onp.bool_]
-all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
+float_dtypes = jtu.dtypes.floating
+int_dtypes = jtu.dtypes.integer
 
 
 def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
