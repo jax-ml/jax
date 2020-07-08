@@ -33,6 +33,12 @@ all_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 
 class TestPolynomial(jtu.JaxTestCase):
 
+  def testNotImplemented(self):
+    for name in jnp.polynomial._NOT_IMPLEMENTED:
+      func = getattr(jnp.polynomial, name)
+      with self.assertRaises(NotImplementedError):
+        func()
+
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_leading={}_trailing={}".format(
        jtu.format_shape_dtype_string((length+leading+trailing,), dtype),
