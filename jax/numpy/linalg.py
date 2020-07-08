@@ -479,9 +479,9 @@ def solve(a, b):
     return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 
-for func in get_module_functions(np.linalg):
-  if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
+for name, func in get_module_functions(np.linalg).items():
+  if name not in globals():
+    globals()[name] = _not_implemented(func)
 
 
 @_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\

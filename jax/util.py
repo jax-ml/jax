@@ -223,9 +223,9 @@ def get_module_functions(module):
   Args:
     module: A Python module.
   Returns:
-    module_fns: A set of functions, builtins or ufuncs in `module`.
+    module_fns: A dict of names mapped to functions, builtins or ufuncs in `module`.
   """
-  module_fns = set()
+  module_fns = {}
   for key in dir(module):
     # Omitting module level __getattr__, __dir__ which was added in Python 3.7
     # https://www.python.org/dev/peps/pep-0562/
@@ -234,7 +234,7 @@ def get_module_functions(module):
     attr = getattr(module, key)
     if isinstance(
         attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
-      module_fns.add(attr)
+      module_fns[key] = attr
   return module_fns
 
 def wrap_name(name, transform_name):
