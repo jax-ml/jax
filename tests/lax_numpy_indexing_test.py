@@ -906,9 +906,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
+      "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}_sugared={}".format(
           name, jtu.format_shape_dtype_string(shape, dtype), indexer,
-          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
+          jtu.format_shape_dtype_string(update_shape, update_dtype), op.name, sugared),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
        "op": op, "sugared": sugared
