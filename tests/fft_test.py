@@ -32,7 +32,7 @@ FLAGS = flags.FLAGS
 
 float_dtypes = jtu.dtypes.floating
 inexact_dtypes = jtu.dtypes.inexact
-real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.bool
+real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.boolean
 all_dtypes = real_dtypes + jtu.dtypes.complex
 
 
