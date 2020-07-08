@@ -30,13 +30,10 @@ config.parse_flags_with_absl()
 
 FLAGS = flags.FLAGS
 
-float_dtypes = [np.float32, np.float64]
-complex_dtypes = [np.complex64, np.complex128]
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [np.int32, np.int64]
-bool_dtypes = [np.bool_]
-real_dtypes = float_dtypes + int_dtypes + bool_dtypes
-all_dtypes = real_dtypes + complex_dtypes
+float_dtypes = jtu.dtypes.floating
+inexact_dtypes = jtu.dtypes.inexact
+real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.bool
+all_dtypes = real_dtypes + jtu.dtypes.complex
 
 
 def _get_fftn_test_axes(shape):

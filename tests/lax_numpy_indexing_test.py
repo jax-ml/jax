@@ -39,11 +39,9 @@ FLAGS = config.FLAGS
 # pylint: disable=bad-continuation
 
 
-float_dtypes = [onp.float32, onp.float64]
-int_dtypes = [onp.int32, onp.int64]
-bool_types = [onp.bool_]
-default_dtypes = float_dtypes + int_dtypes
-all_dtypes = float_dtypes + int_dtypes + bool_types
+float_dtypes = jtu.dtypes.floating
+default_dtypes = float_dtypes + jtu.dtypes.integer
+all_dtypes = default_dtypes + jtu.dtypes.boolean
 
 IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
 

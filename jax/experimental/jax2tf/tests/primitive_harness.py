@@ -30,20 +30,6 @@ import numpy as np
 
 FLAGS = config.FLAGS
 
-# TODO: these are copied from tests/lax_test.py (make this source of truth)
-# Do not run int64 tests unless FLAGS.jax_enable_x64, otherwise we get a
-# mix of int32 and int64 operations.
-
-float_dtypes = jtu.dtypes.all_floating
-complex_elem_dtypes = jtu.dtypes.floating
-complex_dtypes = jtu.dtypes.complex
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = jtu.dtypes.all_integer
-uint_dtypes = jtu.dtypes.all_unsigned
-bool_dtypes = jtu.dtypes.boolean
-default_dtypes = float_dtypes + int_dtypes
-all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
-
 Rng = Any  # A random number generator
 
 class RandArg(NamedTuple):
@@ -189,7 +175,7 @@ lax_pad = jtu.cases_from_list(
           rng_factory=jtu.rand_small,
           arg_shape=arg_shape, dtype=dtype, pads=pads)
   for arg_shape in [(2, 3)]
-  for dtype in default_dtypes
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.all_integer
   for pads in [
     [(0, 0, 0), (0, 0, 0)],  # no padding
     [(1, 1, 0), (2, 2, 0)],  # only positive edge padding
@@ -286,7 +272,7 @@ lax_squeeze = jtu.cases_from_list(
 
 shift_inputs = [
   (arg, dtype, shift_amount)
-  for dtype in uint_dtypes + int_dtypes
+  for dtype in jtu.dtypes.all_unsigned + jtu.dtypes.all_integer
   for arg in [
     np.array([-250, -1, 0, 1, 250], dtype=dtype),
   ]

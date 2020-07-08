@@ -38,13 +38,8 @@ compatible_shapes = [[(), ()],
                      [(3, 1), (1, 4)],
                      [(2, 3, 4), (2, 1, 4)]]
 
-float_dtypes = [onp.float32, onp.float64]
-complex_dtypes = [onp.complex64]
-int_dtypes = [onp.int32, onp.int64]
-bool_dtypes = [onp.bool_]
-default_dtypes = float_dtypes + int_dtypes
-numeric_dtypes = float_dtypes + complex_dtypes + int_dtypes
-
+float_dtypes = jtu.dtypes.floating
+int_dtypes = jtu.dtypes.integer
 
 OpRecord = collections.namedtuple(
     "OpRecord",
