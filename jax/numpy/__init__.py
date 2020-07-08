@@ -71,9 +71,9 @@ def _init():
   from . import lax_numpy
   from .. import util
   # Builds a set of all unimplemented NumPy functions.
-  for func in util.get_module_functions(np):
-    if func.__name__ not in globals():
-      globals()[func.__name__] = lax_numpy._not_implemented(func)
+  for name, func in util.get_module_functions(np).items():
+    if name not in globals():
+      globals()[name] = lax_numpy._not_implemented(func)
 
 _init()
 del _init

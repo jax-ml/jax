@@ -236,6 +236,6 @@ def ifftshift(x, axes=None):
   return jnp.roll(x, shift, axes)
 
 
-for func in get_module_functions(np.fft):
-  if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
+for name, func in get_module_functions(np.fft).items():
+  if name not in globals():
+    globals()[name] = _not_implemented(func)
