@@ -186,6 +186,46 @@ lax_pad = jtu.cases_from_list(
   ]
 )
 
+
+lax_sort = tuple( # one array, random data, all axes, all dtypes
+  Harness(f"one_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
+          lax.sort,
+          [RandArg(shape, dtype), StaticArg(dimension), StaticArg(is_stable)],
+          shape=shape,
+          dimension=dimension,
+          dtype=dtype,
+          is_stable=is_stable)
+  for dtype in jtu.dtypes.all
+  for shape in [(5,), (5, 7)]
+  for dimension in range(len(shape))
+  for is_stable in [False, True]
+) + tuple( # one array, potential edge cases
+  Harness(f"one_special_array_shape={jtu.format_shape_dtype_string(arr.shape, arr.dtype)}_axis={dimension}_isstable={is_stable}",
+          lax.sort,
+          [arr, StaticArg(dimension), StaticArg(is_stable)],
+          shape=arr.shape,
+          dimension=dimension,
+          dtype=arr.dtype,
+          is_stable=is_stable)
+  for arr, dimension in [
+      [np.array([+np.inf, np.nan, -np.nan, -np.inf, 2, 4, 189], dtype=np.float32), -1]
+  ]
+  for is_stable in [False, True]
+) + tuple( # several arrays, random data, all axes, all dtypes
+  Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
+          lambda *args: lax.sort_p.bind(*args[:-2], dimension=args[-2], is_stable=args[-1], num_keys=1),
+          [RandArg(shape, dtype), RandArg(shape, dtype), StaticArg(dimension), StaticArg(is_stable)],
+          shape=shape,
+          dimension=dimension,
+          dtype=dtype,
+          is_stable=is_stable)
+  for dtype in jtu.dtypes.all
+  for shape in [(5,), (5, 7)]
+  for dimension in range(len(shape))
+  for is_stable in [False, True]
+)
+
+
 lax_slice = jtu.cases_from_list(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
           lax.slice,

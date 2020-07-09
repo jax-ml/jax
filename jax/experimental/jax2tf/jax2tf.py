@@ -15,7 +15,7 @@
 
 import functools
 import string
-from typing import Any, Callable, Dict, Iterable, Sequence, Union
+from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union
 
 import jax
 from jax import abstract_arrays
@@ -353,7 +353,7 @@ for unexpected in [
 tf_not_yet_impl = [
   lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
   lax_fft.fft_p, lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p,
-  lax.outfeed_p, lax.sort_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
+  lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
 
   lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
   lax.select_and_gather_add_p, lax.select_and_scatter_p, lax.top_k_p,
@@ -1097,6 +1097,23 @@ def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
   return _interpret_fun(lu.wrap_init(func1), tf_args)
 
 tf_impl[lax.scan_p] = _scan
+
+def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tuple[TfVal, ...]:
+  if num_keys != 1:
+    raise NotImplementedError("TODO: multiple keys")
+  if len(operand) > 2:
+    raise NotImplementedError("TODO: handle > 2 tensors")
+  if is_stable:
+    raise NotImplementedError("TODO: implement stable version of XlaSort")
+  if dimension == len(operand[0].shape) - 1:
+    if len(operand) == 2:
+      return tfxla.key_value_sort(operand[0], operand[1])
+    else:
+      return tfxla.sort(operand)
+  else:
+    raise NotImplementedError("TODO: implement XlaSort for all axes")
+
+tf_impl[lax.sort_p] = _sort
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
                            fun_jaxpr: core.TypedJaxpr,

@@ -167,6 +167,26 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            with_function=False)
 
+  @primitive_harness.parameterized(primitive_harness.lax_sort)
+  def test_sort(self, harness: primitive_harness.Harness):
+    if harness.params["dtype"] is dtypes.bfloat16 or harness.params["dtype"] in jtu.dtypes.complex:
+      # TODO: implement bfloat16/complex support in XlaSort
+      raise unittest.SkipTest("bfloat16/complex support not implemented")
+    if harness.params["dtype"] is dtypes.bool_ and len(harness.arg_descriptors) == 4:
+      # TODO: _sort uses tfxla.key_value_sort to handle 2 operandes, but the operation is not compatible with boolean keys.
+      raise unittest.SkipTest("boolean key key value sort not implemented")
+    if harness.params["is_stable"]:
+      # TODO: implement stable sort support in XlaSort
+      raise unittest.SkipTest("stable sort not implemented")
+    if harness.params["dimension"] != len(harness.params["shape"]) - 1:
+      # TODO: implement sort on all axes
+      raise unittest.SkipTest("conversion not implemented for axis != -1")
+    if len(harness.arg_descriptors) > 4:
+      # TODO: implement variable number of operands to XlaSort
+      raise unittest.SkipTest("conversion not implemented for #operands > 2")
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           with_function=False)
+
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
          f_jax=f_jax)
