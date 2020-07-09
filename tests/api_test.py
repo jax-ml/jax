@@ -2863,6 +2863,38 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(clip_gradient)(1.)  # doesn't crash
 
+  def test_nestable_vjp(self):
+    # Verify that https://github.com/google/jax/issues/3667 is resolved.
+    def f(x):
+        return x ** 2
+
+    @api.custom_vjp
+    def g(x):
+        return f(x)
+
+    def g_fwd(x):
+        y, f_vjp = api.vjp(f, x)
+        return y, f_vjp
+
+    def g_bwd(f_vjp, y_bar):
+        return f_vjp(y_bar)
+
+    g.defvjp(g_fwd, g_bwd)
+
+    # Check that VJP can be nested in simple situations.  For this to pass,
+    # vjp has to return a PyTree.
+    _, g_vjp = api.vjp(g, 1.0)
+    y, = g_vjp(1.0)
+    self.assertAllClose(y, jnp.array(2.0))
+
+    # Check that VJP can be nested in complex situations.  For this to pass,
+    # vjp can't treat the closed-over tracer x as a static argument.
+    @jit
+    def z(x):
+        _, g_vjp = api.vjp(g, x)
+        return g_vjp
+    y, = z(1.0)(3.0)
+    self.assertAllClose(y, jnp.array(6.0))
 
 class InvertibleADTest(jtu.JaxTestCase):
 

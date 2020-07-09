@@ -27,7 +27,7 @@ from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
-from ..tree_util import tree_flatten, tree_unflatten
+from ..tree_util import tree_flatten, tree_unflatten, Partial
 from .. import source_info_util
 
 zip = safe_zip
@@ -109,12 +109,16 @@ def vjp(traceable, primals, has_aux=False):
     out_primals, pvals, jaxpr, consts = linearize(traceable, *primals)
   else:
     out_primals, pvals, jaxpr, consts, aux = linearize(traceable, *primals, has_aux=True)
-  def vjp_(*cts):
+
+  def unbound_vjp(pvals, jaxpr, consts, *cts):
     cts = tuple(map(ignore_consts, cts, pvals))
     dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
     arg_cts = backward_pass(jaxpr, consts, dummy_args, cts)
     return map(instantiate_zeros, arg_cts)
 
+  # Ensure that vjp_ is a PyTree so that we can pass it from the forward to the backward
+  # pass in a custom VJP.
+  vjp_ =  Partial(partial(unbound_vjp, pvals, jaxpr), consts)
   if not has_aux:
     return out_primals, vjp_
   else:
