@@ -169,7 +169,7 @@ class ImageTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(image_shape, dtype),)
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=antialias)
-    jtu.check_grads(jax_fn, args_maker(), order=1, rtol=1e-2)
+    jtu.check_grads(jax_fn, args_maker(), order=2, rtol=1e-2, eps=1.)
 
 
 if __name__ == "__main__":
