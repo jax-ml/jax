@@ -154,7 +154,8 @@ class FftTest(jtu.JaxTestCase):
       for real in [False, True]
       for hermitian in [False, True]
       for rng_factory in [jtu.rand_default]
-      for dtype in (real_dtypes if real and not inverse else all_dtypes)
+      for dtype in (real_dtypes if (real and not inverse) or (hermitian and inverse)
+                                else all_dtypes)
       for shape in [(10,)]
       for axis in [-1, 0]))
   def testFft(self, inverse, real, hermitian, shape, dtype, axis, rng_factory):
