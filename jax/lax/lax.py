@@ -1230,16 +1230,23 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
       For num_keys > 1, the sort order will be determined lexicographically using
       the first `num_keys` arrays, with the first key being primary.
       The remaining operands will be returned with the same permutation.
+
+  Returns:
+    operand : sorted version of the input or inputs.
   """
   if isinstance(operand, Sequence):
     if len(operand) == 0:
       raise TypeError("Sort requires at least one operand")
-    assert 1 <= num_keys <= len(operand)
+    if not (1 <= num_keys <= len(operand)):
+      raise ValueError(f"num_keys={num_keys} must be between 1 and len(operand)={len(operand)}")
     dimension = _canonicalize_axis(dimension, len(operand[0].shape))
     return tuple(sort_p.bind(*operand, dimension=dimension,
                              is_stable=is_stable,
                              comparator=partial(_sort_lt_comparator, num_keys=num_keys)))
   else:
+    if num_keys != 1:
+      raise ValueError(f"num_keys={num_keys} must equal 1 for a single operand.")
+    assert num_keys == 1, num_keys
     dimension = _canonicalize_axis(dimension, len(operand.shape))
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, comparator=_sort_lt_comparator)[0]
 
