@@ -131,14 +131,14 @@ def hfft(a, n=None, axis=-1, norm=None):
   conj_a = jnp.conj(a)
   _axis_check_1d('hfft', axis)
   nn = (a.shape[axis] - 1) * 2 if n is None else n
-  return _fft_core_1d('irfft', xla_client.FftType.IRFFT, conj_a, s=n, axis=axis,
+  return _fft_core_1d('hfft', xla_client.FftType.IRFFT, conj_a, s=n, axis=axis,
                       norm=norm) * nn
 
 @_wraps(np.fft.ihfft)
 def ihfft(a, n=None, axis=-1, norm=None):
   _axis_check_1d('ihfft', axis)
   nn = a.shape[axis] if n is None else n
-  output = _fft_core_1d('rfft', xla_client.FftType.RFFT, a, s=n, axis=axis,
+  output = _fft_core_1d('ihfft', xla_client.FftType.RFFT, a, s=n, axis=axis,
                       norm=norm)
   return jnp.conj(output) * (1 / nn)
 
