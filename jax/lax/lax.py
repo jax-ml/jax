@@ -1246,7 +1246,6 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
   else:
     if num_keys != 1:
       raise ValueError(f"num_keys={num_keys} must equal 1 for a single operand.")
-    assert num_keys == 1, num_keys
     dimension = _canonicalize_axis(dimension, len(operand.shape))
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, comparator=_sort_lt_comparator)[0]
 
