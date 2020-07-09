@@ -59,7 +59,7 @@ class ImageTest(jtu.JaxTestCase):
        for target_shape, image_shape in itertools.combinations_with_replacement(
         [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]], 2)
        for method in ["bilinear", "lanczos3", "lanczos5", "bicubic"]
-       for antialias in [False, True])) 
+       for antialias in [False, True]))
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testResizeAgainstTensorFlow(self, dtype, image_shape, target_shape, method,
                                   antialias):
@@ -74,7 +74,6 @@ class ImageTest(jtu.JaxTestCase):
     def tf_fn(x):
       out = tf.image.resize(x, tf.constant(target_shape[1:-1]), method=method,
                              antialias=antialias).numpy()
-      print(out.dtype)
       return out
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=antialias)
@@ -104,9 +103,7 @@ class ImageTest(jtu.JaxTestCase):
         "lanczos3": PIL_Image.LANCZOS,
       }
       img = PIL_Image.fromarray(x)
-      print(img, x.shape)
       out = np.asarray(img.resize(target_shape[::-1], pil_methods[method]))
-      print(out.shape, target_shape)
       return out
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=True)
@@ -152,6 +149,27 @@ class ImageTest(jtu.JaxTestCase):
     output = image.resize(x, target_shape, method)
     expected = np.array(expected_data[method], dtype=dtype).reshape(target_shape)
     self.assertAllClose(output, expected, atol=1e-04)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+       {"testcase_name": "_shape={}_target={}_method={}_antialias={}".format(
+          jtu.format_shape_dtype_string(image_shape, dtype),
+          jtu.format_shape_dtype_string(target_shape, dtype), method,
+          antialias),
+        "dtype": dtype, "image_shape": image_shape,
+        "target_shape": target_shape,
+        "method": method, "antialias": antialias}
+       for dtype in [np.float32]
+       for target_shape, image_shape in itertools.combinations_with_replacement(
+        [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]], 2)
+       for method in ["bilinear", "lanczos3", "lanczos5", "bicubic"]
+       for antialias in [False, True]))
+  def testResizeGradients(self, dtype, image_shape, target_shape, method,
+                          antialias):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(image_shape, dtype),)
+    jax_fn = partial(image.resize, shape=target_shape, method=method,
+                     antialias=antialias)
+    jtu.check_grads(jax_fn, args_maker(), order=1, rtol=1e-2)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,6 @@
 
 import enum
 import math
-import string
 from typing import Callable, Sequence, Tuple, Union
 
 from jax import lax
@@ -92,11 +91,10 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
     return x
   output_spatial_shape = tuple(np.array(output_shape)[spatial_dims])
   indices = []
-  dim_weights = []
+  contractions = []
   slice_shape = list(input_shape)
-  in_names = string.ascii_lowercase[:len(output_shape) + len(spatial_dims)]
-  out_names = list(string.ascii_lowercase[:len(output_shape)])
-  einstr = in_names
+  in_indices = list(range(len(output_shape) + len(spatial_dims)))
+  out_indices = list(range(len(output_shape)))
   for i, d in enumerate(spatial_dims):
     m = input_shape[d]
     n = output_shape[d]
@@ -105,17 +103,18 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
     starts = lax.broadcast_in_dim(starts, output_spatial_shape + (1,), (i,))
     slice_shape[d] = weights.shape[1]
     indices.append(starts.astype(np.int32))
-    dim_weights.append(weights.astype(x.dtype))
-    einstr += ",{}{}".format(in_names[len(output_shape) + i], in_names[d])
-    out_names[d] = in_names[len(output_shape) + i]
+    contractions.append(weights.astype(x.dtype))
+    contractions.append([len(output_shape) + i, d])
+    out_indices[d] = len(output_shape) + i
   index = lax.concatenate(indices, len(output_spatial_shape))
   dnums = lax.GatherDimensionNumbers(
       offset_dims=tuple(range(len(output_shape))),
       collapsed_slice_dims=(),
       start_index_map=tuple(spatial_dims))
   out = lax.gather(x, index, dnums, slice_shape)
-  return jnp.einsum("{}->{}".format(einstr, "".join(out_names)), out,
-                    *dim_weights, precision=lax.Precision.HIGHEST)
+  contractions.append(out_indices)
+  return jnp.einsum(out, in_indices, *contractions,
+                    precision=lax.Precision.HIGHEST)
 
 
 class ResizeMethod(enum.Enum):

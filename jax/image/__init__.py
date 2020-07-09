@@ -19,4 +19,3 @@ from .scale import (
   resize,
   ResizeMethod
 )
-del scale
