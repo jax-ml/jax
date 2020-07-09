@@ -123,7 +123,6 @@ class ResizeMethod(enum.Enum):
   LANCZOS3 = 2
   LANCZOS5 = 3
   CUBIC = 4
-  BOX = 5
 
   @staticmethod
   def from_string(s: str):
@@ -176,7 +175,7 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
       includes all dimensions of the image. To represent a batch or a channel
       dimension, simply leave that element of the shape unchanged.
     method: the resizing method to use; either a ``ResizeMethod`` instance or a
-      string. Available methods are: LINEAR, LANCZOS3, LANCZOS5, CUBIC, BOX.
+      string. Available methods are: LINEAR, LANCZOS3, LANCZOS5, CUBIC.
     antialias: should an antialiasing filter be used when downsampling? Defaults
       to ``True``. Has no effect when upsampling.
   Returns:
