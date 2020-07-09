@@ -58,7 +58,7 @@ from .lax_numpy import (
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
     triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
     unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
-    vstack, where, zeros, zeros_like)
+    vstack, where, zeros, zeros_like, _NOT_IMPLEMENTED)
 
 from .polynomial import roots
 from .vectorize import vectorize
@@ -73,6 +73,7 @@ def _init():
   # Builds a set of all unimplemented NumPy functions.
   for name, func in util.get_module_functions(np).items():
     if name not in globals():
+      _NOT_IMPLEMENTED.append(name)
       globals()[name] = lax_numpy._not_implemented(func)
 
 _init()

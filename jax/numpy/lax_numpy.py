@@ -4326,6 +4326,7 @@ _diff_methods = ["clip", "conj", "conjugate", "cumprod", "cumsum",
 # _not_implemented implementations of them here rather than in __init__.py.
 # TODO(phawkins): implement these.
 argpartition = _not_implemented(np.argpartition)
+_NOT_IMPLEMENTED = ['argpartition']
 
 # Set up operator, method, and property forwarding on Tracer instances containing
 # ShapedArray avals by following the forwarding conventions for Tracer.

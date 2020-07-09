@@ -445,6 +445,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for a in out]
     return f
 
+  def testNotImplemented(self):
+    for name in jnp._NOT_IMPLEMENTED:
+      func = getattr(jnp, name)
+      with self.assertRaises(NotImplementedError):
+        func()
+
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
         {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,

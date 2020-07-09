@@ -19,8 +19,10 @@ from . import lax_numpy as jnp
 
 from jax import jit
 from ._util import _wraps
+from .lax_numpy import _not_implemented
 from .linalg import eigvals as _eigvals
 from .. import ops as jaxops
+from ..util import get_module_functions
 
 
 def _to_inexact_type(type):
@@ -102,3 +104,10 @@ def roots(p, *, strip_zeros=True):
     # combine roots and zero roots
     roots = jnp.hstack((roots, jnp.zeros(trailing_zeros, p.dtype)))
     return roots
+
+
+_NOT_IMPLEMENTED = []
+for name, func in get_module_functions(np.polynomial).items():
+  if name not in globals():
+    _NOT_IMPLEMENTED.append(name)
+    globals()[name] = _not_implemented(func)

@@ -85,6 +85,12 @@ def _zero_for_irfft(z, axes):
 
 class FftTest(jtu.JaxTestCase):
 
+  def testNotImplemented(self):
+    for name in jnp.fft._NOT_IMPLEMENTED:
+      func = getattr(jnp.fft, name)
+      with self.assertRaises(NotImplementedError):
+        func()
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_shape={}_axes={}".format(
           inverse, real, jtu.format_shape_dtype_string(shape, dtype), axes),

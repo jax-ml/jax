@@ -51,6 +51,12 @@ def _skip_if_unsupported_type(dtype):
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
+  def testNotImplemented(self):
+    for name in jnp.linalg._NOT_IMPLEMENTED:
+      func = getattr(jnp.linalg, name)
+      with self.assertRaises(NotImplementedError):
+        func()
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
