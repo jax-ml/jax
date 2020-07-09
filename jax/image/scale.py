@@ -57,8 +57,6 @@ def _compute_spans(input_size: int, output_size: int,
                    antialias: bool) -> Tuple[np.ndarray, np.ndarray]:
   """
   Computes the locations and weights of the spans of a 1D input image.
-
-  input_size:
   Returns:
     A `(starts, weights)` tuple of ndarrays, where `starts` has shape
     `[output_size]` and `weights` has shape `[output_size, span_size]`.
