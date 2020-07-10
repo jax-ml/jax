@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Set default logging level before any logging happens.
+import os as _os
+_os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
+del _os
+
 # flake8: noqa: F401
 from .config import config
 from .api import (
@@ -85,9 +90,6 @@ from . import nn
 from . import random
 
 def _init():
-  import os
-  os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '1')
-
   from . import numpy # side-effecting import sets up operator overloads
 
 _init()
