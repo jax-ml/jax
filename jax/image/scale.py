@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import enum
 import math
 from typing import Callable, Sequence, Tuple, Union
 
+from jax import jit
 from jax import lax
 from jax import numpy as jnp
 import numpy as np
@@ -146,6 +148,21 @@ _kernels[ResizeMethod.LANCZOS5] = _lanczos_kernel(5.)
 _kernels[ResizeMethod.CUBIC] = _keys_cubic_kernel()
 
 
+@partial(jit, static_argnums=(1, 2, 3))
+def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
+            antialias: bool):
+  if len(shape) != image.ndim:
+    msg = ('shape must have length equal to the number of dimensions of x; '
+           f' {shape} vs {image.shape}')
+    raise ValueError(msg)
+  kernel = _kernels[ResizeMethod.from_string(method) if isinstance(method, str)
+                    else method]
+  scale = [float(o) / i for o, i in zip(shape, image.shape)]
+  if not jnp.issubdtype(image.dtype, jnp.inexact):
+    image = lax.convert_element_type(image, jnp.result_type(image, jnp.float32))
+  return _scale_and_translate(image, shape, scale, [0.] * image.ndim, kernel,
+                              antialias)
+
 def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
            antialias: bool = True):
   """Image resize.
@@ -183,14 +200,5 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   Returns:
     The resized image.
   """
-  if len(shape) != image.ndim:
-    msg = ('shape must have length equal to the number of dimensions of x; '
-           f' {shape} vs {image.shape}')
-    raise ValueError(msg)
-  kernel = _kernels[ResizeMethod.from_string(method) if isinstance(method, str)
-                    else method]
-  scale = [float(o) / i for o, i in zip(shape, image.shape)]
-  if not jnp.issubdtype(image.dtype, jnp.inexact):
-    image = lax.convert_element_type(image, jnp.result_type(image, jnp.float32))
-  return _scale_and_translate(image, shape, scale, [0.] * image.ndim, kernel,
-                              antialias)
+  return _resize(image, shape, method, antialias)
+

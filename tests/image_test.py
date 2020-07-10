@@ -22,6 +22,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from jax import image
+from jax import numpy as jnp
 from jax import test_util as jtu
 
 from jax.config import config
@@ -79,8 +80,8 @@ class ImageTest(jtu.JaxTestCase):
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=antialias)
     self._CheckAgainstNumpy(tf_fn, jax_fn, args_maker, check_dtypes=True,
-                            tol={np.float16: 2e-2, np.float32: 1e-4,
-                                 np.float64: 1e-4})
+                            tol={np.float16: 2e-2, jnp.bfloat16: 1e-1,
+                                 np.float32: 1e-4, np.float64: 1e-4})
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
