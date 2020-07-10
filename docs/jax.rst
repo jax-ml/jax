@@ -12,6 +12,7 @@ Subpackages
     jax.numpy
     jax.scipy
     jax.experimental
+    jax.image
     jax.lax
     jax.nn
     jax.ops
