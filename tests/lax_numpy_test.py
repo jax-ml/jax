@@ -4025,7 +4025,7 @@ class NumpyGradTests(jtu.JaxTestCase):
       extra = set(extra_params.get(name, []))
       unsupported = set(unsupported_params.get(name, []))
 
-      # Sanity checks to prevent tests from becoming out-of-date. If these fail,
+      # Checks to prevent tests from becoming out-of-date. If these fail,
       # it means that extra_params or unsupported_params need to be updated.
       assert extra.issubset(jnp_params), f"{name}: extra={extra} is not a subset of jnp_params={set(jnp_params)}."
       assert not unsupported.intersection(jnp_params), f"{name}: unsupported={unsupported} overlaps with jnp_params={set(jnp_params)}."

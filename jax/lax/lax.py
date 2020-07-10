@@ -3723,7 +3723,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                   slice_sizes=slice_sizes), 0
 
   else:
-    # move our batch dimensions to the front to preserve sanity
+    # move batch dimensions to the front to simplify logic
     operand = batching.moveaxis(operand, operand_bdim, 0)
     start_indices = batching.moveaxis(start_indices, start_indices_bdim, 0)
 
@@ -5598,8 +5598,8 @@ def ranges_like(*xs):
 
 
 def remaining(original, *removed_lists):
-  blacklist = set(itertools.chain(*removed_lists))
-  return [i for i in original if i not in blacklist]
+  removed = set(itertools.chain(*removed_lists))
+  return [i for i in original if i not in removed]
 
 
 def _canonicalize_precision(precision):
