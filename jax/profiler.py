@@ -50,11 +50,11 @@ class TraceContext(xla_client.profiler.TraceMe):
   pass
 
 
-class RootTraceContext(TraceContext):
-  """Context manager that generates a root trace event in the profiler.
+class StepTraceContext(TraceContext):
+  """Context manager that generates a step trace event in the profiler.
 
-  The root trace event spans the duration of the code enclosed by the context.
-  The profiler will provide the performance analysis for each root trace event.
+  The step trace event spans the duration of the code enclosed by the context.
+  The profiler will provide the performance analysis for each step trace event.
 
   For example, it can be used to mark training steps and enable the profiler to
   provide the performance analysis per step:
@@ -62,7 +62,7 @@ class RootTraceContext(TraceContext):
   >>> import jax
   >>>
   >>> while global_step < NUM_STEPS:
-  ...   with jax.profiler.RootTraceContext("train", step_num=global_step):
+  ...   with jax.profiler.StepTraceContext("train", step_num=global_step):
   ...     train_step()
   ...     global_step += 1
 
