@@ -1441,6 +1441,26 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_num_keys={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), num_keys),
+       "shape": shape, "dtype": dtype, "num_keys": num_keys}
+      for dtype in all_dtypes
+      for shape in [(3, 5,), (4, 3)]
+      for num_keys in range(1, shape[0] + 1)))
+  def testSortNumKeys(self, shape, dtype, num_keys):
+    # TODO(b/141131288): enable complex-valued sorts on TPU.
+    if (onp.issubdtype(dtype, onp.complexfloating) and (
+        (jtu.device_under_test() == "cpu" and jax.lib.version <= (0, 1, 47)) or
+         jtu.device_under_test() == "tpu")):
+      raise SkipTest("Complex-valued sort not implemented")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    lax_fun = lambda x: lax.sort(tuple(x), num_keys=num_keys)
+    numpy_fun = lambda x: tuple(x[:, onp.lexsort(x[:num_keys][::-1])])
+    # self._CompileAndCheck(lax_fun, args_maker)
+    self._CheckAgainstNumpy(lax_fun, numpy_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_keyshape={}_valshape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, key_dtype),
           jtu.format_shape_dtype_string(shape, val_dtype),
