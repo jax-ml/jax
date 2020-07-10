@@ -121,7 +121,7 @@ napolean_use_rtype = False
 
 # Execute notebooks before conversion: 'always', 'never', 'auto' (default)
 # We execute all notebooks, exclude the slow ones using 'exclude_patterns'
-nbsphinx_execute = 'always'
+nbsphinx_execute = 'never'
 
 # Use this kernel instead of the one stored in the notebook metadata:
 #nbsphinx_kernel_name = 'python3'
