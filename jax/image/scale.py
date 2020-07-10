@@ -201,4 +201,3 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
     The resized image.
   """
   return _resize(image, shape, method, antialias)
-
