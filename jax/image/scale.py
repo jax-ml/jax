@@ -62,6 +62,9 @@ def _compute_spans(input_size: int, output_size: int,
   """
   radius, kernel_fn = kernel
   inv_scale = 1. / scale
+  # When downsampling the kernel should be scaled since we want to low pass
+  # filter and interpolate, but when upsampling it should not be since we only
+  # want to interpolate.
   kernel_scale = max(inv_scale, 1.) if antialias else 1.
   span_size = min(2 * int(math.ceil(radius * kernel_scale)) + 1, input_size)
 
@@ -125,7 +128,7 @@ class ResizeMethod(enum.Enum):
 
   @staticmethod
   def from_string(s: str):
-    if s in ['linear', 'bilinear', 'trilinear']:
+    if s in ['linear', 'bilinear', 'trilinear', 'triangle']:
       return ResizeMethod.LINEAR
     elif s == 'lanczos3':
       return ResizeMethod.LANCZOS3
@@ -149,7 +152,7 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
 
   The ``method`` argument expects one of the following resize methods:
 
-  ``ResizeMethod.LINEAR``, ``"linear"``, ``"bilinear"``, ``"trilinear"``
+  ``ResizeMethod.LINEAR``, ``"linear"``, ``"bilinear"``, ``"trilinear"``, ``"triangle"``
     `Linear interpolation`_. If ``antialias`` is ``True``, uses a triangular
     filter when downsampling.
 

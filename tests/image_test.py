@@ -55,7 +55,7 @@ class ImageTest(jtu.JaxTestCase):
         "dtype": dtype, "image_shape": image_shape,
         "target_shape": target_shape,
         "method": method, "antialias": antialias}
-       for dtype in [np.float32]
+       for dtype in float_dtypes
        for target_shape, image_shape in itertools.combinations_with_replacement(
         [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]], 2)
        for method in ["bilinear", "lanczos3", "lanczos5", "bicubic"]
@@ -72,13 +72,15 @@ class ImageTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(image_shape, dtype),)
     def tf_fn(x):
-      out = tf.image.resize(x, tf.constant(target_shape[1:-1]), method=method,
-                             antialias=antialias).numpy()
+      out = tf.image.resize(
+        x.astype(np.float64), tf.constant(target_shape[1:-1]),
+        method=method, antialias=antialias).numpy().astype(dtype)
       return out
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=antialias)
     self._CheckAgainstNumpy(tf_fn, jax_fn, args_maker, check_dtypes=True,
-                            tol=1e-4)
+                            tol={np.float16: 2e-2, np.float32: 1e-4,
+                                 np.float64: 1e-4})
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -102,13 +104,13 @@ class ImageTest(jtu.JaxTestCase):
         "bicubic": PIL_Image.BICUBIC,
         "lanczos3": PIL_Image.LANCZOS,
       }
-      img = PIL_Image.fromarray(x)
-      out = np.asarray(img.resize(target_shape[::-1], pil_methods[method]))
+      img = PIL_Image.fromarray(x.astype(np.float32))
+      out = np.asarray(img.resize(target_shape[::-1], pil_methods[method]),
+                       dtype=dtype)
       return out
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=True)
-    self._CheckAgainstNumpy(pil_fn, jax_fn, args_maker, check_dtypes=True,
-                            tol=1e-4)
+    self._CheckAgainstNumpy(pil_fn, jax_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
        {"testcase_name": "_shape={}_target={}_method={}".format(
