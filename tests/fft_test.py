@@ -148,22 +148,27 @@ class FftTest(jtu.JaxTestCase):
         ValueError, lambda: func(rng([2, 3], dtype=np.float64), axes=[-3]))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_real={}_shape={}_axis={}".format(
-          inverse, real, jtu.format_shape_dtype_string(shape, dtype), axis),
+      {"testcase_name": "_inverse={}_real={}_hermitian={}_shape={}_axis={}".format(
+          inverse, real, hermitian, jtu.format_shape_dtype_string(shape, dtype), axis),
        "axis": axis, "shape": shape, "dtype": dtype,
-       "rng_factory": rng_factory, "inverse": inverse, "real": real}
+       "rng_factory": rng_factory, "inverse": inverse, "real": real,
+       "hermitian": hermitian}
       for inverse in [False, True]
       for real in [False, True]
+      for hermitian in [False, True]
       for rng_factory in [jtu.rand_default]
-      for dtype in (real_dtypes if real and not inverse else all_dtypes)
+      for dtype in (real_dtypes if (real and not inverse) or (hermitian and inverse)
+                                else all_dtypes)
       for shape in [(10,)]
       for axis in [-1, 0]))
-  def testFft(self, inverse, real, shape, dtype, axis, rng_factory):
+  def testFft(self, inverse, real, hermitian, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     name = 'fft'
     if real:
       name = 'r' + name
+    elif hermitian:
+      name = 'h' + name
     if inverse:
       name = 'i' + name
     jnp_op = getattr(jnp.fft, name)
@@ -176,15 +181,18 @@ class FftTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inverse={}_real={}".format(inverse, real),
-       "inverse": inverse, "real": real}
+      {"testcase_name": "_inverse={}_real={}_hermitian={}".format(inverse, real, hermitian),
+       "inverse": inverse, "real": real, "hermitian": hermitian}
       for inverse in [False, True]
-      for real in [False, True]))
-  def testFftErrors(self, inverse, real):
+      for real in [False, True]
+      for hermitian in [False, True]))
+  def testFftErrors(self, inverse, real, hermitian):
     rng = jtu.rand_default(self.rng())
     name = 'fft'
     if real:
       name = 'r' + name
+    elif hermitian:
+      name = 'h' + name
     if inverse:
       name = 'i' + name
     func = getattr(jnp.fft, name)
