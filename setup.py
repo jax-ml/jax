@@ -29,7 +29,7 @@ setup(
     packages=find_packages(exclude=["examples"]),
     python_requires='>=3.6',
     install_requires=[
-        'numpy >=1.12', 'absl-py', 'opt_einsum'
+        'numpy >=1.12', 'absl-py', 'opt_einsum', 'toolz'
     ],
     url='https://github.com/google/jax',
     license='Apache-2.0',

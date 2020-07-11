@@ -29,6 +29,7 @@ import functools
 import inspect
 import itertools as it
 import threading
+import toolz
 from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
@@ -89,6 +90,7 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
+@toolz.curry
 def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
         device=None, backend: Optional[str] = None,
         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
@@ -365,6 +367,7 @@ def xla_computation(fun: Callable,
     return c.build(xc.ops.Tuple(c, outs))
   return computation_maker
 
+@toolz.curry
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
          has_aux: bool = False, holomorphic: bool = False) -> Callable:
   """Creates a function which evaluates the gradient of ``fun``.
@@ -420,6 +423,7 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   return grad_f_aux if has_aux else grad_f
 
+@toolz.curry
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                    has_aux: bool = False, holomorphic: bool = False
                    ) -> Callable[..., Tuple[Any, Any]]:
@@ -734,7 +738,7 @@ def _split(x, indices, axis):
 def _dtype(x):
   return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
-
+@toolz.curry
 def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 

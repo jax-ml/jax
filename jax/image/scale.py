@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import enum
 import math
 from typing import Callable, Sequence, Tuple, Union
@@ -157,7 +156,7 @@ _kernels[ResizeMethod.LANCZOS5] = _lanczos_kernel(5.)
 _kernels[ResizeMethod.CUBIC] = _keys_cubic_kernel()
 
 
-@partial(jit, static_argnums=(1, 2, 3, 4))
+@jit(static_argnums=(1, 2, 3, 4))
 def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
             antialias: bool, precision):
   if len(shape) != image.ndim:

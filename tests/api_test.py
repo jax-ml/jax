@@ -43,7 +43,30 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+
 class APITest(jtu.JaxTestCase):
+
+  def test_jit_curry_no_kwargs(self):
+    @jit
+    def f(x, y):
+      return x + y
+
+    @jit()
+    def g(x, y):
+      return x + y
+
+    assert f(1., 2.) == g(1., 2.)
+
+  def test_jit_curry_with_kwargs(self):
+    @partial(jit, static_argnums=(1,))
+    def f(x, y):
+      return x + y
+
+    @jit(static_argnums=(1,))
+    def g(x, y):
+      return x + y
+
+    assert f(1., 2.) == g(1., 2.)
 
   def test_grad_argnums(self):
     def f(x, y, z, flag=False):

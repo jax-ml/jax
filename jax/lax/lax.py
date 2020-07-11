@@ -1695,19 +1695,19 @@ def _upcast_fp16_for_computation(f):
 
   return f_wrapped
 
-@api.jit
+@api.jit  # type: ignore
 @_upcast_fp16_for_computation
 def tan(x: Array) -> Array:
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
   return div(sin(x), cos(x))
 
-@api.jit
+@api.jit  # type: ignore
 def asin(x: Array) -> Array:
   r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
   return mul(_const(x, 2),
              atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
-@api.jit
+@api.jit  # type: ignore
 def acos(x: Array) -> Array:
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
   return select(

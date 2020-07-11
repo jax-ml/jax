@@ -1008,7 +1008,7 @@ def ediff1d(ary, to_end=None, to_begin=None):
   return result
 
 
-@partial(jit, static_argnums=2)
+@jit(static_argnums=2)
 def _gradient(a, varargs, axis):
   def gradient_along_axis(a, h, axis):
     sliced = partial(lax.slice_in_dim, a, axis=axis)
@@ -1859,7 +1859,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
   # avoid materializing the padded output.
   # Consider removing `jit` once again if reduce-window is generalized to
   # support arbitrary padding.
-  @partial(jit, static_argnums=(1, 2))
+  @jit(static_argnums=(1,2))
   def _cumulative_reduction(a, axis, dtype):
     if axis is None or isscalar(a):
       a = ravel(a)
@@ -2010,7 +2010,7 @@ def _pad_edge(array, pad_width):
   return array
 
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1,2))
 def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
   nd = ndim(array)
@@ -2899,7 +2899,7 @@ def einsum_path(subscripts, *operands, **kwargs):
 def _removechars(s, chars):
   return s.translate(str.maketrans(dict.fromkeys(chars)))
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1,2))
 def _einsum(operands: Sequence,
             contractions: Sequence[Tuple[Tuple[int, ...], Set[str], str]],
             precision):
@@ -3061,7 +3061,7 @@ def outer(a, b, out=None):
   a, b = _promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)
 
-@partial(jit, static_argnums=(2, 3, 4))
+@jit(static_argnums=(2, 3, 4))
 def _cross(a, b, axisa, axisb, axisc):
   a = moveaxis(a, axisa, -1)
   b = moveaxis(b, axisb, -1)
@@ -3208,7 +3208,7 @@ def msort(a):
   return sort(a, axis=0)
 
 
-@partial(jit, static_argnums=(2,))
+@jit(static_argnums=(2,))
 def _roll(a, shift, axis):
   a = asarray(a)
   a_shape = shape(a)
@@ -3341,7 +3341,7 @@ def _normalize_index(index, axis_size):
     lax.add(index, _constant_like(index, axis_size)),
     index)
 
-@partial(jit, static_argnums=(2,))
+@jit(static_argnums=(2,))
 def _take_along_axis(arr, indices, axis):
   if axis is None:
     if ndim(indices) != 1:
@@ -3415,7 +3415,7 @@ def take_along_axis(arr, indices, axis):
 
 ### SetOps
 
-@partial(jit, static_argnums=1)
+@jit(static_argnums=1)
 def _unique1d_sorted_mask(ar, optional_indices=False):
   """
   Helper function for unique which is jit-able
@@ -3494,7 +3494,7 @@ def _rewriting_take(arr, idx):
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(jit, static_argnums=(1, 2))
+# @jit(static_argnums=(1, 2))
 def _gather(arr, treedef, static_idx, dynamic_idx):
   idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
@@ -4051,7 +4051,7 @@ def nanquantile(a, q, axis=None, out=None, overwrite_input=False,
   return _quantile(a, q, axis, interpolation, keepdims, True)
 
 
-@partial(jit, static_argnums=(2, 3, 4, 5))
+@jit(static_argnums=(2, 3, 4, 5))
 def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
     raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
@@ -4150,7 +4150,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   return lax.convert_element_type(result, a.dtype)
 
 
-@partial(jit, static_argnums=2)
+@jit(static_argnums=2)
 @partial(vectorize, excluded={0, 2})
 def _searchsorted(a, v, side):
   op = operator.le if side == 'left' else operator.lt
@@ -4410,7 +4410,7 @@ def _compress_method(a, condition, axis=None, out=None):
 setattr(ShapedArray, "compress", _compress_method)
 setattr(DeviceArray, "compress", _compress_method)
 
-@partial(jit, static_argnums=(1,2,3))
+@jit(static_argnums=(1, 2, 3))
 def _multi_slice(arr: DeviceArray,
                  start_indices: Tuple[Tuple[int, ...]],
                  limit_indices: Tuple[Tuple[int, ...]],

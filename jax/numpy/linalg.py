@@ -338,7 +338,7 @@ def inv(a):
     a, lax.broadcast(jnp.eye(a.shape[-1], dtype=lax.dtype(a)), a.shape[:-2]))
 
 
-@partial(jit, static_argnums=(1, 2, 3))
+@jit(static_argnums=(1, 2, 3))
 def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
   x = _promote_arg_dtypes(jnp.asarray(x))
   x_shape = jnp.shape(x)

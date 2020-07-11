@@ -92,7 +92,7 @@ def _naive_rfft(x, fft_lengths):
   n = fft_lengths[-1]
   return y[..., : n//2 + 1]
 
-@partial(jit, static_argnums=1)
+@jit(static_argnums=1)
 def _rfft_transpose(t, fft_lengths):
   # The transpose of RFFT can't be expressed only in terms of irfft. Instead of
   # manually building up larger twiddle matrices (which would increase the

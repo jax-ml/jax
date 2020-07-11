@@ -28,7 +28,7 @@ from ..numpy import linalg as np_linalg
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 
-@partial(jit, static_argnums=(1,))
+@jit(static_argnums=(1,))
 def _cholesky(a, lower):
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
@@ -43,7 +43,7 @@ def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
 def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
   return (cholesky(a, lower=lower), lower)
 
-@partial(jit, static_argnums=(2,))
+@jit(static_argnums=(2,))
 def _cho_solve(c, b, lower):
   c, b = np_linalg._promote_arg_dtypes(jnp.asarray(c), jnp.asarray(b))
   np_linalg._check_solve_shapes(c, b)
@@ -115,7 +115,7 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   return lax_linalg.lu_solve(lu, pivots, b, trans)
 
 
-@partial(jit, static_argnums=(1,))
+@jit(static_argnums=(1,))
 def _lu(a, permute_l):
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
   lu, pivots = lax_linalg.lu(a)
@@ -136,7 +136,7 @@ def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return _lu(a, permute_l)
 
-@partial(jit, static_argnums=(1, 2))
+@jit(static_argnums=(1, 2))
 def _qr(a, mode, pivoting):
   if pivoting:
     raise NotImplementedError(
@@ -160,7 +160,7 @@ def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
   return _qr(a, mode, pivoting)
 
 
-@partial(jit, static_argnums=(2, 3))
+@jit(static_argnums=(2, 3))
 def _solve(a, b, sym_pos, lower):
   if not sym_pos:
     return np_linalg.solve(a, b)
@@ -190,7 +190,7 @@ def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False
   del overwrite_a, overwrite_b, debug, check_finite
   return _solve(a, b, sym_pos, lower)
 
-@partial(jit, static_argnums=(2, 3, 4))
+@jit(static_argnums=(2, 3, 4))
 def _solve_triangular(a, b, trans, lower, unit_diagonal):
   if trans == 0 or trans == "N":
     transpose_a, conjugate_a = False, False

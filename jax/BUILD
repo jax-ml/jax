@@ -43,7 +43,10 @@ pytype_library(
         ],
     ),
     srcs_version = "PY3",
-    deps = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
+    deps = [
+        "//third_party/py/toolz",
+        "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
+    ],
 )
 
 pytype_library(
