@@ -2593,6 +2593,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     ans = jnp.sort(a, axis=0)
     expected = np.array([[1, 1], [3, 4]])
     self.assertAllClose(expected, ans)
+  
+  def testSortComplexManually(self):
+    ans = jnp.sort_complex(np.array([5, 3, 6, 2, 1]))
+    expected = np.array([1.+0.j, 2.+0.j, 3.+0.j, 5.+0.j, 6.+0.j])
+    self.assertAllClose(expected, ans)
+
+    a = np.array([1 + 2j, 2 - 1j, 3 - 2j, 3 - 3j, 3 + 5j])
+    ans = jnp.sort_complex(a)
+    expected = np.array([1.+2.j,  2.-1.j,  3.-3.j,  3.-2.j,  3.+5.j])
+    self.assertAllClose(expected, ans)
+
+
 
   def testArgsortManually(self):
     x = np.array([16, 15, 23, 42, 8, 4])

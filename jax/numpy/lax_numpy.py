@@ -33,6 +33,7 @@ from typing import Sequence, Set, Tuple, Union
 import warnings
 
 import numpy as np
+import numpy.core.numeric as _nx 
 import opt_einsum
 
 from jax import jit, custom_jvp
@@ -3150,6 +3151,18 @@ def sort(a, axis=-1, kind='quicksort', order=None):
   else:
     return lax.sort(a, dimension=_canonicalize_axis(axis, ndim(a)))
 
+@_wraps(np.sort_complex)
+def sort_complex(a):
+    a.sort()
+    if not issubclass(a.dtype.type, _nx.complexfloating):
+        if a.dtype.char in 'bhBH':
+            return a.astype('F')
+        elif a.dtype.char == 'g':
+            return a.astype('G')
+        else:
+            return a.astype('D')
+    else:
+        return a
 
 @_wraps(np.argsort)
 def argsort(a, axis=-1, kind='quicksort', order=None):
@@ -4319,7 +4332,7 @@ _nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
                     "nonzero", "searchsorted", "round"]
 _diff_methods = ["clip", "conj", "conjugate", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
-                 "ravel", "repeat", "sort", "squeeze", "std", "sum",
+                 "ravel", "repeat", "sort", "sort_complex", "squeeze", "std", "sum",
                  "swapaxes", "take", "tile", "trace", "transpose", "var"]
 
 # These methods are mentioned explicitly by nondiff_methods, so we create
