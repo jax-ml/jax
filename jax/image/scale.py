@@ -94,31 +94,25 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
       np.not_equal(translate, 0))[0]
   if len(spatial_dims) == 0:
     return x
-  output_spatial_shape = tuple(np.array(output_shape)[spatial_dims])
-  indices = []
   contractions = []
-  slice_shape = list(input_shape)
-  in_indices = list(range(len(output_shape) + len(spatial_dims)))
+  in_indices = list(range(len(output_shape)))
   out_indices = list(range(len(output_shape)))
   for i, d in enumerate(spatial_dims):
     m = input_shape[d]
     n = output_shape[d]
-    starts, weights = _compute_spans(m, n, scale[d], translate[d],
-                                     kernel, antialias=antialias)
-    starts = lax.broadcast_in_dim(starts, output_spatial_shape + (1,), (i,))
-    slice_shape[d] = weights.shape[1]
-    indices.append(starts.astype(np.int32))
-    contractions.append(weights.astype(x.dtype))
-    contractions.append([len(output_shape) + i, d])
+    starts, span_weights = _compute_spans(m, n, scale[d], translate[d],
+                                          kernel, antialias=antialias)
+    dnums = lax.ScatterDimensionNumbers(
+      update_window_dims=(1,), inserted_window_dims=(1,),
+      scatter_dims_to_operand_dims=(0, 1))
+    w = lax.scatter_add(
+      jnp.zeros((m, n), x.dtype), np.stack([starts, np.arange(n)], axis=-1),
+      span_weights.astype(x.dtype), dnums)
+    contractions.append(w)
+    contractions.append([d, len(output_shape) + i])
     out_indices[d] = len(output_shape) + i
-  index = lax.concatenate(indices, len(output_spatial_shape))
-  dnums = lax.GatherDimensionNumbers(
-      offset_dims=tuple(range(len(output_shape))),
-      collapsed_slice_dims=(),
-      start_index_map=tuple(spatial_dims))
-  out = lax.gather(x, index, dnums, slice_shape)
   contractions.append(out_indices)
-  return jnp.einsum(out, in_indices, *contractions,
+  return jnp.einsum(x, in_indices, *contractions,
                     precision=lax.Precision.HIGHEST)
 
 
@@ -200,4 +194,4 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   Returns:
     The resized image.
   """
-  return _resize(image, shape, method, antialias)
+  return _resize(image, tuple(shape), method, antialias)
