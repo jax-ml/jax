@@ -45,7 +45,7 @@ from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        donation_vector, rebase_donate_argnums)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
-                        treedef_is_leaf)
+                        treedef_is_leaf, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                    split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
@@ -1488,7 +1488,7 @@ def _check_inexact_input_vjp(x):
            "or complex type, got type {}")
     raise TypeError(msg.format(aval.dtype.name))
 
-def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
+def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
@@ -1563,8 +1563,12 @@ def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
-  vjp_py = partial(_vjp_pullback_wrapper, out_vjp,
-                   [_dtype(x) for x in out_primal], (out_tree, in_tree))
+  # Ensure that vjp_py is a PyTree so that we can pass it from the forward to the
+  # backward pass in a custom VJP.
+  vjp_py = Partial(partial(_vjp_pullback_wrapper,
+                           [_dtype(x) for x in out_primal],
+                           (out_tree, in_tree)),
+                   out_vjp)
   if not has_aux:
     return out_primal_py, vjp_py
   else:
