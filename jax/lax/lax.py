@@ -2657,6 +2657,20 @@ def _precision_config(precision):
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  if not all(onp.all(onp.greater_equal(d, 0)) and onp.all(onp.less(d, lhs.ndim))
+             for d in (lhs_contracting, lhs_batch)):
+    msg = ("dot_general requires lhs dimension numbers to be nonnegative and "
+           "less than the number of axes of the lhs value, got "
+           f"lhs_batch of {lhs_batch} and lhs_contracting of {lhs_contracting} "
+           f"for lhs of rank {lhs.ndim}")
+    raise TypeError(msg)
+  if not all(onp.all(onp.greater_equal(d, 0)) and onp.all(onp.less(d, rhs.ndim))
+             for d in (rhs_contracting, rhs_batch)):
+    msg = ("dot_general requires rhs dimension numbers to be nonnegative and "
+           "less than the number of axes of the rhs value, got "
+           f"rhs_batch of {rhs_batch} and rhs_contracting of {rhs_contracting} "
+           f"for rhs of rank {rhs.ndim}")
+    raise TypeError(msg)
   if len(lhs_batch) != len(rhs_batch):
     msg = ("dot_general requires equal numbers of lhs_batch and rhs_batch "
            "dimensions, got lhs_batch {} and rhs_batch {}.")
