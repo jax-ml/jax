@@ -1248,7 +1248,6 @@ def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
     """
     Helper function for intersect1d which is jit-able
     """
-    
     ar = concatenate((ar1, ar2))
 
     if return_indices:
@@ -1258,7 +1257,6 @@ def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
       aux = sort(ar)
 
     mask = aux[1:] == aux[:-1]
-    
     if return_indices:
       return aux, mask, indices
     else:
