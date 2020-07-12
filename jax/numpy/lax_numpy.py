@@ -2783,6 +2783,12 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
 @_wraps(np.matmul, lax_description=_PRECISION_DOC)
 def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
+  for i, x in enumerate((a, b)):
+    if ndim(x) < 1:
+      msg = (f"matmul input operand {i} must have ndim at least 1, "
+             f"but it has ndim {ndim(x)}")
+      raise ValueError(msg)
+
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
   a = expand_dims(a, axis=0) if a_is_vec else a
   b = expand_dims(b, axis=-1) if b_is_vec else b
