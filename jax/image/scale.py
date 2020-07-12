@@ -83,7 +83,7 @@ def _compute_spans(input_size: int, output_size: int,
 
 
 def _scale_and_translate(x, output_shape, scale, translate, kernel,
-                         antialias):
+                         antialias, precision):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
   assert len(input_shape) == len(scale)
@@ -94,32 +94,25 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
       np.not_equal(translate, 0))[0]
   if len(spatial_dims) == 0:
     return x
-  output_spatial_shape = tuple(np.array(output_shape)[spatial_dims])
-  indices = []
   contractions = []
-  slice_shape = list(input_shape)
-  in_indices = list(range(len(output_shape) + len(spatial_dims)))
+  in_indices = list(range(len(output_shape)))
   out_indices = list(range(len(output_shape)))
   for i, d in enumerate(spatial_dims):
     m = input_shape[d]
     n = output_shape[d]
-    starts, weights = _compute_spans(m, n, scale[d], translate[d],
-                                     kernel, antialias=antialias)
-    starts = lax.broadcast_in_dim(starts, output_spatial_shape + (1,), (i,))
-    slice_shape[d] = weights.shape[1]
-    indices.append(starts.astype(np.int32))
-    contractions.append(weights.astype(x.dtype))
-    contractions.append([len(output_shape) + i, d])
+    starts, span_weights = _compute_spans(m, n, scale[d], translate[d],
+                                          kernel, antialias=antialias)
+    dnums = lax.ScatterDimensionNumbers(
+      update_window_dims=(1,), inserted_window_dims=(1,),
+      scatter_dims_to_operand_dims=(0, 1))
+    w = lax.scatter_add(
+      jnp.zeros((m, n), x.dtype), np.stack([starts, np.arange(n)], axis=-1),
+      span_weights.astype(x.dtype), dnums)
+    contractions.append(w)
+    contractions.append([d, len(output_shape) + i])
     out_indices[d] = len(output_shape) + i
-  index = lax.concatenate(indices, len(output_spatial_shape))
-  dnums = lax.GatherDimensionNumbers(
-      offset_dims=tuple(range(len(output_shape))),
-      collapsed_slice_dims=(),
-      start_index_map=tuple(spatial_dims))
-  out = lax.gather(x, index, dnums, slice_shape)
   contractions.append(out_indices)
-  return jnp.einsum(out, in_indices, *contractions,
-                    precision=lax.Precision.HIGHEST)
+  return jnp.einsum(x, in_indices, *contractions, precision=precision)
 
 
 class ResizeMethod(enum.Enum):
@@ -148,9 +141,9 @@ _kernels[ResizeMethod.LANCZOS5] = _lanczos_kernel(5.)
 _kernels[ResizeMethod.CUBIC] = _keys_cubic_kernel()
 
 
-@partial(jit, static_argnums=(1, 2, 3))
+@partial(jit, static_argnums=(1, 2, 3, 4))
 def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
-            antialias: bool):
+            antialias: bool, precision):
   if len(shape) != image.ndim:
     msg = ('shape must have length equal to the number of dimensions of x; '
            f' {shape} vs {image.shape}')
@@ -161,10 +154,11 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   if not jnp.issubdtype(image.dtype, jnp.inexact):
     image = lax.convert_element_type(image, jnp.result_type(image, jnp.float32))
   return _scale_and_translate(image, shape, scale, [0.] * image.ndim, kernel,
-                              antialias)
+                              antialias, precision)
 
 def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
-           antialias: bool = True):
+           antialias: bool = True,
+           precision = lax.Precision.HIGHEST):
   """Image resize.
 
   The ``method`` argument expects one of the following resize methods:
@@ -200,4 +194,4 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   Returns:
     The resized image.
   """
-  return _resize(image, shape, method, antialias)
+  return _resize(image, tuple(shape), method, antialias, precision)
