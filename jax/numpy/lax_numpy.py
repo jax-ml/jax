@@ -1252,7 +1252,7 @@ def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
     ar = concatenate((ar1, ar2))
 
     if return_indices:
-      indices = ar.argsort()
+      indices = argsort(ar)
       aux = ar[indices]
     else:
       aux = sort(ar)
