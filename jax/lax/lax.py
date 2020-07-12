@@ -4862,6 +4862,7 @@ def _select_and_gather_add_batching_rule(
   x = batching.bdim_at_front(x, x_bdim, size)
   window_dimensions = (1,) + window_dimensions
   window_strides = (1,) + window_strides
+  padding = ((0, 0),) + padding
   out = _select_and_gather_add(t, x, select_prim, window_dimensions,
                                window_strides, padding)
   return (out, 0)
