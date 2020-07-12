@@ -1243,6 +1243,27 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
   else:
     return (ar1[:, None] == ar2).any(-1)
 
+@partial(jit, static_argnums=2)
+def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
+    """
+    Helper function for intersect1d which is jit-able
+    """
+    
+    ar = concatenate((ar1, ar2))
+
+    if return_indices:
+      indices = ar.argsort()
+      aux = ar[indices]
+    else:
+      aux = sort(ar)
+
+    mask = aux[1:] == aux[:-1]
+    
+    if return_indices:
+      return aux, mask, indices
+    else:
+      return aux, mask
+
 @_wraps(np.intersect1d)
 def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
 
@@ -1257,14 +1278,11 @@ def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
     ar1 = ravel(ar1)
     ar2 = ravel(ar2)
 
-  aux = concatenate((ar1, ar2))
   if return_indices:
-    aux_sort_indices = argsort(aux, kind='mergesort')
-    aux = aux[aux_sort_indices]
+    aux, mask, aux_sort_indices = _intersect1d_sorted_mask(ar1, ar2, return_indices)
   else:
-    aux = sort(aux)
+    aux, mask = _intersect1d_sorted_mask(ar1, ar2, return_indices)
 
-  mask = (aux[1:] == aux[:-1])
   int1d = aux[:-1][mask]
 
   if return_indices:
