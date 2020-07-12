@@ -87,6 +87,7 @@ from .version import __version__
 from . import image
 from . import lax
 from . import nn
+from . import profiler
 from . import random
 
 def _init():
