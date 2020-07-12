@@ -83,7 +83,7 @@ def _compute_spans(input_size: int, output_size: int,
 
 
 def _scale_and_translate(x, output_shape, scale, translate, kernel,
-                         antialias):
+                         antialias, precision):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
   assert len(input_shape) == len(scale)
@@ -112,8 +112,7 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
     contractions.append([d, len(output_shape) + i])
     out_indices[d] = len(output_shape) + i
   contractions.append(out_indices)
-  return jnp.einsum(x, in_indices, *contractions,
-                    precision=lax.Precision.HIGHEST)
+  return jnp.einsum(x, in_indices, *contractions, precision=precision)
 
 
 class ResizeMethod(enum.Enum):
@@ -142,9 +141,9 @@ _kernels[ResizeMethod.LANCZOS5] = _lanczos_kernel(5.)
 _kernels[ResizeMethod.CUBIC] = _keys_cubic_kernel()
 
 
-@partial(jit, static_argnums=(1, 2, 3))
+@partial(jit, static_argnums=(1, 2, 3, 4))
 def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
-            antialias: bool):
+            antialias: bool, precision):
   if len(shape) != image.ndim:
     msg = ('shape must have length equal to the number of dimensions of x; '
            f' {shape} vs {image.shape}')
@@ -155,10 +154,11 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   if not jnp.issubdtype(image.dtype, jnp.inexact):
     image = lax.convert_element_type(image, jnp.result_type(image, jnp.float32))
   return _scale_and_translate(image, shape, scale, [0.] * image.ndim, kernel,
-                              antialias)
+                              antialias, precision)
 
 def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
-           antialias: bool = True):
+           antialias: bool = True,
+           precision = lax.Precision.HIGHEST):
   """Image resize.
 
   The ``method`` argument expects one of the following resize methods:
@@ -194,4 +194,4 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   Returns:
     The resized image.
   """
-  return _resize(image, tuple(shape), method, antialias)
+  return _resize(image, tuple(shape), method, antialias, precision)
