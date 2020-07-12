@@ -1243,6 +1243,41 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
   else:
     return (ar1[:, None] == ar2).any(-1)
 
+@_wraps(np.intersect1d)
+def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
+
+  if not assume_unique:
+    if return_indices:
+      ar1, ind1 = unique(ar1, return_index=True)
+      ar2, ind2 = unique(ar2, return_index=True)
+    else:
+      ar1 = unique(ar1)
+      ar2 = unique(ar2)
+  else:
+    ar1 = ravel(ar1)
+    ar2 = ravel(ar2)
+
+  aux = concatenate((ar1, ar2))
+  if return_indices:
+    aux_sort_indices = argsort(aux, kind='mergesort')
+    aux = aux[aux_sort_indices]
+  else:
+    aux = sort(aux)
+
+  mask = (aux[1:] == aux[:-1])
+  int1d = aux[:-1][mask]
+
+  if return_indices:
+    ar1_indices = aux_sort_indices[:-1][mask]
+    ar2_indices = aux_sort_indices[1:][mask] - ar1.size
+    if not assume_unique:
+      ar1_indices = ind1[ar1_indices]
+      ar2_indices = ind2[ar2_indices]
+
+    return int1d, ar1_indices, ar2_indices
+  else:
+    return int1d
+
 
 @_wraps(np.isin, lax_description="""
 In the JAX version, the `assume_unique` argument is not referenced.
