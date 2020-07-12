@@ -651,6 +651,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           [(3, 4, 5), (0, 2)],
           [(3, 4, 5), (0, 1, 2)],
           [(3, 1), (1,)],
+          [(3, 0, 5), (1,)],
       ]))
   def testReduceGrad(self, op, init_val, shape, dtype, dims, rng_factory):
     rng = rng_factory(self.rng())
@@ -664,7 +665,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     eps = (1.0 if dtypes.finfo(dtype).bits == 16 and op is lax.add else
            1e-1 if dtype == dtypes.bfloat16 else
            1e-2 if dtypes.finfo(dtype).bits == 32 else None)
-    check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
+    if op not in (lax.max, lax.min) or all(d > 0 for d in shape):
+      check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"
