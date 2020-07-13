@@ -37,7 +37,7 @@ from .lax_numpy import (
     fmod, frexp, full, full_like, function, gcd, geomspace, gradient, greater,
     greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges,
     hsplit, hstack, hypot, identity, iinfo, imag,
-    indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer,
+    indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer, intersect1d,
     isclose, iscomplex, iscomplexobj, isfinite, isin, isinf, isnan, isneginf,
     isposinf, isreal, isrealobj, isscalar, issubdtype, issubsctype, iterable,
     ix_, kaiser, kron, lcm, ldexp, left_shift, less, less_equal, linspace,

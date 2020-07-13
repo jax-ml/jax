@@ -153,6 +153,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     iscomplex
     isfinite
     isin
+    intersect1d
     isinf
     isnan
     isneginf
