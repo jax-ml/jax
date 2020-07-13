@@ -115,7 +115,22 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
   return jnp.einsum(x, in_indices, *contractions, precision=precision)
 
 
+def _resize_nearest(x, output_shape):
+  input_shape = x.shape
+  assert len(input_shape) == len(output_shape)
+  spatial_dims = np.nonzero(np.not_equal(input_shape, output_shape))[0]
+  for d in spatial_dims:
+    m = input_shape[d]
+    n = output_shape[d]
+    offsets = (np.arange(n) + 0.5) * m / n
+    indices = [slice(None)] * len(input_shape)
+    indices[d] = np.floor(offsets).astype(np.int32)
+    x = x[tuple(indices)]
+  return x
+
+
 class ResizeMethod(enum.Enum):
+  NEAREST = 0
   LINEAR = 1
   LANCZOS3 = 2
   LANCZOS5 = 3
@@ -123,6 +138,8 @@ class ResizeMethod(enum.Enum):
 
   @staticmethod
   def from_string(s: str):
+    if s == 'nearest':
+      return ResizeMethod.NEAREST
     if s in ['linear', 'bilinear', 'trilinear', 'triangle']:
       return ResizeMethod.LINEAR
     elif s == 'lanczos3':
@@ -148,8 +165,11 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
     msg = ('shape must have length equal to the number of dimensions of x; '
            f' {shape} vs {image.shape}')
     raise ValueError(msg)
-  kernel = _kernels[ResizeMethod.from_string(method) if isinstance(method, str)
-                    else method]
+  if isinstance(method, str):
+    method_id = ResizeMethod.from_string(method)
+  if method_id == ResizeMethod.NEAREST:
+    return _resize_nearest(image, shape)
+  kernel = _kernels[method_id]
   scale = [float(o) / i for o, i in zip(shape, image.shape)]
   if not jnp.issubdtype(image.dtype, jnp.inexact):
     image = lax.convert_element_type(image, jnp.result_type(image, jnp.float32))
@@ -162,6 +182,10 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   """Image resize.
 
   The ``method`` argument expects one of the following resize methods:
+
+  ``ResizeMethod.NEAREST``, ``"nearest"``
+    `Nearest neighbor interpolation`_. The values of ``antialias`` and
+    ``precision`` are ignored.
 
   ``ResizeMethod.LINEAR``, ``"linear"``, ``"bilinear"``, ``"trilinear"``, ``"triangle"``
     `Linear interpolation`_. If ``antialias`` is ``True``, uses a triangular
@@ -176,6 +200,7 @@ def resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   ``ResizeMethod.LANCZOS5``, ``"lanczos5"``
     `Lanczos resampling`_, using a kernel of radius 5.
 
+  .. _Nearest neighbor interpolation: https://en.wikipedia.org/wiki/Nearest-neighbor_interpolation
   .. _Linear interpolation: https://en.wikipedia.org/wiki/Bilinear_interpolation
   .. _Cubic interpolation: https://en.wikipedia.org/wiki/Bicubic_interpolation
   .. _Lanczos resampling: https://en.wikipedia.org/wiki/Lanczos_resampling
