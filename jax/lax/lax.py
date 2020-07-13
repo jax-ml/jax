@@ -1116,7 +1116,7 @@ def _reduce_and(operand: Array, axes: Sequence[int]) -> Array:
 def reduce_window(operand: Array, init_value: Array, computation: Callable,
                   window_dimensions: Shape, window_strides: Sequence[int],
                   padding: Union[str, Sequence[Tuple[int, int]]]) -> Array:
-  """Wraps XLA's `ReduceWindow
+  """Wraps XLA's `ReduceWindowWithGeneralPadding
   <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
   operator.
   """
