@@ -2004,7 +2004,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for shape in [(5,), (5, 5)]
     for dtype in number_dtypes
     for bins in [10, np.arange(-5, 6), [-5, 0, 3]]
-    for range in [None, (0, 10)]
+    for range in [None, (0, 0), (0, 10)]
     for weights in [True, False]
   ))
   def testHistogramBinEdges(self, shape, dtype, bins, range, weights):
