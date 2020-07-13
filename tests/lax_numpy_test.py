@@ -469,7 +469,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testOp(self, np_op, jnp_op, rng_factory, shapes, dtypes, check_dtypes,
              tolerance, inexact):
     np_op = jtu.ignore_warning(category=RuntimeWarning,
-                                message="invalid value.*")(np_op)
+                               message="invalid value.*")(np_op)
 
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)

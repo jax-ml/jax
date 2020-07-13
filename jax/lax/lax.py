@@ -4284,9 +4284,9 @@ def _reduce_prod_jvp_rule(primals, tangents, *, axes):
         paddings[axis] = (0, 1, 0)
         x2 = pad(x2, _const(x, 1), paddings)
       x = x1 * x2
-    shape = list(x.shape)
-    del shape[axis]
-    return reshape(x, shape)
+    if x.shape[axis] == 0:
+      return full(input_shape[non_axes], _one(x))
+    return squeeze(x, (axis,))
 
   return api.jvp(_reduce_prod_tree, (operand,), (tangent,))
 
