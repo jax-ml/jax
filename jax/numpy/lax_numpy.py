@@ -1400,12 +1400,6 @@ def clip(a, a_min=None, a_max=None):
   return a
 
 
-def _dtype_info(dtype):
-  """Helper function for to get dtype info needed for clipping."""
-  if issubdtype(dtype, integer):
-    return iinfo(dtype)
-  return finfo(dtype)
-
 def _round_to_nearest_even(x):
   half = lax._const(x, 0.5)
   one = lax._const(x, 1)
