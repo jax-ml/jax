@@ -1123,6 +1123,8 @@ def reduce_window(operand: Array, init_value: Array, computation: Callable,
   if isinstance(padding, str):
     padding = padtype_to_pads(operand.shape, window_dimensions,
                               window_strides, padding)
+  else:
+    padding = tuple(padding)
   monoid_reducer = _get_monoid_window_reducer(computation, init_value)
   if monoid_reducer:
     return monoid_reducer(operand, window_dimensions, window_strides, padding)
