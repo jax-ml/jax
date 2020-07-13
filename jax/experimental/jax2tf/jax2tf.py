@@ -791,9 +791,6 @@ def _reduce_window(jax_f, reducer, init_val, operand, window_dimensions,
   # TODO(tomhennigan): tf2xla should have a shape inference function.
   out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
                                    window_strides, padding)
-  padding = lax.padtype_to_pads(_get_shape_from_tensor_or_array(operand),
-                                window_dimensions,
-                                window_strides, padding)
   a = tf.constant(0, operand.dtype)
   reducer_fn = reducer.get_concrete_function(a, a)
   out = tfxla.reduce_window(operand, tf.constant(init_val, operand.dtype),

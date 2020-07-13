@@ -566,8 +566,9 @@ class LaxVmapTest(jtu.JaxTestCase):
             [(1, 2, 2, 1), (1, 1, 1, 1)]))
 
     def fun(operand, tangents):
+      pads = lax.padtype_to_pads(operand.shape, dims, strides, padding)
       return lax._select_and_gather_add(operand, tangents, lax.ge_p, dims,
-                                        strides, padding)
+                                        strides, pads)
 
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape, shape):
