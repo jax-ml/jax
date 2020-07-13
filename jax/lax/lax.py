@@ -2402,7 +2402,7 @@ def _conv_general_dilated_shape_rule(
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, **unused_kwargs):
-  return naryop_dtype_rule(_input_dtype, [_float, _float],
+  return naryop_dtype_rule(_input_dtype, [_float | _complex, _float | _complex],
                           'conv_general_dilated', lhs, rhs)
 
 _conv_spec_transpose = lambda spec: (spec[1], spec[0]) + spec[2:]
@@ -2499,16 +2499,37 @@ def _conv_general_dilated_transpose_rhs(
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count, precision=precision)
 
+
 def _conv_general_dilated_translation_rule(
-    c, lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
-    dimension_numbers, feature_group_count, batch_group_count, precision,
-    **unused_kwargs):
+    c, lhs, rhs, *, window_strides, padding,
+    lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
+    batch_group_count, precision, expand_complex_convolutions, **unused_kwargs):
   assert type(dimension_numbers) is ConvDimensionNumbers
   dimension_numbers = _conv_general_proto(dimension_numbers)
-  return xops.ConvGeneralDilated(lhs, rhs, window_strides, padding, lhs_dilation,
-                                 rhs_dilation, dimension_numbers,
-                                 feature_group_count, batch_group_count,
-                                 precision_config=_precision_config(precision))
+  precision_config = _precision_config(precision)
+  dtype = c.get_shape(lhs).numpy_dtype()
+  conv = lambda x, y: xops.ConvGeneralDilated(
+      x, y, window_strides, padding, lhs_dilation, rhs_dilation,
+      dimension_numbers, feature_group_count, batch_group_count,
+      precision_config=precision_config)
+  if expand_complex_convolutions and onp.issubdtype(dtype, onp.complexfloating):
+    # We use a trick for complex multiplication due to Gauss which uses three
+    # multiplications and five additions; instead of the naive method of four
+    # multiplications and two additions.
+    # https://en.wikipedia.org/wiki/Multiplication_algorithm#Complex_multiplication_algorithm
+    #
+    # This performance win comes with a trade-off in accuracy; especially in
+    # cases when the real and imaginary differ hugely in magnitude. The relative
+    # error bound (e.g. 1p-24 in case of float32) would be relative to the
+    # maximum of real and imaginary parts of the result instead of being
+    # satisfied by the real and imaginary parts independently of each other.
+    lhs_real, lhs_imag = xops.Real(lhs), xops.Imag(lhs)
+    rhs_real, rhs_imag = xops.Real(rhs), xops.Imag(rhs)
+    k1 = conv(xops.Add(lhs_real, lhs_imag), rhs_real)
+    k2 = conv(lhs_real, xops.Sub(rhs_imag, rhs_real))
+    k3 = conv(lhs_imag, xops.Add(rhs_real, rhs_imag))
+    return xops.Complex(xops.Sub(k1, k3), xops.Add(k1, k2))
+  return conv(lhs, rhs)
 
 def _conv_general_dilated_batch_rule(
     batched_args, batch_dims, *, window_strides, padding,
@@ -2631,7 +2652,16 @@ def _conv_general_dilated_masking_rule(
 
 conv_general_dilated_p = standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
-    'conv_general_dilated', _conv_general_dilated_translation_rule)
+    'conv_general_dilated', partial(_conv_general_dilated_translation_rule,
+                                    expand_complex_convolutions=False))
+
+# TODO(b/161124619, b/161126248): XLA does not support complex convolution on
+# CPU or GPU; on these backends, lower complex convolutions away.
+xla.backend_specific_translations['cpu'][conv_general_dilated_p] = partial(
+    _conv_general_dilated_translation_rule, expand_complex_convolutions=True)
+xla.backend_specific_translations['gpu'][conv_general_dilated_p] = partial(
+    _conv_general_dilated_translation_rule, expand_complex_convolutions=True)
+
 ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_lhs,
                _conv_general_dilated_transpose_rhs)
