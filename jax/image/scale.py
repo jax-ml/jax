@@ -88,10 +88,9 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
   assert len(input_shape) == len(output_shape)
   assert len(input_shape) == len(scale)
   assert len(input_shape) == len(translate)
-  spatial_dims = np.nonzero(
-      np.not_equal(input_shape, output_shape) |
-      np.not_equal(scale, 1) |
-      np.not_equal(translate, 0))[0]
+  spatial_dims, = np.nonzero(np.not_equal(input_shape, output_shape) |
+                             np.not_equal(scale, 1) |
+                             np.not_equal(translate, 0))
   if len(spatial_dims) == 0:
     return x
   contractions = []
@@ -118,7 +117,7 @@ def _scale_and_translate(x, output_shape, scale, translate, kernel,
 def _resize_nearest(x, output_shape):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
-  spatial_dims = np.nonzero(np.not_equal(input_shape, output_shape))[0]
+  spatial_dims, = np.nonzero(np.not_equal(input_shape, output_shape))
   for d in spatial_dims:
     m = input_shape[d]
     n = output_shape[d]
