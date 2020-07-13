@@ -1203,7 +1203,7 @@ def scan(f, init, xs, length=None, reverse=False, _unroll=None):
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
     for i in maybe_reversed(range(length)):
-      xs_slice = [_dynamic_index_array(i, core.get_aval(x), x) for x in xs_flat]
+      xs_slice = [_index_array(i, core.get_aval(x), x) for x in xs_flat]
       carry, y = f(carry, tree_unflatten(xs_tree, xs_slice))
       ys.append(y)
     stack = lambda y, *ys: (y if core.get_aval(y) is core.abstract_unit
