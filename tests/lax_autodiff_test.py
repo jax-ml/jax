@@ -346,7 +346,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for strides in all_strides
       for rhs_dil in rhs_dils
       for lhs_dil in lhs_dils
-      for dtype in grad_float_dtypes
+      for dtype in grad_inexact_dtypes
       for padding in ([((0, 0), (0, 0)), ((1, 0), (0, 1))] +
         ([((0, -1), (0, 0))] if lhs_shape[2] != 0 else []))
       for dim_nums, perms in [

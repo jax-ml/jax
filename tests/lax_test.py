@@ -463,7 +463,7 @@ class LaxTest(jtu.JaxTestCase):
            (j * feature_group_count * batch_group_count, i, 4, 5))
           for w in [0, 10]
           for b, i, j in itertools.product([2, 3], repeat=3)]
-      for dtype in float_dtypes for strides in [(1, 1), (2, 1)]
+      for dtype in inexact_dtypes for strides in [(1, 1), (2, 1)]
       for padding in [((1, 2), (2, 0)), ((10, 8), (7, 13))]
       for lhs_dilation, rhs_dilation in itertools.product(
           [(1, 1), (1, 2), (1, 4)], repeat=2)
