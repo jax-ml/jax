@@ -184,6 +184,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if len(harness.arg_descriptors) > 4:
       # TODO: implement variable number of operands to XlaSort
       raise unittest.SkipTest("conversion not implemented for #operands > 2")
+    if (jtu.device_under_test() == "gpu" and
+        len(harness.arg_descriptors) == 4 and
+        not harness.params["is_stable"]):
+      # TODO: fix the TF GPU test
+      raise unittest.SkipTest("GPU tests are running TF on CPU")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            with_function=False)
 
