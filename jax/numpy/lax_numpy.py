@@ -1249,12 +1249,8 @@ def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
     Helper function for intersect1d which is jit-able
     """
     ar = concatenate((ar1, ar2))
-
-    if return_indices:
-      indices = argsort(ar)
-      aux = ar[indices]
-    else:
-      aux = sort(ar)
+    iota = lax.broadcasted_iota(np.int64, shape(ar), dimension=0)
+    aux, indices = lax.sort_key_val(ar, iota)
 
     mask = aux[1:] == aux[:-1]
     if return_indices:
