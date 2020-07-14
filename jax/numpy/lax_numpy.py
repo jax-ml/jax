@@ -1531,8 +1531,13 @@ def _isposneginf(infinity, x):
   else:
     return full_like(x, False, dtype=bool_)
 
-isposinf = _wraps(np.isposinf)(partial(_isposneginf, inf))
-isneginf = _wraps(np.isneginf)(partial(_isposneginf, -inf))
+@_wraps(np.isposinf)
+def isposinf(x):
+  return _isposneginf(inf, x)
+
+@_wraps(np.isneginf)
+def isneginf(x):
+  return _isposneginf(-inf, x)
 
 @_wraps(np.isnan)
 def isnan(x):

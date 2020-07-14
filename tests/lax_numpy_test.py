@@ -4007,8 +4007,6 @@ class NumpyGradTests(jtu.JaxTestCase):
       'broadcast_to': ['arr'],
       'einsum_path': ['kwargs', 'subscripts'],
       'gradient': ['kwargs', 'args'],
-      'isneginf': ['infinity'],
-      'isposinf': ['infinity'],
       'max': ['dtype'],
       'min': ['dtype'],
       'nanmax': ['kwargs'],
