@@ -7,12 +7,12 @@ JAX's type promotion rules (i.e., the result of
 :func:`jax.numpy.promote_types` for each pair of types) are given by the
 following table, where, for example
 
-* "b1" means :code:`jnp.bool_`,
-* "s2" means :code:`jnp.int16`,
-* "u4" means :code:`jnp.uint32`,
-* "bf" means :code:`jnp.bfloat16`,
-* "f2" means :code:`jnp.float16`, and
-* "c8" means :code:`jnp.complex128`.
+* "b1" means :code:`np.bool_`,
+* "s2" means :code:`np.int16`,
+* "u4" means :code:`np.uint32`,
+* "bf" means :code:`np.bfloat16`,
+* "f2" means :code:`np.float16`, and
+* "c8" means :code:`np.complex128`.
 
 .. raw:: html
 
