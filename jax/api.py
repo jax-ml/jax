@@ -1775,7 +1775,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> import jax
   >>> import jax.numpy as jnp
   >>>
-  >>> f = lambda A, x: np.tanh(np.dot(A, x))
+  >>> f = lambda A, x: jnp.tanh(jnp.dot(A, x))
   >>> class MyArgArray(object):
   ...   def __init__(self, shape, dtype):
   ...     self.shape = shape
