@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tup
 from warnings import warn
 
 from absl import logging
-import numpy as onp
+import numpy as np
 
 from ..config import flags, bool_env
 from .. import core
@@ -74,11 +74,11 @@ def identity(x): return x
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 # unit representation
-def _make_unit(c): return xb.constant(c, onp.zeros((), dtype=onp.dtype('bool')))
-def _make_abstract_unit(_): return xc.Shape.array_shape(onp.dtype('bool'), ())
+def _make_unit(c): return xb.constant(c, np.zeros((), dtype=np.dtype('bool')))
+def _make_abstract_unit(_): return xc.Shape.array_shape(np.dtype('bool'), ())
 def _device_put_unit(_, device):
   backend = xb.get_device_backend(device)
-  return backend.buffer_from_pyval(onp.zeros((), dtype=onp.dtype('bool')),
+  return backend.buffer_from_pyval(np.zeros((), dtype=np.dtype('bool')),
                                    device)
 def _make_array_shape(a):
   return xc.Shape.array_shape(a.dtype, a.shape)
@@ -143,10 +143,10 @@ def canonicalize_dtype(x):
   raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
 
 def _canonicalize_ndarray_dtype(x):
-  return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
+  return np.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
 
 def _canonicalize_python_scalar_dtype(typ, x):
-  return onp.asarray(
+  return np.asarray(
       x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
 
 canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
@@ -342,8 +342,8 @@ def check_nans(prim, bufs):
 
 def _check_nans(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
-  if dtypes.issubdtype(xla_shape.element_type(), onp.inexact):
-    if onp.any(onp.isnan(buf.to_py())):
+  if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
+    if np.any(np.isnan(buf.to_py())):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
 
 ### compiling jaxprs
@@ -477,10 +477,10 @@ def _axis_groups(nrep, mesh_spec, mesh_axes):
   trailing_size, ragged = divmod(nrep, prod(mesh_spec))
   assert not ragged
   full_spec = list(mesh_spec) + [trailing_size]
-  iota = onp.arange(prod(full_spec)).reshape(full_spec)
-  groups = onp.reshape(
-      onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
-      (prod(onp.take(full_spec, mesh_axes)), -1))
+  iota = np.arange(prod(full_spec)).reshape(full_spec)
+  groups = np.reshape(
+      np.moveaxis(iota, mesh_axes, np.arange(len(mesh_axes))),
+      (prod(np.take(full_spec, mesh_axes)), -1))
   return tuple(unsafe_map(tuple, groups.T))
 
 def jaxpr_replicas(jaxpr):
@@ -862,7 +862,7 @@ call_translations[xla_call_p] = _xla_call_translation_rule
 def zeros_like_translation_rule(c, x):
   shape = c.get_shape(x)
   assert not shape.is_tuple()
-  zero = xb.constant(c, onp.array(0, shape.element_type()))
+  zero = xb.constant(c, np.array(0, shape.element_type()))
   return xops.Broadcast(zero, shape.dimensions())
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
 
@@ -1018,7 +1018,7 @@ class DeviceArray(DeviceValue):
 
   def copy(self):
     """Returns an ndarray (backed by host memory, not device memory)."""
-    return onp.asarray(self)
+    return np.asarray(self)
 
   def copy_to_host_async(self):
     """Requests a copy of the buffer to the host."""
@@ -1042,10 +1042,10 @@ class DeviceArray(DeviceValue):
     self._npy_value = None
 
   def __repr__(self):
-    line_width = onp.get_printoptions()['linewidth']
+    line_width = np.get_printoptions()['linewidth']
     prefix = '{}('.format(self.__class__.__name__)
-    s = onp.array2string(self._value, prefix=prefix, suffix=',',
-                         separator=', ', max_line_width=line_width)
+    s = np.array2string(self._value, prefix=prefix, suffix=',',
+                        separator=', ', max_line_width=line_width)
     dtype_str = 'dtype={})'.format(self.dtype.name)
     last_line_len = len(s) - s.rfind('\n') + 1
     sep = ' '
@@ -1054,13 +1054,13 @@ class DeviceArray(DeviceValue):
     return "{}{},{}{}".format(prefix, s, sep, dtype_str)
 
   def item(self):
-    if dtypes.issubdtype(self.dtype, onp.complexfloating):
+    if dtypes.issubdtype(self.dtype, np.complexfloating):
       return complex(self)
-    elif dtypes.issubdtype(self.dtype, onp.floating):
+    elif dtypes.issubdtype(self.dtype, np.floating):
       return float(self)
-    elif dtypes.issubdtype(self.dtype, onp.integer):
+    elif dtypes.issubdtype(self.dtype, np.integer):
       return int(self)
-    elif dtypes.issubdtype(self.dtype, onp.bool_):
+    elif dtypes.issubdtype(self.dtype, np.bool_):
       return bool(self)
     else:
       raise TypeError(self.dtype)
@@ -1091,7 +1091,7 @@ class DeviceArray(DeviceValue):
       return format(self._value, format_spec)
 
   def __array__(self, dtype=None, context=None):
-    return onp.asarray(self._value, dtype=dtype)
+    return np.asarray(self._value, dtype=dtype)
 
   @property
   def __cuda_array_interface__(self):
@@ -1251,10 +1251,10 @@ def _remat_translation_rule(c, axis_env, in_nodes,
        Conditional."""
   del device, concrete  # Unused.
   # Fake condition which always selects True branch.
-  rng = xops.RngUniform(xb.constant(c, onp.array(0, dtype=onp.float32)),
-                        xb.constant(c, onp.array(1, dtype=onp.float32)),
+  rng = xops.RngUniform(xb.constant(c, np.array(0, dtype=np.float32)),
+                        xb.constant(c, np.array(1, dtype=np.float32)),
                         xc.Shape.array_shape(xc.PrimitiveType.F32, []))
-  pred = xops.Lt(rng, xb.constant(c, onp.array(2, dtype=onp.float32)))
+  pred = xops.Lt(rng, xb.constant(c, np.array(2, dtype=np.float32)))
 
   true_op = xops.Tuple(c, in_nodes)
   remat_subc = xb.make_computation_builder("remat_call_subcomputation")
@@ -1272,7 +1272,7 @@ def _remat_translation_rule(c, axis_env, in_nodes,
 
   def zeros(xla_shape):
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-    zero = xb.constant(dummy_subc, onp.array(0, dtype=dtype))
+    zero = xb.constant(dummy_subc, np.array(0, dtype=dtype))
     return xops.Broadcast(zero, shape)
   out_nodes = [zeros(s) for s in out_node_shapes]
   dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))

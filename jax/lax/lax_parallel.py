@@ -17,7 +17,7 @@ Parallelization primitives.
 
 import collections
 
-import numpy as onp
+import numpy as np
 
 from jax import core
 from jax import ad_util
@@ -72,8 +72,8 @@ def psum(x, axis_name, *, axis_index_groups=None):
   """
   _validate_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
-  leaves = [lax.convert_element_type(l, onp.int32)
-            if dtypes.dtype(l) == onp.bool_ else l for l in leaves]
+  leaves = [lax.convert_element_type(l, np.int32)
+            if dtypes.dtype(l) == np.bool_ else l for l in leaves]
   out_flat = psum_p.bind(*leaves, axis_name=axis_name,
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -327,7 +327,7 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
   out = [None] * len(args)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
   for dtype, (indices, dtype_args) in sorted(args_by_type.items()):
-    is_complex = dtypes.issubdtype(dtype, onp.complexfloating)
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
     n = len(dtype_args)
     if is_complex:
       dtype_args = ([xops.Real(x) for x in dtype_args] +
@@ -355,7 +355,7 @@ def _notuple_psum_translation_rule(c, *args, replica_groups):
     psum = partial(_allreduce_translation_rule, lax.add_p, c,
                    replica_groups=replica_groups)
     dtype = c.get_shape(val).numpy_dtype()
-    if dtypes.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, np.complexfloating):
       return xops.Complex(psum(xops.Real(val)), psum(xops.Imag(val)))
     else:
       return psum(val)
@@ -507,14 +507,14 @@ def _broadcasting_papply(prim, name, size, vals, axes, **params):
   if xdim is None:
     if x.shape:
       if x.shape[ydim] == 1:
-        x = x.reshape(onp.delete(x.shape, ydim))
+        x = x.reshape(np.delete(x.shape, ydim))
       else:
         x = _drop(x, ydim, name)
     return prim.bind(x, y, **params), ydim
   elif ydim is None:
     if y.shape:
       if y.shape[xdim] == 1:
-        y = y.reshape(onp.delete(y.shape, xdim))
+        y = y.reshape(np.delete(y.shape, xdim))
       else:
         y = _drop(y, xdim, name)
     return prim.bind(x, y, **params), xdim
@@ -525,11 +525,11 @@ def _broadcasting_papply(prim, name, size, vals, axes, **params):
     y_tosplit = xdim - int(ydim <= xdim)
     if y.shape[y_tosplit] == 1:
       y = _allgather(y, ydim, size, name)
-      y = y.reshape(onp.delete(y.shape, xdim))
+      y = y.reshape(np.delete(y.shape, xdim))
       return prim.bind(x, y, **params), ydim
     elif x.shape[x_tosplit] == 1:
       x = _allgather(x, xdim, size, name)
-      x = x.reshape(onp.delete(x.shape, ydim))
+      x = x.reshape(np.delete(x.shape, ydim))
       return prim.bind(x, y, **params), ydim
     else:
       x = all_to_all(x, name, x_tosplit, xdim)
@@ -565,7 +565,7 @@ def _reducer_papply(prim, collective, name, size, vals, papply_axes, axes, **kwa
   if not axes or papply_axis in axes:
     return collective(result, axis_name=name), None
   else:
-    new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
+    new_papply_axis = papply_axis - np.sum(np.less(other_axes, papply_axis))
     return result, new_papply_axis
 
 def _defreducer(prim, collective_prim):
@@ -754,13 +754,13 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
 def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions):
   operand, = vals
   axis, = axes
-  old_sizes = tuple(onp.insert(operand.shape, axis, size))
+  old_sizes = tuple(np.insert(operand.shape, axis, size))
 
   def filter_ones(xs):
     return filter(lambda x: x != 1, xs)
 
   def find_new_axis(old_axis, old_sizes, new_sizes):
-    left = onp.prod(old_sizes[:old_axis])
+    left = np.prod(old_sizes[:old_axis])
     size = old_sizes[old_axis]
     prod = 1
     for i, cur_sz in enumerate(new_sizes):
@@ -829,7 +829,7 @@ def _conv_general_dilated_papply_rule(
   lhs_dim, rhs_dim = dims
   lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
   if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
-    lhs = lax.reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+    lhs = lax.reshape(lhs, tuple(np.insert(lhs.shape, lhs_dim, 1)))
     out = lax.conv_general_dilated(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
         dimension_numbers, feature_group_count, precision)
@@ -848,8 +848,8 @@ def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
     raise ValueError(
         "broadcast_in_dim changes hidden dimension size: {} to {}".format(
             shape[dim], shape[out_dim]))
-  sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
-  sub_shape = tuple(onp.delete(shape, out_dim))
+  sub_bdims = tuple(np.delete(broadcast_dimensions, dim))
+  sub_shape = tuple(np.delete(shape, out_dim))
   return lax.broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
 
 
@@ -906,8 +906,8 @@ def _gather_papply_rule(
         start_index_map=dimension_numbers.start_index_map)
     out = lax.gather(operand, start_indices, dimension_numbers=dnums,
                      slice_sizes=slice_sizes)
-    out_dim = start_indices_dim + onp.sum(
-        onp.less_equal(offset_dims, start_indices_dim))
+    out_dim = start_indices_dim + np.sum(
+        np.less_equal(offset_dims, start_indices_dim))
     return out, out_dim
   else:
     raise NotImplementedError

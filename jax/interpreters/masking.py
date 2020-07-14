@@ -20,7 +20,7 @@ import operator as op
 import string
 from typing import Callable, Dict, Sequence, Union
 
-import numpy as onp
+import numpy as np
 
 from .. import abstract_arrays
 from .. import core, dtypes
@@ -317,7 +317,7 @@ def parse_spec(spec=''):
 
 def _parse_dim(spec):
   if '+' in spec:
-    return onp.sum(map(_parse_dim, spec.split('+')))
+    return np.sum(map(_parse_dim, spec.split('+')))
   elif '*' in spec:
     return prod(map(_parse_dim, spec.split('*')))
   elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
@@ -383,10 +383,10 @@ class MaskTracer(Tracer):
 
 class MaskTrace(Trace):
   def pure(self, val):
-    return MaskTracer(self, val, onp.shape(val))
+    return MaskTracer(self, val, np.shape(val))
 
   def lift(self, val):
-    return MaskTracer(self, val, onp.shape(val))
+    return MaskTracer(self, val, np.shape(val))
 
   def sublift(self, val):
     return MaskTracer(self, val.val, val.polymorphic_shape)

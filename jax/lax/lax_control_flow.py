@@ -24,7 +24,7 @@ import itertools
 import operator
 from typing import Callable, Sequence
 
-import numpy as onp
+import numpy as np
 
 import jax
 from jax import core
@@ -273,7 +273,7 @@ def while_loop(cond_fun, body_fun, init_val):
   if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
     msg = "cond_fun must return a boolean scalar, but got pytree {}."
     raise TypeError(msg.format(cond_tree))
-  if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), onp.bool_):
+  if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), np.bool_):
     msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
     raise TypeError(msg.format(cond_jaxpr.out_avals))
 
@@ -313,9 +313,9 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
                                  cond_jaxpr.literals),
                             extend_name_stack(name_stack, 'cond'), *(x + z))
   if batched:
-    scalar = ShapedArray((), onp.bool_)
+    scalar = ShapedArray((), np.bool_)
     or_ = xla.primitive_subcomputation(lax.or_p, scalar, scalar)
-    pred = xops.Reduce(cond_c, [pred], [xb.constant(cond_c, onp.array(False))], or_,
+    pred = xops.Reduce(cond_c, [pred], [xb.constant(cond_c, np.array(False))], or_,
                          list(range(cond_jaxpr.out_avals[0].ndim)))
 
   body_c = xb.make_computation_builder("body_computation")
@@ -560,10 +560,10 @@ def switch(index, branches: Sequence[Callable], operand):
     branches: Sequence of functions (A -> B) to be applied based on `index`.
     operand: Operand (A) input to whichever branch is applied.
   """
-  if len(onp.shape(index)) != 0:
+  if len(np.shape(index)) != 0:
     raise TypeError(
         f"Branch index must be scalar, "
-        f"got {index} of shape {onp.shape(index)}.")
+        f"got {index} of shape {np.shape(index)}.")
 
   try:
     index_dtype = dtypes.result_type(index)
@@ -582,9 +582,9 @@ def switch(index, branches: Sequence[Callable], operand):
   elif len(branches) == 1:
     return branches[0](operand)
 
-  index = lax.convert_element_type(index, onp.int32)
-  lo = onp.array(0, onp.int32)
-  hi = onp.array(len(branches) - 1, onp.int32)
+  index = lax.convert_element_type(index, np.int32)
+  lo = np.array(0, np.int32)
+  hi = np.array(len(branches) - 1, np.int32)
   index = lax.clamp(lo, index, hi)
 
   if (jax.api._jit_is_disabled() and
@@ -651,9 +651,9 @@ def cond(*args, **kwargs):
   return _cond(*args, **kwargs)
 
 def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
-  if len(onp.shape(pred)) != 0:
+  if len(np.shape(pred)) != 0:
     raise TypeError(
-        f"Pred must be a scalar, got {pred} of shape {onp.shape(pred)}.")
+        f"Pred must be a scalar, got {pred} of shape {np.shape(pred)}.")
 
   try:
     pred_dtype = dtypes.result_type(pred)
@@ -686,7 +686,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, operand):
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
 
-  index = lax.convert_element_type(pred, onp.int32)
+  index = lax.convert_element_type(pred, np.int32)
 
   linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
@@ -742,7 +742,7 @@ def _select_tree(indices, branch_vals):
   if len(branch_vals) == 1:
     return branch_vals[0]
   mid = len(branch_vals) // 2
-  mid = onp.array(mid, dtypes.canonicalize_dtype(lax.dtype(indices)))
+  mid = np.array(mid, dtypes.canonicalize_dtype(lax.dtype(indices)))
   return lax.select(lax.lt(indices, mid),
                     _select_tree(indices, branch_vals[:mid]),
                     _select_tree(indices - mid, branch_vals[mid:]))
@@ -752,7 +752,7 @@ def _cond_index_bcast_and_select_tree(indices, branch_vals):
     return branch_vals[0]
   else:
     bcast_indices = lax.broadcast_in_dim(
-        indices, onp.shape(branch_vals[0]), list(range(onp.ndim(indices))))
+        indices, np.shape(branch_vals[0]), list(range(np.ndim(indices))))
     return _select_tree(bcast_indices, branch_vals)
 
 def _cond_batching_rule(args, dims, branches, linear):
@@ -1066,7 +1066,7 @@ def _cond_typecheck(*avals, branches, linear):
 
   index_aval, *op_avals = avals
   core.typecheck_assert(
-      index_aval.dtype == onp.int32,
+      index_aval.dtype == np.int32,
       f'cond called with index of type {index_aval.dtype} instead of int32')
   core.typecheck_assert(
       all(_map(core.typecompat, jaxpr0.in_avals, op_avals)),
@@ -1859,8 +1859,8 @@ def _flatten(args):
 
 
 def _check_shapes(func_name, expected_name, actual, expected, tree):
-  actual_shapes = _map(onp.shape, actual)
-  expected_shapes = _map(onp.shape, expected)
+  actual_shapes = _map(np.shape, actual)
+  expected_shapes = _map(np.shape, expected)
   if actual_shapes != expected_shapes:
     raise ValueError('{}() output shapes must match {}, got {} and {}'
                      .format(func_name, expected_name,
@@ -2102,18 +2102,18 @@ batching.primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
 def _interleave(a, b):
   """Given two Tensors of static shape, interleave them along the first axis."""
   # TODO(mattjj)
-  import jax.numpy as np
+  import jax.numpy as jnp
   # [a b c ...] [d e f ...] -> [a d b e c f ...]
   half_num_elems = b.shape[0]
 
   if a.shape[0] > b.shape[0]:
-    return np.concatenate(
-        [np.reshape(np.stack([a[: -1], b], axis=1),
-                    (2 * half_num_elems,) + a.shape[1:]),
+    return jnp.concatenate(
+        [jnp.reshape(jnp.stack([a[: -1], b], axis=1),
+                     (2 * half_num_elems,) + a.shape[1:]),
          a[-1:]], axis=0)
   else:
-    return np.reshape(np.stack([a, b], axis=1),
-                      (2 * half_num_elems,) + a.shape[1:])
+    return jnp.reshape(jnp.stack([a, b], axis=1),
+                       (2 * half_num_elems,) + a.shape[1:])
 
 def associative_scan(fn, elems):
   """Perform a scan with an associative binary operation, in parallel.

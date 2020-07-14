@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as onp
+import numpy as np
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import jax
@@ -103,7 +103,7 @@ class BatchTracer(Tracer):
         return aval
       elif type(aval) is ShapedArray:
         assert 0 <= self.batch_dim < aval.ndim
-        new_shape = tuple(onp.delete(aval.shape, self.batch_dim))
+        new_shape = tuple(np.delete(aval.shape, self.batch_dim))
         return ShapedArray(new_shape, aval.dtype)
       else:
         raise TypeError(aval)
@@ -236,7 +236,7 @@ def broadcast_batcher(prim, args, dims, **params):
       either an int indicating the batch dimension, or else `not_mapped`
       indicating no batching.
   """
-  shapes = {(x.shape, d) for x, d in zip(args, dims) if onp.ndim(x)}
+  shapes = {(x.shape, d) for x, d in zip(args, dims) if np.ndim(x)}
   if len(shapes) == 1:
     # if there's only agreeing batch dims and scalars, just call the primitive
     d = next(d for d in dims if d is not not_mapped)
@@ -245,16 +245,16 @@ def broadcast_batcher(prim, args, dims, **params):
   else:
     size, = {shape[d] for shape, d in shapes if d is not not_mapped}
     args = [bdim_at_front(x, d, size) for x, d in zip(args, dims)]
-    ndim = max(onp.ndim(x) for x in args)  # special-case scalar broadcasting
+    ndim = max(np.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
     out = prim.bind(*args, **params)
     return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
 
 def _handle_scalar_broadcasting(nd, x, d):
-  if d is not_mapped or nd == onp.ndim(x):
+  if d is not_mapped or nd == np.ndim(x):
     return x
   else:
-    return x.reshape(x.shape + (1,) * (nd - onp.ndim(x)))
+    return x.reshape(x.shape + (1,) * (nd - np.ndim(x)))
 
 def defreducer(prim):
   primitive_batchers[prim] = partial(reducer_batcher, prim)
@@ -262,8 +262,8 @@ def defreducer(prim):
 def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
   operand, = batched_args
   bdim, = batch_dims
-  axes = tuple(onp.where(onp.less(axes, bdim), axes, onp.add(axes, 1)))
-  bdim_out = int(list(onp.delete(onp.arange(operand.ndim), axes)).index(bdim))
+  axes = tuple(np.where(np.less(axes, bdim), axes, np.add(axes, 1)))
+  bdim_out = int(list(np.delete(np.arange(operand.ndim), axes)).index(bdim))
   if 'input_shape' in params:
     params = dict(params, input_shape=operand.shape)
   return prim.bind(operand, axes=axes, **params), bdim_out
@@ -303,10 +303,10 @@ def broadcast(x, sz, axis):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
   if axis is last:
-    axis = onp.ndim(x)
-  shape = list(onp.shape(x))
+    axis = np.ndim(x)
+  shape = list(np.shape(x))
   shape.insert(axis, sz)
-  broadcast_dims = tuple(onp.delete(onp.arange(len(shape)), axis))
+  broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
   return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
 
 def moveaxis(x, src, dst):
@@ -315,7 +315,7 @@ def moveaxis(x, src, dst):
   if src == dst:
     return x
   src, dst = src % x.ndim, dst % x.ndim
-  perm = [i for i in range(onp.ndim(x)) if i != src]
+  perm = [i for i in range(np.ndim(x)) if i != src]
   perm.insert(dst, src)
   return x.transpose(perm)
 
