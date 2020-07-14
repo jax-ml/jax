@@ -530,8 +530,7 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct,
-                        rtol=5e-2)
+    self.assertAllClose(per_example, per_example_direct, rtol=5e-2, atol=1e-3)
 
   def testSumPool(self):
     W = jnp.array(np.random.randn(3, 3, 1, 5), dtype=np.float32)
