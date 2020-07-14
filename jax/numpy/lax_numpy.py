@@ -823,9 +823,11 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
   if b.ndim == 1:
     return b
   if range is None:
-    range = a.min(), a.max()
-  if not isinstance(a, core.Tracer) and range[0] == range[1]:
-    range = range[0] - 0.5, range[0] + 0.5
+    range = (a.min(), a.max())
+  assert len(range) == 2
+  range = asarray(range)
+  range = (where(ptp(range) == 0, range[0] - 0.5, range[0]),
+           where(ptp(range) == 0, range[1] + 0.5, range[1]))
   dtype = _dtype(a)
   if issubdtype(dtype, integer):
     dtype = promote_types(dtype, float32)
