@@ -2010,11 +2010,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testHistogramBinEdges(self, shape, dtype, bins, range, weights):
     rng = jtu.rand_default(self.rng())
     _weights = lambda w: abs(w) if weights else None
-    np_fun = lambda a, w: np.histogram_bin_edges(a, bins=bins, range=range,
-                                                   weights=_weights(w))
-    jnp_fun = lambda a, w: jnp.histogram_bin_edges(a, bins=bins, range=range,
-                                                   weights=_weights(w))
-    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    np_fun = lambda a, w, r: np.histogram_bin_edges(a, bins=bins, range=r,
+                                                    weights=_weights(w))
+    jnp_fun = lambda a, w, r: jnp.histogram_bin_edges(a, bins=bins, range=r,
+                                                      weights=_weights(w))
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype), range]
     tol = {jnp.bfloat16: 2E-2, np.float16: 1E-2}
     # linspace() compares poorly to numpy when using bfloat16
     if dtype != jnp.bfloat16:

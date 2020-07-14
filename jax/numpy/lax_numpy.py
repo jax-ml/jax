@@ -823,10 +823,10 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
   if b.ndim == 1:
     return b
   if range is None:
-    range = (where(a.ptp() == 0, a.min() - 0.5, a.min()),
-             where(a.ptp() == 0, a.max() + 0.5, a.max()))
-  elif range[0] == range[1]:
-    range = (range[0] - 0.5, range[1] + 0.5)
+    range = (a.min(), a.max())
+  assert len(range) == 2
+  range = (where(ptp(range) == 0, range[0] - 0.5, range[0]),
+           where(ptp(range) == 0, range[1] + 0.5, range[1]))
   dtype = _dtype(a)
   if issubdtype(dtype, integer):
     dtype = promote_types(dtype, float32)
