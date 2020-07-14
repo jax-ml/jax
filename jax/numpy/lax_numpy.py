@@ -309,8 +309,8 @@ def issubdtype(arg1, arg2):
   return dtypes.issubdtype(arg1, arg2)
 
 @_wraps(np.isscalar)
-def isscalar(num):
-  return dtypes.is_python_scalar(num) or np.isscalar(num)
+def isscalar(element):
+  return dtypes.is_python_scalar(element) or np.isscalar(element)
 
 iterable = np.iterable
 
@@ -680,13 +680,13 @@ def _conv(x, y, mode, op, precision):
 
 
 @_wraps(np.convolve, lax_description=_PRECISION_DOC)
-def convolve(x, y, mode='full', *, precision=None):
-  return _conv(x, y, mode, 'convolve', precision)
+def convolve(a, v, mode='full', *, precision=None):
+  return _conv(a, v, mode, 'convolve', precision)
 
 
 @_wraps(np.correlate, lax_description=_PRECISION_DOC)
-def correlate(x, y, mode='valid', *, precision=None):
-  return _conv(x, y, mode, 'correlate', precision)
+def correlate(a, v, mode='valid', *, precision=None):
+  return _conv(a, v, mode, 'correlate', precision)
 
 
 def _normalize_float(x):
@@ -1058,11 +1058,11 @@ def _gradient(a, varargs, axis):
 
 
 @_wraps(np.gradient)
-def gradient(a, *args, **kwargs):
+def gradient(f, *args, **kwargs):
   axis = kwargs.pop("axis", None)
   if not len(kwargs) == 0:
     raise ValueError("Only `axis` keyword is implemented")
-  return _gradient(a, args, axis)
+  return _gradient(f, args, axis)
 
 
 @_wraps(np.isrealobj)
@@ -1531,8 +1531,9 @@ def _isposneginf(infinity, x):
   else:
     return full_like(x, False, dtype=bool_)
 
-isposinf = _wraps(np.isposinf)(partial(_isposneginf, inf))
-isneginf = _wraps(np.isneginf)(partial(_isposneginf, -inf))
+isposinf = _wraps(np.isposinf)(lambda x: _isposneginf(inf, x))
+
+isneginf = _wraps(np.isneginf)(lambda x: _isposneginf(-inf, x))
 
 @_wraps(np.isnan)
 def isnan(x):
@@ -2052,14 +2053,14 @@ def stack(arrays, axis=0):
   return concatenate(new_arrays, axis=axis)
 
 @_wraps(np.tile)
-def tile(a, reps):
+def tile(A, reps):
   if isinstance(reps, int):
     reps = (reps,)
-  a = reshape(a, (1,) * (len(reps) - ndim(a)) + shape(a))
-  reps = (1,) * (ndim(a) - len(reps)) + tuple(reps)
+  A = reshape(A, (1,) * (len(reps) - ndim(A)) + shape(A))
+  reps = (1,) * (ndim(A) - len(reps)) + tuple(reps)
   for i, rep in enumerate(reps):
-    a = concatenate([a] * int(rep), axis=i)
-  return a
+    A = concatenate([A] * int(rep), axis=i)
+  return A
 
 @_wraps(np.concatenate)
 def concatenate(arrays, axis=0):
@@ -2238,15 +2239,15 @@ def asarray(a, dtype=None, order=None):
 
 
 @_wraps(np.zeros_like)
-def zeros_like(x, dtype=None):
+def zeros_like(a, dtype=None):
   lax._check_user_dtype_supported(dtype, "zeros_like")
-  return lax.full_like(x, 0, dtype)
+  return lax.full_like(a, 0, dtype)
 
 
 @_wraps(np.ones_like)
-def ones_like(x, dtype=None):
+def ones_like(a, dtype=None):
   lax._check_user_dtype_supported(dtype, "ones_like")
-  return lax.full_like(x, 1, dtype)
+  return lax.full_like(a, 1, dtype)
 
 
 @_wraps(np.full)
@@ -2736,27 +2737,27 @@ def polyval(p, x):
   return y
 
 @_wraps(np.polyadd)
-def polyadd(a, b):
-  a = asarray(a)
-  b = asarray(b)
+def polyadd(a1, a2):
+  a1 = asarray(a1)
+  a2 = asarray(a2)
 
-  if b.shape[0] <= a.shape[0]:
-    return a.at[-b.shape[0]:].add(b)
+  if a2.shape[0] <= a1.shape[0]:
+    return a1.at[-a2.shape[0]:].add(a2)
   else:
-    return b.at[-a.shape[0]:].add(a)
+    return a2.at[-a1.shape[0]:].add(a1)
 
 
 @_wraps(np.polyder)
-def polyder(a, m=1):
-  a = asarray(a)
+def polyder(p, m=1):
+  p = asarray(p)
   if m < 0:
     raise ValueError("Order of derivative must be positive")
   if m == 0:
-    return a
+    return p
   if m % 1:
     raise ValueError("m must be an integer")
-  coeff = (arange(len(a), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
-  return a[:-m] * coeff
+  coeff = (arange(len(p), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
+  return p[:-m] * coeff
 
 def _trim_zeros(a):
   for i, v in enumerate(a):
@@ -2785,14 +2786,8 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   return val
 
 @_wraps(np.polysub)
-def polysub(a, b):
-  a = asarray(a)
-  b = asarray(b)
-
-  if b.shape[0] <= a.shape[0]:
-    return a.at[-b.shape[0]:].add(-b)
-  else:
-    return -b.at[-a.shape[0]:].add(-a)
+def polysub(a1, a2):
+  return polyadd(asarray(a1), -asarray(a2))
 
 
 @_wraps(np.append)
