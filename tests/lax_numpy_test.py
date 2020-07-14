@@ -2761,6 +2761,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  def testTakeEmpty(self):
+    np.testing.assert_array_equal(
+      jnp.array([], dtype=jnp.float32),
+      jnp.take(jnp.array([], jnp.float32), jnp.array([], jnp.int32)))
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_ishape={}_axis={}".format(
           jtu.format_shape_dtype_string(x_shape, dtype), i_shape, axis),

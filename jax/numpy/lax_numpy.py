@@ -3334,7 +3334,7 @@ def take(a, indices, axis=None, out=None, mode=None):
 
   index_dims = len(shape(indices))
   slice_sizes = list(shape(a))
-  slice_sizes[axis] = 1
+  slice_sizes[axis] = _min(indices.size, 1)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(
       list(range(axis)) +
