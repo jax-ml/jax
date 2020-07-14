@@ -441,6 +441,9 @@ def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
   out = _moveaxis(1, concat_axis + 1, out)
   return out, True
 
+def _all_to_all_transpose_rule(cts, axis_name, split_axis, concat_axis):
+  return (all_to_all(cts, axis_name=axis_name, split_axis=concat_axis, concat_axis=split_axis),)
+
 def _moveaxis(src, dst, x):
   perm = [i for i in range(x.ndim) if i != src]
   perm.insert(dst, src)
@@ -449,6 +452,7 @@ def _moveaxis(src, dst, x):
 all_to_all_p = standard_pmap_primitive('all_to_all')
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
+ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 
 
 ### papply rules
