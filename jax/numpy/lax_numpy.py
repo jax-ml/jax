@@ -2505,72 +2505,61 @@ def indices(dimensions, dtype=int32, sparse=False):
   return stack(output, 0) if output else array([], dtype=dtype)
 
 
-def _repeat_scalar(a, repeats, axis=None):
-  if not isscalar(repeats):
-    raise NotImplementedError(
-        "_repeat_scalar implementation only supports scalar repeats")
-  if axis is None or isscalar(a) or len(shape(a)) == 0:
-    a = ravel(a)
-    axis = 0
-  a_shape = list(shape(a))
-  num_dims = len(a_shape)
-  if axis < 0:
-    axis = axis + num_dims
+_TOTAL_REPEAT_LENGTH_DOC = """\
+Jax adds the optional `total_repeat_length` parameter which specifies the total
+number of repeat, and defaults to sum(repeats). It must be specified for repeat
+to be compilable. If `sum(repeats)` is larger than the specified
+`total_repeat_length` the remaining values will be discarded. In the case of
+`sum(repeats)` being smaller than the specified target length, the final value
+will be repeated.
+"""
 
-  if axis < 0 or axis >= num_dims:
-    raise ValueError(
-        "axis {} is out of bounds for array of dimension {}".format(
-            axis, num_dims))
 
-  # Broadcasts to [..., X, repeats, ...] and reshapes to [..., X * repeats, ...]
-  broadcast_shape = list(a_shape)
-  broadcast_shape.insert(axis + 1, repeats)
-  broadcast_dims = np.concatenate((np.arange(0, axis + 1),
-                                    np.arange(axis + 2, num_dims + 1)))
-  a_shape[axis] *= repeats
-  return lax.reshape(
-      lax.broadcast_in_dim(a, broadcast_shape, broadcast_dims),
-      a_shape)
-
-@_wraps(np.repeat)
-def repeat(a, repeats, axis=None):
-  # use `_repeat_scalar` when possible
-  if isscalar(repeats):
-    return _repeat_scalar(a, repeats, axis)
-  repeats_raveled = np.ravel(np.array(repeats))
-  if size(repeats_raveled) == 1:
-    return _repeat_scalar(a, repeats_raveled.item(), axis)
-
-  if axis is None or isscalar(a):
+@_wraps(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
+def repeat(a, repeats, axis=None, *, total_repeat_length=None):
+  if axis is None:
     a = ravel(a)
     axis = 0
 
-  # repeats must match the dimension along the requested axis
-  if repeats_raveled.size != a.shape[axis]:
-    raise ValueError(f"repeats shape {repeats_raveled.shape} does not match "
-                     f"the dimension on axis {a.shape[axis]}")
+  repeats = array(repeats)
+  repeats = ravel(repeats)
 
-  # calculating the new shape
-  total = repeats_raveled.sum()
+  if ndim(a) != 0:
+    repeats = broadcast_to(repeats, [a.shape[axis]])
 
-  new_shape = list(a.shape)
-  new_shape[axis] = total
-  a_flattened = ravel(a)
+  # If total_repeat_length is not given, use a default.
+  if total_repeat_length is None:
+    total_repeat_length = sum(repeats)
 
-  # first break down raveled input array into list of chunks; each chunk is the
-  # unit of repeat. then tile the repeats to have same length as the list of
-  # chunks. finally repeat each unit x number of times according to the tiled
-  # repeat list.
-  chunks = _prod(a.shape[:axis+1])
-  a_splitted = split(a_flattened, chunks)
-  repeats_tiled = np.tile(repeats_raveled, chunks // len(repeats_raveled))
+  # Special case when a is a scalar.
+  if ndim(a) == 0:
+    if repeats.shape == (1,):
+      return full([total_repeat_length], a)
+    else:
+      raise ValueError('`repeat` with a scalar parameter `a` is only '
+      'implemented for scalar values of the parameter `repeats`.')
 
-  ret = array([], dtype=a.dtype)
-  for i, repeat in enumerate(repeats_tiled):
-    if repeat != 0:
-      ret = concatenate((ret, tile(a_splitted[i], (repeat,))))
+  # Special case if total_repeat_length is zero.
+  if total_repeat_length == 0:
+    return reshape(array([], dtype=a.dtype), array(a.shape).at[axis].set(0))
 
-  return reshape(ret, new_shape)
+  # If repeats is on a zero sized axis, then return the array.
+  if a.shape[axis] == 0:
+    return a
+
+  # Modify repeats from e.g. [1,2,5] -> [0,1,2]
+  exclusive_repeats = roll(repeats, shift=1).at[0].set(0)
+  # Cumsum to get indices of new number in repeated tensor, e.g. [0, 1, 3]
+  scatter_indices = cumsum(exclusive_repeats)
+  # Scatter these onto a zero buffer, e.g. [1,1,0,1,0,0,0,0]
+  block_split_indicators = ops.index_update(
+      x=zeros([total_repeat_length], dtype=int32),
+      idx=scatter_indices,
+      y=1)
+  # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,2,2,2,2,2]
+  gather_indices = cumsum(block_split_indicators) - 1
+  return take(a, gather_indices, axis=axis)
+
 
 @_wraps(np.tri)
 def tri(N, M=None, k=0, dtype=None):
