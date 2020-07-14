@@ -21,7 +21,7 @@ import itertools
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 import scipy.special as osp_special
 
 from jax import api
@@ -188,12 +188,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype) + (d - 1) / 2.]
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
-                            tol={onp.float32: 1e-3, onp.float64: 1e-14})
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
     self._CompileAndCheck(lax_fun, args_maker)
 
   def testIssue980(self):
-    x = onp.full((4,), -1e20, dtype=onp.float32)
-    self.assertAllClose(onp.zeros((4,), dtype=onp.float32),
+    x = np.full((4,), -1e20, dtype=np.float32)
+    self.assertAllClose(np.zeros((4,), dtype=np.float32),
                         lsp_special.expit(x))
 
   def testXlogyShouldReturnZero(self):
