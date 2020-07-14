@@ -825,6 +825,7 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
   if range is None:
     range = (a.min(), a.max())
   assert len(range) == 2
+  range = asarray(range)
   range = (where(ptp(range) == 0, range[0] - 0.5, range[0]),
            where(ptp(range) == 0, range[1] + 0.5, range[1]))
   dtype = _dtype(a)
