@@ -59,7 +59,7 @@ class ImageTest(jtu.JaxTestCase):
        for dtype in float_dtypes
        for target_shape, image_shape in itertools.combinations_with_replacement(
         [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]], 2)
-       for method in ["bilinear", "lanczos3", "lanczos5", "bicubic"]
+       for method in ["nearest", "bilinear", "lanczos3", "lanczos5", "bicubic"]
        for antialias in [False, True]))
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testResizeAgainstTensorFlow(self, dtype, image_shape, target_shape, method,
@@ -93,14 +93,15 @@ class ImageTest(jtu.JaxTestCase):
         "method": method}
        for dtype in [np.float32]
        for target_shape, image_shape in itertools.combinations_with_replacement(
-        [[3, 2], [6, 4], [33, 17], [50, 38]], 2)
-       for method in ["bilinear", "lanczos3", "bicubic"]))
+        [[3, 2], [6, 4], [33, 17], [50, 39]], 2)
+       for method in ["nearest", "bilinear", "lanczos3", "bicubic"]))
   @unittest.skipIf(not PIL_Image, "Test requires PIL")
   def testResizeAgainstPIL(self, dtype, image_shape, target_shape, method):
     rng = jtu.rand_uniform(self.rng())
     args_maker = lambda: (rng(image_shape, dtype),)
     def pil_fn(x):
       pil_methods = {
+        "nearest": PIL_Image.NEAREST,
         "bilinear": PIL_Image.BILINEAR,
         "bicubic": PIL_Image.BICUBIC,
         "lanczos3": PIL_Image.LANCZOS,
@@ -124,10 +125,15 @@ class ImageTest(jtu.JaxTestCase):
          ([3, 1, 2], [6, 1, 4]),
          ([1, 3, 2, 1], [1, 6, 4, 1]),
        ]
-       for method in ["linear", "lanczos3", "lanczos5", "cubic"]))
+       for method in ["nearest", "linear", "lanczos3", "lanczos5", "cubic"]))
   def testResizeUp(self, dtype, image_shape, target_shape, method):
     data = [64, 32, 32, 64, 50, 100]
     expected_data = {}
+    expected_data["nearest"] = [
+        64.0, 64.0, 32.0, 32.0, 64.0, 64.0, 32.0, 32.0, 32.0, 32.0, 64.0, 64.0,
+        32.0, 32.0, 64.0, 64.0, 50.0, 50.0, 100.0, 100.0, 50.0, 50.0, 100.0,
+        100.0
+    ]
     expected_data["linear"] = [
         64.0, 56.0, 40.0, 32.0, 56.0, 52.0, 44.0, 40.0, 40.0, 44.0, 52.0, 56.0,
         36.5, 45.625, 63.875, 73.0, 45.5, 56.875, 79.625, 91.0, 50.0, 62.5,
