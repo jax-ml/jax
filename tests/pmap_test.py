@@ -948,7 +948,7 @@ class PmapTest(jtu.JaxTestCase):
     ans = pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
-    
+
   @jtu.skip_on_devices("gpu")
   def testGradOfPswapaxes(self):
     device_count = xla_bridge.device_count()
@@ -966,7 +966,7 @@ class PmapTest(jtu.JaxTestCase):
 
     ans = f(x, w)
     expected = np.tile(w, reps=device_count).reshape(shape)
-    self.assertAllClose(ans, expected, check_dtypes=False)    
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testReshardInput(self):
     if xla_bridge.device_count() < 6:
