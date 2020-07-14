@@ -21,7 +21,7 @@ from unittest import SkipTest
 from absl.testing import absltest
 from absl.testing import parameterized
 
-import numpy as onp
+import numpy as np
 
 import jax
 from jax import api
@@ -74,13 +74,13 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.log1p, nargs=1, order=2, rng_factory=jtu.rand_positive,
                    dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.sinh, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=grad_float_dtypes + [onp.complex64], tol=1e-5),
+                   dtypes=grad_float_dtypes + [np.complex64], tol=1e-5),
     grad_test_spec(lax.cosh, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes, tol=1e-5),
     grad_test_spec(lax.tanh, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes, tol=1e-5),
     grad_test_spec(lax.sin, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=grad_inexact_dtypes, tol={onp.float32: 5e-1}),
+                   dtypes=grad_inexact_dtypes, tol={np.float32: 5e-1}),
     grad_test_spec(lax.cos, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.tan, nargs=1, order=2,
@@ -122,7 +122,7 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.abs, nargs=1, order=2, rng_factory=jtu.rand_positive,
                    dtypes=grad_inexact_dtypes),
     grad_test_spec(lax.pow, nargs=2, order=2, rng_factory=jtu.rand_positive,
-                   dtypes=grad_inexact_dtypes, tol={onp.float32: 3e-1}),
+                   dtypes=grad_inexact_dtypes, tol={np.float32: 3e-1}),
 
     grad_test_spec(lax.add, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
@@ -152,13 +152,13 @@ def grad_special_values_test_spec(op, values, tol=None):
 LAX_GRAD_SPECIAL_VALUE_TESTS = [
     grad_special_values_test_spec(
       lax.sinh, [0.],
-      tol={onp.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
+      tol={np.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
     grad_special_values_test_spec(
       lax.cosh, [0.],
-      tol={onp.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
+      tol={np.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
     grad_special_values_test_spec(lax.tanh, [0., 1000.]),
-    grad_special_values_test_spec(lax.sin, [0., onp.pi, onp.pi/2., onp.pi/4.]),
-    grad_special_values_test_spec(lax.cos, [0., onp.pi, onp.pi/2., onp.pi/4.]),
+    grad_special_values_test_spec(lax.sin, [0., np.pi, np.pi/2., np.pi/4.]),
+    grad_special_values_test_spec(lax.cos, [0., np.pi, np.pi/2., np.pi/4.]),
     grad_special_values_test_spec(lax.tan, [0.]),
     grad_special_values_test_spec(lax.asin, [0.]),
     grad_special_values_test_spec(lax.acos, [0.]),
@@ -219,7 +219,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
               jtu.tolerance(from_dtype, jtu.default_gradient_tolerance))
     args = (rng((2, 3), from_dtype),)
     convert_element_type = lambda x: lax.convert_element_type(x, to_dtype)
-    convert_element_type = jtu.ignore_warning(category=onp.ComplexWarning)(
+    convert_element_type = jtu.ignore_warning(category=np.ComplexWarning)(
       convert_element_type)
     check_grads(convert_element_type, args, 2, ["fwd", "rev"], tol, tol, eps=1.)
 
@@ -243,7 +243,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dim={}_baseshape=[{}]_dtype={}_narrs={}".format(
-          dim, ",".join(str(d) for d in base_shape), onp.dtype(dtype).name,
+          dim, ",".join(str(d) for d in base_shape), np.dtype(dtype).name,
           num_arrs),
        "dim": dim, "base_shape": base_shape, "dtype": dtype,
        "num_arrs": num_arrs, "rng_factory": rng_factory}
@@ -359,16 +359,16 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, batch_group_count,
                                  rng_factory):
-    if dtype == onp.float16:
+    if dtype == np.float16:
       raise SkipTest("float16 numerical issues")  # TODO(mattjj): resolve
 
     rng = rng_factory(self.rng())
-    tol = {dtypes.bfloat16: 1e-0, onp.float16: 5e-1, onp.float32: 2e-4}
+    tol = {dtypes.bfloat16: 1e-0, np.float16: 5e-1, np.float32: 2e-4}
 
     # permute shapes to match dim_spec, scale by feature_group_count
     lhs_perm, rhs_perm = perms
-    lhs_shape = list(onp.take(lhs_shape, lhs_perm))
-    rhs_shape = list(onp.take(rhs_shape, rhs_perm))
+    lhs_shape = list(np.take(lhs_shape, lhs_perm))
+    rhs_shape = list(np.take(rhs_shape, rhs_perm))
 
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
@@ -391,7 +391,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for dtype in float_dtypes))
   def testDotGrad(self, lhs_shape, rhs_shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
-    tol = {onp.float16: 1e-1, onp.float32: 1e-4}
+    tol = {np.float16: 1e-1, np.float32: 1e-4}
     lhs = rng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
     dot = partial(lax.dot, precision=lax.Precision.HIGHEST)
@@ -434,7 +434,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}_broadcast_sizes={}".format(
-          shape, onp.dtype(dtype).name, broadcast_sizes),
+          shape, np.dtype(dtype).name, broadcast_sizes),
        "shape": shape, "dtype": dtype, "broadcast_sizes": broadcast_sizes,
        "rng_factory": rng_factory}
       for shape in [(), (2, 3)]
@@ -503,11 +503,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
   def testPadGrad(self, shape, dtype, pads, rng_factory):
     rng = rng_factory(self.rng())
     operand = rng(shape, dtype)
-    pad = lambda operand: lax.pad(operand, onp.array(0, dtype), pads)
+    pad = lambda operand: lax.pad(operand, np.array(0, dtype), pads)
     check_grads(pad, (operand,), 2, ["fwd", "rev"], eps=1.)
 
     operand = rng(shape, dtype)
-    padding_value = onp.array(0., dtype)
+    padding_value = np.array(0., dtype)
     pad = lambda operand, padding_value: lax.pad(operand, padding_value, pads)
     check_grads(pad, (operand, padding_value), 2, ["fwd", "rev"], eps=1.)
 
@@ -515,15 +515,15 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rev = lambda operand: lax.rev(operand, dimensions)
 
     dimensions = [0]
-    check_grads(rev, (onp.array([3., 2., 1.]),), 2)
+    check_grads(rev, (np.array([3., 2., 1.]),), 2)
 
     dimensions = [0, 1]
-    check_grads(rev, (onp.array([[6., 5., 4.], [3., 2., 1.]]),), 2,
-                rtol={onp.float32: 3e-3})
+    check_grads(rev, (np.array([[6., 5., 4.], [3., 2., 1.]]),), 2,
+                rtol={np.float32: 3e-3})
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}".format(
-          jtu.format_shape_dtype_string(pred_shape, onp.bool_),
+          jtu.format_shape_dtype_string(pred_shape, np.bool_),
           jtu.format_shape_dtype_string(arg_shape, dtype)),
        "pred_shape": pred_shape, "arg_shape": arg_shape, "dtype": dtype,
        "rng_factory": rng_factory}
@@ -533,7 +533,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default]))
   def testSelectGrad(self, pred_shape, arg_shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
-    pred = rng(pred_shape, onp.bool_)
+    pred = rng(pred_shape, np.bool_)
     on_true = rng(arg_shape, dtype)
     on_false = rng(arg_shape, dtype)
     select = lambda on_true, on_false: lax.select(pred, on_true, on_false)
@@ -603,7 +603,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     operand = rng(shape, dtype)
     update = rng(update_shape, dtype)
-    start_indices = onp.array(start_indices)
+    start_indices = np.array(start_indices)
 
     dus = lambda x, y: lax.dynamic_update_slice(x, y, start_indices)
     check_grads(dus, (operand, update), 2, ["fwd", "rev"], eps=1.)
@@ -639,8 +639,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "dims": dims, "rng_factory": rng_factory}
       for init_val, op, dtypes, rng_factory in [
           (0, lax.add, float_dtypes + jtu.dtypes.complex, jtu.rand_default),
-          (-onp.inf, lax.max, grad_inexact_dtypes, jtu.rand_unique_int),
-          (onp.inf, lax.min, grad_inexact_dtypes, jtu.rand_unique_int),
+          (-np.inf, lax.max, grad_inexact_dtypes, jtu.rand_unique_int),
+          (np.inf, lax.min, grad_inexact_dtypes, jtu.rand_unique_int),
           (1, lax.mul, grad_float_dtypes, partial(jtu.rand_default, scale=1)),
       ]
       for dtype in dtypes
@@ -657,10 +657,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     if jtu.device_under_test() == "tpu" and op is lax.mul:
       raise SkipTest("unimplemented case")
-    tol = {dtypes.bfloat16: 2e-1, onp.float16: 1e-1, onp.float32: 1e-1,
-           onp.float64: 1e-3, onp.complex64: 1e-1}
+    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-1, np.float32: 1e-1,
+           np.float64: 1e-3, np.complex64: 1e-1}
     operand = rng(shape, dtype)
-    init_val = onp.asarray(init_val, dtype=dtype)
+    init_val = np.asarray(init_val, dtype=dtype)
     reduce = lambda operand: lax.reduce(operand, init_val, op, dims)
     eps = (1.0 if dtypes.finfo(dtype).bits == 16 and op is lax.add else
            1e-1 if dtype == dtypes.bfloat16 else
@@ -670,13 +670,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_dtype={}_padding={}"
-       .format(op.__name__, onp.dtype(dtype).name, padding),
+       .format(op.__name__, np.dtype(dtype).name, padding),
        "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,
        "rng_factory": rng_factory}
       for init_val, op, dtypes, rng_factory in [
           (0, lax.add, grad_float_dtypes, jtu.rand_small),
-          (-onp.inf, lax.max, grad_float_dtypes, jtu.rand_unique_int),
-          (onp.inf, lax.min, grad_float_dtypes, jtu.rand_unique_int),
+          (-np.inf, lax.max, grad_float_dtypes, jtu.rand_unique_int),
+          (np.inf, lax.min, grad_float_dtypes, jtu.rand_unique_int),
       ]
       for dtype in dtypes
       for padding in ["VALID", "SAME"]))
@@ -685,7 +685,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                       message="Using reduced precision for gradient.*")
   def testReduceWindowGrad(self, op, init_val, dtype, padding, rng_factory):
     rng = rng_factory(self.rng())
-    init_val = onp.asarray(init_val, dtype=dtype)
+    init_val = np.asarray(init_val, dtype=dtype)
 
     # We need this conditional and the corresponding loop logic to be in the
     # test method, rather than at the parameterized test level, because it
@@ -720,10 +720,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
         tol = None
       else:
         # this test can fail if there are duplicates in operand
-        self.assertEqual(onp.unique(operand).size, operand.size,
+        self.assertEqual(np.unique(operand).size, operand.size,
                          msg="test requires operand elements to be unique.")
         eps = 1e-2
-        tol = {onp.float16: 1e-1, onp.float32: 6e-2, onp.float64: 6e-2}
+        tol = {np.float16: 1e-1, np.float32: 6e-2, np.float64: 6e-2}
       check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], tol, tol,
                   eps)
 
@@ -733,14 +733,14 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "op": op, "shape": shape, "dtype": dtype,
        "axis": axis, "rng_factory": rng_factory}
       for op, types in [
-          (lax.cumsum, [onp.float32, onp.float64]),
-          (lax.cumprod, [onp.float32, onp.float64]),
+          (lax.cumsum, [np.float32, np.float64]),
+          (lax.cumprod, [np.float32, np.float64]),
       ]
       for dtype in types
       for shape in [[10], [3, 4, 5]]
       for axis in range(len(shape))
       for rng_factory in [
-          jtu.rand_default if dtypes.issubdtype(dtype, onp.integer)
+          jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
           else jtu.rand_small]))
   def testCumulativeReduceGrad(self, op, shape, dtype, axis, rng_factory):
     rng = rng_factory(self.rng())
@@ -753,7 +753,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis, is_stable),
        "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "axis": axis,
        "is_stable": is_stable}
-      for dtype in [onp.float32]
+      for dtype in [np.float32]
       for shape in [(5,), (5, 7)]
       for axis in [len(shape) - 1]
       for is_stable in [False, True]
@@ -773,8 +773,8 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_factory": rng_factory, "shape": shape,
        "key_dtype": key_dtype, "val_dtype": val_dtype, "axis": axis,
        "is_stable": is_stable}
-      for key_dtype in [onp.float32]
-      for val_dtype in [onp.float32]
+      for key_dtype in [np.float32]
+      for val_dtype in [np.float32]
       for shape in [(3,), (5, 3)]
       for axis in [len(shape) - 1]
       for is_stable in [False, True]
@@ -786,7 +786,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
     def args_maker():
-      flat_keys = onp.arange(onp.prod(shape, dtype=int), dtype=key_dtype)
+      flat_keys = np.arange(np.prod(shape, dtype=int), dtype=key_dtype)
       keys = self.rng().permutation(flat_keys).reshape(shape)
       values = rng(shape, val_dtype)
       return keys, values
@@ -799,12 +799,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}_k={}".format(
           jtu.format_shape_dtype_string(shape, dtype), k),
        "rng_factory": rng_factory, "shape": shape, "dtype": dtype, "k": k}
-      for dtype in [onp.float32,]
+      for dtype in [np.float32,]
       for shape in [(4,), (5, 5), (2, 1, 4)]
       for k in [1, 3]
       for rng_factory in [jtu.rand_default]))
   def testTopKGrad(self, shape, dtype, k, rng_factory):
-    flat_values = onp.arange(onp.prod(shape, dtype=int), dtype=dtype)
+    flat_values = np.arange(np.prod(shape, dtype=int), dtype=dtype)
     values = self.rng().permutation(flat_values).reshape(shape)
     fun = lambda vs: lax.top_k(vs, k=k)[0]
     check_grads(fun, (values,), 2, ["fwd", "rev"], eps=1e-2)
@@ -816,10 +816,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_factory": rng_factory}
       for dtype in float_dtypes
       for shape, idxs, axes in [
-          [(3, 4, 5), (onp.array([0, 2, 1]),), (0,)],
-          [(3, 4, 5), (onp.array([-1, -2]),), (0,)],
-          [(3, 4, 5), (onp.array([0, 2]), onp.array([1, 3])), (0, 1)],
-          [(3, 4, 5), (onp.array([0, 2]), onp.array([1, 3])), (0, 2)],
+          [(3, 4, 5), (np.array([0, 2, 1]),), (0,)],
+          [(3, 4, 5), (np.array([-1, -2]),), (0,)],
+          [(3, 4, 5), (np.array([0, 2]), np.array([1, 3])), (0, 1)],
+          [(3, 4, 5), (np.array([0, 2]), np.array([1, 3])), (0, 2)],
       ]
       for rng_factory in [jtu.rand_default]))
   def testIndexTakeGrad(self, shape, dtype, idxs, axes, rng_factory):
@@ -837,13 +837,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_idx_factory": rng_idx_factory}
       for dtype in grad_float_dtypes
       for shape, idxs, dnums, slice_sizes, max_idx in [
-          ((5,), onp.array([[0], [2]]), lax.GatherDimensionNumbers(
+          ((5,), np.array([[0], [2]]), lax.GatherDimensionNumbers(
             offset_dims=(), collapsed_slice_dims=(0,), start_index_map=(0,)),
             (1,), 5),
-          ((10,), onp.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
+          ((10,), np.array([[0], [0], [0]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(), start_index_map=(0,)),
             (2,), 9),
-          ((10, 5,), onp.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
+          ((10, 5,), np.array([[0], [2], [1]]), lax.GatherDimensionNumbers(
             offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)),
             (1, 3), 3),
       ]
@@ -868,13 +868,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_idx_factory": rng_idx_factory}
       for dtype in grad_float_dtypes
       for arg_shape, idxs, update_shape, dnums, max_idx in [
-          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+          ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,)), 4),
-          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+          ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,)), 9),
-          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,)), 3),
       ]
@@ -900,13 +900,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_idx_factory": rng_idx_factory}
       for dtype in grad_float_dtypes
       for arg_shape, idxs, update_shape, dnums, max_idx in [
-          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+          ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,)), 4),
-          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+          ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,)), 9),
-          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,)), 3),
       ]
@@ -928,10 +928,10 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/1901
     def f(x):
       n = x.shape[0]
-      y = onp.arange(n, dtype=x.dtype)
-      return jax.ops.index_update(x, onp.diag_indices(n), y)
+      y = np.arange(n, dtype=x.dtype)
+      return jax.ops.index_update(x, np.diag_indices(n), y)
     rng = jtu.rand_default(self.rng())
-    check_grads(f, (rng((5, 5), onp.float32),), 2, ["fwd", "rev"], 1e-2, 1e-2,
+    check_grads(f, (rng((5, 5), np.float32),), 2, ["fwd", "rev"], 1e-2, 1e-2,
                 1.)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -943,13 +943,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_factory": rng_factory, "rng_idx_factory": rng_idx_factory}
       for dtype in grad_float_dtypes
       for arg_shape, idxs, update_shape, dnums in [
-          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+          ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
-          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+          ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,))),
-          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
       ]
@@ -974,13 +974,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
        "rng_factory": rng_factory, "rng_idx_factory": rng_idx_factory}
       for dtype in grad_float_dtypes
       for arg_shape, idxs, update_shape, dnums in [
-          ((5,), onp.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+          ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
-          ((10,), onp.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+          ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
             scatter_dims_to_operand_dims=(0,))),
-          ((10, 5,), onp.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+          ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
             scatter_dims_to_operand_dims=(0,))),
       ]
@@ -1013,7 +1013,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
     ans = api.grad(lambda x: lax.stop_gradient({'foo':x})['foo'])(3.)
-    expected = onp.array(0.0)
+    expected = np.array(0.0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     with core.skipping_checks():
@@ -1022,18 +1022,18 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   # TODO(mattjj): make this a more systematic test
   def testRemainder(self):
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     x = rng.uniform(-0.9, 9, size=(3, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 1))
-    assert not set(onp.unique(x)) & set(onp.unique(y))
-    tol = 1e-1 if jtu.num_float_bits(onp.float64) == 32 else 1e-3
+    assert not set(np.unique(x)) & set(np.unique(y))
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
-    rng = onp.random.RandomState(0)
+    rng = np.random.RandomState(0)
     x = rng.uniform(-0.9, 9, size=(1, 4))
     y = rng.uniform(0.7, 1.9, size=(3, 4))
-    assert not set(onp.unique(x)) & set(onp.unique(y))
-    tol = 1e-1 if jtu.num_float_bits(onp.float64) == 32 else 1e-3
+    assert not set(np.unique(x)) & set(np.unique(y))
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
     check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
 
   def testHigherOrderGradientOfReciprocal(self):
@@ -1042,7 +1042,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       # N.B.: intentionally written as 1/x, not x ** -1 or reciprocal(x)
       return 1 / x
     grad_fn = jax.grad(jax.grad(jax.grad(jax.grad(jax.grad(jax.grad(inv))))))
-    self.assertAllClose(onp.float32(0.0439453125), grad_fn(onp.float32(4.)))
+    self.assertAllClose(np.float32(0.0439453125), grad_fn(np.float32(4.)))
 
 
 if __name__ == '__main__':
