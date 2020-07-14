@@ -21,7 +21,7 @@ not yet fine-tuned the performance of the resulting XLA compilation!
 By default, loops and control-flow in JAX are executed and inlined during tracing.
 For example, in the following code the `for` loop is unrolled during JAX tracing::
 
-  arr = onp.zeros(5)
+  arr = np.zeros(5)
   for i in range(arr.shape[0]):
     arr[i] += 2.
     if i % 2 == 0:
@@ -32,7 +32,7 @@ JAX operations, which require you to express the body of the loops and
 conditionals as functions, and the array updates using a functional style that
 returns an updated array, e.g.::
 
-  arr = onp.zeros(5)
+  arr = np.zeros(5)
   def loop_body(i, acc_arr):
     arr1 = ops.index_update(acc_arr, i, acc_arr[i] + 2.)
     return lax.cond(i % 2 == 0,
