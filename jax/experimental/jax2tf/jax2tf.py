@@ -1104,9 +1104,9 @@ def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tu
     raise NotImplementedError("TODO: implement stable version of XlaSort")
   if dimension == len(operand[0].shape) - 1:
     if len(operand) == 2:
-      return tfxla.key_value_sort(operand[0], operand[1])
+      return tuple(tfxla.key_value_sort(operand[0], operand[1]))
     else:
-      return tfxla.sort(operand)
+      return (tfxla.sort(operand[0]),)
   else:
     raise NotImplementedError("TODO: implement XlaSort for all axes")
 

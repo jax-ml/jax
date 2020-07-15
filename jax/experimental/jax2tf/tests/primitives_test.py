@@ -131,9 +131,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         not harness.params["is_stable"]):
       # TODO: fix the TF GPU test
       raise unittest.SkipTest("GPU tests are running TF on CPU")
-    # TODO: if we enable this test, we get the error
-    #  iterating over `tf.Tensor` is not allowed: AutoGraph is disabled in this function.
-    raise unittest.SkipTest("TODO: re-enable the sort test")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
