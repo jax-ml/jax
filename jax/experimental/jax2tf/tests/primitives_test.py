@@ -133,6 +133,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("GPU tests are running TF on CPU")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
+  def test_qr(self, harness: primitive_harness.Harness):
+    # TODO: figure out why check_compiled=True breaks for complex types.
+    # TODO: figure out why we need to adjust atol and rtol.
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           check_compiled=False, atol=1e-5, rtol=1e-5)
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]

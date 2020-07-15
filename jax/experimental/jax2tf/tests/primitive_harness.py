@@ -24,6 +24,7 @@ from absl import testing
 from jax import config
 from jax import test_util as jtu
 from jax import lax
+from jax import lax_linalg
 from jax import numpy as jnp
 
 import numpy as np
@@ -358,6 +359,17 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
   for is_stable in [False, True]
 )
 
+lax_linalg_qr = tuple(
+  Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
+          lax_linalg.qr,
+          [RandArg(shape, dtype), StaticArg(full_matrices)],
+          shape=shape,
+          dtype=dtype,
+          full_matrices=full_matrices)
+  for dtype in [jnp.float32, jnp.float64, jnp.complex64, jnp.complex128] # See jax.lib.lapack.geqrf
+  for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
+  for full_matrices in [False, True]
+)
 
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore

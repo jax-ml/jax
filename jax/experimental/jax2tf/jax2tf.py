@@ -358,7 +358,7 @@ tf_not_yet_impl = [
 
   lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
-  lax_linalg.lu_p, lax_linalg.qr_p, lax_linalg.svd_p,
+  lax_linalg.lu_p, lax_linalg.svd_p,
   lax_linalg.triangular_solve_p,
 
   lax_fft.fft_p, lax.igamma_grad_a_p,
@@ -1129,6 +1129,11 @@ def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tu
     raise NotImplementedError("TODO: implement XlaSort for all axes")
 
 tf_impl[lax.sort_p] = _sort
+
+def _qr(operand, full_matrices):
+  return tf.linalg.qr(operand, full_matrices=full_matrices)
+
+tf_impl[lax_linalg.qr_p] = _qr
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
                            fun_jaxpr: core.TypedJaxpr,
