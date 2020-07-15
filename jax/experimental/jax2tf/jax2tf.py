@@ -436,7 +436,7 @@ def _xla_compile(func: Callable, *args: TfVal) -> TfVal:
   This is needed to work around some bugs, e.g., without XLA
   a certain TF op has different behavior than expected by JAX.
   """
-  # Do not use XLA if we are already in an XLA context
+  # Do not invoke XLA if we are already in an XLA context
   in_xla_context = control_flow_util.GraphOrParentsInXlaContext(
     ops.get_default_graph())
   if in_xla_context:
