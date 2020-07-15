@@ -607,9 +607,10 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                     for jaxpr in branches),
                 linear=(*linear, False)), eqn.source_info))
   elif eqn.primitive is lax.scan_p:
-    num_consts, num_carry, carry_jaxpr, linear, _, _ = util.split_dict(
+    num_consts, num_carry, carry_jaxpr, linear, _, _, _ = util.split_dict(
         eqn.params,
-        ["num_consts", "num_carry", "jaxpr", "linear", "reverse", "length"])
+        ["num_consts", "num_carry", "jaxpr", "linear", "reverse", "length",
+         "unroll"])
     # We add the token right at the end of carry
     nr_const_and_carry = num_consts + num_carry
     new_invars = eqn.invars[0:nr_const_and_carry] + [

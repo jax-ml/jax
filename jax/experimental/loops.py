@@ -493,7 +493,8 @@ class _BoundedLoopBuilder(_LoopBuilder):
                                         num_consts=len(body_const_vals),
                                         num_carry=len(init_vals),
                                         linear=(False,) * (len(body_const_vals) +
-                                                           len(init_vals) + 1))
+                                                           len(init_vals) + 1),
+                                        unroll=1)
 
 
 class _CondBuilder(_LoopBuilder):
