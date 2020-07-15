@@ -2325,6 +2325,32 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with api.disable_jit():
       self.assertAllClose(np.cumsum(x[::-1])[::-1], cumsum(x, True), check_dtypes=False)
 
+  def test_scan_unroll(self):
+    d = jnp.ones(2)
+    def f(c, a):
+      assert a.shape == (3,)
+      assert c.shape == (4,)
+      b = jnp.cos(jnp.sum(jnp.sin(a)) + jnp.sum(jnp.cos(c)) + jnp.sum(jnp.tan(d)))
+      c = jnp.sin(c * b)
+      assert b.shape == ()
+      return c, b
+
+    xs = jnp.ones((5, 3))
+    c = jnp.ones(4)
+
+    scan = lambda c, xs: lax.scan(f, c, xs)
+    scan_unrolled = lambda c, xs: lax.scan(f, c, xs, unroll=2)
+
+    # jaxprs should be the same size
+    self.assertEqual(
+        len(str(api.make_jaxpr(scan)(c, xs))),
+        len(str(api.make_jaxpr(scan_unrolled)(c, xs))))
+
+    # but HLO should grow due to unrolling
+    self.assertLess(
+        len(str(api.xla_computation(scan)(c, xs).as_hlo_text())),
+        len(str(api.xla_computation(scan_unrolled)(c, xs).as_hlo_text())))
+
   def test_disable_jit_cond_with_vmap(self):
     # https://github.com/google/jax/issues/3093
     def fn(t):

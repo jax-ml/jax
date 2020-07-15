@@ -425,7 +425,8 @@ For the example consider the function ``func11`` below
                   linear=(False, False, False, False)
                   num_carry=1
                   num_consts=1
-                  reverse=False ] b 0.0 a c
+                  reverse=False
+                  unroll=1 ] b 0.0 a c
   in (d, e) }
 
 The top-level jaxpr has one constvar ``c`` corresponding to the ``ones`` constant,
