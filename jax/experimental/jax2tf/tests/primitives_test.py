@@ -171,7 +171,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         # non-special cases are equal
         self.assertAllClose(result_jax[~ special_cases],
                             result_tf[~ special_cases])
-    self.ConvertAndCompare(harness.dyn_fun, arg, custom_assert=custom_assert)
+    atol = None
+    if jtu.device_under_test() == "gpu":
+      # TODO(necula): revisit once we fix the GPU tests
+      atol = 1e-3
+    self.ConvertAndCompare(harness.dyn_fun, arg, custom_assert=custom_assert,
+                           atol=atol)
 
   @primitive_harness.parameterized(primitive_harness.lax_bitwise_not)
   def test_bitwise_not(self, harness):
