@@ -15,7 +15,7 @@
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple
 import tensorflow as tf  # type: ignore[import]
 
 import jax
@@ -61,6 +61,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
   def ConvertAndCompare(self, func_jax: Callable, *args,
                         custom_assert: Optional[Callable] = None,
+                        expect_tf_exceptions: bool = False,
                         expect_exception: Optional[Any] = None,
                         atol=None,
                         rtol=None) -> Tuple[Any, Any]:
@@ -79,19 +80,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         This function is only used for "eager" and "graph" modes, not for the
         "compiled" mode, because in that case we expect always the results
         to be equal.
-    expected_exception: if present, then it should be a dictionary with keys
-        among "eager", "graph", "compiled" and values pairs of an exception
-        type and a string. As a shortcut, the value can be just such a pair,
-        in which case it applies to all execution modes. Use `BaseException`
-        to expect any exception.
+      expect_tf_exceptions: if True, there may be exceptions in some evaluation
+        modes; when there is no exception the result should be the same
+        as in JAX.
     """
-    if expect_exception is None:
-      expect_exception = {}
-    elif type(expect_exception) is tuple:
-      expect_exception = dict(eager=expect_exception,
-                              graph=expect_exception,
-                              compiled=expect_exception)
-    assert type(expect_exception) is dict
     # Run JAX
     result_jax = func_jax(*args)
     # Run TF in all execution modes
@@ -110,16 +102,20 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
-      if mode in expect_exception:
-        with self.assertRaisesRegex(*expect_exception[mode]):
-          run_tf(mode)
-      else:
+      try:
         result_tf = run_tf(mode)
-        if custom_assert is not None and mode in ("eager", "graph"):
-          custom_assert(result_jax, result_tf)
+      except Exception as e:
+        if not expect_tf_exceptions:
+          raise e
         else:
-          # In compiled mode we always expect the same result as JAX
-          self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
+          print(f"Encountered exception for mode={mode}: {e}")
+          continue
+
+      if custom_assert is not None and mode in ("eager", "graph"):
+        custom_assert(result_jax, result_tf)
+      else:
+        # In compiled mode we always expect the same result as JAX
+        self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
 
     return (result_jax, result_tf)
 
