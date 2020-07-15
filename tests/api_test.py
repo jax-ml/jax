@@ -35,6 +35,7 @@ from jax import api, core, lax, lax_reference
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
+from jax.interpreters.sharded_jit import PartitionSpec as P
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
@@ -931,6 +932,36 @@ class APITest(jtu.JaxTestCase):
 
     xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
     self.assertIn('constant(3)', xla_comp.as_hlo_text())
+
+  def test_xla_computation_partitioned(self):
+    def f(x, y):
+      return jnp.dot(x, y) + 1
+
+    x = jax.ShapeDtypeStruct((8, 8), np.float32)
+    y = jax.ShapeDtypeStruct((8, 16), np.float32)
+    xla_comp = api.xla_computation(f, in_parts=(P(2, 2), None),
+                                   out_parts=P(4, 1))(x, y)
+    hlo_text = xla_comp.as_hlo_text()
+    self.assertIn('sharding={devices=[2,2]0,1,2,3}', hlo_text)
+    self.assertIn('sharding={replicated}', hlo_text)
+    self.assertIn('sharding={devices=[4,1]0,1,2,3}', hlo_text)
+
+  def test_xla_computation_replicated_and_partitioned(self):
+    def f(x, y):
+      return jnp.dot(x, y), lax.psum(x, 'i')
+
+    x = jax.ShapeDtypeStruct((8, 8), np.float32)
+    y = jax.ShapeDtypeStruct((8, 16), np.float32)
+    axis_env = [('i', 4)]
+    xla_comp = api.xla_computation(f, axis_env=axis_env,
+                                   in_parts=(P(2, 2), None),
+                                   out_parts=(P(4, 1), None))(x, y)
+    hlo_text = xla_comp.as_hlo_text()
+    self.assertIn('all-reduce', hlo_text)
+    self.assertIn('replica_groups={{0,1,2,3}}', hlo_text)
+    self.assertIn('sharding={devices=[2,2]0,1,2,3}', hlo_text)
+    self.assertIn('sharding={replicated}', hlo_text)
+    self.assertIn('sharding={{devices=[4,1]0,1,2,3}, {replicated}}', hlo_text)
 
   def test_jit_device(self):
     device = xb.devices()[-1]
