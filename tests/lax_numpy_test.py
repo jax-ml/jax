@@ -1424,7 +1424,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [m]
 
     for repeats in [2, [1,3,2,1,1,2], [1,3,0,1,1,2], [2], jnp.array([1,3,2,1,1,2]), jnp.array([2])]:
-      test_single(m, args_maker, repeats, None)
+      test_single(m, args_maker, repeats, axis=None)
+      test_single(m, args_maker, repeats, axis=0)
 
     m_rect = m.reshape((2,3))
     if fixed_size:
