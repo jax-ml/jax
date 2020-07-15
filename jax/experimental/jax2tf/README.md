@@ -77,3 +77,10 @@ tf.saved_model.save(my_model, '/some/directory')
 # Restoring (note: the restored model does *not* require JAX to run, just XLA).
 restored_model = tf.saved_model.load('/some/directory')
 ```
+
+### Running on GPU
+
+To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
+for CUDA. One must be mindful to install a version of CUDA that is compatible
+with both [jaxlib](../../../../../#pip-installation) and
+[TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
