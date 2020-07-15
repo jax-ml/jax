@@ -266,18 +266,35 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
   def test_dynamic_slice(self, harness):
     # JAX.dynamic_slice rejects slice sizes too big; check this, and skip jax2tf
+    args = harness.dyn_args_maker(self.rng())
+    expect_exception = {}
     if any(li - si < 0 or li - si >= sh
            for sh, si, li in zip(harness.params["shape"],
                                  harness.params["start_indices"],
                                  harness.params["limit_indices"])):
       with self.assertRaisesRegex(TypeError, ""):
-        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    else:
-      # TF compiler gives an error for tf.slice(start_indices < 0)
-      if any(si < 0 for si in harness.params["start_indices"]):
-        raise unittest.SkipTest("TF gives error for negative start_indices")
-      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                             check_compiled=False)
+        harness.dyn_fun(*args)
+      return
+
+    # TF compiler gives an error for tf.slice(start_indices < 0)
+    if any(si < 0 for si in harness.params["start_indices"]):
+      expect_exception["compiled"] = (BaseException, "")
+
+    if any(si == -100 for si in harness.params["start_indices"]):
+      # TODO: for this case, TF gives errors except in graph mode
+      expect_exception = dict(eager=(ValueError, "Invalid value in tensor used for shape"),
+                              compiled=(BaseException, "Expected begin"))
+    # TF gives errors for out of bounds access
+    if any(si >= sh
+          for sh, si, li in zip(harness.params["shape"],
+                                harness.params["start_indices"],
+                                harness.params["limit_indices"])):
+      # TODO: for this case, TF gives errors in compiled mode
+      expect_exception = dict(#eager=(ValueError, "Invalid value in tensor used for shape"),
+                              compiled=(BaseException, ""))
+
+    self.ConvertAndCompare(harness.dyn_fun, *args,
+                           expect_exception=expect_exception)
 
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_update_slice)
   def test_dynamic_update_slice(self, harness):
@@ -296,8 +313,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_gather)
   def test_gather(self, harness: primitive_harness.Harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           check_compiled=False)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
@@ -306,13 +322,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for axis in [0, 1]:
       f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))  # pylint: disable=cell-var-from-loop
       # TODO: why can't we compile this code?
-      self.ConvertAndCompare(f_jax, values, indices, check_compiled=False)
+      self.ConvertAndCompare(f_jax, values, indices)
 
   def test_gather_rank_change(self):
     params = jnp.array([[1.0, 1.5, 2.0], [2.0, 2.5, 3.0], [3.0, 3.5, 4.0]])
     indices = jnp.array([[1, 1, 2], [0, 1, 0]])
     f_jax = jax.jit(lambda i: params[i])
-    self.ConvertAndCompare(f_jax, indices, check_compiled=False)
+    self.ConvertAndCompare(f_jax, indices)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
@@ -339,8 +355,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     update = np.float32(6.)
     f_jax = jax.jit(lambda v, u: op(v, jax.ops.index[::2, 3:], u))
     # TODO: compilation fails
-    self.ConvertAndCompare(f_jax, values, update,
-                           check_compiled=False)
+    self.ConvertAndCompare(f_jax, values, update)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
