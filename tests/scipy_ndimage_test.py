@@ -114,7 +114,7 @@ class NdimageTest(jtu.JaxTestCase):
       lsp_ndimage.map_coordinates(x, [c, c], order=1)
 
   def testMapCoordinateDocstring(self):
-    self.assertIn("Only linear interpolation",
+    self.assertIn("Only nearest neighbor",
                   lsp_ndimage.map_coordinates.__doc__)
 
   @parameterized.named_parameters(jtu.cases_from_list(
