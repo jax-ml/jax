@@ -2547,16 +2547,19 @@ def repeat(a, repeats, axis=None, *, total_repeat_length=None):
   if a.shape[axis] == 0:
     return a
 
-  # Modify repeats from e.g. [1,2,5] -> [0,1,2]
+  # This implementation of repeat avoid having to instantiate a large.
+  # intermediate tensor.
+
+  # Modify repeats from e.g. [1,2,0,5] -> [0,1,2,0] for exclusive repeat.
   exclusive_repeats = roll(repeats, shift=1).at[0].set(0)
-  # Cumsum to get indices of new number in repeated tensor, e.g. [0, 1, 3]
+  # Cumsum to get indices of new number in repeated tensor, e.g. [0, 1, 3, 3]
   scatter_indices = cumsum(exclusive_repeats)
-  # Scatter these onto a zero buffer, e.g. [1,1,0,1,0,0,0,0]
-  block_split_indicators = ops.index_update(
+  # Scatter these onto a zero buffer, e.g. [1,1,0,2,0,0,0,0]
+  block_split_indicators = ops.index_add(
       x=zeros([total_repeat_length], dtype=int32),
       idx=scatter_indices,
       y=1)
-  # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,2,2,2,2,2]
+  # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
   gather_indices = cumsum(block_split_indicators) - 1
   return take(a, gather_indices, axis=axis)
 
