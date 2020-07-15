@@ -15,7 +15,7 @@
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 import tensorflow as tf  # type: ignore[import]
 
 import jax
@@ -61,7 +61,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
   def ConvertAndCompare(self, func_jax: Callable, *args,
                         custom_assert: Optional[Callable] = None,
-                        expect_exception: Optional = None,
+                        expect_exception: Optional[Any] = None,
                         atol=None,
                         rtol=None) -> Tuple[Any, Any]:
     """Compares jax_func(*args) with convert(jax_func)(*args).

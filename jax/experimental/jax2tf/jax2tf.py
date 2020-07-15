@@ -45,8 +45,8 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
-from tensorflow.python.ops import control_flow_util
-from tensorflow.python.framework import ops
+from tensorflow.python.ops import control_flow_util  # type: ignore[import]
+from tensorflow.python.framework import ops  # type: ignore[import]
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
