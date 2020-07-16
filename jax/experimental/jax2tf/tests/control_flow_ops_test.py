@@ -204,7 +204,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       return lax.scan(body, 0., (xs, ys))
 
     arg = np.arange(10, dtype=np.float32)
-    self.ConvertAndCompare(f_jax, arg, arg, check_compiled=False)
+    self.ConvertAndCompare(f_jax, arg, arg)
 
   def test_scan_partial_eval(self):
     def f_jax(xs, ys):
@@ -217,7 +217,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
     arg = np.arange(10, dtype=np.float32)
     print(jax.make_jaxpr(jax.grad(f_jax))(arg, arg))
-    self.ConvertAndCompare(jax.grad(f_jax), arg, arg, check_compiled=False)
+    self.ConvertAndCompare(jax.grad(f_jax), arg, arg)
 
 
   def test_scan_custom_jvp(self):
@@ -241,12 +241,12 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
                       x)[0]
 
     arg = np.full((5,), 0.7)
-    self.TransformConvertAndCompare(g, arg, None, check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "jvp", check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "vmap", check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "jvp_vmap", check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "grad", check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "grad_vmap", check_compiled=False)
+    self.TransformConvertAndCompare(g, arg, None)
+    self.TransformConvertAndCompare(g, arg, "jvp")
+    self.TransformConvertAndCompare(g, arg, "vmap")
+    self.TransformConvertAndCompare(g, arg, "jvp_vmap")
+    self.TransformConvertAndCompare(g, arg, "grad")
+    self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
   def test_scan_custom_vjp(self):
     """Conversion of function with custom VJP, inside scan.
@@ -270,10 +270,10 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
                       x)[0]
 
     arg = np.full((5,), 0.7)
-    self.TransformConvertAndCompare(g, arg, None, check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "vmap", check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "grad", check_compiled=False)
-    self.TransformConvertAndCompare(g, arg, "grad_vmap", check_compiled=False)
+    self.TransformConvertAndCompare(g, arg, None)
+    self.TransformConvertAndCompare(g, arg, "vmap")
+    self.TransformConvertAndCompare(g, arg, "grad")
+    self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
 
 if __name__ == "__main__":

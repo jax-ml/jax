@@ -45,6 +45,8 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
+from tensorflow.python.ops import control_flow_util  # type: ignore[import]
+from tensorflow.python.framework import ops  # type: ignore[import]
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
@@ -351,20 +353,23 @@ for unexpected in [
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
-  lax_fft.fft_p, lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p,
-  lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
-
   lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
   lax.select_and_gather_add_p, lax.select_and_scatter_p, lax.top_k_p,
 
-  core.call_p,
+  lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
   lax_linalg.lu_p, lax_linalg.qr_p, lax_linalg.svd_p,
   lax_linalg.triangular_solve_p,
 
+  lax_fft.fft_p, lax.igamma_grad_a_p,
   random.random_gamma_p,
   lax.random_gamma_grad_p,
+
+  # Not high priority?
+  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
+  lax.infeed_p, lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
+
+  core.call_p,
   pe.remat_call_p,
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
@@ -425,6 +430,20 @@ tf_impl[lax.add_p] = wrap_binary_op(tf.math.add)
 tf_impl[lax.sub_p] = wrap_binary_op(tf.math.subtract)
 tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
 
+def _xla_compile(func: Callable, *args: TfVal) -> TfVal:
+  """Ensure that the function is compiled with XLA.
+
+  This is needed to work around some bugs, e.g., without XLA
+  a certain TF op has different behavior than expected by JAX.
+  """
+  # Do not invoke XLA if we are already in an XLA context
+  in_xla_context = control_flow_util.GraphOrParentsInXlaContext(
+    ops.get_default_graph())
+  if in_xla_context:
+    return func(*args)
+  else:
+    res, = tf.xla.experimental.compile(func, args)
+    return res
 
 def _div(lhs, rhs):
   if lhs.dtype.is_integer:
@@ -714,10 +733,8 @@ tf_impl[lax.slice_p] = _slice
 
 def _dynamic_slice(operand, *start_indices, slice_sizes=None):
   # See out-of-bounds index clamping comment for tf.gather
-  out, = tf.xla.experimental.compile(
-    lambda o, s: tf.slice(o, s, slice_sizes),
-    [operand, tf.stack(start_indices)])
-  return out
+  return _xla_compile(lambda o, s: tf.slice(o, s, slice_sizes),
+                      operand, tf.stack(start_indices))
 tf_impl[lax.dynamic_slice_p] = _dynamic_slice
 
 
@@ -940,10 +957,8 @@ def _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes):
   # We do not use tf.gather directly because in the non-compiled version it
   # rejects indices that are out of bounds, while JAX and XLA clamps them.
   # We fix this by ensuring that we always compile tf.gather, to use XLA.
-  out, = tf.xla.experimental.compile(
-    lambda o, s: tf.gather(o, s, axis=axis, batch_dims=0),
-    [operand, start_indices_reshaped])
-  return out
+  return _xla_compile(lambda o, s: tf.gather(o, s, axis=axis, batch_dims=0),
+                      operand, start_indices_reshaped)
 
 @functools.partial(bool_to_int8, argnums=0)
 def _gather(operand, start_indices, dimension_numbers, slice_sizes):
@@ -954,9 +969,11 @@ def _gather(operand, start_indices, dimension_numbers, slice_sizes):
   out_shape = _gather_shape(
       operand, start_indices, dimension_numbers, slice_sizes)
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
-  out, = tf.xla.experimental.compile(
-      lambda o, s: tfxla.gather(o, s, proto, slice_sizes, False),
-      [operand, start_indices])
+  # We compile because without it we run into a TF bug:
+  # tfxla.gather fails on constant inputs with "must be a compile-time constant"
+  # b/153556869
+  out = _xla_compile(lambda o, s: tfxla.gather(o, s, proto, slice_sizes, False),
+                     operand, start_indices)
   out.set_shape(out_shape)
   return out
 tf_impl[lax.gather_p] = _gather
@@ -991,9 +1008,10 @@ def _scatter(update_computation, operand, scatter_indices, updates,
   o_spec = tf.TensorSpec(None, dtype=operand.dtype)
   xla_update_computation = (
       tf.function(update_computation).get_concrete_function(o_spec, o_spec))
-  out, = tf.xla.experimental.compile(
-      lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto),
-      [operand, scatter_indices, updates])
+  # We compile due to TF bug, see comment on gather
+  out = _xla_compile(
+    lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto),
+    operand, scatter_indices, updates)
   out.set_shape(out_shape)
   return out
 
