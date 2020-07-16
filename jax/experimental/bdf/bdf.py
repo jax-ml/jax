@@ -369,7 +369,7 @@ def bdf_solve(ode_fn,
 class Results(
     collections.namedtuple(
         "Results",
-        ["times", "states", "diagnostics", "solver_internal_state"])):  #
+        ["times", "states", "diagnostics", "solver_internal_state"])):
   """
     namedtuple class to store results from ode solver
     """

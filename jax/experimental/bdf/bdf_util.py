@@ -1,8 +1,5 @@
 from collections import namedtuple
-from functools import partial
-from typing import Callable, Dict, List, Tuple, Union
-
-import numpy as np
+from typing import Callable, Tuple, Union
 
 import jax
 import jax.numpy as jnp
@@ -257,7 +254,7 @@ def update_backward_differences(backward_differences, next_backward_difference,
 def get_ode_fn_vec(ode_fn, initial_time, initial_state):
   initial_state_vec = initial_state.flatten()  #pylint: disable=unused-variable
 
-  def ode_fn_vec(inital_time, initial_state_vec):
+  def ode_fn_vec(initial_time, initial_state_vec):
     return ode_fn(initial_time, initial_state_vec)
 
   return ode_fn_vec
