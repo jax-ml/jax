@@ -62,7 +62,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
   def ConvertAndCompare(self, func_jax: Callable, *args,
                         custom_assert: Optional[Callable] = None,
                         expect_tf_exceptions: bool = False,
-                        expect_exception: Optional[Any] = None,
                         atol=None,
                         rtol=None) -> Tuple[Any, Any]:
     """Compares jax_func(*args) with convert(jax_func)(*args).
@@ -70,8 +69,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     It compares the result of JAX, TF ("eager" mode),
     TF with tf.function ("graph" mode), and TF with
     tf.function(experimental_compile=True) ("compiled" mode). In each mode,
-    either we expect an exception (see `expect_exception`) or the value should
-    match the value from the JAX execution.
+    either we expect an exception (see `expect_tf_exceptions`) or the value
+    should match the value from the JAX execution.
 
     Args:
       custom_assert: a function that will be called
