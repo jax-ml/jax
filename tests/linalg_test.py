@@ -44,7 +44,8 @@ complex_types = [np.complex64, np.complex128]
 
 
 # Used in tests for det and lu
-singular_mats = [
+def _singular_mats():
+  return [
   jnp.array([[ 50, -30,  45],  # rank-2, corank-1
              [-30,  90, -81],
              [ 45, -81,  81]], dtype=jnp.float32),
@@ -54,7 +55,8 @@ singular_mats = [
 ]
 
 
-nonsquare_singular_mats = [
+def _nonsquare_singular_mats():
+  return [
   jnp.array([[-35,   7,  27, -17],
              [ 11, -13,  -9,  11],
              [ 19, -11, -15,  13]], dtype=jnp.float32),
@@ -109,58 +111,79 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
-       "n": n, "dtype": dtype, "rng_factory": rng_factory}
+       "_n={}_grad_type={}".format(
+        jtu.format_shape_dtype_string((n,n), dtype), grad_type),
+       "n": n, "dtype": dtype, "rng_factory": rng_factory,
+       "grad_type": grad_type}
       for n in [0, 4, 5, 25]  # TODO(mattjj): complex64 unstable on large sizes?
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
-  def testDet(self, n, dtype, rng_factory):
+      for rng_factory in [jtu.rand_default]
+      for grad_type in ['fast', 'safe']))
+  def testDet(self, n, dtype, rng_factory, grad_type):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
 
+    det = partial(jnp.linalg.det, grad_type=grad_type)
     self._CheckAgainstNumpy(np.linalg.det, jnp.linalg.det, args_maker, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.det, args_maker,
+    self._CompileAndCheck(det, args_maker,
                           rtol={np.float64: 1e-13, np.complex128: 1e-13})
-
-  def testDetOfSingularMatrix(self):
-    x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
-    self.assertAllClose(np.float32(0), jsp.linalg.det(x))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+       "_grad_type={}".format(grad_type),
+       "grad_type": grad_type}
+      for grad_type in ['fast', 'safe']))
+  def testDetOfSingularMatrix(self, grad_type):
+    x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
+    self.assertAllClose(np.float32(0), jsp.linalg.det(x, grad_type=grad_type))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_grad_type={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), grad_type),
+       "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory, "grad_type": grad_type}
       for shape in [(1, 1), (3, 3), (2, 4, 4)]
       for dtype in float_types
-      for rng_factory in [jtu.rand_default]))
+      for rng_factory in [jtu.rand_default]
+      for grad_type in ['fast', 'safe']))
   @jtu.skip_on_devices("tpu")
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
-  def testDetGrad(self, shape, dtype, rng_factory):
+  def testDetGrad(self, shape, dtype, rng_factory, grad_type):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     a = rng(shape, dtype)
-    jtu.check_grads(jnp.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
+    det = partial(jnp.linalg.det, grad_type=grad_type)
+    jtu.check_grads(det, (a,), 2, atol=1e-1, rtol=1e-1)
     # make sure there are no NaNs when a matrix is zero
-    if len(shape) == 2:
-      pass
-      jtu.check_grads(
-        jnp.linalg.det, (jnp.zeros_like(a),), 1, atol=1e-1, rtol=1e-1)
-    else:
-      a[0] = 0
-      jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
+    if grad_type == 'safe':
+      if len(shape) == 2:
+        jtu.check_grads(
+          jnp.linalg.det, (jnp.zeros_like(a),), 1, atol=1e-1, rtol=1e-1)
+      else:
+        a[0] = 0
+        jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
 
-  def testDetGradOfSingularMatrixCorank1(self):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_grad_type={}".format(grad_type),
+       "grad_type": grad_type}
+      for grad_type in ['fast', 'safe']))
+  def testDetGradOfSingularMatrixCorank1(self, grad_type):
     # Rank 2 matrix with nonzero gradient
-    a = singular_mats[0]
-    jtu.check_grads(jnp.linalg.det, (a,), 2, atol=1e-1, rtol=1e-1)
+    a = _singular_mats()[0]
+    det = partial(jnp.linalg.det, grad_type=grad_type)
+    order = 2 if grad_type == 'safe' else 1
+    jtu.check_grads(det, (a,), order, atol=1e-1, rtol=1e-1)
 
   @jtu.skip_on_devices("tpu")  # TODO(mattjj,pfau): nan on tpu, investigate
   def testDetGradOfSingularMatrixCorank2(self):
     # Rank 1 matrix with zero gradient
-    b = singular_mats[1]
-    jtu.check_grads(jnp.linalg.det, (b,), 1, atol=1e-1, rtol=1e-1)
-    jtu.check_grads(jnp.linalg.det, (b,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
+    b = _singular_mats()[1]
+    det = partial(jnp.linalg.det, grad_type='safe')
+    jtu.check_grads(det, (b,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(det, (b,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -1014,7 +1037,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     def _lu(a):
       p, l, u = jsp.linalg.lu(a, grad_type='safe')
       return p, l[:, :-corank], u
-    mat = singular_mats[corank-1]
+    mat = _singular_mats()[corank-1]
     # Check forward mode gradients
     jtu.check_grads(_lu, (mat,), 2, modes=['fwd'], atol=1e-1, rtol=1e-1)
     # Something is causing tests to fail for reverse-mode.
@@ -1030,7 +1053,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       for matidx in range(2)))
   @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
   def testLuGradOfNonSquareSingularMatrix(self, matidx):
-    mat = nonsquare_singular_mats[matidx]
+    mat = _nonsquare_singular_mats()[matidx]
     lu = partial(jsp.linalg.lu, grad_type='safe')
     jtu.check_grads(lu, (mat,), 1, atol=1e-1, rtol=1e-1)
     jtu.check_grads(lu, (mat,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)

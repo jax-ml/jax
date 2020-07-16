@@ -138,6 +138,7 @@ def slogdet(a):
       jnp.sum(jnp.log(jnp.abs(diag)), axis=-1))
   return sign, jnp.real(logdet)
 
+
 @slogdet.defjvp
 def _slogdet_jvp(primals, tangents):
   x, = primals
@@ -149,7 +150,47 @@ def _slogdet_jvp(primals, tangents):
   return (sign, ans), (sign_dot, ans_dot)
 
 
-def _cofactor_solve(a, b):
+@partial(jnp.vectorize, signature='(n,n),(n,n)->(n,n)')
+def _cofactor_triangular_solve(u, b):
+  """Equivalent to det(u)*triangular_solve(u, b) for upper triangular mat.
+
+  This provides a smooth, numerically stable way to compute the cofactor
+  of an upper triangular matrix, no matter what the rank (number of nonzero
+  diagonal entries) of the upper triangular matrix is. This is used as an
+  inner loop in cofactor_solve, which itself is used in the graident of the
+  determinant.
+
+  Ordinary backsubsitution for computing triangular_solve is given by:
+  y_i = (b_i - sum_{j=i+1}^n u_{ij} y_j) / u_{ii}
+  but this fails for singular matrices due to the division by u_{ii}=0.
+  When multiplying by the cofactor, rather than the inverse, we actually want:
+  x_i = y_i * prod_{j=1}^n u_{jj}
+  which can be split into two terms:
+  x_i = z_i * prod_{j<i} u_{jj}, z_i = y_i * prod_{j>=i} u_{jj}
+  and a recurrence relation can be defined for z_i:
+  z_i = b_i * prod_{j>i} u_{jj} - sum_{k>i} u_{ik} z_k * prod_{i<j<k} a_{jj}
+  Note that division by u_{jj} appears nowhere in this expression, so this is
+  well-defined and smooth no matter how many zeros are on the diagonal of u.
+  """
+  n = u.shape[-1]
+  diag = jnp.diag(u)
+  prodrev = jnp.cumprod(
+      jnp.concatenate((np.ones(1), diag[:0:-1])))
+  dd = jnp.tile(diag[..., None], [1, n])
+  dd = dd.at[jnp.triu_indices(n)].set(1)
+  dd = jnp.concatenate((jnp.ones((1, n)),
+                        jnp.cumprod(dd, axis=-2)[:-1, ::-1]), axis=-2)
+  def _body(x, i):
+    m = n-i-1
+    partial = (u[m] * dd[..., i]) @ x
+    residual = b[m] * prodrev[i] - partial
+    return x.at[m].set(residual), None
+  z, _ = lax.scan(_body, jnp.zeros_like(b), jnp.arange(n))
+  x = z * jnp.cumprod(jnp.concatenate((np.ones(1), diag[:-1])))[..., None]
+  return x
+
+
+def _cofactor_solve(a, b, which='fast'):
   """Equivalent to det(a)*solve(a, b) for nonsingular mat.
 
   Intermediate function used for jvp and vjp of det.
@@ -158,8 +199,10 @@ def _cofactor_solve(a, b):
   in a way that is well defined even for low rank matrices.
 
   This function handles two different cases:
-  * rank(a) == n or n-1
-  * rank(a) < n-1
+  * which='fast', which works for rank(a) == n or n-1, and derivatives work
+    for rank(a) == n
+  * which='safe', which works for all values of rank(a) and derivatives of
+    all orders
 
   For rank n-1 matrices, the gradient of the determinant is a rank 1 matrix.
   Rather than computing det(a)*solve(a, b), which would return NaN, we work
@@ -175,18 +218,29 @@ def _cofactor_solve(a, b):
   x_{n} * prod_{i=1...n-1}(u_{ii})
   So by replacing the lower-right corner of u with prod_{i=1...n-1}(u_{ii})^-1
   we can avoid the triangular_solve failing.
-  To correctly compute the rest of y_{i} for i != n, we simply multiply
-  x_{i} by det(a) for all i != n, which will be zero if rank(a) = n-1.
+  When which == 'fast', we simply multiply x_{i} by det(a) for all i != n
+  to correctly compute the rest of y_{i} for i != n, which will be zero if
+  rank(a) = n-1.
 
-  For the second case, a check is done on the matrix to see if `solve`
-  returns NaN or Inf, and gives a matrix of zeros as a result, as the
-  gradient of the determinant of a matrix with rank less than n-1 is 0.
-  This will still return the correct value for rank n-1 matrices, as the check
-  is applied *after* the lower right corner of u has been updated.
+  While this solution works for rank n-1 matrices, if the rank is even lower
+  there will be multiple zeros along the diagonal of u, and the triangular
+  solve will still fail. In this case, the cofactor will be identically zero,
+  however its *derivative* will not necessarily be zero. To evaluate the
+  cofactor in a way such that automatic differentiation is still effective
+  (which == 'safe'), we replace the triangular_solve in its entirety, and
+  instead use a novel recurrence relation that generalizes backsubstitution,
+  described in _upper_triangular_cofactor_solve
 
   Args:
     a: A square matrix or batch of matrices, possibly singular.
     b: A matrix, or batch of matrices of the same dimension as a.
+    which (optional): One of 'fast' or 'safe'. If 'fast', this only works for
+      matrices of rank n or n-1, and gradients only work for matrices of rank
+      n (so second derivatives of determinants of low-rank matrices will fail).
+      If 'safe', this will work for matrices of all ranks and all orders of
+      derivative, but one triangular solve is replaced with a lax.fori_loop,
+      which may be slower than LAPACK or CUDA backends, especially for large
+      matrices.
 
   Returns:
     det(a) and cofactor(a)^T*b, aka adjugate(a)*b
@@ -206,7 +260,7 @@ def _cofactor_solve(a, b):
   # lu contains u in the upper triangular matrix and l in the strict lower
   # triangular matrix.
   # The diagonal of l is set to ones without loss of generality.
-  lu, pivots = lax_linalg.lu(a, grad_type='safe')
+  lu, pivots = lax_linalg.lu(a, grad_type=which)
   dtype = lax.dtype(a)
   batch_dims = lax.broadcast_shapes(lu.shape[:-2], b.shape[:-2])
   x = jnp.broadcast_to(b, batch_dims + b.shape[-2:])
@@ -218,40 +272,57 @@ def _cofactor_solve(a, b):
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains det(u) / u_{nn}.
   partial_det = jnp.cumprod(diag, axis=-1) * sign[..., None]
-  lu = ops.index_update(lu, ops.index[..., -1, -1], 1.0 / partial_det[..., -2])
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, a_shape[-1])
   permutation = jnp.broadcast_to(permutation, batch_dims + (a_shape[-1],))
   iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims + (1,)))
-  # filter out any matrices that are not full rank
-  d = jnp.ones(x.shape[:-1], x.dtype)
-  d = lax_linalg.triangular_solve(lu, d, left_side=True, lower=False)
-  d = jnp.any(jnp.logical_or(jnp.isnan(d), jnp.isinf(d)), axis=-1)
-  d = jnp.tile(d[..., None, None], d.ndim*(1,) + x.shape[-2:])
-  x = jnp.where(d, jnp.zeros_like(x), x)  # first filter
   x = x[iotas[:-1] + (permutation, slice(None))]
-  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
-                                  unit_diagonal=True)
-  x = jnp.concatenate((x[..., :-1, :] * partial_det[..., -1, None, None],
-                      x[..., -1:, :]), axis=-2)
-  x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
-  x = jnp.where(d, jnp.zeros_like(x), x)  # second filter
+
+  if which == 'fast':
+    lu = ops.index_update(lu, ops.index[..., -1, -1],
+                          1.0 / partial_det[..., -2])
+    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
+                                    unit_diagonal=True)
+    x = jnp.concatenate((x[..., :-1, :] * partial_det[..., -1, None, None],
+                        x[..., -1:, :]), axis=-2)
+    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=False)
+  elif which == 'safe':
+    x = lax_linalg.triangular_solve(lu, x, left_side=True, lower=True,
+                                    unit_diagonal=True)
+    x = _cofactor_triangular_solve(jnp.triu(lu), x) * sign[..., None, None]
+  else:
+    raise ValueError("Not a recognized cofactor_solve type: {}".format(which))
 
   return partial_det[..., -1], x
 
 
-@custom_jvp
-@_wraps(np.linalg.det)
-def det(a):
+def _det(a):
   sign, logdet = slogdet(a)
   return sign * jnp.exp(logdet)
 
 
-@det.defjvp
-def _det_jvp(primals, tangents):
+def _det_jvp(primals, tangents, grad_type='fast'):
   x, = primals
   g, = tangents
-  y, z = _cofactor_solve(x, g)
+  y, z = _cofactor_solve(x, g, which=grad_type)
   return y, jnp.trace(z, axis1=-1, axis2=-2)
+
+
+_det_fast = custom_jvp(lambda a: _det(a))
+_det_fast.defjvp(partial(_det_jvp, grad_type='fast'))
+
+
+_det_safe = custom_jvp(lambda a: _det(a))
+_det_safe.defjvp(partial(_det_jvp, grad_type='safe'))
+
+
+@_wraps(np.linalg.det)
+def det(a, grad_type='fast'):
+  if grad_type == 'fast':
+    return _det_fast(a)
+  elif grad_type == 'safe':
+    return _det_safe(a)
+  else:
+    raise ValueError("Unrecognized grad type for Det: {}".format(grad_type))
 
 
 @_wraps(np.linalg.eig)

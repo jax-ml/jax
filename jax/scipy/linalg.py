@@ -67,9 +67,9 @@ def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
 
 
 @_wraps(scipy.linalg.det)
-def det(a, overwrite_a=False, check_finite=True):
+def det(a, overwrite_a=False, check_finite=True, grad_type='fast'):
   del overwrite_a, check_finite
-  return np_linalg.det(a)
+  return np_linalg.det(a, grad_type=grad_type)
 
 
 @_wraps(scipy.linalg.eigh)
