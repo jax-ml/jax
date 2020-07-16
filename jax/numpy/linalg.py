@@ -206,7 +206,7 @@ def _cofactor_solve(a, b):
   # lu contains u in the upper triangular matrix and l in the strict lower
   # triangular matrix.
   # The diagonal of l is set to ones without loss of generality.
-  lu, pivots = lax_linalg.lu(a)
+  lu, pivots = lax_linalg.lu(a, grad_type='safe')
   dtype = lax.dtype(a)
   batch_dims = lax.broadcast_shapes(lu.shape[:-2], b.shape[:-2])
   x = jnp.broadcast_to(b, batch_dims + b.shape[-2:])

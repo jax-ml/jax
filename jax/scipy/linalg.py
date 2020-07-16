@@ -101,10 +101,10 @@ def inv(a, overwrite_a=False, check_finite=True):
 
 
 @_wraps(scipy.linalg.lu_factor)
-def lu_factor(a, overwrite_a=False, check_finite=True):
+def lu_factor(a, overwrite_a=False, check_finite=True, grad_type='fast'):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  return lax_linalg.lu(a)
+  return lax_linalg.lu(a, grad_type=grad_type)
 
 
 @_wraps(scipy.linalg.lu_solve)
@@ -114,10 +114,10 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   return lax_linalg.lu_solve(lu, pivots, b, trans)
 
 
-@partial(jit, static_argnums=(1,))
-def _lu(a, permute_l):
+@partial(jit, static_argnums=(1, 2))
+def _lu(a, permute_l, grad_type):
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  lu, pivots = lax_linalg.lu(a)
+  lu, pivots = lax_linalg.lu(a, grad_type=grad_type)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
   permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
@@ -130,10 +130,12 @@ def _lu(a, permute_l):
   else:
     return p, l, u
 
+# TODO(pfau): add doc including grad_type flag
 @_wraps(scipy.linalg.lu, update_doc=False)
-def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
+def lu(a, permute_l=False, overwrite_a=False, check_finite=True,
+       grad_type='fast'):
   del overwrite_a, check_finite
-  return _lu(a, permute_l)
+  return _lu(a, permute_l, grad_type)
 
 @partial(jit, static_argnums=(1, 2))
 def _qr(a, mode, pivoting):

@@ -956,41 +956,54 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+       "_shape={}_grad_type={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), grad_type),
+       "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory, "grad_type": grad_type}
       for shape in [(1, 1), (4, 5), (10, 5), (50, 50)]
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
-  def testLu(self, shape, dtype, rng_factory):
+      for rng_factory in [jtu.rand_default]
+      for grad_type in ['fast', 'safe']))
+  def testLu(self, shape, dtype, rng_factory, grad_type):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng(shape, dtype)]
     x, = args_maker()
-    p, l, u = jsp.linalg.lu(x)
+    lu = partial(jsp.linalg.lu, grad_type=grad_type)
+    p, l, u = lu(x)
     self.assertAllClose(x, np.matmul(p, np.matmul(l, u)),
                         rtol={np.float32: 1e-3, np.float64: 1e-12,
                               np.complex64: 1e-3, np.complex128: 1e-12})
-    self._CompileAndCheck(jsp.linalg.lu, args_maker)
+    self._CompileAndCheck(lu, args_maker)
 
-  def testLuOfSingularMatrix(self):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_grad_type={}".format(grad_type),
+       "grad_type": grad_type}
+      for grad_type in ['fast', 'safe']))
+  def testLuOfSingularMatrix(self, grad_type):
     x = jnp.array([[-1., 3./2], [2./3, -1.]], dtype=np.float32)
-    p, l, u = jsp.linalg.lu(x)
+    p, l, u = jsp.linalg.lu(x, grad_type=grad_type)
     self.assertAllClose(x, np.matmul(p, np.matmul(l, u)))
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+       "_shape={}_grad_type={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), grad_type),
+       "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory, "grad_type": grad_type}
       for shape in [(1, 1), (4, 5), (10, 5), (10, 10), (6, 7, 7)]
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
+      for rng_factory in [jtu.rand_default]
+      for grad_type in ['fast', 'safe']))
   @jtu.skip_on_devices("tpu")  # TODO(phawkins): precision problems on TPU.
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
-  def testLuGrad(self, shape, dtype, rng_factory):
+  def testLuGrad(self, shape, dtype, rng_factory, grad_type):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     a = rng(shape, dtype)
-    lu = vmap(jsp.linalg.lu) if len(shape) > 2 else jsp.linalg.lu
+    lu = partial(jsp.linalg.lu, grad_type=grad_type)
+    lu = vmap(lu) if len(shape) > 2 else lu
     jtu.check_grads(lu, (a,), 2, atol=5e-2, rtol=3e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -999,15 +1012,16 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
   def testLuGradOfSingularMatrix(self, corank):
     def _lu(a):
-      p, l, u = jsp.linalg.lu(a)
+      p, l, u = jsp.linalg.lu(a, grad_type='safe')
       return p, l[:, :-corank], u
     mat = singular_mats[corank-1]
     # Check forward mode gradients
     jtu.check_grads(_lu, (mat,), 2, modes=['fwd'], atol=1e-1, rtol=1e-1)
     # Something is causing tests to fail for reverse-mode.
     # So let's just compare forward-mode and reverse-mode Jacobians
-    jfwd = jax.jacfwd(jsp.linalg.lu)(mat)
-    jrev = jax.jacrev(jsp.linalg.lu)(mat)
+    lu = partial(jsp.linalg.lu, grad_type='safe')
+    jfwd = jax.jacfwd(lu)(mat)
+    jrev = jax.jacrev(lu)(mat)
     for jf, jr in zip(jfwd, jrev):
       np.testing.assert_allclose(jf, jr)
 
@@ -1017,17 +1031,21 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # TODO(mattjj, pfau): fails on TPU.
   def testLuGradOfNonSquareSingularMatrix(self, matidx):
     mat = nonsquare_singular_mats[matidx]
-    jtu.check_grads(jsp.linalg.lu, (mat,), 1, atol=1e-1, rtol=1e-1)
-    jtu.check_grads(jsp.linalg.lu, (mat,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
+    lu = partial(jsp.linalg.lu, grad_type='safe')
+    jtu.check_grads(lu, (mat,), 1, atol=1e-1, rtol=1e-1)
+    jtu.check_grads(lu, (mat,), 2, modes=["fwd"], atol=1e-1, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+       "_shape={}_grad_type={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), grad_type),
+       "shape": shape, "dtype": dtype,
+       "rng_factory": rng_factory, "grad_type": grad_type}
       for shape in [(4, 5), (6, 5)]
       for dtype in [jnp.float32]
-      for rng_factory in [jtu.rand_default]))
-  def testLuBatching(self, shape, dtype, rng_factory):
+      for rng_factory in [jtu.rand_default]
+      for grad_type in ['fast', 'safe']))
+  def testLuBatching(self, shape, dtype, rng_factory, grad_type):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args = [rng(shape, jnp.float32) for _ in range(10)]
@@ -1036,32 +1054,37 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     ls = np.stack([out[1] for out in expected])
     us = np.stack([out[2] for out in expected])
 
-    actual_ps, actual_ls, actual_us = vmap(jsp.linalg.lu)(jnp.stack(args))
+    lu = partial(jsp.linalg.lu, grad_type=grad_type)
+    actual_ps, actual_ls, actual_us = vmap(lu)(jnp.stack(args))
     self.assertAllClose(ps, actual_ps)
     self.assertAllClose(ls, actual_ls)
     self.assertAllClose(us, actual_us)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_n={}".format(jtu.format_shape_dtype_string((n,n), dtype)),
-       "n": n, "dtype": dtype, "rng_factory": rng_factory}
+       "_n={}_grad_type={}".format(
+        jtu.format_shape_dtype_string((n,n), dtype), grad_type),
+       "n": n, "dtype": dtype, "rng_factory": rng_factory,
+       "grad_type": grad_type}
       for n in [1, 4, 5, 200]
       for dtype in float_types + complex_types
-      for rng_factory in [jtu.rand_default]))
-  def testLuFactor(self, n, dtype, rng_factory):
+      for rng_factory in [jtu.rand_default]
+      for grad_type in ['fast', 'safe']))
+  def testLuFactor(self, n, dtype, rng_factory, grad_type):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
     args_maker = lambda: [rng((n, n), dtype)]
 
     x, = args_maker()
-    lu, piv = jsp.linalg.lu_factor(x)
+    lu_factor = partial(jsp.linalg.lu_factor, grad_type=grad_type)
+    lu, piv = lu_factor(x)
     l = np.tril(lu, -1) + np.eye(n, dtype=dtype)
     u = np.triu(lu)
     for i in range(n):
       x[[i, piv[i]],] = x[[piv[i], i],]
     self.assertAllClose(x, np.matmul(l, u), rtol=1e-3,
                         atol=1e-3)
-    self._CompileAndCheck(jsp.linalg.lu_factor, args_maker)
+    self._CompileAndCheck(lu_factor, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":

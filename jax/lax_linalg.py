@@ -57,8 +57,13 @@ def eigh(x, lower=True, symmetrize_input=True):
   v, w = eigh_p.bind(x, lower=lower)
   return v, w
 
-def lu(x):
-  lu, pivots = lu_p.bind(x)
+def lu(x, grad_type='fast'):
+  if grad_type == 'fast':
+    lu, pivots = lu_fast_p.bind(x)
+  elif grad_type == 'safe':
+    lu, pivots = lu_safe_p.bind(x)
+  else:
+    raise ValueError("Unrecognized grad type for LU: {}".format(grad_type))
   return lu, pivots
 
 def qr(x, full_matrices=True):
@@ -558,8 +563,12 @@ def _lu_python(x):
     pivot, lu = _lu_blocked(x)
   return lu, pivot
 
-def _lu_impl(operand):
-  lu, pivot = xla.apply_primitive(lu_p, operand)
+def _lu_safe_impl(operand):
+  lu, pivot = xla.apply_primitive(lu_safe_p, operand)
+  return lu, pivot
+
+def _lu_fast_impl(operand):
+  lu, pivot = xla.apply_primitive(lu_fast_p, operand)
   return lu, pivot
 
 def _lu_abstract_eval(operand):
@@ -575,10 +584,15 @@ def _lu_abstract_eval(operand):
     pivot = operand
   return operand, pivot
 
-def _lu_jvp_rule(primals, tangents):
+def _lu_jvp_rule(primals, tangents, grad_type='fast'):
   a, = primals
   a_dot, = tangents
-  lu, pivots = lu_p.bind(a)
+  if grad_type == 'fast':
+    lu, pivots = lu_fast_p.bind(a)
+  elif grad_type == 'safe':
+    lu, pivots = lu_safe_p.bind(a)
+  else:
+    raise ValueError("Unrecognized grad type for LU: {}".format(grad_type))
 
   a_shape = jnp.shape(a)
   m, n = a_shape[-2:]
@@ -612,48 +626,63 @@ def _lu_jvp_rule(primals, tangents):
   u_padding[-2] = (0, n - k, 0)
   u = lax.pad(jnp.triu(lu[..., :k, :]), zero, u_padding) + u_eye
 
-  # dummy calculation to figure out which matrices u are low-rank
-  d = triangular_solve(
-      u, jnp.ones(tuple(u.shape[:-2]) + (1, u.shape[-1]), dtype=u.dtype),
-      left_side=False, transpose_a=False, lower=False)
-  mask = (jnp.tile(jnp.isinf(d) | jnp.isnan(d),
-                   (a.ndim-2)*[1] + [a_shape[-2], 1]) &
-          ~(jnp.isinf(a) | jnp.isnan(a)))
+  if grad_type == 'fast':
+    la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
+                          unit_diagonal=True)
+    lau = triangular_solve(u, la, left_side=False, transpose_a=False,
+                           lower=False)
+  elif grad_type == 'safe':
+    # dummy calculation to figure out which matrices u are low-rank
+    d = triangular_solve(
+        u, jnp.ones(tuple(u.shape[:-2]) + (1, u.shape[-1]), dtype=u.dtype),
+        left_side=False, transpose_a=False, lower=False)
+    mask = (jnp.tile(jnp.isinf(d) | jnp.isnan(d),
+                     (a.ndim-2)*[1] + [a_shape[-2], 1]) &
+            ~(jnp.isinf(a) | jnp.isnan(a)))
 
-  # For non-square matrices, the shape of the mask has to be corrected
-  u_mask = lax.pad(mask, zero.astype(np.bool), u_padding)[..., :u.shape[-2], :]
-  u_safe = jnp.where(jnp.swapaxes(u_mask, -1, -2), 1.0, u)
-  la = triangular_solve(
-      l, x, left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
-  lau = triangular_solve(
-      u_safe, la, left_side=False, transpose_a=False, lower=False)
-  lau = jnp.where(mask, 0.0, lau)
+    # For non-square matrices, the shape of the mask has to be corrected
+    u_mask = lax.pad(
+      mask, zero.astype(np.bool), u_padding)[..., :u.shape[-2], :]
+    u_safe = jnp.where(jnp.swapaxes(u_mask, -1, -2), 1.0, u)
+    la = triangular_solve(l, x,
+      left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
+    lau = triangular_solve(u_safe, la,
+      left_side=False, transpose_a=False, lower=False)
+    lau = jnp.where(mask, 0.0, lau)
 
   l_dot = jnp.matmul(l, jnp.tril(lau, -1))
   u_dot = jnp.matmul(jnp.triu(lau), u)
-  # Correction for low-rank matrices
-  # If A has corank k, then the last k rows of U will be 0, and the last
-  # k columns of L will have undefined behavior.
-  # Let U = [U_0; 0], L = [L_0, L_1], ∂U = [∂U_0; ∂U_1], ∂L = [∂L_0, ∂L_1]
-  #     ∂LU + L∂U = ∂A
-  # ==> [∂L_0, ∂L_1][U_0; 0] + [L_0, L_1][∂U_0; ∂U_1] = ∂A
-  # ==> ∂L_0 U_0 + L_0 ∂U_0 + L_1 ∂U_1 = ∂A
-  # ∂L_0 and ∂U_0 can be solved by the normal expression for ∂L and ∂U,
-  # while ∂U_1 can be solved from ∂L_0 and ∂U_0 as
-  #     ∂U_1 = triu(inv(L) . (∂A - ∂L . U))[:-k]
-  u_fix = la - triangular_solve(
-      l, jnp.matmul(l_dot, u, precision=lax.Precision.HIGHEST),
-      left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
-  u_dot = jnp.where(mask, u_fix, u_dot)
+
+  if grad_type == 'safe':
+    # Correction for low-rank matrices
+    # If A has corank k, then the last k rows of U will be 0, and the last
+    # k columns of L will have undefined behavior.
+    # Let U = [U_0; 0], L = [L_0, L_1], ∂U = [∂U_0; ∂U_1], ∂L = [∂L_0, ∂L_1]
+    #     ∂LU + L∂U = ∂A
+    # ==> [∂L_0, ∂L_1][U_0; 0] + [L_0, L_1][∂U_0; ∂U_1] = ∂A
+    # ==> ∂L_0 U_0 + L_0 ∂U_0 + L_1 ∂U_1 = ∂A
+    # ∂L_0 and ∂U_0 can be solved by the normal expression for ∂L and ∂U,
+    # while ∂U_1 can be solved from ∂L_0 and ∂U_0 as
+    #     ∂U_1 = triu(inv(L) . (∂A - ∂L . U))[:-k]
+    u_fix = la - triangular_solve(
+        l, jnp.matmul(l_dot, u, precision=lax.Precision.HIGHEST),
+        left_side=True, transpose_a=False, lower=True, unit_diagonal=True)
+    u_dot = jnp.where(mask, u_fix, u_dot)
+
   lu_dot = l_dot + u_dot
   return (lu, pivots), (lu_dot, ad_util.Zero.from_value(pivots))
 
 
-def _lu_batching_rule(batched_args, batch_dims):
+def _lu_batching_rule(batched_args, batch_dims, grad_type='fast'):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return lu_p.bind(x), (0, 0)
+  if grad_type == 'fast':
+    return lu_fast_p.bind(x), (0, 0)
+  elif grad_type == 'safe':
+    return lu_safe_p.bind(x), (0, 0)
+  else:
+    raise ValueError("Unrecognized grad type for LU: {}".format(grad_type))
 
 def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   shape = c.get_shape(operand)
@@ -667,18 +696,36 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   return xops.Tuple(c, [lu, pivot])
 
 
-lu_p = Primitive('lu')
-lu_p.multiple_results = True
-lu_p.def_impl(_lu_impl)
-lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.translations[lu_p] = xla.lower_fun(_lu_python, multiple_results=True)
-ad.primitive_jvps[lu_p] = _lu_jvp_rule
-batching.primitive_batchers[lu_p] = _lu_batching_rule
+# Define different primitives for LU with safe grad and fast grad
+lu_safe_p = Primitive('lu_safe')
+lu_safe_p.multiple_results = True
+lu_safe_p.def_impl(_lu_safe_impl)
+lu_safe_p.def_abstract_eval(_lu_abstract_eval)
+xla.translations[lu_safe_p] = xla.lower_fun(_lu_python, multiple_results=True)
+ad.primitive_jvps[lu_safe_p] = partial(_lu_jvp_rule, grad_type='safe')
+batching.primitive_batchers[lu_safe_p] = partial(
+  _lu_batching_rule, grad_type='safe')
 
-xla.backend_specific_translations['cpu'][lu_p] = partial(
+xla.backend_specific_translations['cpu'][lu_safe_p] = partial(
   _lu_cpu_gpu_translation_rule, lapack.getrf)
 
-xla.backend_specific_translations['gpu'][lu_p] = partial(
+xla.backend_specific_translations['gpu'][lu_safe_p] = partial(
+  _lu_cpu_gpu_translation_rule, cusolver.getrf)
+
+
+lu_fast_p = Primitive('lu_fast')
+lu_fast_p.multiple_results = True
+lu_fast_p.def_impl(_lu_fast_impl)
+lu_fast_p.def_abstract_eval(_lu_abstract_eval)
+xla.translations[lu_fast_p] = xla.lower_fun(_lu_python, multiple_results=True)
+ad.primitive_jvps[lu_fast_p] = partial(_lu_jvp_rule, grad_type='fast')
+batching.primitive_batchers[lu_fast_p] = partial(
+  _lu_batching_rule, grad_type='fast')
+
+xla.backend_specific_translations['cpu'][lu_fast_p] = partial(
+  _lu_cpu_gpu_translation_rule, lapack.getrf)
+
+xla.backend_specific_translations['gpu'][lu_fast_p] = partial(
   _lu_cpu_gpu_translation_rule, cusolver.getrf)
 
 
