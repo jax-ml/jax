@@ -453,6 +453,7 @@ all_to_all_p = standard_pmap_primitive('all_to_all')
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
+pxla.multi_host_supported_collectives.add(all_to_all_p)
 
 
 ### papply rules
