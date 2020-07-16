@@ -366,7 +366,7 @@ lax_linalg_qr = tuple(
           shape=shape,
           dtype=dtype,
           full_matrices=full_matrices)
-  for dtype in [jnp.float32, jnp.float64, jnp.complex64, jnp.complex128] # See jax.lib.lapack.geqrf
+  for dtype in jtu.dtypes.all
   for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
   for full_matrices in [False, True]
 )

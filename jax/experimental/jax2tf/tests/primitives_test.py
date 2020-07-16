@@ -135,10 +135,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
   def test_qr(self, harness: primitive_harness.Harness):
-    # TODO: figure out why check_compiled=True breaks for complex types.
-    # TODO: figure out why we need to adjust atol and rtol.
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           check_compiled=False, atol=1e-5, rtol=1e-5)
+    if not harness.params["dtype"] in [jnp.float32, jnp.float64, jnp.complex64, jnp.complex128]:
+      with self.assertRaisesRegex(NotImplementedError, "Unsupported dtype"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    else: # See jax.lib.lapack.geqrf for the list of compatible types
+      # TODO: figure out why check_compiled=True breaks for complex types.
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             check_compiled=False, atol=1e-5, rtol=1e-5)
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
