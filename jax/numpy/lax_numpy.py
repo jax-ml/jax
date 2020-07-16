@@ -167,6 +167,7 @@ float64 = double = _make_scalar_type(np.float64)
 complex64 = csingle = _make_scalar_type(np.complex64)
 complex128 = cdouble = _make_scalar_type(np.complex128)
 
+# TODO(jakevdp): simplify this after x64 migration
 int_ = int32 if dtypes.int_ == np.int32 else int64
 float_ = float32 if dtypes.float_ == np.float32 else float64
 complex_ = complex64 if dtypes.complex_ == np.complex64 else complex128
@@ -2212,7 +2213,6 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     raise NotImplementedError("Only implemented for order='K'")
   lax._check_user_dtype_supported(dtype, "array")
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
-
   if _can_call_numpy_array(object):
     object = _np_array(object, dtype=dtype, ndmin=ndmin)
   assert type(object) not in dtypes.python_scalar_dtypes

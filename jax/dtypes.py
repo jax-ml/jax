@@ -54,17 +54,13 @@ class _bfloat16_finfo(object):
   resolution = 10 ** -2
   tiny = bfloat16(float.fromhex("0x1p-126"))
 
-# Default types.
+# Default types. Numpy defaults to 64-bit; JAX departs from this and defaults to
+# 32-bit because it is better supported on accelerators.
 
 bool_ = np.bool_
-int_ = np.int64
-float_ = np.float64
-complex_ = np.complex128
-
-# TODO(phawkins): change the above defaults to:
-# int_ = np.int32
-# float_ = np.float32
-# complex_ = np.complex64
+int_ = np.int32
+float_ = np.float32
+complex_ = np.complex64
 
 
 _dtype_to_32bit_dtype = {
