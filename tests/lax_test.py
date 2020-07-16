@@ -743,10 +743,14 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting,
        "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
+          [(5,), (5,), [0], [0]],
+          [(5, 7), (5,), [0], [0]],
+          [(7, 5), (5,), [1], [0]],
           [(3, 5), (2, 5), [1], [1]],
           [(5, 3), (5, 2), [0], [0]],
           [(5, 3, 2), (5, 2, 4), [0], [0]],
           [(5, 3, 2), (5, 2, 4), [0,2], [0,1]],
+          [(5, 3, 2), (3, 5, 2, 4), [0,2], [1,2]],
           [(1, 2, 2, 3), (1, 2, 3, 1), [1], [1]],
           [(3, 2), (2, 4), [1], [0]],
       ]
@@ -773,6 +777,7 @@ class LaxTest(jtu.JaxTestCase):
        "dimension_numbers": dimension_numbers, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, dimension_numbers in [
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
       for dtype in all_dtypes
@@ -797,6 +802,7 @@ class LaxTest(jtu.JaxTestCase):
        "dimension_numbers": dimension_numbers, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, dimension_numbers in [
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
       for dtype in all_dtypes
