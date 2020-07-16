@@ -49,7 +49,7 @@ def filter_traceback_and_stack(e):
 
   for f, lineno in reversed(list(traceback.walk_tb(e.__traceback__))):
     if include_frame(f):
-      out = types.TracebackType(out, f, f.f_lasti, lineno)
+      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
 
   # Continue up the call stack.
   #
@@ -68,7 +68,7 @@ def filter_traceback_and_stack(e):
     if reached_module_level and f.f_code.co_name != '<module>':
       break
     if include_frame(f):
-      out = types.TracebackType(out, f, f.f_lasti, lineno)
+      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
     if f.f_code.co_name == '<module>':
       reached_module_level = True
 
