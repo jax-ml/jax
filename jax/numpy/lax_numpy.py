@@ -204,6 +204,28 @@ load = np.load
 
 _canonicalize_axis = lax._canonicalize_axis
 
+def _np_array(obj, dtype=None, **kwargs):
+  """Return a properly-typed numpy array.
+
+  `_np_array(obj, **kwds)` is equivalent to `np.array(obj, **kwds)`, with the
+  exception that when obj.dtype is not defined and dtype is not specified, it
+  uses Jax's default dtypes.
+  """
+  arr = np.array(obj, dtype=dtype, **kwargs)
+  typemap = {
+    np.bool_: bool_,
+    np.int_: int_,
+    np.float_: float_,
+    np.complex_: complex_
+  }
+  obj_dtype = getattr(obj, 'dtype', None)
+  arr_dtype = np.dtype(arr.dtype)
+  if dtype is None and obj_dtype is None and arr_dtype in typemap:
+    arr = arr.astype(typemap[arr_dtype])
+  return arr
+
+_np_asarray = partial(_np_array, copy=False)
+
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
@@ -2190,7 +2212,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
   if _can_call_numpy_array(object):
-    object = np.array(object, dtype=dtype, ndmin=ndmin)
+    object = _np_array(object, dtype=dtype, ndmin=ndmin)
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
@@ -2200,21 +2222,21 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
-      out = _device_put_raw(np.asarray(object))
+      out = _device_put_raw(_np_asarray(object))
     else:
       out = object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      out = _device_put_raw(np.array([], dtype or float_))
+      out = _device_put_raw(_np_array([], dtype=dtype))
   else:
     try:
       view = memoryview(object)
     except TypeError:
       pass  # `object` does not support the buffer interface.
     else:
-      return array(np.asarray(view), dtype, copy)
+      return array(_np_asarray(view), dtype, copy)
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
@@ -2329,7 +2351,7 @@ def identity(n, dtype=None):
 @_wraps(np.arange)
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
-  require = partial(core.concrete_or_error, np.asarray)
+  require = partial(core.concrete_or_error, _np_asarray)
   msg = "in jax.numpy.arange argument `{}`".format
   if stop is None and step is None:
     start = require(start, msg("stop"))
@@ -3980,7 +4002,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:
-    return np.array([]).reshape(0, 0)
+    return array([]).reshape(0, 0)
   if ddof is None:
     ddof = 1 if bias == 0 else 0
 
