@@ -16,3 +16,4 @@ docs/_autosummary
 .vscode
 venv/
 jax.iml
+.python-version
