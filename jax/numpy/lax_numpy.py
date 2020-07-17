@@ -2902,13 +2902,8 @@ def tensordot(a, b, axes=2, *, precision=None):
 
 
 @_wraps(np.einsum, lax_description=_PRECISION_DOC)
-def einsum(*operands, **kwargs):
-  optimize = kwargs.pop('optimize', True)
+def einsum(*operands, optimize='greedy', precision=None):
   optimize = 'greedy' if optimize is True else optimize
-  precision = kwargs.pop('precision', None)
-  if kwargs:
-    msg = 'invalid keyword arguments for einsum: {}'
-    raise TypeError(msg.format(', '.join(kwargs)))
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
       *operands, einsum_call=True, use_blas=True, optimize=optimize)
@@ -2916,8 +2911,7 @@ def einsum(*operands, **kwargs):
   return _einsum(operands, contractions, precision)
 
 @_wraps(np.einsum_path)
-def einsum_path(subscripts, *operands, **kwargs):
-  optimize = kwargs.pop('optimize', 'greedy')
+def einsum_path(subscripts, *operands, optimize='greedy'):
   # using einsum_call=True here is an internal api for opt_einsum
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
