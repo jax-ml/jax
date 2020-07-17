@@ -291,12 +291,6 @@ class BatchingTest(jtu.JaxTestCase):
     expected = np.einsum('ij,i->j', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def testDot5(self):
-    f = vmap(partial(jnp.einsum, 'ij,j->i'), (None, 0))
-    jaxpr = make_jaxpr(f)(jnp.zeros((1000, 1000)), jnp.zeros((1000, 1000)))
-    assert "broadcast" not in str(jaxpr)
-    assert "transpose" not in str(jaxpr)
-
   def testPad(self):
     R = np.random.RandomState(0).randn
 
