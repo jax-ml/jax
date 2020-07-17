@@ -2844,20 +2844,57 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
              f"but it has ndim {ndim(x)}")
       raise ValueError(msg)
 
-  a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
-  a = expand_dims(a, axis=0) if a_is_vec else a
-  b = expand_dims(b, axis=-1) if b_is_vec else b
-
   a, b = _promote_dtypes(a, b)
-  batch_shape = lax.broadcast_shapes(shape(a)[:-2], shape(b)[:-2])
-  a = broadcast_to(a, batch_shape + shape(a)[-2:])
-  b = broadcast_to(b, batch_shape + shape(b)[-2:])
-  batch_dims = tuple(range(len(batch_shape)))
-  dim_numbers = (((ndim(a) - 1,), (ndim(b) - 2,)), (batch_dims, batch_dims))
-  result = lax.dot_general(a, b, dim_numbers,  precision)
 
-  squeeze_dims = ((-2,) if a_is_vec else ()) + ((-1,) if b_is_vec else ())
-  return squeeze(result, squeeze_dims)
+  a_is_mat, b_is_mat = (ndim(a) > 1), (ndim(b) > 1)
+  a_batch_dims = shape(a)[:-2] if a_is_mat else ()
+  b_batch_dims = shape(b)[:-2] if b_is_mat else ()
+  num_batch_dims = _max(len(a_batch_dims), len(b_batch_dims))
+  a_batch_dims = (None,) * (num_batch_dims - len(a_batch_dims)) + a_batch_dims
+  b_batch_dims = (None,) * (num_batch_dims - len(b_batch_dims)) + b_batch_dims
+
+  # Dimensions to squeeze from the inputs.
+  a_squeeze = []
+  b_squeeze = []
+
+  # Positions of batch dimensions in squeezed inputs.
+  a_batch = []
+  b_batch = []
+
+  # Desired index in final output of each kind of dimension, in the order that
+  # lax.dot_general will emit them.
+  idx_batch = []
+  idx_a_other = []  # other = non-batch, non-contracting.
+  idx_b_other = []
+  for i, (ba, bb) in enumerate(zip(a_batch_dims, b_batch_dims)):
+    if ba is None:
+      idx_b_other.append(i)
+    elif bb is None:
+      idx_a_other.append(i)
+    elif ba == 1:
+      idx_b_other.append(i)
+      a_squeeze.append(len(idx_batch) + len(idx_a_other) + len(a_squeeze))
+    elif bb == 1:
+      idx_a_other.append(i)
+      b_squeeze.append(len(idx_batch) + len(idx_b_other) + len(b_squeeze))
+    elif ba == bb:
+      a_batch.append(len(idx_batch) + len(idx_a_other))
+      b_batch.append(len(idx_batch) + len(idx_b_other))
+      idx_batch.append(i)
+    else:
+      raise ValueError("Incompatible shapes for matmul arguments: {} and {}"
+                       .format(shape(a), shape(b)))
+
+  if a_is_mat: idx_a_other.append(num_batch_dims)
+  if b_is_mat: idx_b_other.append(num_batch_dims + a_is_mat)
+  perm = np.argsort(np.concatenate([idx_batch, idx_a_other, idx_b_other]))
+
+  a = lax.squeeze(a, tuple(a_squeeze))
+  b = lax.squeeze(b, tuple(b_squeeze))
+  out = lax.dot_general(
+    a, b, (((ndim(a) - 1,), (ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
+    precision=precision)
+  return lax.transpose(out, perm)
 
 
 @_wraps(np.vdot, lax_description=_PRECISION_DOC)
