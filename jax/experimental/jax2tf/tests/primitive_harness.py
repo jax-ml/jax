@@ -319,6 +319,40 @@ lax_pad = tuple(
   ]
 )
 
+lax_top_k = tuple( # random testing
+  Harness(f"_inshape={jtu.format_shape_dtype_string(shape, dtype)}_k={k}",
+          lax.top_k,
+          [RandArg(shape, dtype), StaticArg(k)],
+          shape=shape,
+          dtype=dtype,
+          k=k)
+  for dtype in jtu.dtypes.all #[np.float32, np.int32, np.uint32]
+  for shape in [(3,), (5, 3)]
+  for k in [-1, 1, 3, 4]
+  for rng_factory in [jtu.rand_default]
+) + tuple( # stability test
+  Harness(f"stability_inshape={jtu.format_shape_dtype_string(arr.shape, arr.dtype)}_k={k}",
+          lax.top_k,
+          [arr, StaticArg(k)],
+          shape=arr.shape,
+          dtype=arr.dtype,
+          k=k)
+  for arr in [
+      np.array([5, 7, 5, 8, 8, 5], dtype=np.int32)
+  ]
+  for k in [1, 3, 6]
+) + tuple( # nan/inf sorting test
+  Harness(f"nan_inshape={jtu.format_shape_dtype_string(arr.shape, arr.dtype)}_k={k}",
+          lax.top_k,
+          [arr, StaticArg(k)],
+          shape=arr.shape,
+          dtype=arr.dtype,
+          k=k)
+  for arr in [
+      np.array([+np.inf, np.nan, -np.nan, np.nan, -np.inf, 3], dtype=np.float32)
+  ]
+  for k in [1, 3, 6]
+)
 
 lax_sort = tuple( # one array, random data, all axes, all dtypes
   Harness(f"one_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",

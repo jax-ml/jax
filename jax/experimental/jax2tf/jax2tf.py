@@ -354,7 +354,7 @@ for unexpected in [
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
   lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
-  lax.select_and_gather_add_p, lax.select_and_scatter_p, lax.top_k_p,
+  lax.select_and_gather_add_p, lax.select_and_scatter_p,
 
   lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
@@ -1112,6 +1112,29 @@ def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
   return _interpret_fun(lu.wrap_init(func1), tf_args)
 
 tf_impl[lax.scan_p] = _scan
+
+def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
+  # Some types originally incompatible with tf.math.top_k can be promoted
+  # to a compatible type without loss of precision.
+  def promote_dtype(dtype):
+    if dtype in [jnp.bool_, jnp.uint8, jnp.uint16]:
+      return jnp.uint32
+    if dtype in [jnp.int8, jnp.int16]:
+      return jnp.int32
+    if dtype in [jnp.float16]:
+      return jnp.float32
+    if dtype in [jnp.bfloat16]:
+      return tf.bfloat16
+    return None
+
+  conversion_dtype = promote_dtype(operand.dtype)
+  if conversion_dtype:
+    values, indices = tf.math.top_k(tf.dtypes.cast(operand, to_tf_dtype(conversion_dtype)), k=k)
+    return tf.dtypes.cast(values, operand.dtype), indices
+  else:
+    return tf.math.top_k(operand, k=k)
+
+tf_impl[lax.top_k_p] = _top_k
 
 def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tuple[TfVal, ...]:
   if num_keys != 1:
