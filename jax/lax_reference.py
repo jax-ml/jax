@@ -289,7 +289,10 @@ def reduce(operand, init_value, computation, dimensions):  # pylint: disable=red
 def reduce_window(operand, init_value, computation, window_dimensions,
                   window_strides, padding):
   op, dims, strides = operand, window_dimensions, window_strides
-  pads = padtype_to_pads(op.shape, dims, strides, padding)
+  if isinstance(padding, str):
+    pads = padtype_to_pads(op.shape, dims, strides, padding)
+  else:
+    pads = padding
   view = _conv_view(op.reshape((1, 1) + op.shape), (1, 1) + dims, strides, pads,
                     pad_value=init_value)[0]
   view = view.reshape(view.shape[1:1+len(dims)] + (-1,))
