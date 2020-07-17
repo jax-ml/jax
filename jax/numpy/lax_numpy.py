@@ -3043,10 +3043,10 @@ def _einsum(operands: Sequence,
       rhs, rhs_names = sum_repeats(rhs, rhs_names, rhs_counts,
                                    result_names + lhs_names)
 
-      lhs_and_rhs_names = set(lhs_names) | set(rhs_names)
-      contracted_names = [x for x in contracted_names if x in lhs_and_rhs_names]
-      batch_names = sorted((set(lhs_names) & set(rhs_names))
-                             - set(contracted_names))
+      lhs_or_rhs_names = set(lhs_names) | set(rhs_names)
+      contracted_names = [x for x in contracted_names if x in lhs_or_rhs_names]
+      lhs_and_rhs_names = set(lhs_names) & set(rhs_names)
+      batch_names = [x for x in result_names if x in lhs_and_rhs_names]
 
       lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
                                     for n in batch_names)
@@ -3058,24 +3058,11 @@ def _einsum(operands: Sequence,
         lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
         for name in contracted_names)
 
-      # move batch dims to the front (required by lax.dot_general, and easier)
-      batch_dims = tuple(range(len(batch_names)))
-      if lhs_batch != rhs_batch or set(lhs_batch) != set(batch_dims):
-        lhs = moveaxis(lhs, lhs_batch, batch_dims)
-        lhs_names = _movechars(lhs_names, lhs_batch, batch_dims)
-        rhs = moveaxis(rhs, rhs_batch, batch_dims)
-        rhs_names = _movechars(rhs_names, rhs_batch, batch_dims)
-        batch_names_str = ''.join(batch_names)
-      else:
-        batch_dims = tuple(lhs_batch)
-        batch_names_str = ''.join(lhs_names[i] for i in range(len(lhs_names))
-                              if i in batch_dims)
-
       # contract using lax.dot_general
+      batch_names_str = ''.join(batch_names)
       lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
                                   for n in contracted_names)
-      bdims = tuple(range(len(batch_dims)))
-      dimension_numbers = ((lhs_cont, rhs_cont), (bdims, bdims))
+      dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
       operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
       deleted_names = batch_names_str + ''.join(contracted_names)
       names = (batch_names_str + _removechars(lhs_names, deleted_names)
