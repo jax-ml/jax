@@ -238,10 +238,14 @@ class LaxVmapTest(jtu.JaxTestCase):
        "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting,
        "bdims": bdims, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
+          [(5,), (5,), [0], [0]],
+          [(5, 7), (5,), [0], [0]],
+          [(7, 5), (5,), [1], [0]],
           [(3, 5), (2, 5), [1], [1]],
           [(5, 3), (5, 2), [0], [0]],
           [(5, 3, 2), (5, 2, 4), [0], [0]],
           [(5, 3, 2), (5, 2, 4), [0,2], [0,1]],
+          [(5, 3, 2), (3, 5, 2, 4), [0,2], [1,2]],
           [(1, 2, 2, 3), (1, 2, 3, 1), [1], [1]],
           [(3, 2), (2, 4), [1], [0]],
       ]
@@ -266,6 +270,7 @@ class LaxVmapTest(jtu.JaxTestCase):
        "dimension_numbers": dimension_numbers, "bdims": bdims, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, dimension_numbers in [
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
       for bdims in all_bdims(lhs_shape, rhs_shape)
@@ -277,6 +282,12 @@ class LaxVmapTest(jtu.JaxTestCase):
     dot = partial(lax.dot_general, dimension_numbers=dimension_numbers)
     self._CheckBatching(dot, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
                         rng)
+
+    # Checks that batching didn't introduce any transposes or broadcasts.
+    jaxpr = api.make_jaxpr(dot)(np.zeros(lhs_shape, dtype),
+                                np.zeros(rhs_shape, dtype))
+    for eqn in jtu.iter_eqns(jaxpr.jaxpr):
+      self.assertFalse(eqn.primitive in ["transpose", "broadcast"])
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_dtype={}_broadcast_sizes={}_bdims={}".format(

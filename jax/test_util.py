@@ -682,16 +682,16 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
 
-def _iter_eqns(jaxpr):
+def iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from _iter_eqns(subjaxpr)
+    yield from iter_eqns(subjaxpr)
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in _iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
