@@ -4000,6 +4000,8 @@ class NumpyGradTests(jtu.JaxTestCase):
     check_grads(f, (1.,), order=1)
 
 
+class NumpySignaturesTest(jtu.JaxTestCase):
+
   def testWrappedSignaturesMatch(self):
     """Test that jax.numpy function signatures match numpy."""
     jnp_funcs = {name: getattr(jnp, name) for name in dir(jnp)}
@@ -4023,8 +4025,9 @@ class NumpyGradTests(jtu.JaxTestCase):
       'cumproduct': ['out'],
       'cumsum': ['out'],
       'diff': ['prepend', 'append'],
-      'einsum_path': ['einsum_call', 'optimize'],
       'empty_like': ['shape', 'subok', 'order'],
+      'einsum': ['out', 'kwargs'],
+      'einsum_path': ['einsum_call'],
       'eye': ['order'],
       'full': ['order'],
       'full_like': ['shape', 'subok', 'order'],
@@ -4056,8 +4059,9 @@ class NumpyGradTests(jtu.JaxTestCase):
       'amin': ['dtype'],
       'any': ['dtype'],
       'broadcast_to': ['arr'],
-      'einsum_path': ['kwargs', 'subscripts'],
       'gradient': ['kwargs', 'args'],
+      'einsum': ['precision'],
+      'einsum_path': ['subscripts'],
       'max': ['dtype'],
       'min': ['dtype'],
       'nanmax': ['kwargs'],
