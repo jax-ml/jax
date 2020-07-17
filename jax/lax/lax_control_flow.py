@@ -1393,6 +1393,7 @@ def _scan_transpose(cts, *args, reverse, length, num_consts, num_carry, jaxpr, l
   num_ires = len(consts_lin) - sum(consts_lin)
   num_eres = len(xs_lin) - sum(xs_lin)
   if consts_lin != [False] * num_ires + [True] * (len(consts_lin) - num_ires):
+    import pdb; pdb.set_trace()
     raise NotImplementedError
   if xs_lin != [True] * (len(xs_lin) - num_eres) + [False] * num_eres:
     raise NotImplementedError

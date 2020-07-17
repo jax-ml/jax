@@ -180,12 +180,16 @@ def _cofactor_triangular_solve(u, b):
   dd = dd.at[jnp.triu_indices(n)].set(1)
   dd = jnp.concatenate((jnp.ones((1, n)),
                         jnp.cumprod(dd, axis=-2)[:-1, ::-1]), axis=-2)
-  def _body(x, i):
+  def _body(state, i):
+    u, b, prodrev, dd, n, x = state
     m = n-i-1
     partial = (u[m] * dd[..., i]) @ x
     residual = b[m] * prodrev[i] - partial
-    return x.at[m].set(residual), None
-  z, _ = lax.scan(_body, jnp.zeros_like(b), jnp.arange(n))
+    return (u, b, prodrev, dd, n, x.at[m].set(residual)), None
+  state, _ = lax.scan(_body,
+                      (u, b, prodrev, dd, n, jnp.zeros_like(b)),
+                      jnp.arange(n))
+  _, _, _, _, _, z = state
   x = z * jnp.cumprod(jnp.concatenate((np.ones(1), diag[:-1])))[..., None]
   return x
 
