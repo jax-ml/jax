@@ -43,7 +43,6 @@ from .core import eval_jaxpr
 from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial, flatten_axes,
                        donation_vector, rebase_donate_argnums)
-from .traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, Partial)
@@ -150,7 +149,6 @@ def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   @wraps(fun)
-  @api_boundary
   def f_jitted(*args, **kwargs):
     if _jit_is_disabled():
       return fun(*args, **kwargs)
@@ -344,7 +342,6 @@ def xla_computation(fun: Callable,
     return ShapedArray(np.shape(x), dtypes.result_type(x))
 
   @wraps(fun)
-  @api_boundary
   def computation_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
     if static_argnums:
@@ -412,13 +409,11 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
             "positions {argnums}.")
 
   @wraps(fun, docstr=docstr, argnums=argnums)
-  @api_boundary
   def grad_f(*args, **kwargs):
     _, g = value_and_grad_f(*args, **kwargs)
     return g
 
   @wraps(fun, docstr=docstr, argnums=argnums)
-  @api_boundary
   def grad_f_aux(*args, **kwargs):
     (_, aux), g = value_and_grad_f(*args, **kwargs)
     return g, aux
@@ -461,7 +456,6 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   _check_callable(fun)
 
   @wraps(fun, docstr=docstr, argnums=argnums)
-  @api_boundary
   def value_and_grad_f(*args, **kwargs):
     max_argnum = argnums if type(argnums) is int else max(argnums)
     if max_argnum >= len(args):
@@ -869,7 +863,6 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     raise TypeError(msg.format(out_axes))
 
   @wraps(fun, docstr=docstr)
-  @api_boundary
   def batched_fun(*args):
     args_flat, in_tree  = tree_flatten(args)
     f = lu.wrap_init(fun)
@@ -1140,7 +1133,6 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
     raise ValueError(f"pmap in_axes leaves must be 0 or None, got {in_axes}")
 
   @wraps(fun)
-  @api_boundary
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     if static_broadcasted_tuple:
@@ -1197,7 +1189,6 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
     raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")
 
   @wraps(fun)
-  @api_boundary
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
@@ -1638,7 +1629,6 @@ def make_jaxpr(fun: Callable,
     return pe.PartialVal.unknown(aval)
 
   @wraps(fun)
-  @api_boundary
   def jaxpr_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
     if static_argnums:
@@ -1892,7 +1882,6 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   ...
   """
   @wraps(fun)
-  @api_boundary
   def fun_remat(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
@@ -2074,7 +2063,6 @@ def invertible(fun: Callable, concrete: bool = False) -> Callable:
     concrete: See the documentation of checkpoint.
   """
   @wraps(fun)
-  @api_boundary
   def fun_invertible(*args, **kwargs):
     args_flat, in_tree = tree_flatten((args, kwargs))
     flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
