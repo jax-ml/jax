@@ -17,11 +17,12 @@ import threading
 
 from absl.testing import absltest
 import jax
-from jax import lax, numpy as np
+from jax import lax, numpy as jnp
 from jax.config import config
+from jax.experimental import host_callback as hcb
 from jax.lib import xla_client
 import jax.test_util as jtu
-import numpy as onp
+import numpy as np
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -33,30 +34,31 @@ class InfeedTest(jtu.JaxTestCase):
     def f(x):
       token = lax.create_token(x)
       (y,), token = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 4), np.float32),))
+          token, shape=(jax.ShapedArray((3, 4), jnp.float32),))
       (z,), _ = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 1, 1), np.float32),))
+          token, shape=(jax.ShapedArray((3, 1, 1), jnp.float32),))
       return x + y + z
 
-    x = onp.float32(1.5)
-    y = onp.reshape(onp.arange(12, dtype=onp.float32), (3, 4)) # onp.random.randn(3, 4).astype(onp.float32)
-    z = onp.random.randn(3, 1, 1).astype(onp.float32)
+    x = np.float32(1.5)
+    y = np.reshape(np.arange(12, dtype=np.float32), (3, 4)) # np.random.randn(3, 4).astype(np.float32)
+    z = np.random.randn(3, 1, 1).astype(np.float32)
     device = jax.local_devices()[0]
     device.transfer_to_infeed((y,))
     device.transfer_to_infeed((z,))
     self.assertAllClose(f(x), x + y + z)
 
   def testInfeedThenOutfeed(self):
+    hcb.stop_outfeed_receiver()
     @jax.jit
     def f(x):
       token = lax.create_token(x)
       y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), np.float32))
-      token = lax.outfeed(token, y + onp.float32(1))
+          token, shape=jax.ShapedArray((3, 4), jnp.float32))
+      token = lax.outfeed(token, y + np.float32(1))
       return lax.tie_in(token, x - 1)
 
-    x = onp.float32(7.5)
-    y = onp.random.randn(3, 4).astype(onp.float32)
+    x = np.float32(7.5)
+    y = np.random.randn(3, 4).astype(np.float32)
     execution = threading.Thread(target=lambda: f(x))
     execution.start()
     device = jax.local_devices()[0]
@@ -64,13 +66,14 @@ class InfeedTest(jtu.JaxTestCase):
     out, = device.transfer_from_outfeed(
       xla_client.shape_from_pyval((y,)).with_major_to_minor_layout_if_absent())
     execution.join()
-    self.assertAllClose(out, y + onp.float32(1))
+    self.assertAllClose(out, y + np.float32(1))
 
   def testInfeedThenOutfeedInALoop(self):
+    hcb.stop_outfeed_receiver()
     def doubler(_, token):
       y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), np.float32))
-      return lax.outfeed(token, y * onp.float32(2))
+          token, shape=jax.ShapedArray((3, 4), jnp.float32))
+      return lax.outfeed(token, y * np.float32(2))
 
     @jax.jit
     def f(n):
@@ -83,11 +86,11 @@ class InfeedTest(jtu.JaxTestCase):
     execution = threading.Thread(target=lambda: f(n))
     execution.start()
     for _ in range(n):
-      x = onp.random.randn(3, 4).astype(onp.float32)
+      x = np.random.randn(3, 4).astype(np.float32)
       device.transfer_to_infeed((x,))
       y, = device.transfer_from_outfeed(xla_client.shape_from_pyval((x,))
                                         .with_major_to_minor_layout_if_absent())
-      self.assertAllClose(y, x * onp.float32(2))
+      self.assertAllClose(y, x * np.float32(2))
     execution.join()
 
 

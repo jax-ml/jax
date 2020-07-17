@@ -9,6 +9,12 @@ Change Log
 
 These are the release notes for JAX.
 
+jaxlib 0.1.51 (July 2, 2020)
+------------------------------
+
+* Update XLA.
+* Add new runtime support for host_callback.
+
 jax 0.1.72 (June 28, 2020)
 ---------------------------
 
@@ -266,7 +272,7 @@ jax 0.1.60 (March 17, 2020)
   * Added :py:func:`jax.nn.one_hot` utility function.
   * Added :py:module:`jax.experimental.jet` for exponentially faster
     higher-order automatic differentiation.
-  * Added more sanity checking to arguments of :py:func:`jax.lax.broadcast_in_dim`.
+  * Added more correctness checking to arguments of :py:func:`jax.lax.broadcast_in_dim`.
 
 * The minimum jaxlib version is now 0.1.41.
 

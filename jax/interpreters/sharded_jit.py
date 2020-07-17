@@ -267,11 +267,13 @@ def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None):
       raise NotImplementedError("sharded_jit over kwargs not yet supported")
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    in_parts_flat = tuple(flatten_axes(in_tree.children()[0], in_parts))
+    in_parts_flat = tuple(flatten_axes("sharded_jit in_parts",
+                                       in_tree.children()[0], in_parts))
     flat_fun, out_tree = flatten_fun(f, in_tree)
     # TODO(skye): having a function-typed param in a primitive seems dicey, is
     # there a better way?
-    out_parts_thunk = lambda: tuple(flatten_axes(out_tree(), out_parts))
+    out_parts_thunk = lambda: tuple(flatten_axes("sharded_jit out_parts",
+                                                 out_tree(), out_parts))
     out = sharded_call(
         flat_fun,
         *args_flat,

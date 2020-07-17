@@ -3,7 +3,7 @@
 ## TensorBoard profiling
 
 [TensorBoard's
-profiler](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras>)
+profiler](https://www.tensorflow.org/tensorboard/tensorboard_profiling_keras)
 can be used to profile JAX programs. Tensorboard is a great way to acquire and
 visualize performance traces and profiles of your program, including activity on
 GPU and TPU. The end result looks something like this:

@@ -123,7 +123,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_swoop_bigger(self):
     def swoop(_np, y, t, arg1, arg2):
       return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
@@ -139,6 +139,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (big_y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_odeint_vmap_grad(self):
     # https://github.com/google/jax/issues/2531
 
@@ -168,6 +169,7 @@ class ODETest(jtu.JaxTestCase):
     rtol = {jnp.float64: 2e-15}
     self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
 
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_disable_jit_odeint_with_vmap(self):
     # https://github.com/google/jax/issues/2598
     with jax.disable_jit():
@@ -176,7 +178,7 @@ class ODETest(jtu.JaxTestCase):
       f = lambda x0: odeint(lambda x, _t: x, x0, t)
       jax.vmap(f)(x0_eval)  # doesn't crash
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_grad_closure(self):
     # simplification of https://github.com/google/jax/issues/2718
     def experiment(x):
@@ -186,7 +188,7 @@ class ODETest(jtu.JaxTestCase):
       return history[-1]
     jtu.check_grads(experiment, (0.01,), modes=["rev"], order=1)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_grad_closure_with_vmap(self):
     # https://github.com/google/jax/issues/2718
     @jax.jit
@@ -207,6 +209,7 @@ class ODETest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False, atol=1e-2, rtol=1e-2)
 
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_forward_mode_error(self):
     # https://github.com/google/jax/issues/3558
 
@@ -216,7 +219,7 @@ class ODETest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
       jax.jacfwd(f)(3.)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_closure_nondiff(self):
     # https://github.com/google/jax/issues/3584
 

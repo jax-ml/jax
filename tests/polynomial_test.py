@@ -25,19 +25,19 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 
-float_dtypes = [np.float32, np.float64]
-# implementation casts to complex64.
-complex_dtypes = [np.complex64]
-inexact_dtypes = float_dtypes + complex_dtypes
-int_dtypes = [np.int32, np.int64]
-real_dtypes = float_dtypes + int_dtypes
-all_dtypes = real_dtypes + complex_dtypes
+all_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 
 
 # TODO: these tests fail without fixed PRNG seeds.
 
 
 class TestPolynomial(jtu.JaxTestCase):
+
+  def testNotImplemented(self):
+    for name in jnp.polynomial._NOT_IMPLEMENTED:
+      func = getattr(jnp.polynomial, name)
+      with self.assertRaises(NotImplementedError):
+        func()
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_leading={}_trailing={}".format(

@@ -38,12 +38,9 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-float_dtypes = supported_dtypes([jnp.bfloat16, np.float16, np.float32, np.float64])
-int_dtypes = supported_dtypes([np.int8, np.int16, np.int32, np.int64])
-uint_dtypes = supported_dtypes([np.uint8, np.uint16, np.uint32, np.uint64])
+float_dtypes = jtu.dtypes.all_floating
+int_dtypes = jtu.dtypes.all_integer
+uint_dtypes = jtu.dtypes.all_unsigned
 
 class LaxRandomTest(jtu.JaxTestCase):
 
@@ -336,11 +333,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
     shape = sample_shape + out_shape
-    rand = lambda key, p: random.categorical(key, logits, shape=shape, axis=axis)
+    rand = partial(random.categorical, shape=shape, axis=axis)
     crand = api.jit(rand)
 
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key, logits)
+    compiled_samples = crand(key, logits)
 
     if axis < 0:
       axis += len(logits.shape)
@@ -402,6 +399,7 @@ class LaxRandomTest(jtu.JaxTestCase):
           np.array([0.2, 1., 5.]),
       ]
       for dtype in [np.float32, np.float64]))
+  @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
     key = random.PRNGKey(0)
     rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)

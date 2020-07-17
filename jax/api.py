@@ -32,7 +32,7 @@ import threading
 from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
 from warnings import warn
 
-import numpy as onp
+import numpy as np
 from contextlib import contextmanager
 
 from . import core
@@ -45,7 +45,7 @@ from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        donation_vector, rebase_donate_argnums)
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
-                        treedef_is_leaf)
+                        treedef_is_leaf, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod,
                    split_list, extend_name_stack, wrap_name)
 from .lib import xla_bridge as xb
@@ -204,10 +204,10 @@ def disable_jit():
   debugging, and avoid the tracer too, we can use the :py:func:`disable_jit`
   context manager:
 
-  >>> import jax.numpy as np
+  >>> import jax
   >>>
   >>> with jax.disable_jit():
-  ...   print(f(np.array([1, 2, 3])))
+  ...   print(f(jax.numpy.array([1, 2, 3])))
   ...
   Value of y is [2 4 6]
   [5 7 9]
@@ -339,7 +339,7 @@ def xla_computation(fun: Callable,
       return xla.AxisEnv(nreps, names, sizes)
 
   def abstractify(x):
-    return ShapedArray(onp.shape(x), dtypes.result_type(x))
+    return ShapedArray(np.shape(x), dtypes.result_type(x))
 
   @wraps(fun)
   def computation_maker(*args, **kwargs):
@@ -354,7 +354,7 @@ def xla_computation(fun: Callable,
     jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
                                          instantiate=instantiate_const_outputs,
                                          stage_out=True)
-    jaxpr, _ = xla.apply_outfeed_rewriter(jaxpr)
+    jaxpr = xla.apply_outfeed_rewriter(jaxpr)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(partial(xb.constant, c), consts)
@@ -474,7 +474,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     _check_scalar(ans)
     dtype = dtypes.result_type(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
-    g = vjp_py(onp.ones((), dtype=dtype))
+    g = vjp_py(np.ones((), dtype=dtype))
     g = g[0] if isinstance(argnums, int) else g
     if not has_aux:
       return ans, g
@@ -500,12 +500,12 @@ def _check_input_dtype_revderiv(name, holomorphic, x):
   _check_arg(x)
   aval = core.get_aval(x)
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, onp.complexfloating):
+    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       msg = (f"{name} with holomorphic=True requires inputs with complex dtype, "
              f"but got {aval.dtype.name}.")
       raise TypeError(msg)
-  elif not (dtypes.issubdtype(aval.dtype, onp.floating) or
-            dtypes.issubdtype(aval.dtype, onp.complexfloating)):
+  elif not (dtypes.issubdtype(aval.dtype, np.floating) or
+            dtypes.issubdtype(aval.dtype, np.complexfloating)):
     msg = (f"{name} requires real- or complex-valued inputs (input dtype that "
            "is a sub-dtype of np.floating or np.complexfloating), "
            f"but got {aval.dtype.name}. ")
@@ -515,11 +515,11 @@ _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 def _check_output_dtype_revderiv(name, holomorphic, x):
   aval = core.get_aval(x)
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, onp.complexfloating):
+    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       msg = (f"{name} with holomorphic=True requires outputs with complex dtype, "
              f"but got {aval.dtype.name}.")
       raise TypeError(msg)
-  elif not dtypes.issubdtype(aval.dtype, onp.floating):
+  elif not dtypes.issubdtype(aval.dtype, np.floating):
     msg = (f"{name} requires real-valued outputs (output dtype that is "
            f"a sub-dtype of np.floating), but got {aval.dtype.name}. "
            "For holomorphic differentiation, pass holomorphic=True. "
@@ -545,13 +545,13 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     ``fun`` using forward-mode automatic differentiation.
 
   >>> import jax
-  >>> import jax.numpy as np
+  >>> import jax.numpy as jnp
   >>>
   >>> def f(x):
-  ...   return jax.numpy.asarray(
-  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...   return jnp.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jnp.sin(x[0])])
   ...
-  >>> print(jax.jacfwd(f)(np.array([1., 2., 3.])))
+  >>> print(jax.jacfwd(f)(jnp.array([1., 2., 3.])))
   [[ 1.       0.       0.     ]
    [ 0.       0.       5.     ]
    [ 0.      16.      -2.     ]
@@ -575,12 +575,12 @@ def _check_input_dtype_jacfwd(holomorphic, x):
   _check_arg(x)
   aval = core.get_aval(x)
   if holomorphic:
-    if not (dtypes.issubdtype(aval.dtype, onp.complexfloating) and
-            not dtypes.issubdtype(aval.dtype, onp.floating)):
+    if not (dtypes.issubdtype(aval.dtype, np.complexfloating) and
+            not dtypes.issubdtype(aval.dtype, np.floating)):
       msg = ("jacfwd with holomorphic=True requires inputs with complex dtype, "
              f"but got {aval.dtype.name}.")
       raise TypeError(msg)
-  elif not dtypes.issubdtype(aval.dtype, onp.floating):
+  elif not dtypes.issubdtype(aval.dtype, np.floating):
     msg = ("jacfwd requires real-valued inputs (input dtype that is "
            f"a sub-dtype of np.floating), but got {aval.dtype.name}. "
            "For holomorphic differentiation, pass holomorphic=True. "
@@ -591,7 +591,7 @@ def _check_input_dtype_jacfwd(holomorphic, x):
 def _check_output_dtype_jacfwd(holomorphic, x):
   aval = core.get_aval(x)
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, onp.complexfloating):
+    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       msg = ("jacfwd with holomorphic=True requires outputs with complex dtype, "
              f"but got {aval.dtype.name}.")
       raise TypeError(msg)
@@ -613,13 +613,13 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
     ``fun`` using reverse-mode automatic differentiation.
 
   >>> import jax
-  >>> import jax.numpy as np
+  >>> import jax.numpy as jnp
   >>>
   >>> def f(x):
-  ...   return jax.numpy.asarray(
-  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jax.numpy.sin(x[0])])
+  ...   return jnp.asarray(
+  ...     [x[0], 5*x[2], 4*x[1]**2 - 2*x[2], x[2] * jnp.sin(x[0])])
   ...
-  >>> print(jax.jacrev(f)(np.array([1., 2., 3.])))
+  >>> print(jax.jacrev(f)(jnp.array([1., 2., 3.])))
   [[ 1.       0.       0.     ]
    [ 0.       0.       5.     ]
    [ 0.      16.      -2.     ]
@@ -711,23 +711,23 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
 def _std_basis(pytree):
   leaves, _ = tree_flatten(pytree)
-  ndim = sum(map(onp.size, leaves))
+  ndim = sum(map(np.size, leaves))
   # TODO(mattjj): use a symbolic identity matrix here
   dtype = dtypes.result_type(*leaves)
-  flat_basis = onp.eye(ndim, dtype=dtype)
+  flat_basis = np.eye(ndim, dtype=dtype)
   return _unravel_array_into_pytree(pytree, 1, flat_basis)
 
 def _unravel_array_into_pytree(pytree, axis, arr):
   leaves, treedef = tree_flatten(pytree)
   axis = axis % arr.ndim
-  shapes = [arr.shape[:axis] + onp.shape(l) + arr.shape[axis+1:] for l in leaves]
-  parts = _split(arr, onp.cumsum(map(onp.size, leaves[:-1])), axis)
-  reshaped_parts = [onp.reshape(x, shape) for x, shape in zip(parts, shapes)]
+  shapes = [arr.shape[:axis] + np.shape(l) + arr.shape[axis+1:] for l in leaves]
+  parts = _split(arr, np.cumsum(map(np.size, leaves[:-1])), axis)
+  reshaped_parts = [np.reshape(x, shape) for x, shape in zip(parts, shapes)]
   return tree_unflatten(treedef, reshaped_parts)
 
 def _split(x, indices, axis):
-  if isinstance(x, onp.ndarray):
-    return onp.split(x, indices, axis)
+  if isinstance(x, np.ndarray):
+    return np.split(x, indices, axis)
   else:
     return x.split(indices, axis)
 
@@ -771,9 +771,9 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   For example, we can implement a matrix-matrix product using a vector dot
   product:
 
-  >>> import jax.numpy as np
+  >>> import jax.numpy as jnp
   >>>
-  >>> vv = lambda x, y: np.vdot(x, y)  #  ([a], [a]) -> []
+  >>> vv = lambda x, y: jnp.vdot(x, y)  #  ([a], [a]) -> []
   >>> mv = vmap(vv, (0, None), 0)      #  ([b,a], [a]) -> [b]      (b is the mapped axis)
   >>> mm = vmap(mv, (None, 1), 1)      #  ([b,a], [a,c]) -> [b,c]  (c is the mapped axis)
 
@@ -788,21 +788,21 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   axes of the container elements to map over:
 
   >>> A, B, C, D = 2, 3, 4, 5
-  >>> x = np.ones((A, B))
-  >>> y = np.ones((B, C))
-  >>> z = np.ones((C, D))
+  >>> x = jnp.ones((A, B))
+  >>> y = jnp.ones((B, C))
+  >>> z = jnp.ones((C, D))
   >>> def foo(tree_arg):
   ...   x, (y, z) = tree_arg
-  ...   return np.dot(x, np.dot(y, z))
+  ...   return jnp.dot(x, jnp.dot(y, z))
   >>> tree = (x, (y, z))
   >>> print(foo(tree))
   [[12. 12. 12. 12. 12.]
    [12. 12. 12. 12. 12.]]
   >>> from jax import vmap
   >>> K = 6  # batch size
-  >>> x = np.ones((K, A, B))  # batch axis in different locations
-  >>> y = np.ones((B, K, C))
-  >>> z = np.ones((C, D, K))
+  >>> x = jnp.ones((K, A, B))  # batch axis in different locations
+  >>> y = jnp.ones((B, K, C))
+  >>> z = jnp.ones((C, D, K))
   >>> tree = (x, (y, z))
   >>> vfoo = vmap(foo, in_axes=((0, (1, 2)),))
   >>> print(vfoo(tree).shape)
@@ -811,7 +811,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   Here's another example using container types in ``in_axes``, this time a
   dictionary, to specify the elements of the container to map over:
 
-  >>> dct = {'a': 0., 'b': np.arange(5.)}
+  >>> dct = {'a': 0., 'b': jnp.arange(5.)}
   >>> x = 1.
   >>> def foo(dct, x):
   ...  return dct['a'] + dct['b'] + x
@@ -824,13 +824,13 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
   element mapped and the second unmapped. Only for unmapped results
   we can specify ``out_axes`` to be ``None`` (to keep it unmapped).
 
-  >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=(0, None))(np.arange(2.), 4.))
+  >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=(0, None))(jnp.arange(2.), 4.))
   (DeviceArray([4., 5.], dtype=float32), 8.0)
 
   If the ``out_axes`` is specified for an unmapped result, the result is broadcast
   across the mapped axis:
 
-  >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(np.arange(2.), 4.))
+  >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(jnp.arange(2.), 4.))
   (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32))
 
   If the ``out_axes`` is specified for a mapped result, the result is
@@ -867,10 +867,11 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     args_flat, in_tree  = tree_flatten(args)
     f = lu.wrap_init(fun)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    in_axes_flat = flatten_axes(in_tree, in_axes)
+    in_axes_flat = flatten_axes("vmap in_axes", in_tree, in_axes)
     _ = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap")
     out_flat = batching.batch(flat_fun, args_flat, in_axes_flat,
-                              lambda: flatten_axes(out_tree(), out_axes))
+                              lambda: flatten_axes("vmap out_axes", out_tree(),
+                                                   out_axes))
     return tree_unflatten(out_tree(), out_flat)
 
   return batched_fun
@@ -883,7 +884,7 @@ def _get_axis_size(name: str, i:int, shape: Tuple[int, ...], axis: int):
                      f"but axis to be mapped {axis}") from e
 
 def _mapped_axis_size(tree, vals, dims, name):
-  mapped_axis_sizes = {_get_axis_size(name, i, onp.shape(x), d)
+  mapped_axis_sizes = {_get_axis_size(name, i, np.shape(x), d)
                        for i, (x, d) in enumerate(zip(vals, dims))
                        if d is not None}
   try:
@@ -1004,18 +1005,18 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   For example, assuming 8 XLA devices are available, :py:func:`pmap` can be used as a
   map along a leading array axis:
 
-  >>> import jax.numpy as np
+  >>> import jax.numpy as jnp
   >>>
-  >>> out = pmap(lambda x: x ** 2)(np.arange(8))  # doctest: +SKIP
+  >>> out = pmap(lambda x: x ** 2)(jnp.arange(8))  # doctest: +SKIP
   >>> print(out)  # doctest: +SKIP
   [0, 1, 4, 9, 16, 25, 36, 49]
 
   When the leading dimension is smaller than the number of available devices JAX
   will simply run on a subset of devices:
 
-  >>> x = np.arange(3 * 2 * 2.).reshape((3, 2, 2))
-  >>> y = np.arange(3 * 2 * 2.).reshape((3, 2, 2)) ** 2
-  >>> out = pmap(np.dot)(x, y)  # doctest: +SKIP
+  >>> x = jnp.arange(3 * 2 * 2.).reshape((3, 2, 2))
+  >>> y = jnp.arange(3 * 2 * 2.).reshape((3, 2, 2)) ** 2
+  >>> out = pmap(jnp.dot)(x, y)  # doctest: +SKIP
   >>> print(out)  # doctest: +SKIP
   [[[    4.     9.]
     [   12.    29.]]
@@ -1027,14 +1028,14 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   If your leading dimension is larger than the number of available devices you
   will get an error:
 
-  >>> pmap(lambda x: x ** 2)(np.arange(9))  # doctest: +SKIP
+  >>> pmap(lambda x: x ** 2)(jnp.arange(9))  # doctest: +SKIP
   ValueError: ... requires 9 replicas, but only 8 XLA devices are available
 
   As with :py:func:`vmap`, using ``None`` in ``in_axes`` indicates that an argument
   doesn't have an extra axis and should be broadcasted, rather than mapped,
   across the replicas:
 
-  >>> x, y = np.arange(2.), 4.
+  >>> x, y = jnp.arange(2.), 4.
   >>> out = pmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None))(x, y)  # doctest: +SKIP
   >>> print(out)  # doctest: +SKIP
   ([4., 5.], [8., 8.])
@@ -1047,7 +1048,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   collective operations. For example:
 
   >>> f = lambda x: x / jax.lax.psum(x, axis_name='i')
-  >>> out = pmap(f, axis_name='i')(np.arange(4.))  # doctest: +SKIP
+  >>> out = pmap(f, axis_name='i')(jnp.arange(4.))  # doctest: +SKIP
   >>> print(out)  # doctest: +SKIP
   [ 0.          0.16666667  0.33333334  0.5       ]
   >>> print(out.sum())  # doctest: +SKIP
@@ -1072,7 +1073,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   ...   doubly_normed = x / jax.lax.psum(x, ('rows', 'cols'))
   ...   return row_normed, col_normed, doubly_normed
   >>>
-  >>> x = np.arange(8.).reshape((4, 2))
+  >>> x = jnp.arange(8.).reshape((4, 2))
   >>> row_normed, col_normed, doubly_normed = normalize(x)  # doctest: +SKIP
   >>> print(row_normed.sum(0))  # doctest: +SKIP
   [ 1.  1.]
@@ -1086,7 +1087,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   runs on two hosts with 4 XLA devices each:
 
   >>> f = lambda x: x + jax.lax.psum(x, axis_name='i')
-  >>> data = np.arange(4) if jax.host_id() == 0 else np.arange(4,8)
+  >>> data = jnp.arange(4) if jax.host_id() == 0 else jnp.arange(4,8)
   >>> out = pmap(f, axis_name='i')(data)  # doctest: +SKIP
   >>> print(out)  # doctest: +SKIP
   [28 29 30 31] # on host 0
@@ -1095,7 +1096,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   Each host passes in a different length-4 array, corresponding to its 4 local
   devices, and the psum operates over all 8 values. Conceptually, the two
   length-4 arrays can be thought of as sharded length-8 array (in this example
-  equivalent to np.arange(8)) that is mapped over, with the length-8 mapped axis
+  equivalent to jnp.arange(8)) that is mapped over, with the length-8 mapped axis
   given name 'i'. The pmap call on each host then returns the corresponding
   length-4 output shard.
 
@@ -1113,9 +1114,9 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   ... def f2(x):
   ...   return jax.lax.psum(x ** 2, axis_name='i')
   >>>
-  >>> print(f1(np.arange(6.)))  # doctest: +SKIP
+  >>> print(f1(jnp.arange(6.)))  # doctest: +SKIP
   [0.         0.06666667 0.13333333 0.2        0.26666667 0.33333333]
-  >>> print(f2(np.array([2., 3.])))  # doctest: +SKIP
+  >>> print(f2(jnp.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
   # axis_size is an optional integer representing the global axis size.
@@ -1152,7 +1153,7 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
       dyn_args, dyn_in_axes = args, in_axes
     args, in_tree = tree_flatten((dyn_args, kwargs))
     donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
-    in_axes_flat = flatten_axes(in_tree, (dyn_in_axes, 0))
+    in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
@@ -1191,7 +1192,7 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, *,
   def f_pmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    in_axes_flat = flatten_axes(in_tree, (in_axes, 0))
+    in_axes_flat = flatten_axes("soft_pmap in_axes", in_tree, (in_axes, 0))
     mapped_invars = tuple(axis is not None for axis in in_axes_flat)
     axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     for arg in args_flat: _check_arg(arg)
@@ -1300,7 +1301,7 @@ def mask(fun: Callable, in_shapes, out_shape) -> Callable:
     if in_tree != in_shapes_tree:
       raise TypeError(f"Tree mismatch: Input {in_tree} and shape spec {in_shapes_tree}.")
     logical_env = {unique_ids[name] : val for name, val in logical_env.items()}
-    in_shapes = map(masking.finalize_spec, in_specs, map(onp.shape, args_flat))
+    in_shapes = map(masking.finalize_spec, in_specs, map(np.shape, args_flat))
     padded_env = masking.bind_shapes(in_shapes, [x.shape for x in args_flat])
     f = lu.wrap_init(fun)
     flat_fun, out_tree_thunk = flatten_fun_nokwargs(f, in_tree)
@@ -1313,7 +1314,7 @@ def mask(fun: Callable, in_shapes, out_shape) -> Callable:
       return tuple(dim if dim is masking._monomorphic_dim else
                    masking.eval_poly(dim, padded_env) for dim in shape_spec)
     masking.check_shapes(map(padded_spec, out_specs), out_spec_tree,
-                         map(onp.shape, outs), out_tree, "Padded output")
+                         map(np.shape, outs), out_tree, "Padded output")
     return tree_unflatten(out_tree, outs)
   return wrapped_fun
 
@@ -1325,7 +1326,7 @@ def shapecheck(in_shapes, out_shape, fun: Callable):
   out_specs, out_spec_tree = tree_flatten(out_shape)
   out_specs = map(masking.parse_spec, out_specs)
   flat_fun, out_tree_thunk = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  avals = map(partial(ShapedArray, dtype=onp.float32), in_shapes)
+  avals = map(partial(ShapedArray, dtype=np.float32), in_shapes)
   out_shapes = [o.shape for o in pe.abstract_eval_fun(flat_fun.call_wrapped, *avals)]
   masking.check_shapes(map(tuple, out_specs), out_spec_tree,
                        map(tuple, out_shapes), out_tree_thunk())
@@ -1438,9 +1439,9 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   Here's a more complete example of using :py:func:`linearize`:
 
   >>> import jax
-  >>> import jax.numpy as np
+  >>> import jax.numpy as jnp
   >>>
-  >>> def f(x): return 3. * np.sin(x) + np.cos(x / 2.)
+  >>> def f(x): return 3. * jnp.sin(x) + jnp.cos(x / 2.)
   ...
   >>> jax.jvp(f, (2.,), (3.,))
   (DeviceArray(3.26819, dtype=float32), DeviceArray(-5.00753, dtype=float32))
@@ -1482,12 +1483,12 @@ def _lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
 
 def _check_inexact_input_vjp(x):
   aval = core.get_aval(x)
-  if not dtypes.issubdtype(aval.dtype, onp.inexact):
+  if not dtypes.issubdtype(aval.dtype, np.inexact):
     msg = ("Primal inputs to reverse-mode differentiation must be of float "
            "or complex type, got type {}")
     raise TypeError(msg.format(aval.dtype.name))
 
-def _vjp_pullback_wrapper(fun, cotangent_dtypes, io_tree, py_args):
+def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
@@ -1562,8 +1563,12 @@ def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
-  vjp_py = partial(_vjp_pullback_wrapper, out_vjp,
-                   [_dtype(x) for x in out_primal], (out_tree, in_tree))
+  # Ensure that vjp_py is a PyTree so that we can pass it from the forward to the
+  # backward pass in a custom VJP.
+  vjp_py = Partial(partial(_vjp_pullback_wrapper,
+                           [_dtype(x) for x in out_primal],
+                           (out_tree, in_tree)),
+                   out_vjp)
   if not has_aux:
     return out_primal_py, vjp_py
   else:
@@ -1698,9 +1703,9 @@ class ShapeDtypeStruct(object):
   __slots__ = ["shape", "dtype"]
   def __init__(self, shape, dtype):
     self.shape = shape
-    self.dtype = onp.dtype(dtype)
+    self.dtype = np.dtype(dtype)
 
-  size = property(lambda self: onp.prod(self.shape))
+  size = property(lambda self: np.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
 
   def __len__(self):
@@ -1768,16 +1773,16 @@ def eval_shape(fun: Callable, *args, **kwargs):
   For example:
 
   >>> import jax
-  >>> import jax.numpy as np
+  >>> import jax.numpy as jnp
   >>>
-  >>> f = lambda A, x: np.tanh(np.dot(A, x))
+  >>> f = lambda A, x: jnp.tanh(jnp.dot(A, x))
   >>> class MyArgArray(object):
   ...   def __init__(self, shape, dtype):
   ...     self.shape = shape
   ...     self.dtype = dtype
   ...
-  >>> A = MyArgArray((2000, 3000), np.float32)
-  >>> x = MyArgArray((3000, 1000), np.float32)
+  >>> A = MyArgArray((2000, 3000), jnp.float32)
+  >>> x = MyArgArray((3000, 1000), jnp.float32)
   >>> out = jax.eval_shape(f, A, x)  # no FLOPs performed
   >>> print(out.shape)
   (2000, 1000)
@@ -1785,7 +1790,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   float32
   """
   def abstractify(x):
-    return ShapedArray(onp.shape(x), dtypes.result_type(x))
+    return ShapedArray(np.shape(x), dtypes.result_type(x))
   args_flat, in_tree = tree_flatten((args, kwargs))
   wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,

@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tup
 from warnings import warn
 
 from absl import logging
-import numpy as onp
+import numpy as np
 
 from ..config import flags, bool_env
 from .. import core
@@ -66,16 +66,19 @@ flags.DEFINE_bool('jax_log_compiles',
                   bool_env('JAX_LOG_COMPILES', False),
                   'Print a message each time a `jit` computation is compiled.')
 
+# This flag is set on exit; no logging should be attempted
+_on_exit = False
+
 def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 # unit representation
-def _make_unit(c): return xb.constant(c, onp.zeros((), dtype=onp.dtype('bool')))
-def _make_abstract_unit(_): return xc.Shape.array_shape(onp.dtype('bool'), ())
+def _make_unit(c): return xb.constant(c, np.zeros((), dtype=np.dtype('bool')))
+def _make_abstract_unit(_): return xc.Shape.array_shape(np.dtype('bool'), ())
 def _device_put_unit(_, device):
   backend = xb.get_device_backend(device)
-  return backend.buffer_from_pyval(onp.zeros((), dtype=onp.dtype('bool')),
+  return backend.buffer_from_pyval(np.zeros((), dtype=np.dtype('bool')),
                                    device)
 def _make_array_shape(a):
   return xc.Shape.array_shape(a.dtype, a.shape)
@@ -140,10 +143,10 @@ def canonicalize_dtype(x):
   raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
 
 def _canonicalize_ndarray_dtype(x):
-  return onp.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
+  return np.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
 
 def _canonicalize_python_scalar_dtype(typ, x):
-  return onp.asarray(
+  return np.asarray(
       x, dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[typ]))
 
 canonicalize_dtype_handlers: Dict[Any, Callable] = {core.Unit: identity}
@@ -174,12 +177,12 @@ pytype_aval_mappings.update(
 # We can optionally set a Jaxpr rewriter that can be applied just before
 # compilation. This mechanism is used for compiling id_tap, we can
 # remove it once we bring the id_tap implementation into the core.
-outfeed_rewriter: Optional[Callable[[core.Jaxpr], Tuple[core.Jaxpr, bool]]] = None
-def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> Tuple[core.Jaxpr, bool]:
+outfeed_rewriter: Optional[Callable[[core.Jaxpr], core.Jaxpr]] = None
+def apply_outfeed_rewriter(jaxpr: core.Jaxpr) -> core.Jaxpr:
   if outfeed_rewriter is not None:
     return outfeed_rewriter(jaxpr)
   else:
-    return jaxpr, False
+    return jaxpr
 
 outfeed_primitives: Set[core.Primitive] = set()
 def jaxpr_uses_outfeed(jaxpr: core.Jaxpr) -> bool:
@@ -206,13 +209,6 @@ def primitive_uses_outfeed(prim: core.Primitive, params: Dict) -> bool:
     elif _param_uses_outfeed(param):
       return True
   return False
-
-# TODO(necula): remove this when we start the outfeed receiver automatically.
-can_execute_outfeed_computations: bool = False  # Set by outfeed_receiver
-def check_before_outfeed_execution(uses_outfeed: bool):
-  if uses_outfeed and not can_execute_outfeed_computations:
-    raise ValueError("Attempting to execute compiled code using outfeed, "
-                     "but outfeed_receiver is not started.")
 
 ### op-by-op execution
 
@@ -346,8 +342,8 @@ def check_nans(prim, bufs):
 
 def _check_nans(name, xla_shape, buf):
   assert not xla_shape.is_tuple()
-  if dtypes.issubdtype(xla_shape.element_type(), onp.inexact):
-    if onp.any(onp.isnan(buf.to_py())):
+  if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
+    if np.any(np.isnan(buf.to_py())):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
 
 ### compiling jaxprs
@@ -481,10 +477,10 @@ def _axis_groups(nrep, mesh_spec, mesh_axes):
   trailing_size, ragged = divmod(nrep, prod(mesh_spec))
   assert not ragged
   full_spec = list(mesh_spec) + [trailing_size]
-  iota = onp.arange(prod(full_spec)).reshape(full_spec)
-  groups = onp.reshape(
-      onp.moveaxis(iota, mesh_axes, onp.arange(len(mesh_axes))),
-      (prod(onp.take(full_spec, mesh_axes)), -1))
+  iota = np.arange(prod(full_spec)).reshape(full_spec)
+  groups = np.reshape(
+      np.moveaxis(iota, mesh_axes, np.arange(len(mesh_axes))),
+      (prod(np.take(full_spec, mesh_axes)), -1))
   return tuple(unsafe_map(tuple, groups.T))
 
 def jaxpr_replicas(jaxpr):
@@ -607,7 +603,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   jaxpr, pvals, consts = pe.trace_to_jaxpr(
       fun, pvals, instantiate=False, stage_out=True, bottom=True)
   map(prefetch, it.chain(consts, jaxpr_literals(jaxpr)))
-  jaxpr, uses_outfeed = apply_outfeed_rewriter(jaxpr)
+  jaxpr = apply_outfeed_rewriter(jaxpr)
 
   nreps = jaxpr_replicas(jaxpr)
   device = _xla_callable_device(nreps, backend, device, arg_devices)
@@ -620,8 +616,9 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   if not jaxpr.eqns:
     return partial(_execute_trivial, jaxpr, device, consts, result_handlers)
 
-  log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority, "Compiling %s for args %s.", fun.__name__, abstract_args)
+  if not _on_exit:
+    log_priority = logging.WARNING if FLAGS.jax_log_compiles else logging.DEBUG
+    logging.log(log_priority, "Compiling %s for args %s.", fun.__name__, abstract_args)
 
   if nreps > 1:
     warn(f"The jitted function {fun.__name__} includes a pmap. Using "
@@ -667,9 +664,9 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   options.parameter_is_tupled_arguments = tuple_args
   compiled = backend.compile(built, compile_options=options)
   if nreps == 1:
-    return partial(_execute_compiled, compiled, uses_outfeed, result_handlers)
+    return partial(_execute_compiled, compiled, result_handlers)
   else:
-    return partial(_execute_replicated, compiled, uses_outfeed, result_handlers)
+    return partial(_execute_replicated, compiled, result_handlers)
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   """Configures input/output "must" aliasing based on `donated_args`."""
@@ -767,18 +764,14 @@ def _pval_to_result_handler(device, pval):
   else:
     return aval_to_result_handler(device, pv)
 
-def _execute_compiled(compiled: XlaExecutable, uses_outfeed: bool,
-                      handlers, *args):
-  check_before_outfeed_execution(uses_outfeed)
+def _execute_compiled(compiled: XlaExecutable, handlers, *args):
   device, = compiled.local_devices()
   input_bufs = [device_put(x, device) for x in args if x is not token]
   out_bufs = compiled.execute(input_bufs)
   if FLAGS.jax_debug_nans: check_nans(xla_call_p, out_bufs)
   return [handler(out_buf) for handler, out_buf in zip(handlers, out_bufs)]
 
-def _execute_replicated(compiled: XlaExecutable, uses_outfeed: bool,
-                        handlers, *args):
-  check_before_outfeed_execution(uses_outfeed)
+def _execute_replicated(compiled: XlaExecutable, handlers, *args):
   input_bufs = [
       [device_put(x, device) for x in args if x is not token]
       for device in compiled.local_devices()]
@@ -869,7 +862,7 @@ call_translations[xla_call_p] = _xla_call_translation_rule
 def zeros_like_translation_rule(c, x):
   shape = c.get_shape(x)
   assert not shape.is_tuple()
-  zero = xb.constant(c, onp.array(0, shape.element_type()))
+  zero = xb.constant(c, np.array(0, shape.element_type()))
   return xops.Broadcast(zero, shape.dimensions())
 translations[ad_util.zeros_like_p] = zeros_like_translation_rule
 
@@ -1025,7 +1018,7 @@ class DeviceArray(DeviceValue):
 
   def copy(self):
     """Returns an ndarray (backed by host memory, not device memory)."""
-    return onp.asarray(self)
+    return np.asarray(self)
 
   def copy_to_host_async(self):
     """Requests a copy of the buffer to the host."""
@@ -1049,10 +1042,10 @@ class DeviceArray(DeviceValue):
     self._npy_value = None
 
   def __repr__(self):
-    line_width = onp.get_printoptions()['linewidth']
+    line_width = np.get_printoptions()['linewidth']
     prefix = '{}('.format(self.__class__.__name__)
-    s = onp.array2string(self._value, prefix=prefix, suffix=',',
-                         separator=', ', max_line_width=line_width)
+    s = np.array2string(self._value, prefix=prefix, suffix=',',
+                        separator=', ', max_line_width=line_width)
     dtype_str = 'dtype={})'.format(self.dtype.name)
     last_line_len = len(s) - s.rfind('\n') + 1
     sep = ' '
@@ -1061,13 +1054,13 @@ class DeviceArray(DeviceValue):
     return "{}{},{}{}".format(prefix, s, sep, dtype_str)
 
   def item(self):
-    if dtypes.issubdtype(self.dtype, onp.complexfloating):
+    if dtypes.issubdtype(self.dtype, np.complexfloating):
       return complex(self)
-    elif dtypes.issubdtype(self.dtype, onp.floating):
+    elif dtypes.issubdtype(self.dtype, np.floating):
       return float(self)
-    elif dtypes.issubdtype(self.dtype, onp.integer):
+    elif dtypes.issubdtype(self.dtype, np.integer):
       return int(self)
-    elif dtypes.issubdtype(self.dtype, onp.bool_):
+    elif dtypes.issubdtype(self.dtype, np.bool_):
       return bool(self)
     else:
       raise TypeError(self.dtype)
@@ -1098,7 +1091,7 @@ class DeviceArray(DeviceValue):
       return format(self._value, format_spec)
 
   def __array__(self, dtype=None, context=None):
-    return onp.asarray(self._value, dtype=dtype)
+    return np.asarray(self._value, dtype=dtype)
 
   @property
   def __cuda_array_interface__(self):
@@ -1258,10 +1251,10 @@ def _remat_translation_rule(c, axis_env, in_nodes,
        Conditional."""
   del device, concrete  # Unused.
   # Fake condition which always selects True branch.
-  rng = xops.RngUniform(xb.constant(c, onp.array(0, dtype=onp.float32)),
-                        xb.constant(c, onp.array(1, dtype=onp.float32)),
+  rng = xops.RngUniform(xb.constant(c, np.array(0, dtype=np.float32)),
+                        xb.constant(c, np.array(1, dtype=np.float32)),
                         xc.Shape.array_shape(xc.PrimitiveType.F32, []))
-  pred = xops.Lt(rng, xb.constant(c, onp.array(2, dtype=onp.float32)))
+  pred = xops.Lt(rng, xb.constant(c, np.array(2, dtype=np.float32)))
 
   true_op = xops.Tuple(c, in_nodes)
   remat_subc = xb.make_computation_builder("remat_call_subcomputation")
@@ -1279,7 +1272,7 @@ def _remat_translation_rule(c, axis_env, in_nodes,
 
   def zeros(xla_shape):
     shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-    zero = xb.constant(dummy_subc, onp.array(0, dtype=dtype))
+    zero = xb.constant(dummy_subc, np.array(0, dtype=dtype))
     return xops.Broadcast(zero, shape)
   out_nodes = [zeros(s) for s in out_node_shapes]
   dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))

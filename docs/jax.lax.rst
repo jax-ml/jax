@@ -26,6 +26,8 @@ Operators
     abs
     add
     acos
+    argmax
+    argmin
     asin
     atan
     atan2
@@ -167,5 +169,6 @@ Parallelism support is experimental.
     pmin
     pmean
     ppermute
+    pshuffle
     pswapaxes
     axis_index

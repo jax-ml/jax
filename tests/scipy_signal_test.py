@@ -17,7 +17,7 @@ from functools import partial
 
 from absl.testing import absltest, parameterized
 
-import numpy as onp
+import numpy as np
 
 from jax import lax
 from jax import test_util as jtu
@@ -31,13 +31,7 @@ onedim_shapes = [(1,), (2,), (5,), (10,)]
 twodim_shapes = [(1, 1), (2, 2), (2, 3), (3, 4), (4, 4)]
 
 
-def supported_dtypes(dtypes):
-  return [t for t in dtypes if t in jtu.supported_dtypes()]
-
-
-float_dtypes = supported_dtypes([onp.float32, onp.float64])
-int_dtypes = [onp.int32, onp.int64]
-default_dtypes = float_dtypes + int_dtypes
+default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
@@ -62,7 +56,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {onp.float16: 1e-2, onp.float32: 1e-2, onp.float64: 1e-8}
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-8}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker)
 
@@ -85,7 +79,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {onp.float16: 1e-2, onp.float32: 1e-2, onp.float64: 1e-14}
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-14}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker)
 
@@ -103,7 +97,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     osp_fun = partial(osp_signal.detrend, axis=axis, type=type, bp=bp)
     jsp_fun = partial(jsp_signal.detrend, axis=axis, type=type, bp=bp)
-    tol = {onp.float32: 1e-5, onp.float64: 1e-12}
+    tol = {np.float32: 1e-5, np.float64: 1e-12}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 

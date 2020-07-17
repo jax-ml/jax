@@ -26,6 +26,7 @@ from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
 import jax.linear_util as lu
 from jax.interpreters import xla
+from jax.custom_derivatives import custom_jvp_call_jaxpr_p
 from jax.lax import lax
 from jax.lax import lax_fft
 
@@ -113,7 +114,6 @@ class JetTrace(core.Trace):
     return JetTracer(self, val.primal, val.terms)
 
   def process_primitive(self, primitive, tracers, params):
-    assert not primitive.multiple_results  # TODO
     order = self.master.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     series_in = [[zero_term] * order if s is zero_series else s
@@ -124,7 +124,10 @@ class JetTrace(core.Trace):
                  for x, series in zip(primals_in, series_in)]
     rule = jet_rules[primitive]
     primal_out, terms_out = rule(primals_in, series_in, **params)
-    return JetTracer(self, primal_out, terms_out)
+    if not primitive.multiple_results:
+      return JetTracer(self, primal_out, terms_out)
+    else:
+      return [JetTracer(self, p, ts) for p, ts in zip(primal_out, terms_out)]
 
   def process_call(self, call_primitive, f, tracers, params):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
@@ -547,3 +550,10 @@ def _lax_min_taylor_rule(primal_in, series_in):
     series_out = [select_min_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
     return primal_out, series_out
 jet_rules[lax.min_p] = _lax_min_taylor_rule
+
+def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
+                                jvp_jaxpr_thunk):
+  # TODO(mattjj): do something better than ignoring custom jvp rules for jet?
+  del jvp_jaxpr_thunk
+  return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
+jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule

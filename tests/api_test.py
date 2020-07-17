@@ -1073,8 +1073,8 @@ class APITest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/795
     self.assertRaisesRegex(
         ValueError,
-        "axes specification must be a tree prefix of the corresponding "
-        r"value, got specification \(0, 0\) for value "
+        "vmap in_axes specification must be a tree prefix of the corresponding "
+        r"value, got specification \(0, 0\) for value tree "
         r"PyTreeDef\(tuple, \[\*\]\).",
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(jnp.ones(3))
     )
@@ -1148,7 +1148,9 @@ class APITest(jtu.JaxTestCase):
 
     # Error is: TypeError: only integer scalar arrays can be converted to a scalar index
     with self.assertRaisesRegex(
-        ValueError, "axes specification must be a tree prefix of the corresponding value"):
+        ValueError,
+        "vmap out_axes specification must be a tree prefix of the "
+        "corresponding value.*"):
       api.vmap(lambda x: x, in_axes=0, out_axes=(2, 3))(jnp.array([1., 2.]))
 
     with self.assertRaisesRegex(
@@ -2861,6 +2863,38 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(clip_gradient)(1.)  # doesn't crash
 
+  def test_nestable_vjp(self):
+    # Verify that https://github.com/google/jax/issues/3667 is resolved.
+    def f(x):
+        return x ** 2
+
+    @api.custom_vjp
+    def g(x):
+        return f(x)
+
+    def g_fwd(x):
+        y, f_vjp = api.vjp(f, x)
+        return y, f_vjp
+
+    def g_bwd(f_vjp, y_bar):
+        return f_vjp(y_bar)
+
+    g.defvjp(g_fwd, g_bwd)
+
+    # Check that VJP can be nested in simple situations.  For this to pass,
+    # vjp has to return a PyTree.
+    _, g_vjp = api.vjp(g, 1.0)
+    y, = g_vjp(1.0)
+    self.assertAllClose(y, jnp.array(2.0))
+
+    # Check that VJP can be nested in complex situations.  For this to pass,
+    # vjp can't treat the closed-over tracer x as a static argument.
+    @jit
+    def z(x):
+        _, g_vjp = api.vjp(g, x)
+        return g_vjp
+    y, = z(1.0)(3.0)
+    self.assertAllClose(y, jnp.array(6.0))
 
 class InvertibleADTest(jtu.JaxTestCase):
 

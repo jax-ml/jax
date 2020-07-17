@@ -92,13 +92,16 @@ def irfftn(a, s=None, axes=None, norm=None):
   return _fft_core('irfftn', xla_client.FftType.IRFFT, a, s, axes, norm)
 
 
-def _fft_core_1d(func_name, fft_type, a, s, axis, norm):
+def _axis_check_1d(func_name, axis):
   full_name = "jax.numpy.fft." + func_name
   if isinstance(axis, (list, tuple)):
     raise ValueError(
         "%s does not support multiple axes. Please use %sn. "
         "Got axis = %r." % (full_name, full_name, axis)
     )
+
+def _fft_core_1d(func_name, fft_type, a, s, axis, norm):
+  _axis_check_1d(func_name, axis)
   axes = None if axis is None else [axis]
   return _fft_core(func_name, fft_type, a, s, axes, norm)
 
@@ -122,6 +125,22 @@ def rfft(a, n=None, axis=-1, norm=None):
 def irfft(a, n=None, axis=-1, norm=None):
   return _fft_core_1d('irfft', xla_client.FftType.IRFFT, a, s=n, axis=axis,
                       norm=norm)
+
+@_wraps(np.fft.hfft)
+def hfft(a, n=None, axis=-1, norm=None):
+  conj_a = jnp.conj(a)
+  _axis_check_1d('hfft', axis)
+  nn = (a.shape[axis] - 1) * 2 if n is None else n
+  return _fft_core_1d('hfft', xla_client.FftType.IRFFT, conj_a, s=n, axis=axis,
+                      norm=norm) * nn
+
+@_wraps(np.fft.ihfft)
+def ihfft(a, n=None, axis=-1, norm=None):
+  _axis_check_1d('ihfft', axis)
+  nn = a.shape[axis] if n is None else n
+  output = _fft_core_1d('ihfft', xla_client.FftType.RFFT, a, s=n, axis=axis,
+                      norm=norm)
+  return jnp.conj(output) * (1 / nn)
 
 
 def _fft_core_2d(func_name, fft_type, a, s, axes, norm):
@@ -236,6 +255,8 @@ def ifftshift(x, axes=None):
   return jnp.roll(x, shift, axes)
 
 
-for func in get_module_functions(np.fft):
-  if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
+_NOT_IMPLEMENTED = []
+for name, func in get_module_functions(np.fft).items():
+  if name not in globals():
+    _NOT_IMPLEMENTED.append(name)
+    globals()[name] = _not_implemented(func)

@@ -14,7 +14,6 @@
 """Tests for the jax2tf conversion for control-flow primitives."""
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 import jax.lax as lax
@@ -30,27 +29,19 @@ config.parse_flags_with_absl()
 
 class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
-  def test_cond(self, with_function=False):
+  def test_cond(self):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: t + 1., lambda f: f, x)
 
-    self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
-    self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
+    self.ConvertAndCompare(f_jax, True, 1.)
+    self.ConvertAndCompare(f_jax, False, 1.)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
-  def test_cond_multiple_results(self, with_function=False):
+  def test_cond_multiple_results(self):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: (t + 1., 1.), lambda f: (f + 2., 2.), x)
 
-    self.ConvertAndCompare(f_jax, True, 1., with_function=with_function)
-    self.ConvertAndCompare(f_jax, False, 1., with_function=with_function)
+    self.ConvertAndCompare(f_jax, True, 1.)
+    self.ConvertAndCompare(f_jax, False, 1.)
 
   def test_cond_partial_eval(self):
     def f(x):
@@ -58,16 +49,13 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       return res
     self.ConvertAndCompare(jax.grad(f), 1.)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
+
   def test_cond_units(self, with_function=True):
     def g(x):
       return lax.cond(True, lambda x: x, lambda y: y, x)
 
-    self.ConvertAndCompare(g, 0.7, with_function=with_function)
-    self.ConvertAndCompare(jax.grad(g), 0.7, with_function=with_function)
+    self.ConvertAndCompare(g, 0.7)
+    self.ConvertAndCompare(jax.grad(g), 0.7)
 
 
   def test_cond_custom_jvp(self):
@@ -121,24 +109,17 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(g, arg, "vmap")
     self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
-  def test_while_single_carry(self, with_function=False):
+
+  def test_while_single_carry(self):
     """A while with a single carry"""
     def func(x):
       # Equivalent to:
       #      for(i=x; i < 4; i++);
       return lax.while_loop(lambda c: c < 4, lambda c: c + 1, x)
 
-    self.ConvertAndCompare(func, 0, with_function=with_function)
+    self.ConvertAndCompare(func, 0)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
-  def test_while(self, with_function=False):
+  def test_while(self):
     # Some constants to capture in the conditional branches
     cond_const = np.ones(3, dtype=np.float32)
     body_const1 = np.full_like(cond_const, 1.)
@@ -163,13 +144,9 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
       return lax.while_loop(cond, body, (0, x))
 
-    self.ConvertAndCompare(func, cond_const, with_function=with_function)
+    self.ConvertAndCompare(func, cond_const)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
-  def test_while_batched_cond(self, with_function=True):
+  def test_while_batched_cond(self):
     """A while with a single carry"""
     def product(x, y):
       # Equivalent to "x * y" implemented as:
@@ -190,7 +167,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def product_xs_ys(xs, ys):
       return jax.vmap(product_xs_y, in_axes=(None, 0))(xs, ys)
 
-    self.ConvertAndCompare(product_xs_ys, xs, ys, with_function=with_function)
+    self.ConvertAndCompare(product_xs_ys, xs, ys)
 
   def test_while_custom_jvp(self):
     """Conversion of function with custom JVP, inside while.
@@ -218,11 +195,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(g, arg, "jvp_vmap")
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
-  def test_scan(self, with_function=False):
+  def test_scan(self):
     def f_jax(xs, ys):
       body_const = np.ones((2, ), dtype=np.float32)  # Test constant capture
       def body(res0, inputs):
@@ -231,9 +204,9 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
       return lax.scan(body, 0., (xs, ys))
 
     arg = np.arange(10, dtype=np.float32)
-    self.ConvertAndCompare(f_jax, arg, arg, with_function=with_function)
+    self.ConvertAndCompare(f_jax, arg, arg)
 
-  def test_scan_partial_eval(self, with_function=False):
+  def test_scan_partial_eval(self):
     def f_jax(xs, ys):
       body_const = np.ones((2, ), dtype=np.float32)  # Test constant capture
       def body(res0, inputs):
@@ -244,7 +217,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
     arg = np.arange(10, dtype=np.float32)
     print(jax.make_jaxpr(jax.grad(f_jax))(arg, arg))
-    self.ConvertAndCompare(jax.grad(f_jax), arg, arg, with_function=with_function)
+    self.ConvertAndCompare(jax.grad(f_jax), arg, arg)
 
 
   def test_scan_custom_jvp(self):

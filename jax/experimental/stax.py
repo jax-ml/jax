@@ -174,8 +174,10 @@ def _pooling_layer(reducer, init_val, rescaler=None):
       strides = strides[:i] + (1,) + strides[i:]
 
     def init_fun(rng, input_shape):
+      padding_vals = lax.padtype_to_pads(input_shape, window_shape,
+                                         strides, padding)
       out_shape = lax.reduce_window_shape_tuple(input_shape, window_shape,
-                                                strides, padding)
+                                                strides, padding_vals)
       return out_shape, ()
     def apply_fun(params, inputs, **kwargs):
       out = lax.reduce_window(inputs, init_val, reducer, window_shape,

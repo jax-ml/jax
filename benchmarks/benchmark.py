@@ -20,7 +20,7 @@ import time
 from typing import Any, Optional, Union, Callable, List, Dict
 
 from absl import flags
-import numpy as onp
+import numpy as np
 from tabulate import tabulate
 
 from jax.util import safe_zip
@@ -59,7 +59,7 @@ def benchmark(f: Callable[[], Any], iters: Optional[int] = None,
     if iters is None:
       warmup = 1
     else:
-      warmup = onp.clip(1, iters // 10, 10)
+      warmup = np.clip(1, iters // 10, 10)
   for _ in range(warmup):
     f()
 
@@ -73,7 +73,7 @@ def benchmark(f: Callable[[], Any], iters: Optional[int] = None,
     times.append(end - start)
     count += 1
 
-  times_arr = onp.array(times)
+  times_arr = np.array(times)
   print("---------Benchmark results for %s---------" % (name or f.__name__))
   print("mean=%f std=%f %%std=%f total=%f" %
         (times_arr.mean(), times_arr.std(), _pstd(times_arr), times_arr.sum()))

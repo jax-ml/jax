@@ -153,6 +153,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     iscomplex
     isfinite
     isin
+    intersect1d
     isinf
     isnan
     isneginf
@@ -312,6 +313,8 @@ jax.numpy.fft
   irfft2
   rfftn
   irfftn
+  hfft
+  ihfft
   fftfreq
   rfftfreq
   fftshift

@@ -563,9 +563,12 @@ class PmapTest(jtu.JaxTestCase):
     g = lambda x: jnp.sum(y * pmap(f, 'i')(x))
 
     x = np.arange(device_count, dtype=np.float32)
+
     ans = grad(g)(x)
-    expected = np.roll(np.pi + np.arange(device_count), 1)
+    expected = np.roll(np.pi + np.arange(device_count), -1)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    jtu.check_grads(g, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2)
 
   @jtu.skip_on_devices("cpu")
   def testCollectivePermuteCyclicWithPShuffle(self):
@@ -573,7 +576,7 @@ class PmapTest(jtu.JaxTestCase):
     values = np.arange(device_count)
     shift_right = [(i - 1) % device_count for i in range(device_count)]
     f = lambda x: lax.pshuffle(x, perm=shift_right, axis_name='i')
-    expected = np.roll(values, -1)
+    expected = np.roll(values, 1)
     ans = np.asarray(pmap(f, "i")(values))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -585,16 +588,15 @@ class PmapTest(jtu.JaxTestCase):
     f = lambda x: lax.pshuffle(x, perm=bad_perm, axis_name='i')
     g = lambda: pmap(f, "i")(np.arange(device_count))
     self.assertRaisesRegex(
-      AssertionError,
-      "Given `perm` does not represent a real permutation: \\[1.*\\]", g)
+      ValueError,
+      "`perm` does not represent a permutation: \\[1.*\\]", g)
 
   @jtu.skip_on_devices("cpu", "gpu")
   def testPpermuteWithZipObject(self):
     # https://github.com/google/jax/issues/1703
     num_devices = xla_bridge.device_count()
     perm = [num_devices - 1] + list(range(num_devices - 1))
-    f = pmap(
-      lambda x: lax.ppermute(x, "i", zip(range(num_devices), perm)), "i")
+    f = pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
     result = f(jnp.arange(num_devices, dtype=jnp.float32))
     expected = jnp.asarray(perm, dtype=jnp.float32)
     self.assertAllClose(result, expected)
@@ -947,6 +949,25 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("gpu")
+  def testGradOfPswapaxes(self):
+    device_count = xla_bridge.device_count()
+    # TODO: AllToAll not yet implemented on XLA:CPU
+    if jtu.device_under_test() == "cpu":
+      device_count = 1
+    shape = (device_count, 1, device_count)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    w = np.arange(device_count, dtype=np.float32)
+
+    @partial(pmap, axis_name='i')
+    def f(x, w):
+      g = lambda x: jnp.sum(lax.pswapaxes(x, 'i', 1) * w)
+      return grad(g)(x)
+
+    ans = f(x, w)
+    expected = np.tile(w, reps=device_count).reshape(shape)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testReshardInput(self):
     if xla_bridge.device_count() < 6:
       raise SkipTest("testReshardInput requires 6 devices")
@@ -1289,6 +1310,30 @@ class PmapTest(jtu.JaxTestCase):
       self.assertGreaterEqual(len(w), 1)
       self.assertIn("The jitted function foo includes a pmap",
                     str(w[-1].message))
+
+  def testPsumZeroCotangents(self):
+    # https://github.com/google/jax/issues/3651
+    def loss(params, meta_params):
+      (net, mpo) = params
+      return meta_params * mpo * net
+
+    def inner(meta_params, params):
+      grads = jax.grad(loss)(params, meta_params)
+      grads = lax.psum(grads, axis_name="i")
+      net_grads, mpo_grads = grads
+      net = params[0] + net_grads
+      mpo = params[1]
+      return mpo * net
+
+    def outer(params):
+      meta_params = jnp.array(4.0)
+      return jax.grad(inner)(meta_params, params)
+
+    params = (jnp.array([2.0]), jnp.array([3.0]))
+    jax.pmap(outer, axis_name='i')(params)  # doesn't crash
+
+    f = jax.pmap(outer, axis_name='i')
+    jtu.check_grads(f, (params,), 2, ["fwd", "rev"], 1e-3, 1e-3)
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):

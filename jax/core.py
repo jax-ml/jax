@@ -26,7 +26,7 @@ from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
                     Type, Union, cast)
 
-import numpy as onp
+import numpy as np
 
 from . import dtypes
 from .config import FLAGS
@@ -831,24 +831,22 @@ def concretization_function_error(fun, context=""):
   return error
 
 
-def concrete_or_error(typ: Type, val: Any, context=""):
-  """Like typ(val), but gives the context in the error message.
-  Use with typ either `int`, or `bool`.
-  """
+def concrete_or_error(force: Any, val: Any, context=""):
+  """Like force(val), but gives the context in the error message."""
   if isinstance(val, Tracer):
     if isinstance(val.aval, ConcreteArray):
-      return typ(val.aval.val)
+      return force(val.aval.val)
     else:
       raise_concretization_error(val, context)
   else:
-    return typ(val)
+    return force(val)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
   array_abstraction_level = 2
 
   def __init__(self, dtype, weak_type=False):
-    self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtype))
+    self.dtype = np.dtype(dtypes.canonicalize_dtype(dtype))
     self.weak_type = weak_type
 
   def __eq__(self, other):
@@ -860,7 +858,7 @@ class UnshapedArray(AbstractValue):
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.dtype, self.weak_type))
 
@@ -927,7 +925,7 @@ class ShapedArray(UnshapedArray):
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type))
 
@@ -970,16 +968,16 @@ class ConcreteArray(ShapedArray):
   array_abstraction_level = 0
 
   def __init__(self, val, weak_type=False):
-    super(ConcreteArray, self).__init__(onp.shape(val), onp.result_type(val),
+    super(ConcreteArray, self).__init__(np.shape(val), np.result_type(val),
                                         weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
-    assert self.dtype != onp.dtype('O')
+    assert self.dtype != np.dtype('O')
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype
             and self.shape == other.shape and self.weak_type == other.weak_type
-            and onp.all(self.val == other.val))
+            and np.all(self.val == other.val))
 
   def __hash__(self):
     return id(self.val)

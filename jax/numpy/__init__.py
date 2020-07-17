@@ -37,7 +37,7 @@ from .lax_numpy import (
     fmod, frexp, full, full_like, function, gcd, geomspace, gradient, greater,
     greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges,
     hsplit, hstack, hypot, identity, iinfo, imag,
-    indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer,
+    indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer, intersect1d,
     isclose, iscomplex, iscomplexobj, isfinite, isin, isinf, isnan, isneginf,
     isposinf, isreal, isrealobj, isscalar, issubdtype, issubsctype, iterable,
     ix_, kaiser, kron, lcm, ldexp, left_shift, less, less_equal, linspace,
@@ -58,7 +58,7 @@ from .lax_numpy import (
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
     triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
     unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
-    vstack, where, zeros, zeros_like)
+    vstack, where, zeros, zeros_like, _NOT_IMPLEMENTED)
 
 from .polynomial import roots
 from .vectorize import vectorize
@@ -71,9 +71,10 @@ def _init():
   from . import lax_numpy
   from .. import util
   # Builds a set of all unimplemented NumPy functions.
-  for func in util.get_module_functions(np):
-    if func.__name__ not in globals():
-      globals()[func.__name__] = lax_numpy._not_implemented(func)
+  for name, func in util.get_module_functions(np).items():
+    if name not in globals():
+      _NOT_IMPLEMENTED.append(name)
+      globals()[name] = lax_numpy._not_implemented(func)
 
 _init()
 del _init

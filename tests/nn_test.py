@@ -148,6 +148,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
                          [False, False, True]])
     self.assertAllClose(actual, expected)
 
+  def testOneHotConcretizationError(self):
+    # https://github.com/google/jax/issues/3654
+    msg = r"Abstract tracer.*\(in jax.nn.one_hot argument `num_classes`\).*"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      jax.jit(nn.one_hot)(3, 5)
+
+
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
   ["name", "initializer", "shapes"])

@@ -51,6 +51,12 @@ def _skip_if_unsupported_type(dtype):
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
+  def testNotImplemented(self):
+    for name in jnp.linalg._NOT_IMPLEMENTED:
+      func = getattr(jnp.linalg, name)
+      with self.assertRaises(NotImplementedError):
+        func()
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -856,7 +862,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testLstsq(self, lhs_shape, rhs_shape, dtype, lowrank, rcond, rng_factory):
     rng = rng_factory(self.rng())
     _skip_if_unsupported_type(dtype)
-    onp_fun = partial(np.linalg.lstsq, rcond=rcond)
+    np_fun = partial(np.linalg.lstsq, rcond=rcond)
     jnp_fun = partial(jnp.linalg.lstsq, rcond=rcond)
     jnp_fun_numpy_resid = partial(jnp.linalg.lstsq, rcond=rcond, numpy_resid=True)
     tol = {np.float32: 1e-6, np.float64: 1e-12,
@@ -867,7 +873,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         lhs[:, -1] = lhs[:, :-1].mean(1)
       return [lhs, rng(rhs_shape, dtype)]
 
-    self._CheckAgainstNumpy(onp_fun, jnp_fun_numpy_resid, args_maker, check_dtypes=False, tol=tol)
+    self._CheckAgainstNumpy(np_fun, jnp_fun_numpy_resid, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
     # Disabled because grad is flaky for low-rank inputs.

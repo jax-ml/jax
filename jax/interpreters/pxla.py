@@ -37,7 +37,7 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
                     Type, Union)
 
 from absl import logging
-import numpy as onp
+import numpy as np
 
 from ..config import flags
 from .. import core
@@ -465,7 +465,7 @@ def _axis_index_bind(*, axis_name):
   nreps = dynamic_axis_env.nreps
   trace = frame.pmap_trace
 
-  out_aval = ShapedArray((), onp.int32)
+  out_aval = ShapedArray((), np.int32)
   out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
   eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
                           dict(nreps=nreps, sizes=sizes,
@@ -476,19 +476,19 @@ def _axis_index_bind(*, axis_name):
   if not frame.soft_trace:
     return out_tracer
   else:
-    val_out = out_tracer * frame.soft_size + onp.arange(frame.soft_size)
+    val_out = out_tracer * frame.soft_size + np.arange(frame.soft_size)
     return SplitAxisTracer(frame.soft_trace, axis_name, val_out)
 
 def _axis_index_translation_rule(c, nreps, sizes, soft_size, axis_name):
-  div = xb.constant(c, onp.array(nreps // prod(sizes), dtype=onp.uint32))
-  mod = xb.constant(c, onp.array(sizes[-1], dtype=onp.uint32))
+  div = xb.constant(c, np.array(nreps // prod(sizes), dtype=np.uint32))
+  mod = xb.constant(c, np.array(sizes[-1], dtype=np.uint32))
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
-  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(onp.int32))
+  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
 axis_index_p = core.Primitive('axis_index')
 axis_index_p.def_custom_bind(_axis_index_bind)
 axis_index_p.def_abstract_eval(
-    lambda *args, **params: ShapedArray((), onp.int32))
+    lambda *args, **params: ShapedArray((), np.int32))
 xla.translations[axis_index_p] = _axis_index_translation_rule
 
 
@@ -587,7 +587,7 @@ class ShardedDeviceArray(xla.DeviceArray):
   def _value(self):
     if self._npy_value is None:
       self.copy_to_host_async()
-      npy_value = onp.empty(self.aval.shape, self.aval.dtype)
+      npy_value = np.empty(self.aval.shape, self.aval.dtype)
       for i in self.one_replica_buffer_indices:
         npy_value[self.indices[i]] = self.device_buffers[i].to_py()
       self._npy_value = npy_value
@@ -633,7 +633,7 @@ def _shard_sharded_device_array_slow_path(x, devices, indices):
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array_slow_path
 
 def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
-  return xb.constant(c, onp.asarray(val), canonicalize_types=canonicalize_types)
+  return xb.constant(c, np.asarray(val), canonicalize_types=canonicalize_types)
 xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_handler)
 
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
@@ -709,7 +709,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
       dynamic_fun, [pval] + pvals, instantiate=False, stage_out=True, bottom=True)
   jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
-  jaxpr, uses_outfeed = xla.apply_outfeed_rewriter(jaxpr)
+  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
 
   out_pvs, out_consts = unzip2(out_pvals)
 
@@ -838,7 +838,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   # provided 1D list of devices).
   device_assignment = tree_map(lambda d: d.id, devices)
   # Convert to 2D in case it's 1D and we have > 1 partitions.
-  device_assignment = onp.array(device_assignment).reshape(
+  device_assignment = np.array(device_assignment).reshape(
       (num_global_replicas, num_partitions))
   compile_options = xb.get_compile_options(
       num_replicas=num_global_replicas,
@@ -862,7 +862,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
                                           num_partitions, out_parts,
                                           out_pvals, compiled.local_devices(),
                                           backend)
-  return partial(execute_replicated, compiled, uses_outfeed, backend, handle_args,
+  return partial(execute_replicated, compiled, backend, handle_args,
                  handle_outs)
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
@@ -933,7 +933,7 @@ def get_num_partitions(*partitions):
   if len(partition_specs) == 0:
     # Everything is specified as replicated (all Nones).
     return None
-  num_partitions_set = set(onp.prod(spec) for spec in partition_specs)
+  num_partitions_set = set(np.prod(spec) for spec in partition_specs)
   if len(num_partitions_set) > 1:
     raise ValueError(
         f"All partition specs must use the same number of total partitions, "
@@ -1105,9 +1105,7 @@ def partitioned_sharding_spec(num_partitions: int,
         replication_factors=[])
 
 
-def execute_replicated(compiled,
-                       uses_outfeed, backend, in_handler, out_handler, *args):
-  xla.check_before_outfeed_execution(uses_outfeed)
+def execute_replicated(compiled, backend, in_handler, out_handler, *args):
   input_bufs = in_handler(args)
   out_bufs = compiled.execute_on_local_devices(list(input_bufs))
   return out_handler(out_bufs)
@@ -1159,7 +1157,7 @@ def _xla_shard(c, aval, axis_env, x):
     return x
   elif isinstance(aval, ShapedArray):
     dims = list(c.get_shape(x).dimensions())
-    zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
+    zero = xb.constant(c, np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * (len(dims) - 1)
     return xops.Reshape(xops.DynamicSlice(x, idxs, [1] + dims[1:]), dims[1:])
   else:
@@ -1171,16 +1169,16 @@ def _xla_unshard(c, aval, axis_env, x, backend):
     return x
   elif isinstance(aval, ShapedArray):
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
-    convert_bool = (onp.issubdtype(aval.dtype, onp.bool_)
+    convert_bool = (np.issubdtype(aval.dtype, np.bool_)
                     and xb.get_backend(backend).platform in ('cpu', 'gpu'))
     if convert_bool:
-      x = xops.ConvertElementType(x, xb.dtype_to_etype(onp.float32))
+      x = xops.ConvertElementType(x, xb.dtype_to_etype(np.float32))
 
     xla_shape = c.get_shape(x)
     dims = list(xla_shape.dimensions())
-    padded = xops.Broadcast(xb.constant(c, onp.array(0, xla_shape.numpy_dtype())),
+    padded = xops.Broadcast(xb.constant(c, np.array(0, xla_shape.numpy_dtype())),
                          [axis_env.sizes[-1]] + dims)
-    zero = xb.constant(c, onp.zeros((), dtype=onp.uint32))
+    zero = xb.constant(c, np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index(c, axis_env)] + [zero] * len(dims)
     padded = xops.DynamicUpdateSlice(padded, xops.Reshape(x, [1] + dims), idxs)
     replica_groups_protos = xc.make_replica_groups(
@@ -1189,15 +1187,15 @@ def _xla_unshard(c, aval, axis_env, x, backend):
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
-      nonzero = xops.Ne(out, xb.constant(c, onp.array(0, dtype=onp.float32)))
-      out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(onp.bool_))
+      nonzero = xops.Ne(out, xb.constant(c, np.array(0, dtype=np.float32)))
+      out = xops.ConvertElementType(nonzero, xb.dtype_to_etype(np.bool_))
     return out
   else:
     raise TypeError((aval, c.get_shape(x)))
 
 def _unravel_index(c, axis_env):
-  div = xb.constant(c, onp.array(axis_env.nreps // prod(axis_env.sizes), onp.uint32))
-  mod = xb.constant(c, onp.array(axis_env.sizes[-1], onp.uint32))
+  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes), np.uint32))
+  mod = xb.constant(c, np.array(axis_env.sizes[-1], np.uint32))
   return xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
 
 
@@ -1280,7 +1278,7 @@ class SplitAxisTrace(core.Trace):
     if primitive is axis_index_p:
       dummy, = vals_in
       hard_idx = primitive.bind(dummy, **params)
-      val_out = hard_idx * params['soft_size'] + onp.arange(params['soft_size'])
+      val_out = hard_idx * params['soft_size'] + np.arange(params['soft_size'])
       return SplitAxisTracer(self, params['axis_name'], val_out)
     elif all(axis_name is not_mapped for axis_name in names_in):
       return primitive.bind(*vals_in, **params)

@@ -204,6 +204,28 @@ load = np.load
 
 _canonicalize_axis = lax._canonicalize_axis
 
+def _np_array(obj, dtype=None, **kwargs):
+  """Return a properly-typed numpy array.
+
+  `_np_array(obj, **kwds)` is equivalent to `np.array(obj, **kwds)`, with the
+  exception that when obj.dtype is not defined and dtype is not specified, it
+  uses Jax's default dtypes.
+  """
+  arr = np.array(obj, dtype=dtype, **kwargs)
+  typemap = {
+    np.bool_: bool_,
+    np.int_: int_,
+    np.float_: float_,
+    np.complex_: complex_
+  }
+  obj_dtype = getattr(obj, 'dtype', None)
+  arr_dtype = np.dtype(arr.dtype)
+  if dtype is None and obj_dtype is None and arr_dtype in typemap:
+    arr = arr.astype(typemap[arr_dtype])
+  return arr
+
+_np_asarray = partial(_np_array, copy=False)
+
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
   if len(args) < 2:
@@ -309,8 +331,8 @@ def issubdtype(arg1, arg2):
   return dtypes.issubdtype(arg1, arg2)
 
 @_wraps(np.isscalar)
-def isscalar(num):
-  return dtypes.is_python_scalar(num) or np.isscalar(num)
+def isscalar(element):
+  return dtypes.is_python_scalar(element) or np.isscalar(element)
 
 iterable = np.iterable
 
@@ -680,13 +702,13 @@ def _conv(x, y, mode, op, precision):
 
 
 @_wraps(np.convolve, lax_description=_PRECISION_DOC)
-def convolve(x, y, mode='full', *, precision=None):
-  return _conv(x, y, mode, 'convolve', precision)
+def convolve(a, v, mode='full', *, precision=None):
+  return _conv(a, v, mode, 'convolve', precision)
 
 
 @_wraps(np.correlate, lax_description=_PRECISION_DOC)
-def correlate(x, y, mode='valid', *, precision=None):
-  return _conv(x, y, mode, 'correlate', precision)
+def correlate(a, v, mode='valid', *, precision=None):
+  return _conv(a, v, mode, 'correlate', precision)
 
 
 def _normalize_float(x):
@@ -823,9 +845,11 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
   if b.ndim == 1:
     return b
   if range is None:
-    range = a.min(), a.max()
-  if not isinstance(a, core.Tracer) and range[0] == range[1]:
-    range = range[0] - 0.5, range[0] + 0.5
+    range = (a.min(), a.max())
+  assert len(range) == 2
+  range = asarray(range)
+  range = (where(ptp(range) == 0, range[0] - 0.5, range[0]),
+           where(ptp(range) == 0, range[1] + 0.5, range[1]))
   dtype = _dtype(a)
   if issubdtype(dtype, integer):
     dtype = promote_types(dtype, float32)
@@ -1058,11 +1082,11 @@ def _gradient(a, varargs, axis):
 
 
 @_wraps(np.gradient)
-def gradient(a, *args, **kwargs):
+def gradient(f, *args, **kwargs):
   axis = kwargs.pop("axis", None)
   if not len(kwargs) == 0:
     raise ValueError("Only `axis` keyword is implemented")
-  return _gradient(a, args, axis)
+  return _gradient(f, args, axis)
 
 
 @_wraps(np.isrealobj)
@@ -1243,6 +1267,56 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
   else:
     return (ar1[:, None] == ar2).any(-1)
 
+@partial(jit, static_argnums=2)
+def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
+    """
+    Helper function for intersect1d which is jit-able
+    """
+    ar = concatenate((ar1, ar2))
+    if return_indices:
+      iota = lax.broadcasted_iota(np.int64, shape(ar), dimension=0)
+      aux, indices = lax.sort_key_val(ar, iota)
+    else:
+      aux = sort(ar)
+
+    mask = aux[1:] == aux[:-1]
+    if return_indices:
+      return aux, mask, indices
+    else:
+      return aux, mask
+
+@_wraps(np.intersect1d)
+def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
+
+  if not assume_unique:
+    if return_indices:
+      ar1, ind1 = unique(ar1, return_index=True)
+      ar2, ind2 = unique(ar2, return_index=True)
+    else:
+      ar1 = unique(ar1)
+      ar2 = unique(ar2)
+  else:
+    ar1 = ravel(ar1)
+    ar2 = ravel(ar2)
+
+  if return_indices:
+    aux, mask, aux_sort_indices = _intersect1d_sorted_mask(ar1, ar2, return_indices)
+  else:
+    aux, mask = _intersect1d_sorted_mask(ar1, ar2, return_indices)
+
+  int1d = aux[:-1][mask]
+
+  if return_indices:
+    ar1_indices = aux_sort_indices[:-1][mask]
+    ar2_indices = aux_sort_indices[1:][mask] - ar1.size
+    if not assume_unique:
+      ar1_indices = ind1[ar1_indices]
+      ar2_indices = ind2[ar2_indices]
+
+    return int1d, ar1_indices, ar2_indices
+  else:
+    return int1d
+
 
 @_wraps(np.isin, lax_description="""
 In the JAX version, the `assume_unique` argument is not referenced.
@@ -1400,12 +1474,6 @@ def clip(a, a_min=None, a_max=None):
   return a
 
 
-def _dtype_info(dtype):
-  """Helper function for to get dtype info needed for clipping."""
-  if issubdtype(dtype, integer):
-    return iinfo(dtype)
-  return finfo(dtype)
-
 def _round_to_nearest_even(x):
   half = lax._const(x, 0.5)
   one = lax._const(x, 1)
@@ -1487,8 +1555,9 @@ def _isposneginf(infinity, x):
   else:
     return full_like(x, False, dtype=bool_)
 
-isposinf = _wraps(np.isposinf)(partial(_isposneginf, inf))
-isneginf = _wraps(np.isneginf)(partial(_isposneginf, -inf))
+isposinf = _wraps(np.isposinf)(lambda x: _isposneginf(inf, x))
+
+isneginf = _wraps(np.isneginf)(lambda x: _isposneginf(-inf, x))
 
 @_wraps(np.isnan)
 def isnan(x):
@@ -1550,6 +1619,8 @@ def _reduction_dims(a, axis):
   if axis is None:
     return tuple(range(ndim(a)))
   elif isinstance(axis, (np.ndarray, tuple, list)):
+    if len(axis) != len(set(axis)):
+      raise ValueError(f"duplicate value in 'axis': {axis}")
     return tuple(_canonicalize_axis(x, ndim(a)) for x in axis)
   elif isinstance(axis, int):
     return (_canonicalize_axis(axis, ndim(a)),)
@@ -2006,14 +2077,14 @@ def stack(arrays, axis=0):
   return concatenate(new_arrays, axis=axis)
 
 @_wraps(np.tile)
-def tile(a, reps):
+def tile(A, reps):
   if isinstance(reps, int):
     reps = (reps,)
-  a = reshape(a, (1,) * (len(reps) - ndim(a)) + shape(a))
-  reps = (1,) * (ndim(a) - len(reps)) + tuple(reps)
+  A = reshape(A, (1,) * (len(reps) - ndim(A)) + shape(A))
+  reps = (1,) * (ndim(A) - len(reps)) + tuple(reps)
   for i, rep in enumerate(reps):
-    a = concatenate([a] * int(rep), axis=i)
-  return a
+    A = concatenate([A] * int(rep), axis=i)
+  return A
 
 @_wraps(np.concatenate)
 def concatenate(arrays, axis=0):
@@ -2141,7 +2212,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
   if _can_call_numpy_array(object):
-    object = np.array(object, dtype=dtype, ndmin=ndmin)
+    object = _np_array(object, dtype=dtype, ndmin=ndmin)
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
@@ -2151,21 +2222,21 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
-      out = _device_put_raw(np.asarray(object))
+      out = _device_put_raw(_np_asarray(object))
     else:
       out = object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      out = _device_put_raw(np.array([], dtype or float_))
+      out = _device_put_raw(_np_array([], dtype=dtype))
   else:
     try:
       view = memoryview(object)
     except TypeError:
       pass  # `object` does not support the buffer interface.
     else:
-      return array(np.asarray(view), dtype, copy)
+      return array(_np_asarray(view), dtype, copy)
 
     raise TypeError("Unexpected input type for array: {}".format(type(object)))
 
@@ -2192,15 +2263,15 @@ def asarray(a, dtype=None, order=None):
 
 
 @_wraps(np.zeros_like)
-def zeros_like(x, dtype=None):
+def zeros_like(a, dtype=None):
   lax._check_user_dtype_supported(dtype, "zeros_like")
-  return lax.full_like(x, 0, dtype)
+  return lax.full_like(a, 0, dtype)
 
 
 @_wraps(np.ones_like)
-def ones_like(x, dtype=None):
+def ones_like(a, dtype=None):
   lax._check_user_dtype_supported(dtype, "ones_like")
-  return lax.full_like(x, 1, dtype)
+  return lax.full_like(a, 1, dtype)
 
 
 @_wraps(np.full)
@@ -2280,10 +2351,16 @@ def identity(n, dtype=None):
 @_wraps(np.arange)
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
+  require = partial(core.concrete_or_error, _np_asarray)
+  msg = "in jax.numpy.arange argument `{}`".format
   if stop is None and step is None:
+    start = require(start, msg("stop"))
     dtype = dtype or _dtype(start)
     return lax.iota(dtype, np.ceil(start)) # avoids materializing
   else:
+    start = None if start is None else require(start, msg("start"))
+    stop = None if stop is None else require(stop, msg("stop"))
+    step = None if step is None else require(step, msg("step"))
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 
@@ -2450,72 +2527,64 @@ def indices(dimensions, dtype=int32, sparse=False):
   return stack(output, 0) if output else array([], dtype=dtype)
 
 
-def _repeat_scalar(a, repeats, axis=None):
-  if not isscalar(repeats):
-    raise NotImplementedError(
-        "_repeat_scalar implementation only supports scalar repeats")
-  if axis is None or isscalar(a) or len(shape(a)) == 0:
-    a = ravel(a)
-    axis = 0
-  a_shape = list(shape(a))
-  num_dims = len(a_shape)
-  if axis < 0:
-    axis = axis + num_dims
+_TOTAL_REPEAT_LENGTH_DOC = """\
+Jax adds the optional `total_repeat_length` parameter which specifies the total
+number of repeat, and defaults to sum(repeats). It must be specified for repeat
+to be compilable. If `sum(repeats)` is larger than the specified
+`total_repeat_length` the remaining values will be discarded. In the case of
+`sum(repeats)` being smaller than the specified target length, the final value
+will be repeated.
+"""
 
-  if axis < 0 or axis >= num_dims:
-    raise ValueError(
-        "axis {} is out of bounds for array of dimension {}".format(
-            axis, num_dims))
 
-  # Broadcasts to [..., X, repeats, ...] and reshapes to [..., X * repeats, ...]
-  broadcast_shape = list(a_shape)
-  broadcast_shape.insert(axis + 1, repeats)
-  broadcast_dims = np.concatenate((np.arange(0, axis + 1),
-                                    np.arange(axis + 2, num_dims + 1)))
-  a_shape[axis] *= repeats
-  return lax.reshape(
-      lax.broadcast_in_dim(a, broadcast_shape, broadcast_dims),
-      a_shape)
-
-@_wraps(np.repeat)
-def repeat(a, repeats, axis=None):
-  # use `_repeat_scalar` when possible
-  if isscalar(repeats):
-    return _repeat_scalar(a, repeats, axis)
-  repeats_raveled = np.ravel(np.array(repeats))
-  if size(repeats_raveled) == 1:
-    return _repeat_scalar(a, repeats_raveled.item(), axis)
-
-  if axis is None or isscalar(a):
+@_wraps(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
+def repeat(a, repeats, axis=None, *, total_repeat_length=None):
+  if axis is None:
     a = ravel(a)
     axis = 0
 
-  # repeats must match the dimension along the requested axis
-  if repeats_raveled.size != a.shape[axis]:
-    raise ValueError(f"repeats shape {repeats_raveled.shape} does not match "
-                     f"the dimension on axis {a.shape[axis]}")
+  repeats = array(repeats)
+  repeats = ravel(repeats)
 
-  # calculating the new shape
-  total = repeats_raveled.sum()
+  if ndim(a) != 0:
+    repeats = broadcast_to(repeats, [a.shape[axis]])
 
-  new_shape = list(a.shape)
-  new_shape[axis] = total
-  a_flattened = ravel(a)
+  # If total_repeat_length is not given, use a default.
+  if total_repeat_length is None:
+    total_repeat_length = sum(repeats)
 
-  # first break down raveled input array into list of chunks; each chunk is the
-  # unit of repeat. then tile the repeats to have same length as the list of
-  # chunks. finally repeat each unit x number of times according to the tiled
-  # repeat list.
-  chunks = _prod(a.shape[:axis+1])
-  a_splitted = split(a_flattened, chunks)
-  repeats_tiled = np.tile(repeats_raveled, chunks // len(repeats_raveled))
+  # Special case when a is a scalar.
+  if ndim(a) == 0:
+    if repeats.shape == (1,):
+      return full([total_repeat_length], a)
+    else:
+      raise ValueError('`repeat` with a scalar parameter `a` is only '
+      'implemented for scalar values of the parameter `repeats`.')
 
-  ret = array([], dtype=a.dtype)
-  for i, repeat in enumerate(repeats_tiled):
-    if repeat != 0:
-      ret = concatenate((ret, tile(a_splitted[i], (repeat,))))
+  # Special case if total_repeat_length is zero.
+  if total_repeat_length == 0:
+    return reshape(array([], dtype=a.dtype), array(a.shape).at[axis].set(0))
 
-  return reshape(ret, new_shape)
+  # If repeats is on a zero sized axis, then return the array.
+  if a.shape[axis] == 0:
+    return a
+
+  # This implementation of repeat avoid having to instantiate a large.
+  # intermediate tensor.
+
+  # Modify repeats from e.g. [1,2,0,5] -> [0,1,2,0] for exclusive repeat.
+  exclusive_repeats = roll(repeats, shift=1).at[0].set(0)
+  # Cumsum to get indices of new number in repeated tensor, e.g. [0, 1, 3, 3]
+  scatter_indices = cumsum(exclusive_repeats)
+  # Scatter these onto a zero buffer, e.g. [1,1,0,2,0,0,0,0]
+  block_split_indicators = ops.index_add(
+      x=zeros([total_repeat_length], dtype=int32),
+      idx=scatter_indices,
+      y=1)
+  # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
+  gather_indices = cumsum(block_split_indicators) - 1
+  return take(a, gather_indices, axis=axis)
+
 
 @_wraps(np.tri)
 def tri(N, M=None, k=0, dtype=None):
@@ -2684,27 +2753,27 @@ def polyval(p, x):
   return y
 
 @_wraps(np.polyadd)
-def polyadd(a, b):
-  a = asarray(a)
-  b = asarray(b)
+def polyadd(a1, a2):
+  a1 = asarray(a1)
+  a2 = asarray(a2)
 
-  if b.shape[0] <= a.shape[0]:
-    return a.at[-b.shape[0]:].add(b)
+  if a2.shape[0] <= a1.shape[0]:
+    return a1.at[-a2.shape[0]:].add(a2)
   else:
-    return b.at[-a.shape[0]:].add(a)
+    return a2.at[-a1.shape[0]:].add(a1)
 
 
 @_wraps(np.polyder)
-def polyder(a, m=1):
-  a = asarray(a)
+def polyder(p, m=1):
+  p = asarray(p)
   if m < 0:
     raise ValueError("Order of derivative must be positive")
   if m == 0:
-    return a
+    return p
   if m % 1:
     raise ValueError("m must be an integer")
-  coeff = (arange(len(a), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
-  return a[:-m] * coeff
+  coeff = (arange(len(p), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
+  return p[:-m] * coeff
 
 def _trim_zeros(a):
   for i, v in enumerate(a):
@@ -2733,14 +2802,8 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   return val
 
 @_wraps(np.polysub)
-def polysub(a, b):
-  a = asarray(a)
-  b = asarray(b)
-
-  if b.shape[0] <= a.shape[0]:
-    return a.at[-b.shape[0]:].add(-b)
-  else:
-    return -b.at[-a.shape[0]:].add(-a)
+def polysub(a1, a2):
+  return polyadd(asarray(a1), -asarray(a2))
 
 
 @_wraps(np.append)
@@ -2775,6 +2838,12 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
 @_wraps(np.matmul, lax_description=_PRECISION_DOC)
 def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
+  for i, x in enumerate((a, b)):
+    if ndim(x) < 1:
+      msg = (f"matmul input operand {i} must have ndim at least 1, "
+             f"but it has ndim {ndim(x)}")
+      raise ValueError(msg)
+
   a_is_vec, b_is_vec = (ndim(a) == 1), (ndim(b) == 1)
   a = expand_dims(a, axis=0) if a_is_vec else a
   b = expand_dims(b, axis=-1) if b_is_vec else b
@@ -3092,7 +3161,18 @@ def argmax(a, axis=None):
   if axis is None:
     a = ravel(a)
     axis = 0
-  return _argminmax("argmax", max, a, axis)
+  if a.shape[axis] == 0:
+    raise ValueError("attempt to get argmax of an empty sequence")
+  return lax.argmax(a, _canonicalize_axis(axis, a.ndim), int64)
+
+@_wraps(np.argmin)
+def argmin(a, axis=None):
+  if axis is None:
+    a = ravel(a)
+    axis = 0
+  if a.shape[axis] == 0:
+    raise ValueError("attempt to get argmin of an empty sequence")
+  return lax.argmin(a, _canonicalize_axis(axis, a.ndim), int64)
 
 
 _NANARG_DOC = """\
@@ -3109,15 +3189,6 @@ def nanargmax(a, axis=None):
   res = argmax(a, axis=axis)
   return where(all(nan_mask, axis=axis), -1, res)
 
-
-@_wraps(np.argmin)
-def argmin(a, axis=None):
-  if axis is None:
-    a = ravel(a)
-    axis = 0
-  return _argminmax("argmin", min, a, axis)
-
-
 @_wraps(np.nanargmin, lax_description=_NANARG_DOC.format("min"))
 def nanargmin(a, axis=None):
   if not issubdtype(_dtype(a), inexact):
@@ -3126,19 +3197,6 @@ def nanargmin(a, axis=None):
   a = where(nan_mask, inf, a)
   res = argmin(a, axis=axis)
   return where(all(nan_mask, axis=axis), -1, res)
-
-
-# TODO(mattjj): redo this lowering with a call to variadic lax.reduce
-def _argminmax(name, op, a, axis):
-  if a.shape[axis] == 0:
-    raise ValueError("attempt to get {} of an empty sequence".format(name))
-  shape = [1] * a.ndim
-  shape[axis] = a.shape[axis]
-  idxs = lax.tie_in(a, arange(a.shape[axis])).reshape(shape)
-  maxval = iinfo(dtypes.canonicalize_dtype(idxs.dtype)).max
-  maxval = lax.tie_in(a, maxval)
-  mask_idxs = where(lax._eq_meet(a, op(a, axis, keepdims=True)), idxs, maxval)
-  return min(mask_idxs, axis)
 
 
 @_wraps(np.sort)
@@ -3287,7 +3345,7 @@ def take(a, indices, axis=None, out=None, mode=None):
 
   index_dims = len(shape(indices))
   slice_sizes = list(shape(a))
-  slice_sizes[axis] = 1
+  slice_sizes[axis] = _min(indices.size, 1)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(
       list(range(axis)) +
@@ -3944,7 +4002,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:
-    return np.array([]).reshape(0, 0)
+    return array([]).reshape(0, 0)
   if ddof is None:
     ddof = 1 if bias == 0 else 0
 
@@ -4329,6 +4387,7 @@ _diff_methods = ["clip", "conj", "conjugate", "cumprod", "cumsum",
 # _not_implemented implementations of them here rather than in __init__.py.
 # TODO(phawkins): implement these.
 argpartition = _not_implemented(np.argpartition)
+_NOT_IMPLEMENTED = ['argpartition']
 
 # Set up operator, method, and property forwarding on Tracer instances containing
 # ShapedArray avals by following the forwarding conventions for Tracer.

@@ -42,11 +42,19 @@ jobs:
           - python-version: 3.6
             os: ubuntu-latest
             enable-x64: disable-x64
+            package-overrides: "none"
             num_generated_cases: 25
           - python-version: 3.7
             os: ubuntu-latest
             enable-x64: enable-x64
+            package-overrides: "none"
             num_generated_cases: 25
+          - python-version: 3.6
+            os: ubuntu-latest
+            enable-x64: enable-x64
+            # Test with numpy version that matches Google-internal version
+            package-overrides: "numpy==1.16.4"
+            num_generated_cases: 10
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
@@ -57,6 +65,10 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r build/test-requirements.txt
+        if [ ${{ matrix.package-overrides }} != none ]; then
+          pip install ${{ matrix.package-overrides }}
+        fi
+
     - name: Run tests
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
@@ -89,5 +101,5 @@ jobs:
         pip install -r docs/requirements.txt
     - name: Test documentation
       run: |
-        pytest docs
-        pytest --doctest-modules jax/api.py
+        pytest -n 1 docs
+        pytest -n 1 --doctest-modules jax/api.py

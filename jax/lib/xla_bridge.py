@@ -30,7 +30,7 @@ from absl import logging
 from ..config import flags
 from .. import util
 from .. import dtypes
-import numpy as onp  # 'onp' rather than 'np' to distinguish from autograd.numpy
+import numpy as np
 import threading
 
 try:
@@ -62,7 +62,8 @@ flags.DEFINE_bool(
     'optimization is greater than that of running a less-optimized program.')
 
 
-def get_compile_options(num_replicas, num_partitions, device_assignment=None):
+def get_compile_options(num_replicas, num_partitions, device_assignment=None,
+                        use_spmd_partitioning=True):
   """Returns the compile options to use, as derived from flag values.
 
   Args:
@@ -72,16 +73,20 @@ def get_compile_options(num_replicas, num_partitions, device_assignment=None):
       logical replicas to physical devices (default inherited from
       xla_client.CompileOptions). Must be consistent with `num_replicas` and
       `num_partitions`.
+    use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
+      partitioning in XLA.
   """
   compile_options = xla_client.CompileOptions()
   compile_options.num_replicas = num_replicas
   compile_options.num_partitions = num_partitions
+  build_options = compile_options.executable_build_options
+  build_options.use_spmd_partitioning = use_spmd_partitioning
   if device_assignment is not None:
     logging.vlog(
         2,
         'get_compile_options: num_replicas=%s num_partitions=%s device_assignment=%s',
         num_replicas, num_partitions, device_assignment)
-    device_assignment = onp.array(device_assignment)
+    device_assignment = np.array(device_assignment)
 
     # Allow 1D device assignment if num_partitions is 1.
     if (device_assignment.ndim == 1) and (num_partitions == 1):
@@ -283,9 +288,8 @@ def supported_numpy_dtypes():
 # TODO(mattjj,frostig): try to remove this function
 def normalize_to_xla_dtypes(val):
   """Normalize dtypes in a value."""
-  if hasattr(val, '__array__') or onp.isscalar(val):
-    return onp.asarray(val,
-                       dtype=dtypes.canonicalize_dtype(dtypes.result_type(val)))
+  if hasattr(val, '__array__') or np.isscalar(val):
+    return np.asarray(val, dtype=dtypes.canonicalize_dtype(dtypes.result_type(val)))
   elif isinstance(val, (tuple, list)):
     return tuple(normalize_to_xla_dtypes(x) for x in val)
   raise TypeError('Can\'t convert to XLA: {}'.format(val))
@@ -356,7 +360,7 @@ def _sharding_to_proto(sharding: SpatialSharding):
   else:
     proto.type = xla_client.OpSharding.Type.OTHER
     proto.tile_assignment_dimensions = list(sharding)
-    proto.tile_assignment_devices = list(range(onp.product(sharding)))
+    proto.tile_assignment_devices = list(range(np.product(sharding)))
   return proto
 
 def set_sharding(builder, op, sharding: SpatialSharding):
@@ -390,7 +394,7 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
   special handling of arrays with any strides of size zero: for those, it
   generates appropriate calls to NumpyArrayConstant, Broadcast, and Transpose
   to avoid staging in large literals that might arise from np.zeros or np.ones
-  or the output of lax.broadcast (which uses onp.broadcast_to which in turn
+  or the output of lax.broadcast (which uses np.broadcast_to which in turn
   uses size-zero strides).
 
   Args:
@@ -402,28 +406,28 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
     staged into the XLA Computation.
   """
   # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
-  if onp.any(onp.equal(0, val.strides)) and val.size > 0:
-    zero_stride_axes, = onp.where(onp.equal(0, val.strides))
-    other_axes, = onp.where(onp.not_equal(0, val.strides))
+  if np.any(np.equal(0, val.strides)) and val.size > 0:
+    zero_stride_axes, = np.where(np.equal(0, val.strides))
+    other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)
                               for ax in range(val.ndim))]
     xla_val = xops.Broadcast(
         _numpy_array_constant(c, collapsed_val, canonicalize_types),
-        onp.take(val.shape, zero_stride_axes))
-    permutation = onp.argsort(tuple(zero_stride_axes) + tuple(other_axes))
+        np.take(val.shape, zero_stride_axes))
+    permutation = np.argsort(tuple(zero_stride_axes) + tuple(other_axes))
     return xops.Transpose(xla_val, permutation)
   else:
     return _numpy_array_constant(c, val, canonicalize_types)
-register_constant_handler(onp.ndarray, _ndarray_constant_handler)
+register_constant_handler(np.ndarray, _ndarray_constant_handler)
 
 
 def _scalar_constant_handler(c, val, canonicalize_types=True):
   return _numpy_array_constant(c, val, canonicalize_types)
 
-for scalar_type in [onp.int8, onp.int16, onp.int32, onp.int64,
-                    onp.uint8, onp.uint16, onp.uint32, onp.uint64,
-                    onp.float16, onp.float32, onp.float64, onp.float128,
-                    onp.bool_, onp.longlong]:
+for scalar_type in [np.int8, np.int16, np.int32, np.int64,
+                    np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.float16, np.float32, np.float64, np.float128,
+                    np.bool_, np.longlong]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
