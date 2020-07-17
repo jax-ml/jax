@@ -97,6 +97,28 @@ def filtered_tracebacks_supported():
   return sys.version_info >= (3, 7)
 
 def api_boundary(fun):
+  '''Wraps ``fun`` to form a boundary for filtering exception tracebacks.
+
+  When an exception occurs below ``fun``, this appends to it a custom
+  ``__cause__`` that carries a filtered traceback. The traceback imitates the
+  stack trace of the original exception, but with JAX-internal frames removed.
+
+  This boundary annotation works in composition with itself. The topmost frame
+  corresponding to an ``api_boundary`` is the one below which stack traces are
+  filtered. In other words, if ``api_boundary(f)`` calls ``api_boundary(g)``,
+  directly or indirectly, the filtered stack trace provided is the same as if
+  ``api_boundary(f)`` were to simply call ``g`` instead.
+
+  This annotation is primarily useful in wrapping functions output by JAX's
+  transformations. For example, consder ``g = jax.jit(f)``. When ``g`` is
+  called, JAX's JIT compilation machinery is invoked, which in turn calls ``f``
+  in order to trace and translate it. If the function ``f`` raises an exception,
+  the stack unwinds through JAX's JIT internals up to the original call site of
+  ``g``. Because the function returned by ``jax.jit`` is annotated as an
+  ``api_boundary``, such an exception is accompanied by an additional traceback
+  that excludes the frames specific to JAX's implementation.
+  '''
+
   if not filtered_tracebacks_supported():
     return fun
 
