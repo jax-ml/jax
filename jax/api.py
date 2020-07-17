@@ -944,6 +944,10 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   of the mapped axis sizes must be less than or equal to the number of XLA
   devices.
 
+  .. note::
+    :py:func:`pmap` compiles ``fun``, so while it can be combined with
+    :py:func:`jit`, it's usually unnecessary.
+
   **Multi-host platforms:** On multi-host platforms such as TPU pods, :py:func:`pmap`
   is designed to be used in SPMD Python programs, where every host is running
   the same Python code such that all hosts run the same pmapped function in the
