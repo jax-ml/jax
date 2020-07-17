@@ -1826,9 +1826,6 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
-      msg = ('{} does not accept dtype {} at xk {}. '
-             'Accepted dtypes at xk {} are subtypes of {}.')
-      typename = str(onp.dtype(aval_dtype).name)
       msg = ('{} does not accept dtype {} at position {}. '
              'Accepted dtypes at position {} are subtypes of {}.')
       typename = str(np.dtype(aval_dtype).name)
