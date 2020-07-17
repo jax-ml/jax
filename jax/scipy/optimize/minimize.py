@@ -40,8 +40,8 @@ def minimize(fun, x0, *, args=(), method=None, tol=None, options=None):
     results = fmin_bfgs(fun, x0, args=args, options=options)
     return OptimizeResults(x=results.x_k,
                            success=(results.converged) & (~results.failed),
-                           status=results.failed,
-                           message="",
+                           status=results.status,
+                           message="status meaning: 0=converged, 1=max BFGS iters reached, 3=zoom failed, 4=saddle point reached, 5=max line search iters reached, -1=undefined",
                            fun=results.f_k,
                            jac=results.g_k,
                            hess_inv=results.H_k,

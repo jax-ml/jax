@@ -25,6 +25,8 @@ class BFGSResults(NamedTuple):
   g_k: jnp.ndarray  # A tensor containing the gradient of the objective function at the `final_position`.
   # If the search converged the l2-norm of this tensor should be below the tolerance.
   H_k: jnp.ndarray  # A tensor containing the inverse of the estimated Hessian.
+  status: int  # int describing end state
+  ls_status: int  # int describing ls end state (only means something if ls fails)
 
 
 def fmin_bfgs(func, x0, args=(), options=None):
@@ -74,7 +76,10 @@ def fmin_bfgs(func, x0, args=(), options=None):
                       x_k=x0,
                       f_k=None,
                       g_k=None,
-                      H_k=None)
+                      H_k=None,
+                      status=None,
+                      ls_status=jnp.array(0)
+                      )
 
   if maxiter is None:
     maxiter = jnp.size(x0) * 200
@@ -98,7 +103,8 @@ def fmin_bfgs(func, x0, args=(), options=None):
                                       maxiter=ls_maxiter)
     state = state._replace(nfev=state.nfev + line_search_results.nfev,
                            ngev=state.ngev + line_search_results.ngev,
-                           failed=line_search_results.failed)
+                           failed=line_search_results.failed,
+                           ls_status=line_search_results.status)
     s_k = line_search_results.a_k * p_k
     x_kp1 = state.x_k + s_k
     f_kp1 = line_search_results.f_k
@@ -127,5 +133,11 @@ def fmin_bfgs(func, x0, args=(), options=None):
     lambda state: (~ state.converged) & (~state.failed) & (state.k < maxiter),
     body,
     state)
+
+  state = state._replace(status=jnp.where(state.converged, jnp.array(0),  # converged
+                                          jnp.where(state.k == maxiter, jnp.array(1),  # max iters reached
+                                                    jnp.where(state.failed, jnp.array(2) + state.ls_status,
+                                                              # ls failed (+ reason)
+                                                              jnp.array(-1)))))  # undefined
 
   return state
