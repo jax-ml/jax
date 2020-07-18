@@ -102,6 +102,7 @@ def _initialize_solver_internal_state(
                                  step_size=first_step_size)
 
 
+@partial(jax.jit, static_argnums=(0, 4))
 def _solve(ode_fn, initial_time, initial_state, solution_times, jacobian_fn,
            atol, rtol, min_step_size_factor, max_step_size_factor, max_order,
            max_num_newton_iters, max_num_steps, newton_tol_factor,
@@ -179,7 +180,7 @@ def _solve(ode_fn, initial_time, initial_state, solution_times, jacobian_fn,
                                                   new_step_size / step_size),
         backward_differences)
     step_size = jnp.where(should_update_step_size, new_step_size, step_size)
-    should_update_factorization = should_update_step_size  #pylint: disable=unused-variable
+    #should_update_factorization = should_update_step_size  #pylint: disable=unused-variable
     num_steps_same_size = jnp.where(should_update_step_size, 0,
                                     num_steps_same_size)
 
@@ -339,7 +340,14 @@ def _solve(ode_fn, initial_time, initial_state, solution_times, jacobian_fn,
   )
 
 
-@partial(jax.jit, static_argnums=(0, 4))
+@partial(jax.jit, static_argnums=(0, ))
+def get_jac(ode_fn, t, state_vec):
+  jac_rev = jax.jacrev(
+      ode_fn, (1, ))  # rev mode jacobian w.r.t to 2nd arguement(state_vec)
+  jac = jac_rev(t, state_vec)
+  return jac[0]
+
+
 def bdf_solve(ode_fn,
               initial_time,
               initial_state,
@@ -356,6 +364,9 @@ def bdf_solve(ode_fn,
               newton_step_size_factor=0.5,
               safety_factor=0.9,
               bdf_coefficients=[0., 0.1850, -1. / 9., -0.0823, -0.0415, 0.]):
+
+  if jacobian_fn is None:
+    jacobian_fn = partial(get_jac, ode_fn)
 
   results = _solve(ode_fn, initial_time, initial_state, solution_times,
                    jacobian_fn, atol, rtol, min_step_size_factor,

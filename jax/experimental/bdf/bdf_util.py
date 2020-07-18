@@ -251,8 +251,8 @@ def update_backward_differences(backward_differences, next_backward_difference,
   return new_backward_differences
 
 
-def get_ode_fn_vec(ode_fn, initial_time, initial_state):
-  initial_state_vec = initial_state.flatten()  #pylint: disable=unused-variable
+def get_ode_fn_vec(ode_fn, initial_time, initial_state): #pylint: disable=unused-variable
+  initial_state_vec = initial_state.flatten()  #noqa: F841 #pylint: disable=unused-variable 
 
   def ode_fn_vec(initial_time, initial_state_vec):
     return ode_fn(initial_time, initial_state_vec)
