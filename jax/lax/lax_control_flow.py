@@ -22,7 +22,7 @@ import functools
 import inspect
 import itertools
 import operator
-from typing import Callable, Sequence
+from typing import Callable, Sequence, TypeVar
 
 import numpy as np
 
@@ -54,6 +54,9 @@ xops = xla_client.ops
 _map = safe_map
 zip = safe_zip
 _reduce = functools.reduce
+
+T = TypeVar('T')
+
 
 @cache()
 def _initial_style_untyped_jaxpr(fun: Callable, in_tree, in_avals):
@@ -211,7 +214,9 @@ def fori_loop(lower, upper, body_fun, init_val):
   return result
 
 
-def while_loop(cond_fun, body_fun, init_val):
+def while_loop(cond_fun: Callable[[T], bool],
+               body_fun: Callable[[T], T],
+               init_val: T) -> T:
   """Call ``body_fun`` repeatedly in a loop while ``cond_fun`` is True.
 
   The type signature in brief is
