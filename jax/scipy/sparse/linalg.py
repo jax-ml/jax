@@ -108,27 +108,31 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   def body_fun(value):
     x, r, rhat, alpha, omega, rho, p, q, k = value
-    rho_ = _vdot_tree(jnp.conj(rhat), r)
+    # rho_ = _vdot_tree(_conj(rhat), r)
+    rho_ = _vdot_tree(rhat, r)
     beta = rho_ / rho * alpha / omega
     p_ = _add(r, _mul(beta, _sub(p, _mul(omega, q))))
     phat = M(p_)
-    q_ = A(p_)
-    alpha_ = rho_ / _vdot_tree(jnp.conj(rhat), q_)
+    q_ = A(phat)
+    # alpha_ = rho_ / _vdot_tree(_conj(rhat), q_)
+    alpha_ = rho_ / _vdot_tree(rhat, q_)
     s = _sub(r, _mul(alpha_, q_))
-    # TODO(sunilkpai): stop early?
-    #  It requires accessing cond_fun like this
+    # TODO(?): stop early
+    #  It requires accessing cond_fun like this, but it's
+    #  not possible with jit...
     #  if cond_fun((x, s, r0, alpha_, omega, rho_, p_, q_, k)):
     #    x_ = _add(x, _mul(alpha_, phat))
     #    return x_, s, rhat, alpha_, omega, rho_, p_, q, k
     shat = M(s)
     t = A(shat)
-    omega_ = _vdot_tree(jnp.conj(s), t) / _vdot_tree_real(t, t)
+    # omega_ = _vdot_tree(_conj(s), t) / _vdot_tree_real(t, t)
+    omega_ = _vdot_tree(s, t) / _vdot_tree_real(t, t)
     x_ = _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat)))
     r_ = _sub(s, _mul(omega_, t))
-    return x_, r_, rhat, alpha_, omega_, rho_, p_, q, k + 1
+    return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k + 1
 
   r0 = _sub(b, A(x0))
-  rho0 = alpha0 = omega0 = 1.0
+  rho0 = alpha0 = omega0 = _vdot_tree(r0, r0)  # / _vdot_tree(r0, r0)
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)

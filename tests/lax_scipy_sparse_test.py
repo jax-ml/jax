@@ -50,14 +50,38 @@ def lax_cg(A, b, M=None, atol=0.0, **kwargs):
   return x
 
 
+def lax_bicgstab(A, b, M=None, rtol=1e-5, atol=0.0, **kwargs):
+  A = partial(matmul_high_precision, A)
+  if M is not None:
+    M = partial(matmul_high_precision, M)
+  x, _ = jax.scipy.sparse.linalg.bicgstab(A, b, atol=atol, tol=rtol, M=M, **kwargs)
+  return x
+
+
 def scipy_cg(A, b, atol=0.0, **kwargs):
   x, _ = scipy.sparse.linalg.cg(A, b, atol=atol, **kwargs)
+  return x
+
+
+def scipy_bicgstab(A, b, atol=0.0, **kwargs):
+  x, _ = scipy.sparse.linalg.bicgstab(A, b, atol=atol, **kwargs)
   return x
 
 
 def rand_sym_pos_def(rng, shape, dtype):
   matrix = np.eye(N=shape[0], dtype=dtype) + rng(shape, dtype)
   return matrix @ matrix.T.conj()
+
+
+def poisson(shape, dtype):
+  n = shape[0]
+  data = np.ones((3, n), dtype=dtype)
+  data[0, :] = 2
+  data[1, :] = -1
+  data[2, :] = -1
+  a = scipy.sparse.spdiags(data, [0, -1, 1], n, n, format='csr')
+  a.sort_indices()
+  return a.A
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -109,6 +133,52 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         args_maker,
         tol=2e-2)
 
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+          "_shape={}_preconditioner={}".format(
+              jtu.format_shape_dtype_string(shape, dtype),
+              preconditioner),
+          "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
+      for shape in [(4, 4), (7, 7), (32, 32)]
+      for dtype in float_types + complex_types
+      for preconditioner in [None, 'identity', 'exact']))
+  def test_bicgstab_against_scipy(self, shape, dtype, preconditioner):
+
+    rng = jtu.rand_default(self.rng())
+    A = poisson(shape, dtype)  # use scipy's test to check bicgstab instead of random matrix
+    # A = rand_sym_pos_def(rng, shape, dtype)
+    b = rng(shape[:1], dtype)
+
+    if preconditioner == 'identity':
+      M = np.eye(shape[0], dtype=dtype)
+    elif preconditioner == 'exact':
+      M = np.linalg.inv(A)
+    else:
+      M = None
+
+    def args_maker():
+      return A, b
+
+    self._CheckAgainstNumpy(
+        partial(scipy_bicgstab, M=M, maxiter=1),
+        partial(lax_bicgstab, M=M, maxiter=1),
+        args_maker,
+        tol=1e-3)
+
+    self._CheckAgainstNumpy(
+        partial(scipy_bicgstab, M=M, maxiter=3),
+        partial(lax_bicgstab, M=M, maxiter=3),
+        args_maker,
+        tol=3e-3)
+
+    self._CheckAgainstNumpy(
+        np.linalg.solve,
+        partial(lax_bicgstab, M=M, atol=1e-6),
+        args_maker,
+        tol=2e-2)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
@@ -116,7 +186,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for shape in [(2, 2)]
       for dtype in float_types + complex_types))
   def test_cg_as_solve(self, shape, dtype):
-
     rng = jtu.rand_default(self.rng())
     a = rng(shape, dtype)
     b = rng(shape[:1], dtype)
@@ -133,6 +202,29 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     jtu.check_grads(
         lambda x, y: lax_cg(posify(x), y),
         (a, b), order=2, rtol=1e-2)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+          "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(2, 2)]
+      for dtype in float_types + complex_types))
+  def test_bicgstab_as_solve(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    a = poisson(shape, dtype)  # TODO(sunilkpai): random doesn't work (bicg numerics), so using poisson instead...
+    # a = rng(shape, dtype)
+    b = rng(shape[:1], dtype)
+
+    expected = np.linalg.solve(a, b)
+    actual = lax_bicgstab(a, b)
+    self.assertAllClose(expected, actual)
+
+    actual = jit(lax_bicgstab)(a, b)
+    self.assertAllClose(expected, actual)
+
+    jtu.check_grads(
+      lambda x, y: lax_bicgstab(a, y),
+      (a, b), order=2, rtol=3e-2)  # needed to loosen the tolerance here as well for complex128...
 
   def test_cg_ndarray(self):
     A = lambda x: 2 * x
@@ -178,6 +270,42 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
     self.assertAllClose(expected, actual.value)
 
+  def test_bicgstab_pytree(self):
+    A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}
+    b = {"a": 1.0, "b": -4.0}
+    expected = {"a": 4.0, "b": -6.0}
+    actual, _ = jax.scipy.sparse.linalg.bicgstab(A, b)
+    self.assertEqual(expected.keys(), actual.keys())
+    self.assertAlmostEqual(expected["a"], actual["a"], places=6)
+    self.assertAlmostEqual(expected["b"], actual["b"], places=6)
+
+  def test_bicgstab_errors(self):
+    A = lambda x: x
+    b = jnp.zeros((2,))
+    with self.assertRaisesRegex(
+        ValueError, "x0 and b must have matching tree structure"):
+      jax.scipy.sparse.linalg.bicgstab(A, {'x': b}, {'y': b})
+    with self.assertRaisesRegex(
+        ValueError, "x0 and b must have matching shape"):
+      jax.scipy.sparse.linalg.bicgstab(A, b, b[:, np.newaxis])
+
+  def test_bicgstab_without_pytree_equality(self):
+
+    @register_pytree_node_class
+    class MinimalPytree:
+      def __init__(self, value):
+        self.value = value
+      def tree_flatten(self):
+        return [self.value], None
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+    A = lambda x: MinimalPytree(2 * x.value)
+    b = MinimalPytree(jnp.arange(5.0))
+    expected = b.value / 2
+    actual, _ = jax.scipy.sparse.linalg.bicgstab(A, b)
+    self.assertAllClose(expected, actual.value)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
