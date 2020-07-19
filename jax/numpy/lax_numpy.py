@@ -3711,8 +3711,10 @@ def _index_to_gather(x_shape, idx):
                   or type(core.get_aval(elt)) is ConcreteArray
                   for elt in (i.start, i.stop, i.step)):
         msg = ("Array slice indices must have static start/stop/step to be used "
-               "with Numpy indexing syntax. Try lax.dynamic_slice/"
-               "dynamic_update_slice instead.")
+               "with NumPy indexing syntax. To index a statically sized "
+               "array at a dynamic position, try lax.dynamic_slice/"
+               "dynamic_update_slice (JAX does not support dynamically sized "
+               "arrays).")
         raise IndexError(msg)
       start, limit, stride, needs_rev = _static_idx(i, x_shape[x_axis])
       if needs_rev:

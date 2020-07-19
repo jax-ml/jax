@@ -750,9 +750,12 @@ def dynamic_slice(operand: Array, start_indices: Sequence[Array],
 
   Args:
     operand: an array to slice.
-    start_indices: a list of scalar indices, one per dimension.
+    start_indices: a list of scalar indices, one per dimension. These values
+      may be dynamic.
     slice_sizes: the size of the slice. Must be a sequence of non-negative
-      integers with length equal to `ndim(operand)`.
+      integers with length equal to `ndim(operand)`. Inside a JIT compiled
+      function, only static values are supported (all JAX arrays inside JIT
+      must have statically known size).
 
   Returns:
     An array containing the slice.
