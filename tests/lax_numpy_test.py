@@ -3835,15 +3835,15 @@ class NumpyGradTests(jtu.JaxTestCase):
 
     check_grads(f, (1.,), order=1)
 
-  def testSortManually(self): 
-    ans = jnp.sort_complex(np.array([16+0j, 15, 23+1j, 42, 8, 4])) # jnp.sort(np.array([16, 15, 23, 42, 8, 4])) 
+  def testSortComplexManually(self):
+    ans = jnp.sort_complex(np.array([16+0j, 15, 23+1j, 42, 8, 4])) # jnp.sort(np.array([16, 15, 23, 42, 8, 4]))
     expected = np.array([ 4.+0.j,  8.+0.j, 15.+0.j, 16.+0.j, 23.+1.j, 42.+0.j])
-    self.assertAllClose(expected, ans) 
-    
-    a = np.array([[1, 4], [3, 1]]) 
-    ans = jnp.sort(a, axis=None) 
-    expected = np.array([1.+0.j, 1.+0.j, 3.+0.j, 4.+0.j]) 
-    self.assertAllClose(expected, ans) 
+    self.assertAllClose(expected, ans)
+
+    a = np.array([[1, 4], [3, 1]])
+    ans = jnp.sort(a, axis=None)
+    expected = np.array([1.+0.j, 1.+0.j, 3.+0.j, 4.+0.j])
+    self.assertAllClose(expected, ans)
 
 if __name__ == "__main__":
   absltest.main()

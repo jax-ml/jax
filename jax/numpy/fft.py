@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# pydocstyle: noqa
+
 import numpy as np
 
 from .. import lax
