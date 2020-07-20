@@ -2201,7 +2201,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
            [None, None, None, None, None, 4.0, 3.0]]
 
     rng = np.random.RandomState(0)
-    b = list(rng.randn(7, dtype='float32'))
+    b = list(rng.randn(7).astype('float32'))
 
     # Non-batched
     jtu.check_grads(custom_unrolled_lower_tri_solve, (mat, b), order=2,
@@ -2210,7 +2210,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # Batch one element of b (which, because of unrolling, should only affect
     # the first block of outputs)
     b_bat = list(b)
-    b_bat[3] = rng.randn(3)
+    b_bat[3] = rng.randn(3).astype('float32')
     jtu.check_grads(
         api.vmap(
             custom_unrolled_lower_tri_solve,
@@ -2220,7 +2220,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         rtol={jnp.float32: 1e-2})
 
     # Batch one element of mat (again only affecting first block)
-    mat[2][1] = rng.randn(3)
+    mat[2][1] = rng.randn(3).astype('float32')
     mat_axis_tree = [
         [0 if i == 2 and j == 1 else None for j in range(7)] for i in range(7)
     ]
