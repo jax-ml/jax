@@ -717,7 +717,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # depends on FLAGS for the device under test.
     # TODO(b/31565929): enable when fixed.
     if jtu.device_under_test() == "tpu" and op is not lax.add:
-      if len(shape) != 4:
+      if len(shape) != 4 or dims != (1, 1, 2, 1):
         raise SkipTest("Only R4 SelectAndScatter implemented on TPU")
 
       # TODO(b/73062247): need variadic reduce-window for better precision.
