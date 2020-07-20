@@ -3754,7 +3754,7 @@ def _index_to_gather(x_shape, idx):
                "with NumPy indexing syntax. To index a statically sized "
                "array at a dynamic position, try lax.dynamic_slice/"
                "dynamic_update_slice (JAX does not support dynamically sized "
-               "arrays).")
+               "arrays within JIT compiled functions).")
         raise IndexError(msg)
       start, limit, stride, needs_rev = _static_idx(i, x_shape[x_axis])
       if needs_rev:
