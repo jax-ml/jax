@@ -1,41 +1,69 @@
+from typing import Any, Callable, Mapping, Optional, Tuple
+
 from .bfgs_minimize import minimize_bfgs
 from typing import NamedTuple
 import jax.numpy as jnp
 
 
 class OptimizeResults(NamedTuple):
-  x: jnp.ndarray  # Final variable
-  success: bool  # Wheter optimization converged (and there were no other failures, e.g. line search failures)
-  status: int  # Solver specific return code. 0 means nominal
-  message: str  # Soler specific message
-  fun: jnp.ndarray  # Final function value
-  jac: jnp.ndarray  # Final jacobian array
-  hess_inv: jnp.ndarray  # Final inverse Hessian estimate
-  nfev: int  # Number of funcation calls used
-  njev: int  # Number of gradient evaluations
-  nit: int  # Number of iterations of the optimization algorithm
+  """Object holding optimization results.
 
-
-def minimize(fun, x0, *, args=(), method=None, tol=None, options=None):
+  Parameters:
+    x: final solution.
+    success: True if optimization succeeded.
+    status: solver specific return code. 0 means nominal.
+    message: solver specific message.
+    fun: final function value.
+    jac: final jacobian array.
+    hess_inv: final inverse Hessian estimate.
+    nfev: number of funcation calls used.
+    njev: number of gradient evaluations.
+    nit: number of iterations of the optimization algorithm.
   """
-  Interface to scalar function minimisation.
+  x: jnp.ndarray
+  success: bool
+  status: int
+  message: str
+  fun: jnp.ndarray
+  jac: jnp.ndarray
+  hess_inv: jnp.ndarray
+  nfev: int
+  njev: int
+  nit: int
 
-  This implementation is jittable so long as `fun` is.
+
+def minimize(
+    fun: Callable,
+    x0: jnp.ndarray,
+    args: Tuple = (),
+    method: Optional[str] = None,
+    *,
+    tol: Optional[float] = None,
+    options: Optional[Mapping[str, Any]] = None,
+) -> OptimizeResults:
+  """Minimization of scalar function of one or more variables.
+
   Args:
-      fun: jax function
-      x0: initial guess, currently only single flat arrays supported.
-      args: tuple, optional
-          Extra arguments to pass to func as func(x,*args)
-      method: Available methods: ['BFGS']
-      tol: Tolerance for termination. For detailed control, use solver-specific options.
-      options: A dictionary of solver options. All methods accept the following generic options:
-          maxiter : int
-              Maximum number of iterations to perform. Depending on the
-              method each iteration may use several function evaluations.
+    fun: the objective function to be minimized, ``fun(x, *args) -> float``,
+      where ``x`` is an 1-D array with shape ``(n,)`` and ``args`` is a tuple
+      of the fixed parameters needed to completely specify the function.
+    x0: initial guess. Array of real elements of size ``(n,)``, where 'n' is
+      the number of independent variables.
+    args: extra arguments passed to the objective function.
+    method: solver type. Currently only "BFGS" is supported.
+    tol: tolerance for termination. For detailed control, use solver-specific
+      options.
+    options: a dictionary of solver options. All methods accept the following
+      generic options:
+        maxiter : int
+            Maximum number of iterations to perform. Depending on the
+            method each iteration may use several function evaluations.
 
-  Returns: OptimizeResults
-
+  Returns: OptimizeResults object.
   """
+  if options is None:
+    options = {}
+
   if method.lower() == 'bfgs':
     results = minimize_bfgs(fun, x0, args=args, **options)
     message = ("status meaning: 0=converged, 1=max BFGS iters reached, "
