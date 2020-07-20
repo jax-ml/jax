@@ -287,13 +287,16 @@ def reduce(operand, init_value, computation, dimensions):  # pylint: disable=red
   return reducer(operand, tuple(dimensions)).astype(np.asarray(operand).dtype)
 
 def reduce_window(operand, init_value, computation, window_dimensions,
-                  window_strides, padding):
+                  window_strides, padding, base_dilation):
   op, dims, strides = operand, window_dimensions, window_strides
   if isinstance(padding, str):
     pads = padtype_to_pads(op.shape, dims, strides, padding)
   else:
     pads = padding
-  view = _conv_view(op.reshape((1, 1) + op.shape), (1, 1) + dims, strides, pads,
+  op = op.reshape((1, 1) + op.shape)
+  if base_dilation:
+    op = _dilate(op, base_dilation, init_value)
+  view = _conv_view(op, (1, 1) + dims, strides, pads,
                     pad_value=init_value)[0]
   view = view.reshape(view.shape[1:1+len(dims)] + (-1,))
   reducer = _make_reducer(computation, init_value)
@@ -364,13 +367,13 @@ def _pad(arr, pads, pad_value):
                  for (lo, hi), dim in zip(pads, np.shape(arr)))
   return out[slices]
 
-def _dilate(operand, factors):
+def _dilate(operand, factors, fill_value=0):
   # this logic is like lax.pad, but with two leading dimensions, no edge
   # padding, and factors are at least 1 (interior padding is at least 0)
   outspace = np.add(operand.shape[2:],
                      np.multiply(np.subtract(factors, 1),
                                   np.subtract(operand.shape[2:], 1)))
-  out = np.zeros(operand.shape[:2] + tuple(outspace), operand.dtype)
+  out = np.full(operand.shape[:2] + tuple(outspace), fill_value, operand.dtype)
   lhs_slices = tuple(_slice(None, None, step) for step in factors)
   out[(_slice(None),) * 2 + lhs_slices] = operand
   return out

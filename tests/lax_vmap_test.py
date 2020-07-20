@@ -500,37 +500,45 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_dtype={}_padding={}"
-       .format(op.__name__, np.dtype(dtype).name, padding),
-       "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,
-       "rng_factory": rng_factory}
+      {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
+                         "_basedilation={}_windowdilation={}")
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype),
+               dims, strides, padding, base_dilation, window_dilation),
+       "op": op, "init_val": init_val, "dtype": dtype, "shape": shape,
+       "dims": dims, "strides": strides, "padding": padding,
+       "base_dilation": base_dilation, "window_dilation": window_dilation}
       for init_val, op, dtypes in [
           (0, lax.add, [np.float32]),
           (-np.inf, lax.max, [np.float32]),
           (np.inf, lax.min, [np.float32]),
       ]
-      for dtype in dtypes
-      for padding in ["VALID", "SAME"]
-      for rng_factory in [jtu.rand_small]))
-  def testReduceWindow(self, op, init_val, dtype, padding, rng_factory):
-    rng = rng_factory(self.rng())
-    init_val = np.asarray(init_val, dtype=dtype)
-
-    all_configs = itertools.chain(
-        itertools.product(
+      for shape, dims, strides, padding, base_dilation, window_dilation in (
+        itertools.chain(
+          itertools.product(
             [(4, 6)],
             [(2, 1), (1, 2)],
-            [(1, 1), (2, 1), (1, 2)]),
-        itertools.product(
+            [(1, 1), (2, 1), (1, 2)],
+            ["VALID", "SAME", [(0, 3), (1, 2)]],
+            [(1, 1), (2, 3)],
+            [(1, 1), (1, 2)]),
+          itertools.product(
             [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
-            [(1, 2, 2, 1), (1, 1, 1, 1)]))
+            [(1, 2, 2, 1), (1, 1, 1, 1)],
+            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
+            [(1, 1, 1, 1), (2, 1, 3, 2)],
+            [(1, 1, 1, 1), (1, 2, 2, 1)])))
+      for dtype in dtypes))
+  def testReduceWindow(self, op, init_val, dtype, shape, dims, strides, padding,
+                       base_dilation, window_dilation):
+    rng = jtu.rand_small(self.rng())
+    init_val = np.asarray(init_val, dtype=dtype)
 
     def fun(operand):
-      return lax.reduce_window(operand, init_val, op, dims, strides, padding)
+      return lax.reduce_window(operand, init_val, op, dims, strides, padding,
+                               base_dilation, window_dilation)
 
-    for shape, dims, strides in all_configs:
-      for bdims in all_bdims(shape):
-        self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
+    for bdims in all_bdims(shape):
+      self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}_bdims={}"
@@ -578,8 +586,9 @@ class LaxVmapTest(jtu.JaxTestCase):
 
     def fun(operand, tangents):
       pads = lax.padtype_to_pads(operand.shape, dims, strides, padding)
+      ones = (1,) * len(operand.shape)
       return lax._select_and_gather_add(operand, tangents, lax.ge_p, dims,
-                                        strides, pads)
+                                        strides, pads, ones, ones)
 
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape, shape):

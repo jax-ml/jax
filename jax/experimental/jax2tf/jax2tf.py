@@ -781,11 +781,14 @@ tf_impl[lax.cumprod_p] = tf.math.cumprod
 
 
 def _reduce_window_shape(jax_f, operand, window_dimensions,
-                         window_strides, padding, input_shape=None):
+                         window_strides, padding, base_dilation,
+                         window_dilation, input_shape=None):
   """Shape inference function for reduce_window_{sum,min,max}."""
   params = dict(window_dimensions=window_dimensions,
                 window_strides=window_strides,
                 padding=padding,
+                base_dilation=base_dilation,
+                window_dilation=window_dilation,
                 input_shape=input_shape)
   try:
     out, = _infer_shape_jax(jax_f, operand, **params)
@@ -802,17 +805,20 @@ def _get_shape_from_tensor_or_array(x):
 
 
 def _reduce_window(jax_f, reducer, init_val, operand, window_dimensions,
-                   window_strides, padding, input_shape=None):
+                   window_strides, padding, base_dilation, window_dilation,
+                   input_shape=None):
   """TensorFlow implementation of reduce_window_{sum,min,max}."""
   del input_shape
   # TODO(tomhennigan): tf2xla should have a shape inference function.
   out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
-                                   window_strides, padding)
+                                   window_strides, padding, base_dilation,
+                                   window_dilation)
   a = tf.constant(0, operand.dtype)
   reducer_fn = reducer.get_concrete_function(a, a)
   out = tfxla.reduce_window(operand, tf.constant(init_val, operand.dtype),
                             reducer_fn, window_dimensions,
-                            window_strides, padding=padding)
+                            window_strides, base_dilations=base_dilation,
+                            window_dilations=window_dilation, padding=padding)
   out.set_shape(out_shape)
   return out
 # pylint: disable=protected-access

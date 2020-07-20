@@ -671,63 +671,74 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       check_grads(reduce, (operand,), 2, ["fwd", "rev"], tol, tol, eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_dtype={}_padding={}"
-       .format(op.__name__, np.dtype(dtype).name, padding),
-       "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,
+      {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
+                         "_basedilation={}_windowdilation={}")
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), dims,
+               strides, padding, base_dilation, window_dilation),
+       "op": op, "init_val": init_val, "dtype": dtype, "shape": shape,
+       "dims": dims, "strides": strides, "padding": padding,
+       "base_dilation": base_dilation, "window_dilation": window_dilation,
        "rng_factory": rng_factory}
       for init_val, op, dtypes, rng_factory in [
           (0, lax.add, grad_float_dtypes, jtu.rand_small),
           (-np.inf, lax.max, grad_float_dtypes, jtu.rand_unique_int),
           (np.inf, lax.min, grad_float_dtypes, jtu.rand_unique_int),
       ]
-      for dtype in dtypes
-      for padding in ["VALID", "SAME"]))
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+      for shape, dims, strides, padding, base_dilation, window_dilation in (
+        itertools.chain(
+          itertools.product(
+            [(4, 6)],
+            [(2, 1), (1, 2)],
+            [(1, 1), (2, 1), (1, 2)],
+            # TODO(b/161704903): explicit paddings segfault on CPU.
+            ["VALID", "SAME"], #, [(0, 3), (1, 2)]],
+            [(1, 1)] + ([(2, 3)] if op is lax.add else []),
+            [(1, 1)] + ([(1, 2)] if op is lax.add else [])),
+          itertools.product(
+            [(3, 2, 4, 6)],
+            [(1, 1, 2, 1), (2, 1, 2, 1)],
+            [(1, 2, 2, 1), (1, 1, 1, 1)],
+            # TODO(b/161704903): explicit paddings segfault on CPU.
+            ["VALID", "SAME"], # [(0, 1), (1, 0), (2, 3), (0, 2)]],
+            [(1, 1, 1, 1)] + ([(2, 1, 3, 2)] if op is lax.add else []),
+            [(1, 1, 1, 1)] + ([(1, 2, 2, 1)] if op is lax.add else []))))
+      for dtype in dtypes))
   @jtu.ignore_warning(category=UserWarning,
                       message="Using reduced precision for gradient.*")
-  def testReduceWindowGrad(self, op, init_val, dtype, padding, rng_factory):
+  def testReduceWindowGrad(
+      self, op, init_val, dtype, shape, dims, strides,
+      padding, base_dilation, window_dilation, rng_factory):
     rng = rng_factory(self.rng())
     init_val = np.asarray(init_val, dtype=dtype)
 
+    gradient_order = 3
     # We need this conditional and the corresponding loop logic to be in the
     # test method, rather than at the parameterized test level, because it
     # depends on FLAGS for the device under test.
     # TODO(b/31565929): enable when fixed.
     if jtu.device_under_test() == "tpu" and op is not lax.add:
-      all_configs = [((6, 5, 4, 3), (2, 2, 1, 1), (1, 2, 1, 1))]
+      if len(shape) != 4 or dims != (1, 1, 2, 1):
+        raise SkipTest("Only R4 SelectAndScatter implemented on TPU")
 
       # TODO(b/73062247): need variadic reduce-window for better precision.
       gradient_order = 1
-    else:
-      all_configs = itertools.chain(
-          itertools.product(
-              [(4, 6)],  # shapes
-              [(2, 1), (1, 2)],  # window_dimensions
-              [(1, 1), (2, 1), (1, 2)]  # strides
-          ),
-          itertools.product(
-              [(3, 2, 4, 6)],  # shapes
-              [(1, 1, 2, 1), (2, 1, 2, 1)],  # window_dimensions
-              [(1, 2, 2, 1), (1, 1, 1, 1)]),  # strides
-      )
-      gradient_order = 3
 
     def fun(operand):
-      return lax.reduce_window(operand, init_val, op, dims, strides, padding)
+      return lax.reduce_window(operand, init_val, op, dims, strides, padding,
+                               base_dilation, window_dilation)
 
-    for shape, dims, strides in all_configs:
-      operand = rng(shape, dtype)
-      if op is lax.add:
-        eps = 1.
-        tol = None
-      else:
-        # this test can fail if there are duplicates in operand
-        self.assertEqual(np.unique(operand).size, operand.size,
-                         msg="test requires operand elements to be unique.")
-        eps = 1e-2
-        tol = {np.float16: 1e-1, np.float32: 6e-2, np.float64: 6e-2}
-      check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], tol, tol,
-                  eps)
+    operand = rng(shape, dtype)
+    if op is lax.add:
+      eps = 1.
+      tol = None
+    else:
+      # this test can fail if there are duplicates in operand
+      self.assertEqual(np.unique(operand).size, operand.size,
+                       msg="test requires operand elements to be unique.")
+      eps = 1e-2
+      tol = {np.float16: 1e-1, np.float32: 6e-2, np.float64: 6e-2}
+    check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], tol, tol,
+                eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}"
