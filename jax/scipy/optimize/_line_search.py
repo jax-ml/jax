@@ -339,7 +339,7 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
             star_to_zoom1,
             state._asdict(),
             zoom1._asdict(),
-            ['a_star', 'phi_star', 'dphi_star', 'g_star'],
+            keys=['a_star', 'phi_star', 'dphi_star', 'g_star'],
         ),
     )
     state = state._replace(
@@ -351,8 +351,8 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
                 a_star=a_i,
                 phi_star=phi_i,
                 dphi_star=dphi_i,
-                g_star=g_i),
-            ['a_star', 'phi_star', 'dphi_star', 'g_star'],
+                g_star=g_i,
+            ),
         ),
     )
     state = state._replace(
@@ -362,7 +362,7 @@ def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
             star_to_zoom2,
             state._asdict(),
             zoom2._asdict(),
-            ['a_star', 'phi_star', 'dphi_star', 'g_star'],
+            keys=['a_star', 'phi_star', 'dphi_star', 'g_star'],
         ),
     )
     state = state._replace(i=state.i + 1, a_i1=a_i, phi_i1=phi_i, dphi_i1=dphi_i)
