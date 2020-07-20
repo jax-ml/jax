@@ -1835,7 +1835,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     elif loop == "fori_inside_scan":
       func = lambda x: lax.scan(lambda c, x: (lax.fori_loop(x, x + 2., lambda i, c1: c1 * c, x),
                                               None),
-                                x, np.ones(2))[0]
+                                x, np.ones(2, dtype='float32'))[0]
     else:
       assert False
 
