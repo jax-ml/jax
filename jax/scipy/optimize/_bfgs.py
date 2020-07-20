@@ -47,6 +47,7 @@ class _BFGSResults(NamedTuple):
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
+_einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
 
 
 def minimize_bfgs(
@@ -143,7 +144,7 @@ def minimize_bfgs(
 
     sy_k = s_k[:, jnp.newaxis] * y_k[jnp.newaxis, :]
     w = jnp.eye(d) - rho_k * sy_k
-    H_kp1 = (jnp.einsum('ij,jk,lk', w, state.H_k, w)
+    H_kp1 = (_einsum('ij,jk,lk', w, state.H_k, w)
              + rho_k * s_k[:, jnp.newaxis] * s_k[jnp.newaxis, :])
     H_kp1 = jnp.where(jnp.isfinite(rho_k), H_kp1, state.H_k)
     converged = jnp.linalg.norm(g_kp1, ord=norm) < gtol
