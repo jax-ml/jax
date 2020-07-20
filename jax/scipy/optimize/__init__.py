@@ -1,1 +1,1 @@
-from .minimize import minimize  # noqa: F401
+from ._minimize import minimize  # noqa: F401

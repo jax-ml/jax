@@ -1,11 +1,11 @@
 """The Broyden-Fletcher-Goldfarb-Shanno minimization algorithm."""
 from functools import partial
+from typing import NamedTuple, Optional
 
 import jax
 import jax.numpy as jnp
 from jax import lax
-from .line_search import line_search
-from typing import NamedTuple, Optional
+from ._line_search import line_search
 
 
 class _BFGSResults(NamedTuple):

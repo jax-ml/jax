@@ -1,18 +1,15 @@
 import numpy as np
 from absl.testing import absltest, parameterized
+
+from jax import grad
 from jax.config import config
-from jax import test_util as jtu, numpy as jnp, grad
-from jax.scipy.optimize.line_search import line_search
+import jax.numpy as jnp
+import jax.test_util as jtu
+from jax.scipy.optimize._line_search import line_search
 from scipy.optimize.linesearch import line_search_wolfe2
 
+
 config.parse_flags_with_absl()
-
-
-def f_and_fprime(f, fprime):
-  def func(x):
-    return f(x), fprime(x)
-
-  return func
 
 
 class TestLineSearch(jtu.JaxTestCase):
