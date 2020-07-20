@@ -1,6 +1,6 @@
 from typing import Any, Callable, Mapping, Optional, Tuple
 
-from .bfgs_minimize import minimize_bfgs
+from ._bfgs import minimize_bfgs
 from typing import NamedTuple
 import jax.numpy as jnp
 
