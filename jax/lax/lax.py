@@ -4697,9 +4697,12 @@ def _common_reduce_window_shape_rule(operand, window_dimensions,
                                    window_dilation)
 
 def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
-                              padding, base_dilation, window_dilation):
-  operand_shape = _dilate_shape(operand_shape, base_dilation)
-  window_dimensions = _dilate_shape(window_dimensions, window_dilation)
+                              padding, base_dilation=None,
+                              window_dilation=None):
+  if base_dilation is not None:
+    operand_shape = _dilate_shape(operand_shape, base_dilation)
+  if window_dilation is not None:
+    window_dimensions = _dilate_shape(window_dimensions, window_dilation)
   operand_padded = np.add(operand_shape, np.add(*zip(*padding)))
   t = np.floor_divide(
       np.subtract(operand_padded, window_dimensions), window_strides) + 1
