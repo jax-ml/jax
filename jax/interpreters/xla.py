@@ -648,7 +648,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   out_tuple = xops.Tuple(c, out_nodes)
   backend = xb.get_backend(backend)
-  if backend.platform == "tpu":
+  if backend.platform in ("gpu", "tpu"):
     donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   if any(donated_invars):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.

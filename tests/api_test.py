@@ -3229,16 +3229,17 @@ class BufferDonationTest(jtu.JaxTestCase):
           "Some donated buffers were not usable: f32[2]{0}, s32[2]{0}",
           str(w[-1].message))
 
-  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jit_donate_argnums_invalidates_input(self):
-    # We can't just use `lambda x: x` because JAX simplifies this away.
+    # We can't just use `lambda x: x` because JAX simplifies this away to an
+    # empty XLA computation.
     move = jit(lambda x: x + x - x, donate_argnums=0)
     x = jnp.ones([])
     y = move(x)
     self.assertDeleted(x)
     self.assertEqual(y, 1.)
 
-  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jit_donate_argnums_static_argnums(self):
     jit_fun = jit(lambda a, b, c, d: ((a + b + c), (a + b + d)),
                   static_argnums=(0, 1), donate_argnums=(2, 3))
@@ -3284,7 +3285,7 @@ class BufferDonationTest(jtu.JaxTestCase):
 
   # === pmap ===
 
-  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_pmap_donate_argnums_invalidates_input(self):
     move = api.pmap(lambda x: x + x - x, donate_argnums=0)
     n = jax.local_device_count()
