@@ -2201,7 +2201,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
            [None, None, None, None, None, 4.0, 3.0]]
 
     rng = np.random.RandomState(0)
-    b = list(rng.randn(7))
+    b = list(rng.randn(7, dtype='float32'))
 
     # Non-batched
     jtu.check_grads(custom_unrolled_lower_tri_solve, (mat, b), order=2,
