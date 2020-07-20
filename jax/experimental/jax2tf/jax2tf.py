@@ -23,6 +23,7 @@ from jax import ad_util
 from jax import api
 from jax import core
 from jax import custom_derivatives
+from jax import dtypes
 from jax import lax
 from jax import linear_util as lu
 from jax import numpy as jnp
@@ -367,7 +368,7 @@ for unexpected in [
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
   lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
-  lax.select_and_gather_add_p, lax.select_and_scatter_p,
+  lax.select_and_scatter_p,
 
   lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
@@ -808,6 +809,79 @@ _max_fn = tf.function(tf.math.maximum)
 
 tf_impl[lax.cumsum_p] = tf.math.cumsum
 tf_impl[lax.cumprod_p] = tf.math.cumprod
+
+def _select_and_gather_add(tangents: TfVal,
+                           operand: TfVal,
+                           select_prim: core.Primitive,
+                           window_dimensions: Sequence[int],
+                           window_strides: Sequence[int],
+                           base_dilation: Sequence[int],
+                           window_dilation: Sequence[int],
+                           padding: Sequence[Tuple[int, int]],
+                           max_bits=64):
+  dtype = to_jax_dtype(operand.dtype)
+  nbits = dtypes.finfo(dtype).bits
+
+  assert nbits <= max_bits
+  double_word_reduction = nbits * 2 <= max_bits
+
+  const = lambda dtype, x: tf.constant(np.array(x), dtype)
+
+  if double_word_reduction:
+    word_dtype = lax.lax._UINT_DTYPES[nbits]
+    double_word_dtype = lax.lax._UINT_DTYPES[nbits * 2]
+
+    # Packs two values into a tuple.
+    def pack(a, b):
+      a = _bitcast_convert_type(a, word_dtype)
+      b = _bitcast_convert_type(b, word_dtype)
+      a = tfxla.convert_element_type(a, double_word_dtype)
+      b = tfxla.convert_element_type(b, double_word_dtype)
+      a = tf.bitwise.left_shift(a, const(double_word_dtype, nbits))
+      return tf.bitwise.bitwise_or(a, b)
+
+    # Unpacks the first element of a tuple.
+    def fst(t):
+      st = _shift_right_logical(t, const(double_word_dtype, nbits))
+      return _bitcast_convert_type(tfxla.convert_element_type(st, word_dtype), dtype)
+
+    # Unpacks the second element of a tuple.
+    def snd(t):
+      return _bitcast_convert_type(
+        tfxla.convert_element_type(t, word_dtype), dtype
+      )
+
+  else:
+    raise NotImplementedError("TODO: precision reduction case is not implemented")
+
+  def reducer(x, y):
+    which = tf_impl[select_prim]
+    return tf_impl[lax.select_p](which(fst(x), fst(y)), x=x, y=y)
+
+  assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
+
+  init = -np.inf if select_prim is lax.ge_p else np.inf
+  jax_f = lax._reduce_window_max if select_prim is lax.ge_p else lax._reduce_window_min
+
+  a = tf.constant(0, dtype=double_word_dtype, shape=operand.shape)
+
+  out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
+                                   window_strides, padding, base_dilation,
+                                   window_dilation)
+
+  out = tfxla.reduce_window(pack(operand, tangents), pack(const(dtype, init),
+                            const(dtype, 0)),
+                            tf.function(reducer).get_concrete_function(a, a),
+                            window_dimensions, window_strides=window_strides,
+                            base_dilations=base_dilation,
+                            window_dilations=window_dilation,
+                            padding=padding)
+
+  out.set_shape(out_shape)
+
+  return snd(out)
+
+tf_impl[lax.select_and_gather_add_p] = _select_and_gather_add
 
 
 def _reduce_window_shape(jax_f, operand, window_dimensions,
