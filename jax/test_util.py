@@ -184,7 +184,8 @@ def inner_prod(xs, ys):
 def _safe_subtract(x, y, *, dtype):
   """Subtraction that with `inf - inf == 0` semantics."""
   with np.errstate(invalid='ignore'):
-    return np.where(np.equal(x, y), 0, np.subtract(x, y, dtype=dtype))
+    return np.where(np.equal(x, y), np.array(0, dtype),
+                    np.subtract(x, y, dtype=dtype))
 
 add = partial(tree_multimap, lambda x, y: np.add(x, y, dtype=_dtype(x)))
 sub = partial(tree_multimap, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
