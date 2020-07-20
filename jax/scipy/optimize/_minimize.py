@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Any, Callable, Mapping, Optional, Tuple
 
 from ._bfgs import minimize_bfgs
@@ -78,8 +79,10 @@ def minimize(
   if options is None:
     options = {}
 
+  fun_with_args = partial(fun, *args)
+
   if method.lower() == 'bfgs':
-    results = minimize_bfgs(fun, x0, args=args, **options)
+    results = minimize_bfgs(fun_with_args, x0, **options)
     message = ("status meaning: 0=converged, 1=max BFGS iters reached, "
                "3=zoom failed, 4=saddle point reached, "
                "5=max line search iters reached, -1=undefined")

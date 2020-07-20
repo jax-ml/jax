@@ -1,6 +1,6 @@
 """The Broyden-Fletcher-Goldfarb-Shanno minimization algorithm."""
 from functools import partial
-from typing import NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional
 
 import jax
 import jax.numpy as jnp
@@ -51,13 +51,12 @@ _einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
 
 
 def minimize_bfgs(
-    func,
-    x0,
-    args=(),
-    maxiter=None,
+    fun: Callable,
+    x0: jnp.ndarray,
+    maxiter: Optional[int] = None,
     norm=jnp.inf,
-    gtol=1e-5,
-    line_search_maxiter=10,
+    gtol: float = 1e-5,
+    line_search_maxiter: int = 10,
 ) -> _BFGSResults:
   """Minimize a function using BFGS.
 
@@ -66,21 +65,17 @@ def minimize_bfgs(
     136-143.
 
   Args:
-    func: callable
-      Function of the form f(x) where x is a flat ndarray and returns a real
+    fun: function of the form f(x) where x is a flat ndarray and returns a real
       scalar. The function should be composed of operations with vjp defined.
-      If func is jittable then fmin_bfgs is jittable. If func is not jittable,
-      then _nojit should be set to True.
-    x0: ndarray
-      Initial variable.
-    args: tuple, optional
-      Extra arguments to pass to func as func(x,*args).
+    x0: initial guess.
     maxiter: maximum number of iterations.
     norm: order of norm for convergence check. Default inf.
     gtol: terminates minimization when |grad|_norm < g_tol.
     line_search_maxiter: maximum number of linesearch iterations.
-  """
 
+  Returns:
+    Optimization result.
+  """
   # Note: we utilise boolean arithmetic to avoid jax.cond calls which don't
   # work on accelerators. A side effect is that we perform more gradient
   # evaluations than scipy's BFGS
@@ -105,11 +100,7 @@ def minimize_bfgs(
   d = x0.shape[0]
 
   initial_H = jnp.eye(d)
-
-  func_with_args = partial(func, *args)
-  value_and_grad = jax.value_and_grad(func_with_args)
-
-  f_0, g_0 = value_and_grad(x0)
+  f_0, g_0 = jax.value_and_grad(fun)(x0)
   state = state._replace(
       f_k=f_0,
       g_k=g_0,
@@ -122,7 +113,7 @@ def minimize_bfgs(
   def body(state):
     p_k = -_dot(state.H_k, state.g_k)
     line_search_results = line_search(
-        func_with_args,
+        fun,
         state.x_k,
         p_k,
         old_fval=state.f_k,
