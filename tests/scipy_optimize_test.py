@@ -17,8 +17,10 @@ from jax import numpy as jnp
 from jax import test_util as jtu
 from jax import jit
 from jax.config import config
-from jax.scipy.optimize.bfgs_minimize import fmin_bfgs
-from scipy.optimize import minimize as smin
+import jax.scipy.optimize
+# from jax.scipy.optimize.bfgs_minimize import minimize_bfgs
+import scipy.optimize
+# from scipy.optimize import minimize as smin
 import numpy as onp
 
 config.parse_flags_with_absl()
@@ -71,19 +73,19 @@ class TestBFGS(jtu.JaxTestCase):
 
     func, x0 = func_and_init
 
-
     @jit
     def min_op(x0):
-      result = fmin_bfgs(func(jnp), x0,
-                         options=dict(ls_maxiter=100, maxiter=maxiter, gtol=1e-6))
-      return result
+      result = jax.scipy.optimize.minimize(
+          func(jnp),
+          x0,
+          method='BFGS',
+          options=dict(maxiter=maxiter, gtol=1e-6),
+      )
+      return result.x
 
     jax_res = min_op(x0)
-
-    scipy_res = smin(func(onp), x0, method='BFGS')
-
-    self.assertAllClose(scipy_res.x, jax_res.x_k, atol=2e-5, check_dtypes=False)
-
+    scipy_res = scipy.optimize.minimize(func(onp), x0, method='BFGS').x
+    self.assertAllClose(scipy_res, jax_res, atol=2e-5, check_dtypes=False)
 
 
 if __name__ == "__main__":

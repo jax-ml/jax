@@ -1,4 +1,4 @@
-from .bfgs_minimize import fmin_bfgs
+from .bfgs_minimize import minimize_bfgs
 from typing import NamedTuple
 import jax.numpy as jnp
 
@@ -37,11 +37,14 @@ def minimize(fun, x0, *, args=(), method=None, tol=None, options=None):
 
   """
   if method.lower() == 'bfgs':
-    results = fmin_bfgs(fun, x0, args=args, options=options)
+    results = minimize_bfgs(fun, x0, args=args, **options)
+    message = ("status meaning: 0=converged, 1=max BFGS iters reached, "
+               "3=zoom failed, 4=saddle point reached, "
+               "5=max line search iters reached, -1=undefined")
     return OptimizeResults(x=results.x_k,
                            success=(results.converged) & (~results.failed),
                            status=results.status,
-                           message="status meaning: 0=converged, 1=max BFGS iters reached, 3=zoom failed, 4=saddle point reached, 5=max line search iters reached, -1=undefined",
+                           message=message,
                            fun=results.f_k,
                            jac=results.g_k,
                            hess_inv=results.H_k,
@@ -49,4 +52,4 @@ def minimize(fun, x0, *, args=(), method=None, tol=None, options=None):
                            njev=results.ngev,
                            nit=results.k)
 
-  raise ValueError("Method {} not recognised".format(method))
+  raise ValueError("Method {} not recognized".format(method))
