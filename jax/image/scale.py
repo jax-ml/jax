@@ -165,10 +165,11 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
            f' {shape} vs {image.shape}')
     raise ValueError(msg)
   if isinstance(method, str):
-    method_id = ResizeMethod.from_string(method)
-  if method_id == ResizeMethod.NEAREST:
+    method = ResizeMethod.from_string(method)
+  if method == ResizeMethod.NEAREST:
     return _resize_nearest(image, shape)
-  kernel = _kernels[method_id]
+  assert isinstance(method, ResizeMethod)
+  kernel = _kernels[method]
   scale = [float(o) / i for o, i in zip(shape, image.shape)]
   if not jnp.issubdtype(image.dtype, jnp.inexact):
     image = lax.convert_element_type(image, jnp.result_type(image, jnp.float32))
