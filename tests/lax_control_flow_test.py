@@ -1203,6 +1203,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                   x)
 
     def f_ref(x):
+      x = np.asarray(x, dtype='float32')
       if x < 2:
         return np.array([1., 2.]) * x
       else:
@@ -2316,7 +2317,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def cumsum(x, reverse):
       return scan(lambda c, x: (c + x, c + x), 0, x, reverse=reverse)[1]
 
-    x = np.array([3, 1, 4, 1, 5, 9])
+    x = np.array([3, 1, 4, 1, 5, 9], dtype='int32')
     self.assertAllClose(np.cumsum(x), cumsum(x, False), check_dtypes=False)
     self.assertAllClose(np.cumsum(x[::-1])[::-1], cumsum(x, True), check_dtypes=False)
 
