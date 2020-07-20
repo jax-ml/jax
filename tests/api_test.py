@@ -2572,6 +2572,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def f_fwd(x):
       return (f(x), x)
     def f_rev(x, g):
+      g = jnp.asarray(g)  # TODO(vanderplas): understand why this is necessary.
       return (g * 3,)
     f.defvjp(f_fwd, f_rev)
     def f2(x):
@@ -2601,6 +2602,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       else:
         return f(x), x
     def f_rev(x, g):
+      g = jnp.asarray(g)  # TODO(vanderplas): understand why this is necessary.
       if x > 0:
         return (2 * g,)
       else:
