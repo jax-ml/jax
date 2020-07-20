@@ -1132,8 +1132,12 @@ def _get_monoid_window_reducer(monoid_op: Callable, x: Array) -> Optional[Callab
 def _reduce_window_sum(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
                        padding: Sequence[Tuple[int, int]],
-                       base_dilation: Sequence[int],
-                       window_dilation: Sequence[int]) -> Array:
+                       base_dilation: Optional[Sequence[int]] = None,
+                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_sum_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
@@ -1143,10 +1147,14 @@ def _reduce_window_sum(operand: Array, window_dimensions: Shape,
 def _reduce_window_prod(operand: Array, window_dimensions: Shape,
                         window_strides: Sequence[int],
                         padding: Sequence[Tuple[int, int]],
-                        base_dilation: Sequence[int],
-                        window_dilation: Sequence[int]) -> Array:
+                        base_dilation: Optional[Sequence[int]] = None,
+                        window_dilation: Optional[Sequence[int]] = None) -> Array:
   init_value = _const(operand, 1)
   jaxpr, consts = _reduction_jaxpr(mul, _abstractify(init_value))
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_p.bind(
       operand, init_value, jaxpr=jaxpr, consts=consts,
       window_dimensions=tuple(window_dimensions),
@@ -1157,8 +1165,12 @@ def _reduce_window_prod(operand: Array, window_dimensions: Shape,
 def _reduce_window_max(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
                        padding: Sequence[Tuple[int, int]],
-                       base_dilation: Sequence[int],
-                       window_dilation: Sequence[int]) -> Array:
+                       base_dilation: Optional[Sequence[int]] = None,
+                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_max_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
@@ -1168,8 +1180,12 @@ def _reduce_window_max(operand: Array, window_dimensions: Shape,
 def _reduce_window_min(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
                        padding: Sequence[Tuple[int, int]],
-                       base_dilation: Sequence[int],
-                       window_dilation: Sequence[int]) -> Array:
+                       base_dilation: Optional[Sequence[int]] = None,
+                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_min_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
