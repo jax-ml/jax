@@ -113,7 +113,7 @@ def sign(x: Array) -> Array:
   return sign_p.bind(x)
 
 def nextafter(x1: Array, x2: Array) -> Array:
-  r"""Returns the next representable value after `x1` in the pk of `x2`."""
+  r"""Returns the next representable value after `x1` in the direction of `x2`."""
   return nextafter_p.bind(_brcast(x1, x2), _brcast(x2, x1))
 
 def floor(x: Array) -> Array:
@@ -510,7 +510,7 @@ def conv_general_dilated(
     An array containing the convolution result.
 
   In the string case of `dimension_numbers`, each character identifies by
-  xk:
+  position:
 
   - the batch dimensions in `lhs`, `rhs`, and the output with the character
     'N',
