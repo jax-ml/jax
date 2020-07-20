@@ -1089,7 +1089,9 @@ def _reduce_and(operand: Array, axes: Sequence[int]) -> Array:
 
 def reduce_window(operand: Array, init_value: Array, computation: Callable,
                   window_dimensions: Shape, window_strides: Sequence[int],
-                  padding: Union[str, Sequence[Tuple[int, int]]]) -> Array:
+                  padding: Union[str, Sequence[Tuple[int, int]]],
+                  base_dilation: Optional[Sequence[int]] = None,
+                  window_dilation: Optional[Sequence[int]] = None) -> Array:
   """Wraps XLA's `ReduceWindowWithGeneralPadding
   <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
   operator.
@@ -1099,15 +1101,22 @@ def reduce_window(operand: Array, init_value: Array, computation: Callable,
                                     window_strides, padding))
   else:
     padding = tuple(padding)
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   monoid_reducer = _get_monoid_window_reducer(computation, init_value)
   if monoid_reducer:
-    return monoid_reducer(operand, window_dimensions, window_strides, padding)
+    return monoid_reducer(operand, window_dimensions, window_strides, padding,
+                          base_dilation, window_dilation)
   else:
     jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value))
     return reduce_window_p.bind(
         operand, init_value, jaxpr=jaxpr, consts=consts,
         window_dimensions=tuple(window_dimensions),
-        window_strides=tuple(window_strides), padding=padding)
+        window_strides=tuple(window_strides), padding=padding,
+        base_dilation=tuple(base_dilation),
+        window_dilation=tuple(window_dilation))
 
 def _get_monoid_window_reducer(monoid_op: Callable, x: Array) -> Optional[Callable]:
   aval = core.get_aval(x)
@@ -1122,46 +1131,66 @@ def _get_monoid_window_reducer(monoid_op: Callable, x: Array) -> Optional[Callab
 
 def _reduce_window_sum(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]]) -> Array:
+                       padding: Sequence[Tuple[int, int]],
+                       base_dilation: Sequence[int],
+                       window_dilation: Sequence[int]) -> Array:
   return reduce_window_sum_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _reduce_window_prod(operand: Array, window_dimensions: Shape,
                         window_strides: Sequence[int],
-                        padding: Sequence[Tuple[int, int]]) -> Array:
+                        padding: Sequence[Tuple[int, int]],
+                        base_dilation: Sequence[int],
+                        window_dilation: Sequence[int]) -> Array:
   init_value = _const(operand, 1)
   jaxpr, consts = _reduction_jaxpr(mul, _abstractify(init_value))
   return reduce_window_p.bind(
       operand, init_value, jaxpr=jaxpr, consts=consts,
       window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _reduce_window_max(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]]) -> Array:
+                       padding: Sequence[Tuple[int, int]],
+                       base_dilation: Sequence[int],
+                       window_dilation: Sequence[int]) -> Array:
   return reduce_window_max_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _reduce_window_min(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]]) -> Array:
+                       padding: Sequence[Tuple[int, int]],
+                       base_dilation: Sequence[int],
+                       window_dilation: Sequence[int]) -> Array:
   return reduce_window_min_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _select_and_scatter(operand: Array, select: Callable,
                         window_dimensions: Shape, window_strides: Sequence[int],
                         padding: Sequence[Tuple[int, int]], source: Array,
-                        init_value: Array, scatter: Callable) -> Array:
+                        init_value: Array, scatter: Callable,
+                        base_dilation: Sequence[int],
+                        window_dilation: Sequence[int]) -> Array:
   select_jaxpr, select_consts = _reduction_jaxpr(select, _abstractify(init_value))
   scatter_jaxpr, scatter_consts = _reduction_jaxpr(scatter, _abstractify(init_value))
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
       select_consts=select_consts, scatter_jaxpr=scatter_jaxpr,
       scatter_consts=scatter_consts, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _select_and_scatter_add(source: Array, operand: Array,
                             select_prim: core.Primitive,
@@ -1177,11 +1206,15 @@ def _select_and_gather_add(tangents: Array, operand: Array,
                            select_prim: core.Primitive,
                            window_dimensions: Shape,
                            window_strides: Sequence[int],
-                           padding: Sequence[Tuple[int, int]]) -> Array:
+                           padding: Sequence[Tuple[int, int]],
+                           base_dilation: Sequence[int],
+                           window_dilation: Sequence[int]) -> Array:
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def cumsum(operand: Array, axis: int) -> Array:
   """Computes a cumulative sum along `axis`."""
@@ -4490,38 +4523,43 @@ reduce_and_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(np.bo
 batching.defreducer(reduce_and_p)
 
 def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
-                              window_dimensions, window_strides, padding):
+                              window_dimensions, window_strides, padding,
+                              base_dilation, window_dilation):
   if operand.dtype != init_value.dtype:
     msg = ("reduce_window got inconsistent dtypes for operand and init_value: "
            " got operand dtype {} and init_value dtype {}.")
     raise TypeError(msg.format(operand.dtype, init_value.dtype))
-  return _common_reduce_window_shape_rule(operand, window_dimensions,
-                                         window_strides, padding)
+  return _common_reduce_window_shape_rule(
+    operand, window_dimensions, window_strides, padding, base_dilation,
+    window_dilation)
 
 def _reduce_window_translation_rule(c, operand, init_value, *, jaxpr, consts,
-                                    window_dimensions, window_strides, padding):
+                                    window_dimensions, window_strides, padding,
+                                    base_dilation, window_dilation):
   xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
   return xops.ReduceWindowWithGeneralPadding(
     operand, init_value, xla_computation, window_dimensions,
-    window_strides, (), (), padding)
+    window_strides, base_dilation, window_dilation, padding)
 
 def _generic_reduce_window_batch_rule(
     batched_args, batch_dims, *, jaxpr, consts, window_dimensions,
-    window_strides, padding):
+    window_strides, padding, base_dilation, window_dilation):
   operand, init = batched_args
   bdim, init_bdim = batch_dims
   if init_bdim is not None:
     raise NotImplementedError("reduce_window batching is not implemented for "
                               "initial values")
 
-  def reduce_window(x, window_dimensions, window_strides, padding):
+  def reduce_window(x, window_dimensions, window_strides, padding, base_dilation,
+                    window_dilation):
     return reduce_window_p.bind(
       x, init, jaxpr=jaxpr, consts=consts, window_dimensions=window_dimensions,
-      window_strides=window_strides, padding=padding)
-  return _reduce_window_batch_rule(reduce_window, (operand,), (bdim,),
-                                   window_dimensions=window_dimensions,
-                                   window_strides=window_strides,
-                                   padding=padding)
+      window_strides=window_strides, padding=padding, base_dilation=base_dilation,
+      window_dilation=window_dilation)
+  return _reduce_window_batch_rule(
+    reduce_window, (operand,), (bdim,), window_dimensions=window_dimensions,
+    window_strides=window_strides, padding=padding, base_dilation=base_dilation,
+    window_dilation=window_dilation)
 
 
 reduce_window_p = standard_primitive(
@@ -4531,40 +4569,46 @@ batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 
 def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
-                                  padding):
+                                  padding, base_dilation, window_dilation):
   if not dtypes.issubdtype(operand.dtype, np.number):
     msg = "operand to reduce_window_sum must have a number dtype, got {}"
     raise TypeError(msg.format(np.dtype(operand.dtype).name))
   return _common_reduce_window_shape_rule(operand, window_dimensions,
-                                          window_strides, padding)
+                                          window_strides, padding, base_dilation,
+                                          window_dilation)
 
 def _reduce_window_sum_translation_rule(c, operand, *, window_dimensions,
-                                        window_strides, padding):
+                                        window_strides, padding, base_dilation,
+                                        window_dilation):
   dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.ReduceWindowWithGeneralPadding(
     operand, xb.constant(c, np.array(0, dtype)),
     xla.primitive_subcomputation(add_p, scalar, scalar), window_dimensions,
-    window_strides, (), (), padding)
+    window_strides, base_dilation, window_dilation, padding)
 
 def _reduce_window_sum_transpose_rule(cotangent, operand, *, window_dimensions,
-                                      window_strides, padding):
+                                      window_strides, padding, base_dilation,
+                                      window_dilation):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
-  ones = [1] * len(input_shape)
   pads = _conv_general_vjp_lhs_padding(
       input_shape, window_dimensions, window_strides, cotangent.shape, padding,
-      ones, ones)
+      base_dilation, window_dilation)
+  ones = [1] * len(input_shape)
   padding_config = [(lo, hi, stride - 1)
                     for (lo, hi), stride in zip(pads, window_strides)]
   pad_cotangent = pad(cotangent, _zero(cotangent), padding_config)
-  result = _reduce_window_sum(pad_cotangent, window_dimensions, ones,
-                              [(0, 0)] * len(input_shape))
-  assert result.shape == input_shape
+  result = _reduce_window_sum(pad_cotangent, window_dimensions, base_dilation,
+                              [(0, 0)] * len(input_shape),
+                              base_dilation=ones,
+                              window_dilation=window_dilation)
+  assert result.shape == input_shape, (result.shape, input_shape)
   return [result]
 
 def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
-                              window_dimensions, window_strides, padding):
+                              window_dimensions, window_strides, padding,
+                              base_dilation, window_dilation):
   operand, = batched_args
   bdim, = bdims
 
@@ -4573,7 +4617,11 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
         window_dimensions[:bdim] + (1,) + window_dimensions[bdim:]
     window_strides = window_strides[:bdim] + (1,) + window_strides[bdim:]
     padding = padding[:bdim] + ((0, 0),) + padding[bdim:]
-  operand = reduce_window(operand, window_dimensions, window_strides, padding)
+    base_dilation = base_dilation[:bdim] + (1,) + base_dilation[bdim:]
+    window_dilation = window_dilation[:bdim] + (1,) + window_dilation[bdim:]
+
+  operand = reduce_window(operand, window_dimensions, window_strides, padding,
+                          base_dilation, window_dilation)
   return operand, bdim
 
 reduce_window_sum_p = standard_primitive(
@@ -4584,26 +4632,32 @@ batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
 
 def _reduce_window_chooser_translation_rule(
-    prim, identity, c, operand, *, window_dimensions, window_strides, padding):
+    prim, identity, c, operand, *, window_dimensions, window_strides, padding,
+    base_dilation, window_dilation):
   dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.ReduceWindowWithGeneralPadding(
     operand, xb.constant(c, identity(dtype)),
     xla.primitive_subcomputation(prim, scalar, scalar), window_dimensions,
-    window_strides, (), (), padding)
+    window_strides, base_dilation, window_dilation, padding)
 
 def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
-                                    window_strides, padding):
+                                    window_strides, padding, base_dilation,
+                                    window_dilation):
   assert prim is max_p or prim is min_p
   select_prim = ge_p if prim is max_p else le_p
   return _select_and_gather_add(g, operand, select_prim, window_dimensions,
-                                window_strides, padding)
+                                window_strides, padding, base_dilation,
+                                window_dilation)
 
 
 def _common_reduce_window_shape_rule(operand, window_dimensions,
-                                     window_strides, padding):
+                                     window_strides, padding, base_dilation,
+                                     window_dilation):
   _check_shapelike("reduce_window", "window_dimensions", window_dimensions)
   _check_shapelike("reduce_window", "window_strides", window_strides)
+  _check_shapelike("reduce_window", "base_dilation", base_dilation)
+  _check_shapelike("reduce_window", "window_dilation", window_dilation)
   if operand.ndim != len(window_dimensions):
     msg = ("reduce_window got the wrong number of window_dimensions for "
            "operand: got operand shape {} with window_dimensions {}.")
@@ -4612,12 +4666,24 @@ def _common_reduce_window_shape_rule(operand, window_dimensions,
     msg = ("reduce_window got inconsistent window_strides and "
            "window_dimensions: got window_strides {} and window_dimensions {}.")
     raise TypeError(msg.format(window_strides, window_dimensions))
+  if len(base_dilation) != len(window_dimensions):
+    msg = ("reduce_window got inconsistent base_dilation and "
+           "window_dimensions: got base_dilation {} and window_dimensions {}.")
+    raise TypeError(msg.format(base_dilation, window_dimensions))
+  if len(window_dilation) != len(window_dimensions):
+    msg = ("reduce_window got inconsistent window_dilation and "
+           "window_dimensions: got window_dilation {} and window_dimensions "
+           "{}.")
+    raise TypeError(msg.format(window_dilation, window_dimensions))
 
   return reduce_window_shape_tuple(operand.shape, window_dimensions,
-                                   window_strides, padding)
+                                   window_strides, padding, base_dilation,
+                                   window_dilation)
 
 def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
-                              padding):
+                              padding, base_dilation, window_dilation):
+  operand_shape = _dilate_shape(operand_shape, base_dilation)
+  window_dimensions = _dilate_shape(window_dimensions, window_dilation)
   operand_padded = np.add(operand_shape, np.add(*zip(*padding)))
   t = np.floor_divide(
       np.subtract(operand_padded, window_dimensions), window_strides) + 1
@@ -4708,8 +4774,9 @@ def _select_and_scatter_add_transpose(
     t, source, operand, *, select_prim, window_dimensions, window_strides,
     padding):
   assert ad.is_undefined_primal(source) and not ad.is_undefined_primal(operand)
+  ones = (1,) * len(window_dimensions)
   source_t = _select_and_gather_add(t, operand, select_prim, window_dimensions,
-                                    window_strides, padding)
+                                    window_strides, padding, ones, ones)
   return [source_t, None]
 
 def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
@@ -4753,13 +4820,14 @@ batching.primitive_batchers[select_and_scatter_add_p] = \
 
 def _select_and_gather_add_shape_rule(
     tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
   if tangents.shape != operand.shape:
     msg = ("select_and_gather_add tangents and operand shapes must match, "
            "got {} and {}.")
     raise TypeError(msg.format(tangents.shape, operand.shape))
-  return _common_reduce_window_shape_rule(operand, window_dimensions,
-                                          window_strides, padding)
+  return _common_reduce_window_shape_rule(
+    operand, window_dimensions, window_strides, padding, base_dilation,
+    window_dilation)
 
 
 _UINT_DTYPES = {
@@ -4776,7 +4844,7 @@ _INT_DTYPES = {
 
 def _select_and_gather_add_translation(
     c, tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding, max_bits=64):
+    padding, base_dilation, window_dilation, max_bits=64):
   shape = c.get_shape(operand)
   dtype = shape.numpy_dtype()
   etype = shape.xla_element_type()
@@ -4867,37 +4935,52 @@ def _select_and_gather_add_translation(
   init = -np.inf if select_prim is ge_p else np.inf
   out = xops.ReduceWindowWithGeneralPadding(
     pack(operand, tangents), pack(const(c, dtype, init), const(c, dtype, 0)),
-    reducer(), window_dimensions, window_strides, (), (), padding)
+    reducer(), window_dimensions, window_strides, base_dilation,
+    window_dilation, padding)
   return snd(out)
 
 def _select_and_gather_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
   source, operand = primals
   g_source, g_operand = tangents
   val_out = _select_and_gather_add(
       source, operand, select_prim, window_dimensions, window_strides,
-      padding)
+      padding, base_dilation, window_dilation)
   del g_operand
   if type(g_source) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
     tangent_out = _select_and_gather_add(
         g_source, operand, select_prim, window_dimensions,
-        window_strides, padding)
+        window_strides, padding, base_dilation, window_dilation)
   return val_out, tangent_out
 
 def _select_and_gather_add_transpose(
     t, tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
+  assert select_prim in (le_p, ge_p)
   assert ad.is_undefined_primal(tangents) and not ad.is_undefined_primal(operand)
+  if any(d != 1 for d in window_dilation):
+    msg = ("VJP not implemented for select_and_gather (MaxPool) with window "
+           "dilation, got window_dilation={}.")
+    raise NotImplementedError(msg.format(window_dilation))
+  has_base_dilation = any(d != 1 for d in base_dilation)
+  if has_base_dilation:
+    select_identity = (_get_max_identity if select_prim is ge_p
+                       else _get_min_identity)
+    operand = pad(operand, select_identity(operand.dtype),
+                  tuple((0, 0, d - 1) for d in base_dilation))
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
                                    window_strides, padding)
+  if has_base_dilation:
+    result = slice(operand, (0,) * len(operand.shape), operand.shape,
+                   base_dilation)
   return [result, None]
 
 def _select_and_gather_add_batching_rule(
     batched_args, batch_dims, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
   t, x = batched_args
   t_bdim, x_bdim = batch_dims
   size = next(a.shape[bdim] for a, bdim in zip(batched_args, batch_dims)
@@ -4907,8 +4990,11 @@ def _select_and_gather_add_batching_rule(
   window_dimensions = (1,) + window_dimensions
   window_strides = (1,) + window_strides
   padding = ((0, 0),) + padding
+  base_dilation = (1,) + base_dilation
+  window_dilation = (1,) + window_dilation
   out = _select_and_gather_add(t, x, select_prim, window_dimensions,
-                               window_strides, padding)
+                               window_strides, padding, base_dilation,
+                               window_dilation)
   return (out, 0)
 
 
