@@ -1,6 +1,6 @@
 """The Broyden-Fletcher-Goldfarb-Shanno minimization algorithm."""
 from functools import partial
-from typing import Callable, NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional, Union
 
 import jax
 import jax.numpy as jnp
@@ -14,10 +14,10 @@ class _BFGSResults(NamedTuple):
   Parameters:
     converged: True if minimization converged.
     failed: True if line search failed.
-    k: the number of iterations of the BFGS update.
-    nfev: total number of objective evaluations performed.
-    ngev: total number of jacobian evaluations
-    nhev: total number of hessian evaluations
+    k: integer the number of iterations of the BFGS update.
+    nfev: integer total number of objective evaluations performed.
+    ngev: integer total number of jacobian evaluations
+    nhev: integer total number of hessian evaluations
     x_k: array containing the last argument value found during the search. If
       the search converged, then this value is the argmin of the objective
       function.
@@ -32,18 +32,18 @@ class _BFGSResults(NamedTuple):
     line_search_status: int describing line search end state (only means
       something if line search fails).
   """
-  converged: bool
-  failed: bool
-  k: int
-  nfev: int
-  ngev: int
-  nhev: int
+  converged: Union[bool, jnp.ndarray]
+  failed: Union[bool, jnp.ndarray]
+  k: Union[int, jnp.ndarray]
+  nfev: Union[int, jnp.ndarray]
+  ngev: Union[int, jnp.ndarray]
+  nhev: Union[int, jnp.ndarray]
   x_k: jnp.ndarray
   f_k: jnp.ndarray
   g_k: jnp.ndarray
   H_k: jnp.ndarray
-  status: int
-  line_search_status: int
+  status: Union[int, jnp.ndarray]
+  line_search_status: Union[int, jnp.ndarray]
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
@@ -76,23 +76,6 @@ def minimize_bfgs(
   Returns:
     Optimization result.
   """
-  # Note: we utilise boolean arithmetic to avoid jax.cond calls which don't
-  # work on accelerators. A side effect is that we perform more gradient
-  # evaluations than scipy's BFGS
-  state = _BFGSResults(
-      converged=False,
-      failed=False,
-      k=0,
-      nfev=0,
-      ngev=0,
-      nhev=0,
-      x_k=x0,
-      f_k=None,
-      g_k=None,
-      H_k=None,
-      status=None,
-      line_search_status=jnp.array(0),
-  )
 
   if maxiter is None:
     maxiter = jnp.size(x0) * 200
@@ -101,13 +84,19 @@ def minimize_bfgs(
 
   initial_H = jnp.eye(d)
   f_0, g_0 = jax.value_and_grad(fun)(x0)
-  state = state._replace(
+  state = _BFGSResults(
+      converged=jnp.linalg.norm(g_0, ord=norm) < gtol,
+      failed=False,
+      k=0,
+      nfev=1,
+      ngev=1,
+      nhev=0,
+      x_k=x0,
       f_k=f_0,
       g_k=g_0,
       H_k=initial_H,
-      nfev=state.nfev + 1,
-      ngev=state.ngev + 1,
-      converged=jnp.linalg.norm(g_0, ord=norm) < gtol,
+      status=0,
+      line_search_status=0,
   )
 
   def body(state):
@@ -157,14 +146,14 @@ def minimize_bfgs(
   )
   status = jnp.where(
       state.converged,
-      jnp.array(0),  # converged
+      0,  # converged
       jnp.where(
           state.k == maxiter,
-          jnp.array(1),  # max iters reached
+          1,  # max iters reached
           jnp.where(
               state.failed,
-              jnp.array(2) + state.line_search_status, # ls failed (+ reason)
-              jnp.array(-1)  # undefined
+              2 + state.line_search_status, # ls failed (+ reason)
+              -1,  # undefined
           )
       )
   )

@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Union
 
 import jax.numpy as jnp
 import jax
@@ -39,23 +39,23 @@ def _binary_replace(replace_bit, original_dict, new_dict, keys=None):
 
 
 class _ZoomState(NamedTuple):
-  done: bool
-  failed: bool
-  j: int
-  a_lo: float
-  phi_lo: float
-  dphi_lo: float
-  a_hi: float
-  phi_hi: float
-  dphi_hi: float
-  a_rec: float
-  phi_rec: float
-  a_star: float
-  phi_star: float
-  dphi_star: float
-  g_star: float
-  nfev: int
-  ngev: int
+  done: Union[bool, jnp.ndarray]
+  failed: Union[bool, jnp.ndarray]
+  j: Union[int, jnp.ndarray]
+  a_lo: Union[float, jnp.ndarray]
+  phi_lo: Union[float, jnp.ndarray]
+  dphi_lo: Union[float, jnp.ndarray]
+  a_hi: Union[float, jnp.ndarray]
+  phi_hi: Union[float, jnp.ndarray]
+  dphi_hi: Union[float, jnp.ndarray]
+  a_rec: Union[float, jnp.ndarray]
+  phi_rec: Union[float, jnp.ndarray]
+  a_star: Union[float, jnp.ndarray]
+  phi_star: Union[float, jnp.ndarray]
+  dphi_star: Union[float, jnp.ndarray]
+  g_star: Union[float, jnp.ndarray]
+  nfev: Union[int, jnp.ndarray]
+  ngev: Union[int, jnp.ndarray]
 
 
 def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
@@ -87,9 +87,6 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
   delta1 = 0.2
   delta2 = 0.1
 
-  # TODO(albert): profile implementation using `cond` against this one. With
-  # cond fewer gradients _can_ be evaluated, but at what price to performance
-  # on an accelerator?
   def body(state):
     # Body of zoom algorithm. We use boolean arithmetic to avoid using jax.cond
     # so that it works on GPU/TPU.
@@ -190,19 +187,19 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
 
 
 class _LineSearchState(NamedTuple):
-  done: bool
-  failed: bool
-  i: int
-  a_i1: float
-  phi_i1: float
-  dphi_i1: float
-  nfev: int
-  ngev: int
-  a_star: float
-  phi_star: float
-  dphi_star: float
+  done: Union[bool, jnp.ndarray]
+  failed: Union[bool, jnp.ndarray]
+  i: Union[int, jnp.ndarray]
+  a_i1: Union[float, jnp.ndarray]
+  phi_i1: Union[float, jnp.ndarray]
+  dphi_i1: Union[float, jnp.ndarray]
+  nfev: Union[int, jnp.ndarray]
+  ngev: Union[int, jnp.ndarray]
+  a_star: Union[float, jnp.ndarray]
+  phi_star: Union[float, jnp.ndarray]
+  dphi_star: Union[float, jnp.ndarray]
   g_star: jnp.ndarray
-  saddle_point: bool
+  saddle_point: Union[bool, jnp.ndarray]
 
 
 class _LineSearchResults(NamedTuple):
@@ -210,30 +207,30 @@ class _LineSearchResults(NamedTuple):
 
   Parameters:
     failed: True if the strong Wolfe criteria were satisfied
-    nit: number of iterations
-    nfev: number of functions evaluations
-    ngev: number of gradients evaluations
-    k: number of iterations
-    a_k: step size
+    nit: integer number of iterations
+    nfev: integer number of functions evaluations
+    ngev: integer number of gradients evaluations
+    k: integer number of iterations
+    a_k: integer step size
     f_k: final function value
     g_k: final gradient value
-    status: end status
+    status: integer end status
   """
-  failed: bool
-  nit: int
-  nfev: int
-  ngev: int
-  k: int
-  a_k: float
+  failed: Union[bool, jnp.ndarray]
+  nit: Union[int, jnp.ndarray]
+  nfev: Union[int, jnp.ndarray]
+  ngev: Union[int, jnp.ndarray]
+  k: Union[int, jnp.ndarray]
+  a_k: Union[int, jnp.ndarray]
   f_k: jnp.ndarray
   g_k: jnp.ndarray
-  status: int
+  status: Union[bool, jnp.ndarray]
 
 
 def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,
                 c2=0.9, maxiter=20):
   """Inexact line search that satisfies strong Wolfe conditions.
-  
+
   Algorithm 3.5 from Wright and Nocedal, 'Numerical Optimization', 1999, pg. 59-61
 
   Args:

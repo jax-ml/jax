@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Callable, Mapping, Optional, Tuple
+from typing import Any, Callable, Mapping, Optional, Tuple, Union
 
 from ._bfgs import minimize_bfgs
 from typing import NamedTuple
@@ -12,25 +12,25 @@ class OptimizeResults(NamedTuple):
   Parameters:
     x: final solution.
     success: True if optimization succeeded.
-    status: solver specific return code. 0 means nominal.
+    status: integer solver specific return code. 0 means nominal.
     message: solver specific message.
     fun: final function value.
     jac: final jacobian array.
     hess_inv: final inverse Hessian estimate.
-    nfev: number of funcation calls used.
-    njev: number of gradient evaluations.
-    nit: number of iterations of the optimization algorithm.
+    nfev: integer number of funcation calls used.
+    njev: integer number of gradient evaluations.
+    nit: integer number of iterations of the optimization algorithm.
   """
   x: jnp.ndarray
-  success: bool
-  status: int
+  success: Union[bool, jnp.ndarray]
+  status: Union[int, jnp.ndarray]
   message: str
   fun: jnp.ndarray
   jac: jnp.ndarray
   hess_inv: jnp.ndarray
-  nfev: int
-  njev: int
-  nit: int
+  nfev: Union[int, jnp.ndarray]
+  njev: Union[int, jnp.ndarray]
+  nit: Union[int, jnp.ndarray]
 
 
 def minimize(
@@ -38,7 +38,7 @@ def minimize(
     x0: jnp.ndarray,
     args: Tuple = (),
     *,
-    method: Optional[str] = None,
+    method: str,
     tol: Optional[float] = None,
     options: Optional[Mapping[str, Any]] = None,
 ) -> OptimizeResults:
@@ -86,8 +86,9 @@ def minimize(
     message = ("status meaning: 0=converged, 1=max BFGS iters reached, "
                "3=zoom failed, 4=saddle point reached, "
                "5=max line search iters reached, -1=undefined")
+    success = (results.converged) & jnp.logical_not(results.failed)
     return OptimizeResults(x=results.x_k,
-                           success=(results.converged) & (~results.failed),
+                           success=success,
                            status=results.status,
                            message=message,
                            fun=results.f_k,
