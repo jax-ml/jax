@@ -2645,6 +2645,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = np.array([[1, 1], [3, 4]])
     self.assertAllClose(expected, ans)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_input_type={}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          input_type.__name__, axis),
+       "shape": shape, "dtype": dtype, "input_type": input_type, "axis": axis}
+      for dtype in all_dtypes
+      for shape in [(3, 4), (3, 4, 5), (2, 3, 0)]
+      for input_type in [np.array, tuple]
+      for axis in range(1 - len(shape), len(shape) - 1)))
+  def testLexsort(self, dtype, shape, input_type, axis):
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [input_type(rng(shape, dtype))]
+    jnp_op = lambda x: jnp.lexsort(x, axis=axis)
+    np_op = lambda x: np.lexsort(x, axis=axis)
+    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
   def testArgsortManually(self):
     x = np.array([16, 15, 23, 42, 8, 4])
     ans = jnp.argsort(x)
