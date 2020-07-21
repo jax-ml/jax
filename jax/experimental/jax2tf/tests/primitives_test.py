@@ -137,7 +137,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_qr(self, harness: primitive_harness.Harness):
     # See jax.lib.lapack.geqrf for the list of compatible types
     if not harness.params["dtype"] in [jnp.float32, jnp.float64, jnp.complex64, jnp.complex128]:
-      with self.assertRaisesRegex(NotImplementedError, "Unsupported dtype"):
+      expected_error = ValueError if jtu.device_under_test() == "gpu" else NotImplementedError
+      with self.assertRaisesRegex(expected_error, "Unsupported dtype"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     elif harness.params["dtype"] in [jnp.float32, jnp.float64]:
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
