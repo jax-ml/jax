@@ -1116,20 +1116,18 @@ tf_impl[lax.scan_p] = _scan
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted
   # to a compatible type without loss of precision.
-  def promote_dtype(dtype):
-    if dtype in [jnp.bool_, jnp.uint8, jnp.uint16]:
-      return jnp.uint32
-    if dtype in [jnp.int8, jnp.int16]:
-      return jnp.int32
-    if dtype in [jnp.float16]:
-      return jnp.float32
-    if dtype in [jnp.bfloat16]:
-      return tf.bfloat16
+  def promote_tf_dtype(tf_dtype):
+    if tf_dtype in [tf.bool, tf.uint8, tf.uint16]:
+      return tf.uint32
+    if tf_dtype in [tf.int8, tf.int16]:
+      return tf.int32
+    if tf_dtype is tf.float16:
+      return tf.float32
     return None
 
-  conversion_dtype = promote_dtype(operand.dtype)
+  conversion_dtype = promote_tf_dtype(operand.dtype)
   if conversion_dtype:
-    values, indices = tf.math.top_k(tf.dtypes.cast(operand, to_tf_dtype(conversion_dtype)), k=k)
+    values, indices = tf.math.top_k(tf.dtypes.cast(operand, conversion_dtype), k=k)
     return tf.dtypes.cast(values, operand.dtype), indices
   else:
     return tf.math.top_k(operand, k=k)
