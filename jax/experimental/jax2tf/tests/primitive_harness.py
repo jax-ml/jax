@@ -326,7 +326,7 @@ lax_top_k = tuple( # random testing
           shape=shape,
           dtype=dtype,
           k=k)
-  for dtype in jtu.dtypes.all #[np.float32, np.int32, np.uint32]
+  for dtype in jtu.dtypes.all
   for shape in [(3,), (5, 3)]
   for k in [-1, 1, 3, 4]
   for rng_factory in [jtu.rand_default]
