@@ -320,29 +320,29 @@ ADVANCED_INDEXING_TESTS_NO_REPEATS = [
 
 ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED = [
     ("One1DIntArrayIndex",
-     [IndexSpec(shape=(3,), indexer=onp.array([0, 1])),
-      IndexSpec(shape=(3, 3), indexer=onp.array([0, 1, 2])),
-      IndexSpec(shape=(3, 4, 5), indexer=onp.array([0, 1, 2])),
-      IndexSpec(shape=(3,), indexer=onp.array([-1, 1])),
-      IndexSpec(shape=(3,), indexer=onp.array([-2, -1])),
-      IndexSpec(shape=(0,), indexer=onp.array([], dtype=onp.int32)),
+     [IndexSpec(shape=(3,), indexer=np.array([0, 1])),
+      IndexSpec(shape=(3, 3), indexer=np.array([0, 1, 2])),
+      IndexSpec(shape=(3, 4, 5), indexer=np.array([0, 1, 2])),
+      IndexSpec(shape=(3,), indexer=np.array([-1, 1])),
+      IndexSpec(shape=(3,), indexer=np.array([-2, -1])),
+      IndexSpec(shape=(0,), indexer=np.array([], dtype=np.int32)),
      ]),
     ("One2DIntArrayIndex",
-     [IndexSpec(shape=(3,), indexer=onp.array([[0, 1]])),
-      IndexSpec(shape=(6, 6), indexer=onp.array([[-1, 0, 1],
+     [IndexSpec(shape=(3,), indexer=np.array([[0, 1]])),
+      IndexSpec(shape=(6, 6), indexer=np.array([[-1, 0, 1],
                                                  [ 2, 3, 4]])),
      ]),
     ("Two1DIntArrayIndicesNoBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[onp.array([0, 1]),
-                                       onp.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[onp.array([0, 1, 2, 3]),
-                                          onp.array([-2, -1, 0, 1])]),
+     [IndexSpec(shape=(3, 3), indexer=[np.array([0, 1]),
+                                       np.array([1, 2])]),
+      IndexSpec(shape=(4, 5, 6), indexer=[np.array([0, 1, 2, 3]),
+                                          np.array([-2, -1, 0, 1])]),
      ]),
     ("Two1DIntArrayIndicesWithBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[onp.array([[0, 1]]),
-                                       onp.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[onp.array([[-1, 0, 1, 2]]),
-                                          onp.array([-2, -1, 0, 2])]),
+     [IndexSpec(shape=(3, 3), indexer=[np.array([[0, 1]]),
+                                       np.array([1, 2])]),
+      IndexSpec(shape=(4, 5, 6), indexer=[np.array([[-1, 0, 1, 2]]),
+                                          np.array([-2, -1, 0, 2])]),
      ]),
     ("ListOfPythonInts",
      [IndexSpec(shape=(3,), indexer=[0, 1, 2]),
@@ -357,14 +357,14 @@ ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED = [
       IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[0, 2, 3]])),
      ]),
     ("ListOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[0, onp.array([0, 1])]),
+     [IndexSpec(shape=(3, 4, 5), indexer=[0, np.array([0, 1])]),
       IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                          onp.array([[0, 2, 3]])]),
+                                          np.array([[0, 2, 3]])]),
      ]),
     ("ListOfListsOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], onp.array([0])]),
+     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], np.array([0])]),
       IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                          onp.array([[0, 2, 3]])]),
+                                          np.array([[0, 2, 3]])]),
      ]),
 ]
 
@@ -956,7 +956,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, unique_indices=True)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, unique_indices=True)
-    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker)
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
     self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
