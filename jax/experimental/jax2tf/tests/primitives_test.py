@@ -109,6 +109,24 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("pad with negative pad not supported")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_top_k)
+  def test_top_k(self, harness: primitive_harness.Harness):
+    if (harness.params["k"] > harness.params["shape"][-1] or
+        harness.params["k"] < 0):
+      with self.assertRaisesRegex(ValueError, "k argument to top_k must be"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    # TODO: figure out what's up with bfloat16
+    elif harness.params["dtype"] is dtypes.bfloat16:
+      raise unittest.SkipTest("bfloat16 support not implemented")
+    elif harness.params["dtype"] in jtu.dtypes.complex:
+      with self.assertRaisesRegex(RuntimeError, "Unimplemented: complex comparison"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    # TODO: TF and JAX sort [inf, nan] differently.
+    elif harness.name.startswith("nan_"):
+      raise unittest.SkipTest("inconsistent [nan, inf] sorting")
+    else:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_sort)
   def test_sort(self, harness: primitive_harness.Harness):
     if harness.params["dtype"] is dtypes.bfloat16 or harness.params["dtype"] in jtu.dtypes.complex:
