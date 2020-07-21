@@ -14,9 +14,9 @@
 
 from absl.testing import absltest
 
-from jax import jit, make_jaxpr, numpy as jnp, test_util as jtu
+from jax import jaxpr_util, jit, make_jaxpr, numpy as jnp
+from jax import test_util as jtu
 from jax.config import config
-from jax.experimental import jaxpr_stats as js
 
 
 config.parse_flags_with_absl()
@@ -30,7 +30,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jit(jnp.sin)(x)
       return jnp.sin(s) + jnp.cos(y)
 
-    hist = js.primitives(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.primitives(make_jaxpr(f)(1., 1.).jaxpr)
 
     for k in ['add', 'sin', 'cos', 'xla_call']:
       assert k in hist, k
@@ -42,7 +42,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jnp.sin(x)
       return jnp.sin(s) + jnp.cos(y)
 
-    hist = js.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
 
     sin_keys = [k for k in hist.keys() if k.startswith('sin @ ')]
     self.assertEqual(len(sin_keys), 2)
@@ -55,7 +55,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s, _ = jit(sub)(x, y)
       return jnp.sin(s) + jnp.cos(y)
 
-    hist = js.primitives_by_shape(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.primitives_by_shape(make_jaxpr(f)(1., 1.).jaxpr)
 
     shapes = [
         'add :: float32[]',
@@ -73,15 +73,15 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jnp.sin(x)                  # sin
       return jnp.sin(s) + jnp.cos(y)  # sin, cos, add
 
-    hist = js.source_locations(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.source_locations(make_jaxpr(f)(1., 1.).jaxpr)
     self.assertEqual(set(hist.values()), set([1, 3]))
 
   def test_print_histogram(self):
     def f(x, y):
       s = jit(jnp.sin)(x)
       return jnp.sin(s) + jnp.cos(y)
-    hist = js.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
-    js.print_histogram(hist)
+    hist = jaxpr_util.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
+    jaxpr_util.print_histogram(hist)
 
 
 if __name__ == "__main__":
