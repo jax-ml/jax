@@ -280,7 +280,7 @@ def fold_in(key, data):
     data: a 32bit integer representing data to be folded in to the key.
 
   Returns:
-    A new PRNGKey that is a deterministic function of the ijnputs and is
+    A new PRNGKey that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
   return _fold_in(key, data)
