@@ -749,8 +749,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_op(np.array([]))
     with self.assertRaises(ValueError, msg=msg):
       jnp_op(np.zeros((2, 0)), axis=1)
-    np_fun = partial(np_op, axis=0)
-    jnp_fun = partial(jnp_op, axis=0)
+    
+    def np_fun(array_to_reduce):
+      return np_op(array_to_reduce, axis=0).astype(jnp.int_)
+
+    def jnp_fun(array_to_reduce):
+      return jnp_op(array_to_reduce, axis=0)
+
     args_maker = lambda: [np.zeros((2, 0))]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -1369,7 +1374,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda x: np.unique(x, return_index, return_inverse, return_counts)
     jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts)
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                            check_dtypes=not return_inverse)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fixed_size={}".format(fixed_size),
@@ -2551,7 +2557,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testUnravelIndex(self, flat_index, shape):
     args_maker = lambda: (flat_index, shape)
     self._CheckAgainstNumpy(np.unravel_index, jnp.unravel_index,
-                            args_maker)
+                            args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp.unravel_index, args_maker)
 
   def testUnravelIndexOOB(self):
