@@ -1150,7 +1150,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testExtract(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, jnp.float32), rng(shape, dtype)]
-    self._CheckAgainstNumpy(np.extract, jnp.extract, args_maker)
+    self._CheckAgainstNumpy(np.extract, jnp.extract, args_maker, check_dtypes=False)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1374,8 +1374,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda x: np.unique(x, return_index, return_inverse, return_counts)
     jnp_fun = lambda x: jnp.unique(x, return_index, return_inverse, return_counts)
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
-                            check_dtypes=not return_inverse)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_fixed_size={}".format(fixed_size),
@@ -1653,7 +1652,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                              jnp.diag_indices(n, ndim))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "arr_shape={}".format(
+      {"testcase_name": "_arr_shape={}".format(
         jtu.format_shape_dtype_string(shape, dtype)
       ),
        "dtype": dtype, "shape": shape}
@@ -1664,7 +1663,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = np.diag_indices_from
     jnp_fun = jnp.diag_indices_from
     args_maker = lambda : [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -1870,7 +1869,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), jnp.sort(rng(binshape, dtype))[order]]
     np_fun = lambda x, bins: np.digitize(x, bins, right=right)
     jnp_fun = lambda x, bins: jnp.digitize(x, bins, right=right)
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2263,39 +2262,40 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       f"_arg{i}_ndmin={ndmin}_dtype={np.dtype(dtype) if dtype else None}",
-       "arg": arg, "ndmin": ndmin, "dtype": dtype}
-      for i, (arg, dtypes) in enumerate([
-          ([True, False, True], all_dtypes),
-          (3., all_dtypes),
-          ([1, 2, 3], all_dtypes),
-          (np.array([1, 2, 3], dtype=np.int64), all_dtypes),
-          ([1., 2., 3.], all_dtypes),
-          ([[1, 2], [3, 4], [5, 6]], all_dtypes),
-          ([[1, 2.], [3, 4], [5, 6]], all_dtypes),
-          ([[1., 2j], [3., 4.], [5., 6.]], complex_dtypes),
-          ([[3, np.array(2, dtype=jnp.float_), 1],
-           np.arange(3., dtype=jnp.float_)], all_dtypes),
-      ])
-      for dtype in [None] + dtypes
-      for ndmin in [None, np.ndim(arg), np.ndim(arg) + 1, np.ndim(arg) + 2]))
-  def testArray(self, arg, ndmin, dtype):
-    args_maker = lambda: [arg]
-    canonical_dtype = dtypes.canonicalize_dtype(dtype or np.array(arg).dtype)
-    if ndmin is not None:
-      np_fun = partial(np.array, ndmin=ndmin, dtype=canonical_dtype)
-      jnp_fun = partial(jnp.array, ndmin=ndmin, dtype=dtype)
-    else:
-      np_fun = partial(np.array, dtype=canonical_dtype)
-      jnp_fun = partial(jnp.array, dtype=dtype)
+  # TODO(vanderplas): re-enable this test when type semantics are worked out.
+  # @parameterized.named_parameters(jtu.cases_from_list(
+  #     {"testcase_name":
+  #      f"_arg{i}_ndmin={ndmin}_dtype={np.dtype(dtype) if dtype else None}",
+  #      "arg": arg, "ndmin": ndmin, "dtype": dtype}
+  #     for i, (arg, dtypes) in enumerate([
+  #         ([True, False, True], all_dtypes),
+  #         (3., all_dtypes),
+  #         ([1, 2, 3], all_dtypes),
+  #         (np.array([1, 2, 3], dtype=np.int64), all_dtypes),
+  #         ([1., 2., 3.], all_dtypes),
+  #         ([[1, 2], [3, 4], [5, 6]], all_dtypes),
+  #         ([[1, 2.], [3, 4], [5, 6]], all_dtypes),
+  #         ([[1., 2j], [3., 4.], [5., 6.]], complex_dtypes),
+  #         ([[3, np.array(2, dtype=jnp.float_), 1],
+  #          np.arange(3., dtype=jnp.float_)], all_dtypes),
+  #     ])
+  #     for dtype in [None] + dtypes
+  #     for ndmin in [None, np.ndim(arg), np.ndim(arg) + 1, np.ndim(arg) + 2]))
+  # def testArray(self, arg, ndmin, dtype):
+  #   args_maker = lambda: [arg]
+  #   canonical_dtype = dtypes.canonicalize_dtype(dtype or np.array(arg).dtype)
+  #   if ndmin is not None:
+  #     np_fun = partial(np.array, ndmin=ndmin, dtype=canonical_dtype)
+  #     jnp_fun = partial(jnp.array, ndmin=ndmin, dtype=dtype)
+  #   else:
+  #     np_fun = partial(np.array, dtype=canonical_dtype)
+  #     jnp_fun = partial(jnp.array, dtype=dtype)
 
-    # We are testing correct canonicalization behavior here, so we turn off the
-    # permissive canonicalization logic in the test harness.
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
-                            canonicalize_dtypes=False)
-    self._CompileAndCheck(jnp_fun, args_maker)
+  #   # We are testing correct canonicalization behavior here, so we turn off the
+  #   # permissive canonicalization logic in the test harness.
+  #   self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+  #                           canonicalize_dtypes=False)
+  #   self._CompileAndCheck(jnp_fun, args_maker)
 
   def testArrayUnsupportedDtypeError(self):
     with self.assertRaisesRegex(TypeError,
@@ -3254,7 +3254,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        ])))
   def testBlock(self, input):
     args_maker = lambda: [input]
-    self._CheckAgainstNumpy(np.block, jnp.block, args_maker)
+    # TODO(vanderplas): check_dtypes=True when type semantics are worked out.
+    self._CheckAgainstNumpy(np.block, jnp.block, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp.block, args_maker)
 
   def testLongLong(self):
