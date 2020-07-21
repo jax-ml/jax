@@ -2546,13 +2546,14 @@ def repeat(a, repeats, axis=None, *, total_repeat_length=None):
   # If total_repeat_length is not given, can't compile, use a default.
   if total_repeat_length is None:
     repeats = core.concrete_or_error(np.array, repeats, "jax.numpy.repeat")
+    repeats = np.ravel(repeats)
     if ndim(a) != 0:
       repeats = np.broadcast_to(repeats, [a.shape[axis]])
     total_repeat_length = np.sum(repeats)
   else:
+    repeats = ravel(repeats)
     if ndim(a) != 0:
       repeats = broadcast_to(repeats, [a.shape[axis]])
-    repeats = ravel(repeats)
 
   # Special case when a is a scalar.
   if ndim(a) == 0:
