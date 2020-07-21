@@ -1005,9 +1005,10 @@ def _scatter_shape(operand, scatter_indices, updates, dimension_numbers):
 
 @functools.partial(bool_to_int8, argnums=(1, 3))
 def _scatter(update_computation, operand, scatter_indices, updates,
-             update_jaxpr, update_consts, dimension_numbers):
+             update_jaxpr, update_consts, dimension_numbers,
+             indices_are_sorted, unique_indices):
   """Tensorflow implementation of scatter with an update computation."""
-  del update_jaxpr, update_consts
+  del update_jaxpr, update_consts, unique_indices
   out_shape = _scatter_shape(operand, scatter_indices, updates,
                              dimension_numbers)
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
@@ -1016,7 +1017,8 @@ def _scatter(update_computation, operand, scatter_indices, updates,
       tf.function(update_computation).get_concrete_function(o_spec, o_spec))
   # We compile due to TF bug, see comment on gather
   out = _xla_compile(
-    lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto),
+    lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
+                                  indices_are_sorted=indices_are_sorted),
     operand, scatter_indices, updates)
   out.set_shape(out_shape)
   return out
