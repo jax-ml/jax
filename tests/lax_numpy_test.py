@@ -2655,6 +2655,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for input_type in [np.array, tuple]
       for axis in (-1, *range(len(shape) - 1))))
   def testLexsort(self, dtype, shape, input_type, axis):
+    if (jnp.issubdtype(dtype, jnp.complexfloating)
+        and jtu.device_under_test() == "tpu"):
+      self.skipTest("complex sort not supported on TPU")
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [input_type(rng(shape, dtype))]
     jnp_op = lambda x: jnp.lexsort(x, axis=axis)
