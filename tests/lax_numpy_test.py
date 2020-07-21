@@ -1319,26 +1319,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-
-  def _compute_total_repeat_length(self, shape, axis, repeats):
-    # Calculate expected size of the repeated axis.
-    if jnp.ndim(shape) == 0 :
-      return repeats
-    shape = jnp.array(shape)
-    if shape.size == 0:
-      return repeats
-    if axis is None:
-      axis = 0
-      if jnp.ndim(shape) != 0:
-        shape = jnp.array([jnp.product(shape)])
-    # Broadcasting the repeats if a scalar value.
-    expected_repeats = jnp.broadcast_to(jnp.ravel(repeats),
-                                        [shape[axis]])
-    # Total size will be num_repeats X axis length.
-    total_repeat_length = jnp.sum(expected_repeats)
-    return total_repeat_length
-
-
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape=[{}]_axis={}_repeats={}_fixed_size={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
@@ -1354,8 +1334,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = lambda arg: np.repeat(arg, repeats=repeats, axis=axis)
     np_fun = _promote_like_jnp(np_fun)
     if fixed_size:
-      total_repeat_length = self._compute_total_repeat_length(
-          shape, axis, repeats)
+      total_repeat_length = np.repeat(np.zeros(shape), repeats, axis).shape[axis or 0]
       jnp_fun = lambda arg, rep: jnp.repeat(arg, repeats=rep, axis=axis,
                                      total_repeat_length=total_repeat_length)
       jnp_args_maker = lambda: [rng(shape, dtype), repeats]
@@ -1370,7 +1349,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [rng(shape, dtype)]
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
-
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_ind={}_inv={}_count={}".format(
@@ -1410,9 +1388,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       if fixed_size:
 
         # Calculate expected size of the repeated axis.
-        rep_length = self._compute_total_repeat_length(m.shape, axis, repeats)
+        rep_length = np.repeat(np.zeros_like(m), repeats, axis).shape[axis or 0]
         jnp_fun = lambda arg, rep: jnp.repeat(
-            arg, repeats = rep, axis=axis, total_repeat_length=rep_length)
+            arg, repeats=rep, axis=axis, total_repeat_length=rep_length)
       else:
         jnp_fun = lambda arg: jnp.repeat(arg, repeats = repeats, axis=axis)
       self._CompileAndCheck(jnp_fun, args_maker)

@@ -2543,15 +2543,16 @@ def repeat(a, repeats, axis=None, *, total_repeat_length=None):
     a = ravel(a)
     axis = 0
 
-  repeats = array(repeats)
-  repeats = ravel(repeats)
-
-  if ndim(a) != 0:
-    repeats = broadcast_to(repeats, [a.shape[axis]])
-
-  # If total_repeat_length is not given, use a default.
+  # If total_repeat_length is not given, can't compile, use a default.
   if total_repeat_length is None:
-    total_repeat_length = sum(repeats)
+    repeats = core.concrete_or_error(np.array, repeats, "jax.numpy.repeat")
+    if ndim(a) != 0:
+      repeats = np.broadcast_to(repeats, [a.shape[axis]])
+    total_repeat_length = np.sum(repeats)
+  else:
+    if ndim(a) != 0:
+      repeats = broadcast_to(repeats, [a.shape[axis]])
+    repeats = ravel(repeats)
 
   # Special case when a is a scalar.
   if ndim(a) == 0:
@@ -2563,7 +2564,9 @@ def repeat(a, repeats, axis=None, *, total_repeat_length=None):
 
   # Special case if total_repeat_length is zero.
   if total_repeat_length == 0:
-    return reshape(array([], dtype=a.dtype), array(a.shape).at[axis].set(0))
+    result_shape = list(a.shape)
+    result_shape[axis] = 0
+    return reshape(array([], dtype=a.dtype), result_shape)
 
   # If repeats is on a zero sized axis, then return the array.
   if a.shape[axis] == 0:
