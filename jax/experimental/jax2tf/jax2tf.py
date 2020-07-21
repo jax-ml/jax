@@ -1127,10 +1127,10 @@ def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
 
   conversion_dtype = promote_tf_dtype(operand.dtype)
   if conversion_dtype:
-    values, indices = tf.math.top_k(tf.dtypes.cast(operand, conversion_dtype), k=k)
+    values, indices = tf.math.top_k(tf.dtypes.cast(operand, conversion_dtype), k=k, sorted=True)
     return tf.dtypes.cast(values, operand.dtype), indices
   else:
-    return tf.math.top_k(operand, k=k)
+    return tf.math.top_k(operand, k=k, sorted=True)
 
 tf_impl[lax.top_k_p] = _top_k
 
