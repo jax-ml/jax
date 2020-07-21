@@ -836,7 +836,7 @@ class ScatterDimensionNumbers(NamedTuple):
   scatter_dims_to_operand_dims: Sequence[int]
 
 def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers,
+                dimension_numbers: ScatterDimensionNumbers, *,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False) -> Array:
   """Scatter-add operator.
@@ -855,8 +855,10 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -868,7 +870,7 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers,
+                dimension_numbers: ScatterDimensionNumbers, *,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False) -> Array:
   """Scatter-multiply operator.
@@ -887,8 +889,10 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -900,7 +904,7 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers,
+                dimension_numbers: ScatterDimensionNumbers, *,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False) -> Array:
   """Scatter-min operator.
@@ -919,8 +923,10 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -932,7 +938,7 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
       indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers,
+                dimension_numbers: ScatterDimensionNumbers, *,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False) -> Array:
   """Scatter-max operator.
@@ -951,8 +957,10 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -989,8 +997,10 @@ def scatter(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
