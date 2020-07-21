@@ -3240,6 +3240,8 @@ def lexsort(keys, axis=-1):
     raise TypeError("need sequence of keys with len > 0 in lexsort")
   if len(set(shape(key) for key in keys)) > 1:
     raise ValueError("all keys need to be the same shape")
+  if ndim(keys[0]) == 0:
+    return np.int64(0)
   axis = _canonicalize_axis(axis, ndim(keys[0]))
   iota = lax.broadcasted_iota(np.int64, shape(keys[0]), axis)
   return lax.sort((*keys[::-1], iota), dimension=axis, num_keys=len(keys))[-1]

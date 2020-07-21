@@ -2651,9 +2651,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           input_type.__name__, axis),
        "shape": shape, "dtype": dtype, "input_type": input_type, "axis": axis}
       for dtype in all_dtypes
-      for shape in [(3, 4), (3, 4, 5), (2, 3, 0)]
+      for shape in [(2,), (3, 4), (3, 4, 5), (2, 3, 0)]
       for input_type in [np.array, tuple]
-      for axis in range(1 - len(shape), len(shape) - 1)))
+      for axis in (-1, *range(len(shape) - 1))))
   def testLexsort(self, dtype, shape, input_type, axis):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [input_type(rng(shape, dtype))]
