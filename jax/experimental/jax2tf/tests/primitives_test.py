@@ -133,6 +133,25 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("GPU tests are running TF on CPU")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
+  def test_qr(self, harness: primitive_harness.Harness):
+    # See jax.lib.lapack.geqrf for the list of compatible types
+    if harness.params["dtype"] in [jnp.float32, jnp.float64]:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             atol=1e-5, rtol=1e-5)
+    elif harness.params["dtype"] in [jnp.complex64, jnp.complex128]:
+      # TODO: see https://github.com/google/jax/pull/3775#issuecomment-659407824.
+      # - check_compiled=True breaks for complex types;
+      # - for now, the performance of the HLO QR implementation called when
+      #   compiling with TF is expected to have worse performance than the
+      #   custom calls made in JAX.
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             expect_tf_exceptions=True, atol=1e-5, rtol=1e-5)
+    else:
+      expected_error = ValueError if jtu.device_under_test() == "gpu" else NotImplementedError
+      with self.assertRaisesRegex(expected_error, "Unsupported dtype"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
