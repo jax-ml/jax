@@ -1986,7 +1986,7 @@ class APITest(jtu.JaxTestCase):
     self.assertStartsWith(repr(rep), "DeviceArray")
 
   def test_device_array_hash(self):
-    rep = jnp.ones(()) + 1.
+    rep = jnp.ones((1,)) + 1.
     self.assertIsInstance(rep, jax.interpreters.xla.DeviceArray)
     msg = "JAX DeviceArray, like numpy.ndarray, is not hashable."
     with self.assertRaisesRegex(TypeError, msg):
@@ -2569,6 +2569,11 @@ class APITest(jtu.JaxTestCase):
 
     jtu.check_grads(batched_scan_over_mul, (x_batch, coeff), order=2,
                     modes=['rev'])
+
+  def test_device_array_unpacking_1D_hashable(self):
+    xs = device_put(np.array([1, 1]))
+    x, _ = xs
+    hash(x)  # doesn't crash
 
 
 class RematTest(jtu.JaxTestCase):

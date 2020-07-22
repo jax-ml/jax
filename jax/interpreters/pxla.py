@@ -562,7 +562,19 @@ class ShardedDeviceArray(xla.DeviceArray):  # type: ignore
         buf = self.device_buffers[buf_idx]
         aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
         return xla.make_device_array(aval, None, buf)
-    return xla.DeviceArray.__getitem__(self, idx)
+    return super().__getitem__(idx)
+
+  def __iter__(self):
+    if self.ndim == 0:
+      raise TypeError("iteration over a 0-d array")  # same as numpy error
+    else:
+      return (self[i] for i in range(self.shape[0]))
+
+  def __reversed__(self):
+    if self.ndim == 0:
+      raise TypeError("iteration over a 0-d array")  # same as numpy error
+    else:
+      return (self[i] for i in range(self.shape[0] - 1, -1, -1))
 
 
 def _hashable_index(idx):

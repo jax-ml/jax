@@ -1187,15 +1187,12 @@ for device_array in [DeviceArray]:
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
-      return self._value.__iter__()
+      return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())
 
   setattr(device_array, "__iter__", __iter__)
 
   def __reversed__(self):
-    if self.ndim == 0:
-      raise TypeError("iteration over a 0-d array")
-    else:
-      return reversed(self._value)
+    return iter(self[::-1])
 
   setattr(device_array, "__reversed__", __reversed__)
 
@@ -1235,7 +1232,15 @@ for device_array in [DeviceArray]:
   setattr(device_array, "__eq__", lambda self, other: self._value == other)
 
   def __hash__(self):
-    raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
+    if self.ndim == 0:
+      # We allow 0D DeviceArrays to be hashable, mainly so that when we unpack a
+      # 1D DeviceArray with __iter__ we get an iterable of hashable values. That
+      # is loosely analogous to how NumPy unpacks 1D arrays into hashable NumPy
+      # scalars (but JAX doesn't have special scalar values distinct from 0D
+      # arrays).
+      return hash(self.item())
+    else:
+      raise TypeError("JAX DeviceArray, like numpy.ndarray, is not hashable.")
 
   setattr(device_array, "__hash__", __hash__)
 
