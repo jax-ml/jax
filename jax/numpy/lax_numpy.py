@@ -4525,7 +4525,7 @@ class _IndexUpdateRef:
   def __repr__(self):
     return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
 
-  def set(self, values):
+  def set(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = y``.
 
     ``x.at[idx].set(y)`` is syntactic sugar for
@@ -4535,9 +4535,11 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_update(self.array, self.index, values)
+    return ops.index_update(self.array, self.index, values,
+                            indices_are_sorted=indices_are_sorted,
+                            unique_indices=unique_indices)
 
-  def add(self, values):
+  def add(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] += y``.
 
     ``x.at[idx].add(y)`` is syntactic sugar for
@@ -4547,9 +4549,11 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_add(self.array, self.index, values)
+    return ops.index_add(self.array, self.index, values,
+                         indices_are_sorted=indices_are_sorted,
+                         unique_indices=unique_indices)
 
-  def mul(self, values):
+  def mul(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] += y``.
 
     ``x.at[idx].mul(y)`` is syntactic sugar for
@@ -4559,9 +4563,11 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_mul(self.array, self.index, values)
+    return ops.index_mul(self.array, self.index, values,
+                         indices_are_sorted=indices_are_sorted,
+                         unique_indices=unique_indices)
 
-  def min(self, values):
+  def min(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
     ``x.at[idx].min(y)`` is syntactic sugar for
@@ -4572,9 +4578,11 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_min(self.array, self.index, values)
+    return ops.index_min(self.array, self.index, values,
+                         indices_are_sorted=indices_are_sorted,
+                         unique_indices=unique_indices)
 
-  def max(self, values):
+  def max(self, values, indices_are_sorted=False, unique_indices=False):
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
     ``x.at[idx].max(y)`` is syntactic sugar for
@@ -4585,7 +4593,9 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    return ops.index_max(self.array, self.index, values)
+    return ops.index_max(self.array, self.index, values,
+                         indices_are_sorted=indices_are_sorted,
+                         unique_indices=unique_indices)
 
 setattr(DeviceArray, "at", property(_IndexUpdateHelper))
 setattr(ShapedArray, "at", core.aval_property(_IndexUpdateHelper))
