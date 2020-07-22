@@ -170,6 +170,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     left_shift
     less
     less_equal
+    lexsort
     linspace
     log
     log10
