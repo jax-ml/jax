@@ -9,18 +9,25 @@ Change Log
 
 These are the release notes for JAX.
 
+jaxlib 0.1.52 (July 22, 2020)
+------------------------------
+
+* Update XLA.
+
 jax 0.1.73 (July 22, 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.72...jax-v0.1.73>`_.
 * The minimum jaxlib version is now 0.1.51.
 
 * New Features:
+
   * jax.image.resize. (#3703)
   * hfft and ihfft (#3664)
   * jax.numpy.intersect1d (#3726)
   * jax.numpy.lexsort (#3812)
 
 * Bug Fixes:
+
   * Fix reduction repeated axis error (#3618)
   * Fix shape rule for lax.pad for input dimensions of size 0. (#3608)
   * make psum transpose handle zero cotangents (#3653)
@@ -29,6 +36,7 @@ jax 0.1.73 (July 22, 2020)
   * address nan issue in jax.scipy.special.zeta (#3777)
 
 * Improvements:
+
   * Many improvements to jax2tf
   * Reimplement argmin/argmax using a single pass variadic reduction. (#3611)
   * Enable XLA SPMD partitioning by default. (#3151)
@@ -41,7 +49,6 @@ jax 0.1.73 (July 22, 2020)
   * Relax dimension ordering rules for dot_general. (#3778)
   * Enable buffer donation for GPU. (#3800)
   * Add support for base dilation and window dilation to reduce window op… (#3803)
-
 
 jaxlib 0.1.51 (July 2, 2020)
 ------------------------------
