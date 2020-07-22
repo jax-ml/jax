@@ -2655,6 +2655,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for input_type in [np.array, tuple]
       for axis in (-1, *range(len(shape) - 1))))
   def testLexsort(self, dtype, shape, input_type, axis):
+    # TODO(b/141131288): enable test once complex sort is supported on TPU.
     if (jnp.issubdtype(dtype, jnp.complexfloating)
         and jtu.device_under_test() == "tpu"):
       self.skipTest("complex sort not supported on TPU")
