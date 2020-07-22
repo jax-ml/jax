@@ -4107,7 +4107,8 @@ batching.primitive_batchers[scatter_mul_p] = (
   partial(_scatter_batching_rule, scatter_mul))
 
 def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
-                          update_consts, dimension_numbers):
+                          update_consts, dimension_numbers,
+                          indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
 
@@ -4116,7 +4117,9 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
   val_out = scatter_op.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=scatter_dnums)
+      update_consts=update_consts, dimension_numbers=scatter_dnums,
+      indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices)
 
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
@@ -4196,7 +4199,9 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
     tangent_out = scatter_add(g_operand,
                               scatter_indices,
                               tangent_updates,
-                              scatter_dnums)
+                              scatter_dnums,
+                              indices_are_sorted=indices_are_sorted,
+                              unique_indices=unique_indices)
 
   return val_out, tangent_out
 

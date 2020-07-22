@@ -978,14 +978,14 @@ class IndexedUpdateTest(jtu.JaxTestCase):
                            rng_factory, indexer, sugared, op):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
-    onp_fn = lambda x, y: UpdateOps.onp_fn(op, indexer, x, y)
+    np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
     if sugared:
       jax_fn = lambda x, y: UpdateOps.sugar_fn(
           op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(
           op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
-    self._CheckAgainstNumpy(onp_fn, jax_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True)
     self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list({
