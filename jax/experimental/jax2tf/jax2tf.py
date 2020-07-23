@@ -420,7 +420,7 @@ tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
   lax.linear_solve_p,
-  lax_linalg.eig_p, lax_linalg.eigh_p,
+  lax_linalg.eigh_p,
   lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
@@ -1327,6 +1327,30 @@ def _svd(operand, full_matrices, compute_uv):
   return s, u, tf.linalg.adjoint(v)
 
 tf_impl[lax_linalg.svd_p] = _svd
+
+def _eig(operand: TfVal, compute_left_eigenvectors: bool,
+         compute_right_eigenvectors: bool):
+  if compute_left_eigenvectors and compute_right_eigenvectors:
+    # TODO(bchetioui): didn't find a 100% reliable, easy and satisfying way to
+    # sort the left eigenvectors in the right order. The jax.numpy.linalg API
+    # suggests to me that left eigenvectors are anyway seldom used, so I
+    # think it is acceptable to leave as unimplemented for now.
+    msg = ("Conversion of eig is not implemented when both "
+           "compute_left_eigenvectors and compute_right_eigenvectors are set "
+           "to True.")
+    raise NotImplementedError(msg)
+  elif not (compute_left_eigenvectors or compute_right_eigenvectors):
+    return tuple([tf.linalg.eigvals(operand)])
+  elif compute_right_eigenvectors:
+    return tuple(tf.linalg.eig(operand))
+  else: # compute_left_eigenvectors == True
+    rank = len(operand.shape)
+    permutation = list(range(rank - 2)) + [rank - 1, rank - 2]
+    wH, vl = tf.linalg.eig(tf.math.conj(tf.transpose(operand, permutation)))
+    wHH = tf.math.conj(wH)
+    return tuple([wHH, vl])
+
+tf_impl[lax_linalg.eig_p] = _eig
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
                            fun_jaxpr: core.ClosedJaxpr,

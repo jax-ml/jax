@@ -118,6 +118,14 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
+  if prim is lax_linalg.eig_p:
+    tf_unimpl(additional_msg=("this is a problem only in compiled mode "
+                              "(experimental_compile=True))"))
+    compute_left_eigenvectors = kwargs['compute_left_eigenvectors']
+    compute_right_eigenvectors = kwargs['compute_right_eigenvectors']
+    if compute_left_eigenvectors and compute_right_eigenvectors:
+      tf_unimpl(additional_msg=("it is not possible to request both left and "
+                                "right eigenvectors for now"))
   if prim is lax_linalg.svd_p:
     np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [dtypes.bfloat16]:

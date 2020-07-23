@@ -605,6 +605,21 @@ lax_linalg_svd = tuple(
   for compute_uv in [False, True]
 )
 
+lax_linalg_eig = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_computelefteigenvectors={compute_left_eigenvectors}_computerighteigenvectors={compute_right_eigenvectors}",
+          lax_linalg.eig,
+          [RandArg(shape, dtype), StaticArg(compute_left_eigenvectors),
+           StaticArg(compute_right_eigenvectors)],
+          shape=shape,
+          dtype=dtype,
+          compute_left_eigenvectors=compute_left_eigenvectors,
+          compute_right_eigenvectors=compute_right_eigenvectors)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [(0, 0), (5, 5), (2, 6, 6)]
+  for compute_left_eigenvectors in [False, True]
+  for compute_right_eigenvectors in [False, True]
+)
+
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
           lax.slice,
