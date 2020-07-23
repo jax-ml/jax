@@ -661,6 +661,9 @@ def rand_some_zero(rng):
 
 def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
+    nonlocal high
+    if low == 0 and high is None:
+      high = np.iinfo(dtype).max
     return rng.randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
