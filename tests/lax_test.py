@@ -1865,7 +1865,7 @@ class LazyConstantTest(jtu.JaxTestCase):
 
   def testBroadcastInDim(self):
     arr = lax.full((2, 1), 1.) + 1.
-    arr_np = np.full((2, 1), 1.) + 1.
+    arr_np = (np.full((2, 1), 1.) + 1.).astype(dtypes.float_)
     expected = lax_reference.broadcast_in_dim(arr_np, (2, 1, 3), (0, 2))
     make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
     self._Check(make_const, expected)
