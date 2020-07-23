@@ -343,7 +343,7 @@ def _check_shape(name, shape, *param_shapes):
 
 def uniform(key: jnp.ndarray,
             shape: Sequence[int] = (),
-            dtype: np.dtype = np.float64,
+            dtype: np.dtype = dtypes.float_,
             minval: Union[float, jnp.ndarray] = 0.,
             maxval: Union[float, jnp.ndarray] = 1.) -> jnp.ndarray:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
@@ -400,7 +400,7 @@ def randint(key: jnp.ndarray,
             shape: Sequence[int],
             minval: Union[int, jnp.ndarray],
             maxval: Union[int, jnp.ndarray],
-            dtype: np.dtype = np.int64):
+            dtype: np.dtype = dtypes.int_):
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
@@ -589,7 +589,7 @@ def choice(key, a, shape=(), replace=True, p=None):
 
 def normal(key: jnp.ndarray,
            shape: Sequence[int] = (),
-           dtype: np.dtype = np.float64) -> jnp.ndarray:
+           dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
@@ -622,7 +622,7 @@ def multivariate_normal(key: jnp.ndarray,
                         mean: jnp.ndarray,
                         cov: jnp.ndarray,
                         shape: Optional[Sequence[int]] = None,
-                        dtype: np.dtype = np.float64) -> jnp.ndarray:
+                        dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample multivariate normal random values with given mean and covariance.
 
   Args:
@@ -679,7 +679,7 @@ def truncated_normal(key: jnp.ndarray,
                     lower: Union[float, jnp.ndarray],
                     upper: Union[float, jnp.ndarray],
                     shape: Optional[Sequence[int]] = None,
-                    dtype: np.dtype = np.float64) -> jnp.ndarray:
+                    dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
@@ -763,7 +763,7 @@ def beta(key: jnp.ndarray,
          a: Union[float, jnp.ndarray],
          b: Union[float, jnp.ndarray],
          shape: Optional[Sequence[int]] = None,
-         dtype: np.dtype = np.float64) -> jnp.ndarray:
+         dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample Beta random values with given shape and float dtype.
 
   Args:
@@ -806,7 +806,7 @@ def _beta(key, a, b, shape, dtype):
   return gamma_a / (gamma_a + gamma_b)
 
 
-def cauchy(key, shape=(), dtype=np.float64):
+def cauchy(key, shape=(), dtype=dtypes.float_):
   """Sample Cauchy random values with given shape and float dtype.
 
   Args:
@@ -834,7 +834,7 @@ def _cauchy(key, shape, dtype):
   return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
 
 
-def dirichlet(key, alpha, shape=None, dtype=np.float64):
+def dirichlet(key, alpha, shape=None, dtype=dtypes.float_):
   """Sample Dirichlet random values with given shape and float dtype.
 
   Args:
@@ -878,7 +878,7 @@ def _dirichlet(key, alpha, shape, dtype):
   return gamma_samples / jnp.sum(gamma_samples, axis=-1, keepdims=True)
 
 
-def exponential(key, shape=(), dtype=np.float64):
+def exponential(key, shape=(), dtype=dtypes.float_):
   """Sample Exponential random values with given shape and float dtype.
 
   Args:
@@ -1000,7 +1000,7 @@ ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_g
 xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, multiple_results=False)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
-def gamma(key, a, shape=None, dtype=np.float64):
+def gamma(key, a, shape=None, dtype=dtypes.float_):
   """Sample Gamma random values with given shape and float dtype.
 
   Args:
@@ -1116,7 +1116,7 @@ def _poisson(key, lam, shape, dtype):
   # The acceptance probability for rejection sampling maxes out at 89% as
   # λ -> ∞, so pick some arbitrary large value.
   lam_rejection = lax.select(use_knuth, lax.full_like(lam, 1e5), lam)
-  max_iters = jnp.iinfo(dtype).max  # insanely conservative
+  max_iters = dtype.type(jnp.iinfo(dtype).max)  # insanely conservative
   return lax.select(
       use_knuth,
       _poisson_knuth(key, lam_knuth, shape, dtype, max_iters),
@@ -1124,7 +1124,7 @@ def _poisson(key, lam, shape, dtype):
   )
 
 
-def poisson(key, lam, shape=(), dtype=np.int64):
+def poisson(key, lam, shape=(), dtype=dtypes.int_):
   """Sample Poisson random values with given shape and integer dtype.
 
   Args:
@@ -1146,7 +1146,7 @@ def poisson(key, lam, shape=(), dtype=np.int64):
   return _poisson(key, lam, shape, dtype)
 
 
-def gumbel(key, shape=(), dtype=np.float64):
+def gumbel(key, shape=(), dtype=dtypes.float_):
   """Sample Gumbel random values with given shape and float dtype.
 
   Args:
@@ -1203,7 +1203,7 @@ def categorical(key, logits, axis=-1, shape=None):
   return jnp.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
 
 
-def laplace(key, shape=(), dtype=np.float64):
+def laplace(key, shape=(), dtype=dtypes.float_):
   """Sample Laplace random values with given shape and float dtype.
 
   Args:
@@ -1231,7 +1231,7 @@ def _laplace(key, shape, dtype):
   return lax.mul(lax.sign(u), lax.log1p(lax.neg(lax.abs(u))))
 
 
-def logistic(key, shape=(), dtype=np.float64):
+def logistic(key, shape=(), dtype=dtypes.float_):
   """Sample logistic random values with given shape and float dtype.
 
   Args:
@@ -1270,7 +1270,7 @@ def _logistic(key, shape, dtype):
   return lax.log(lax.div(lax.add(lax._const(x, eps), x), lax.sub(lax._const(x, 1), x)))
 
 
-def pareto(key, b, shape=None, dtype=np.float64):
+def pareto(key, b, shape=None, dtype=dtypes.float_):
   """Sample Pareto random values with given shape and float dtype.
 
   Args:
@@ -1307,7 +1307,7 @@ def _pareto(key, b, shape, dtype):
   return lax.exp(e / b)
 
 
-def t(key, df, shape=(), dtype=np.float64):
+def t(key, df, shape=(), dtype=dtypes.float_):
   """Sample Student's t random values with given shape and float dtype.
 
   Args:
