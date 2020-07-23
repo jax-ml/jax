@@ -2517,6 +2517,29 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = 12.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_inner_custom_jvp_unexpected_tracer_error(self):
+    # https://github.com/google/jax/issues/3822
+    alpha = np.float32(2.)
+
+    def sample(seed):
+      @jax.custom_jvp
+      def f(alpha):
+        return jax.random.gamma(seed, alpha, shape=[])
+
+      @f.defjvp
+      def f_jvp(primal, tangent):
+        alpha = primal
+        dalpha = tangent
+        sample = f(alpha)
+        partial_alpha = jax.lax.random_gamma_grad(alpha, sample)
+        return sample, partial_alpha * dalpha
+      return f(alpha)
+
+    msg = ("custom_jvp functions and their corresponding differentiation rules "
+           "must be defined at the top level")
+    with self.assertRaisesRegex(jax.core.UnexpectedTracerError, msg):
+      jax.vmap(sample)(jax.random.split(jax.random.PRNGKey(1), 3))
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
