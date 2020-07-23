@@ -2628,7 +2628,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "shape": shape, "dtype": dtype, "axis": axis}
       for dtype in all_dtypes
-      for shape in [(2,), (3, 4), (3, 4, 5), (2, 3, 0)]
+      for shape in nonzerodim_shapes
       for axis in (None, *range(len(shape)))))
   def testSort(self, dtype, shape, axis):
     # TODO(b/141131288): enable test once complex sort is supported on TPU.
@@ -2651,7 +2651,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           input_type.__name__, axis),
        "shape": shape, "dtype": dtype, "input_type": input_type, "axis": axis}
       for dtype in all_dtypes
-      for shape in [(2,), (3, 4), (3, 4, 5), (2, 3, 0)]
+      for shape in nonempty_nonscalar_array_shapes
       for input_type in [np.array, tuple]
       for axis in (-1, *range(len(shape) - 1))))
   def testLexsort(self, dtype, shape, input_type, axis):
@@ -2671,7 +2671,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "shape": shape, "dtype": dtype, "axis": axis}
       for dtype in all_dtypes
-      for shape in [(2,), (3, 4), (3, 4, 5), (2, 3, 0)]
+      for shape in nonzerodim_shapes
       for axis in (None, *range(len(shape)))))
   def testArgsort(self, dtype, shape, axis):
     # TODO(b/141131288): enable test once complex sort is supported on TPU.
@@ -2693,7 +2693,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
       for dtype in all_dtypes
-      for shape in [(2,), (3, 4), (3, 4, 5), (2, 3, 0)]))
+      for shape in nonzerodim_shapes))
   def testMsort(self, dtype, shape):
     # TODO(b/141131288): enable test once complex sort is supported on TPU.
     if (jnp.issubdtype(dtype, jnp.complexfloating)
