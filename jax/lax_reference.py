@@ -119,6 +119,9 @@ shift_right_arithmetic = np.right_shift
 # TODO shift_right_logical
 
 def population_count(x):
+  dtype = x.dtype
+  if x.dtype in (np.uint8, np.uint16):
+    x = x.astype(np.uint32)
   assert x.dtype in (np.uint32, np.uint64)
   m = [
       0x5555555555555555,  # binary: 0101...
@@ -141,7 +144,7 @@ def population_count(x):
   x = (x & m[4]) + ((x >> 16) & m[4])  # put count of each 32 bits into those 32 bits
   if x.dtype == np.uint64:
     x = (x & m[5]) + ((x >> 32) & m[5])  # put count of each 64 bits into those 64 bits
-  return x
+  return x.astype(dtype)
 
 eq = np.equal
 ne = np.not_equal

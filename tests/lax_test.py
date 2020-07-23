@@ -47,8 +47,8 @@ float_dtypes = jtu.dtypes.all_floating
 complex_elem_dtypes = jtu.dtypes.floating
 complex_dtypes = jtu.dtypes.complex
 inexact_dtypes = jtu.dtypes.all_inexact
-int_dtypes = jtu.dtypes.integer
-uint_dtypes = jtu.dtypes.unsigned
+int_dtypes = jtu.dtypes.all_integer
+uint_dtypes = jtu.dtypes.all_unsigned
 bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -137,8 +137,7 @@ LAX_OPS = [
     op_record("bitwise_not", 1, bool_dtypes, jtu.rand_small),
     op_record("bitwise_or", 2, bool_dtypes, jtu.rand_small),
     op_record("bitwise_xor", 2, bool_dtypes, jtu.rand_small),
-    op_record("population_count", 1, uint_dtypes, partial(jtu.rand_int,
-                                                          high=1 << 32)),
+    op_record("population_count", 1, uint_dtypes, jtu.rand_int),
 
     op_record("add", 2, default_dtypes + complex_dtypes, jtu.rand_small),
     op_record("sub", 2, default_dtypes + complex_dtypes, jtu.rand_small),
