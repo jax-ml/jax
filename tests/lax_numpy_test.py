@@ -2623,27 +2623,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(np.arange(2.5, dtype=jnp.float_),
                         jnp.arange(2.5))
 
-  def testSortManually(self):
-    # manual tests for sort are nice because we don't have to worry about ties.
-    # lax.sort is tested combinatorially.
-    ans = jnp.sort(np.array([16, 15, 23, 42, 8, 4]))
-    expected = np.array([4, 8, 15, 16, 23, 42])
-    self.assertAllClose(expected, ans)
-
-    a = np.array([[1, 4], [3, 1]])
-    ans = jnp.sort(a, axis=None)
-    expected = np.array([1, 1, 3, 4])
-    self.assertAllClose(expected, ans)
-
-    a = np.array([[1, 4], [3, 1]])
-    ans = jnp.sort(a)  # last axis
-    expected = np.array([[1, 4], [1, 3]])
-    self.assertAllClose(expected, ans)
-
-    a = np.array([[1, 4], [3, 1]])
-    ans = jnp.sort(a, axis=0)
-    expected = np.array([[1, 1], [3, 4]])
-    self.assertAllClose(expected, ans)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "shape": shape, "dtype": dtype, "axis": axis}
+      for dtype in all_dtypes
+      for shape in nonzerodim_shapes
+      for axis in (None, *range(len(shape)))))
+  def testSort(self, dtype, shape, axis):
+    # TODO(b/141131288): enable test once complex sort is supported on TPU.
+    if (jnp.issubdtype(dtype, jnp.complexfloating)
+        and jtu.device_under_test() == "tpu"):
+      self.skipTest("complex sort not supported on TPU")
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_fun = jnp.sort
+    np_fun = np.sort
+    if axis is not None:
+      jnp_fun = partial(jnp_fun, axis=axis)
+      np_fun = partial(np_fun, axis=axis)
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_input_type={}_axis={}".format(
@@ -2651,7 +2651,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           input_type.__name__, axis),
        "shape": shape, "dtype": dtype, "input_type": input_type, "axis": axis}
       for dtype in all_dtypes
-      for shape in [(2,), (3, 4), (3, 4, 5), (2, 3, 0)]
+      for shape in nonempty_nonscalar_array_shapes
       for input_type in [np.array, tuple]
       for axis in (-1, *range(len(shape) - 1))))
   def testLexsort(self, dtype, shape, input_type, axis):
@@ -2666,38 +2666,43 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
-  def testArgsortManually(self):
-    x = np.array([16, 15, 23, 42, 8, 4])
-    ans = jnp.argsort(x)
-    expected = np.argsort(x)
-    self.assertAllClose(expected, ans, check_dtypes=False)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis),
+       "shape": shape, "dtype": dtype, "axis": axis}
+      for dtype in all_dtypes
+      for shape in nonzerodim_shapes
+      for axis in (None, *range(len(shape)))))
+  def testArgsort(self, dtype, shape, axis):
+    # TODO(b/141131288): enable test once complex sort is supported on TPU.
+    if (jnp.issubdtype(dtype, jnp.complexfloating)
+        and jtu.device_under_test() == "tpu"):
+      self.skipTest("complex sort not supported on TPU")
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    jnp_fun = jnp.argsort
+    np_fun = np.argsort
+    if axis is not None:
+      jnp_fun = partial(jnp_fun, axis=axis)
+      np_fun = partial(np_fun, axis=axis)
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
-    x = np.array([[16, 15, 23], [42, 8, 4]])
-    ans = jnp.argsort(x, axis=0)
-    expected = np.argsort(x, axis=0)
-    self.assertAllClose(expected, ans, check_dtypes=False)
-
-    x = np.array([[16, 15, 23], [42, 8, 4]])
-    ans = jnp.argsort(x, axis=1)
-    expected = np.argsort(x, axis=1)
-    self.assertAllClose(expected, ans, check_dtypes=False)
-
-    x = np.array([[16, 15, 23], [42, 8, 4]])
-    ans = jnp.argsort(x, axis=None)
-    expected = np.argsort(x, axis=None)
-    self.assertAllClose(expected, ans, check_dtypes=False)
-
-    x = np.array([[16, 15, 23], [42, 8, 4]])
-    ans = jnp.argsort(x)
-    expected = np.argsort(x)
-    self.assertAllClose(expected, ans, check_dtypes=False)
-
-  def testMsortManually(self):
-    args_maker = lambda: [np.random.randint(50, size=(5 ,5))]
-    jnp_op = lambda x: jnp.msort(x)
-    np_op = lambda x: np.msort(x)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
-    self._CompileAndCheck(jnp_op, args_maker)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for dtype in all_dtypes
+      for shape in nonzerodim_shapes))
+  def testMsort(self, dtype, shape):
+    # TODO(b/141131288): enable test once complex sort is supported on TPU.
+    if (jnp.issubdtype(dtype, jnp.complexfloating)
+        and jtu.device_under_test() == "tpu"):
+      self.skipTest("complex sort not supported on TPU")
+    rng = jtu.rand_some_equal(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(jnp.msort, np.msort, args_maker)
+    self._CompileAndCheck(jnp.msort, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_shifts={}_axis={}".format(
