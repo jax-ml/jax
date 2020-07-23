@@ -1075,7 +1075,8 @@ def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
   params = dict(params_tuple)
   todo = []
   while True:
-    tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
+    tracers = [x for x in outs if isinstance(x, Tracer)
+               and (level is None or x._trace.level > level)]
     if tracers:
       ans = max(tracers, key=lambda x: x._trace.level)
     else:

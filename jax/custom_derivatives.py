@@ -278,7 +278,11 @@ class CustomJVPCallPrimitive(core.CallPrimitive):
       outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if env_trace_todo:
-      raise core.UnexpectedTracerError
+      msg = ("Encountered an unexpected tracer in custom_jvp function "
+             f"{fun.__name__}. custom_jvp functions and their corresponding "
+             "differentiation rules must be defined at the top-level, i.e. "
+             "not within the body of another function to be transformed.")
+      raise core.UnexpectedTracerError(msg)
     return map(core.full_lower, outs)
 
   def impl(self, fun, _, *args):
