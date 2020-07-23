@@ -2074,3 +2074,49 @@ def invertible(fun: Callable, concrete: bool = False) -> Callable:
                                    concrete=concrete)
     return tree_unflatten(out_tree(), out_flat)
   return fun_invertible
+
+def make_hlo(fun: Callable,
+             optimize: bool = False,
+             metadata: bool = False, 
+             platform: Optional[str] = None,
+             num_replicas: int = 1,
+             num_partitions: int = 1,
+             **xla_computation_kwargs) -> Callable:
+  """Utility function for printing JAX-emitted HLO and XLA-compiled HLO.
+
+  Example Usage:
+    hlo_str = make_hlo(lambda x: jnp.sin(x) + x)(jnp.array([1.,2.,3.]))
+    print(hlo_str)
+
+  Args:
+    fun: jax function to wrap
+    optimize: whether to return platform-specific, XLA-optimized HLO
+    metadata: whether to include JAX metadata including source 
+      information.
+    platform: None, 'cpu','gpu','tpu' - platform to compile for,
+      None uses the current default.
+    num_replicas: the replicated axis size, only necessary for printing
+      XLA-compiled pmap'd HLOs.
+    num_partitions: the number of partitions, only necessary for printing
+      XLA-optimized sharded HLOs.
+    xla_computation_kwargs: further kwargs corresponding to those for 
+      xla_computation.
+
+  Returns:
+    A wrapped function that takes the arguments of `fun` and that returns 
+    the HLO text corresponding to `fun` evaluated on these args.
+  """
+  client = xb.get_backend(platform)
+  print_opts = xc._xla.HloPrintOptions.short_parsable()
+  print_opts.print_metadata = metadata
+  def wrapped_fn(*args, **kwargs):
+    c = xla_computation(fun, **xla_computation_kwargs)(*args, **kwargs)
+    if optimize:
+      options = xb.get_compile_options(num_replicas=num_replicas,
+                                       num_partitions=num_partitions)
+      module = client.compile(c, compile_options=options).hlo_modules()[0]
+      return module.to_string(print_opts)
+    else:
+      return c.as_hlo_module().to_string(print_opts)
+  return wrapped_fn
+
