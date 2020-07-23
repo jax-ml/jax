@@ -98,7 +98,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     osp_fun = partial(osp_signal.detrend, axis=axis, type=type, bp=bp)
     jsp_fun = partial(jsp_signal.detrend, axis=axis, type=type, bp=bp)
     tol = {np.float32: 1e-5, np.float64: 1e-12}
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol, check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
 
