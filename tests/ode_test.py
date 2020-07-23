@@ -48,10 +48,10 @@ class ODETest(jtu.JaxTestCase):
       theta, omega = y
       return [omega, -m * omega - g * _np.sin(theta)]
 
-    y0 = [np.pi - 0.1, 0.0]
-    ts = np.linspace(0., 1., 11)
-    args = (0.25, 9.8)
-    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+    y0 = [jnp.float_(np.pi - 0.1), jnp.float_(0.0)]
+    ts = jnp.linspace(0., 1., 11)
+    args = (jnp.float_(0.25), jnp.float_(9.8))
+    tol = 1e-1 if jtu.num_float_bits(jnp.float_) == 32 else 1e-3
 
     self.check_against_scipy(pend, y0, ts, *args, tol=tol)
 
@@ -79,9 +79,9 @@ class ODETest(jtu.JaxTestCase):
     def dynamics(_np, y, t):
       return _np.array([y[1] * -t, -1 * y[1] - 9.8 * _np.sin(y[0])])
 
-    y0 = [np.pi - 0.1, 0.0]
-    ts = np.linspace(0., 1., 11)
-    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+    y0 = [jnp.float_(np.pi - 0.1), jnp.float_(0.0)]
+    ts = jnp.linspace(0., 1., 11)
+    tol = 1e-1 if jtu.num_float_bits(jnp.float_) == 32 else 1e-3
 
     self.check_against_scipy(dynamics, y0, ts, tol=tol)
 
@@ -184,7 +184,7 @@ class ODETest(jtu.JaxTestCase):
     def experiment(x):
       def model(y, t):
         return -x * y
-      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      history = odeint(model, 1., jnp.arange(0, 10, 0.1))
       return history[-1]
     jtu.check_grads(experiment, (0.01,), modes=["rev"], order=1)
 
@@ -195,11 +195,11 @@ class ODETest(jtu.JaxTestCase):
     def experiment(x):
       def model(y, t):
         return -x * y
-      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      history = odeint(model, 1., jnp.arange(0, 10, 0.1))
       return history[-1]
 
     gradfun = jax.value_and_grad(experiment)
-    t = np.arange(0., 1., 0.01)
+    t = jnp.arange(0., 1., 0.01)
     h, g = jax.vmap(gradfun)(t)  # doesn't crash
     ans = h[11], g[11]
 
