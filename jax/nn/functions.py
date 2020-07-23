@@ -243,7 +243,7 @@ def normalize(x, axis=-1, mean=None, variance=None, epsilon=1e-5):
     variance = jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
   return (x - mean) * lax.rsqrt(variance + epsilon)
 
-def one_hot(x, num_classes, *, dtype=jnp.float64):
+def one_hot(x, num_classes, *, dtype=jnp.float_):
   """One-hot encodes the given indicies.
 
   Each index in the input ``x`` is encoded as a vector of zeros of length
