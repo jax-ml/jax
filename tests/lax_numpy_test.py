@@ -749,7 +749,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp_op(np.array([]))
     with self.assertRaises(ValueError, msg=msg):
       jnp_op(np.zeros((2, 0)), axis=1)
-    
+
     def np_fun(array_to_reduce):
       return np_op(array_to_reduce, axis=0).astype(jnp.int_)
 
