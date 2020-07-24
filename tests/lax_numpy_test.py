@@ -447,10 +447,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-  def testFailIfX64(self):
-    if FLAGS.jax_enable_x64:
-      raise ValueError("purposely failing on x64")
-
   def testNotImplemented(self):
     for name in jnp._NOT_IMPLEMENTED:
       func = getattr(jnp, name)
