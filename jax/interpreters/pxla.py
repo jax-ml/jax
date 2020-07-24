@@ -944,7 +944,7 @@ def get_num_partitions(*partitions):
   return num_partitions_set.pop()
 
 
-class ResultToPopulate(object): pass
+class ResultToPopulate: pass
 result_to_populate = ResultToPopulate()
 
 def _pvals_to_results_handler(
