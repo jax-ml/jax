@@ -311,6 +311,34 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, "grad")
     self.TransformConvertAndCompare(f, arg, "grad_vmap")
 
+  def test_remat1(self):
+    @jax.remat
+    def f(x1):
+      x2 = jnp.sin(x1)
+      x3 = jnp.sin(x2)
+      x4 = jnp.sin(x3)
+      return jnp.sum(x4)
+
+    # The computation of grad_f computes "sin" 5 times, 3 for the forward pass
+    # and then to rematerialize "x2" and "x3" in the backward pass.
+    arg = np.arange(3.)
+    self.TransformConvertAndCompare(f, arg, "grad")
+    # TODO: check that the TF code also computes "sin" 5 times
+
+
+  def test_remat_free_var(self):
+    def f(x):
+      y = 2 * x
+
+      @jax.remat
+      def g():
+        return y
+
+      return g()
+    arg = 3.
+    self.TransformConvertAndCompare(f, arg, None)
+    self.TransformConvertAndCompare(f, arg, "grad")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

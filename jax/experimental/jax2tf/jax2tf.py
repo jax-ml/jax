@@ -305,8 +305,17 @@ class TensorFlowTrace(core.Trace):
     vals_out: Sequence[TfValOrUnit] = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v) for v in vals_out]
 
-  def post_process_call(self, call_primitive, out_tracers, params):
-    raise NotImplementedError("post_process_call")
+  def post_process_call(self, call_primitive: core.Primitive,
+                        out_tracers: Sequence[TensorFlowTracer], params):
+    # We encountered a call primitive, e.g., remat_call_p, whose result
+    # (out_tracers) include TensorFlowTracer that were not passed through
+    # its arguments (captured from the environment).
+    vals = tuple(t.val for t in out_tracers)
+    master = self.master
+    def todo(vals: Sequence[TfValOrUnit]):
+      trace = TensorFlowTrace(master, core.cur_sublevel())
+      return map(functools.partial(TensorFlowTracer, trace), vals)
+    return vals, todo
 
   def process_map(self, map_primitive, f, tracers, params):
     raise NotImplementedError("process_map")
@@ -347,7 +356,8 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 
 
 for unexpected in [
-  xla.xla_call_p]:  # Not part of the public API
+    # Call primitives are inlined
+    xla.xla_call_p, pe.remat_call_p, core.call_p]:
 
   tf_impl[unexpected] = functools.partial(_unexpected_primitive, unexpected)
 
@@ -369,8 +379,6 @@ tf_not_yet_impl = [
   lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
   lax.infeed_p, lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
 
-  core.call_p,
-  pe.remat_call_p,
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
 

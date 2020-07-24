@@ -275,6 +275,19 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(g, arg, "grad")
     self.TransformConvertAndCompare(g, arg, "grad_vmap")
 
+  def test_scan_remat(self):
+    def f_jax(xs):
+
+      @jax.remat
+      def body_fun(carry, x):
+        return carry * x, xs   # capture xs from the environment
+      res1, res2 = lax.scan(body_fun, 0., xs + 1.)
+      return jnp.sum(res1) + jnp.sum(res2)
+
+    arg = np.arange(10, dtype=np.float32) + 1.
+    self.TransformConvertAndCompare(f_jax, arg, None)
+    self.TransformConvertAndCompare(f_jax, arg, "grad")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
