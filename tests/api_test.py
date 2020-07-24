@@ -933,8 +933,8 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('constant(3)', xla_comp.as_hlo_text())
 
   def test_xla_computation_return_shape(self):
-    _, shape_tree = api.xla_computation(lambda x: (x + 1, jnp.zeros(2)),
-                                        return_shape=True)(1)
+    _, shape_tree = api.xla_computation(lambda x: (x + 1, jnp.zeros(2, jnp.float32)),
+                                        return_shape=True)(np.int32(1))
     expected = (api.ShapeDtypeStruct(shape=(), dtype=jnp.int32),
                 api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
     self.assertEqual(shape_tree, expected)
