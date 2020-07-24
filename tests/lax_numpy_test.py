@@ -1696,7 +1696,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = lambda arg: np.diagflat(np.atleast_1d(arg), k)
     jnp_fun = lambda arg: jnp.diagflat(arg, k)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=check_dtypes)
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2046,12 +2047,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   ))
   def testHistogramBinEdges(self, shape, dtype, bins, range, weights):
     rng = jtu.rand_default(self.rng())
-    _weights = lambda w: abs(w) if weights else None
+    wrng = jtu.rand_positive(self.rng())
     np_fun = lambda a, w, r: np.histogram_bin_edges(a, bins=bins, range=r,
-                                                    weights=_weights(w))
+                                                    weights=w)
     jnp_fun = lambda a, w, r: jnp.histogram_bin_edges(a, bins=bins, range=r,
-                                                      weights=_weights(w))
-    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype), range]
+                                                      weights=w)
+    if weights:
+      args_maker = lambda: [rng(shape, dtype), None, range]
+    else:
+      args_maker = lambda: [rng(shape, dtype), wrng(shape, dtype), range]
     tol = {jnp.bfloat16: 2E-2, np.float16: 1E-2}
     # linspace() compares poorly to numpy when using bfloat16
     if dtype != jnp.bfloat16:
