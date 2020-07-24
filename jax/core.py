@@ -1336,8 +1336,8 @@ def pp_eqns(eqns: Sequence[JaxprEqn],
   if source_info:
     l = max((i + len(s) for x in pps for i, s in x.lines), default=None)
     if l is not None:
-      return [pp_eqn(e).annotate(l, source_info_util.summarize(e.source_info))
-              for e in eqns]
+      return [p.annotate(l, source_info_util.summarize(e.source_info))
+              for e, p in zip(eqns, pps)]
   return pps
 
 def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
