@@ -41,17 +41,17 @@ jobs:
         include:
           - python-version: 3.6
             os: ubuntu-latest
-            enable-x64: disable-x64
+            enable-x64: 0
             package-overrides: "none"
             num_generated_cases: 25
           - python-version: 3.7
             os: ubuntu-latest
-            enable-x64: enable-x64
+            enable-x64: 1
             package-overrides: "none"
             num_generated_cases: 25
           - python-version: 3.6
             os: ubuntu-latest
-            enable-x64: enable-x64
+            enable-x64: 1
             # Test with numpy version that matches Google-internal version
             package-overrides: "numpy==1.16.4"
             num_generated_cases: 10
@@ -72,8 +72,8 @@ jobs:
     - name: Run tests
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
+        JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
       run: |
-        [ ${{ matrix.enable-x64 }} = enable-x64 ] && JAX_ENABLE_X64=1 || JAX_ENABLE_X64=0
         pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
