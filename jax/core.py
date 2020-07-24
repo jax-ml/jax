@@ -635,6 +635,11 @@ class TraceState(threading.local):
     self.substack = [Sublevel(0)]
     self.initial_style = False
 
+  def set_state(self, other: 'TraceState') -> None:
+    self.trace_stack = other.trace_stack
+    self.sustack = other.substack[:]
+    self.initial_style = other.initial_style
+
   def copy(self):
     new = TraceState()
     new.trace_stack = self.trace_stack.copy()
