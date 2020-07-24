@@ -287,14 +287,6 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 
 ### parallel primitives
 
-def standard_pmap_primitive(name, multiple_results=False):
-  prim = core.Primitive(name)
-  prim.multiple_results = multiple_results
-  prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
-  prim.def_abstract_eval(lambda x, *args, **params: x)
-  return prim
-
-
 def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
                                axis_index_groups):
   assert tuple(which_mapped) == (True,)
