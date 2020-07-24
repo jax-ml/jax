@@ -74,6 +74,7 @@ jax.scipy.special
    entr
    erf
    erfc
+   erfcx
    erfinv
    expit
    gammainc

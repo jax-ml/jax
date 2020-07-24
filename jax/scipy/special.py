@@ -75,6 +75,12 @@ def erfc(x):
   return lax.erfc(x)
 
 
+@_wraps(osp_special.erfcx)
+def erfcx(x):
+  x, = _promote_args_inexact("erfcx", x)
+  return lax.exp(x ** 2) * lax.erfc(x)
+
+
 @_wraps(osp_special.erfinv)
 def erfinv(x):
   x, = _promote_args_inexact("erfinv", x)

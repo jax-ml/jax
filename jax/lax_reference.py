@@ -73,6 +73,7 @@ igamma = scipy.special.gammainc
 igammac = scipy.special.gammaincc
 def erf(x): return scipy.special.erf(x).astype(x.dtype)
 def erfc(x): return scipy.special.erfc(x).astype(x.dtype)
+def erfcx(x): return scipy.special.erfcx(x).astype(x.dtype)
 def erf_inv(x): return scipy.special.erfinv(x).astype(x.dtype)
 
 def bessel_i0e(x): return scipy.special.i0e(x).astype(x.dtype)
