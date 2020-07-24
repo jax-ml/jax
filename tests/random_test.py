@@ -75,7 +75,7 @@ class LaxRandomTest(jtu.JaxTestCase):
             f'{expected_freq[valid]}\n{actual_freq[valid]}')
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in [np.float32, np.float64]))
   def testNumpyAndXLAAgreeOnFloatEndianness(self, dtype):
     if not FLAGS.jax_enable_x64 and jnp.issubdtype(dtype, np.float64):
@@ -160,7 +160,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysEqual(bits64, expected64)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testRngUniform(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
@@ -177,7 +177,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in int_dtypes + uint_dtypes))
   def testRngRandint(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
@@ -197,7 +197,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertTrue(np.all(samples < hi))
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in [np.float16, np.float32, np.float64]))
   def testNormal(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
@@ -213,7 +213,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in [np.float32, np.float64, np.int32, np.int64]))
   def testShuffle(self, dtype):
     key = random.PRNGKey(0)
@@ -233,7 +233,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_shape={}_replace={}_weighted={}_array_input={}".format(
           np.dtype(dtype).name, shape, replace, weighted, array_input),
-        "dtype": np.dtype(dtype).name, "shape": shape, "replace": replace,
+        "dtype": dtype, "shape": shape, "replace": replace,
         "weighted": weighted, "array_input": array_input}
       for dtype in [np.float32, np.float64, np.int32, np.int64]
       for shape in [(), (5,), (4, 5)]
@@ -260,7 +260,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}".format(jtu.format_shape_dtype_string(shape, dtype)),
-       "dtype": np.dtype(dtype).name, "shape": shape}
+       "dtype": dtype, "shape": shape}
       for dtype in [np.float32, np.float64, np.int32, np.int64]
       for shape in [100, (10, 10), (10, 5, 2)]))
   def testPermutationArray(self, dtype, shape):
@@ -300,8 +300,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       api.jit(random.permutation)(key, 10)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_p={}_{}".format(p, dtype),
-       "p": p, "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_p={}_dtype={}".format(p, np.dtype(dtype).name),
+       "p": p, "dtype": dtype}
       for p in [0.1, 0.5, 0.9]
       for dtype in [np.float32, np.float64]))
   def testBernoulli(self, p, dtype):
@@ -317,8 +317,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_p={}_{}_{}".format(p, dtype, sample_shape),
-     "p": p, "axis": axis, "dtype": np.dtype(dtype).name, 'sample_shape': sample_shape}
+    {"testcase_name": "_p={}_{}_{}".format(p, np.dtype(dtype).name, sample_shape),
+     "p": p, "axis": axis, "dtype": dtype, 'sample_shape': sample_shape}
     for (p, axis) in [
         ([.25] * 4, -1),
         ([.1, .2, .3, .4], -1),
@@ -358,8 +358,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_a={}_b={}_{}".format(a, b, dtype),
-       "a": a, "b": b, "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_a={}_b={}_dtype={}".format(a, b, np.dtype(dtype).name),
+       "a": a, "b": b, "dtype": dtype}
       for a in [0.2, 5.]
       for b in [0.2, 5.]
       for dtype in [np.float64]))  # NOTE: KS test fails with float32
@@ -377,7 +377,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in [np.float16, np.float32, np.float64]))
   def testCauchy(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
@@ -393,8 +393,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.cauchy().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_alpha={}_{}".format(alpha, dtype),
-       "alpha": alpha, "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_alpha={}_dtype={}".format(alpha, np.dtype(dtype).name),
+       "alpha": alpha, "dtype": dtype}
       for alpha in [
           np.array([0.2, 1., 5.]),
       ]
@@ -415,7 +415,7 @@ class LaxRandomTest(jtu.JaxTestCase):
         self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testExponential(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
@@ -431,8 +431,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_a={}_{}".format(a, dtype),
-       "a": a, "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_a={}_dtype={}".format(a, np.dtype(dtype).name),
+       "a": a, "dtype": dtype}
       for a in [0.1, 1., 10.]
       for dtype in [np.float32, np.float64]))
   def testGamma(self, a, dtype):
@@ -479,7 +479,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     api.vjp(f, a, b)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_lam={}_{}".format(lam, dtype),
+      {"testcase_name": "_lam={}_dtype={}".format(lam, np.dtype(dtype).name),
        "lam": lam, "dtype": np.dtype(dtype)}
       for lam in [0.5, 3, 9, 11, 50, 500]
       for dtype in [np.int16, np.int32, np.int64]))
@@ -513,7 +513,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in [np.float32, np.float64]))
   def testGumbel(self, dtype):
     key = random.PRNGKey(0)
@@ -527,7 +527,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testLaplace(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
@@ -543,7 +543,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(dtype), "dtype": np.dtype(dtype)}
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in float_dtypes))
   def testLogistic(self, dtype):
     if jtu.device_under_test() == "tpu" and jnp.dtype(dtype).itemsize < 3:
@@ -559,8 +559,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_b={}_{}".format(b, dtype),
-       "b": b, "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_b={}_dtype={}".format(b, np.dtype(dtype).name),
+       "b": b, "dtype": dtype}
       for b in [0.1, 1., 10.]
       for dtype in [np.float32, np.float64]))
   def testPareto(self, b, dtype):
@@ -580,8 +580,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == (3, 2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_df={}_{}".format(df, dtype),
-       "df": df, "dtype": np.dtype(dtype).name}
+      {"testcase_name": "_df={}_dtype={}".format(df, np.dtype(dtype).name),
+       "df": df, "dtype": dtype}
       for df in [0.1, 1., 10.]
       for dtype in [np.float32, np.float64]))
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
@@ -597,7 +597,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}D_{}".format(dim, np.dtype(dtype)),
+      {"testcase_name": "_dim={}_dtype={}".format(dim, np.dtype(dtype)),
        "dim": dim, "dtype": dtype}
       for dim in [1, 3, 5]
       for dtype in float_dtypes))
