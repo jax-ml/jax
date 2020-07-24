@@ -2533,7 +2533,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       futures = []
       for _ in range(n_workers):
         futures.append(e.submit(run))
-      unused_results = [f.result() for f in futures]
+      _ = [f.result() for f in futures]
 
 
 class CustomVJPTest(jtu.JaxTestCase):
