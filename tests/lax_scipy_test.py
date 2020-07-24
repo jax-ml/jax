@@ -59,7 +59,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("gammaincc", 2, float_dtypes, jtu.rand_positive, True),
     op_record("erf", 1, float_dtypes, jtu.rand_small_positive, True),
     op_record("erfc", 1, float_dtypes, jtu.rand_small_positive, True),
-    op_record("erfcx", 1, float_dtypes, jtu.rand_small_positive, True),
+    op_record("erfcx", 1, float_dtypes, jtu.rand_default, True),
     op_record("erfinv", 1, float_dtypes, jtu.rand_small_positive, True),
     op_record("expit", 1, float_dtypes, jtu.rand_small_positive, True),
     # TODO: gammaln has slightly high error.
