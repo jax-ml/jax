@@ -58,11 +58,12 @@ def _memoize(thunk):
   saved_state = core.trace_state.copy()
   def memoized():
     if not cell:
-      prev_state, core.trace_state = core.trace_state, saved_state
+      prev_state = core.trace_state.copy()
+      core.trace_state.set_state(saved_state)
       try:
         cell.append(thunk())
       finally:
-        core.trace_state = prev_state
+        core.trace_state.set_state(prev_state)
     return cell[0]
   return memoized
 
