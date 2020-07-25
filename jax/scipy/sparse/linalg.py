@@ -108,31 +108,36 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   def body_fun(value):
     x, r, rhat, alpha, omega, rho, p, q, k = value
-    # rho_ = _vdot_tree(_conj(rhat), r)
     rho_ = _vdot_tree(rhat, r)
     beta = rho_ / rho * alpha / omega
     p_ = _add(r, _mul(beta, _sub(p, _mul(omega, q))))
     phat = M(p_)
     q_ = A(phat)
-    # alpha_ = rho_ / _vdot_tree(_conj(rhat), q_)
     alpha_ = rho_ / _vdot_tree(rhat, q_)
     s = _sub(r, _mul(alpha_, q_))
-    # TODO(?): stop early
-    #  It requires accessing cond_fun like this, but it's
-    #  not possible with jit...
-    #  if cond_fun((x, s, r0, alpha_, omega, rho_, p_, q_, k)):
-    #    x_ = _add(x, _mul(alpha_, phat))
-    #    return x_, s, rhat, alpha_, omega, rho_, p_, q, k
+    exit_early = _vdot_tree_real(s, s) < atol2
     shat = M(s)
     t = A(shat)
-    # omega_ = _vdot_tree(_conj(s), t) / _vdot_tree_real(t, t)
-    omega_ = _vdot_tree(s, t) / _vdot_tree_real(t, t)
-    x_ = _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat)))
-    r_ = _sub(s, _mul(omega_, t))
+    omega_ = _vdot_tree(t, s) / _vdot_tree(t, t)  # make cases?
+    x_ = lax.cond(
+      exit_early,
+      lambda _: _add(x, _mul(alpha_, phat)),
+      lambda _: _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat))),
+      None
+    )
+    r_ = lax.cond(
+      exit_early,
+      lambda _: s,
+      lambda _: _sub(s, _mul(omega_, t)),
+      None
+    )
     return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k + 1
 
   r0 = _sub(b, A(x0))
-  rho0 = alpha0 = omega0 = _vdot_tree(r0, r0)  # / _vdot_tree(r0, r0)
+  # need to use _vdot_tree to match dtype (hacky...)
+  # is there a more efficient way to do this???
+  # I just need 1 of same dtype...
+  rho0 = alpha0 = omega0 = _vdot_tree(b, b) / _vdot_tree(b, b)
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -144,8 +149,8 @@ def _shapes(pytree):
   return map(jnp.shape, tree_leaves(pytree))
 
 
-def isolve(_isolve, A, b, x0=None, *, tol=1e-5, atol=0.0,
-           maxiter=None, M=None):
+def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
+            maxiter=None, M=None, symmetric=False):
   if x0 is None:
     x0 = tree_map(jnp.zeros_like, b)
 
@@ -168,12 +173,13 @@ def isolve(_isolve, A, b, x0=None, *, tol=1e-5, atol=0.0,
         'arrays in x0 and b must have matching shapes: '
         f'{_shapes(x0)} vs {_shapes(b)}')
 
-  isolve = partial(_isolve, x0=x0, tol=tol, atol=atol, maxiter=maxiter, M=M)
+  _isolve_fn = partial(_isolve_solve, x0=x0, tol=tol, atol=atol,
+                       maxiter=maxiter, M=M)
 
   real_valued = lambda x: not issubclass(x.dtype.type, np.complexfloating)
-  symmetric = all(map(real_valued, tree_leaves(b)))
+  symmetric = all(map(real_valued, tree_leaves(b))) if symmetric else symmetric
   x = lax.custom_linear_solve(
-    A, b, solve=isolve, transpose_solve=isolve, symmetric=symmetric)
+    A, b, solve=_isolve_fn, transpose_solve=_isolve_fn, symmetric=symmetric)
   info = None  # TODO(shoyer): return the real iteration count here
   return x, info
 
@@ -232,12 +238,13 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   jax.lax.custom_linear_solve
   """
 
-  return isolve(_cg_solve,
-                A=A, b=b, x0=x0, tol=tol, atol=atol,
-                maxiter=maxiter, M=M)
+  return _isolve(_cg_solve,
+                 A=A, b=b, x0=x0, tol=tol, atol=atol,
+                 maxiter=maxiter, M=M)
 
 
-def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
+def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None,
+             symmetric=False):
   """Use Bi-Conjugate Gradient Stable iteration to solve ``Ax = b``.
 
   The numerics of JAX's ``bicgstab`` should exact match SciPy's
@@ -245,7 +252,7 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   is slightly different: you need to supply the linear operator ``A`` as
   a function instead of a sparse matrix or ``LinearOperator``.
 
-  Derivatives of ``bicgstab`` are implemented via implicit
+  As with ``cg``, derivatives of ``bicgstab`` are implemented via implicit
   differentiation with another ``bicgstab`` solve, rather than by
   differentiating *through* the solver. They will be accurate only if
   both solves converge.
@@ -254,8 +261,8 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   ----------
   A : function
       Function that calculates the matrix-vector product ``Ax`` when called
-      like ``A(x)``. ``A`` must represent a hermitian, positive definite
-      matrix, and must return array(s) with the same structure and shape as its
+      like ``A(x)``. ``A`` can represent any general (nonsymmetric) linear
+      operator, and must return array(s) with the same structure and shape as its
       argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
@@ -285,13 +292,16 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
       to reach a given error tolerance.
+  symmetric: bool
+      Indicates whether the operator A is symmetric, which is a parameter
+      passed into `jax.lax.custom_linear_solve`.
 
   See also
   --------
-  scipy.sparse.linalg.cg
+  scipy.sparse.linalg.bicgstab
   jax.lax.custom_linear_solve
   """
 
-  return isolve(_bicgstab_solve,
-                A=A, b=b, x0=x0, tol=tol, atol=atol,
-                maxiter=maxiter, M=M)
+  return _isolve(_bicgstab_solve,
+                 A=A, b=b, x0=x0, tol=tol, atol=atol,
+                 maxiter=maxiter, M=M, symmetric=symmetric)
