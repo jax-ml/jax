@@ -2380,15 +2380,18 @@ def _wrap_numpy_nullary_function(f):
 
 
 @_wraps(np.linspace)
-def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=float_,
+def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
              axis=0):
   """Implementation of linspace differentiable in start and stop args."""
   lax._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError("Number of samples, %s, must be non-negative." % num)
+    
+  dtype = dtype or result_type(start, stop, float_)
+  computation_dtype = promote_types(dtype, float_)
+  start = asarray(start, dtype=computation_dtype)
+  stop = asarray(stop, dtype=computation_dtype)
 
-  start = array(start, dtype=dtype)
-  stop = array(stop, dtype=dtype)
   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
   broadcast_stop = broadcast_to(stop, bounds_shape)
@@ -2398,7 +2401,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=float_,
   iota_shape[axis] = num
   div = (num - 1) if endpoint else num
   if num > 1:
-    delta = lax.convert_element_type(stop - start, dtype) / div
+    delta = lax.convert_element_type(stop - start, computation_dtype) / div
     if issubdtype(dtype, integer):
       # This is similar to how numpy computes linspace, but it
       # can fail to recover the endpoints in float32 arithmetic.
@@ -2408,7 +2411,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=float_,
     else:
       # This approach recovers the endpoints with float32 arithmetic,
       # but can lead to rounding errors for integer outputs.
-      step = reshape(lax.iota(dtype, num), iota_shape) / div
+      step = reshape(lax.iota(computation_dtype, num), iota_shape) / div
       out = (reshape(broadcast_start, bounds_shape) * (1 - step) +
         reshape(broadcast_stop, bounds_shape) * step)
   elif num == 1:
