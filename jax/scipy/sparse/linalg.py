@@ -104,7 +104,8 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
   def cond_fun(value):
     x, r, *_, k = value
     rs = _vdot_tree_real(r, r)
-    return (rs > atol2) & (k < maxiter)
+    # the last condition checks breakdown
+    return (rs > atol2) & (k < maxiter) & (k >= 0)
 
   def body_fun(value):
     x, r, rhat, alpha, omega, rho, p, q, k = value
@@ -131,7 +132,10 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
       lambda _: _sub(s, _mul(omega_, t)),
       None
     )
-    return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k + 1
+    k_ = lax.cond((omega_ == 0) | (alpha_ == 0),
+                  lambda _: -11, lambda _: k + 1, None)
+    k_ = lax.cond((rho_ == 0), lambda _: -10, lambda _: k_, None)
+    return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k_
 
   r0 = _sub(b, A(x0))
   # need to use _vdot_tree to match dtype (hacky...)
