@@ -141,7 +141,7 @@ class ControlExampleTest(jtu.JaxTestCase):
     randn = np.random.RandomState(0).randn
     dim, T = 2, 10
     p = one_step_lqr(dim, T)
-    x0 = randn(dim)
+    x0 = randn(dim).astype(jnp.float_)
     X, U = control.lqr_predict(p, x0)
     self.assertAllClose(X[0], x0, check_dtypes=True)
     self.assertAllClose(U[0], -x0, check_dtypes=True,
@@ -157,7 +157,7 @@ class ControlExampleTest(jtu.JaxTestCase):
     dim, T, num_iters = 2, 10, 3
     lqr = one_step_lqr(dim, T)
     p = control_from_lqr(lqr)
-    x0 = randn(dim)
+    x0 = randn(dim).astype(jnp.float_)
     X, U = control.ilqr(num_iters, p, x0, jnp.zeros((T, dim)))
     self.assertAllClose(X[0], x0, check_dtypes=True)
     self.assertAllClose(U[0], -x0, check_dtypes=True)
@@ -169,7 +169,7 @@ class ControlExampleTest(jtu.JaxTestCase):
     randn = np.random.RandomState(0).randn
     dim, T, num_iters = 2, 10, 3
     p = one_step_control(dim, T)
-    x0 = randn(dim)
+    x0 = randn(dim).astype(jnp.float_)
     X, U = control.ilqr(num_iters, p, x0, jnp.zeros((T, dim)))
     self.assertAllClose(X[0], x0, check_dtypes=True)
     self.assertAllClose(U[0], -x0, check_dtypes=True)
@@ -201,7 +201,7 @@ class ControlExampleTest(jtu.JaxTestCase):
     dim, T, num_iters = 2, 10, 3
     lqr = one_step_lqr(dim, T)
     p = control_from_lqr(lqr)
-    x0 = randn(dim)
+    x0 = randn(dim).astype(jnp.float_)
     solver = partial(control.ilqr, num_iters)
     X, U = control.mpc_predict(solver, p, x0, jnp.zeros((T, dim)))
     self.assertAllClose(X[0], x0, check_dtypes=True)
@@ -214,7 +214,7 @@ class ControlExampleTest(jtu.JaxTestCase):
     randn = np.random.RandomState(0).randn
     dim, T, num_iters = 2, 10, 3
     p = one_step_control(dim, T)
-    x0 = randn(dim)
+    x0 = randn(dim).astype(jnp.float_)
     solver = partial(control.ilqr, num_iters)
     X, U = control.mpc_predict(solver, p, x0, jnp.zeros((T, dim)))
     self.assertAllClose(X[0], x0, check_dtypes=True)
