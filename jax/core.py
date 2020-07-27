@@ -39,7 +39,7 @@ from .pprint_util import pp, vcat, PrettyPrint
 # TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
 check_leaks = False
 
-"""Disables internal invariant checks."""
+# Disables internal invariant checks
 skip_checks = not FLAGS.jax_enable_checks  # not __debug__  # google doesn't use -O
 
 @contextmanager
@@ -115,6 +115,8 @@ class TypedJaxpr:
                out_avals: Sequence['AbstractValue']):
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
+
+    assert not any(isinstance(l, Tracer) for l in literals), literals
 
     if not skip_checks:
       in_avals_raised = [raise_to_shaped(v) for v in in_avals]
@@ -291,11 +293,11 @@ class Primitive:
     self.bind = bind
     return bind
 
-  def impl(self, *args, **kwargs):
+  def impl(self, *args, **params):
     raise NotImplementedError("Evaluation rule for '{}' not implemented"
                               .format(self.name))
 
-  def abstract_eval(self, *args, **kwargs):
+  def abstract_eval(self, *args, **params):
     raise NotImplementedError("Abstract evaluation for '{}' not implemented"
                               .format(self.name))
 
@@ -622,10 +624,7 @@ class TraceStack:
 class Sublevel(int): pass
 
 
-# The global state of the tracer is accessed by a thread-local object.
-# This allows concurrent tracing in separate threads; passing traced objects
-# between threads is forbidden.
-class TraceState(threading.local):
+class TraceState:
   trace_stack: TraceStack
   substack: List[Sublevel]
   initial_style: bool
@@ -641,47 +640,54 @@ class TraceState(threading.local):
     new.substack = self.substack[:]
     new.initial_style = self.initial_style
     return new
-trace_state = TraceState()
+
+# The global state of the tracer is accessed by a thread-local object.
+# This allows concurrent tracing in separate threads; passing traced objects
+# between threads is forbidden.
+class ThreadLocalState(threading.local):
+  def __init__(self):
+    self.trace_state = TraceState()
+thread_local_state = ThreadLocalState()
 
 def reset_trace_state() -> bool:
   "Reset the global trace state and return True if it was already clean."
-  if (trace_state.substack != [Sublevel(0)] or
-      trace_state.trace_stack.downward or
-      trace_state.trace_stack.upward):
-    trace_state.__init__()  # type: ignore
+  if (thread_local_state.trace_state.substack != [Sublevel(0)] or
+      thread_local_state.trace_state.trace_stack.downward or
+      thread_local_state.trace_state.trace_stack.upward):
+    thread_local_state.trace_state.__init__()  # type: ignore
     return False
   else:
     return True
 
 def cur_sublevel() -> Sublevel:
-  return trace_state.substack[-1]
+  return thread_local_state.trace_state.substack[-1]
 
 @contextmanager
 def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MasterTrace, None, None]:
-  level = trace_state.trace_stack.next_level(bottom)
+  level = thread_local_state.trace_state.trace_stack.next_level(bottom)
   master = MasterTrace(level, trace_type)
-  trace_state.trace_stack.push(master, bottom)
+  thread_local_state.trace_state.trace_stack.push(master, bottom)
 
   try:
     yield master
   finally:
-    trace_state.trace_stack.pop(bottom)
+    thread_local_state.trace_state.trace_stack.pop(bottom)
 
   if check_leaks:
     t = ref(master)
     del master
     if t() is not None:
-      print(trace_state.trace_stack)
+      print(thread_local_state.trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
 
 @contextmanager
 def new_sublevel() -> Generator[None, None, None]:
-  sublevel = Sublevel(len(trace_state.substack))
-  trace_state.substack.append(sublevel)
+  sublevel = Sublevel(len(thread_local_state.trace_state.substack))
+  thread_local_state.trace_state.substack.append(sublevel)
   try:
     yield
   finally:
-    trace_state.substack.pop()
+    thread_local_state.trace_state.substack.pop()
 
   if check_leaks:
     t = ref(sublevel)
@@ -702,6 +708,7 @@ def find_top_trace(xs) -> Optional[Trace]:
 
 @contextmanager
 def initial_style_staging():
+  trace_state = thread_local_state.trace_state
   prev, trace_state.initial_style = trace_state.initial_style, True
   try:
     yield
@@ -1090,7 +1097,8 @@ def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
               fun: lu.WrappedFun, *args, **params):
   params_tuple = tuple(params.items())
   top_trace = find_top_trace(args)
-  level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
+  level = (thread_local_state.trace_state.trace_stack.next_level(True)
+           if top_trace is None else top_trace.level)
   params_tuple = tuple(params.items())
   fun, env_trace_todo = process_env_traces(fun, primitive, level, params_tuple)
   if top_trace is None:
@@ -1329,11 +1337,11 @@ def pp_eqns(eqns: Sequence[JaxprEqn],
             source_info: bool = False) -> Sequence[PrettyPrint]:
   pps = map(pp_eqn, eqns)
   if source_info:
-    l = max(i + len(s) for x in pps for i, s in x.lines)
-    return [pp_eqn(e).annotate(l, source_info_util.summarize(e.source_info))
-            for e in eqns]
-  else:
-    return pps
+    l = max((i + len(s) for x in pps for i, s in x.lines), default=None)
+    if l is not None:
+      return [p.annotate(l, source_info_util.summarize(e.source_info))
+              for e, p in zip(eqns, pps)]
+  return pps
 
 def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
   pps = pp_eqns(jaxpr.eqns, source_info=source_info)

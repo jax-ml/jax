@@ -228,7 +228,8 @@ def xla_computation(fun: Callable,
                     axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
-                    instantiate_const_outputs: bool = True) -> Callable:
+                    instantiate_const_outputs: bool = True,
+                    return_shape: bool = False) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -351,9 +352,8 @@ def xla_computation(fun: Callable,
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
     pvals = [pe.PartialVal.unknown(aval) for aval in avals]
-    jaxpr, _, consts = pe.trace_to_jaxpr(jaxtree_fun, pvals,
-                                         instantiate=instantiate_const_outputs,
-                                         stage_out=True)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        jaxtree_fun, pvals, instantiate=instantiate_const_outputs, stage_out=True)
     jaxpr = xla.apply_outfeed_rewriter(jaxpr)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
@@ -362,7 +362,14 @@ def xla_computation(fun: Callable,
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
-    return c.build(xc.ops.Tuple(c, outs))
+    built = c.build(xc.ops.Tuple(c, outs))
+    if return_shape:
+      out_avals = [raise_to_shaped(pval.get_aval()) for pval in out_pvals]
+      out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
+      out_shape = tree_unflatten(out_tree(), out_shapes_flat)
+      return built, out_shape
+    else:
+      return built
   return computation_maker
 
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
@@ -943,6 +950,10 @@ def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
   ``devices`` is specified, see below). For nested :py:func:`pmap` calls, the product
   of the mapped axis sizes must be less than or equal to the number of XLA
   devices.
+
+  .. note::
+    :py:func:`pmap` compiles ``fun``, so while it can be combined with
+    :py:func:`jit`, it's usually unnecessary.
 
   **Multi-host platforms:** On multi-host platforms such as TPU pods, :py:func:`pmap`
   is designed to be used in SPMD Python programs, where every host is running

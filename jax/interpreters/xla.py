@@ -261,7 +261,7 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
       num_partitions=1,
       device_assignment=device and (device.id,))
   options.parameter_is_tupled_arguments = tuple_args
-  compiled = backend.compile(built_c, compile_options=options)
+  compiled = _backend_compile(backend, built_c, options)
   if nreps == 1:
     return partial(_execute_compiled_primitive, prim, compiled, handle_result)
   else:
@@ -317,7 +317,11 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
 
 def primitive_subcomputation(prim, *avals, **params):
   return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
-  return primitive_computation(prim, AxisEnv(1), None, False, *avals, **params)
+
+def _backend_compile(backend, built_c, options):
+  # we use a separate function call to ensure that XLA compilation appears
+  # separately in Python profiling results
+  return backend.compile(built_c, compile_options=options)
 
 def _execute_compiled_primitive(prim, compiled, result_handler, *args):
   device, = compiled.local_devices()
@@ -406,17 +410,8 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
       ans = rule(c, axis_env, extend_name_stack(name_stack, eqn.primitive.name),
                  map(aval, eqn.invars), backend, *in_nodes, **new_params)
     elif eqn.primitive in parallel_translations:
-      replica_groups = axis_groups(axis_env, eqn.params['axis_name'])
-      axis_index_groups = eqn.params.get('axis_index_groups', None)
-      if axis_index_groups is not None:
-        replica_groups = [[axis_group[i] for i in axis_index_group]
-                          for axis_group in replica_groups
-                          for axis_index_group in axis_index_groups]
-      new_params = {k: v for k, v in eqn.params.items()
-                    if k not in ('axis_name', 'axis_index_groups')}
       rule = parallel_translations[eqn.primitive]
-      ans = rule(c, *in_nodes, replica_groups=replica_groups, platform=platform,
-                 **new_params)
+      ans = rule(c, *in_nodes, axis_env=axis_env, platform=platform, **eqn.params)
     elif eqn.primitive in call_translations:
       new_params = check_backend_params(eqn.params, backend)
       rule = call_translations[eqn.primitive]
@@ -648,7 +643,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   out_tuple = xops.Tuple(c, out_nodes)
   backend = xb.get_backend(backend)
-  if backend.platform == "tpu":
+  if backend.platform in ("gpu", "tpu"):
     donated_invars = set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   if any(donated_invars):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
@@ -662,7 +657,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
   options.parameter_is_tupled_arguments = tuple_args
-  compiled = backend.compile(built, compile_options=options)
+  compiled = _backend_compile(backend, built, options)
   if nreps == 1:
     return partial(_execute_compiled, compiled, result_handlers)
   else:

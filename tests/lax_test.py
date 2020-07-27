@@ -47,8 +47,8 @@ float_dtypes = jtu.dtypes.all_floating
 complex_elem_dtypes = jtu.dtypes.floating
 complex_dtypes = jtu.dtypes.complex
 inexact_dtypes = jtu.dtypes.all_inexact
-int_dtypes = jtu.dtypes.integer
-uint_dtypes = jtu.dtypes.unsigned
+int_dtypes = jtu.dtypes.all_integer
+uint_dtypes = jtu.dtypes.all_unsigned
 bool_dtypes = jtu.dtypes.boolean
 default_dtypes = float_dtypes + int_dtypes
 all_dtypes = float_dtypes + complex_dtypes + int_dtypes + bool_dtypes
@@ -137,8 +137,7 @@ LAX_OPS = [
     op_record("bitwise_not", 1, bool_dtypes, jtu.rand_small),
     op_record("bitwise_or", 2, bool_dtypes, jtu.rand_small),
     op_record("bitwise_xor", 2, bool_dtypes, jtu.rand_small),
-    op_record("population_count", 1, uint_dtypes, partial(jtu.rand_int,
-                                                          high=1 << 32)),
+    op_record("population_count", 1, uint_dtypes, jtu.rand_int),
 
     op_record("add", 2, default_dtypes + complex_dtypes, jtu.rand_small),
     op_record("sub", 2, default_dtypes + complex_dtypes, jtu.rand_small),
@@ -743,10 +742,14 @@ class LaxTest(jtu.JaxTestCase):
        "lhs_contracting": lhs_contracting, "rhs_contracting": rhs_contracting,
        "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, lhs_contracting, rhs_contracting in [
+          [(5,), (5,), [0], [0]],
+          [(5, 7), (5,), [0], [0]],
+          [(7, 5), (5,), [1], [0]],
           [(3, 5), (2, 5), [1], [1]],
           [(5, 3), (5, 2), [0], [0]],
           [(5, 3, 2), (5, 2, 4), [0], [0]],
           [(5, 3, 2), (5, 2, 4), [0,2], [0,1]],
+          [(5, 3, 2), (3, 5, 2, 4), [0,2], [1,2]],
           [(1, 2, 2, 3), (1, 2, 3, 1), [1], [1]],
           [(3, 2), (2, 4), [1], [0]],
       ]
@@ -773,6 +776,7 @@ class LaxTest(jtu.JaxTestCase):
        "dimension_numbers": dimension_numbers, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, dimension_numbers in [
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
       for dtype in all_dtypes
@@ -797,6 +801,7 @@ class LaxTest(jtu.JaxTestCase):
        "dimension_numbers": dimension_numbers, "rng_factory": rng_factory}
       for lhs_shape, rhs_shape, dimension_numbers in [
           ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0]))),
+          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1]))),
           ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1]))),
       ]
       for dtype in all_dtypes
@@ -1296,50 +1301,60 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_dtype={}_padding={}"
-       .format(op.__name__, np.dtype(dtype).name, padding),
-       "op": op, "init_val": init_val, "dtype": dtype, "padding": padding,
-       "rng_factory": rng_factory}
+      {"testcase_name": ("_op={}_shape={}_dims={}_strides={}_padding={}"
+                         "_basedilation={}_windowdilation={}")
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype),
+               dims, strides, padding, base_dilation, window_dilation),
+       "op": op, "init_val": init_val, "dtype": dtype, "shape": shape,
+       "dims": dims, "strides": strides, "padding": padding,
+       "base_dilation": base_dilation, "window_dilation": window_dilation}
       for init_val, op, dtypes in [
           (0, lax.add, [np.float32]),
           (-np.inf, lax.max, [np.float32]),
           (np.inf, lax.min, [np.float32]),
       ]
-      for dtype in dtypes
-      for padding in ["VALID", "SAME"]
-      for rng_factory in [jtu.rand_small]))
-  def testReduceWindow(self, op, init_val, dtype, padding, rng_factory):
-    rng = rng_factory(self.rng())
-    init_val = np.asarray(init_val, dtype=dtype)
-
-    all_configs = itertools.chain(
-        itertools.product(
+      for shape, dims, strides, padding, base_dilation, window_dilation in (
+        itertools.chain(
+          itertools.product(
             [(4, 6)],
             [(2, 1), (1, 2)],
-            [(1, 1), (2, 1), (1, 2)]),
-        itertools.product(
+            [(1, 1), (2, 1), (1, 2)],
+            ["VALID", "SAME", [(0, 3), (1, 2)]],
+            [(1, 1), (2, 3)],
+            [(1, 1), (1, 2)]),
+          itertools.product(
             [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
-            [(1, 2, 2, 1), (1, 1, 1, 1)]))
+            [(1, 2, 2, 1), (1, 1, 1, 1)],
+            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
+            [(1, 1, 1, 1), (2, 1, 3, 2)],
+            [(1, 1, 1, 1), (1, 2, 2, 1)])))
+      for dtype in dtypes))
+  def testReduceWindow(self, op, init_val, dtype, shape, dims, strides, padding,
+                       base_dilation, window_dilation):
+    rng = jtu.rand_small(self.rng())
+    init_val = np.asarray(init_val, dtype=dtype)
 
     def fun(operand, init_val):
-      return lax.reduce_window(operand, init_val, op, dims, strides, padding)
+      return lax.reduce_window(operand, init_val, op, dims, strides, padding,
+                               base_dilation, window_dilation)
 
-    # pylint: disable=cell-var-from-loop
-    for shape, dims, strides in all_configs:
-      args_maker = lambda: [rng(shape, dtype), init_val]
-      self._CompileAndCheck(fun, args_maker)
-    # pylint: enable=cell-var-from-loop
+    def reference_fun(operand, init_val):
+      return lax_reference.reduce_window(operand, init_val, op, dims, strides,
+                                         padding, base_dilation)
+
+    args_maker = lambda: [rng(shape, dtype), init_val]
+    self._CompileAndCheck(fun, args_maker)
+    if all(d == 1 for d in window_dilation):
+      self._CheckAgainstNumpy(fun, reference_fun, args_maker)
 
     # we separately test the version that uses a concrete init_val because it
     # can hit different code paths
     def fun(operand):
-      return lax.reduce_window(operand, init_val, op, dims, strides, padding)
+      return lax.reduce_window(operand, init_val, op, dims, strides, padding,
+                               base_dilation, window_dilation)
 
-    # pylint: disable=cell-var-from-loop
-    for shape, dims, strides in all_configs:
-      args_maker = lambda: [rng(shape, dtype)]
-      self._CompileAndCheck(fun, args_maker)
-    # pylint: enable=cell-var-from-loop
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}"

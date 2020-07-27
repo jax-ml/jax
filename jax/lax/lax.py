@@ -614,35 +614,6 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
   contract_dims_seq, batch_dims_seq = dimension_numbers
   contract_dims = tuple(map(lambda x: tuple(x), contract_dims_seq))
   batch_dims = tuple(map(lambda x: tuple(x), batch_dims_seq))
-  if not dtypes.issubdtype(lhs.dtype, np.inexact):
-    # TODO(b/134526360): XLA doesn't support bool or integer dots, so we emit a
-    # sum of products instead.
-    lhs_contract_dims, rhs_contract_dims = contract_dims
-    lhs_batch_dims, rhs_batch_dims = batch_dims
-    lhs_noncontract_dims = tuple(sorted(
-      set(range(np.ndim(lhs))) - set(lhs_batch_dims) - set(lhs_contract_dims)))
-    rhs_noncontract_dims = tuple(sorted(
-      set(range(np.ndim(rhs))) - set(rhs_batch_dims) - set(rhs_contract_dims)))
-    lhs = transpose(lhs,
-                    lhs_batch_dims + lhs_noncontract_dims + lhs_contract_dims)
-    rhs = transpose(rhs,
-                    rhs_batch_dims + rhs_noncontract_dims + rhs_contract_dims)
-
-    lhs_start_expand = len(lhs_batch_dims) + len(lhs_noncontract_dims)
-    lhs_end_expand = lhs_start_expand + len(rhs_noncontract_dims)
-    lhs = expand_dims(lhs, tuple(range(lhs_start_expand, lhs_end_expand)))
-
-    rhs_start_expand = len(lhs_batch_dims)
-    rhs_end_expand = rhs_start_expand + len(lhs_noncontract_dims)
-    rhs = expand_dims(rhs, tuple(range(rhs_start_expand, rhs_end_expand)))
-
-    out_ndim = (len(lhs_batch_dims) + len(lhs_noncontract_dims) +
-                len(rhs_noncontract_dims))
-    op_product = bitwise_and if lhs.dtype == np.bool_ else mul
-    op_sum = bitwise_or if lhs.dtype == np.bool_ else add
-    return reduce(op_product(lhs, rhs), _zero(lhs), op_sum,
-                  tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
-
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(contract_dims, batch_dims),
                             precision=_canonicalize_precision(precision))
@@ -750,9 +721,12 @@ def dynamic_slice(operand: Array, start_indices: Sequence[Array],
 
   Args:
     operand: an array to slice.
-    start_indices: a list of scalar indices, one per dimension.
+    start_indices: a list of scalar indices, one per dimension. These values
+      may be dynamic.
     slice_sizes: the size of the slice. Must be a sequence of non-negative
-      integers with length equal to `ndim(operand)`.
+      integers with length equal to `ndim(operand)`. Inside a JIT compiled
+      function, only static values are supported (all JAX arrays inside JIT
+      must have statically known size).
 
   Returns:
     An array containing the slice.
@@ -862,7 +836,9 @@ class ScatterDimensionNumbers(NamedTuple):
   scatter_dims_to_operand_dims: Sequence[int]
 
 def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers, *,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-add operator.
 
   Wraps `XLA's Scatter operator
@@ -879,6 +855,10 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -886,10 +866,13 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(add, _abstractify(_const(operand, 0)))
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers, *,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-multiply operator.
 
   Wraps `XLA's Scatter operator
@@ -906,6 +889,10 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -913,10 +900,13 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(mul, _abstractify(_const(operand, 1)))
   return scatter_mul_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers, *,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-min operator.
 
   Wraps `XLA's Scatter operator
@@ -933,6 +923,10 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -940,10 +934,13 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(min, _abstractify(_const(operand, 0)))
   return scatter_min_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
-                dimension_numbers: ScatterDimensionNumbers) -> Array:
+                dimension_numbers: ScatterDimensionNumbers, *,
+                indices_are_sorted: bool = False,
+                unique_indices: bool = False) -> Array:
   """Scatter-max operator.
 
   Wraps `XLA's Scatter operator
@@ -960,6 +957,10 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -967,13 +968,16 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
   jaxpr, consts = _reduction_jaxpr(max, _abstractify(_const(operand, 0)))
   return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 # Define this outside of scatter to ensure cache hits.
 _scatter_reduction_computation = lambda x, y: y
 
-def scatter(operand: Array, scatter_indices:Array, updates: Array,
-            dimension_numbers: ScatterDimensionNumbers) -> Array:
+def scatter(operand: Array, scatter_indices: Array, updates: Array,
+            dimension_numbers: ScatterDimensionNumbers, *,
+            indices_are_sorted: bool = False,
+            unique_indices: bool = False) -> Array:
   """Scatter-update operator.
 
   Wraps `XLA's Scatter operator
@@ -993,6 +997,10 @@ def scatter(operand: Array, scatter_indices:Array, updates: Array,
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    indices_are_sorted: whether `scatter_indices` is known to be sorted. If
+      true, may improve performance on some backends.
+    unique_indices: whether `scatter_indices` is known to be free of duplicates.
+      If true, may improve performance on some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -1001,7 +1009,8 @@ def scatter(operand: Array, scatter_indices:Array, updates: Array,
                                    _abstractify(_const(operand, 0)))
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
-      update_consts=consts, dimension_numbers=dimension_numbers)
+      update_consts=consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
 def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
   indices = concatenate([expand_dims(i, (1,)) for i in idxs], 1)
@@ -1115,7 +1124,9 @@ def _reduce_and(operand: Array, axes: Sequence[int]) -> Array:
 
 def reduce_window(operand: Array, init_value: Array, computation: Callable,
                   window_dimensions: Shape, window_strides: Sequence[int],
-                  padding: Union[str, Sequence[Tuple[int, int]]]) -> Array:
+                  padding: Union[str, Sequence[Tuple[int, int]]],
+                  base_dilation: Optional[Sequence[int]] = None,
+                  window_dilation: Optional[Sequence[int]] = None) -> Array:
   """Wraps XLA's `ReduceWindowWithGeneralPadding
   <https://www.tensorflow.org/xla/operation_semantics#reducewindow>`_
   operator.
@@ -1125,15 +1136,22 @@ def reduce_window(operand: Array, init_value: Array, computation: Callable,
                                     window_strides, padding))
   else:
     padding = tuple(padding)
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   monoid_reducer = _get_monoid_window_reducer(computation, init_value)
   if monoid_reducer:
-    return monoid_reducer(operand, window_dimensions, window_strides, padding)
+    return monoid_reducer(operand, window_dimensions, window_strides, padding,
+                          base_dilation, window_dilation)
   else:
     jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value))
     return reduce_window_p.bind(
         operand, init_value, jaxpr=jaxpr, consts=consts,
         window_dimensions=tuple(window_dimensions),
-        window_strides=tuple(window_strides), padding=padding)
+        window_strides=tuple(window_strides), padding=padding,
+        base_dilation=tuple(base_dilation),
+        window_dilation=tuple(window_dilation))
 
 def _get_monoid_window_reducer(monoid_op: Callable, x: Array) -> Optional[Callable]:
   aval = core.get_aval(x)
@@ -1148,46 +1166,82 @@ def _get_monoid_window_reducer(monoid_op: Callable, x: Array) -> Optional[Callab
 
 def _reduce_window_sum(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]]) -> Array:
+                       padding: Sequence[Tuple[int, int]],
+                       base_dilation: Optional[Sequence[int]] = None,
+                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_sum_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _reduce_window_prod(operand: Array, window_dimensions: Shape,
                         window_strides: Sequence[int],
-                        padding: Sequence[Tuple[int, int]]) -> Array:
+                        padding: Sequence[Tuple[int, int]],
+                        base_dilation: Optional[Sequence[int]] = None,
+                        window_dilation: Optional[Sequence[int]] = None) -> Array:
   init_value = _const(operand, 1)
   jaxpr, consts = _reduction_jaxpr(mul, _abstractify(init_value))
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_p.bind(
       operand, init_value, jaxpr=jaxpr, consts=consts,
       window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _reduce_window_max(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]]) -> Array:
+                       padding: Sequence[Tuple[int, int]],
+                       base_dilation: Optional[Sequence[int]] = None,
+                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_max_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _reduce_window_min(operand: Array, window_dimensions: Shape,
                        window_strides: Sequence[int],
-                       padding: Sequence[Tuple[int, int]]) -> Array:
+                       padding: Sequence[Tuple[int, int]],
+                       base_dilation: Optional[Sequence[int]] = None,
+                       window_dilation: Optional[Sequence[int]] = None) -> Array:
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
   return reduce_window_min_p.bind(
       operand, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _select_and_scatter(operand: Array, select: Callable,
                         window_dimensions: Shape, window_strides: Sequence[int],
                         padding: Sequence[Tuple[int, int]], source: Array,
-                        init_value: Array, scatter: Callable) -> Array:
+                        init_value: Array, scatter: Callable,
+                        base_dilation: Sequence[int],
+                        window_dilation: Sequence[int]) -> Array:
   select_jaxpr, select_consts = _reduction_jaxpr(select, _abstractify(init_value))
   scatter_jaxpr, scatter_consts = _reduction_jaxpr(scatter, _abstractify(init_value))
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
       select_consts=select_consts, scatter_jaxpr=scatter_jaxpr,
       scatter_consts=scatter_consts, window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def _select_and_scatter_add(source: Array, operand: Array,
                             select_prim: core.Primitive,
@@ -1203,11 +1257,15 @@ def _select_and_gather_add(tangents: Array, operand: Array,
                            select_prim: core.Primitive,
                            window_dimensions: Shape,
                            window_strides: Sequence[int],
-                           padding: Sequence[Tuple[int, int]]) -> Array:
+                           padding: Sequence[Tuple[int, int]],
+                           base_dilation: Sequence[int],
+                           window_dilation: Sequence[int]) -> Array:
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
-      window_strides=tuple(window_strides), padding=tuple(padding))
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
 
 def cumsum(operand: Array, axis: int) -> Array:
   """Computes a cumulative sum along `axis`."""
@@ -2714,24 +2772,38 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision):
     msg = ("dot_general requires equal numbers of lhs_batch and rhs_batch "
            "dimensions, got lhs_batch {} and rhs_batch {}.")
     raise TypeError(msg.format(lhs_batch, rhs_batch))
-  if not np.all(np.equal(lhs_batch, rhs_batch)):
-    msg = ("dot_general requires same lhs and rhs batch dimension numbers, "
-           "got {} and {}.")
-    raise TypeError(msg.format(lhs_batch, rhs_batch))
+  lhs_contracting_set, lhs_batch_set = set(lhs_contracting), set(lhs_batch)
+  rhs_contracting_set, rhs_batch_set = set(rhs_contracting), set(rhs_batch)
+  if len(lhs_batch_set) != len(lhs_batch):
+    msg = ("dot_general requires lhs batch dimensions to be distinct, got "
+           f"lhs_batch {lhs_batch}.")
+    raise TypeError(msg)
+  if len(rhs_batch_set) != len(rhs_batch):
+    msg = ("dot_general requires rhs batch dimensions to be distinct, got "
+           f"rhs_batch {rhs_batch}.")
+    raise TypeError(msg)
+  if len(lhs_contracting_set) != len(lhs_contracting):
+    msg = ("dot_general requires lhs contracting dimensions to be distinct, "
+           f"got lhs_contracting {lhs_contracting}.")
+    raise TypeError(msg)
+  if len(rhs_contracting_set) != len(rhs_contracting):
+    msg = ("dot_general requires rhs contracting dimensions to be distinct, "
+           f"got rhs_contracting {rhs_contracting}.")
+    raise TypeError(msg)
+  if lhs_contracting_set & lhs_batch_set:
+    msg = ("dot_general requires lhs batch dimensions to be disjoint from "
+           "contracting dimensions, got lhs_batch {} and lhs_contracting {}.")
+    raise TypeError(msg.format(lhs_batch, lhs_contracting))
+  if rhs_contracting_set & rhs_batch_set:
+    msg = ("dot_general requires rhs batch dimensions to be disjoint from "
+           "contracting dimensions, got rhs_batch {} and rhs_contracting {}.")
+    raise TypeError(msg.format(rhs_batch, rhs_contracting))
   lhs_batch_shape = np.take(lhs.shape, lhs_batch)
   rhs_batch_shape = np.take(rhs.shape, rhs_batch)
   if not np.all(np.equal(lhs_batch_shape, rhs_batch_shape)):
     msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
            "to have the same shape, got {} and {}.")
     raise TypeError(msg.format(lhs_batch_shape, rhs_batch_shape))
-  if tuple(sorted(lhs_batch)) != tuple(range(len(lhs_batch))):
-    msg = ("dot_general requires lhs batch dimensions to precede contracting "
-           "and non-contracting dimensions, got lhs_batch {}.")
-    raise TypeError(msg.format(lhs_batch))
-  if tuple(sorted(rhs_batch)) != tuple(range(len(rhs_batch))):
-    msg = ("dot_general requires rhs batch dimensions to precede contracting "
-           "and non-contracting dimensions, got rhs_batch {}.")
-    raise TypeError(msg.format(rhs_batch))
   lhs_contracting_shape = np.take(lhs.shape, lhs_contracting)
   rhs_contracting_shape = np.take(rhs.shape, rhs_contracting)
   if not np.all(np.equal(lhs_contracting_shape, rhs_contracting_shape)):
@@ -2739,16 +2811,16 @@ def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision):
            "shape, got {} and {}.")
     raise TypeError(msg.format(lhs_contracting_shape, rhs_contracting_shape))
 
-  batch_shape = tuple(np.take(lhs.shape, lhs_batch))
-  lhs_contract_or_batch = tuple(lhs_contracting) + tuple(lhs_batch)
+  batch_shape = tuple(lhs_batch_shape)
+  lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
   lhs_tensored_shape = tuple(np.delete(lhs.shape, lhs_contract_or_batch))
-  rhs_contract_or_batch = tuple(rhs_contracting) + tuple(rhs_batch)
+  rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))
   rhs_tensored_shape = tuple(np.delete(rhs.shape, rhs_contract_or_batch))
   return batch_shape + lhs_tensored_shape + rhs_tensored_shape
 
 
 def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision):
-  return naryop_dtype_rule(_input_dtype, [_num, _num], 'dot_general', lhs, rhs)
+  return naryop_dtype_rule(_input_dtype, [_any, _any], 'dot_general', lhs, rhs)
 
 
 def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
@@ -2785,53 +2857,77 @@ def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
   lhs, rhs = batched_args
   lbd, rbd = batch_dims
   assert lbd is not None or rbd is not None
+  def bump_dims(dims, b):
+    return tuple(np.add(dims, np.greater_equal(dims, b)))
+
   if lbd is not None and rbd is not None:
     # adding a batch dimension
-    if lbd != 0:
-      lhs = batching.moveaxis(lhs, lbd, 0)
-    if rbd != 0:
-      rhs = batching.moveaxis(rhs, rbd, 0)
-    lhs_batch = (0,) + tuple(np.add(1, lhs_batch))
-    rhs_batch = (0,) + tuple(np.add(1, rhs_batch))
-    lhs_contract = tuple(np.add(1, lhs_contract))
-    rhs_contract = tuple(np.add(1, rhs_contract))
+    lhs_batch = (lbd,) + bump_dims(lhs_batch, lbd)
+    rhs_batch = (rbd,) + bump_dims(rhs_batch, rbd)
+    lhs_contract = bump_dims(lhs_contract, lbd)
+    rhs_contract = bump_dims(rhs_contract, rbd)
     result_batch_dim = 0
   else:
     # adding a tensor product dimension
     if lbd is not None:
-      if lhs_batch == () or lbd > np.max(lhs_batch):
-        # can avoid transposes
-        bump_lhs_contract = np.greater_equal(lhs_contract, lbd)
-        lhs_contract = tuple(np.add(lhs_contract, bump_lhs_contract))
-        result_batch_dim = lbd - len(lhs_contract) + sum(bump_lhs_contract)
-      else:
-        # move the new dimension to the end of lhs to avoid changing batch dims
-        lhs = batching.moveaxis(lhs, lbd, lhs.ndim - 1)
-        # lhs tensor product dims in result come after batch dims
-        result_batch_dim = lhs.ndim - len(lhs_contract) - 1
+      other = tuple(d for d in range(lhs.ndim)
+                    if d not in lhs_batch and d not in lhs_contract)
+      result_batch_dim = (len(lhs_batch) + sum(np.less(other, lbd)))
+      lhs_batch = bump_dims(lhs_batch, lbd)
+      lhs_contract = bump_dims(lhs_contract, lbd)
     else:
-      if rhs_batch == () or rbd > np.max(rhs_batch):
-        # can avoid transposes
-        bump_rhs_contract = np.greater_equal(rhs_contract, rbd)
-        rhs_contract = tuple(np.add(rhs_contract, bump_rhs_contract))
-        result_batch_dim = (rbd + (lhs.ndim - len(lhs_contract) - len(lhs_batch))
-                                - (len(rhs_contract) - sum(bump_rhs_contract)))
-      else:
-        # move the new dimension to the end of rhs to avoid changing batch dims
-        rhs = batching.moveaxis(rhs, rbd, rhs.ndim - 1)
-        # rhs tensor product dims in result come after batch dims + lhs tensor
-        # product dims
-        result_batch_dim = (lhs.ndim - len(lhs_contract) - len(lhs_batch) +
-                            rhs.ndim - len(rhs_contract) - 1)
+      other = tuple(d for d in range(rhs.ndim)
+                    if d not in rhs_batch and d not in rhs_contract)
+      result_batch_dim = (lhs.ndim - len(lhs_contract) +
+                          sum(np.less(other, rbd)))
+      rhs_batch = bump_dims(rhs_batch, rbd)
+      rhs_contract = bump_dims(rhs_contract, rbd)
+
   new_dimension_numbers = ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch))
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
                             precision=precision)
   return batched_out, int(result_batch_dim)
 
+def _dot_using_sum_of_products(lhs, rhs, *, dimension_numbers):
+  contract_dims, batch_dims = dimension_numbers
+  lhs_contract_dims, rhs_contract_dims = contract_dims
+  lhs_batch_dims, rhs_batch_dims = batch_dims
+  lhs_noncontract_dims = tuple(sorted(
+    set(range(np.ndim(lhs))) - set(lhs_batch_dims) - set(lhs_contract_dims)))
+  rhs_noncontract_dims = tuple(sorted(
+    set(range(np.ndim(rhs))) - set(rhs_batch_dims) - set(rhs_contract_dims)))
+  lhs = transpose(lhs,
+                  lhs_batch_dims + lhs_noncontract_dims + lhs_contract_dims)
+  rhs = transpose(rhs,
+                  rhs_batch_dims + rhs_noncontract_dims + rhs_contract_dims)
+
+  lhs_start_expand = len(lhs_batch_dims) + len(lhs_noncontract_dims)
+  lhs_end_expand = lhs_start_expand + len(rhs_noncontract_dims)
+  lhs = expand_dims(lhs, tuple(range(lhs_start_expand, lhs_end_expand)))
+
+  rhs_start_expand = len(lhs_batch_dims)
+  rhs_end_expand = rhs_start_expand + len(lhs_noncontract_dims)
+  rhs = expand_dims(rhs, tuple(range(rhs_start_expand, rhs_end_expand)))
+
+  out_ndim = (len(lhs_batch_dims) + len(lhs_noncontract_dims) +
+              len(rhs_noncontract_dims))
+  op_product = bitwise_and if lhs.dtype == np.bool_ else mul
+  op_sum = bitwise_or if lhs.dtype == np.bool_ else add
+  return reduce(op_product(lhs, rhs), _zero(lhs), op_sum,
+                tuple(range(out_ndim, out_ndim + len(lhs_contract_dims))))
+
 def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision):
-  return xops.DotGeneral(lhs, rhs,
-                         xc.make_dot_dimension_numbers(dimension_numbers),
-                         precision_config=_precision_config(precision))
+  dtype = c.get_shape(lhs).numpy_dtype()
+  if dtypes.issubdtype(dtype, np.inexact):
+    return xops.DotGeneral(lhs, rhs,
+                           xc.make_dot_dimension_numbers(dimension_numbers),
+                           precision_config=_precision_config(precision))
+  else:
+    # TODO(b/134526360): XLA doesn't support bool or integer dots, so we emit a
+    # sum of products instead.
+    translation = xla.lower_fun(_dot_using_sum_of_products,
+                                multiple_results=False)
+    return translation(c, lhs, rhs, dimension_numbers=dimension_numbers)
 
 def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
                               precision):
@@ -3682,7 +3778,8 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
   index, index_bdim = _batch_dynamic_slice_indices(start_idx, start_idx_bd)
   return _scatter_batching_rule(
     scatter, (operand, index, update), (operand_bd, index_bdim, update_bd),
-    update_jaxpr=None, update_consts=None, dimension_numbers=dnums)
+    update_jaxpr=None, update_consts=None, dimension_numbers=dnums,
+    indices_are_sorted=True, unique_indices=True)
 
 
 dynamic_update_slice_p = standard_primitive(
@@ -3745,7 +3842,10 @@ def _gather_transpose_rule(t, operand, start_indices, *, dimension_numbers,
     update_window_dims=dimension_numbers.offset_dims,
     inserted_window_dims=dimension_numbers.collapsed_slice_dims,
     scatter_dims_to_operand_dims=dimension_numbers.start_index_map)
-  return [scatter_add(zeros, start_indices, t, scatter_dnums), ad_util.Zero.from_value(start_indices)]
+  out = scatter_add(zeros, start_indices, t, scatter_dnums,
+                    indices_are_sorted=False,
+                    unique_indices=False)
+  return [out, ad_util.Zero.from_value(start_indices)]
 
 def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                           slice_sizes):
@@ -3830,8 +3930,9 @@ def _scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
 def _scatter_shape_rule(operand, scatter_indices, updates, **kwargs):
   return operand.shape
 
-def _scatter_translation_rule(c, operand, scatter_indices, updates,
-                              update_jaxpr, update_consts, dimension_numbers):
+def _scatter_translation_rule(c, operand, scatter_indices, updates, *,
+                              update_jaxpr, update_consts, dimension_numbers,
+                              indices_are_sorted, unique_indices):
   dtype = c.get_shape(operand).numpy_dtype()
   init_value = xb.constant(c, np.array(0, dtype))
   update_computation = _reduction_computation(
@@ -3839,15 +3940,16 @@ def _scatter_translation_rule(c, operand, scatter_indices, updates,
   indices_shape = c.get_shape(scatter_indices)
   return xops.Scatter(operand, scatter_indices, updates, update_computation,
                       _scatter_dimensions_proto(indices_shape, dimension_numbers),
-                      False, False)
+                      indices_are_sorted, unique_indices)
 
 def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
-                     dimension_numbers):
+                     dimension_numbers, indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
   val_out = scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=dimension_numbers)
+      update_consts=update_consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
@@ -3855,11 +3957,13 @@ def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
     g_updates = ad.instantiate_zeros(g_updates)
     tangent_out = scatter_add_p.bind(
         g_operand, scatter_indices, g_updates, update_jaxpr=update_jaxpr,
-        update_consts=update_consts, dimension_numbers=dimension_numbers)
+        update_consts=update_consts, dimension_numbers=dimension_numbers,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   return val_out, tangent_out
 
 def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
-                                update_jaxpr, update_consts, dimension_numbers):
+                                update_jaxpr, update_consts, dimension_numbers,
+                                indices_are_sorted, unique_indices):
   assert not ad.is_undefined_primal(scatter_indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
@@ -3890,7 +3994,8 @@ def _scatter_add_transpose_rule(t, operand, scatter_indices, updates, *,
   return [operand_t, None, update_t]
 
 def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
-                                update_jaxpr, update_consts, dimension_numbers):
+                                update_jaxpr, update_consts, dimension_numbers,
+                                indices_are_sorted, unique_indices):
   assert not ad.is_undefined_primal(scatter_indices)
   if ad.is_undefined_primal(updates):
     updates_shape = updates.aval.shape
@@ -3901,8 +4006,9 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
 
   operand_t = update_t = None
   if ad.is_undefined_primal(operand):
-    operand_t = scatter_mul(t, scatter_indices, updates,
-                            dimension_numbers=dimension_numbers)
+    operand_t = scatter_mul(
+        t, scatter_indices, updates, dimension_numbers=dimension_numbers,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
 
   if ad.is_undefined_primal(updates):
     gather_dnums = GatherDimensionNumbers(
@@ -3923,7 +4029,8 @@ def _scatter_mul_transpose_rule(t, operand, scatter_indices, updates, *,
 
 
 def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
-                           update_jaxpr, update_consts, dimension_numbers):
+                           update_jaxpr, update_consts, dimension_numbers,
+                           indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = batched_args
   operand_bdim, scatter_indices_bdim, updates_bdim = batch_dims
   del update_jaxpr, update_consts  # Unused.
@@ -3945,7 +4052,9 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
         update_window_dims=update_window_dims,
         inserted_window_dims=inserted_window_dims,
         scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-    return scatter_op(operand, scatter_indices, updates, dnums), 0
+    return scatter_op(
+      operand, scatter_indices, updates, dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices), 0
 
 
   # see the third case in _gather_batching_rule for comparison and comments
@@ -3966,7 +4075,9 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
       update_window_dims=update_window_dims,
       inserted_window_dims=inserted_window_dims,
       scatter_dims_to_operand_dims=scatter_dims_to_operand_dims)
-  return scatter_op(operand, scatter_indices, updates, dnums), 0
+  return scatter_op(
+      operand, scatter_indices, updates, dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices), 0
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
@@ -3981,9 +4092,11 @@ scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
     _scatter_translation_rule)
 
-def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers, **kw):
-  return mul(x, scatter_add(zeros_like_array(x), i, g,
-                            dimension_numbers=dimension_numbers))
+def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
+                         indices_are_sorted, unique_indices, **kw):
+  return mul(x, scatter_add(
+      zeros_like_array(x), i, g, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices))
 
 ad.defjvp(scatter_mul_p,
           lambda g, x, i, y, **kw: scatter_mul_p.bind(g, i, y, **kw),
@@ -3994,7 +4107,8 @@ batching.primitive_batchers[scatter_mul_p] = (
   partial(_scatter_batching_rule, scatter_mul))
 
 def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
-                          update_consts, dimension_numbers):
+                          update_consts, dimension_numbers,
+                          indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
 
@@ -4003,7 +4117,9 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
   val_out = scatter_op.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=scatter_dnums)
+      update_consts=update_consts, dimension_numbers=scatter_dnums,
+      indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices)
 
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
@@ -4083,7 +4199,9 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
     tangent_out = scatter_add(g_operand,
                               scatter_indices,
                               tangent_updates,
-                              scatter_dnums)
+                              scatter_dnums,
+                              indices_are_sorted=indices_are_sorted,
+                              unique_indices=unique_indices)
 
   return val_out, tangent_out
 
@@ -4102,7 +4220,7 @@ batching.primitive_batchers[scatter_max_p] = (
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
 
 def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
-                 dimension_numbers):
+                 dimension_numbers, indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = primals
   g_operand, g_scatter_indices, g_updates = tangents
   dnums = dimension_numbers
@@ -4110,7 +4228,8 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   if type(g_operand) is ad_util.Zero and type(g_updates) is ad_util.Zero:
     val_out = scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=dnums)
+      update_consts=update_consts, dimension_numbers=dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
     return val_out, ad_util.Zero.from_value(val_out)
 
   g_operand = ad.instantiate_zeros(g_operand)
@@ -4161,7 +4280,8 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
     scatter_dims_to_operand_dims=tuple(d + 1 for d in dnums.scatter_dims_to_operand_dims))
   outputs = scatter_p.bind(
       new_operand, scatter_indices, updates_and_ids, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=new_dnums)
+      update_consts=update_consts, dimension_numbers=new_dnums,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
   val_out = index_in_dim(outputs, 0, keepdims=False)
   scattered_ids = index_in_dim(outputs, 1, keepdims=False)
 
@@ -4190,7 +4310,9 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
   # d) perform a scatter-add to compute the tangent output.
   tangent_out = scatter_add(masked_g_operand, scatter_indices, masked_g_updates,
-                            dimension_numbers=dnums)
+                            dimension_numbers=dnums,
+                            indices_are_sorted=indices_are_sorted,
+                            unique_indices=unique_indices)
   return val_out, tangent_out
 
 
@@ -4435,20 +4557,12 @@ ad.defjvp_zero(argmin_p)
 xla.backend_specific_translations['gpu'][argmin_p] = xla.lower_fun(
   partial(_argminmax_gpu_translation_rule, _reduce_min),
   multiple_results=False)
-# TODO(mattjj,phawkins): remove this rule when TPU compile time issue resolved
-xla.backend_specific_translations['tpu'][argmin_p] = xla.lower_fun(
-  partial(_argminmax_gpu_translation_rule, _reduce_min),
-  multiple_results=False)
 
 argmax_p = standard_primitive(_argminmax_shape_rule, _argminmax_dtype_rule,
                               'argmax', _argmax_translation_rule)
 batching.defreducer(argmax_p)
 ad.defjvp_zero(argmax_p)
 xla.backend_specific_translations['gpu'][argmax_p] = xla.lower_fun(
-  partial(_argminmax_gpu_translation_rule, _reduce_max),
-  multiple_results=False)
-# TODO(mattjj,phawkins): remove this rule when TPU compile time issue resolved
-xla.backend_specific_translations['tpu'][argmax_p] = xla.lower_fun(
   partial(_argminmax_gpu_translation_rule, _reduce_max),
   multiple_results=False)
 
@@ -4478,38 +4592,43 @@ reduce_and_p = standard_primitive(_reduce_logical_shape_rule, _fixed_dtype(np.bo
 batching.defreducer(reduce_and_p)
 
 def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
-                              window_dimensions, window_strides, padding):
+                              window_dimensions, window_strides, padding,
+                              base_dilation, window_dilation):
   if operand.dtype != init_value.dtype:
     msg = ("reduce_window got inconsistent dtypes for operand and init_value: "
            " got operand dtype {} and init_value dtype {}.")
     raise TypeError(msg.format(operand.dtype, init_value.dtype))
-  return _common_reduce_window_shape_rule(operand, window_dimensions,
-                                         window_strides, padding)
+  return _common_reduce_window_shape_rule(
+    operand, window_dimensions, window_strides, padding, base_dilation,
+    window_dilation)
 
 def _reduce_window_translation_rule(c, operand, init_value, *, jaxpr, consts,
-                                    window_dimensions, window_strides, padding):
+                                    window_dimensions, window_strides, padding,
+                                    base_dilation, window_dilation):
   xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
   return xops.ReduceWindowWithGeneralPadding(
     operand, init_value, xla_computation, window_dimensions,
-    window_strides, (), (), padding)
+    window_strides, base_dilation, window_dilation, padding)
 
 def _generic_reduce_window_batch_rule(
     batched_args, batch_dims, *, jaxpr, consts, window_dimensions,
-    window_strides, padding):
+    window_strides, padding, base_dilation, window_dilation):
   operand, init = batched_args
   bdim, init_bdim = batch_dims
   if init_bdim is not None:
     raise NotImplementedError("reduce_window batching is not implemented for "
                               "initial values")
 
-  def reduce_window(x, window_dimensions, window_strides, padding):
+  def reduce_window(x, window_dimensions, window_strides, padding, base_dilation,
+                    window_dilation):
     return reduce_window_p.bind(
       x, init, jaxpr=jaxpr, consts=consts, window_dimensions=window_dimensions,
-      window_strides=window_strides, padding=padding)
-  return _reduce_window_batch_rule(reduce_window, (operand,), (bdim,),
-                                   window_dimensions=window_dimensions,
-                                   window_strides=window_strides,
-                                   padding=padding)
+      window_strides=window_strides, padding=padding, base_dilation=base_dilation,
+      window_dilation=window_dilation)
+  return _reduce_window_batch_rule(
+    reduce_window, (operand,), (bdim,), window_dimensions=window_dimensions,
+    window_strides=window_strides, padding=padding, base_dilation=base_dilation,
+    window_dilation=window_dilation)
 
 
 reduce_window_p = standard_primitive(
@@ -4519,40 +4638,46 @@ batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
 
 def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
-                                  padding):
+                                  padding, base_dilation, window_dilation):
   if not dtypes.issubdtype(operand.dtype, np.number):
     msg = "operand to reduce_window_sum must have a number dtype, got {}"
     raise TypeError(msg.format(np.dtype(operand.dtype).name))
   return _common_reduce_window_shape_rule(operand, window_dimensions,
-                                          window_strides, padding)
+                                          window_strides, padding, base_dilation,
+                                          window_dilation)
 
 def _reduce_window_sum_translation_rule(c, operand, *, window_dimensions,
-                                        window_strides, padding):
+                                        window_strides, padding, base_dilation,
+                                        window_dilation):
   dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.ReduceWindowWithGeneralPadding(
     operand, xb.constant(c, np.array(0, dtype)),
     xla.primitive_subcomputation(add_p, scalar, scalar), window_dimensions,
-    window_strides, (), (), padding)
+    window_strides, base_dilation, window_dilation, padding)
 
 def _reduce_window_sum_transpose_rule(cotangent, operand, *, window_dimensions,
-                                      window_strides, padding):
+                                      window_strides, padding, base_dilation,
+                                      window_dilation):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
-  ones = [1] * len(input_shape)
   pads = _conv_general_vjp_lhs_padding(
       input_shape, window_dimensions, window_strides, cotangent.shape, padding,
-      ones, ones)
+      base_dilation, window_dilation)
+  ones = [1] * len(input_shape)
   padding_config = [(lo, hi, stride - 1)
                     for (lo, hi), stride in zip(pads, window_strides)]
   pad_cotangent = pad(cotangent, _zero(cotangent), padding_config)
-  result = _reduce_window_sum(pad_cotangent, window_dimensions, ones,
-                              [(0, 0)] * len(input_shape))
-  assert result.shape == input_shape
+  result = _reduce_window_sum(pad_cotangent, window_dimensions, base_dilation,
+                              [(0, 0)] * len(input_shape),
+                              base_dilation=ones,
+                              window_dilation=window_dilation)
+  assert result.shape == input_shape, (result.shape, input_shape)
   return [result]
 
 def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
-                              window_dimensions, window_strides, padding):
+                              window_dimensions, window_strides, padding,
+                              base_dilation, window_dilation):
   operand, = batched_args
   bdim, = bdims
 
@@ -4561,7 +4686,11 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
         window_dimensions[:bdim] + (1,) + window_dimensions[bdim:]
     window_strides = window_strides[:bdim] + (1,) + window_strides[bdim:]
     padding = padding[:bdim] + ((0, 0),) + padding[bdim:]
-  operand = reduce_window(operand, window_dimensions, window_strides, padding)
+    base_dilation = base_dilation[:bdim] + (1,) + base_dilation[bdim:]
+    window_dilation = window_dilation[:bdim] + (1,) + window_dilation[bdim:]
+
+  operand = reduce_window(operand, window_dimensions, window_strides, padding,
+                          base_dilation, window_dilation)
   return operand, bdim
 
 reduce_window_sum_p = standard_primitive(
@@ -4572,26 +4701,32 @@ batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
 
 def _reduce_window_chooser_translation_rule(
-    prim, identity, c, operand, *, window_dimensions, window_strides, padding):
+    prim, identity, c, operand, *, window_dimensions, window_strides, padding,
+    base_dilation, window_dilation):
   dtype = c.get_shape(operand).numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.ReduceWindowWithGeneralPadding(
     operand, xb.constant(c, identity(dtype)),
     xla.primitive_subcomputation(prim, scalar, scalar), window_dimensions,
-    window_strides, (), (), padding)
+    window_strides, base_dilation, window_dilation, padding)
 
 def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
-                                    window_strides, padding):
+                                    window_strides, padding, base_dilation,
+                                    window_dilation):
   assert prim is max_p or prim is min_p
   select_prim = ge_p if prim is max_p else le_p
   return _select_and_gather_add(g, operand, select_prim, window_dimensions,
-                                window_strides, padding)
+                                window_strides, padding, base_dilation,
+                                window_dilation)
 
 
 def _common_reduce_window_shape_rule(operand, window_dimensions,
-                                     window_strides, padding):
+                                     window_strides, padding, base_dilation,
+                                     window_dilation):
   _check_shapelike("reduce_window", "window_dimensions", window_dimensions)
   _check_shapelike("reduce_window", "window_strides", window_strides)
+  _check_shapelike("reduce_window", "base_dilation", base_dilation)
+  _check_shapelike("reduce_window", "window_dilation", window_dilation)
   if operand.ndim != len(window_dimensions):
     msg = ("reduce_window got the wrong number of window_dimensions for "
            "operand: got operand shape {} with window_dimensions {}.")
@@ -4600,12 +4735,27 @@ def _common_reduce_window_shape_rule(operand, window_dimensions,
     msg = ("reduce_window got inconsistent window_strides and "
            "window_dimensions: got window_strides {} and window_dimensions {}.")
     raise TypeError(msg.format(window_strides, window_dimensions))
+  if len(base_dilation) != len(window_dimensions):
+    msg = ("reduce_window got inconsistent base_dilation and "
+           "window_dimensions: got base_dilation {} and window_dimensions {}.")
+    raise TypeError(msg.format(base_dilation, window_dimensions))
+  if len(window_dilation) != len(window_dimensions):
+    msg = ("reduce_window got inconsistent window_dilation and "
+           "window_dimensions: got window_dilation {} and window_dimensions "
+           "{}.")
+    raise TypeError(msg.format(window_dilation, window_dimensions))
 
   return reduce_window_shape_tuple(operand.shape, window_dimensions,
-                                   window_strides, padding)
+                                   window_strides, padding, base_dilation,
+                                   window_dilation)
 
 def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
-                              padding):
+                              padding, base_dilation=None,
+                              window_dilation=None):
+  if base_dilation is not None:
+    operand_shape = _dilate_shape(operand_shape, base_dilation)
+  if window_dilation is not None:
+    window_dimensions = _dilate_shape(window_dimensions, window_dilation)
   operand_padded = np.add(operand_shape, np.add(*zip(*padding)))
   t = np.floor_divide(
       np.subtract(operand_padded, window_dimensions), window_strides) + 1
@@ -4696,8 +4846,9 @@ def _select_and_scatter_add_transpose(
     t, source, operand, *, select_prim, window_dimensions, window_strides,
     padding):
   assert ad.is_undefined_primal(source) and not ad.is_undefined_primal(operand)
+  ones = (1,) * len(window_dimensions)
   source_t = _select_and_gather_add(t, operand, select_prim, window_dimensions,
-                                    window_strides, padding)
+                                    window_strides, padding, ones, ones)
   return [source_t, None]
 
 def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
@@ -4741,13 +4892,14 @@ batching.primitive_batchers[select_and_scatter_add_p] = \
 
 def _select_and_gather_add_shape_rule(
     tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
   if tangents.shape != operand.shape:
     msg = ("select_and_gather_add tangents and operand shapes must match, "
            "got {} and {}.")
     raise TypeError(msg.format(tangents.shape, operand.shape))
-  return _common_reduce_window_shape_rule(operand, window_dimensions,
-                                          window_strides, padding)
+  return _common_reduce_window_shape_rule(
+    operand, window_dimensions, window_strides, padding, base_dilation,
+    window_dilation)
 
 
 _UINT_DTYPES = {
@@ -4764,7 +4916,7 @@ _INT_DTYPES = {
 
 def _select_and_gather_add_translation(
     c, tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding, max_bits=64):
+    padding, base_dilation, window_dilation, max_bits=64):
   shape = c.get_shape(operand)
   dtype = shape.numpy_dtype()
   etype = shape.xla_element_type()
@@ -4855,37 +5007,52 @@ def _select_and_gather_add_translation(
   init = -np.inf if select_prim is ge_p else np.inf
   out = xops.ReduceWindowWithGeneralPadding(
     pack(operand, tangents), pack(const(c, dtype, init), const(c, dtype, 0)),
-    reducer(), window_dimensions, window_strides, (), (), padding)
+    reducer(), window_dimensions, window_strides, base_dilation,
+    window_dilation, padding)
   return snd(out)
 
 def _select_and_gather_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
   source, operand = primals
   g_source, g_operand = tangents
   val_out = _select_and_gather_add(
       source, operand, select_prim, window_dimensions, window_strides,
-      padding)
+      padding, base_dilation, window_dilation)
   del g_operand
   if type(g_source) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
     tangent_out = _select_and_gather_add(
         g_source, operand, select_prim, window_dimensions,
-        window_strides, padding)
+        window_strides, padding, base_dilation, window_dilation)
   return val_out, tangent_out
 
 def _select_and_gather_add_transpose(
     t, tangents, operand, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
+  assert select_prim in (le_p, ge_p)
   assert ad.is_undefined_primal(tangents) and not ad.is_undefined_primal(operand)
+  if any(d != 1 for d in window_dilation):
+    msg = ("VJP not implemented for select_and_gather (MaxPool) with window "
+           "dilation, got window_dilation={}.")
+    raise NotImplementedError(msg.format(window_dilation))
+  has_base_dilation = any(d != 1 for d in base_dilation)
+  if has_base_dilation:
+    select_identity = (_get_max_identity if select_prim is ge_p
+                       else _get_min_identity)
+    operand = pad(operand, select_identity(operand.dtype),
+                  tuple((0, 0, d - 1) for d in base_dilation))
   result = _select_and_scatter_add(t, operand, select_prim, window_dimensions,
                                    window_strides, padding)
+  if has_base_dilation:
+    result = slice(operand, (0,) * len(operand.shape), operand.shape,
+                   base_dilation)
   return [result, None]
 
 def _select_and_gather_add_batching_rule(
     batched_args, batch_dims, *, select_prim, window_dimensions, window_strides,
-    padding):
+    padding, base_dilation, window_dilation):
   t, x = batched_args
   t_bdim, x_bdim = batch_dims
   size = next(a.shape[bdim] for a, bdim in zip(batched_args, batch_dims)
@@ -4895,8 +5062,11 @@ def _select_and_gather_add_batching_rule(
   window_dimensions = (1,) + window_dimensions
   window_strides = (1,) + window_strides
   padding = ((0, 0),) + padding
+  base_dilation = (1,) + base_dilation
+  window_dilation = (1,) + window_dilation
   out = _select_and_gather_add(t, x, select_prim, window_dimensions,
-                               window_strides, padding)
+                               window_strides, padding, base_dilation,
+                               window_dilation)
   return (out, 0)
 
 

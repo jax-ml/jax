@@ -24,6 +24,7 @@ from absl import testing
 from jax import config
 from jax import test_util as jtu
 from jax import lax
+from jax import lax_linalg
 from jax import numpy as jnp
 
 import numpy as np
@@ -319,6 +320,40 @@ lax_pad = tuple(
   ]
 )
 
+lax_top_k = tuple( # random testing
+  Harness(f"_inshape={jtu.format_shape_dtype_string(shape, dtype)}_k={k}",
+          lax.top_k,
+          [RandArg(shape, dtype), StaticArg(k)],
+          shape=shape,
+          dtype=dtype,
+          k=k)
+  for dtype in jtu.dtypes.all
+  for shape in [(3,), (5, 3)]
+  for k in [-1, 1, 3, 4]
+  for rng_factory in [jtu.rand_default]
+) + tuple( # stability test
+  Harness(f"stability_inshape={jtu.format_shape_dtype_string(arr.shape, arr.dtype)}_k={k}",
+          lax.top_k,
+          [arr, StaticArg(k)],
+          shape=arr.shape,
+          dtype=arr.dtype,
+          k=k)
+  for arr in [
+      np.array([5, 7, 5, 8, 8, 5], dtype=np.int32)
+  ]
+  for k in [1, 3, 6]
+) + tuple( # nan/inf sorting test
+  Harness(f"nan_inshape={jtu.format_shape_dtype_string(arr.shape, arr.dtype)}_k={k}",
+          lax.top_k,
+          [arr, StaticArg(k)],
+          shape=arr.shape,
+          dtype=arr.dtype,
+          k=k)
+  for arr in [
+      np.array([+np.inf, np.nan, -np.nan, np.nan, -np.inf, 3], dtype=np.float32)
+  ]
+  for k in [1, 3, 6]
+)
 
 lax_sort = tuple( # one array, random data, all axes, all dtypes
   Harness(f"one_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
@@ -358,6 +393,17 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
   for is_stable in [False, True]
 )
 
+lax_linalg_qr = tuple(
+  Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
+          lax_linalg.qr,
+          [RandArg(shape, dtype), StaticArg(full_matrices)],
+          shape=shape,
+          dtype=dtype,
+          full_matrices=full_matrices)
+  for dtype in jtu.dtypes.all
+  for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
+  for full_matrices in [False, True]
+)
 
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore

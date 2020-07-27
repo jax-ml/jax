@@ -932,6 +932,13 @@ class APITest(jtu.JaxTestCase):
     xla_comp = api.xla_computation(f, static_argnums=(1,))(2, 3)
     self.assertIn('constant(3)', xla_comp.as_hlo_text())
 
+  def test_xla_computation_return_shape(self):
+    _, shape_tree = api.xla_computation(lambda x: (x + 1, jnp.zeros(2, jnp.float32)),
+                                        return_shape=True)(np.int32(1))
+    expected = (api.ShapeDtypeStruct(shape=(), dtype=jnp.int32),
+                api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
+    self.assertEqual(shape_tree, expected)
+
   def test_jit_device(self):
     device = xb.devices()[-1]
     x = api.jit(lambda x: x, device=device)(3.)
@@ -2517,6 +2524,28 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = 12.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_concurrent_initial_style(self):
+    # https://github.com/google/jax/issues/3843
+    def unroll(param, sequence):
+      def scan_f(prev_state, inputs):
+        return prev_state, jax.nn.sigmoid(param * inputs)
+      return jnp.sum(jax.lax.scan(scan_f, None, sequence)[1])
+
+    def run():
+      return jax.grad(unroll)(jnp.array(1.0), jnp.array([1.0]))
+
+    expected = run()
+
+    # we just don't want this to crash
+    n_workers = 20
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as e:
+      futures = []
+      for _ in range(n_workers):
+        futures.append(e.submit(run))
+      results = [f.result() for f in futures]
+    for ans in results:
+      self.assertAllClose(ans, expected)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -3229,16 +3258,17 @@ class BufferDonationTest(jtu.JaxTestCase):
           "Some donated buffers were not usable: f32[2]{0}, s32[2]{0}",
           str(w[-1].message))
 
-  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jit_donate_argnums_invalidates_input(self):
-    # We can't just use `lambda x: x` because JAX simplifies this away.
+    # We can't just use `lambda x: x` because JAX simplifies this away to an
+    # empty XLA computation.
     move = jit(lambda x: x + x - x, donate_argnums=0)
     x = jnp.ones([])
     y = move(x)
     self.assertDeleted(x)
     self.assertEqual(y, 1.)
 
-  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jit_donate_argnums_static_argnums(self):
     jit_fun = jit(lambda a, b, c, d: ((a + b + c), (a + b + d)),
                   static_argnums=(0, 1), donate_argnums=(2, 3))
@@ -3284,7 +3314,7 @@ class BufferDonationTest(jtu.JaxTestCase):
 
   # === pmap ===
 
-  @jtu.skip_on_devices("cpu", "gpu")  # In/out aliasing only supported on TPU.
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_pmap_donate_argnums_invalidates_input(self):
     move = api.pmap(lambda x: x + x - x, donate_argnums=0)
     n = jax.local_device_count()

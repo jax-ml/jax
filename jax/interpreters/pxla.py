@@ -795,7 +795,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   else:
     out_tuple = build_out_tuple()
   backend = xb.get_backend(backend)
-  if backend.platform == "tpu":
+  if backend.platform in ("gpu", "tpu"):
     donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   built = c.Build(out_tuple)
 
@@ -944,7 +944,7 @@ def get_num_partitions(*partitions):
   return num_partitions_set.pop()
 
 
-class ResultToPopulate(object): pass
+class ResultToPopulate: pass
 result_to_populate = ResultToPopulate()
 
 def _pvals_to_results_handler(

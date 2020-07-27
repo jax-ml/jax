@@ -305,8 +305,17 @@ class TensorFlowTrace(core.Trace):
     vals_out: Sequence[TfValOrUnit] = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v) for v in vals_out]
 
-  def post_process_call(self, call_primitive, out_tracers, params):
-    raise NotImplementedError("post_process_call")
+  def post_process_call(self, call_primitive: core.Primitive,
+                        out_tracers: Sequence[TensorFlowTracer], params):
+    # We encountered a call primitive, e.g., remat_call_p, whose result
+    # (out_tracers) include TensorFlowTracer that were not passed through
+    # its arguments (captured from the environment).
+    vals = tuple(t.val for t in out_tracers)
+    master = self.master
+    def todo(vals: Sequence[TfValOrUnit]):
+      trace = TensorFlowTrace(master, core.cur_sublevel())
+      return map(functools.partial(TensorFlowTracer, trace), vals)
+    return vals, todo
 
   def process_map(self, map_primitive, f, tracers, params):
     raise NotImplementedError("process_map")
@@ -347,18 +356,19 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 
 
 for unexpected in [
-  xla.xla_call_p]:  # Not part of the public API
+    # Call primitives are inlined
+    xla.xla_call_p, pe.remat_call_p, core.call_p]:
 
   tf_impl[unexpected] = functools.partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
   lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
-  lax.select_and_gather_add_p, lax.select_and_scatter_p, lax.top_k_p,
+  lax.select_and_gather_add_p, lax.select_and_scatter_p,
 
   lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
-  lax_linalg.lu_p, lax_linalg.qr_p, lax_linalg.svd_p,
+  lax_linalg.lu_p, lax_linalg.svd_p,
   lax_linalg.triangular_solve_p,
 
   lax_fft.fft_p, lax.igamma_grad_a_p,
@@ -369,8 +379,6 @@ tf_not_yet_impl = [
   lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
   lax.infeed_p, lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
 
-  core.call_p,
-  pe.remat_call_p,
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
 
@@ -781,11 +789,14 @@ tf_impl[lax.cumprod_p] = tf.math.cumprod
 
 
 def _reduce_window_shape(jax_f, operand, window_dimensions,
-                         window_strides, padding, input_shape=None):
+                         window_strides, padding, base_dilation,
+                         window_dilation, input_shape=None):
   """Shape inference function for reduce_window_{sum,min,max}."""
   params = dict(window_dimensions=window_dimensions,
                 window_strides=window_strides,
                 padding=padding,
+                base_dilation=base_dilation,
+                window_dilation=window_dilation,
                 input_shape=input_shape)
   try:
     out, = _infer_shape_jax(jax_f, operand, **params)
@@ -802,17 +813,20 @@ def _get_shape_from_tensor_or_array(x):
 
 
 def _reduce_window(jax_f, reducer, init_val, operand, window_dimensions,
-                   window_strides, padding, input_shape=None):
+                   window_strides, padding, base_dilation, window_dilation,
+                   input_shape=None):
   """TensorFlow implementation of reduce_window_{sum,min,max}."""
   del input_shape
   # TODO(tomhennigan): tf2xla should have a shape inference function.
   out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
-                                   window_strides, padding)
+                                   window_strides, padding, base_dilation,
+                                   window_dilation)
   a = tf.constant(0, operand.dtype)
   reducer_fn = reducer.get_concrete_function(a, a)
   out = tfxla.reduce_window(operand, tf.constant(init_val, operand.dtype),
                             reducer_fn, window_dimensions,
-                            window_strides, padding=padding)
+                            window_strides, base_dilations=base_dilation,
+                            window_dilations=window_dilation, padding=padding)
   out.set_shape(out_shape)
   return out
 # pylint: disable=protected-access
@@ -999,9 +1013,10 @@ def _scatter_shape(operand, scatter_indices, updates, dimension_numbers):
 
 @functools.partial(bool_to_int8, argnums=(1, 3))
 def _scatter(update_computation, operand, scatter_indices, updates,
-             update_jaxpr, update_consts, dimension_numbers):
+             update_jaxpr, update_consts, dimension_numbers,
+             indices_are_sorted, unique_indices):
   """Tensorflow implementation of scatter with an update computation."""
-  del update_jaxpr, update_consts
+  del update_jaxpr, update_consts, unique_indices
   out_shape = _scatter_shape(operand, scatter_indices, updates,
                              dimension_numbers)
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
@@ -1010,7 +1025,8 @@ def _scatter(update_computation, operand, scatter_indices, updates,
       tf.function(update_computation).get_concrete_function(o_spec, o_spec))
   # We compile due to TF bug, see comment on gather
   out = _xla_compile(
-    lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto),
+    lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
+                                  indices_are_sorted=indices_are_sorted),
     operand, scatter_indices, updates)
   out.set_shape(out_shape)
   return out
@@ -1113,6 +1129,27 @@ def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
 
 tf_impl[lax.scan_p] = _scan
 
+def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
+  # Some types originally incompatible with tf.math.top_k can be promoted
+  # to a compatible type without loss of precision.
+  def promote_tf_dtype(tf_dtype):
+    if tf_dtype in [tf.bool, tf.uint8, tf.uint16]:
+      return tf.uint32
+    if tf_dtype in [tf.int8, tf.int16]:
+      return tf.int32
+    if tf_dtype is tf.float16:
+      return tf.float32
+    return None
+
+  conversion_dtype = promote_tf_dtype(operand.dtype)
+  if conversion_dtype:
+    values, indices = tf.math.top_k(tf.dtypes.cast(operand, conversion_dtype), k=k, sorted=True)
+    return tf.dtypes.cast(values, operand.dtype), indices
+  else:
+    return tf.math.top_k(operand, k=k, sorted=True)
+
+tf_impl[lax.top_k_p] = _top_k
+
 def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tuple[TfVal, ...]:
   if num_keys != 1:
     raise NotImplementedError("TODO: multiple keys")
@@ -1129,6 +1166,11 @@ def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tu
     raise NotImplementedError("TODO: implement XlaSort for all axes")
 
 tf_impl[lax.sort_p] = _sort
+
+def _qr(operand, full_matrices):
+  return tf.linalg.qr(operand, full_matrices=full_matrices)
+
+tf_impl[lax_linalg.qr_p] = _qr
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
                            fun_jaxpr: core.TypedJaxpr,

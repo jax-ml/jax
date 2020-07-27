@@ -109,6 +109,27 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("pad with negative pad not supported")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_top_k)
+  def test_top_k(self, harness: primitive_harness.Harness):
+    if (harness.params["k"] > harness.params["shape"][-1] or
+        harness.params["k"] < 0):
+      with self.assertRaisesRegex(ValueError, "k argument to top_k must be"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    # TODO: figure out what's up with bfloat16
+    elif harness.params["dtype"] is dtypes.bfloat16:
+      raise unittest.SkipTest("bfloat16 support not implemented")
+    elif harness.params["dtype"] in jtu.dtypes.complex:
+      # TODO(necula): fix top_k complex bug on TPU
+      if jtu.device_under_test() == "tpu":
+        raise unittest.SkipTest("top_k complex on TPU raises different error")
+      with self.assertRaisesRegex(RuntimeError, "Unimplemented: complex comparison"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    # TODO: TF and JAX sort [inf, nan] differently.
+    elif harness.name.startswith("nan_"):
+      raise unittest.SkipTest("inconsistent [nan, inf] sorting")
+    else:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_sort)
   def test_sort(self, harness: primitive_harness.Harness):
     if harness.params["dtype"] is dtypes.bfloat16 or harness.params["dtype"] in jtu.dtypes.complex:
@@ -133,6 +154,37 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("GPU tests are running TF on CPU")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
+  def test_qr(self, harness: primitive_harness.Harness):
+    # See jax.lib.lapack.geqrf for the list of compatible types
+    if harness.params["dtype"] in [jnp.float32, jnp.float64]:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             atol=1e-5, rtol=1e-5)
+    elif harness.params["dtype"] in [jnp.complex64, jnp.complex128]:
+      if (jtu.device_under_test() == "tpu" and
+          harness.params["dtype"] in [jnp.complex64]):
+        raise unittest.SkipTest("QR for c64 not implemented on TPU")
+
+      # TODO: see https://github.com/google/jax/pull/3775#issuecomment-659407824.
+      # - check_compiled=True breaks for complex types;
+      # - for now, the performance of the HLO QR implementation called when
+      #   compiling with TF is expected to have worse performance than the
+      #   custom calls made in JAX.
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             expect_tf_exceptions=True, atol=1e-5, rtol=1e-5)
+    else:
+      # TODO(necula): fix QR bug on TPU
+      if (jtu.device_under_test() == "tpu" and
+          harness.params["dtype"] in (jnp.bfloat16, jnp.int32, jnp.uint32)):
+        raise unittest.SkipTest("QR bug on TPU for certain types: error not raised")
+      if (jtu.device_under_test() == "tpu" and
+          harness.params["dtype"] in (jnp.bool_,)):
+        raise unittest.SkipTest("QR bug on TPU for certain types: invalid cast")
+
+      expected_error = ValueError if jtu.device_under_test() == "gpu" else NotImplementedError
+      with self.assertRaisesRegex(expected_error, "Unsupported dtype"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
@@ -141,6 +193,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     arg, = harness.dyn_args_maker(self.rng())
     custom_assert = None
     if harness.params["lax_name"] == "digamma":
+      # TODO(necula): fix bug with digamma/f32 on TPU
+      if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
+        raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
+
       # digamma is not defined at 0 and -1
       def custom_assert(result_jax, result_tf):
         # lax.digamma returns NaN and tf.math.digamma returns inf
@@ -157,6 +213,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO(necula): fix bug with erf_inv/f16
       if dtype is np.float16:
         raise unittest.SkipTest("TODO: fix bug")
+      # TODO(necula): fix erf_inv bug on TPU
+      if jtu.device_under_test() == "tpu":
+        raise unittest.SkipTest("erf_inv bug on TPU: nan vs non-nan")
       # erf_inf is not defined for arg <= -1 or arg >= 1
       def custom_assert(result_jax, result_tf):  # noqa: F811
         # for arg < -1 or arg > 1
@@ -186,10 +245,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_binary_elementwise(self, harness):
     if harness.params["dtype"] is dtypes.bfloat16:
       raise unittest.SkipTest("bfloat16 not implemented")
-    # TODO(necula): fix bug with igamma/f16
-    if (harness.params["lax_name"] in ("igamma", "igammac") and
-        harness.params["dtype"] is np.float16):
-      raise unittest.SkipTest("TODO: fix bug")
+    if harness.params["lax_name"] in ("igamma", "igammac"):
+      # TODO(necula): fix bug with igamma/f16
+      if harness.params["dtype"] is np.float16:
+        raise unittest.SkipTest("TODO: fix bug")
+      # TODO(necula): fix bug with igamma/f32 on TPU
+      if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
+        raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
     # TODO(necula): fix bug with nextafter/f16
     if (harness.params["lax_name"] == "nextafter" and
         harness.params["dtype"] is np.float16):
@@ -268,6 +330,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
   def test_dynamic_slice(self, harness):
     # JAX.dynamic_slice rejects slice sizes too big; check this, and skip jax2tf
+    # TODO(necula): fix dynamic_slice bug on TPU
+    if jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("dynamic_slice bug on TPU: not compilable (for some shapes)")
     args = harness.dyn_args_maker(self.rng())
     expect_tf_exceptions = False
     if any(li - si < 0 or li - si >= sh
@@ -305,9 +370,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_gather)
   def test_gather(self, harness: primitive_harness.Harness):
+    # TODO(necula): fix gather bug on TPU
+    if jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("TODO: fix bug: not compilable")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   def test_boolean_gather(self):
+    # TODO(necula): fix boolean_gather bug on TPU
+    if jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("TODO: fix bug: not compilable")
     values = np.array([[True, True], [False, True], [False, False]],
                       dtype=np.bool_)
     indices = np.array([0, 1], dtype=np.int32)
@@ -317,6 +388,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       self.ConvertAndCompare(f_jax, values, indices)
 
   def test_gather_rank_change(self):
+    # TODO(necula): fix gather bug on TPU
+    if jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("TODO: fix bug: not compilable")
     params = jnp.array([[1.0, 1.5, 2.0], [2.0, 2.5, 3.0], [3.0, 3.5, 4.0]])
     indices = jnp.array([[1, 1, 2], [0, 1, 0]])
     f_jax = jax.jit(lambda i: params[i])
@@ -343,6 +417,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
          op=op)
     for op in INDEX))
   def test_scatter_static(self, op):
+    # TODO(necula): fix scatter bug on TPU
+    if jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("scatter bug on TPU: not compilable")
     values = np.ones((5, 6), dtype=np.float32)
     update = np.float32(6.)
     f_jax = jax.jit(lambda v, u: op(v, jax.ops.index[::2, 3:], u))
