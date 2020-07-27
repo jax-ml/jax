@@ -55,15 +55,15 @@ def _add_args_(extra_args, left, *args, **kwargs):
 
 def _memoize(thunk):
   cell = []
-  saved_state = core.trace_state.copy()
+  saved_state = core.thread_local_state.trace_state.copy()
   def memoized():
     if not cell:
-      prev_state = core.trace_state.copy()
-      core.trace_state.set_state(saved_state)
+      prev_state = core.thread_local_state.trace_state
+      core.thread_local_state.trace_state = saved_state
       try:
         cell.append(thunk())
       finally:
-        core.trace_state.set_state(prev_state)
+        core.thread_local_state.trace_state = prev_state
     return cell[0]
   return memoized
 
@@ -221,7 +221,7 @@ class custom_jvp:
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_tree1 = flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_tree2 = _flatten_jvp(jvp, in_tree)
-    if core.trace_state.initial_style:
+    if core.thread_local_state.trace_state.initial_style:
       out_flat = custom_jvp_call_jaxpr(flat_fun, flat_jvp, *args_flat)
       out_tree = out_tree1()
     else:
@@ -464,7 +464,7 @@ class custom_vjp:
     flat_fun, out_tree = flatten_fun_nokwargs(f_, in_tree)
     flat_fwd, out_trees = _flatten_fwd(fwd, in_tree)
     flat_bwd = _flatten_bwd(bwd, in_tree, out_trees)
-    if core.trace_state.initial_style:
+    if core.thread_local_state.trace_state.initial_style:
       out_flat = custom_vjp_call_jaxpr(flat_fun, flat_fwd, flat_bwd,
                                        *args_flat, out_trees=out_trees)
       out_tree = out_tree()
