@@ -4226,12 +4226,9 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 
 @partial(jit, static_argnums=2)
 def _searchsorted(a, v, side='left'):
-  assert side in ['left', 'right']
   op = operator.lt if side == "right" else operator.le
-  v_shape = shape(v)
-  v = ravel(v)
 
-  def f(carry, x):
+  def fscan(carry, x):
     low, high = carry
     mid = (low + high) // 2
     mask = op(v, a[mid])
@@ -4242,9 +4239,8 @@ def _searchsorted(a, v, side='left'):
   low = zeros(len(v), dtype=int_)
   high = full(len(v), len(a), dtype=int_)
   n_levels = int(np.ceil(np.log2(len(a) + 1)))
-  (low, high), _ = lax.scan(f, (low, high), None, length=n_levels)
-
-  return high.reshape(v_shape)
+  (low, high), _ = lax.scan(fscan, (low, high), None, length=n_levels)
+  return high
 
 @_wraps(np.searchsorted)
 def searchsorted(a, v, side='left', sorter=None):
@@ -4258,7 +4254,7 @@ def searchsorted(a, v, side='left', sorter=None):
     raise ValueError("a should be 1-dimensional")
   if size(a) == 0 or size(v) == 0:
     return zeros_like(v, dtype=int_)
-  return _searchsorted(a, v, side)
+  return _searchsorted(a, ravel(v), side).reshape(shape(v))
 
 
 @_wraps(np.digitize)
