@@ -4226,34 +4226,37 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 
 
 @partial(jit, static_argnums=2)
-@partial(vectorize, excluded={0, 2})
-def _searchsorted(a, v, side):
-  op = operator.le if side == 'left' else operator.lt
-
-  def cond_fun(state):
-    start, stop = state
-    return stop - start > 1
-
-  def body_fun(state):
-    start, stop = state
-    mid = (start + stop) // 2
-    go_left = op(v, a[mid])
-    return where(go_left, start, mid), where(go_left, mid, stop)
-
-  result = lax.while_loop(cond_fun, body_fun, (0, a.shape[0]))
-  return where(op(v, a[0]), 0, result[1])
-
-
-@_wraps(np.searchsorted)
-def searchsorted(a, v, side='left', sorter=None):
+def _searchsorted(a, v, side='left'):
   assert side in ['left', 'right']
+  op = operator.lt if side == "right" else operator.le
+  v_shape = shape(v)
+  v = ravel(v)
+
+  def f(carry, x):
+    low, high = carry
+    mid = (low + high) // 2
+    mask = op(v, a[mid])
+    low = where(mask, low, mid)
+    high = where(mask, mid, high)
+    return (low, high), x
+
+  low = zeros(len(v), dtype=int_)
+  high = full(len(v), len(a), dtype=int_)
+  n_levels = int(np.ceil(np.log2(len(a) + 1)))
+  (low, high), _ = lax.scan(f, (low, high), None, length=n_levels)
+
+  return high.reshape(v_shape)
+
+def searchsorted(a, v, side='left', sorter=None):
+  if side not in ['left', 'right']:
+    raise ValueError(f"{side!r} is an invalid value for keyword 'side'")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
   a = asarray(a)
   v = asarray(v)
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
-  if size(a) == 0:
+  if size(a) == 0 or size(v) == 0:
     return zeros_like(v, dtype=int)
   return _searchsorted(a, v, side)
 
