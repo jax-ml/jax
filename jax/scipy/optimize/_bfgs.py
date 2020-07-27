@@ -99,7 +99,12 @@ def minimize_bfgs(
       line_search_status=0,
   )
 
-  def body(state):
+  def cond_fun(state):
+    return (jnp.logical_not(state.converged)
+            & jnp.logical_not(state.failed)
+            & (state.k < maxiter))
+
+  def body_fun(state):
     p_k = -_dot(state.H_k, state.g_k)
     line_search_results = line_search(
         fun,
@@ -139,11 +144,7 @@ def minimize_bfgs(
     )
     return state
 
-  state = lax.while_loop(
-      lambda state: (~state.converged) & (~state.failed) & (state.k < maxiter),
-      body,
-      state,
-  )
+  state = lax.while_loop(cond_fun, body_fun, state)
   status = jnp.where(
       state.converged,
       0,  # converged
