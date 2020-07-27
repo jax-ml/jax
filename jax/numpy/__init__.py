@@ -53,7 +53,7 @@ from .lax_numpy import (
     rad2deg, radians, ravel, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
     save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
-    signedinteger, sin, sinc, single, sinh, size, sometrue, sort, split, sqrt,
+    signedinteger, sin, sinc, single, sinh, size, sometrue, sort, sort_complex, split, sqrt,
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
     triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,

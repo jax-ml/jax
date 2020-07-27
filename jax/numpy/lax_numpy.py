@@ -3237,6 +3237,11 @@ def sort(a, axis=-1, kind='quicksort', order=None):
   else:
     return lax.sort(a, dimension=_canonicalize_axis(axis, ndim(a)))
 
+@_wraps(np.sort_complex)
+def sort_complex(a):
+  a = lax.sort(a, dimension=0)
+  return lax.convert_element_type(a, result_type(a, complex_))
+
 @_wraps(np.lexsort)
 def lexsort(keys, axis=-1):
   keys = tuple(keys)

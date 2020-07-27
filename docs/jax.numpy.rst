@@ -255,6 +255,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     sinh
     sometrue
     sort
+    sort_complex
     split
     sqrt
     square
