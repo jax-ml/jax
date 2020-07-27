@@ -2652,7 +2652,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       {"testcase_name": "_{}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
         "shape": shape, "dtype": dtype, "axis": axis}
-      for dtype in all_dtypes
+      for dtype in python_scalar_dtypes
       for shape in one_dim_array_shapes
       for axis in [None]))
   def testSortComplex(self, dtype, shape, axis):
@@ -2662,13 +2662,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest("complex sort not supported on TPU")
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    jnp_fun = jnp.sort_complex
-    np_fun = np.sort_complex
-    if axis is not None:
-      jnp_fun = partial(jnp_fun, axis=axis)
-      np_fun = partial(np_fun, axis=axis)
-    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(jnp.sort_complex, np.sort_complex, args_maker)
+    self._CompileAndCheck(jnp.sort_complex, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_input_type={}_axis={}".format(
