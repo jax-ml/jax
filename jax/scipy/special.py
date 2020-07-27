@@ -206,6 +206,7 @@ def zeta(x, q=None):
   T0 = (a + N) ** -s
   s_over_a = (s_ + np.arange(2 * M, dtype=M.dtype)) / (a_ + N)
   T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
+  T1 = jnp.clip(T1, a_max=jnp.finfo(dtype).max)
   coefs = np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype)
   T1 = T1 / coefs
   T = T0 * (dtype(0.5) + T1.sum(-1))

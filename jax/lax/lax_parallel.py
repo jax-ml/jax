@@ -17,7 +17,7 @@ Parallelization primitives.
 
 import collections
 
-import numpy as onp
+import numpy as np
 
 from jax import core
 from jax import ad_util
@@ -72,8 +72,8 @@ def psum(x, axis_name, *, axis_index_groups=None):
   """
   _validate_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
-  leaves = [lax.convert_element_type(l, onp.int32)
-            if dtypes.dtype(l) == onp.bool_ else l for l in leaves]
+  leaves = [lax.convert_element_type(l, np.int32)
+            if dtypes.dtype(l) == np.bool_ else l for l in leaves]
   out_flat = psum_p.bind(*leaves, axis_name=axis_name,
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -287,33 +287,39 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
 
 ### parallel primitives
 
-def standard_pmap_primitive(name, multiple_results=False):
-  prim = core.Primitive(name)
-  prim.multiple_results = multiple_results
-  prim.def_impl(partial(pxla.apply_parallel_primitive, prim))
-  prim.def_abstract_eval(lambda x, *args, **params: x)
-  return prim
-
-
 def _allreduce_split_axis_rule(prim, reducer, vals, which_mapped, axis_name,
                                axis_index_groups):
   assert tuple(which_mapped) == (True,)
   if axis_index_groups is not None:
     raise NotImplementedError("soft_pmap does not yet support axis_index_groups")
   vals = (reducer(x, [0]) for x in vals)
-  return prim.bind(*vals, axis_name=axis_name), False
+  out = prim.bind(*vals, axis_name=axis_name, axis_index_groups=axis_index_groups)
+  return out, False
 
-def _allreduce_translation_rule(prim, c, val, replica_groups, platform=None):
+def _allreduce_translation_rule(prim, c, val, *, axis_name, axis_index_groups,
+                                axis_env, platform):
+  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
   dtype = c.get_shape(val).numpy_dtype()
   scalar = ShapedArray((), dtype)
   computation = xla.primitive_subcomputation(prim, scalar, scalar)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
   return xops.AllReduce(val, computation, replica_groups_protos, None, None)
 
+def _replica_groups(axis_env, axis_name, axis_index_groups):
+  replica_groups = xla.axis_groups(axis_env, axis_name)
+  if axis_index_groups is not None:
+    replica_groups = [[axis_group[i] for i in axis_index_group]
+                      for axis_group in replica_groups
+                      for axis_index_group in axis_index_groups]
+  return replica_groups
+
 # psum translation rule has special handling for complex dtypes
-def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
+def _psum_translation_rule(c, *args, axis_name, axis_index_groups, axis_env,
+                           platform):
   if platform in ("cpu", "tpu"):
-    return _notuple_psum_translation_rule(c, *args, replica_groups=replica_groups)
+    return _notuple_psum_translation_rule(c, *args, axis_name=axis_name,
+                                          axis_index_groups=axis_index_groups,
+                                          axis_env=axis_env, platform=platform)
 
   # XLA's tuple all-reduce doesn't support different dtypes in the same
   # allreduce. Instead, we perform once all-reduce for each argument input type.
@@ -325,9 +331,10 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
 
   # The outputs, in the original argument order.
   out = [None] * len(args)
+  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
   for dtype, (indices, dtype_args) in sorted(args_by_type.items()):
-    is_complex = dtypes.issubdtype(dtype, onp.complexfloating)
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
     n = len(dtype_args)
     if is_complex:
       dtype_args = ([xops.Real(x) for x in dtype_args] +
@@ -350,12 +357,14 @@ def _psum_translation_rule(c, *args, replica_groups=None, platform=None):
 # cross-task communication either.
 # TODO(b/155446630): An XLA:TPU optimization pass also doesn't support
 # tuple all-reduce yet. Meanwhile, rely on deterministic compiler behavior.
-def _notuple_psum_translation_rule(c, *args, replica_groups):
+def _notuple_psum_translation_rule(c, *args, axis_name, axis_env,
+                                   axis_index_groups, platform):
   def _translate(val):
     psum = partial(_allreduce_translation_rule, lax.add_p, c,
-                   replica_groups=replica_groups)
+                   axis_name=axis_name, axis_env=axis_env,
+                   axis_index_groups=axis_index_groups, platform=platform)
     dtype = c.get_shape(val).numpy_dtype()
-    if dtypes.issubdtype(dtype, onp.complexfloating):
+    if dtypes.issubdtype(dtype, np.complexfloating):
       return xops.Complex(psum(xops.Real(val)), psum(xops.Imag(val)))
     else:
       return psum(val)
@@ -367,9 +376,10 @@ def _psum_transpose_rule(cts, axis_name, axis_index_groups):
                                axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, nonzero_in_cts)
 
-psum_p = standard_pmap_primitive('psum', multiple_results=True)
-psum_p.def_abstract_eval(
-    lambda *args, **params: tuple(map(raise_to_shaped, args)))
+psum_p = core.Primitive('psum')
+psum_p.multiple_results = True
+psum_p.def_impl(partial(pxla.apply_parallel_primitive, psum_p))
+psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
 pxla.split_axis_rules[psum_p] = \
     partial(_allreduce_split_axis_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
@@ -378,21 +388,24 @@ ad.deflinear(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 
 
-pmax_p = standard_pmap_primitive('pmax')
+pmax_p = core.Primitive('pmax')
+pmax_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
 pxla.split_axis_rules[pmax_p] = \
     partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
 
 
-pmin_p = standard_pmap_primitive('pmin')
+pmin_p = core.Primitive('pmin')
+pmin_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
 pxla.split_axis_rules[pmin_p] = \
     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 
 
-def _ppermute_translation_rule(c, x, replica_groups, perm, platform=None):
+def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
+  replica_groups = _replica_groups(axis_env, axis_name, None)
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -410,15 +423,17 @@ def _ppermute_transpose_rule(t, perm, axis_name):
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
-ppermute_p = standard_pmap_primitive('ppermute')
+ppermute_p = core.Primitive('ppermute')
+ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
 
 
-def _all_to_all_translation_rule(c, x, split_axis, concat_axis, replica_groups,
-                                 platform=None):
+def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
+                                 axis_env, platform):
   # Workaround for AllToAll not being implemented on CPU.
+  replica_groups = _replica_groups(axis_env, axis_name, None)
   if len(replica_groups[0]) == 1:
     return x
   else:
@@ -441,14 +456,20 @@ def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
   out = _moveaxis(1, concat_axis + 1, out)
   return out, True
 
+def _all_to_all_transpose_rule(cts, axis_name, split_axis, concat_axis):
+  return (all_to_all(cts, axis_name=axis_name, split_axis=concat_axis, concat_axis=split_axis),)
+
 def _moveaxis(src, dst, x):
   perm = [i for i in range(x.ndim) if i != src]
   perm.insert(dst, src)
   return lax.transpose(x, perm)
 
-all_to_all_p = standard_pmap_primitive('all_to_all')
+all_to_all_p = core.Primitive('all_to_all')
+all_to_all_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 pxla.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
+ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
+pxla.multi_host_supported_collectives.add(all_to_all_p)
 
 
 ### papply rules
@@ -507,14 +528,14 @@ def _broadcasting_papply(prim, name, size, vals, axes, **params):
   if xdim is None:
     if x.shape:
       if x.shape[ydim] == 1:
-        x = x.reshape(onp.delete(x.shape, ydim))
+        x = x.reshape(np.delete(x.shape, ydim))
       else:
         x = _drop(x, ydim, name)
     return prim.bind(x, y, **params), ydim
   elif ydim is None:
     if y.shape:
       if y.shape[xdim] == 1:
-        y = y.reshape(onp.delete(y.shape, xdim))
+        y = y.reshape(np.delete(y.shape, xdim))
       else:
         y = _drop(y, xdim, name)
     return prim.bind(x, y, **params), xdim
@@ -525,11 +546,11 @@ def _broadcasting_papply(prim, name, size, vals, axes, **params):
     y_tosplit = xdim - int(ydim <= xdim)
     if y.shape[y_tosplit] == 1:
       y = _allgather(y, ydim, size, name)
-      y = y.reshape(onp.delete(y.shape, xdim))
+      y = y.reshape(np.delete(y.shape, xdim))
       return prim.bind(x, y, **params), ydim
     elif x.shape[x_tosplit] == 1:
       x = _allgather(x, xdim, size, name)
-      x = x.reshape(onp.delete(x.shape, ydim))
+      x = x.reshape(np.delete(x.shape, ydim))
       return prim.bind(x, y, **params), ydim
     else:
       x = all_to_all(x, name, x_tosplit, xdim)
@@ -565,7 +586,7 @@ def _reducer_papply(prim, collective, name, size, vals, papply_axes, axes, **kwa
   if not axes or papply_axis in axes:
     return collective(result, axis_name=name), None
   else:
-    new_papply_axis = papply_axis - onp.sum(onp.less(other_axes, papply_axis))
+    new_papply_axis = papply_axis - np.sum(np.less(other_axes, papply_axis))
     return result, new_papply_axis
 
 def _defreducer(prim, collective_prim):
@@ -754,13 +775,13 @@ def _dot_general_papply_rule(name, size, vals, dims, dimension_numbers,
 def _reshape_papply_rule(name, size, vals, axes, new_sizes, dimensions):
   operand, = vals
   axis, = axes
-  old_sizes = tuple(onp.insert(operand.shape, axis, size))
+  old_sizes = tuple(np.insert(operand.shape, axis, size))
 
   def filter_ones(xs):
     return filter(lambda x: x != 1, xs)
 
   def find_new_axis(old_axis, old_sizes, new_sizes):
-    left = onp.prod(old_sizes[:old_axis])
+    left = np.prod(old_sizes[:old_axis])
     size = old_sizes[old_axis]
     prod = 1
     for i, cur_sz in enumerate(new_sizes):
@@ -829,7 +850,7 @@ def _conv_general_dilated_papply_rule(
   lhs_dim, rhs_dim = dims
   lhs_spec_batch_dim = dimension_numbers.lhs_spec[0]
   if rhs_dim is None and lhs_dim == lhs_spec_batch_dim:
-    lhs = lax.reshape(lhs, tuple(onp.insert(lhs.shape, lhs_dim, 1)))
+    lhs = lax.reshape(lhs, tuple(np.insert(lhs.shape, lhs_dim, 1)))
     out = lax.conv_general_dilated(
         lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
         dimension_numbers, feature_group_count, precision)
@@ -848,8 +869,8 @@ def _broadcast_in_dim_papply_rule(name, size, vals, dims, shape,
     raise ValueError(
         "broadcast_in_dim changes hidden dimension size: {} to {}".format(
             shape[dim], shape[out_dim]))
-  sub_bdims = tuple(onp.delete(broadcast_dimensions, dim))
-  sub_shape = tuple(onp.delete(shape, out_dim))
+  sub_bdims = tuple(np.delete(broadcast_dimensions, dim))
+  sub_shape = tuple(np.delete(shape, out_dim))
   return lax.broadcast_in_dim(operand, sub_shape, sub_bdims), out_dim
 
 
@@ -906,8 +927,8 @@ def _gather_papply_rule(
         start_index_map=dimension_numbers.start_index_map)
     out = lax.gather(operand, start_indices, dimension_numbers=dnums,
                      slice_sizes=slice_sizes)
-    out_dim = start_indices_dim + onp.sum(
-        onp.less_equal(offset_dims, start_indices_dim))
+    out_dim = start_indices_dim + np.sum(
+        np.less_equal(offset_dims, start_indices_dim))
     return out, out_dim
   else:
     raise NotImplementedError

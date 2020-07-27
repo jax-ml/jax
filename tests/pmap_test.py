@@ -949,6 +949,25 @@ class PmapTest(jtu.JaxTestCase):
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("gpu")
+  def testGradOfPswapaxes(self):
+    device_count = xla_bridge.device_count()
+    # TODO: AllToAll not yet implemented on XLA:CPU
+    if jtu.device_under_test() == "cpu":
+      device_count = 1
+    shape = (device_count, 1, device_count)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    w = np.arange(device_count, dtype=np.float32)
+
+    @partial(pmap, axis_name='i')
+    def f(x, w):
+      g = lambda x: jnp.sum(lax.pswapaxes(x, 'i', 1) * w)
+      return grad(g)(x)
+
+    ans = f(x, w)
+    expected = np.tile(w, reps=device_count).reshape(shape)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testReshardInput(self):
     if xla_bridge.device_count() < 6:
       raise SkipTest("testReshardInput requires 6 devices")

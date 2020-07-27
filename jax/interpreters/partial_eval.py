@@ -20,7 +20,7 @@ from typing import (Callable, Dict, NamedTuple, Optional, Sequence,
                     Set, Tuple, Type, Union, cast)
 from weakref import ref
 
-import numpy as onp
+import numpy as np
 
 from .. import core
 from .. import linear_util as lu
@@ -128,7 +128,7 @@ class JaxprTrace(Trace):
     if const is None:
       return tracer
     else:
-      if type(const) in core.literalable_types and onp.shape(const) == ():
+      if type(const) in core.literalable_types and np.shape(const) == ():
         return self.new_instantiated_literal(const)
       else:
         return self.new_instantiated_const(const)
@@ -138,7 +138,7 @@ class JaxprTrace(Trace):
     if const is None:
       return tracer
     else:
-      aval = raise_to_shaped(get_aval(const), onp.isscalar(const))
+      aval = raise_to_shaped(get_aval(const), np.isscalar(const))
       return JaxprTracer(self, PartialVal.unknown(aval), ConstVar(const))
 
   def process_primitive(self, primitive, tracers, params):

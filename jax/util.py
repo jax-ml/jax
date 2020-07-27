@@ -17,7 +17,7 @@ import functools
 import itertools as it
 import types
 
-import numpy as onp
+import numpy as np
 
 
 def safe_zip(*args):
@@ -233,7 +233,7 @@ def get_module_functions(module):
       continue
     attr = getattr(module, key)
     if isinstance(
-        attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
+        attr, (types.BuiltinFunctionType, types.FunctionType, np.ufunc)):
       module_fns[key] = attr
   return module_fns
 

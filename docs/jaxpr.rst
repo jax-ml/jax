@@ -86,7 +86,7 @@ The jaxpr primitives are documented in the :py:mod:`jax.lax` module.
 For example, here is the jaxpr produced for the function ``func1`` below
 
 >>> from jax import make_jaxpr
->>> from jax import numpy as jnp
+>>> import jax.numpy as jnp
 >>> def func1(first, second):
 ...    temp = first + jnp.sin(second) * 3.
 ...    return jnp.sum(temp)
@@ -187,7 +187,7 @@ JAX produces the following jaxpr
   in (e,) }
 
 When tracing ``func6``, the function ``func5`` is invoked with a constant value
-(``onp.ones(8)``) for the second argument. As a result, the sub-expression
+(``np.ones(8)``) for the second argument. As a result, the sub-expression
 ``jnp.sin(second) * 3.`` is constant-folded.
 There are two ConstVars, ``b`` (standing for ``jnp.sin(second) * 3.``) and ``d``
 (standing for ``jnp.ones(8)``). Unfortunately, it is not easy to tell from the
@@ -348,7 +348,7 @@ and :py:func:`jax.lax.fori_loop`
 In the above signature, “C” stands for the type of a the loop “carry” value.
 For example, here is an example fori loop
 
->>> import numpy as onp
+>>> import numpy as np
 >>>
 >>> def func10(arg, n):
 ...   ones = jnp.ones(arg.shape)  # A constant
@@ -356,7 +356,7 @@ For example, here is an example fori loop
 ...                        lambda i, carry: carry + ones * 3. + arg,
 ...                        arg + ones)
 ...
->>> print(make_jaxpr(func10)(onp.ones(16), 5))
+>>> print(make_jaxpr(func10)(np.ones(16), 5))
 { lambda c d ; a b.
   let e = add a d
       _ _ f = while[ body_jaxpr={ lambda  ; e g a b c.
@@ -414,7 +414,7 @@ For the example consider the function ``func11`` below
 ...     return (carry + ae1 * ae2 + extra, carry)
 ...   return lax.scan(body, 0., (arr, ones))
 ...
->>> print(make_jaxpr(func11)(onp.ones(16), 5.))
+>>> print(make_jaxpr(func11)(np.ones(16), 5.))
 { lambda c ; a b.
   let d e = scan[ jaxpr={ lambda  ; f a b c.
                           let d = mul b c
@@ -425,7 +425,8 @@ For the example consider the function ``func11`` below
                   linear=(False, False, False, False)
                   num_carry=1
                   num_consts=1
-                  reverse=False ] b 0.0 a c
+                  reverse=False
+                  unroll=1 ] b 0.0 a c
   in (d, e) }
 
 The top-level jaxpr has one constvar ``c`` corresponding to the ``ones`` constant,

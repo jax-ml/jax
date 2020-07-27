@@ -291,11 +291,6 @@ class BatchingTest(jtu.JaxTestCase):
     expected = np.einsum('ij,i->j', xs, ys)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def testDot5(self):
-    f = vmap(partial(jnp.einsum, 'ij,j->i'), (None, 0))
-    jaxpr = make_jaxpr(f)(jnp.zeros((1000, 1000)), jnp.zeros((1000, 1000)))
-    assert "broadcast" not in str(jaxpr)
-
   def testPad(self):
     R = np.random.RandomState(0).randn
 
@@ -530,8 +525,7 @@ class BatchingTest(jtu.JaxTestCase):
       per_example_direct += [
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
-    self.assertAllClose(per_example, per_example_direct,
-                        rtol=5e-2)
+    self.assertAllClose(per_example, per_example_direct, rtol=5e-2, atol=1e-3)
 
   def testSumPool(self):
     W = jnp.array(np.random.randn(3, 3, 1, 5), dtype=np.float32)

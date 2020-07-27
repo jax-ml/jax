@@ -66,7 +66,7 @@ def main(argv):
   input_shape = (224, 224, 3, 1)
   _, params = init_fn(rng, input_shape)
 
-  # Sanity check our JAX model.
+  # Check our JAX model.
   # Note: We expect 161 parameters here but stax does not support optional bias
   # in conv so we have 53 additional biases.
   assert len(jax.tree_leaves(params)) == 214

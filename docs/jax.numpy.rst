@@ -153,6 +153,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     iscomplex
     isfinite
     isin
+    intersect1d
     isinf
     isnan
     isneginf
@@ -169,6 +170,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     left_shift
     less
     less_equal
+    lexsort
     linspace
     log
     log10
@@ -313,6 +315,8 @@ jax.numpy.fft
   irfft2
   rfftn
   irfftn
+  hfft
+  ihfft
   fftfreq
   rfftfreq
   fftshift

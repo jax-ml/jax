@@ -181,8 +181,16 @@ def inner_prod(xs, ys):
   return tree_reduce(np.add, tree_multimap(contract, xs, ys))
 
 
+def _safe_subtract(x, y, *, dtype):
+  """Subtraction that with `inf - inf == 0` semantics."""
+  with np.errstate(invalid='ignore'):
+    return np.where(np.equal(x, y), np.array(0, dtype),
+                    np.subtract(x, y, dtype=dtype))
+
 add = partial(tree_multimap, lambda x, y: np.add(x, y, dtype=_dtype(x)))
 sub = partial(tree_multimap, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
+safe_sub = partial(tree_multimap,
+                   lambda x, y: _safe_subtract(x, y, dtype=_dtype(x)))
 conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
@@ -203,7 +211,7 @@ def numerical_jvp(f, primals, tangents, eps=EPS):
   delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
   f_neg = f(*sub(primals, delta))
-  return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
+  return scalar_mul(safe_sub(f_pos, f_neg), 0.5 / eps)
 
 
 def _merge_tolerance(tol, default):
@@ -653,6 +661,13 @@ def rand_some_zero(rng):
 
 def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
+    nonlocal high
+    if low == 0 and high is None:
+      if np.issubdtype(dtype, np.integer):
+        high = np.iinfo(dtype).max
+      else:
+        raise ValueError("rand_int requires an explicit `high` value for "
+                         "non-integer types.")
     return rng.randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
@@ -682,16 +697,16 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
 
-def _iter_eqns(jaxpr):
+def iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from _iter_eqns(subjaxpr)
+    yield from iter_eqns(subjaxpr)
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in _iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
