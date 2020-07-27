@@ -36,7 +36,6 @@ import numpy as np
 import opt_einsum
 
 from jax import jit, custom_jvp
-from .vectorize import vectorize
 from ._util import _wraps
 from .. import core
 from .. import dtypes
