@@ -805,7 +805,7 @@ PYBIND11_MODULE(pytree, m) {
                [](const PyTreeDef &p) { return p.GetTraversal(); },
                // function 2: __setstate__ - build a new PyTreeDef from a tuple with a traversal_
                [](py::tuple t) {
-                   PyTreeDef p();
+                   PyTreeDef p;
                    p.SetTraversal(t);
                    return p;
                });)
