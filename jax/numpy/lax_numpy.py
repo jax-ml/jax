@@ -2387,8 +2387,8 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   if num < 0:
     raise ValueError("Number of samples, %s, must be non-negative." % num)
 
-  dtype = dtype or result_type(start, stop, float_)
-  computation_dtype = promote_types(dtype, float_)
+  dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
+  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
 
@@ -2443,8 +2443,8 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
 @_wraps(np.geomspace)
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
   """Implementation of geomspace differentiable in start and stop args."""
-  dtype = dtype or result_type(start, stop, float(num), zeros((), dtype))
-  computation_dtype = promote_types(dtype, float32)
+  dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
+  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
   # follow the numpy geomspace convention for negative and complex endpoints
