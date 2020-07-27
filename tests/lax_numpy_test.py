@@ -1801,8 +1801,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = lambda x: np.frexp(x)
     jnp_fun = lambda x: jnp.frexp(x)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
-                            check_dtypes=np.issubdtype(dtype, np.inexact))
+    check_dtypes = np.issubdtype(dtype, np.inexact) and shape is not jtu.PYTHON_SCALAR_SHAPE
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=check_dtypes)
     self._CompileAndCheck(jnp_fun, args_maker)
 
 
