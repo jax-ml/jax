@@ -4236,8 +4236,8 @@ def _searchsorted(a, v, side='left'):
     high = where(mask, mid, high)
     return (low, high), x
 
-  low = zeros(len(v), dtype=int_)
-  high = full(len(v), len(a), dtype=int_)
+  low = zeros(len(v), dtype=dtypes.canonicalize_dtype(int_))
+  high = full(len(v), len(a), dtype=dtypes.canonicalize_dtype(int_))
   n_levels = int(np.ceil(np.log2(len(a) + 1)))
   (low, high), _ = lax.scan(fscan, (low, high), None, length=n_levels)
   return high
