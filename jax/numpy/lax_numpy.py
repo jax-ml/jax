@@ -2386,7 +2386,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   lax._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError("Number of samples, %s, must be non-negative." % num)
-    
+
   dtype = dtype or result_type(start, stop, float_)
   computation_dtype = promote_types(dtype, float_)
   start = asarray(start, dtype=computation_dtype)
