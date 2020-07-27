@@ -14,6 +14,7 @@
 
 
 import collections
+import pickle
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -165,6 +166,14 @@ class TreeTest(jtu.JaxTestCase):
   @parameterized.parameters(*LEAVES)
   def testAllLeavesWithLeaves(self, leaf):
     self.assertTrue(tree_util.all_leaves([leaf]))
+
+  @parameterized.parameters(*TREES)
+  def testPickles(self, inputs):
+    xs, tree = tree_util.tree_flatten(inputs)
+    pickled_tree = pickle.dumps(tree)
+    unpickled_tree = pickle.loads(pickled_tree)
+    result = tree_util.tree_unflatten(unpickled_tree, xs)
+    self.assertEqual(result, inputs)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
