@@ -158,6 +158,9 @@ class PyTreeDef {
   bool operator!=(const PyTreeDef& other) const { return !(*this == other); }
 
   std::string ToString() const;
+  
+  py::tuple GetTraversal() {return py::make_tuple(traversal_); }
+  void SetTraversal(py::tuple t) { traversal_ = t.cast<std::vector<Node>>(); }
 
  private:
   enum class Kind {
@@ -794,8 +797,18 @@ PYBIND11_MODULE(pytree, m) {
       .def("__ne__",
            [](const PyTreeDef& a, const PyTreeDef& b) { return a != b; })
       .def("__hash__",
-           [](const PyTreeDef& t) { return absl::Hash<PyTreeDef>()(t); });
-
+           [](const PyTreeDef& t) { return absl::Hash<PyTreeDef>()(t); })
+      // make PyTreeDef pickleable to enable use with multiprocessing
+      // https://pybind11.readthedocs.io/en/stable/advanced/classes.html#pickling-support
+      .def(py::pickle(
+               // function 1: __getstate__ - return a tuple with traversal_ vector to encode state
+               [](const PyTreeDef &p) { return p.GetTraversal(); },
+               // function 2: __setstate__ - build a new PyTreeDef from a tuple with a traversal_
+               [](py::tuple t) {
+                   PyTreeDef p();
+                   p.SetTraversal(t);
+                   return p;
+               });)
   m.def("register_node", [](py::object type, py::function to_iterable,
                             py::function from_iterable) {
     return CustomNodeRegistry::Register(type, to_iterable, from_iterable);
