@@ -4246,6 +4246,7 @@ def _searchsorted(a, v, side='left'):
 
   return high.reshape(v_shape)
 
+@_wraps(np.searchsorted)
 def searchsorted(a, v, side='left', sorter=None):
   if side not in ['left', 'right']:
     raise ValueError(f"{side!r} is an invalid value for keyword 'side'")
@@ -4256,7 +4257,7 @@ def searchsorted(a, v, side='left', sorter=None):
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
   if size(a) == 0 or size(v) == 0:
-    return zeros_like(v, dtype=int)
+    return zeros_like(v, dtype=int_)
   return _searchsorted(a, v, side)
 
 
