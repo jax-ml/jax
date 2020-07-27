@@ -32,7 +32,7 @@ import types
 from typing import Sequence, Set, Tuple, Union
 import warnings
 
-import numpy as np 
+import numpy as np
 import opt_einsum
 
 from jax import jit, custom_jvp
@@ -3152,19 +3152,8 @@ def sort(a, axis=-1, kind='quicksort', order=None):
 
 @_wraps(np.sort_complex)
 def sort_complex(a):
-    a = lax.sort(a, dimension = 0)
-    if not issubclass(a.dtype.type, complexfloating):
-        if a.dtype.char in 'bhBH':
-            dtype = dtypes.result_type(a, 'F')
-            return lax.convert_element_type(a, dtype)
-        elif a.dtype.char == 'g':
-            dtype = dtypes.result_type(a, 'g')
-            return lax.convert_element_type(a, dtype)
-        else:
-            dtype = dtypes.result_type(a, 'D')
-            return lax.convert_element_type(a, dtype) 
-    else:
-        return a
+  a = lax.sort(a, dimension = 0)
+  return lax.convert_element_type(a, result_type(a, complex64))
 
 @_wraps(np.argsort)
 def argsort(a, axis=-1, kind='quicksort', order=None):
