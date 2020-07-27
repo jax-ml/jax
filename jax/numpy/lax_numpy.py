@@ -4252,8 +4252,6 @@ def searchsorted(a, v, side='left', sorter=None):
   v = asarray(v)
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
-  if size(a) == 0 or size(v) == 0:
-    return zeros_like(v, dtype=int_)
   return _searchsorted(a, ravel(v), side).reshape(shape(v))
 
 
