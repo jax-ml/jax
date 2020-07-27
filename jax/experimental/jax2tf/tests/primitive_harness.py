@@ -27,6 +27,8 @@ from jax import lax
 from jax import lax_linalg
 from jax import numpy as jnp
 
+from jaxlib.xla_client import FftType
+
 import numpy as np
 
 FLAGS = config.FLAGS
@@ -414,6 +416,120 @@ lax_linalg_qr = tuple(
   for dtype in jtu.dtypes.all
   for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
   for full_matrices in [False, True]
+)
+
+
+
+lax_fft = tuple( # 1D tests, no complex
+  Harness(f"1d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in [t for t in jtu.dtypes.all if t not in jtu.dtypes.complex]
+  for shape in [(10,), (12, 13), (14, 15, 16)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-1:]),
+                                (FftType.IFFT, shape[-1:]),
+                                (FftType.RFFT, shape[-1:]),
+                                (FftType.IRFFT, ((shape[-1] - 1) * 2,)),
+                                (FftType.IRFFT, [])]
+) + tuple( # 1D tests, complex
+  Harness(f"1d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in jtu.dtypes.complex
+  for shape in [(10,), (12, 13), (14, 15, 16)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-1:]),
+                                (FftType.IFFT, shape[-1:]),
+                                (FftType.IRFFT, ((shape[-1] - 1) * 2,)),
+                                (FftType.IRFFT, [])]
+) + tuple( # 2D tests, no complex
+  Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in [t for t in jtu.dtypes.all if t not in jtu.dtypes.complex]
+  for shape in [(12, 13), (14, 15, 16)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-2:]),
+                                (FftType.IFFT, shape[-2:]),
+                                (FftType.RFFT, shape[-2:]),
+                                (FftType.IRFFT, shape[-2:-1] + ((shape[-1] - 1) * 2,))]
+) + tuple( # 2D tests, complex
+  Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in jtu.dtypes.complex
+  for shape in [(12, 13), (14, 15, 16)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-2:]),
+                                (FftType.IFFT, shape[-2:]),
+                                (FftType.IRFFT, shape[-2:-1] + ((shape[-1] - 1) * 2,))]
+) + tuple( # 3D tests, no complex
+  Harness(f"3d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in [t for t in jtu.dtypes.all if t not in jtu.dtypes.complex]
+  for shape in [(14, 15, 16)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-3:]),
+                                (FftType.IFFT, shape[-3:]),
+                                (FftType.RFFT, shape[-3:]),
+                                (FftType.IRFFT, shape[-3:-1] + ((shape[-1] - 1) * 2,))]
+) + tuple( # 3D tests, complex
+  Harness(f"3d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in jtu.dtypes.complex
+  for shape in [(14, 15, 16)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-3:]),
+                                (FftType.IFFT, shape[-3:]),
+                                (FftType.IRFFT, shape[-3:-1] + ((shape[-1] - 1) * 2,))]
+) + tuple( # 4D test, no complex, should error
+  Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in [t for t in jtu.dtypes.all if t not in jtu.dtypes.complex]
+  for shape in [(14, 15, 16, 17)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-4:]),
+                                (FftType.IFFT, shape[-4:]),
+                                (FftType.RFFT, shape[-4:]),
+                                (FftType.IRFFT, shape[-4:-1] + ((shape[-1] - 1) * 2,))]
+) + tuple( # 4D test, complex, should error
+  Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+          lax.lax_fft.fft,
+          [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          shape=shape,
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
+  for dtype in jtu.dtypes.complex
+  for shape in [(14, 15, 16, 17)]
+  for fft_type, fft_lengths in [(FftType.FFT, shape[-4:]),
+                                (FftType.IFFT, shape[-4:]),
+                                (FftType.IRFFT, shape[-4:-1] + ((shape[-1] - 1) * 2,))]
 )
 
 lax_slice = tuple(
