@@ -157,7 +157,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
   def test_qr(self, harness: primitive_harness.Harness):
     # See jax.lib.lapack.geqrf for the list of compatible types
-    if harness.params["dtype"] in [jnp.float32, jnp.float64]:
+    if (harness.params["dtype"] in [jnp.float32, jnp.float64] or
+        harness.params["dtype"] == jnp.float16 and jtu.device_under_test() == "tpu"):
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                              atol=1e-5, rtol=1e-5)
     elif harness.params["dtype"] in [jnp.complex64, jnp.complex128]:
@@ -196,6 +197,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO(necula): fix bug with digamma/f32 on TPU
       if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
+      if harness.params["dtype"] is np.float16 and jtu.device_under_test() == "tpu":
+        raise unittest.SkipTest("TODO: fix bug: nans and infs")
 
       # digamma is not defined at 0 and -1
       def custom_assert(result_jax, result_tf):
