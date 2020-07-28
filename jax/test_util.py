@@ -354,8 +354,8 @@ def if_device_under_test(device_type: Union[str, Sequence[str]],
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    types = {np.bool_, np.int32, np.uint32, _dtypes.bfloat16, np.float32,
-             np.complex64}
+    types = {np.bool_, np.int32, np.uint32, _dtypes.bfloat16, np.float16,
+             np.float32, np.complex64}
   else:
     types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
              np.uint8, np.uint16, np.uint32, np.uint64,
