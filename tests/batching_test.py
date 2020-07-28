@@ -960,6 +960,22 @@ class BatchingTest(jtu.JaxTestCase):
     expected = g(np.asarray([1]), np.asarray([2]))
     self.assertAllClose(ans, expected)
 
+  def testIssue3883(self):
+    def scalar_f(x):
+      return lax.dynamic_slice(x, [], [])
+
+    xs = jnp.array([1, 2, 3, 4])
+    ans = vmap(scalar_f)(xs)
+    expected = jnp.array([scalar_f(x) for x in xs])
+    self.assertAllClose(ans, expected)
+
+    def scalar_f2(x):
+      return lax.dynamic_update_slice(x, 7, [])
+
+    xs = jnp.array([1, 2, 3, 4])
+    ans = vmap(scalar_f2)(xs)
+    expected = jnp.array([scalar_f2(x) for x in xs])
+    self.assertAllClose(ans, expected)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
