@@ -5122,11 +5122,12 @@ def _prescan_power_of_two(x, axis: int, op: Callable, unit):
 
 
 def _parallel_prefix_scan(x, axis: int, op: Callable, unit: Any):
-  if np.issubdtype(x.dtype, np.integer):
+  dtype = dtypes.canonicalize_dtype(x.dtype)
+  if np.issubdtype(dtype, np.integer):
     if np.isposinf(unit):
-      unit = np.iinfo(x.dtype).max
+      unit = dtype.type(np.iinfo(dtype).max)
     elif np.isneginf(unit):
-      unit = np.iinfo(x.dtype).min
+      unit = dtype.type(np.iinfo(dtype).min)
   n = x.shape[axis]
   if n == 0:
     return x
