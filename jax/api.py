@@ -907,7 +907,7 @@ def _mapped_axis_size(tree, vals, dims, name):
     # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
     if tree == tree_flatten((core.unit,) * tree.num_leaves)[1]:
       lines1 = ["arg {} has shape {} and axis {} is to be mapped"
-                .format(i, x.shape, d) for i, (x, d) in enumerate(zip(vals, dims))]
+                .format(i, np.shape(x), d) for i, (x, d) in enumerate(zip(vals, dims))]
       sizes = collections.defaultdict(list)
       for i, (x, d) in enumerate(zip(vals, dims)):
         if d is not None:
@@ -919,11 +919,11 @@ def _mapped_axis_size(tree, vals, dims, name):
                   "axes" if len(idxs) > 1 else "an axis",
                   size)
                 for size, idxs in sizes.items()]
-      raise ValueError(msg.format("\n".join(lines1 + ["so"] + lines2))) from e
+      raise ValueError(msg.format("\n".join(lines1 + ["so"] + lines2))) from None
     else:
       sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
       sizes = tree_unflatten(tree, sizes)
-      raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from e
+      raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from None
 
 def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
