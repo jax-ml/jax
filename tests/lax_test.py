@@ -1786,6 +1786,12 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "duplicate value in 'axes' .*"):
       lax.reduce(np.arange(3), 0, lax.add, (0, 0))
 
+  def test_population_count_booleans_not_supported(self):
+    # https://github.com/google/jax/issues/3886
+    msg = "population_count does not accept dtype bool"
+    with self.assertRaisesRegex(TypeError, msg):
+      lax.population_count(True)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

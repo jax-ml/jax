@@ -1971,6 +1971,7 @@ def _brcast_to(x, shape):
 _float = {np.floating}
 _complex = {np.complexfloating}
 _complex_elem_types = {np.float32, np.float64}
+_uint = {np.unsignedinteger}
 _int = {np.integer}
 _bool = {np.bool_}
 
@@ -2242,7 +2243,7 @@ ad.defjvp_zero(or_p)
 xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
 
-population_count_p = standard_unop(_bool_or_int, 'population_count')
+population_count_p = standard_unop(_uint, 'population_count')
 
 def _add_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases we
