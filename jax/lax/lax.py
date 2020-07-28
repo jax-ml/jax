@@ -732,6 +732,8 @@ def dynamic_slice(operand: Array, start_indices: Sequence[Array],
     An array containing the slice.
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
+  if not np.shape(operand):
+    return operand
   return dynamic_slice_p.bind(operand, *start_indices,
                               slice_sizes=tuple(slice_sizes))
 
@@ -750,6 +752,8 @@ def dynamic_update_slice(operand: Array, update: Array,
     An array containing the slice.
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
+  if not np.shape(operand):
+    return update
   return dynamic_update_slice_p.bind(operand, update, *start_indices)
 
 
