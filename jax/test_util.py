@@ -361,8 +361,6 @@ def supported_dtypes():
              np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
-  if not FLAGS.jax_enable_x64:
-    types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
 
 def skip_if_unsupported_type(dtype):

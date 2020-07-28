@@ -54,22 +54,16 @@ class _bfloat16_finfo(object):
   resolution = 10 ** -2
   tiny = bfloat16(float.fromhex("0x1p-126"))
 
-# Default types. Numpy defaults to 64-bit; JAX departs from this and defaults to
-# 32-bit because it is better supported on accelerators.
+# Default dtypes. Numpy defaults to 64-bit; JAX defaults to 32-bit or 64-bit
+# depending on the jax_enable_x64 flag.
+bool_ = np.bool8
+int_ = np.int64 if FLAGS.jax_enable_x64 else np.int32
+uint = np.uint64 if FLAGS.jax_enable_x64 else np.uint32
+float_ = np.float64 if FLAGS.jax_enable_x64 else np.float32
+complex_ = np.complex128 if FLAGS.jax_enable_x64 else np.complex64
 
-bool_ = np.bool_
-int_ = np.int32
-float_ = np.float32
-complex_ = np.complex64
 
-
-_dtype_to_32bit_dtype = {
-    np.dtype('int64'): np.dtype('int32'),
-    np.dtype('uint64'): np.dtype('uint32'),
-    np.dtype('float64'): np.dtype('float32'),
-    np.dtype('complex128'): np.dtype('complex64'),
-}
-
+# TODO(jakevdp): remove this function and all uses of it.
 @util.memoize
 def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
@@ -79,11 +73,7 @@ def canonicalize_dtype(dtype):
     dtype = np.dtype(dtype)
   except TypeError as e:
     raise TypeError(f'dtype {dtype!r} not understood') from e
-
-  if FLAGS.jax_enable_x64:
-    return dtype
-  else:
-    return _dtype_to_32bit_dtype.get(dtype, dtype)
+  return dtype
 
 
 # Default dtypes corresponding to Python scalars.
