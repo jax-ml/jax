@@ -244,6 +244,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_bitwise_not(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_population_count)
+  def test_population_count(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           expect_tf_exceptions=True)
+
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
     if harness.params["dtype"] is dtypes.bfloat16:

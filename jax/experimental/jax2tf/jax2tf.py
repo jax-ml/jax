@@ -364,7 +364,7 @@ for unexpected in [
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
+  lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
   lax.select_and_gather_add_p, lax.select_and_scatter_p,
 
   lax.linear_solve_p,
@@ -399,6 +399,11 @@ tf_impl[lax.ceil_p] = tf.math.ceil
 tf_impl[lax.round_p] = tf.math.round
 tf_impl[lax.nextafter_p] = tf.math.nextafter
 
+def _population_count(x):
+  orig_dtype = x.dtype
+  return tf.bitcast(tf.raw_ops.PopulationCount(x=x), orig_dtype)
+
+tf_impl[lax.population_count_p] = _population_count
 tf_impl[lax.is_finite_p] = tf.math.is_finite
 
 tf_impl[lax.abs_p] = tf.math.abs

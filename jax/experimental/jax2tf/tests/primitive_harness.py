@@ -193,6 +193,17 @@ lax_bitwise_not = tuple(
   ]]
 )
 
+lax_population_count = tuple(
+  Harness(f"{jtu.dtype_str(dtype)}",
+          lax.population_count,
+          [arg],
+          dtype=dtype)
+  for dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned
+  for arg in [
+    np.array([-1, -2, 0, 1], dtype=dtype)
+  ]
+)
+
 _LAX_BINARY_ELEMENTWISE = (
   lax.add, lax.atan2, lax.div, lax.igamma, lax.igammac, lax.max, lax.min,
   lax.nextafter, lax.rem, lax.sub)
