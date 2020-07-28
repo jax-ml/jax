@@ -16,6 +16,8 @@ limitations under the License.
 // Caution: this code uses exceptions. The exception use is local to the
 // binding code and the idiomatic way to emit Python exceptions.
 
+#include "jaxlib/pytree.h"
+
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -34,43 +36,6 @@ limitations under the License.
 namespace jax {
 
 namespace py = pybind11;
-
-// Registry of custom node types.
-class CustomNodeRegistry {
- public:
-  struct Registration {
-    // The Python type object, used to identify the type.
-    py::object type;
-    // A function with signature: object -> (iterable, aux_data)
-    py::function to_iterable;
-    // A function with signature: (aux_data, iterable) -> object
-    py::function from_iterable;
-  };
-
-  // Registers a new custom type. Objects of `type` will be treated as container
-  // node types in PyTrees.
-  static void Register(py::object type, py::function to_iterable,
-                       py::function from_iterable);
-
-  // Finds the custom type registration for `type`. Returns nullptr if none
-  // exists.
-  static const Registration* Lookup(py::handle type);
-
- private:
-  static CustomNodeRegistry* Singleton();
-
-  struct TypeHash {
-    size_t operator()(const py::object& t) const { return py::hash(t); }
-  };
-  struct TypeEq {
-    bool operator()(const py::object& a, const py::object& b) const {
-      return a.equal(b);
-    }
-  };
-  absl::flat_hash_map<py::object, std::unique_ptr<Registration>, TypeHash,
-                      TypeEq>
-      registrations_;
-};
 
 /*static*/ CustomNodeRegistry* CustomNodeRegistry::Singleton() {
   static auto* registry = new CustomNodeRegistry;
@@ -101,134 +66,6 @@ class CustomNodeRegistry {
   return it == registry->registrations_.end() ? nullptr : it->second.get();
 }
 
-// A PyTreeDef describes the tree structure of a PyTree. A PyTree is a tree of
-// Python values, where the interior nodes are tuples, lists, dictionaries, or
-// user-defined containers, and the leaves are other objects.
-class PyTreeDef {
- public:
-  PyTreeDef() = default;
-
-  // Flattens a Pytree into a list of leaves and a PyTreeDef.
-  static std::pair<py::list, std::unique_ptr<PyTreeDef>> Flatten(py::handle x);
-
-  // Tests whether the given list is a flat list of leaves.
-  static bool AllLeaves(const py::iterable& x);
-
-  // Flattens a Pytree up to this PyTreeDef. 'this' must be a tree prefix of
-  // the tree-structure of 'x'. For example, if we flatten a value
-  // [(1, (2, 3)), {"foo": 4}] with a treedef [(*, *), *], the result is the
-  // list of leaves [1, (2, 3), {"foo": 4}].
-  py::list FlattenUpTo(py::handle x) const;
-
-  // Returns an unflattened PyTree given an iterable of leaves and a PyTreeDef.
-  py::object Unflatten(py::iterable leaves) const;
-
-  // Composes two PyTreeDefs, replacing the leaves of this tree with copies of
-  // `inner`.
-  std::unique_ptr<PyTreeDef> Compose(const PyTreeDef& inner) const;
-
-  // Makes a Tuple PyTreeDef out of a vector of PyTreeDefs.
-  static std::unique_ptr<PyTreeDef> Tuple(const std::vector<PyTreeDef>& defs);
-
-  std::vector<std::unique_ptr<PyTreeDef>> Children() const;
-
-  // Maps a function over a PyTree structure, applying f_leaf to each leaf, and
-  // f_node to each container node.
-  // TODO(phawkins): use flattening everywhere instead and delete this method.
-  py::object Walk(const py::function& f_node, py::handle f_leaf,
-                  py::iterable leaves) const;
-
-  // Given a tree of iterables with the same node/leaf structure as this PyTree,
-  // build the corresponding PyTree.
-  // TODO(phawkins): use flattening everywhere instead and delete this method.
-  py::object FromIterableTree(py::handle xs) const;
-
-  int num_leaves() const {
-    if (traversal_.empty()) {
-      return 0;
-    }
-    return traversal_.back().num_leaves;
-  }
-
-  int num_nodes() const { return traversal_.size(); }
-
-  size_t Hash() const;
-
-  bool operator==(const PyTreeDef& other) const;
-  bool operator!=(const PyTreeDef& other) const { return !(*this == other); }
-
-  std::string ToString() const;
-
- private:
-  enum class Kind {
-    kLeaf,        // An opaque leaf node
-    kNone,        // None.
-    kTuple,       // A tuple
-    kNamedTuple,  // A collections.namedtuple
-    kList,        // A list
-    kDict,        // A dict
-    kCustom,      // A custom type.
-  };
-
-  struct Node {
-    Kind kind = Kind::kLeaf;
-
-    // Arity for non-kLeaf types.
-    int arity = 0;
-
-    // Kind-specific auxiliary data. For a kNamedTuple, contains the tuple type
-    // object. For a kDict, contains a sorted list of keys. For a kCustom type,
-    // contains the auxiliary data returned by the `to_iterable` function.
-    py::object node_data;
-
-    const CustomNodeRegistry::Registration* custom = nullptr;
-
-    // Number of leaf nodes in the subtree rooted at this node.
-    int num_leaves = 0;
-
-    // Number of leaf and interior nodes in the subtree rooted at this node.
-    int num_nodes = 0;
-  };
-  template <typename H>
-  friend H AbslHashValue(H h, const Node& n);
-
-  template <typename H>
-  friend H AbslHashValue(H h, const PyTreeDef& t);
-
-  // Helper that manufactures an instance of a node given its children.
-  static py::object MakeNode(const Node& node, absl::Span<py::object> children);
-
-  // Recursive helper used to implement Flatten()
-  static void FlattenHelper(py::handle handle, py::list* leaves,
-                            PyTreeDef* tree);
-
-  // Recursive helper used to implement FromIterableTree()
-  py::object FromIterableTreeHelper(
-      py::handle xs,
-      std::vector<PyTreeDef::Node>::const_reverse_iterator* it) const;
-
-  // Computes the node kind of a given Python object.
-  static Kind GetKind(const py::handle& obj,
-                      CustomNodeRegistry::Registration const** custom);
-
-  // Nodes, in a post-order traversal. We use an ordered traversal to minimize
-  // allocations, and post-order corresponds to the order we need to rebuild the
-  // tree structure.
-  std::vector<Node> traversal_;
-};
-
-template <typename H>
-H AbslHashValue(H h, const PyTreeDef::Node& n) {
-  h = H::combine(std::move(h), n.kind, n.arity, n.custom);
-  return h;
-}
-
-template <typename H>
-H AbslHashValue(H h, const PyTreeDef& t) {
-  return H::combine_contiguous(std::move(h), t.traversal_.data(),
-                               t.traversal_.size());
-}
-
 bool PyTreeDef::operator==(const PyTreeDef& other) const {
   if (traversal_.size() != other.traversal_.size()) {
     return false;
@@ -251,8 +88,7 @@ bool PyTreeDef::operator==(const PyTreeDef& other) const {
 }
 
 /*static*/ PyTreeDef::Kind PyTreeDef::GetKind(
-    const py::handle& obj,
-    CustomNodeRegistry::Registration const** custom) {
+    const py::handle& obj, CustomNodeRegistry::Registration const** custom) {
   const PyObject* ptr = obj.ptr();
   if (PyTuple_CheckExact(ptr)) return Kind::kTuple;
   if (PyList_CheckExact(ptr)) return Kind::kList;
@@ -270,11 +106,11 @@ bool PyTreeDef::operator==(const PyTreeDef& other) const {
   }
 }
 
-void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
-                              PyTreeDef* tree) {
+void PyTreeDef::FlattenInto(py::handle handle,
+                            std::vector<py::object>& leaves) {
   Node node;
-  int start_num_nodes = tree->traversal_.size();
-  int start_num_leaves = leaves->size();
+  int start_num_nodes = traversal_.size();
+  int start_num_leaves = leaves.size();
   node.kind = GetKind(handle, &node.custom);
   if (node.kind == Kind::kNone) {
     // Nothing to do.
@@ -282,13 +118,13 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
     py::tuple tuple = py::reinterpret_borrow<py::tuple>(handle);
     node.arity = tuple.size();
     for (py::handle entry : tuple) {
-      FlattenHelper(entry, leaves, tree);
+      FlattenInto(entry, leaves);
     }
   } else if (node.kind == Kind::kList) {
     py::list list = py::reinterpret_borrow<py::list>(handle);
     node.arity = list.size();
     for (py::handle entry : list) {
-      FlattenHelper(entry, leaves, tree);
+      FlattenInto(entry, leaves);
     }
   } else if (node.kind == Kind::kDict) {
     py::dict dict = py::reinterpret_borrow<py::dict>(handle);
@@ -297,7 +133,7 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
       throw std::runtime_error("Dictionary key sort failed.");
     }
     for (py::handle key : keys) {
-      FlattenHelper(dict[key], leaves, tree);
+      FlattenInto(dict[key], leaves);
     }
     node.arity = dict.size();
     node.node_data = std::move(keys);
@@ -311,29 +147,29 @@ void PyTreeDef::FlattenHelper(py::handle handle, py::list* leaves,
     node.arity = 0;
     for (py::handle entry : py::cast<py::iterable>(out[0])) {
       ++node.arity;
-      FlattenHelper(entry, leaves, tree);
+      FlattenInto(entry, leaves);
     }
   } else if (node.kind == Kind::kNamedTuple) {
     py::tuple tuple = py::reinterpret_borrow<py::tuple>(handle);
     node.arity = tuple.size();
     node.node_data = py::reinterpret_borrow<py::object>(tuple.get_type());
     for (py::handle entry : tuple) {
-      FlattenHelper(entry, leaves, tree);
+      FlattenInto(entry, leaves);
     }
   } else {
     assert(node.kind == Kind::kLeaf);
-    leaves->append(py::reinterpret_borrow<py::object>(handle));
+    leaves.push_back(py::reinterpret_borrow<py::object>(handle));
   }
-  node.num_nodes = tree->traversal_.size() - start_num_nodes + 1;
-  node.num_leaves = leaves->size() - start_num_leaves;
-  tree->traversal_.push_back(std::move(node));
+  node.num_nodes = traversal_.size() - start_num_nodes + 1;
+  node.num_leaves = leaves.size() - start_num_leaves;
+  traversal_.push_back(std::move(node));
 }
 
-/*static*/ std::pair<py::list, std::unique_ptr<PyTreeDef>> PyTreeDef::Flatten(
-    py::handle x) {
-  py::list leaves;
+/*static*/ std::pair<std::vector<py::object>, std::unique_ptr<PyTreeDef>>
+PyTreeDef::Flatten(py::handle x) {
+  std::vector<py::object> leaves;
   auto tree = absl::make_unique<PyTreeDef>();
-  FlattenHelper(x, &leaves, tree.get());
+  tree->FlattenInto(x, leaves);
   return std::make_pair(std::move(leaves), std::move(tree));
 }
 
@@ -453,9 +289,8 @@ py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
   int leaf = num_leaves() - 1;
   while (!agenda.empty()) {
     if (it == traversal_.rend()) {
-      throw std::invalid_argument(
-          absl::StrFormat("Tree structures did not match: %s vs %s",
-                          py::repr(xs), ToString()));
+      throw std::invalid_argument(absl::StrFormat(
+          "Tree structures did not match: %s vs %s", py::repr(xs), ToString()));
     }
     const Node& node = *it;
     py::object object = agenda.back();
@@ -585,9 +420,8 @@ py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
     }
   }
   if (it != traversal_.rend() || leaf != -1) {
-    throw std::invalid_argument(
-        absl::StrFormat("Tree structures did not match: %s vs %s",
-                        py::repr(xs), ToString()));
+    throw std::invalid_argument(absl::StrFormat(
+        "Tree structures did not match: %s vs %s", py::repr(xs), ToString()));
   }
   return leaves;
 }
