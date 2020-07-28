@@ -3408,7 +3408,7 @@ def sort_complex(a, axis=-1, kind="quicksort", order=None):
             b = a.astype(np.complex).copy()
         else:
             b = a.copy()
-        return lax.sort(b)       
+        return lax.sort(b)     
 
 
 @_wraps(np.msort)
