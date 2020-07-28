@@ -2427,8 +2427,8 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 @_wraps(np.logspace)
 def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
   """Implementation of logspace differentiable in start and stop args."""
-  dtype = dtype or result_type(start, stop, float_)
-  computation_dtype = promote_types(dtype, float_)
+  dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
+  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
   lin = linspace(start, stop, num,
@@ -3240,7 +3240,7 @@ def sort(a, axis=-1, kind='quicksort', order=None):
 @_wraps(np.sort_complex)
 def sort_complex(a):
   a = lax.sort(a, dimension=0)
-  return lax.convert_element_type(a, result_type(a, complex_))
+  return lax.convert_element_type(a, result_type(a, dtypes.canonicalize_dtype(complex_)))
 
 @_wraps(np.lexsort)
 def lexsort(keys, axis=-1):
@@ -3525,7 +3525,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
     ret += (perm[mask],)
   if return_inverse:
     imask = cumsum(mask) - 1
-    inv_idx = zeros(mask.shape, dtype=int_)
+    inv_idx = zeros(mask.shape, dtype=dtypes.canonicalize_dtype(int_))
     inv_idx = ops.index_update(inv_idx, perm, imask)
     ret += (inv_idx,)
   if return_counts:
@@ -4257,7 +4257,7 @@ def searchsorted(a, v, side='left', sorter=None):
 @_wraps(np.digitize)
 def digitize(x, bins, right=False):
   if len(bins) == 0:
-    return zeros(x, dtype=int_)
+    return zeros(x, dtype=dtypes.canonicalize_dtype(int_))
   side = 'right' if not right else 'left'
   return where(
     bins[-1] >= bins[0],
