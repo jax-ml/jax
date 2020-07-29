@@ -352,7 +352,7 @@ def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False):
 
 def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False):
   if promote_to_inexact:
-    fn = lambda x1, x2: lax_fn(*_promote_args_inexact(numpy_fn, x1, x2))
+    fn = lambda x1, x2: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x1, x2))
   else:
     fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
   return _wraps(numpy_fn)(fn)
