@@ -194,10 +194,7 @@ def eig_cpu_translation_rule(c, operand, jobvl, jobvr):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
 
-  result = _cpu_geev(c, operand, jobvl=jobvl, jobvr=jobvr)
-
-  w = result[0]
-  info = result[-1]
+  w, vl, vr, info = _cpu_geev(c, operand, jobvl=jobvl, jobvr=jobvr)
 
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
@@ -205,13 +202,11 @@ def eig_cpu_translation_rule(c, operand, jobvl, jobvr):
   output = [w]
 
   if jobvl:
-    vl = result[1]
     vl = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vl,
                               _nan_like(c, vl))
     output.append(vl)
 
   if jobvr:
-    vr = result[2] if jobvl else result[1]
     vr = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vr,
                               _nan_like(c, vr))
     output.append(vr)

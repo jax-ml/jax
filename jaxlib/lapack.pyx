@@ -1796,19 +1796,10 @@ def geev(c, a, jobvl=True, jobvr=True):
         Shape.array_shape(dtype, dims, layout),
     ))
   if real:
-    w, vl, vr, info = (_ops.Complex(_ops.GetTupleElement(out, 3),
-                                    _ops.GetTupleElement(out, 4)),
-                       _ops.GetTupleElement(out, 5), _ops.GetTupleElement(out, 6),
-                       _ops.GetTupleElement(out, 7))
+    return (_ops.Complex(_ops.GetTupleElement(out, 3),
+                         _ops.GetTupleElement(out, 4)),
+            _ops.GetTupleElement(out, 5), _ops.GetTupleElement(out, 6),
+            _ops.GetTupleElement(out, 7))
   else:
-    w, vl, vr, info = (_ops.GetTupleElement(out, 2), _ops.GetTupleElement(out, 3),
-                       _ops.GetTupleElement(out, 4), _ops.GetTupleElement(out, 5))
-
-  if not jobvl and not jobvr:
-    return w, info
-  elif not jobvr:
-    return w, vl, info
-  elif not jobvl:
-    return w, vr, info
-  else:
-    return w, vl, vr, info
+    return (_ops.GetTupleElement(out, 2), _ops.GetTupleElement(out, 3),
+            _ops.GetTupleElement(out, 4), _ops.GetTupleElement(out, 5))
