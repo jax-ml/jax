@@ -13,13 +13,14 @@
 # limitations under the License.
 
 from absl.testing import absltest, parameterized
+import numpy as np
+import scipy.optimize
+
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax import jit
 from jax.config import config
 import jax.scipy.optimize
-import scipy.optimize
-import numpy as onp
 
 config.parse_flags_with_absl()
 
@@ -62,10 +63,10 @@ class TestBFGS(jtu.JaxTestCase):
     {"testcase_name": "_func={}_maxiter={}".format(func_and_init[0].__name__, maxiter),
      "maxiter": maxiter, "func_and_init": func_and_init}
     for maxiter in [None]
-    for func_and_init in [(rosenbrock, jnp.zeros(2)),
-                          (himmelblau, jnp.zeros(2)),
-                          (matyas, jnp.ones(2) * 6.),
-                          (eggholder, jnp.ones(2) * 100.)]))
+    for func_and_init in [(rosenbrock, np.zeros(2)),
+                          (himmelblau, np.zeros(2)),
+                          (matyas, np.ones(2) * 6.),
+                          (eggholder, np.ones(2) * 100.)]))
   def test_minimize(self, maxiter, func_and_init):
     # Note, cannot compare step for step with scipy BFGS because our line search is _slightly_ different.
 
@@ -82,7 +83,7 @@ class TestBFGS(jtu.JaxTestCase):
       return result.x
 
     jax_res = min_op(x0)
-    scipy_res = scipy.optimize.minimize(func(onp), x0, method='BFGS').x
+    scipy_res = scipy.optimize.minimize(func(np), x0, method='BFGS').x
     self.assertAllClose(scipy_res, jax_res, atol=2e-5, check_dtypes=False)
 
 
