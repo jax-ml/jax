@@ -484,6 +484,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
              tolerance, inexact):
     np_op = jtu.ignore_warning(category=RuntimeWarning,
                                message="invalid value.*")(np_op)
+    np_op = jtu.ignore_warning(category=RuntimeWarning,
+                               message="divide by zero.*")(np_op)
 
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
