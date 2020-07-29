@@ -1731,8 +1731,8 @@ def geev(c, a, jobvl=True, jobvr=True):
     b *= d
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  jobvl = ord('V' if jobvl else 'N')
-  jobvr = ord('V' if jobvr else 'N')
+  jobvl_c = ord('V' if jobvl else 'N')
+  jobvr_c = ord('V' if jobvr else 'N')
 
   if dtype == np.float32:
     fn = b"lapack_sgeev"
@@ -1779,8 +1779,8 @@ def geev(c, a, jobvl=True, jobvr=True):
     c, fn,
     operands=(_constant_s32_scalar(c, b),
               _constant_s32_scalar(c, n),
-              _ops.Constant(c, np.uint8(jobvl)),
-              _ops.Constant(c, np.uint8(jobvr)),
+              _ops.Constant(c, np.uint8(jobvl_c)),
+              _ops.Constant(c, np.uint8(jobvr_c)),
               a),
     shape_with_layout=Shape.tuple_shape(workspaces + eigvals + (
         Shape.array_shape(np.dtype(eigvecs_type), dims, layout),
