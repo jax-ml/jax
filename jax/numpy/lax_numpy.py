@@ -4228,19 +4228,19 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 def _searchsorted(a, v, side='left'):
   op = operator.lt if side == "right" else operator.le
 
-  def fscan(carry, _):
-    low, high = carry
+  def body_fun(i, state):
+    low, high = state
     mid = (low + high) // 2
     mask = op(v, a[mid])
-    low = where(mask, low, mid)
-    high = where(mask, mid, high)
-    return (low, high), None
+    return (where(mask, low, mid), where(mask, mid, high))
 
   low = zeros(len(v), dtype=dtypes.canonicalize_dtype(int_))
   high = full(len(v), len(a), dtype=dtypes.canonicalize_dtype(int_))
   n_levels = int(np.ceil(np.log2(len(a) + 1)))
-  (low, high), _ = lax.scan(fscan, (low, high), None, length=n_levels)
+  if n_levels > 0:
+    low, high = lax.fori_loop(0, n_levels, body_fun, (low, high))
   return high
+
 
 @_wraps(np.searchsorted)
 def searchsorted(a, v, side='left', sorter=None):
