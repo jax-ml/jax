@@ -2242,7 +2242,7 @@ ad.defjvp_zero(or_p)
 xor_p = standard_naryop([_bool_or_int, _bool_or_int], 'xor')
 ad.defjvp_zero(xor_p)
 
-population_count_p = standard_unop(_bool_or_int, 'population_count')
+population_count_p = standard_unop(_int, 'population_count')
 
 def _add_transpose(t, x, y):
   # The following linearity assertion is morally true, but because in some cases we

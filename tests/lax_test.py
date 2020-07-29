@@ -137,7 +137,7 @@ LAX_OPS = [
     op_record("bitwise_not", 1, bool_dtypes, jtu.rand_small),
     op_record("bitwise_or", 2, bool_dtypes, jtu.rand_small),
     op_record("bitwise_xor", 2, bool_dtypes, jtu.rand_small),
-    op_record("population_count", 1, uint_dtypes, jtu.rand_int),
+    op_record("population_count", 1, int_dtypes + uint_dtypes, jtu.rand_int),
 
     op_record("add", 2, default_dtypes + complex_dtypes, jtu.rand_small),
     op_record("sub", 2, default_dtypes + complex_dtypes, jtu.rand_small),
@@ -1785,6 +1785,12 @@ class LaxTest(jtu.JaxTestCase):
   def test_reduction_with_repeated_axes_error(self):
     with self.assertRaisesRegex(ValueError, "duplicate value in 'axes' .*"):
       lax.reduce(np.arange(3), 0, lax.add, (0, 0))
+
+  def test_population_count_booleans_not_supported(self):
+    # https://github.com/google/jax/issues/3886
+    msg = "population_count does not accept dtype bool"
+    with self.assertRaisesRegex(TypeError, msg):
+      lax.population_count(True)
 
 
 class LazyConstantTest(jtu.JaxTestCase):

@@ -119,9 +119,14 @@ shift_right_arithmetic = np.right_shift
 # TODO shift_right_logical
 
 def population_count(x):
+  assert np.issubdtype(x.dtype, np.integer)
   dtype = x.dtype
-  if x.dtype in (np.uint8, np.uint16):
-    x = x.astype(np.uint32)
+  iinfo = np.iinfo(x.dtype)
+  if np.iinfo(x.dtype).bits < 32:
+    assert iinfo.kind in ('i', 'u')
+    x = x.astype(np.uint32 if iinfo.kind == 'u' else np.int32)
+  if iinfo.kind == 'i':
+    x = x.view(f"uint{np.iinfo(x.dtype).bits}")
   assert x.dtype in (np.uint32, np.uint64)
   m = [
       0x5555555555555555,  # binary: 0101...
