@@ -1831,7 +1831,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jtu.format_shape_dtype_string(vshape, dtype),
       side), "ashape": ashape, "vshape": vshape, "side": side,
      "dtype": dtype, "rng_factory": rng_factory}
-    for ashape in [(20,)]
+    for ashape in [(15,), (16,), (17,)]
     for vshape in [(), (5,), (5, 5)]
     for side in ['left', 'right']
     for dtype in default_dtypes
@@ -1839,7 +1839,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   ))
   def testSearchsorted(self, ashape, vshape, side, dtype, rng_factory):
     rng = rng_factory(self.rng())
-    args_maker = lambda: [jnp.sort(rng(ashape, dtype)), rng(vshape, dtype)]
+    args_maker = lambda: [np.sort(rng(ashape, dtype)), rng(vshape, dtype)]
     np_fun = lambda a, v: np.searchsorted(a, v, side=side)
     jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)

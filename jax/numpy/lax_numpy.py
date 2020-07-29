@@ -4228,33 +4228,30 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 @partial(jit, static_argnums=2)
 @partial(vectorize, excluded={0, 2})
 def _searchsorted(a, v, side):
+  if len(a) == 0:
+    return 0
   op = operator.le if side == 'left' else operator.lt
 
-  def cond_fun(state):
-    start, stop = state
-    return stop - start > 1
-
-  def body_fun(state):
-    start, stop = state
-    mid = (start + stop) // 2
+  def body_fun(i, state):
+    low, high = state
+    mid = (low + high) // 2
     go_left = op(v, a[mid])
-    return where(go_left, start, mid), where(go_left, mid, stop)
+    return (where(go_left, low, mid), where(go_left, mid, high))
 
-  result = lax.while_loop(cond_fun, body_fun, (0, a.shape[0]))
-  return where(op(v, a[0]), 0, result[1])
+  n_levels = int(np.ceil(np.log2(len(a) + 1)))
+  return lax.fori_loop(0, n_levels, body_fun, (0, len(a)))[1]
 
 
 @_wraps(np.searchsorted)
 def searchsorted(a, v, side='left', sorter=None):
-  assert side in ['left', 'right']
+  if side not in ['left', 'right']:
+    raise ValueError(f"{side!r} is an invalid value for keyword 'side'")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
   a = asarray(a)
   v = asarray(v)
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
-  if size(a) == 0:
-    return zeros_like(v, dtype=int)
   return _searchsorted(a, v, side)
 
 
