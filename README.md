@@ -61,7 +61,7 @@ from jax import grad, jit, vmap
 def predict(params, inputs):
   for W, b in params:
     outputs = jnp.dot(inputs, W) + b
-    inputs = jnp.tanh(outputs)
+    outputs = jnp.tanh(outputs)
   return outputs
 
 def logprob_fun(params, inputs, targets):
