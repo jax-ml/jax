@@ -3673,6 +3673,8 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
           [None] * len(start_indices))
 
 def _batch_dynamic_slice_indices(indices, bdims):
+  if len(indices) == 0:
+    return np.array([], 'int32'), None
   size = next((x.shape[i] for x, i in zip(indices, bdims) if i is not None), -1)
   if size < 0:
     return concatenate([broadcast(i, (1,)) for i in indices], 0), None
@@ -3769,8 +3771,8 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
   # scatter always.
   operand, update, *start_idx = batched_args
   operand_bd, update_bd, *start_idx_bd = batch_dims
-  update_shape = (update.shape if update_bd is batching.not_mapped
-                  else tuple(np.delete(update.shape, update_bd)))
+  update_shape = (np.shape(update) if update_bd is batching.not_mapped
+                  else tuple(np.delete(np.shape(update), update_bd)))
   dims = tuple(range(len(update_shape)))
   dnums = ScatterDimensionNumbers(update_window_dims=dims,
                                   inserted_window_dims=(),
