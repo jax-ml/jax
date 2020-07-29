@@ -2386,8 +2386,12 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   lax._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError("Number of samples, %s, must be non-negative." % num)
-  dt = result_type(start, stop, float(num))
-  dtype = dtype or dt
+
+  dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
+  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
+  start = asarray(start, dtype=computation_dtype)
+  stop = asarray(stop, dtype=computation_dtype)
+
   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
   broadcast_stop = broadcast_to(stop, bounds_shape)
@@ -2397,27 +2401,27 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   iota_shape[axis] = num
   div = (num - 1) if endpoint else num
   if num > 1:
-    delta = lax.convert_element_type(stop - start, dt) / div
+    delta = lax.convert_element_type(stop - start, computation_dtype) / div
     if issubdtype(dtype, integer):
       # This is similar to how numpy computes linspace, but it
       # can fail to recover the endpoints in float32 arithmetic.
       out = (reshape(broadcast_start, bounds_shape) +
-        reshape(lax.iota(dt, num), iota_shape) *
+        reshape(lax.iota(dtype, num), iota_shape) *
         reshape(delta, bounds_shape))
     else:
       # This approach recovers the endpoints with float32 arithmetic,
       # but can lead to rounding errors for integer outputs.
-      step = reshape(lax.iota(dt, num), iota_shape) / div
+      step = reshape(lax.iota(computation_dtype, num), iota_shape) / div
       out = (reshape(broadcast_start, bounds_shape) * (1 - step) +
         reshape(broadcast_stop, bounds_shape) * step)
   elif num == 1:
-    delta = nan if endpoint else lax.convert_element_type(stop - start, dt)
+    delta = nan if endpoint else stop - start
     out = reshape(broadcast_start, bounds_shape)
-  else: # num == 0 degenerate case, match np behavior
+  else: # num == 0 degenerate case, match numpy behavior
     empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
     empty_shape.insert(axis, 0)
     delta = nan
-    out = reshape(array([], dtype=dt), empty_shape)
+    out = reshape(array([], dtype=dtype), empty_shape)
   if retstep:
     return lax.convert_element_type(out, dtype), delta
   else:
@@ -2439,8 +2443,8 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
 @_wraps(np.geomspace)
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
   """Implementation of geomspace differentiable in start and stop args."""
-  dtype = dtype or result_type(start, stop, float(num), zeros((), dtype))
-  computation_dtype = promote_types(dtype, float32)
+  dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
+  computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
   # follow the numpy geomspace convention for negative and complex endpoints
