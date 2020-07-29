@@ -36,6 +36,7 @@ import numpy as np
 import opt_einsum
 
 from jax import jit, custom_jvp
+from .vectorize import vectorize
 from ._util import _wraps
 from .. import core
 from .. import dtypes
@@ -4225,21 +4226,20 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 
 
 @partial(jit, static_argnums=2)
+@partial(vectorize, excluded={0, 2})
 def _searchsorted(a, v, side):
+  if len(a) == 0:
+    return 0
   op = operator.le if side == 'left' else operator.lt
 
   def body_fun(i, state):
     low, high = state
     mid = (low + high) // 2
-    mask = op(v, a[mid])
-    return (where(mask, low, mid), where(mask, mid, high))
+    go_left = op(v, a[mid])
+    return (where(go_left, low, mid), where(go_left, mid, high))
 
-  low = zeros(len(v), dtype=dtypes.canonicalize_dtype(int_))
-  high = full(len(v), len(a), dtype=dtypes.canonicalize_dtype(int_))
   n_levels = int(np.ceil(np.log2(len(a) + 1)))
-  if n_levels > 0:
-    low, high = lax.fori_loop(0, n_levels, body_fun, (low, high))
-  return high
+  return lax.fori_loop(0, n_levels, body_fun, (0, len(a)))[1]
 
 
 @_wraps(np.searchsorted)
@@ -4252,7 +4252,7 @@ def searchsorted(a, v, side='left', sorter=None):
   v = asarray(v)
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
-  return _searchsorted(a, ravel(v), side).reshape(shape(v))
+  return _searchsorted(a, v, side)
 
 
 @_wraps(np.digitize)
