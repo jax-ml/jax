@@ -18,9 +18,7 @@ from jax import test_util as jtu
 from jax import jit
 from jax.config import config
 import jax.scipy.optimize
-# from jax.scipy.optimize.bfgs_minimize import minimize_bfgs
 import scipy.optimize
-# from scipy.optimize import minimize as smin
 import numpy as onp
 
 config.parse_flags_with_absl()
