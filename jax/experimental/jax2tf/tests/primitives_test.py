@@ -208,6 +208,23 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       with self.assertRaisesRegex(expected_error, "Unsupported dtype"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_svd)
+  def test_svd(self, harness: primitive_harness.Harness):
+    if harness.params["dtype"] in [jnp.complex64, jnp.complex128]:
+      if jtu.device_under_test() == "tpu":
+        raise unittest.SkipTest("No TPU implementation for SVD of complex numbers")
+        # TODO: the above should be replaced by an appropriate assertRaisesRegex to
+        # detect future possible breaking changes of the conversion.
+      else:
+        # TODO: tf.linalg.svd is not compatible with complex numbers.
+        raise unittest.SkipTest("Conversion is not implemented for complex numbers")
+    elif harness.params["dtype"] in [jnp.float16, dtypes.bfloat16]:
+      with self.assertRaisesRegex(NotImplementedError, "Unsupported dtype"):
+          harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    else:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             atol=1e-4, rtol=1e-4)
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
