@@ -4225,8 +4225,8 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 
 
 @partial(jit, static_argnums=2)
-def _searchsorted(a, v, side='left'):
-  op = operator.lt if side == "right" else operator.le
+def _searchsorted(a, v, side):
+  op = operator.le if side == 'left' else operator.lt
 
   def body_fun(i, state):
     low, high = state
