@@ -192,6 +192,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     min
     minimum
     mod
+    modf
     moveaxis
     msort
     multiply

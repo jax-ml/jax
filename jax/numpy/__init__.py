@@ -43,7 +43,7 @@ from .lax_numpy import (
     ix_, kaiser, kron, lcm, ldexp, left_shift, less, less_equal, lexsort, linspace,
     load, log, log10, log1p, log2, logaddexp, logaddexp2, logical_and,
     logical_not, logical_or, logical_xor, logspace, mask_indices, matmul, max,
-    maximum, mean, median, meshgrid, min, minimum, mod, moveaxis, msort,
+    maximum, mean, median, meshgrid, min, minimum, mod, modf, moveaxis, msort,
     multiply, nan, nan_to_num, nanargmax, nanargmin, nancumprod, nancumsum,
     nanmedian, nanpercentile, nanquantile,
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,

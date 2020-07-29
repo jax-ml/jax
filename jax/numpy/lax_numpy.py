@@ -668,7 +668,7 @@ def trapz(y, x=None, dx=1.0, axis=-1):
 
 @_wraps(np.trunc)
 def trunc(x):
-  return where(lax.lt(x, lax._const(x, 0)), lax.ceil(x), lax.floor(x))
+  return where(lax.lt(x, lax._const(x, 0)), ceil(x), floor(x))
 
 
 def _conv(x, y, mode, op, precision):
@@ -1522,7 +1522,16 @@ def fix(x, out=None):
   if out is not None:
     raise ValueError("fix does not support the `out` argument.")
   zero = lax._const(x, 0)
-  return where(lax.ge(x, zero), lax.floor(x), lax.ceil(x))
+  return where(lax.ge(x, zero), floor(x), ceil(x))
+
+
+@_wraps(np.modf)
+def modf(x, out=None):
+  if out is not None:
+    raise ValueError("modf does not support the `out` argument.")
+  whole = fix(x)
+  return x - whole, whole
+
 
 @_wraps(np.isfinite)
 def isfinite(x):
