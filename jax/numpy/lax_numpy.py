@@ -4228,13 +4228,13 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
 def _searchsorted(a, v, side='left'):
   op = operator.lt if side == "right" else operator.le
 
-  def fscan(carry, x):
+  def fscan(carry, _):
     low, high = carry
     mid = (low + high) // 2
     mask = op(v, a[mid])
     low = where(mask, low, mid)
     high = where(mask, mid, high)
-    return (low, high), x
+    return (low, high), None
 
   low = zeros(len(v), dtype=dtypes.canonicalize_dtype(int_))
   high = full(len(v), len(a), dtype=dtypes.canonicalize_dtype(int_))
