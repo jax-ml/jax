@@ -1400,7 +1400,11 @@ def pp_jaxprs(jaxprs) -> PrettyPrint:
   return pp('( ') >> vcat(map(pp_jaxpr, jaxprs)) >> pp(' )')
 
 def pp_kv_pair(k, v):
-  return pp(f'{k}=') >> (pp_jaxprs(v) if k == 'branches' else pp(v))
+  if type(v) is tuple and all(isinstance(j, (Jaxpr, TypedJaxpr)) for j in v):
+    pp_v = pp_jaxprs(v)
+  else:
+    pp_v = pp(v)
+  return pp(f'{k}=') >> pp_v
 
 def pp_kv_pairs(kv_pairs):
   if kv_pairs:
