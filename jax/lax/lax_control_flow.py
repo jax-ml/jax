@@ -22,6 +22,7 @@ import functools
 import inspect
 import itertools
 import operator
+import os
 from typing import Callable, Sequence, TypeVar
 
 import numpy as np
@@ -127,6 +128,14 @@ def _disable_jit_impl(prim, interp, *args, **kwargs):
     return interp(*args, **kwargs)
   else:
     return xla.apply_primitive(prim, *args, **kwargs)
+
+def _typecheck_param(prim, param, name, msg_required, pred):
+  msg = (f'invalid {prim} param {name} of type {type(param).__name__}, '
+         f'{msg_required} required:')
+  param_str = str(param)
+  sep = os.linesep if os.linesep in param_str else ' '
+  msg = sep.join([msg, param_str])
+  core.typecheck_assert(pred, msg)
 
 
 ### fori_loop and while_loop
@@ -1044,12 +1053,19 @@ def _avals_short(avals):
   return ' '.join(_map(to_str, avals))
 
 def _cond_typecheck(*avals, branches, linear):
+  tc = partial(_typecheck_param, 'cond')
+  tc(branches, 'branches', 'tuple of TypedJaxpr',
+     type(branches) is tuple and
+     all(type(x) is core.TypedJaxpr for x in branches))
+  tc(linear, 'linear', 'tuple of bool',
+     type(linear) is tuple and all(type(x) is bool for x in linear))
+
   core.typecheck_assert(
       len(branches) > 0,
       'cond requires at least one branch function')
   core.typecheck_assert(
       len(linear) + 1 == len(avals),
-      f'cond called with {len(linear)} linear flags for '
+      f'cond given {len(linear)} linear flags for '
       f'{len(avals) - 1} non-predicate operands')
 
   jaxpr0 = branches[0]
@@ -1761,17 +1777,26 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
   return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
-def _scan_typecheck(*avals, reverse, length, num_consts, num_carry, jaxpr,
-                    linear, unroll):
+def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
+                    jaxpr, linear, unroll):
+  tc = partial(_typecheck_param, 'scan')
+  tc(reverse, 'reverse', 'bool', type(reverse) is bool)
+  tc(num_consts, 'num_consts', 'non-negative int',
+     type(num_consts) is int and num_consts >= 0)
+  tc(num_carry, 'num_carry', 'non-negative int',
+     type(num_carry) is int and num_carry >= 0)
+  tc(jaxpr, 'jaxpr', 'TypedJaxpr', type(jaxpr) is core.TypedJaxpr)
+  tc(linear, 'linear', 'tuple of bool',
+     type(linear) is tuple and all(type(x) is bool for x in linear))
+  tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
+
+  length_types = (int, masking.Poly) if bind_time else (int,)
+  tc(length, 'length', 'non-negative int',
+     type(length) in length_types and length >= 0)
+
   core.typecheck_assert(
       len(linear) == len(avals),
-      f'scan called with {len(linear)} linear flags for {len(avals)} operands')
-  core.typecheck_assert(
-      isinstance(unroll, int),
-      f'unroll length {unroll} is not an int')
-  core.typecheck_assert(
-      unroll > 0,
-      f'non-positive unroll length {unroll}')
+      f'scan param linear has length {len(linear)} for {len(avals)} operands')
 
   const_avals, init_avals, x_avals = split_list(avals, [num_consts, num_carry])
   const_avals_jaxpr, init_avals_jaxpr, x_avals_jaxpr = split_list(
@@ -1799,7 +1824,7 @@ def _scan_typecheck(*avals, reverse, length, num_consts, num_carry, jaxpr,
 def scan_bind(*args, **params):
   if not core.skip_checks:
     avals = _map(core.get_aval, args)
-    _scan_typecheck(*avals, **params)
+    _scan_typecheck(True, *avals, **params)
     core.check_jaxpr(params['jaxpr'].jaxpr)
   return core.Primitive.bind(scan_p, *args, **params)
 
@@ -1815,7 +1840,7 @@ pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.initial_style_translations[scan_p] = xla.lower_fun_initial_style(_scan_impl)
 batching.primitive_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
-core.custom_typechecks[scan_p] = _scan_typecheck
+core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 
 
 def map(f, xs):

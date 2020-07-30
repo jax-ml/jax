@@ -28,6 +28,7 @@ import numpy as np
 import numpy.random as npr
 
 from jax import api
+from jax import core
 from jax import lax
 from jax import random
 from jax import test_util as jtu
@@ -2399,6 +2400,68 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(result.second, np.array([0., 10., 30.]),
                         check_dtypes=False)
+
+  def test_scan_typecheck_param(self):
+    d = jnp.ones(2)
+    def f(c, a):
+      b = jnp.cos(jnp.sum(a) + jnp.sum(c) + jnp.sum(d))
+      c = jnp.sin(c * b)
+      return c, b
+
+    xs = jnp.ones((5, 3))
+    c = jnp.ones(4)
+    scan_fun = lambda c, xs: lax.scan(f, c, xs)
+
+    def new_jaxpr():
+      jaxpr = api.make_jaxpr(scan_fun)(c, xs).jaxpr
+      scan = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'scan')
+      return jaxpr, scan
+
+    jaxpr, eqn = new_jaxpr()
+    eqn.params['reverse'] = 4
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        re.escape('invalid scan param reverse of type int, bool required: 4'),
+        lambda: core.check_jaxpr(jaxpr))
+
+    jaxpr, eqn = new_jaxpr()
+    eqn.params['num_consts'] = -3
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        re.escape('invalid scan param num_consts of type int, '
+                  'non-negative int required: -3'),
+        lambda: core.check_jaxpr(jaxpr))
+
+  def test_cond_typecheck_param(self):
+    def new_jaxpr():
+      jaxpr = api.make_jaxpr(
+          lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+      cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
+      return jaxpr, cond
+
+    jaxpr, eqn = new_jaxpr()
+    eqn.params['branches'] = (4, 2)
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        re.escape('invalid cond param branches of type tuple, '
+                  'tuple of TypedJaxpr required: (4, 2)'),
+        lambda: core.check_jaxpr(jaxpr))
+
+    jaxpr, eqn = new_jaxpr()
+    eqn.params['linear'] = (4, 2)
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        re.escape('invalid cond param linear of type tuple, '
+                  'tuple of bool required: (4, 2)'),
+        lambda: core.check_jaxpr(jaxpr))
+
+    jaxpr, eqn = new_jaxpr()
+    eqn.params['linear'] = 'multi\nline'
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r'invalid cond param linear of type str, '
+        r'tuple of bool required:\nmulti\nline',
+        lambda: core.check_jaxpr(jaxpr))
 
 
 if __name__ == '__main__':
