@@ -194,12 +194,11 @@ def build_tree(treedef, xs):
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
   flat, treedef = tree_flatten(pytree_to_transpose)
-  expected_treedef = outer_treedef.compose(inner_treedef)
-  if treedef != expected_treedef:
-    raise TypeError("Mismatch\n{}\n != \n{}".format(treedef, expected_treedef))
-
   inner_size = inner_treedef.num_leaves
   outer_size = outer_treedef.num_leaves
+  if treedef.num_leaves != (inner_size * outer_size):
+    expected_treedef = outer_treedef.compose(inner_treedef)
+    raise TypeError(f"Mismatch\n{treedef}\n != \n{expected_treedef}")
   flat = iter(flat)
   lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
   transposed_lol = zip(*lol)

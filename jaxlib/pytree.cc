@@ -682,6 +682,13 @@ std::unique_ptr<PyTreeDef> PyTreeDef::Compose(const PyTreeDef& inner) const {
       out->traversal_.push_back(n);
     }
   }
+  const auto& root = traversal_.back();
+  const auto& inner_root = inner.traversal_.back();
+  // TODO(tomhennigan): This should update all nodes in the traversal.
+  auto& out_root = out->traversal_.back();
+  out_root.num_nodes = (root.num_nodes - root.num_leaves) +
+                       (inner_root.num_nodes * root.num_leaves);
+  out_root.num_leaves *= inner_root.num_leaves;
   return out;
 }
 
