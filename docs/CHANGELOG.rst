@@ -9,6 +9,26 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.1.74 (July 22, 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.73...jax-v0.1.74>`_.
+
+* New Features:
+
+  * BFGS (#3101)
+  * TPU suppot for half-precision arithmetic (#3878)
+
+* Bug Fixes:
+
+  * Prevent some accidental dtype warnings (#3874)
+  * Fix a multi-threading bug in custom derivatives (#3845, #3869)
+
+* Improvements:
+
+  * Faster searchsorted implementation (3873)
+  * Better test coverage for jax.numpy sorting algorithms (#3836)
+
+
 jaxlib 0.1.52 (July 22, 2020)
 ------------------------------
 
