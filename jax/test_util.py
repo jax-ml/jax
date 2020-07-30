@@ -366,9 +366,10 @@ def supported_dtypes():
   return types
 
 def skip_if_unsupported_type(dtype):
-  if dtype not in supported_dtypes():
+  dtype = np.dtype(dtype)
+  if dtype.type not in supported_dtypes():
     raise unittest.SkipTest(
-      f"Type {dtype} not supported on {device_under_test()}")
+      f"Type {dtype.name} not supported on {device_under_test()}")
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
