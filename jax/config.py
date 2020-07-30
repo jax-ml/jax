@@ -42,6 +42,7 @@ class Config(object):
     self.meta = {}
     self.FLAGS = NameSpace(self.read)
     self.use_absl = False
+    self.omnistaging_enabled = False
 
   def update(self, name, val):
     if self.use_absl:
