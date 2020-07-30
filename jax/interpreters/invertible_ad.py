@@ -20,14 +20,14 @@ from jax import core
 from jax import linear_util as lu
 from . import ad
 from . import partial_eval as pe
-from .partial_eval import (PartialVal, partial_eval_jaxpr, new_eqn_recipe,
-                           _partition_knowns)
+from .partial_eval import PartialVal, new_eqn_recipe, _partition_knowns
 from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
-from ..custom_derivatives import _initial_style_jaxpr, _resolve_kwargs
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten
 from ..util import safe_map, safe_zip, unzip2, split_list, cache
 from .. import source_info_util
+from .. import custom_derivatives
+from ..config import config
 
 map = safe_map
 zip = safe_zip
@@ -116,7 +116,7 @@ class custom_ivjp:
     if self.ivjp is None:
       msg = "No VJP defined for custom_vjp function {}. Did you forget to use defivjp?"
       raise AttributeError(msg.format(self.__name__))
-    args = _resolve_kwargs(self.fun, args, kwargs)
+    args = custom_derivatives._resolve_kwargs(self.fun, args, kwargs)
     # TODO: Support nondiff_argnums
     fun, ivjp = lu.wrap_init(self.fun), lu.wrap_init(self.ivjp)
     args_flat, in_tree = tree_flatten(args)
@@ -142,9 +142,10 @@ def _flatten_ivjp(in_tree, out_tree, *args):
 
 def _custom_ivjp(fun, ivjp, args):
   in_avals = [raise_to_shaped(get_aval(x)) for x in args]
-  fun_jaxpr = _initial_style_jaxpr(fun, in_avals)
+  fun_jaxpr = custom_derivatives._initial_style_jaxpr(fun, in_avals)
   try:
-    ivjp_jaxpr = _initial_style_jaxpr(ivjp, in_avals + fun_jaxpr.out_avals * 2)
+    ivjp_jaxpr = custom_derivatives._initial_style_jaxpr(
+        ivjp, in_avals + fun_jaxpr.out_avals * 2)
   except RecursionError:
     raise ValueError("Calls to {} from its custom ivjp aren't supported yet".format(fun.__name__))
   return custom_ivjp_p.bind(*args, fun_jaxpr=fun_jaxpr,
@@ -254,9 +255,13 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
       complete_ivjp_flat, _ = flatten_fun_nokwargs(complete_ivjp, in_tree)
 
       in_avals = map(abstract, primals_in + primals_out + primals_out)
-      ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
-        complete_ivjp_flat, map(PartialVal.unknown, in_avals),
-        instantiate=True, stage_out=False)
+      if config.omnistaging_enabled:
+        ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
+            complete_ivjp_flat, map(PartialVal.unknown, in_avals), instantiate=True)
+      else:
+        ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
+          complete_ivjp_flat, map(PartialVal.unknown, in_avals),
+          instantiate=True, stage_out=False)
       assert not ivjp_jaxpr.constvars  # That might happen some time, but don't bother until then
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
       ivjp_jaxpr = core.TypedJaxpr(ivjp_jaxpr, [], in_avals, out_avals)
@@ -267,8 +272,12 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
     unknowns = (map(ad.is_undefined_primal, primals_in) +
                 map(ad.is_undefined_primal, primals_out) +
                 [False] * len(cts_in))
-    jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
-        ivjp_jaxpr, unknowns, instantiate=False, trace_type=None)
+    if config.omnistaging_enabled:
+      jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(  # type: ignore
+          ivjp_jaxpr, unknowns, instantiate=False)  # type:ignore
+    else:
+      jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(
+          ivjp_jaxpr, unknowns, instantiate=False, trace_type=None)
     unknown_rec_primals_in, unknown_cotangents = split_list(out_unknowns, [num_inputs])
     # Make sure we're able to compute all cotangents. We don't really care if we
     # can reconstruct or primals or not, although failure to do so might result in

@@ -16,8 +16,9 @@ import numpy as np
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import jax
+from ..config import config
 from .. import core
-from ..core import Trace, Tracer, new_master
+from ..core import Trace, Tracer
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
@@ -53,7 +54,7 @@ def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, sum_match=False):
 def _batch_fun(sum_match, in_dims, out_dims_thunk, out_dim_dests, *in_vals, **params):
   in_dims = in_dims() if callable(in_dims) else in_dims
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
-  with new_master(BatchTrace) as master:
+  with core.new_master(BatchTrace) as master:
     out_vals = yield (master, in_dims,) + in_vals, params
     del master
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
@@ -72,7 +73,7 @@ def batch_fun2(fun : lu.WrappedFun, in_dims):
 
 @lu.transformation
 def _batch_fun2(in_dims, *in_vals, **params):
-  with new_master(BatchTrace) as master:
+  with core.new_master(BatchTrace) as master:
     out_vals = yield (master, in_dims,) + in_vals, params
     del master
   yield out_vals
@@ -364,7 +365,7 @@ def batch_jaxpr(jaxpr, size, batched, instantiate):
 @lu.transformation_with_aux
 def batched_traceable(size, batched, instantiate, *vals):
   in_dims = [0 if b else None for b in batched]
-  with new_master(BatchTrace) as master:
+  with core.new_master(BatchTrace) as master:
     trace = BatchTrace(master, core.cur_sublevel())
     ans = yield map(partial(BatchTracer, trace), vals, in_dims), {}
     out_tracers = map(trace.full_raise, ans)
@@ -405,3 +406,17 @@ def _merge_bdims(x, y):
     return x
   else:
     return x  # arbitrary
+
+
+@config.omnistaging_enablers.append
+def omnistaging_enabler() -> None:
+  global batch_jaxpr
+
+  def batch_jaxpr(jaxpr, size, batched, instantiate):
+    f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+    f, batched_out = batched_traceable(f, size, batched, instantiate)
+    avals_in = [_promote_aval_rank(size, a) if b else a
+                for a, b in zip(jaxpr.in_avals, batched)]
+    jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f, avals_in)
+    jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
+    return jaxpr_out, batched_out()

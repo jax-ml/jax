@@ -79,7 +79,7 @@ def matrix_power(a, n):
     return jnp.broadcast_to(jnp.eye(a.shape[-2], dtype=a.dtype), a.shape)
   elif n < 0:
     a = inv(a)
-    n = jnp.abs(n)
+    n = np.abs(n)
 
   if n == 1:
     return a

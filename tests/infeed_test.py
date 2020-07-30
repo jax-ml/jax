@@ -18,7 +18,7 @@ import threading
 from absl.testing import absltest
 import jax
 from jax import lax, numpy as jnp
-from jax.config import config
+from jax import config
 from jax.experimental import host_callback as hcb
 from jax.lib import xla_client
 import jax.test_util as jtu
@@ -30,6 +30,7 @@ FLAGS = config.FLAGS
 class InfeedTest(jtu.JaxTestCase):
 
   def testInfeed(self):
+
     @jax.jit
     def f(x):
       token = lax.create_token(x)
@@ -49,13 +50,14 @@ class InfeedTest(jtu.JaxTestCase):
 
   def testInfeedThenOutfeed(self):
     hcb.stop_outfeed_receiver()
+
     @jax.jit
     def f(x):
       token = lax.create_token(x)
       y, token = lax.infeed(
           token, shape=jax.ShapedArray((3, 4), jnp.float32))
       token = lax.outfeed(token, y + np.float32(1))
-      return lax.tie_in(token, x - 1)
+      return x - 1 if config.omnistaging_enabled else lax.tie_in(token, x - 1)
 
     x = np.float32(7.5)
     y = np.random.randn(3, 4).astype(np.float32)
@@ -70,6 +72,7 @@ class InfeedTest(jtu.JaxTestCase):
 
   def testInfeedThenOutfeedInALoop(self):
     hcb.stop_outfeed_receiver()
+
     def doubler(_, token):
       y, token = lax.infeed(
           token, shape=jax.ShapedArray((3, 4), jnp.float32))
@@ -79,7 +82,7 @@ class InfeedTest(jtu.JaxTestCase):
     def f(n):
       token = lax.create_token(n)
       token = lax.fori_loop(0, n, doubler, token)
-      return lax.tie_in(token, n)
+      return n if config.omnistaging_enabled else lax.tie_in(token, n)
 
     device = jax.local_devices()[0]
     n = 10

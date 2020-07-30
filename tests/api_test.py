@@ -38,6 +38,7 @@ from jax.interpreters import xla
 from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
+from jax import linear_util as lu
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -223,7 +224,7 @@ class APITest(jtu.JaxTestCase):
     assert grad(f)(1.0) == 1.0
     assert grad(f)(-1.0) == -1.0
     with self.assertRaisesRegex(core.ConcretizationTypeError,
-                                "Abstract tracer value encountered where concrete value is expected"):
+                                "Abstract tracer value"):
       jit(f)(1)
 
   def test_range_err(self):
@@ -235,7 +236,7 @@ class APITest(jtu.JaxTestCase):
     assert jit(f, static_argnums=(1,))(0, 5) == 10
     self.assertRaisesRegex(
         TypeError,
-        "('JaxprTracer' object cannot be interpreted as an integer"
+        "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
         "|Abstract value passed to .*)",
         lambda: jit(f)(0, 5))
 
@@ -244,7 +245,7 @@ class APITest(jtu.JaxTestCase):
       f = lambda x: castfun(x)
       self.assertRaisesRegex(
           TypeError,
-          "('JaxprTracer' object cannot be interpreted as an integer"
+          "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
           "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
@@ -921,7 +922,10 @@ class APITest(jtu.JaxTestCase):
     def f():
       return jnp.zeros((3, 4))
 
-    xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
+    if config.omnistaging_enabled:
+      xla_comp = api.xla_computation(f)()
+    else:
+      xla_comp = api.xla_computation(f, instantiate_const_outputs=True)()
     out_shape, = xla_comp.program_shape().result_shape().tuple_shapes()
     self.assertEqual(out_shape.dimensions(), (3, 4))
 
@@ -954,26 +958,6 @@ class APITest(jtu.JaxTestCase):
       yield x
     self.assertRaisesRegex(TypeError, "Expected a function, got a generator function.*",
                            lambda: api.jit(gen))
-
-  def test_issue_1062(self):
-    # code from https://github.com/google/jax/issues/1062 @shoyer
-    # this tests, among other things, whether ShardedDeviceTuple constants work
-    device_count = xb.device_count()
-
-    @jit
-    def multi_step(state, count):
-      return lax.fori_loop(0, count, lambda i, s: s, state)
-
-    @jit
-    def multi_step_pmap(state, count=2):
-      @partial(api.pmap, axis_name='x')
-      def pmapped_multi_step(state):
-        return multi_step(state, count)
-
-      return pmapped_multi_step(state)
-
-    u = jnp.ones((device_count, 100))
-    _ = multi_step_pmap(u)  # doesn't crash
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -1201,7 +1185,7 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
   def test_jit_reference_dropping(self):
-    x = np.ones(10)
+    x = jnp.ones(10)
     f = (lambda x: lambda: x)(x)  # reference to x in f's closure
     g = jit(f)
     x = weakref.ref(x)      # no more strong ref to x in this scope
@@ -1389,7 +1373,7 @@ class APITest(jtu.JaxTestCase):
       return x + self._saved_tracer
     with self.assertRaisesRegex(
         core.UnexpectedTracerError,
-        re.compile("Encountered an unexpected tracer.*Incompatible sublevel",
+        re.compile("Encountered an unexpected tracer",
                    re.DOTALL)):
       api.jit(func1)(2.)
 
@@ -1445,6 +1429,16 @@ class APITest(jtu.JaxTestCase):
     hlo_lines = set([s.strip() for s in hlo_lines])
     self.assertIn('constant.1 = f32[2]{0} constant({7, 14})', hlo_lines)
     self.assertNotIn('constant.2 = f32[2]{0} constant({7, 14})', hlo_lines)
+
+  def test_omnistaging_flag(self):
+    if FLAGS.jax_omnistaging:
+      jaxpr = api.make_jaxpr(lambda: jnp.add(1, 1))()
+      self.assertLen(jaxpr.jaxpr.eqns, 1)
+    else:
+      # omnistaging can be enabled programmatically without setting the flag,
+      # but that shouldn't happen in tests
+      jaxpr = api.make_jaxpr(lambda: jnp.add(1, 1))()
+      self.assertLen(jaxpr.jaxpr.eqns, 0)
 
 
 class RematTest(jtu.JaxTestCase):
@@ -1619,7 +1613,7 @@ class RematTest(jtu.JaxTestCase):
     finally:
       lax.sin_p.def_impl(sin_impl)
     num_calls = len(called)
-    self.assertEqual(num_calls, 1)
+    self.assertLessEqual(num_calls, 1)
 
   def test_remat_binomial_checkpointing(self):
     def binom_checkpoint(funs):
@@ -1744,6 +1738,9 @@ class RematTest(jtu.JaxTestCase):
 
   def test_remat_jit_static_argnum(self):
     # https://github.com/google/jax/issues/2833
+    if config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works without omnistaging")  # see next test
+
     def f(a_bool, y):
       if a_bool:
         return y + 1
@@ -1751,6 +1748,27 @@ class RematTest(jtu.JaxTestCase):
         return y
 
     api.jit(api.remat(f, concrete=True), static_argnums=0)(True, 1)  # no crash
+
+
+  def test_remat_jit_static_argnum_omnistaging(self):
+    # https://github.com/google/jax/issues/2833
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")  # see previous test
+
+    def named_call(f):
+      def named_f(*args):
+        f_ = lu.wrap_init(lambda: (f(*args),))
+        out, = core.call_p.bind(f_)
+        return out
+      return named_f
+
+    def f(a_bool, y):
+      if a_bool:
+        return y + 1
+      else:
+        return y
+
+    api.jit(named_call(f), static_argnums=0)(True, 1)  # no crash
 
   def test_remat_eval_counter(self):
     # https://github.com/google/jax/issues/2737
@@ -1815,14 +1833,23 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_const(self):
     def fun(x):
-      return (x, 1., jnp.zeros(1))
+      return (x, 1., np.zeros(1))
+
+    if config.omnistaging_enabled:
+      expected = """
+      { lambda a ; b.
+      let
+      in (b, 1.0, a) }
+      """
+    else:
+      expected = """
+      { lambda b ; a.
+      let
+      in (a, 1.0, b) }
+      """
 
     jaxpr = api.make_jaxpr(fun)(0.)
-    self.assertMultiLineStrippedEqual("""
-{ lambda b ; a.
-  let
-  in (a, 1.0, b) }
-    """, str(jaxpr))
+    self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
   def test_cond(self):
     def f(x):
@@ -1831,23 +1858,42 @@ class JaxprTest(jtu.JaxTestCase):
                       lambda xt: xt + x,
                       x + 2.,
                       lambda xf: xf - x)
+    if config.omnistaging_enabled:
+      expected = """
+      { lambda  ; a.
+        let b = ge a 0.0
+            c = add a 1.0
+            d = add a 2.0
+            e = convert_element_type[ new_dtype=int32
+                                      old_dtype=bool ] b
+            f = cond[ branches=( { lambda  ; e_ a b c.
+                                   let d = sub c a
+                                   in (d,) }
+                                 { lambda  ; a f_ b c.
+                                   let d = add b a
+                                   in (d,) } )
+                      linear=(False, False, False, False) ] e a a c d
+      in (f,) }
+      """
+    else:
+      expected = """
+      { lambda  ; a.
+        let b = ge a 0.0
+            c = convert_element_type[ new_dtype=int32
+                                      old_dtype=bool ] b
+            d = add a 1.0
+            e = add a 2.0
+            f = cond[ branches=( { lambda  ; e_ c a b.
+                                   let d = sub b c
+                                   in (d,) }
+                                 { lambda  ; c f_ a b.
+                                   let d = add a c
+                                   in (d,) } )
+                      linear=(False, False, False, False) ] c a a d e
+        in (f,) }
+        """
     jaxpr = api.make_jaxpr(f)(3.)
-    self.assertMultiLineStrippedEqual("""
-{ lambda  ; a.
-  let b = ge a 0.0
-      c = convert_element_type[ new_dtype=int32
-                                old_dtype=bool ] b
-      d = add a 1.0
-      e = add a 2.0
-      f = cond[ branches=( { lambda  ; e_ c a b.
-                             let d = sub b c
-                             in (d,) }
-                           { lambda  ; c f_ a b.
-                             let d = add a c
-                             in (d,) } )
-                linear=(False, False, False, False) ] c a a d e
-  in (f,) }
-        """, str(jaxpr))
+    self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
   def test_make_jaxpr_static_argnums(self):
     def f(x, y):
@@ -2015,7 +2061,7 @@ class LazyTest(jtu.JaxTestCase):
   def test_constant_forcing_computations_cached(self):
     # from https://github.com/google/jax/issues/1909
     xla._lazy_force_computation.cache_clear()  # clear force compile cache
-    big_lazy_x = jnp.ones((api.device_count(), 100))
+    big_lazy_x = np.ones((api.device_count(), 100))
     f = api.pmap(lambda x: 2 * x)
     _ = f(big_lazy_x)
 
@@ -2242,8 +2288,6 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_tracers_error_message(self):
-    raise unittest.SkipTest("TODO")  # TODO(mattjj)
-
     def f(x):
       @api.custom_jvp
       def g(y):
@@ -2275,7 +2319,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = (2., 3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_nondiff_arg_tracer(self):
+  def test_nondiff_arg_jit_tracer(self):
     @partial(api.custom_jvp, nondiff_argnums=(0,))
     def f(x, y):
       return x * y
@@ -2537,7 +2581,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = run()
 
     # we just don't want this to crash
-    n_workers = 20
+    n_workers = 2
     with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as e:
       futures = []
       for _ in range(n_workers):
@@ -2877,18 +2921,18 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x  # identity function
 
     def clip_gradient_fwd(lo, hi, x):
-        # return x, None
-        return x, (hi, )
+      # return x, None
+      return x, (hi, )
 
     def clip_gradient_bwd(lo, hi, _, g):
-        return (jnp.clip(g, lo, hi),)
+      return (jnp.clip(g, lo, hi),)
 
     _clip_gradient.defvjp(clip_gradient_fwd, clip_gradient_bwd)
 
     def clip_gradient(x):
-        lo = -1
-        hi = x + 1  # causes things to break
-        return _clip_gradient(lo, hi, x)
+      lo = -1
+      hi = x + 1  # causes things to break
+      return _clip_gradient(lo, hi, x)
 
     jax.grad(clip_gradient)(1.)  # doesn't crash
 
@@ -2941,21 +2985,40 @@ class InvertibleADTest(jtu.JaxTestCase):
         return fun_vjp(cotangents)
       return jax.make_jaxpr(run)(primals, cotangents)
 
+    if config.omnistaging_enabled:
+      expected = """
+      { lambda  ; a b.
+        let c = exp a
+            d = mul c 4.0
+            e = mul d a
+            f = mul b a
+            g = div e a
+            h = mul b g
+            i = div g 4.0
+            j = mul f 4.0
+            _ = log i
+            k = mul j i
+            l = add_any h k
+        in (l,) }
+      """
+    else:
+      expected = """
+      { lambda  ; a b.
+        let c = exp a
+            d = mul c 4.0
+            e = mul d a
+            f = div e a
+            g = mul b f
+            h = mul b a
+            i = mul h 4.0
+            j = div f 4.0
+            k = mul i j
+            l = add_any g k
+        in (l,) }
+      """
+
     jaxpr = jax.make_jaxpr(lambda p, ct: jax.vjp(finv, p)[1](ct))(x, x)
-    self.assertMultiLineStrippedEqual("""
-{ lambda  ; a b.
-  let c = exp a
-      d = mul c 4.0
-      e = mul d a
-      f = div e a
-      g = mul b f
-      h = mul b a
-      i = mul h 4.0
-      j = div f 4.0
-      k = mul i j
-      l = add_any g k
-  in (l,) }
-    """, str(jaxpr))
+    self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
     self.assertAllClose(jax.value_and_grad(lambda x: np.sum(f(x)))(x),
                         jax.value_and_grad(lambda x: np.sum(finv(x)))(x),
@@ -3323,7 +3386,7 @@ class BufferDonationTest(jtu.JaxTestCase):
     self.assertDeleted(x)
     np.testing.assert_allclose(y, [1.] * n)
 
-  def test_pmap_nested_donate_raises(self):
+  def test_pmap_nested_donate_ignored(self):
     pmap_fun = jit(lambda x: api.pmap(lambda y: y ** 2, donate_argnums=0)(x))
     a = api.pmap(lambda x: x)(jnp.array([1]))
 

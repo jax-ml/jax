@@ -32,6 +32,7 @@ from jax import util
 from jax.api_util import flatten_fun
 from jax.lax import lax_control_flow
 from jax.lax import lax_fft
+from jax.lax.lax import tie_in_p
 from jax import lax_linalg
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
@@ -382,8 +383,10 @@ tf_not_yet_impl = [
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
 
-tf_impl[lax.tie_in_p] = lambda x, y: y
-tf_impl[core.identity_p] = lambda x: x
+try:
+  tf_impl[tie_in_p] = lambda x, y: y
+except AttributeError:
+  pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
 tf_impl[ad_util.add_jaxvals_p] = wrap_binary_op(tf.math.add)

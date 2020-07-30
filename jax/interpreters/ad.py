@@ -18,8 +18,9 @@ import itertools as it
 from typing import Any, Callable, Dict, Set, List
 
 from . import partial_eval as pe
+from ..config import config
 from .. import core
-from ..core import Trace, Tracer, new_master, get_aval, call_p, Primitive, Literal
+from ..core import Trace, Tracer, get_aval, call_p, Primitive, Literal
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
 from ..abstract_arrays import raise_to_shaped
@@ -45,7 +46,7 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
-  with new_master(JVPTrace) as master:
+  with core.new_master(JVPTrace) as master:
     out_primals, out_tangents = yield (master, primals, tangents), {}
     del master
   if type(instantiate) is bool:
@@ -448,7 +449,6 @@ def zero_jvp(primitive, primals, tangents, **params):
 
 
 deflinear(zeros_like_p, lambda t: [Zero.from_value(t)])
-deflinear(core.identity_p, lambda t: (t,))
 deflinear(add_jaxvals_p, lambda t: (t, t))
 
 def instantiate_zeros(tangent):
@@ -498,9 +498,13 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
               for p in primals_in]
   typed_call_jaxpr = core.TypedJaxpr(call_jaxpr, [], in_avals, cotangent_in_avals)
   unknowns = map(is_undefined_primal, primals_in)
-  primal_jaxpr, tangent_jaxpr, out_unknowns = \
-    pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True,
-                          trace_type=None)
+  if config.omnistaging_enabled:
+    primal_jaxpr, tangent_jaxpr, out_unknowns = \
+      pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True)  # type: ignore
+  else:
+    primal_jaxpr, tangent_jaxpr, out_unknowns = \
+      pe.partial_eval_jaxpr(typed_call_jaxpr, unknowns=unknowns, instantiate=True,
+                            trace_type=None)
 
   def do_transpose(primals_in, cotangents_in):
     # NOTE: This is passing in undefined primals in place of tangent arguments, but it
@@ -637,9 +641,12 @@ def defvjp_all(prim, custom_vjp):
       primals_out = [primals_out]
     out_avals = [raise_to_shaped(get_aval(x)) for x in primals_out]
     ct_pvals = [pe.PartialVal.unknown(aval) for aval in out_avals]
-    with core.initial_style_staging():
-      jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals,
-                                        instantiate=True)
+    if config.omnistaging_enabled:
+      jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals, instantiate=True)
+    else:
+      with core.initial_style_staging():
+        jaxpr, _, res = pe.trace_to_jaxpr(lu.wrap_init(vjp_py), ct_pvals,
+                                          instantiate=True)
     tangents_out = fun_lin_p.bind(*it.chain(res, tangents), trans_jaxpr=jaxpr,
                                   num_res=len(res), out_avals=out_avals)
     return primals_out + tangents_out
@@ -671,3 +678,19 @@ def defvjp2(prim, *vjps):
                          for x, vjp in zip(primals, vjps)]
     return ans, vjpfun
   defvjp_all(prim, vjpmaker)
+
+
+# TODO(mattjj): remove when omnistaging fully lands
+@config.omnistaging_enablers.append
+def omnistaging_enabler() -> None:
+  global jvp_jaxpr
+
+  def jvp_jaxpr(jaxpr, nonzeros, instantiate):
+    assert len(jaxpr.in_avals) == len(nonzeros)
+    f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+    f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate), nonzeros)
+    tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
+    avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
+    jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
+    jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
+    return jaxpr_out, out_nonzeros()

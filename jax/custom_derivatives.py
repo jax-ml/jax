@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import update_wrapper, reduce
+from functools import update_wrapper, reduce, partial
 import inspect
 import operator as op
 
@@ -28,7 +28,8 @@ from .interpreters import partial_eval as pe
 from .interpreters import ad
 from .interpreters import batching
 from .interpreters import xla
-from .interpreters.batching import not_mapped, batch_jaxpr
+from .interpreters.batching import not_mapped
+from .config import config
 
 map = safe_map
 zip = safe_zip
@@ -76,17 +77,21 @@ def _initial_style_jaxpr(fun, in_avals):
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   return typed_jaxpr
 
-def sum_tangents(_, x, *xs):
+def _initial_style_staging() -> bool:
+  if config.omnistaging_enabled:
+    return core.thread_local_state.trace_state.trace_stack.dynamic.level != 0  # type: ignore
+  else:
+    return core.thread_local_state.trace_state.initial_style
+
+def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
-def zeros_like_pytree(x):
+def _zeros_like_pytree(x):
   return tree_map(Zero.from_value, x)
 
-def stop_gradient(x):
-  return tree_map(_stop_gradient, x)
-
+@partial(partial, tree_map)
 def _stop_gradient(x):
-  if isinstance(x, core.Tracer) or core.valid_jaxtype(x):
+  if isinstance(x, core.Tracer):
     return stop_gradient_p.bind(x)
   else:
     return x
@@ -194,10 +199,10 @@ class custom_jvp:
 
     def jvp(primals, tangents):
       primal_out = self(*primals)
-      zeros = zeros_like_pytree(primal_out)
+      zeros = _zeros_like_pytree(primal_out)
       all_tangents_out = [jvp(t, primal_out, *primals) if jvp else zeros
                           for t, jvp in zip(tangents, jvps)]
-      tangent_out = tree_multimap(sum_tangents, primal_out, *all_tangents_out)
+      tangent_out = tree_multimap(_sum_tangents, primal_out, *all_tangents_out)
       return primal_out, tangent_out
 
     self.defjvp(jvp)
@@ -210,7 +215,7 @@ class custom_jvp:
     if self.nondiff_argnums:
       is_nondiff = [False] * len(args)
       for i in self.nondiff_argnums: is_nondiff[i] = True
-      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      args = [_stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
       dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
@@ -221,7 +226,7 @@ class custom_jvp:
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_tree1 = flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_tree2 = _flatten_jvp(jvp, in_tree)
-    if core.thread_local_state.trace_state.initial_style:
+    if _initial_style_staging():
       out_flat = custom_jvp_call_jaxpr(flat_fun, flat_jvp, *args_flat)
       out_tree = out_tree1()
     else:
@@ -321,19 +326,19 @@ def _custom_jvp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, jvp_jaxpr_thunk):
   num_out = len(fun_jaxpr.out_avals)
 
   in_batched = [d is not not_mapped for d in in_dims]
-  batched_fun_jaxpr, out_batched = batch_jaxpr(fun_jaxpr, size, in_batched, False)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
   @_memoize
   def batched_jvp_jaxpr_thunk():
     jvp_jaxpr = jvp_jaxpr_thunk()
-    _, all_batched = batch_jaxpr(jvp_jaxpr, size, in_batched * 2, False)
+    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, in_batched * 2, False)
     primals_batched, tangents_batched = split_list(all_batched, [num_out])
     out_batched = map(op.or_, primals_batched, tangents_batched)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
-    batched_jvp_jaxpr, _ = batch_jaxpr(jvp_jaxpr, size, in_batched * 2,
-                                       out_batched * 2)
+    batched_jvp_jaxpr, _ = batching.batch_jaxpr(jvp_jaxpr, size, in_batched * 2,
+                                                out_batched * 2)
     return batched_jvp_jaxpr
 
   batched_outs = custom_jvp_call_jaxpr_p.bind(
@@ -451,7 +456,7 @@ class custom_vjp:
     if self.nondiff_argnums:
       is_nondiff = [False] * len(args)
       for i in self.nondiff_argnums: is_nondiff[i] = True
-      args = [stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
+      args = [_stop_gradient(x) if b else x for b, x in zip(is_nondiff, args)]
       dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
@@ -464,7 +469,7 @@ class custom_vjp:
     flat_fun, out_tree = flatten_fun_nokwargs(f_, in_tree)
     flat_fwd, out_trees = _flatten_fwd(fwd, in_tree)
     flat_bwd = _flatten_bwd(bwd, in_tree, out_trees)
-    if core.thread_local_state.trace_state.initial_style:
+    if _initial_style_staging():
       out_flat = custom_vjp_call_jaxpr(flat_fun, flat_fwd, flat_bwd,
                                        *args_flat, out_trees=out_trees)
       out_tree = out_tree()
@@ -566,14 +571,14 @@ def _custom_vjp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, fwd_jaxpr_thunk,
           else x for x, d in zip(args, in_dims)]
 
   in_batched = [d is not not_mapped for d in in_dims]
-  batched_fun_jaxpr, out_batched = batch_jaxpr(fun_jaxpr, size, in_batched, False)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
   @_memoize
   def batched_fwd_jaxpr_thunk():
     fwd_jaxpr = fwd_jaxpr_thunk()
-    batched_fwd_jaxpr, out_batched = batch_jaxpr(fwd_jaxpr, size, in_batched, False)
+    batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(fwd_jaxpr, size, in_batched, False)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr
 
@@ -593,3 +598,29 @@ xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
     xla.lower_fun_initial_style(_custom_vjp_call_jaxpr_impl)
 
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
+
+
+# TODO(mattjj): remove when omnistaging fully lands
+@config.omnistaging_enablers.append
+def omnistaging_enabler() -> None:
+  global _initial_style_jaxpr
+
+  def _initial_style_jaxpr(fun, in_avals):
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+    typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
+    return typed_jaxpr
+
+  def bind(self, fun, jvp, *args):
+    args = map(core.full_lower, args)
+    top_trace = core.find_top_trace(args)
+    fun, env_trace_todo1 = core.process_env_traces(
+        fun, self, top_trace and top_trace.level, ())
+    jvp, env_trace_todo2 = core.process_env_traces(
+        jvp, self, top_trace and top_trace.level, ())
+    tracers = map(top_trace.full_raise, args)  # type: ignore
+    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
+    _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
+    if env_trace_todo:
+      raise core.UnexpectedTracerError
+    return map(core.full_lower, outs)
+  CustomJVPCallPrimitive.bind = bind  # type: ignore
