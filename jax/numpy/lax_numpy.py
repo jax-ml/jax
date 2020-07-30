@@ -363,7 +363,6 @@ def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn):
     return lax_fn(x1, x2) if x1.dtype != bool_ else bool_lax_fn(x1, x2)
   return _wraps(numpy_fn)(fn)
 
-absolute = abs = _one_to_one_unop(np.absolute, lax.abs)
 fabs = _one_to_one_unop(np.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
 negative = _one_to_one_unop(np.negative, lax.neg)
@@ -440,6 +439,12 @@ logical_and = _logical_op(np.logical_and, lax.bitwise_and)
 logical_not = _logical_op(np.logical_not, lax.bitwise_not)
 logical_or = _logical_op(np.logical_or, lax.bitwise_or)
 logical_xor = _logical_op(np.logical_xor, lax.bitwise_xor)
+
+
+@_wraps(np.absolute)
+def absolute(x):
+  return x if issubdtype(_dtype(x), unsignedinteger) else lax.abs(x)
+abs = _wraps(np.abs)(absolute)
 
 
 @_wraps(np.rint)
