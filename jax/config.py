@@ -113,6 +113,8 @@ class Config(object):
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
+  def enable_omnistaging(self):
+    pass  # placeholder
 
 class NameSpace(object):
   def __init__(self, getter):
