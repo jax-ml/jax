@@ -807,8 +807,14 @@ def remainder(x1, x2):
   do_plus = lax.bitwise_and(
       lax.ne(lax.lt(trunc_mod, zero), lax.lt(x2, zero)), trunc_mod_not_zero)
   return lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
-mod = remainder
-fmod = _wraps(np.fmod)(lambda x1, x2: lax.rem(x1, x2))
+mod = _wraps(np.mod)(remainder)
+
+
+@_wraps(np.fmod)
+def fmod(x1, x2):
+  if issubdtype(_dtype(x1, x2), integer):
+    x2 = where(x2 == 0, 1, x2)
+  return lax.rem(*_promote_args(np.fmod, x1, x2))
 
 
 @_wraps(np.cbrt)

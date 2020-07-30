@@ -202,6 +202,7 @@ JAX_COMPOUND_OP_RECORDS = [
               jtu.rand_nonzero, ["rev"]),
     op_record("fmin", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("fmax", 2, number_dtypes, all_shapes, jtu.rand_some_nan, []),
+    op_record("fmod", 2, default_dtypes, all_shapes, jtu.rand_some_nan, []),
     op_record("heaviside", 2, default_dtypes, all_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("hypot", 2, default_dtypes, all_shapes, jtu.rand_default, [],
@@ -483,6 +484,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
              tolerance, inexact):
     np_op = jtu.ignore_warning(category=RuntimeWarning,
                                message="invalid value.*")(np_op)
+    np_op = jtu.ignore_warning(category=RuntimeWarning,
+                               message="divide by zero.*")(np_op)
 
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes, np_arrays=False)
