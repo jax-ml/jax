@@ -5,5 +5,5 @@ pillow
 pytest-benchmark
 pytest-xdist
 # jax2tf needs some fixes that are not in latest tensorflow
-tf-nightly==2.4.0.dev20200701
+tf-nightly==2.4.0.dev20200730
 wheel
