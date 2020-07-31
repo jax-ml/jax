@@ -69,11 +69,11 @@ def extend_shape_envs(logical_env, padded_env):
 
 def shape_as_value(shape):
   assert is_tracing() or not is_polymorphic(shape)
-  return eval_polymorphic_shape(shape, shape_envs.logical)
+  return eval_poly_shape(shape, shape_envs.logical)
 
 def padded_shape_as_value(shape):
   assert is_tracing() or not is_polymorphic(shape)
-  return eval_polymorphic_shape(shape, shape_envs.padded)
+  return eval_poly_shape(shape, shape_envs.padded)
 
 def mask_fun(fun, logical_env, padded_env, in_vals, polymorphic_shapes):
   env_keys, padded_env_vals = unzip2(sorted(padded_env.items()))
@@ -101,7 +101,7 @@ def mask_subtrace(master, shapes, padded_env, *in_vals):
   out_vals, out_shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
   yield out_vals, out_shapes
 
-def eval_polymorphic_shape(shape, values_dict):
+def eval_poly_shape(shape, values_dict):
   return tuple(eval_poly(dim, values_dict) for dim in shape)
 
 def eval_poly(poly, values_dict):
