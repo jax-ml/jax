@@ -392,8 +392,11 @@ if numpy_version >= (1, 15):
   JAX_COMPOUND_OP_RECORDS += [
       op_record("isclose", 2, [t for t in all_dtypes if t != jnp.bfloat16],
                 all_shapes, jtu.rand_small_positive, []),
-      op_record("gcd", 2, int_dtypes, all_shapes, jtu.rand_default, []),
-      op_record("lcm", 2, int_dtypes, all_shapes, jtu.rand_default, []),
+      # uint64 is problematic because with any other int type it promotes to float.
+      op_record("gcd", 2, [d for d in int_dtypes + unsigned_dtypes if d != np.uint64],
+                all_shapes, jtu.rand_default, []),
+      op_record("lcm", 2, [d for d in int_dtypes + unsigned_dtypes if d != np.uint64],
+                all_shapes, jtu.rand_default, []),
   ]
   JAX_REDUCER_NO_DTYPE_RECORDS += [
       op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),

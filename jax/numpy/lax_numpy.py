@@ -4018,11 +4018,10 @@ def _gcd_body_fn(xs):
 def gcd(x1, x2):
   if (not issubdtype(_dtype(x1), integer) or
       not issubdtype(_dtype(x2), integer)):
-    raise ValueError("Arguments to gcd must be integers.")
+    raise ValueError("Arguments to jax.numpy.gcd must be integers.")
   x1, x2 = _promote_dtypes(x1, x2)
   x1, x2 = broadcast_arrays(x1, x2)
-  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn,
-                          (lax.abs(x1), lax.abs(x2)))
+  gcd, _ = lax.while_loop(_gcd_cond_fn, _gcd_body_fn, (abs(x1), abs(x2)))
   return gcd
 
 
@@ -4031,7 +4030,7 @@ def lcm(x1, x2):
   x1, x2 = _promote_dtypes(x1, x2)
   d = gcd(x1, x2)
   return where(d == 0, lax._const(d, 0),
-               lax.div(lax.abs(multiply(x1, x2)), d))
+               abs(multiply(x1, floor_divide(x2, d))))
 
 
 @_wraps(np.extract)
