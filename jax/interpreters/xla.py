@@ -369,7 +369,10 @@ def jaxpr_literals(jaxpr):
 
 
 def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
-  platform = xb.get_backend(backend).platform
+  if backend not in ('cpu', 'gpu', 'tpu'):
+    platform = xb.get_backend(backend).platform  # canonicalize
+  else:
+    platform = backend
 
   def read(v):
     if type(v) is Literal:
