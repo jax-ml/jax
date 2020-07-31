@@ -98,7 +98,7 @@ LAX_OPS = [
     op_record("acos", 1, float_dtypes + complex_dtypes, jtu.rand_small),
     op_record("atan", 1, float_dtypes + complex_dtypes, jtu.rand_small),
     op_record("asinh", 1, float_dtypes + complex_dtypes, jtu.rand_default,
-              tol={np.complex64: 1E-5, np.complex128: 1E-5}),
+              tol={np.complex64: 1E-4, np.complex128: 1E-5}),
     op_record("acosh", 1, float_dtypes + complex_dtypes, jtu.rand_positive),
     # TODO(b/155331781): atanh has only ~float precision
     op_record("atanh", 1, float_dtypes + complex_dtypes, jtu.rand_small, {np.float64: 1e-9}),
