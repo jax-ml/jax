@@ -1781,21 +1781,37 @@ def tan(x: Array) -> Array:
 @api.jit
 def asin(x: Array) -> Array:
   r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
-  return mul(_const(x, 2),
-             atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
+  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+    return mul(_const(x, -1j), asinh(mul(_const(x, 1j), x)))
+  else:
+    return mul(_const(x, 2),
+               atan2(x, add(_const(x, 1), sqrt(sub(_const(x, 1), square(x))))))
 
 @api.jit
 def acos(x: Array) -> Array:
   r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
-  return select(
-      ne(x, _const(x, -1.0)),
-      mul(_const(x, 2),
-          atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x))),
-      full_like(x, np.pi))
+  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+    result = mul(_const(x, 1j), acosh(x))
+    # By convention, numpy chooses the branch with positive real part.
+    rpart = real(result)
+    return select(
+      gt(rpart, _const(rpart, 0)),
+      result,
+      neg(result)
+    )
+  else:
+    return select(
+        ne(x, _const(x, -1.0)),
+        mul(_const(x, 2),
+            atan2(sqrt(sub(_const(x, 1), square(x))), add(_const(x, 1), x))),
+        full_like(x, np.pi))
 
 def atan(x: Array) -> Array:
   r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
-  return atan2(x, _const(x, 1))
+  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+    return mul(_const(x, -1j), atanh(mul(_const(x, 1j), x)))
+  else:
+    return atan2(x, _const(x, 1))
 
 def sinh(x: Array) -> Array:
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
