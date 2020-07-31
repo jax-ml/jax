@@ -353,8 +353,10 @@ def xla_computation(fun: Callable,
     wrapped = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
-    jax_args, in_tree = tree_flatten((args, kwargs))
+      wrapped, dyn_args = argnums_partial(wrapped, dyn_argnums, args)
+    else:
+      dyn_args = args
+    jax_args, in_tree = tree_flatten((dyn_args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
     if config.omnistaging_enabled:
