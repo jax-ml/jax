@@ -1137,7 +1137,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(shape, dtype), reps),
        "shape": shape, "dtype": dtype, "reps": reps,
        "rng_factory": jtu.rand_default}
-      for reps in [(), (2,), (3, 4), (2, 3, 4)]
+      for reps in [(), (2,), (3, 4), (2, 3, 4), (1, 0, 2)]
       for shape, dtype in _shape_and_dtypes(all_shapes, default_dtypes)
       ))
   def testTile(self, shape, dtype, reps, rng_factory):
