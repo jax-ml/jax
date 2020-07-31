@@ -32,7 +32,7 @@ from jax.scipy.special import expit
 from jax import mask, vmap, jit, grad, shapecheck, make_jaxpr
 from jax.interpreters.masking import (
     shape_as_value, ShapeError, parse_spec, Poly, Mon, finalize_spec,
-    eval_polymorphic_shape, remap_ids, UniqueIds)
+    eval_poly_shape, remap_ids, UniqueIds)
 
 config.parse_flags_with_absl()
 
@@ -153,14 +153,14 @@ class MaskingTest(jtu.JaxTestCase):
     out_specs, _ = tree_flatten(out_shape)
     out_specs = map(parse_spec, out_specs)
     out_specs = map(finalize_spec, out_specs, map(np.shape, padded_outs))
-    logical_out_shapes = [eval_polymorphic_shape(s, logical_env)
+    logical_out_shapes = [eval_poly_shape(s, logical_env)
                           for s in out_specs]
     logical_out_slices = [tuple(map(slice, s)) for s in logical_out_shapes]
     logical_outs = [o[s] for o, s in zip(padded_outs, logical_out_slices)]
 
     in_specs = map(parse_spec, in_shapes)
     in_specs = map(finalize_spec, in_specs, padded_in_shapes)
-    logical_in_shapes = [eval_polymorphic_shape(s, logical_env)
+    logical_in_shapes = [eval_poly_shape(s, logical_env)
                          for s in in_specs]
     logical_in_slices = [tuple(map(slice, s)) for s in logical_in_shapes]
     logical_args = [a[s] for a, s in zip(padded_args, logical_in_slices)]
@@ -173,7 +173,6 @@ class MaskingTest(jtu.JaxTestCase):
     padded_outs_jit, _ = tree_flatten(jit(masked_fun)(padded_args, logical_env))
     self.assertAllClose(padded_outs_jit, padded_outs, check_dtypes=True,
                         atol=atol, rtol=rtol)
-
 
   def test_add(self):
     self.check(lax.add, ['n', ''], 'n', {'n': 3}, [(4,), ()], ['float_', 'float_'],
@@ -732,6 +731,18 @@ class MaskingTest(jtu.JaxTestCase):
     jaxpr = make_jaxpr(foo)([padded_x], dict(n=3))
     self.assertNotIn('mul', str(jaxpr))
     self.assertNotIn('add', str(jaxpr))
+
+  def test_return_shape_to_user(self):
+    @partial(mask, in_shapes=['n'])
+    def foo(x):
+      return [x, np.sum(x)]
+
+    out, out_shape = foo([np.arange(5)], dict(n=2))
+    self.assertIsInstance(out_shape, list)
+    self.assertLen(out_shape, 2)
+    a, b = out_shape
+    self.assertEqual(a.shape, (2,))
+    self.assertEqual(b.shape, ())
 
 
 if __name__ == '__main__':
