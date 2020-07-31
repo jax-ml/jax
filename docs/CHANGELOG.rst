@@ -9,7 +9,7 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.1.74 (July 29, 2020)
+jax 0.1.75 (July 30, 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.74...jax-v0.1.75>`_.
 
