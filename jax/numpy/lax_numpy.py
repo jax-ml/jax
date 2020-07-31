@@ -2108,7 +2108,10 @@ def tile(A, reps):
   A = reshape(A, (1,) * (len(reps) - ndim(A)) + shape(A))
   reps = (1,) * (ndim(A) - len(reps)) + tuple(reps)
   for i, rep in enumerate(reps):
-    A = concatenate([A] * int(rep), axis=i)
+    if rep == 0:
+      A = A[tuple(slice(0 if j == i else None) for j in range(A.ndim))]
+    elif rep != 1:
+      A = concatenate([A] * int(rep), axis=i)
   return A
 
 @_wraps(np.concatenate)
