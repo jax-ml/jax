@@ -92,7 +92,7 @@ to more than one device will raise an error.
 You can also use :func:`jax.device_put` without a ``device`` parameter. If the data 
 is already on a device (committed or not), it's left as-is. If the data isn't on any 
 device—that is, it's a regular Python or NumPy value—it's placed uncommitted on the default 
-device. You can also use :func:`jax.device_put` without a `device` parameter. 
+device.
 
 Jitted functions behave like any other primitive operations—they will follow the 
 data and will show errors if invoked on data committed on more than one device.
