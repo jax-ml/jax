@@ -58,8 +58,7 @@ class TestPolynomial(jtu.JaxTestCase):
       return jnp.concatenate(
         [jnp.zeros(leading, p.dtype), p, jnp.zeros(trailing, p.dtype)]),
 
-    # order may differ (jnp.sort doesn't deal with complex numbers)
-    jnp_fn = lambda arg: np.sort(jnp.roots(arg))
+    jnp_fn = lambda arg: jnp.sort(jnp.roots(arg))
     np_fn = lambda arg: np.sort(np.roots(arg))
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=3e-6)
@@ -84,8 +83,7 @@ class TestPolynomial(jtu.JaxTestCase):
         # adding trailing would make input invalid (start with zeros)
         return p,
 
-    # order may differ (jnp.sort doesn't deal with complex numbers)
-    jnp_fn = lambda arg: np.sort(jnp.roots(arg, strip_zeros=False))
+    jnp_fn = lambda arg: jnp.sort(jnp.roots(arg, strip_zeros=False))
     np_fn = lambda arg: np.sort(np.roots(arg))
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker,
                             check_dtypes=False, tol=1e-6)
@@ -113,9 +111,8 @@ class TestPolynomial(jtu.JaxTestCase):
         # adding trailing would make input invalid (start with zeros)
         return p,
 
-    # order may differ (jnp.sort doesn't deal with complex numbers)
     roots_compiled = jit(partial(jnp.roots, strip_zeros=False))
-    jnp_fn = lambda arg: np.sort(roots_compiled(arg))
+    jnp_fn = lambda arg: jnp.sort(roots_compiled(arg))
     np_fn = lambda arg: np.sort(np.roots(arg))
     # Using strip_zeros=False makes the algorithm less efficient
     # and leads to slightly different values compared ot numpy
