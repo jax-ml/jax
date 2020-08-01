@@ -869,16 +869,22 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axes = tuple(in_axes)
 
-  if not all(isinstance(l, (type(None), int, batching._Last))
-             for l in tree_leaves(in_axes)):
+  in_axes_, out_axes_ = tree_leaves(in_axes), tree_leaves(out_axes)
+  if not all(isinstance(l, (type(None), int, batching._Last)) for l in in_axes_):
     msg = ("vmap in_axes must be an int, None, or (nested) container with "
            "those types as leaves, but got {}.")
     raise TypeError(msg.format(in_axes))
-  if not all(isinstance(l, (type(None), int, batching._Last))
-             for l in tree_leaves(out_axes)):
+  if not all(isinstance(l, (type(None), int, batching._Last)) for l in out_axes_):
     msg = ("vmap out_axes must be an int, None, or (nested) container with "
            "those types as leaves, but got {}.")
     raise TypeError(msg.format(out_axes))
+  if any(l < 0 for l in in_axes_ if l is not batching.last):
+    msg = "vmap in_axes leaves must be non-negative integers or None, but got {}."
+    raise TypeError(msg.format(in_axes))
+  if any(l < 0 for l in out_axes_ if l is not batching.last):
+    msg = "vmap in_axes leaves must be non-negative integers or None, but got {}."
+    raise TypeError(msg.format(out_axes))
+  del in_axes_, out_axes_
 
   @wraps(fun, docstr=docstr)
   def batched_fun(*args):
