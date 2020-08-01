@@ -733,6 +733,10 @@ def initial_style_staging():
   finally:
     trace_state.initial_style = prev
 
+@contextmanager
+def eval_context():
+  yield  # dummy implementation for forward compatibility
+
 
 # -------------------- abstract values --------------------
 
