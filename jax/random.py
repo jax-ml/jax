@@ -267,7 +267,7 @@ def split(key: jnp.ndarray, num: int = 2) -> jnp.ndarray:
   return _split(key, int(num))
 
 @partial(jit, static_argnums=(1,))
-def _split(key, num):
+def _split(key, num) -> jnp.ndarray:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
@@ -367,7 +367,7 @@ def uniform(key: jnp.ndarray,
   return _uniform(key, shape, dtype, minval, maxval)
 
 @partial(jit, static_argnums=(1, 2))
-def _uniform(key, shape, dtype, minval, maxval):
+def _uniform(key, shape, dtype, minval, maxval) -> jnp.ndarray:
   _check_shape("uniform", shape)
   if not jnp.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -504,7 +504,7 @@ def permutation(key, x):
 
 
 @partial(jit, static_argnums=(2,))
-def _shuffle(key, x, axis):
+def _shuffle(key, x, axis) -> jnp.ndarray:
   # On parallel architectures, Fisher-Yates is more expensive than doing
   # multiple sorts. This algorithm is based on one developed and analyzed by
   # tjablin@. We sort according to randomly-generated 32bit keys, but those keys
@@ -609,7 +609,7 @@ def normal(key: jnp.ndarray,
   return _normal(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
-def _normal(key, shape, dtype):
+def _normal(key, shape, dtype) -> jnp.ndarray:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), 0., dtype=dtype)
   hi = np.array(1., dtype)
@@ -651,7 +651,7 @@ def multivariate_normal(key: jnp.ndarray,
   return _multivariate_normal(key, mean, cov, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
-def _multivariate_normal(key, mean, cov, shape, dtype):
+def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
     raise ValueError(msg.format(np.ndim(mean)))
@@ -707,7 +707,7 @@ def truncated_normal(key: jnp.ndarray,
   return _truncated_normal(key, lower, upper, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
-def _truncated_normal(key, lower, upper, shape, dtype):
+def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
   else:
@@ -749,7 +749,7 @@ def bernoulli(key: jnp.ndarray,
   return _bernoulli(key, p, shape)
 
 @partial(jit, static_argnums=(2,))
-def _bernoulli(key, p, shape):
+def _bernoulli(key, p, shape) -> jnp.ndarray:
   if shape is None:
     shape = np.shape(p)
   else:

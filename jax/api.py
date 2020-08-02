@@ -945,11 +945,12 @@ def _mapped_axis_size(tree, vals, dims, name):
       sizes = tree_unflatten(tree, sizes)
       raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from None
 
-def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
+def pmap(fun: Callable[..., T],
+         axis_name: Optional[AxisName] = None, *, in_axes=0,
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None,
-         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
+         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
   """Parallel map with support for collectives.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data (SPMD)
