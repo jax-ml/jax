@@ -29,7 +29,7 @@ import functools
 import inspect
 import itertools as it
 import threading
-from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, TypeVar, Union
 from warnings import warn
 
 import numpy as np
@@ -67,6 +67,7 @@ from .custom_derivatives import custom_jvp, custom_vjp
 from .config import flags, config, bool_env
 
 AxisName = Any
+T = TypeVar("T")
 
 map = safe_map
 zip = safe_zip
@@ -89,9 +90,11 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
-        device=None, backend: Optional[str] = None,
-        donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
+def jit(fun: Callable[..., T],
+        static_argnums: Union[int, Iterable[int]] = (),
+        device=None,
+        backend: Optional[str] = None,
+        donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -753,7 +756,7 @@ def _dtype(x):
   return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
-def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
+def vmap(fun: Callable[..., T], in_axes=0, out_axes=0) -> Callable[..., T]:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
