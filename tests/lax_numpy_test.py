@@ -2582,7 +2582,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     np_op = lambda x: np.asarray(x).astype(jnp.int32)
     jnp_op = lambda x: jnp.asarray(x).astype(jnp.int32)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2605,7 +2605,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_op = lambda x: jnp.asarray(x).view(dtype)
     # Above may produce signaling nans; ignore warnings from invalid values.
     with np.errstate(invalid='ignore'):
-      self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
       self._CompileAndCheck(jnp_op, args_maker)
 
   def testPathologicalFloats(self):
@@ -2625,7 +2625,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_op = lambda x: np.asarray(x).view('float32').view('uint32')
     jnp_op = lambda x: jnp.asarray(x).view('float32').view('uint32')
 
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   # TODO(mattjj): test other ndarray-like method overrides
@@ -2663,7 +2663,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if axis is not None:
       jnp_fun = partial(jnp_fun, axis=axis)
       np_fun = partial(np_fun, axis=axis)
-    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2680,7 +2680,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest("complex sort not supported on TPU")
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(jnp.sort_complex, np.sort_complex, args_maker, check_dtypes=False)
+    self._CheckAgainstNumpy(np.sort_complex, jnp.sort_complex, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp.sort_complex, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2701,7 +2701,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [input_type(rng(shape, dtype))]
     jnp_op = lambda x: jnp.lexsort(x, axis=axis)
     np_op = lambda x: np.lexsort(x, axis=axis)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2723,7 +2723,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if axis is not None:
       jnp_fun = partial(jnp_fun, axis=axis)
       np_fun = partial(np_fun, axis=axis)
-    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2739,7 +2739,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest("complex sort not supported on TPU")
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(jnp.msort, np.msort, args_maker)
+    self._CheckAgainstNumpy(np.msort, jnp.msort, args_maker)
     self._CompileAndCheck(jnp.msort, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2765,7 +2765,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), np.array(shifts)]
     jnp_op = partial(jnp.roll, axis=axis)
     np_op = partial(np.roll, axis=axis)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2784,7 +2784,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     jnp_op = partial(jnp.rollaxis, axis=axis, start=start)
     np_op = partial(np.rollaxis, axis=axis, start=start)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2804,7 +2804,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     jnp_op = partial(jnp.packbits, axis=axis, bitorder=bitorder)
     np_op = partial(np.packbits, axis=axis, bitorder=bitorder)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2824,7 +2824,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     jnp_op = partial(jnp.unpackbits, axis=axis, bitorder=bitorder)
     np_op = partial(np.unpackbits, axis=axis, bitorder=bitorder)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2851,7 +2851,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng_indices = jtu.rand_int(self.rng(), -5, 5)
     jnp_op = lambda x, i: jnp.take(x, i, axis=axis, mode=mode)
     np_op = lambda x, i: np.take(x, i, axis=axis, mode=mode)
-    self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   def testTakeEmpty(self):
@@ -2892,7 +2892,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     if hasattr(np, "take_along_axis"):
       np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
-      self._CheckAgainstNumpy(jnp_op, np_op, args_maker)
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(

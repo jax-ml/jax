@@ -98,9 +98,9 @@ class NdimageTest(jtu.JaxTestCase):
     if dtype in float_dtypes:
       epsilon = max([dtypes.finfo(dtypes.canonicalize_dtype(d)).eps
                      for d in [dtype, coords_dtype]])
-      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=100*epsilon)
+      self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=100*epsilon)
     else:
-      self._CheckAgainstNumpy(lsp_op, osp_op, args_maker, tol=0)
+      self._CheckAgainstNumpy(osp_op, lsp_op, args_maker, tol=0)
 
   def testMapCoordinatesErrors(self):
     x = np.arange(5.0)
@@ -130,7 +130,7 @@ class NdimageTest(jtu.JaxTestCase):
 
     lsp_op = lambda x, c: lsp_ndimage.map_coordinates(x, c, order=order)
     osp_op = lambda x, c: osp_ndimage.map_coordinates(x, c, order=order)
-    self._CheckAgainstNumpy(lsp_op, osp_op, args_maker)
+    self._CheckAgainstNumpy(osp_op, lsp_op, args_maker)
 
   def testContinuousGradients(self):
     # regression test for https://github.com/google/jax/issues/3024
