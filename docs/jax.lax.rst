@@ -138,10 +138,12 @@ Control flow operators
 .. autosummary::
   :toctree: _autosummary
 
+    associative_scan
     cond
     fori_loop
     map
     scan
+    switch
     while_loop
 
 Custom gradient operators
