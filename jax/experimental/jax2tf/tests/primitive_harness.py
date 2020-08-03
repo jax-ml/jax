@@ -513,10 +513,10 @@ lax_fft = tuple( # 1D tests, no complex
           fft_lengths=fft_lengths)
   for dtype in [t for t in jtu.dtypes.all if t not in jtu.dtypes.complex]
   for shape in [(14, 15, 16, 17)]
-  for fft_type, fft_lengths in [(FftType.FFT, shape[-4:]),
-                                (FftType.IFFT, shape[-4:]),
-                                (FftType.RFFT, shape[-4:]),
-                                (FftType.IRFFT, shape[-4:-1] + ((shape[-1] - 1) * 2,))]
+  for fft_type, fft_lengths in [(FftType.FFT, shape),
+                                (FftType.IFFT, shape),
+                                (FftType.RFFT, shape),
+                                (FftType.IRFFT, shape[:-1] + ((shape[-1] - 1) * 2,))]
 ) + tuple( # 4D test, complex, should error
   Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
@@ -527,9 +527,9 @@ lax_fft = tuple( # 1D tests, no complex
           fft_lengths=fft_lengths)
   for dtype in jtu.dtypes.complex
   for shape in [(14, 15, 16, 17)]
-  for fft_type, fft_lengths in [(FftType.FFT, shape[-4:]),
-                                (FftType.IFFT, shape[-4:]),
-                                (FftType.IRFFT, shape[-4:-1] + ((shape[-1] - 1) * 2,))]
+  for fft_type, fft_lengths in [(FftType.FFT, shape),
+                                (FftType.IFFT, shape),
+                                (FftType.IRFFT, shape[:-1] + ((shape[-1] - 1) * 2,))]
 )
 
 lax_slice = tuple(
