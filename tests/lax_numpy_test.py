@@ -1781,6 +1781,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_period={}_left={}_right={}".format(
+       jtu.format_shape_dtype_string(shape, dtype), period, left, right),
+       "shape": shape, "dtype": dtype,
+       "period": period, "left": left, "right": right}
+      for dtype in (dt for dt in default_dtypes if dt not in [np.float16, jnp.bfloat16])
+      for shape in all_shapes
+      for period in [None, 1]
+      for left in [None, 0]
+      for right in [None, 0]
+  ))
+  def testInterp(self, shape, dtype, period, left, right):
+    rng = jtu.rand_default(self.rng())
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    args_maker = lambda: [rng(shape, dtype), np.sort(rng((20,), dtype)), np.linspace(0, 1, 20)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_x1={}_x2={}_x1_rng={}".format(
           jtu.format_shape_dtype_string(x1_shape, x1_dtype),
           jtu.format_shape_dtype_string(x2_shape, np.int32),

@@ -1266,6 +1266,30 @@ else:
   def _maybe_numpy_1_13_isclose_behavior(a, out):
     return out
 
+@_wraps(np.interp)
+def interp(x, xp, fp, left=None, right=None, period=None):
+  x, xp, fp = map(asarray, _promote_dtypes_inexact(x, xp, fp))
+  if period is not None:
+    if period == 0:
+      raise ValueError(f"period must be a non-zero value; got {period}")
+    x = x % period
+    xp = xp % period
+    lax.sort_key_val(xp, fp)
+    xp = concatenate([xp[-1:] - period, xp, xp[:1] + period])
+    fp = concatenate([fp[-1:], fp, fp[:1]])
+  
+  i = clip(searchsorted(xp, x, side='right'), 1, len(xp) - 1)
+  f = fp[i - 1] + (x - xp[i - 1]) * ((fp[i] - fp[i - 1]) / (xp[i] - xp[i - 1]))
+
+  if not period:
+    if left is None:
+      left = fp[0]
+    if right is None:
+      right = fp[-1]
+    f = where(x < xp[0], left, f)
+    f = where(x > xp[-1], right, f)
+  return f
+
 
 @_wraps(np.in1d, lax_description="""
 In the JAX version, the `assume_unique` argument is not referenced.
