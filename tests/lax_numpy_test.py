@@ -1799,7 +1799,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = partial(np.interp, **kwds)
     jnp_fun = partial(jnp.interp, **kwds)
     args_maker = lambda: [rng(shape, dtype), np.sort(rng((20,), dtype)), np.linspace(0, 1, 20)]
-    
+
     # skip numpy comparison for integer types with period specified, because numpy
     # uses an unstable sort and so results differ for duplicate values.
     if not (period and np.issubdtype(dtype, np.integer)):

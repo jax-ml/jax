@@ -1280,12 +1280,12 @@ def interp(x, xp, fp, left=None, right=None, period=None):
     xp, fp = lax.sort_key_val(xp, fp)
     xp = concatenate([xp[-1:] - period, xp, xp[:1] + period])
     fp = concatenate([fp[-1:], fp, fp[:1]])
-  
+
   i = clip(searchsorted(xp, x, side='right'), 1, len(xp) - 1)
-  dy = fp[i] - fp[i - 1]
+  df = fp[i] - fp[i - 1]
   dx = xp[i] - xp[i - 1]
   delta = x - xp[i - 1]
-  f = where((dx == 0) | (x == fp[i]), fp[i], fp[i - 1] + delta * (dy / dx))
+  f = where((dx == 0) | (x == fp[i]), fp[i], fp[i - 1] + delta * (df / dx))
 
   if period is None:
     f = where(x < xp[0], fp[0] if left is None else left, f)
