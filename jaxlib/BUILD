@@ -89,9 +89,29 @@ py_library(
     ],
 )
 
+cc_library(
+    name = "pytree_lib",
+    srcs = ["pytree.cc"],
+    hdrs = ["pytree.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@pybind11",
+    ],
+)
+
 pybind_extension(
     name = "pytree",
-    srcs = ["pytree.cc"],
+    srcs = ["pytree_extension.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -99,6 +119,7 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "pytree",
     deps = [
+        ":pytree_lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash",
