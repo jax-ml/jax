@@ -4289,6 +4289,27 @@ def digitize(x, bins, right=False):
   )
 
 
+_wraps(np.piecewise)
+def piecewise(x, condlist, funclist, *args, **kw):
+  nc, nf = len(condlist), len(funclist)
+  if nf == nc + 1:
+    funclist = funclist[-1:] + funclist[:-1]
+  elif nf == nc:
+    funclist = [0] + list(funclist)
+  else:
+    raise ValueError(f"with {nc} condition(s), either {nc} or {nc+1} functions are expected; got {nf}")
+  indices = zeros_like(x, dtype=dtypes.canonicalize_dtype(int_))
+  for i, cond in enumerate(condlist):
+    indices = where(cond, i + 1, indices)
+  dtype = _dtype(x)
+  def _call(f):
+    return lambda x: f(x, *args, **kw).astype(dtype)
+  def _const(v):
+    return lambda x: full_like(x, v)
+  funclist = [_call(f) if callable(f) else _const(f) for f in funclist]
+  return vectorize(lax.switch, excluded=(1,))(indices, funclist, x)
+
+
 @_wraps(np.percentile)
 def percentile(a, q, axis=None, out=None, overwrite_input=False,
                interpolation="linear", keepdims=False):
