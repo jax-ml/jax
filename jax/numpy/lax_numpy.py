@@ -42,7 +42,7 @@ from .. import core
 from .. import dtypes
 from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from ..config import flags, config
-from ..interpreters.xla import DeviceArray, DeviceValue
+from ..interpreters.xla import DeviceArray
 from ..interpreters.masking import Poly
 from .. import lax
 from ..lax.lax import _device_put_raw
@@ -2246,7 +2246,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if type(object) is np.ndarray:
     out = _device_put_raw(object)
     if dtype: assert _dtype(out) == dtype
-  elif isinstance(object, (DeviceValue, core.Tracer)):
+  elif isinstance(object, (DeviceArray, core.Tracer)):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
@@ -2276,7 +2276,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   return out
 
 def _can_call_numpy_array(x):
-  return _all(not isinstance(l, (core.Tracer, DeviceValue))
+  return _all(not isinstance(l, (core.Tracer, DeviceArray))
               for l in tree_leaves(x))
 
 

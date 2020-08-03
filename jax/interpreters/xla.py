@@ -939,40 +939,19 @@ xla_result_handlers[AbstractToken] = lambda _, __: lambda _: token
 canonicalize_dtype_handlers[Token] = identity
 
 
-class DeviceValue(object):
-  """A DeviceValue represents a value backed by device memory."""
-  __slots__ = ["aval", "device_buffer", "__weakref__"]
-
-  def __init__(self, aval, device_buffer):
-    self.aval = aval
-    self.device_buffer = device_buffer
-
-  def _check_if_deleted(self):
-    if self.device_buffer is deleted_buffer:
-      raise ValueError("DeviceValue has been deleted.")
-
-  def block_until_ready(self):
-    """Blocks the caller until the buffer's value has been computed on device.
-
-    This method is mostly useful for timing microbenchmarks that wish to
-    time how long a computation takes, without transferring the result back
-    to the host.
-
-    Returns the buffer object (`self`).
-    """
-    self._check_if_deleted()
-    self.device_buffer.block_host_until_ready()
-    return self
-
 def _forward_method(attrname, self, fun, *args):
   return fun(getattr(self, attrname), *args)
 _forward_to_value = partial(_forward_method, "_value")
 
-class DeviceArray(DeviceValue):
+
+class DeviceArray:
   """A DeviceArray is an ndarray backed by a single device memory buffer."""
   # We don't subclass ndarray because that would open up a host of issues,
   # but lax_numpy.py overrides isinstance behavior and attaches ndarray methods.
-  __slots__ = ["_npy_value", "_device", "_lazy_expr"]
+  __slots__ = [
+      "aval", "device_buffer", "_npy_value", "_device", "_lazy_expr",
+      "__weakref__"
+  ]
   __array_priority__ = 100
 
   # DeviceArray has methods that are dynamically populated in lax_numpy.py,
@@ -992,6 +971,23 @@ class DeviceArray(DeviceValue):
       npy_value = self._value
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape
       assert (device is None) or device is device_buffer.device()
+
+  def _check_if_deleted(self):
+    if self.device_buffer is deleted_buffer:
+      raise ValueError("DeviceArray has been deleted.")
+
+  def block_until_ready(self):
+    """Blocks the caller until the buffer's value has been computed on device.
+
+    This method is mostly useful for timing microbenchmarks that wish to
+    time how long a computation takes, without transferring the result back
+    to the host.
+
+    Returns the buffer object (`self`).
+    """
+    self._check_if_deleted()
+    self.device_buffer.block_host_until_ready()
+    return self
 
   @property
   def _value(self):
@@ -1215,7 +1211,7 @@ def _lazy_force_computation(aval: core.ShapedArray,
   backend = xb.get_device_backend(device)
   compiled = backend.compile(built_c, compile_options=options)
 
-  force_fun: Callable[[DeviceValue], DeviceArray]
+  force_fun: Callable[[DeviceArray], DeviceArray]
   if lazy.is_constant(lexpr):
     def force_fun(_):
       return compiled.execute([])[0]

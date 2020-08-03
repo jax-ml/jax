@@ -1379,7 +1379,7 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x):
-  if isinstance(x, xla.DeviceValue):
+  if isinstance(x, xla.DeviceArray):
     return x
   else:
     aval = raise_to_shaped(core.get_aval(x))
