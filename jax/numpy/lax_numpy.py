@@ -4291,6 +4291,7 @@ def digitize(x, bins, right=False):
 
 _wraps(np.piecewise)
 def piecewise(x, condlist, funclist, *args, **kw):
+  condlist = array(condlist, dtype=bool_)
   nc, nf = len(condlist), len(funclist)
   if nf == nc + 1:
     funclist = funclist[-1:] + funclist[:-1]
@@ -4298,9 +4299,7 @@ def piecewise(x, condlist, funclist, *args, **kw):
     funclist = [0] + list(funclist)
   else:
     raise ValueError(f"with {nc} condition(s), either {nc} or {nc+1} functions are expected; got {nf}")
-  indices = zeros_like(x, dtype=dtypes.canonicalize_dtype(int_))
-  for i, cond in enumerate(condlist):
-    indices = where(cond, i + 1, indices)
+  indices = argmax(cumsum(vstack([zeros_like(condlist[:1]), condlist]), 0), 0)
   dtype = _dtype(x)
   def _call(f):
     return lambda x: f(x, *args, **kw).astype(dtype)
