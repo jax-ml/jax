@@ -4288,8 +4288,13 @@ def digitize(x, bins, right=False):
     len(bins) - searchsorted(bins[::-1], x, side=side)
   )
 
+_PIECEWISE_DOC = """\
+Unlike `np.piecewise`, :py:func:`jax.numpy.piecewise` requires functions in
+`funclist` to be traceable by JAX, as it is implemeted via :func:`jax.lax.switch`.
+See the :func:`jax.lax.switch` documentation for more information.
+"""
 
-_wraps(np.piecewise)
+@_wraps(np.piecewise, lax_description=_PIECEWISE_DOC)
 def piecewise(x, condlist, funclist, *args, **kw):
   condlist = array(condlist, dtype=bool_)
   nc, nf = len(condlist), len(funclist)
