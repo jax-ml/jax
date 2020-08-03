@@ -66,6 +66,12 @@ def qr(x, full_matrices=True):
   return q, r
 
 def svd(x, full_matrices=True, compute_uv=True):
+  """Singular value decomposition.
+
+  Returns the singular values if compute_uv is False, and a triple containing
+  the left singular vectors, the singular values and the adjoint of the right
+  singular vectors.
+  """
   result = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
   if compute_uv:
     s, u, v = result
