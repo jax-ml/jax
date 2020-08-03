@@ -419,6 +419,11 @@ parallel_pure_rules: Dict[core.Primitive, Callable] = {}
 def axis_index(axis_name):
   """Return the index along the pmapped axis ``axis_name``.
 
+  On multi-host platforms, returns unique indices on each host, in line with the
+  conceptual model of a multi-host pmap running over a single array sharded
+  across hosts. See the "Multi-host platforms" section of the :func:`jax.pmap`
+  documentation.
+
   Args:
     axis_name: hashable Python object used to name the pmapped axis (see the
       :func:`jax.pmap` documentation for more details).
