@@ -185,7 +185,7 @@ def _cofactor_triangular_solve(u, b):
     m = n-i-1
     partial = (u[m] * dd[..., i]) @ x
     residual = b[m] * prodrev[i] - partial
-    return (u, b, prodrev, dd, n, x.at[m].set(residual)), None
+    return (u, b, prodrev, dd, n, x.at[m].add(residual)), None
   state, _ = lax.scan(_body,
                       (u, b, prodrev, dd, n, jnp.zeros_like(b)),
                       jnp.arange(n))

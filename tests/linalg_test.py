@@ -159,11 +159,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # make sure there are no NaNs when a matrix is zero
     if grad_type == 'safe':
       if len(shape) == 2:
-        jtu.check_grads(
-          jnp.linalg.det, (jnp.zeros_like(a),), 1, atol=1e-1, rtol=1e-1)
+        jtu.check_grads(det, (jnp.zeros_like(a),), 2, atol=1e-1, rtol=1e-1)
       else:
         a[0] = 0
-        jtu.check_grads(jnp.linalg.det, (a,), 1, atol=1e-1, rtol=1e-1)
+        jtu.check_grads(det, (a,), 2, atol=1e-1, rtol=1e-1)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
