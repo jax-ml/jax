@@ -106,10 +106,10 @@ if __name__ == "__main__":
     return random.bernoulli(rng, batch)
 
   @jit
-  def run_epoch(rng, opt_state):
+  def run_epoch(rng, opt_state, images):
     def body_fun(i, opt_state):
       elbo_rng, data_rng = random.split(random.fold_in(rng, i))
-      batch = binarize_batch(data_rng, i, train_images)
+      batch = binarize_batch(data_rng, i, images)
       loss = lambda params: -elbo(elbo_rng, params, batch) / batch_size
       g = grad(loss)(get_params(opt_state))
       return opt_update(i, g, opt_state)
@@ -127,7 +127,7 @@ if __name__ == "__main__":
   opt_state = opt_init(init_params)
   for epoch in range(num_epochs):
     tic = time.time()
-    opt_state = run_epoch(random.PRNGKey(epoch), opt_state)
+    opt_state = run_epoch(random.PRNGKey(epoch), opt_state, train_images)
     test_elbo, sampled_images = evaluate(opt_state, test_images)
     print("{: 3d} {} ({:.3f} sec)".format(epoch, test_elbo, time.time() - tic))
     plt.imsave(imfile.format(epoch), sampled_images, cmap=plt.cm.gray)
