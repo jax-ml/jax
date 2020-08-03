@@ -264,7 +264,7 @@ def split(key: jnp.ndarray, num: int = 2) -> jnp.ndarray:
   Returns:
     An array with shape (num, 2) and dtype uint32 representing `num` new keys.
   """
-  return _split(key, int(num))
+  return _split(key, int(num))  # type: ignore
 
 @partial(jit, static_argnums=(1,))
 def _split(key, num) -> jnp.ndarray:
@@ -364,7 +364,7 @@ def uniform(key: jnp.ndarray,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
-  return _uniform(key, shape, dtype, minval, maxval)
+  return _uniform(key, shape, dtype, minval, maxval)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval) -> jnp.ndarray:
@@ -473,7 +473,7 @@ def shuffle(key: jnp.ndarray, x: jnp.ndarray, axis: int = 0) -> jnp.ndarray:
   msg = ("jax.random.shuffle is deprecated and will be removed in a future release. "
          "Use jax.random.permutation")
   warnings.warn(msg, FutureWarning)
-  return _shuffle(key, x, axis)
+  return _shuffle(key, x, axis)  # type: ignore
 
 
 def permutation(key, x):
@@ -606,7 +606,7 @@ def normal(key: jnp.ndarray,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
-  return _normal(key, shape, dtype)
+  return _normal(key, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype) -> jnp.ndarray:
@@ -648,7 +648,7 @@ def multivariate_normal(key: jnp.ndarray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype)
+  return _multivariate_normal(key, mean, cov, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4))
 def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
@@ -704,7 +704,7 @@ def truncated_normal(key: jnp.ndarray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
-  return _truncated_normal(key, lower, upper, shape, dtype)
+  return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
@@ -746,7 +746,7 @@ def bernoulli(key: jnp.ndarray,
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
-  return _bernoulli(key, p, shape)
+  return _bernoulli(key, p, shape)  # type: ignore
 
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape) -> jnp.ndarray:
