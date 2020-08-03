@@ -1167,6 +1167,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_ncond={}_nfunc={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), ncond, nfunc),
+       "shape": shape, "dtype": dtype, "ncond": ncond, "nfunc": nfunc}
+      for ncond in [1, 2, 3]
+      for nfunc in [ncond, ncond + 1]
+      for shape in nonempty_nonscalar_array_shapes
+      for dtype in all_dtypes))
+  def testPiecewise(self, shape, dtype, ncond, nfunc):
+    rng = jtu.rand_default(self.rng())
+    rng_bool = jtu.rand_int(self.rng(), 0, 2)
+    funclist = [lambda x: x - 1, 1, lambda x: x, 0][:nfunc]
+    args_maker = lambda: (rng(shape, dtype), list(rng_bool((ncond,) + shape, bool)))
+    np_fun = partial(np.piecewise, funclist=funclist)
+    jnp_fun = partial(jnp.piecewise, funclist=funclist)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "a_shape={} , b_shape={}".format(
           jtu.format_shape_dtype_string(a_shape, dtype),
           jtu.format_shape_dtype_string(b_shape, dtype)),

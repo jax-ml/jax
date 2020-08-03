@@ -218,6 +218,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     packbits
     pad
     percentile
+    piecewise
     polyadd
     polyder
     polymul

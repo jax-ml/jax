@@ -4288,6 +4288,31 @@ def digitize(x, bins, right=False):
     len(bins) - searchsorted(bins[::-1], x, side=side)
   )
 
+_PIECEWISE_DOC = """\
+Unlike `np.piecewise`, :py:func:`jax.numpy.piecewise` requires functions in
+`funclist` to be traceable by JAX, as it is implemeted via :func:`jax.lax.switch`.
+See the :func:`jax.lax.switch` documentation for more information.
+"""
+
+@_wraps(np.piecewise, lax_description=_PIECEWISE_DOC)
+def piecewise(x, condlist, funclist, *args, **kw):
+  condlist = array(condlist, dtype=bool_)
+  nc, nf = len(condlist), len(funclist)
+  if nf == nc + 1:
+    funclist = funclist[-1:] + funclist[:-1]
+  elif nf == nc:
+    funclist = [0] + list(funclist)
+  else:
+    raise ValueError(f"with {nc} condition(s), either {nc} or {nc+1} functions are expected; got {nf}")
+  indices = argmax(cumsum(vstack([zeros_like(condlist[:1]), condlist]), 0), 0)
+  dtype = _dtype(x)
+  def _call(f):
+    return lambda x: f(x, *args, **kw).astype(dtype)
+  def _const(v):
+    return lambda x: full_like(x, v)
+  funclist = [_call(f) if callable(f) else _const(f) for f in funclist]
+  return vectorize(lax.switch, excluded=(1,))(indices, funclist, x)
+
 
 @_wraps(np.percentile)
 def percentile(a, q, axis=None, out=None, overwrite_input=False,
