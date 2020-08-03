@@ -24,6 +24,7 @@ import time
 
 import matplotlib.pyplot as plt
 
+import jax
 import jax.numpy as jnp
 from jax import jit, grad, lax, random
 from jax.experimental import optimizers
@@ -99,6 +100,9 @@ if __name__ == "__main__":
   init_params = init_encoder_params, init_decoder_params
 
   opt_init, opt_update, get_params = optimizers.momentum(step_size, mass=0.9)
+
+  train_images = jax.device_put(train_images)
+  test_images = jax.device_put(test_images)
 
   def binarize_batch(rng, i, images):
     i = i % num_batches
