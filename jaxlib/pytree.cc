@@ -279,6 +279,7 @@ py::object PyTreeDef::Unflatten(py::iterable leaves) const {
       return node.custom->from_iterable(node.node_data, tuple);
     }
   }
+  throw std::logic_error("Unreachable code.");
 }
 
 py::list PyTreeDef::FlattenUpTo(py::handle xs) const {
@@ -613,34 +614,6 @@ std::string PyTreeDef::ToString() const {
     throw std::logic_error("PyTreeDef traversal did not yield a singleton.");
   }
   return std::move(agenda.back());
-}
-
-PYBIND11_MODULE(pytree, m) {
-  m.def("flatten", &PyTreeDef::Flatten);
-  m.def("tuple", &PyTreeDef::Tuple);
-  m.def("all_leaves", &PyTreeDef::AllLeaves);
-
-  py::class_<PyTreeDef>(m, "PyTreeDef")
-      .def("unflatten", &PyTreeDef::Unflatten)
-      .def("flatten_up_to", &PyTreeDef::FlattenUpTo)
-      .def("compose", &PyTreeDef::Compose)
-      .def("walk", &PyTreeDef::Walk)
-      .def("from_iterable_tree", &PyTreeDef::FromIterableTree)
-      .def("children", &PyTreeDef::Children)
-      .def_property_readonly("num_leaves", &PyTreeDef::num_leaves)
-      .def_property_readonly("num_nodes", &PyTreeDef::num_nodes)
-      .def("__repr__", &PyTreeDef::ToString)
-      .def("__eq__",
-           [](const PyTreeDef& a, const PyTreeDef& b) { return a == b; })
-      .def("__ne__",
-           [](const PyTreeDef& a, const PyTreeDef& b) { return a != b; })
-      .def("__hash__",
-           [](const PyTreeDef& t) { return absl::Hash<PyTreeDef>()(t); });
-
-  m.def("register_node", [](py::object type, py::function to_iterable,
-                            py::function from_iterable) {
-    return CustomNodeRegistry::Register(type, to_iterable, from_iterable);
-  });
 }
 
 }  // namespace jax
