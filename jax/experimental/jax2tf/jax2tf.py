@@ -1190,6 +1190,13 @@ def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tu
 tf_impl[lax.sort_p] = _sort
 
 def _fft(x, fft_type, fft_lengths):
+  shape = x.shape
+  assert len(fft_lengths) <= len(shape)
+  if (fft_type == FftType.IRFFT and
+      fft_lengths != shape[-len(fft_lengths):-1] + ((shape[-1] - 1) * 2,) or
+      fft_type != FftType.IRFFT and
+      fft_lengths != shape[-len(fft_lengths):]):
+     raise NotImplementedError(f"Unsupported fft_lengths={fft_lengths} for fft_type={fft_type} of array with shape={shape}.")
   tf_funcs = {FftType.FFT: [tf.signal.fft, tf.signal.fft2d, tf.signal.fft3d],
               FftType.IFFT: [tf.signal.ifft, tf.signal.ifft2d, tf.signal.ifft3d],
               FftType.RFFT: [tf.signal.rfft, tf.signal.rfft2d, tf.signal.rfft3d],
