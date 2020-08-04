@@ -257,12 +257,14 @@ def _det_jvp(primals, tangents):
 @_wraps(np.linalg.eig)
 def eig(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
-  return lax_linalg.eig(a, jobvr=True)
+  w, vl, vr = lax_linalg.eig(a)
+  return w, vr
 
 
 @_wraps(np.linalg.eigvals)
 def eigvals(a):
-  return lax_linalg.eig(a)[0]
+  w, _ = eig(a)
+  return w
 
 
 @_wraps(np.linalg.eigh)
