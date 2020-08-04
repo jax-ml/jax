@@ -895,7 +895,7 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0) -> Callable[..., T]:
     msg = "vmap in_axes leaves must be non-negative integers or None, but got {}."
     raise TypeError(msg.format(in_axes))
   if any(l < 0 for l in out_axes_ if l is not batching.last):
-    msg = "vmap in_axes leaves must be non-negative integers or None, but got {}."
+    msg = "vmap out_axes leaves must be non-negative integers or None, but got {}."
     raise TypeError(msg.format(out_axes))
   del in_axes_, out_axes_
 
