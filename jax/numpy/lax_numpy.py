@@ -1285,7 +1285,7 @@ def interp(x, xp, fp, left=None, right=None, period=None):
   df = fp[i] - fp[i - 1]
   dx = xp[i] - xp[i - 1]
   delta = x - xp[i - 1]
-  f = where((dx == 0) | (x == xp[i]), fp[i], fp[i - 1] + delta * (df / dx))
+  f = where((dx == 0), fp[i], fp[i - 1] + (delta / dx) * df)
 
   if period is None:
     f = where(x < xp[0], fp[0] if left is None else left, f)
