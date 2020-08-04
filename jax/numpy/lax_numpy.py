@@ -273,6 +273,16 @@ def _promote_dtypes_inexact(*args):
   to_dtype = _to_inexact_dtype(result_type(*args))
   return [lax.convert_element_type(x, to_dtype) for x in args]
 
+def _to_signed_dtype(dtype):
+  """Promotes a dtype into a signed dtype, if it is not already one."""
+  return promote_types(dtype, 'int8') if issubdtype(dtype, unsignedinteger) else dtype
+
+def _promote_dtypes_signed(*args):
+  """Convenience function to apply Numpy argument dtype promotion.
+
+  Promotes arguments to a signed type."""
+  to_dtype = _to_signed_dtype(result_type(*args))
+  return [lax.convert_element_type(x, to_dtype) for x in args]
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
@@ -443,7 +453,8 @@ logical_xor = _logical_op(np.logical_xor, lax.bitwise_xor)
 
 @_wraps(np.absolute)
 def absolute(x):
-  return x if issubdtype(_dtype(x), unsignedinteger) else lax.abs(x)
+  dt = _dtype(x)
+  return x if dt == bool_ or issubdtype(dt, unsignedinteger) else lax.abs(x)
 abs = _wraps(np.abs)(absolute)
 
 
@@ -472,7 +483,8 @@ def copysign(x1, x2):
   if issubdtype(_dtype(x1), complexfloating) or issubdtype(_dtype(x2), complexfloating):
     raise TypeError("copysign does not support complex-valued inputs")
   x1, x2 = _promote_shapes("copysign", x1, x2)
-  return where(signbit(x2), -lax.abs(x1), lax.abs(x1))
+  x1, = _promote_dtypes_signed(x1)
+  return where(signbit(x2), -abs(x1), abs(x1))
 
 
 @_wraps(np.true_divide)
