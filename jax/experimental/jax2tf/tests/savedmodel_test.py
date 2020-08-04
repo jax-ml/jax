@@ -101,6 +101,8 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(TypeError, "An op outside of the function building code is being passed"):
       _ = tape.gradient(y, xv)
 
+  # TODO: nested compilation bug on TPU. See README.md.
+  @jtu.skip_on_devices("tpu")
   def test_xla_context_preserved(self):
     # Certain ops are converted to ensure an XLA context, e.g.,
     # tf.gather, so that the index-out-of-bounds behavior matches that of
