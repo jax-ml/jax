@@ -21,12 +21,10 @@ from jax import core
 from jax import linear_util as lu
 from . import ad
 from . import partial_eval as pe
-from .partial_eval import PartialVal, new_eqn_recipe, _partition_knowns
 from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, register_pytree_node
-from ..util import safe_map, safe_zip, unzip2, split_list, cache
-from .. import source_info_util
+from ..util import safe_map, safe_zip, unzip2, split_list
 from .. import custom_derivatives
 from ..config import config
 
@@ -217,10 +215,10 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
       if config.omnistaging_enabled:
         # TODO: Actually we do know some of the inputs, because they might be literals!
         ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
-            complete_ivjp_flat, map(PartialVal.unknown, in_avals), instantiate=True)
+            complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals), instantiate=True)
       else:
         ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
-          complete_ivjp_flat, map(PartialVal.unknown, in_avals),
+          complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals),
           instantiate=True, stage_out=False)
       assert not ivjp_jaxpr.constvars  # That might happen some time, but don't bother until then
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
