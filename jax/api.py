@@ -67,6 +67,16 @@ from .custom_derivatives import custom_jvp, custom_vjp
 from .config import flags, config, bool_env
 
 AxisName = Any
+
+# This TypeVar is used below to express the fact that function call signatures
+# are invariant under the jit, vmap, and pmap transformations.
+# Specifically, we statically assert that the return type is invariant.
+# Until PEP-612 is implemented, we cannot express the same invariance for
+# function arguments.
+# Note that the return type annotations will generally not strictly hold
+# in JIT internals, as Tracer values are passed through the function.
+# Should this raise any type errors for the tracing code in future, we can disable
+# type checking in parts of the tracing code, or remove these annotations.
 T = TypeVar("T")
 
 map = safe_map
