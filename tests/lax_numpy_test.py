@@ -1781,6 +1781,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_period={}_left={}_right={}".format(
+       jtu.format_shape_dtype_string(shape, dtype), period, left, right),
+       "shape": shape, "dtype": dtype,
+       "period": period, "left": left, "right": right}
+      for shape in nonempty_shapes
+      for period in [None, 0.59]
+      for left in [None, 0]
+      for right in [None, 1]
+      for dtype in default_dtypes
+      # following types lack precision for meaningful tests
+      if dtype not in [np.int8, np.int16, np.float16, jnp.bfloat16]
+  ))
+  def testInterp(self, shape, dtype, period, left, right):
+    rng = jtu.rand_default(self.rng(), scale=10)
+    kwds = dict(period=period, left=left, right=right)
+    np_fun = partial(np.interp, **kwds)
+    jnp_fun = partial(jnp.interp, **kwds)
+    args_maker = lambda: [rng(shape, dtype), np.sort(rng((20,), dtype)), np.linspace(0, 1, 20)]
+
+    # skip numpy comparison for integer types with period specified, because numpy
+    # uses an unstable sort and so results differ for duplicate values.
+    if not (period and np.issubdtype(dtype, np.integer)):
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol={np.float32: 2E-4})
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_x1={}_x2={}_x1_rng={}".format(
           jtu.format_shape_dtype_string(x1_shape, x1_dtype),
           jtu.format_shape_dtype_string(x2_shape, np.int32),

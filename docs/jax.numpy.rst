@@ -149,6 +149,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     in1d
     indices
     inner
+    interp
     isclose
     iscomplex
     isfinite
