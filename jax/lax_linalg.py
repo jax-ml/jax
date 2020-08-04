@@ -854,9 +854,8 @@ xla.backend_specific_translations['gpu'][qr_p] = partial(
 # Singular value decomposition
 
 def svd_impl(operand, full_matrices, compute_uv):
-  result = xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
-                               compute_uv=compute_uv)
-  return result
+  return xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
+                             compute_uv=compute_uv)
 
 def svd_translation_rule(c, operand, full_matrices, compute_uv):
   shape = c.get_shape(operand).dimensions()
