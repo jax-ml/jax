@@ -244,7 +244,10 @@ class TensorFlowTracer(core.Tracer):
     else:  # Must be a numeric value
       assert core.skip_checks or _is_tfval(val), f"Non TfVal: {val}"
       aval = xla.abstractify(val)  # type: ignore
-      self.val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore
+      source_array_dtype = aval.dtype
+      if aval.dtype == jnp.bfloat16:
+        source_array_dtype = jnp.float32
+      self.val = tf.convert_to_tensor(np.array(val, source_array_dtype), dtype=to_tf_dtype(aval.dtype))  # type: ignore
       assert core.skip_checks or aval.strip_weak_type() == self.aval.strip_weak_type(), (
               f"Expected {aval}, got {self.aval}")
 
