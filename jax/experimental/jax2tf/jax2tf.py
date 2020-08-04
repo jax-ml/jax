@@ -39,7 +39,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import pxla
 
-from jaxlib.xla_client import FftType
+from jaxlib import xla_client
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -1192,15 +1192,19 @@ tf_impl[lax.sort_p] = _sort
 def _fft(x, fft_type, fft_lengths):
   shape = x.shape
   assert len(fft_lengths) <= len(shape)
-  if (fft_type == FftType.IRFFT and
-      fft_lengths != shape[-len(fft_lengths):-1] + ((shape[-1] - 1) * 2,) or
-      fft_type != FftType.IRFFT and
-      fft_lengths != shape[-len(fft_lengths):]):
+  if ((fft_type == xla_client.FftType.IRFFT and
+       fft_lengths != shape[-len(fft_lengths):-1] + ((shape[-1] - 1) * 2,)) or
+      (fft_type != xla_client.FftType.IRFFT and
+       fft_lengths != shape[-len(fft_lengths):])):
      raise NotImplementedError(f"Unsupported fft_lengths={fft_lengths} for fft_type={fft_type} of array with shape={shape}.")
-  tf_funcs = {FftType.FFT: [tf.signal.fft, tf.signal.fft2d, tf.signal.fft3d],
-              FftType.IFFT: [tf.signal.ifft, tf.signal.ifft2d, tf.signal.ifft3d],
-              FftType.RFFT: [tf.signal.rfft, tf.signal.rfft2d, tf.signal.rfft3d],
-              FftType.IRFFT: [tf.signal.irfft, tf.signal.irfft2d, tf.signal.irfft3d]}
+  tf_funcs = {xla_client.FftType.FFT: [tf.signal.fft, tf.signal.fft2d,
+                                       tf.signal.fft3d],
+              xla_client.FftType.IFFT: [tf.signal.ifft, tf.signal.ifft2d,
+                                        tf.signal.ifft3d],
+              xla_client.FftType.RFFT: [tf.signal.rfft, tf.signal.rfft2d,
+                                        tf.signal.rfft3d],
+              xla_client.FftType.IRFFT: [tf.signal.irfft, tf.signal.irfft2d,
+                                         tf.signal.irfft3d]}
 
   return tf_funcs[fft_type][len(fft_lengths) - 1](x)
 

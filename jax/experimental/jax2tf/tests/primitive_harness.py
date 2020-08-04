@@ -27,7 +27,7 @@ from jax import lax
 from jax import lax_linalg
 from jax import numpy as jnp
 
-from jaxlib.xla_client import FftType
+from jaxlib import xla_client
 
 import numpy as np
 
@@ -430,12 +430,12 @@ lax_fft = tuple( # 1D tests
           fft_lengths=fft_lengths)
   for dtype in jtu.dtypes.all
   for shape in [(10,), (12, 13), (14, 15, 16)]
-  for fft_type, fft_lengths in [(FftType.FFT, shape[-1:]),
-                                (FftType.IFFT, shape[-1:]),
-                                (FftType.RFFT, shape[-1:]),
-                                (FftType.IRFFT, ((shape[-1] - 1) * 2,)),
-                                (FftType.IRFFT, [])]
-  if not (dtype in jtu.dtypes.complex and fft_type == FftType.RFFT) # No complex for RFFT!
+  for fft_type, fft_lengths in [(xla_client.FftType.FFT, shape[-1:]),
+                                (xla_client.FftType.IFFT, shape[-1:]),
+                                (xla_client.FftType.RFFT, shape[-1:]),
+                                (xla_client.FftType.IRFFT, ((shape[-1] - 1) * 2,)),
+                                (xla_client.FftType.IRFFT, [])]
+  if not (dtype in jtu.dtypes.complex and fft_type == xla_client.FftType.RFFT) # No complex for RFFT!
 ) + tuple( # 2D tests
   Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
@@ -446,11 +446,12 @@ lax_fft = tuple( # 1D tests
           fft_lengths=fft_lengths)
   for dtype in jtu.dtypes.all
   for shape in [(12, 13), (14, 15, 16)]
-  for fft_type, fft_lengths in [(FftType.FFT, shape[-2:]),
-                                (FftType.IFFT, shape[-2:]),
-                                (FftType.RFFT, shape[-2:]),
-                                (FftType.IRFFT, shape[-2:-1] + ((shape[-1] - 1) * 2,))]
-  if not (dtype in jtu.dtypes.complex and fft_type == FftType.RFFT)
+  for fft_type, fft_lengths in [(xla_client.FftType.FFT, shape[-2:]),
+                                (xla_client.FftType.IFFT, shape[-2:]),
+                                (xla_client.FftType.RFFT, shape[-2:]),
+                                (xla_client.FftType.IRFFT,
+                                 shape[-2:-1] + ((shape[-1] - 1) * 2,))]
+  if not (dtype in jtu.dtypes.complex and fft_type == xla_client.FftType.RFFT)
 ) + tuple( # 3D tests
   Harness(f"3d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
@@ -461,11 +462,12 @@ lax_fft = tuple( # 1D tests
           fft_lengths=fft_lengths)
   for dtype in jtu.dtypes.all
   for shape in [(14, 15, 16)]
-  for fft_type, fft_lengths in [(FftType.FFT, shape[-3:]),
-                                (FftType.IFFT, shape[-3:]),
-                                (FftType.RFFT, shape[-3:]),
-                                (FftType.IRFFT, shape[-3:-1] + ((shape[-1] - 1) * 2,))]
-  if not (dtype in jtu.dtypes.complex and fft_type == FftType.RFFT)
+  for fft_type, fft_lengths in [(xla_client.FftType.FFT, shape[-3:]),
+                                (xla_client.FftType.IFFT, shape[-3:]),
+                                (xla_client.FftType.RFFT, shape[-3:]),
+                                (xla_client.FftType.IRFFT,
+                                 shape[-3:-1] + ((shape[-1] - 1) * 2,))]
+  if not (dtype in jtu.dtypes.complex and fft_type == xla_client.FftType.RFFT)
 ) + tuple( # 4D tests
   Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
@@ -476,11 +478,12 @@ lax_fft = tuple( # 1D tests
           fft_lengths=fft_lengths)
   for dtype in jtu.dtypes.all
   for shape in [(14, 15, 16, 17)]
-  for fft_type, fft_lengths in [(FftType.FFT, shape),
-                                (FftType.IFFT, shape),
-                                (FftType.RFFT, shape),
-                                (FftType.IRFFT, shape[:-1] + ((shape[-1] - 1) * 2,))]
-  if not (dtype in jtu.dtypes.complex and fft_type == FftType.RFFT)
+  for fft_type, fft_lengths in [(xla_client.FftType.FFT, shape),
+                                (xla_client.FftType.IFFT, shape),
+                                (xla_client.FftType.RFFT, shape),
+                                (xla_client.FftType.IRFFT,
+                                 shape[:-1] + ((shape[-1] - 1) * 2,))]
+  if not (dtype in jtu.dtypes.complex and fft_type == xla_client.FftType.RFFT)
 )
 
 lax_slice = tuple(
