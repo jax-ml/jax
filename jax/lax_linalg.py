@@ -914,6 +914,9 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   dU = jnp.matmul(U, F * (dSS + _T(dSS)))
   dV = jnp.matmul(V, F * (SdS + _T(SdS)))
 
+  if not compute_uv:
+    return (s,), (ds,)
+
   m, n = A.shape[-2:]
   if m > n:
     dU = dU + jnp.matmul(jnp.eye(m, dtype=A.dtype) - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim
