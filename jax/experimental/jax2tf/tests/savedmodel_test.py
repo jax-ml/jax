@@ -17,6 +17,7 @@ import os
 from absl.testing import absltest
 
 import jax
+from jax import lax
 import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -100,6 +101,27 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(TypeError, "An op outside of the function building code is being passed"):
       _ = tape.gradient(y, xv)
 
+  # TODO: nested compilation bug on TPU. See README.md.
+  @jtu.skip_on_devices("tpu")
+  def test_xla_context_preserved(self):
+    # Certain ops are converted to ensure an XLA context, e.g.,
+    # tf.gather, so that the index-out-of-bounds behavior matches that of
+    # JAX. We check that this information is preserved through a savedmodel
+    nr_elements = 10
+    def f_jax(arr):
+      return lax.dynamic_slice(arr, [nr_elements + 1], [1])  # out of bounds, should return the last element
+    arr = np.arange(nr_elements, dtype=np.float32)
+    self.assertEqual(nr_elements - 1, f_jax(arr))
+
+    f_tf = jax2tf.convert(f_jax)  # Even in eager evaluation we get XLA behavior
+    self.assertEqual(nr_elements - 1, f_tf(arr))
+
+    model = tf.Module()
+    model.f = tf.function(jax2tf.convert(f_jax),
+                          autograph=False,
+                          input_signature=[tf.TensorSpec([nr_elements], tf.float32)])
+    restored_model = self.save_and_load_model(model)
+    self.assertEqual(nr_elements - 1, restored_model.f(arr))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

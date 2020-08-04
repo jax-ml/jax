@@ -449,17 +449,29 @@ tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
 def _xla_compile(func: Callable, *args: TfVal) -> TfVal:
   """Ensure that the function is compiled with XLA.
 
-  This is needed to work around some bugs, e.g., without XLA
-  a certain TF op has different behavior than expected by JAX.
+  We do this to ensure that XLA is used for certain operations, so that we
+  can match the JAX semantics. See comments at the callsites for this function.
   """
-  # Do not invoke XLA if we are already in an XLA context
+  # In some cases, e.g., when we are already in an XLA context due to an outer
+  # tf.function(compile=True), the compilation fails. In those cases, however,
+  # the compilation should not be necessary.
   in_xla_context = control_flow_util.GraphOrParentsInXlaContext(
     ops.get_default_graph())
   if in_xla_context:
     return func(*args)
   else:
-    res, = tf.xla.experimental.compile(func, args)
-    return res
+    # We don't seem to be in an XLA context, but on TPUs, even the eager
+    # execution is using XLA. Be prepared to catch an exception and
+    # fallback to no-compilation.
+    try:
+      res, = tf.xla.experimental.compile(func, args)
+      return res
+    except tf.errors.InvalidArgumentError as e:
+      if "Function invoked by the following node is not compilable" in e.message:
+        return func(*args)
+      else:
+        raise e
+
 
 def _div(lhs, rhs):
   if lhs.dtype.is_integer:

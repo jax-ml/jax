@@ -107,7 +107,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         if not expect_tf_exceptions:
           raise e
         else:
-          print(f"Encountered exception for mode={mode}: {e}")
+          print(f"Encountered expected exception for mode={mode}: {e}")
           continue
 
       if custom_assert is not None and mode in ("eager", "graph"):
