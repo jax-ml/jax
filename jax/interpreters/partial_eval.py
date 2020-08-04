@@ -605,6 +605,12 @@ def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
     `jaxpr_known` = lambda ki, ui: let ka = ki + 2
                                     in (ki + 3, *, ka)
     'jaxpr_unknown` = lambda ki, ui, ka: (*, ui + ka)
+
+  Note that if instantiate is True for a given output, then jaxpr_known always returns a
+  unit in its place. So when instantiate is True, the expectation is the one doesn't
+  run `jaxpr_known` for any of its outputs, but only to generate residuals that will allow
+  to obtain the full outputs once `jaxpr_unknown` is ran. Outputs known ahead of time will
+  simply get passed as residual constants and returned immediately.
   """
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
@@ -618,8 +624,9 @@ def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
     cell.append((out_pvs_2, jaxpr_2, len(consts_2)))
     return out_consts_2 + consts_2
 
-  # For jaxpr_known we pass core.unit for the unknown inputs, and known PartialVal for the
-  # known inputs.
+  # The abstract_unit here doesn't really matter, because trace_to_jaxpr completely ignores
+  # the avals, and it will never actually reach any primitives, because the `fun` above will
+  # execute the jaxpr with the right avals (it reconstructs `pvals` inside).
   pvals = [PartialVal.unknown(abstract_unit) if uk else PartialVal.unknown(aval)
            for aval, uk in zip(jaxpr.in_avals, unknowns)]
   jaxpr_1, out_pvals, consts_1 = trace_to_jaxpr(lu.wrap_init(fun), pvals, instantiate=True)
