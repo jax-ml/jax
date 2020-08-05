@@ -292,6 +292,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     vander
     var
     vdot
+    vectorize
     vsplit
     vstack
     where
