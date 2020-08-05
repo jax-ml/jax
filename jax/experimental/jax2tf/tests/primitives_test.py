@@ -418,7 +418,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     else:
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-  @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
+  @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice,
+                                   one_containing="shape=(3,)_start_indices=(1,)_limit_indices=(2,)_strides=None")
   def test_dynamic_slice(self, harness):
     # JAX.dynamic_slice rejects slice sizes too big; check this, and skip jax2tf
     args = harness.dyn_args_maker(self.rng())
@@ -459,7 +460,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_squeeze(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-  @primitive_harness.parameterized(primitive_harness.lax_gather)
+  @primitive_harness.parameterized(primitive_harness.lax_gather,
+                                   one_containing="shape=(10, 5)_idxs_shape=(2, 2)_dnums=GatherDimensionNumbers(offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0, 1))_slice_sizes=(1, 3)")
   def test_gather(self, harness: primitive_harness.Harness):
     expect_tf_exceptions = False
     if jtu.device_under_test() == "tpu":

@@ -48,8 +48,6 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
-from tensorflow.python.ops import control_flow_util  # type: ignore[import]
-from tensorflow.python.framework import ops  # type: ignore[import]
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
@@ -448,32 +446,6 @@ tf_impl[lax.add_p] = wrap_binary_op(tf.math.add)
 tf_impl[lax.sub_p] = wrap_binary_op(tf.math.subtract)
 tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
 
-def _xla_compile(func: Callable, *args: TfVal) -> TfVal:
-  """Ensure that the function is compiled with XLA.
-
-  We do this to ensure that XLA is used for certain operations, so that we
-  can match the JAX semantics. See comments at the callsites for this function.
-  """
-  # In some cases, e.g., when we are already in an XLA context due to an outer
-  # tf.function(compile=True), the compilation fails. In those cases, however,
-  # the compilation should not be necessary.
-  in_xla_context = control_flow_util.GraphOrParentsInXlaContext(
-    ops.get_default_graph())
-  if in_xla_context:
-    return func(*args)
-  else:
-    # We don't seem to be in an XLA context, but on TPUs, even the eager
-    # execution is using XLA. Be prepared to catch an exception and
-    # fallback to no-compilation.
-    try:
-      res, = tf.xla.experimental.compile(func, args)
-      return res
-    except tf.errors.InvalidArgumentError as e:
-      if "Function invoked by the following node is not compilable" in e.message:
-        return func(*args)
-      else:
-        raise e
-
 
 def _div(lhs, rhs):
   if lhs.dtype.is_integer:
@@ -752,28 +724,6 @@ tf_impl[lax.rev_p] = _rev
 
 tf_impl[lax.select_p] = tf.where
 
-
-def _slice(operand, start_indices, limit_indices, strides):
-  if strides is None:
-    strides = [1] * len(start_indices)
-  slices = tuple(map(slice, start_indices, limit_indices, strides))
-  return operand[slices]
-tf_impl[lax.slice_p] = _slice
-
-
-def _dynamic_slice(operand, *start_indices, slice_sizes=None):
-  # See out-of-bounds index clamping comment for tf.gather
-  return _xla_compile(lambda o, s: tf.slice(o, s, slice_sizes),
-                      operand, tf.stack(start_indices))
-tf_impl[lax.dynamic_slice_p] = _dynamic_slice
-
-
-def _dynamic_update_slice(operand, update, *start_indices):
-  return tfxla.dynamic_update_slice(*promote_types(operand, update),
-                                    tf.stack(start_indices))
-tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
-
-
 def _transpose(operand, permutation):
   return tf.transpose(operand, permutation)
 tf_impl[lax.transpose_p] = _transpose
@@ -956,10 +906,12 @@ def _gather_shape(operand, start_indices, dimension_numbers, slice_sizes):
 
 
 def _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes):
+  # TODO: this function is not used (see comment for dynamic_slice).
+
   # Handle only the case when batch_dims=0.
 
   # Find axis to match the tf.gather semantics
-  # Let I = len(indices_shape)
+  # Let I = len(start_indices_shape)
   # let O = len(op_shape)
   # slice_sizes == op_shape[:axis] + (1,) + op_shape[axis+1:]
   # collapsed_slice_dims == (axis,)
@@ -993,27 +945,53 @@ def _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes):
   # We do not use tf.gather directly because in the non-compiled version it
   # rejects indices that are out of bounds, while JAX and XLA clamps them.
   # We fix this by ensuring that we always compile tf.gather, to use XLA.
-  return _xla_compile(lambda o, s: tf.gather(o, s, axis=axis, batch_dims=0),
-                      operand, start_indices_reshaped)
+  # TODO: see comment for dynamic_slice
+  return tf.function(lambda o, s: tf.gather(o, s, axis=axis, batch_dims=0),
+                     experimental_compile=True)(operand, start_indices_reshaped)
 
 @functools.partial(bool_to_int8, argnums=0)
 def _gather(operand, start_indices, dimension_numbers, slice_sizes):
   """Tensorflow implementation of gather."""
-  res = _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes)
-  if res is not None:
-    return res
+  # TODO: see comment for dynamic_slice
+  #res = _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes)
+  #if res is not None:
+  #  return res
   out_shape = _gather_shape(
       operand, start_indices, dimension_numbers, slice_sizes)
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
   # We compile because without it we run into a TF bug:
   # tfxla.gather fails on constant inputs with "must be a compile-time constant"
   # b/153556869
-  out = _xla_compile(lambda o, s: tfxla.gather(o, s, proto, slice_sizes, False),
-                     operand, start_indices)
+  out = tf.function(lambda o, s: tfxla.gather(o, s, proto, slice_sizes, False),
+                    experimental_compile=True)(operand, start_indices)
   out.set_shape(out_shape)
   return out
 tf_impl[lax.gather_p] = _gather
 
+def _slice(operand, start_indices, limit_indices, strides):
+  if strides is None:
+    strides = [1] * len(start_indices)
+  slices = tuple(map(slice, start_indices, limit_indices, strides))
+  return operand[slices]
+tf_impl[lax.slice_p] = _slice
+
+
+def _dynamic_slice(operand, *start_indices, slice_sizes):
+  # Here we could use tf.slice. Similarly, for lax.gather we can sometimes use
+  # tf.gather. But those have different semantics for index-out-of-bounds than
+  # JAX (and XLA). We have tried to force compilation, by wrapping into
+  # tf.xla.experimental.compile, or tf.function(experimental_compile=True), but
+  # those solutions are brittle because they do not work when nested into an
+  # outer compilation (see b/162814494 and b/163006262). They also do not
+  # survive well being put in a SavedModel. Hence, we now use TFXLA slicing
+  # and gather ops.
+  res = tfxla.dynamic_slice(operand, tf.stack(start_indices),
+                            size_indices=slice_sizes)
+  # TODO: implement shape inference for XlaShape
+  res.set_shape(tuple(slice_sizes))
+  return res
+
+tf_impl[lax.dynamic_slice_p] = _dynamic_slice
 
 def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   proto = xla_data_pb2.ScatterDimensionNumbers()
@@ -1046,10 +1024,9 @@ def _scatter(update_computation, operand, scatter_indices, updates,
   xla_update_computation = (
       tf.function(update_computation).get_concrete_function(o_spec, o_spec))
   # We compile due to TF bug, see comment on gather
-  out = _xla_compile(
-    lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
-                                  indices_are_sorted=indices_are_sorted),
-    operand, scatter_indices, updates)
+  out = tf.function(lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
+                                                  indices_are_sorted=indices_are_sorted),
+                    experimental_compile=True)(operand, scatter_indices, updates)
   out.set_shape(out_shape)
   return out
 
@@ -1058,6 +1035,11 @@ tf_impl[lax.scatter_min_p] = functools.partial(_scatter, tf.math.minimum)
 tf_impl[lax.scatter_max_p] = functools.partial(_scatter, tf.math.maximum)
 tf_impl[lax.scatter_mul_p] = functools.partial(_scatter, tf.math.multiply)
 tf_impl[lax.scatter_add_p] = functools.partial(_scatter, tf.math.add)
+
+def _dynamic_update_slice(operand, update, *start_indices):
+  return tfxla.dynamic_update_slice(*promote_types(operand, update),
+                                    tf.stack(start_indices))
+tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 
 def _cond(index: TfVal, *operands: TfValOrUnit,

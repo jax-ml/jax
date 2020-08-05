@@ -92,36 +92,6 @@ with both [jaxlib](../../../../../#pip-installation) and
 
 ## Known limitations
 
-#### Errors due to nested invocations of XLA
-
-In some rare cases, running the converted function will result in compilation
-errors of the form
-`InvalidArgumentError: Function invoked by the following node is not compilable`.
-This can be fixed by ensuring that the conversion happens in a compilation context, e.g.:
-
-```
-tf.function(jax2tf.convert(func), experimental_compile=True)(*args)
-```
-
-Explanation: some of the TF operations that are used in the conversion have the
-correct (i.e., matching JAX) semantics only if they are compiled with XLA. An example
-is `tf.gather` that for out-of-bounds index has different semantics when XLA
-is used vs. when XLA is not used. Only the XLA semantics matches the JAX semantics. 
-To work around this problem, the conversion will wrap the use of these TF ops with a
-`tf.xla.experimental.compile(tf.gather)`. However, there seems to be a problem where the 
-`tf.xla.experimental.compile` cannot be used if we are already in a compilation
-context (results in the error mentioned above). (See b/162814494). 
-The converter watches for an
-enclosing compilation context and will not use the compiler if we are already
-in a compilation context. That is why the solution mentioned above works.
-
-One instance when you can still get this error is on TPU, when you use the
-converted function in graph mode but without invoking the compiler:
-`tf.function(jax2tf.convert(fun), experimental_compile=False)`. Since there
-is no compilation context, the converter will apply the compiler internally, 
-but since we are on TPU, when executing the graph the compiler will be called 
-again, resulting in the error.
-
 #### Converted functions cannot be differentiated when loaded from SavedModel
 
 TODO
