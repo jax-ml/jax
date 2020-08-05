@@ -77,7 +77,8 @@ def svd(x, full_matrices=True, compute_uv=True):
     s, u, v = result
     return u, s, v
   else:
-    return result[0]
+    s, = result
+    return s
 
 def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
                      conjugate_a=False, unit_diagonal=False):
