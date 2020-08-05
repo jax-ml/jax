@@ -418,12 +418,19 @@ lax_linalg_qr = tuple(
   for full_matrices in [False, True]
 )
 
-
+def _fft_rng_factory(dtype):
+  _all_integers = jtu.dtypes.all_integer + jtu.dtypes.all_unsigned + jtu.dtypes.boolean
+  # For integer types, use small values to keep the errors small
+  if dtype in _all_integers:
+    return jtu.rand_small
+  else:
+    return jtu.rand_default
 
 lax_fft = tuple( # 1D tests
   Harness(f"1d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
           [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          rng_factory=_fft_rng_factory(dtype),
           shape=shape,
           dtype=dtype,
           fft_type=fft_type,
@@ -440,6 +447,7 @@ lax_fft = tuple( # 1D tests
   Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
           [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          rng_factory=_fft_rng_factory(dtype),
           shape=shape,
           dtype=dtype,
           fft_type=fft_type,
@@ -456,6 +464,7 @@ lax_fft = tuple( # 1D tests
   Harness(f"3d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
           [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          rng_factory=_fft_rng_factory(dtype),
           shape=shape,
           dtype=dtype,
           fft_type=fft_type,
@@ -472,6 +481,7 @@ lax_fft = tuple( # 1D tests
   Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
           lax.lax_fft.fft,
           [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
+          rng_factory=_fft_rng_factory(dtype),
           shape=shape,
           dtype=dtype,
           fft_type=fft_type,
