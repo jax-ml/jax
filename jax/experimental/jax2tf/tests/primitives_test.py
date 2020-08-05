@@ -27,6 +27,7 @@ from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters import xla
+
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -153,6 +154,27 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO: fix the TF GPU test
       raise unittest.SkipTest("GPU tests are running TF on CPU")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_fft)
+  def test_fft(self, harness: primitive_harness.Harness):
+    if len(harness.params["fft_lengths"]) > 3:
+      with self.assertRaisesRegex(RuntimeError, "FFT only supports ranks 1-3"):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    elif harness.params["dtype"] is dtypes.bfloat16:
+      raise unittest.SkipTest("bfloat16 support not implemented")
+    elif jtu.device_under_test() == "tpu" and len(harness.params["fft_lengths"]) > 1:
+      # TODO(b/140351181): FFT is mostly unimplemented on TPU, even for JAX
+      with self.assertRaisesRegex(RuntimeError, "only 1D FFT is currently supported."):
+        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    else:
+      tol = None
+      if jtu.device_under_test() == "gpu":
+        if harness.params["dtype"] in jtu.dtypes.boolean:
+          tol = 0.01
+        else:
+          tol = 1e-3
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                             atol=tol, rtol=tol)
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
   def test_qr(self, harness: primitive_harness.Harness):
