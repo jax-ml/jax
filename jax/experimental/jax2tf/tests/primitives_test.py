@@ -172,7 +172,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         if harness.params["dtype"] in jtu.dtypes.boolean:
           tol = 0.01
         else:
-          tol = 1e-4
+          tol = 1e-3
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                              atol=tol, rtol=tol)
 
