@@ -157,7 +157,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_fft)
   def test_fft(self, harness: primitive_harness.Harness):
-    if len(harness.params["shape"]) > 3:
+    if len(harness.params["fft_lengths"]) > 3:
       with self.assertRaisesRegex(RuntimeError, "FFT only supports ranks 1-3"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     elif harness.params["dtype"] is dtypes.bfloat16:
