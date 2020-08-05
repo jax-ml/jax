@@ -394,7 +394,6 @@ add = _maybe_bool_binop(np.add, lax.add, lax.bitwise_or)
 bitwise_and = _one_to_one_binop(np.bitwise_and, lax.bitwise_and)
 bitwise_or = _one_to_one_binop(np.bitwise_or, lax.bitwise_or)
 bitwise_xor = _one_to_one_binop(np.bitwise_xor, lax.bitwise_xor)
-right_shift = _one_to_one_binop(np.right_shift, lax.shift_right_arithmetic)
 left_shift = _one_to_one_binop(np.left_shift, lax.shift_left)
 equal = _one_to_one_binop(np.equal, lax.eq)
 multiply = _maybe_bool_binop(np.multiply, lax.mul, lax.bitwise_and)
@@ -439,6 +438,14 @@ logical_and = _logical_op(np.logical_and, lax.bitwise_and)
 logical_not = _logical_op(np.logical_not, lax.bitwise_not)
 logical_or = _logical_op(np.logical_or, lax.bitwise_or)
 logical_xor = _logical_op(np.logical_xor, lax.bitwise_xor)
+
+
+@_wraps(np.right_shift)
+def right_shift(x1, x2):
+  x1, x2 = _promote_args(np.right_shift.__name__, x1, x2)
+  lax_fn = lax.shift_right_logical if \
+    np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
+  return lax_fn(x1, x2)
 
 
 @_wraps(np.absolute)
@@ -4492,6 +4499,8 @@ _operators = {
     "invert": bitwise_not,
     "lshift": _defer_to_unrecognized_arg(left_shift),
     "rshift": _defer_to_unrecognized_arg(right_shift),
+    "rlshift": _defer_to_unrecognized_arg(_swap_args(left_shift)),
+    "rrshift": _defer_to_unrecognized_arg(_swap_args(right_shift)),
     "round": _operator_round,
 }
 

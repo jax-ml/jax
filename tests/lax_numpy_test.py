@@ -69,6 +69,9 @@ all_dtypes = number_dtypes + bool_dtypes
 
 python_scalar_dtypes = [jnp.bool_, jnp.int_, jnp.float_, jnp.complex_]
 
+# uint64 is problematic because with any uint type it promotes to float:
+int_dtypes_no_uint64 = [d for d in int_dtypes + unsigned_dtypes if d != np.uint64]
+
 def _valid_dtypes_for_shape(shape, dtypes):
   # Not all (shape, dtype) pairs are valid. In particular, Python scalars only
   # have one type in each category (float, bool, etc.)
@@ -351,7 +354,8 @@ JAX_OPERATOR_OVERLOADS = [
     # op_record("__and__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     # op_record("__xor__", 2, number_dtypes, all_shapes, jtu.rand_bool, []),
     # op_record("__divmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, []),
-    # TODO(mattjj): lshift, rshift
+    op_record("__lshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), []),
+    op_record("__rshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), []),
 ]
 
 JAX_RIGHT_OPERATOR_OVERLOADS = [
@@ -370,6 +374,8 @@ JAX_RIGHT_OPERATOR_OVERLOADS = [
     # op_record("__rand__", 2, number_dtypes, all_shapes, jtu.rand_default, []),
     # op_record("__rxor__", 2, number_dtypes, all_shapes, jtu.rand_bool, []),
     # op_record("__rdivmod__", 2, number_dtypes, all_shapes, jtu.rand_nonzero, []),
+    op_record("__rlshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), []),
+    op_record("__rrshift__", 2, int_dtypes_no_uint64, all_shapes, partial(jtu.rand_int, high=8), [])
 ]
 
 class _OverrideEverything(object):
@@ -392,11 +398,8 @@ if numpy_version >= (1, 15):
   JAX_COMPOUND_OP_RECORDS += [
       op_record("isclose", 2, [t for t in all_dtypes if t != jnp.bfloat16],
                 all_shapes, jtu.rand_small_positive, []),
-      # uint64 is problematic because with any other int type it promotes to float.
-      op_record("gcd", 2, [d for d in int_dtypes + unsigned_dtypes if d != np.uint64],
-                all_shapes, jtu.rand_default, []),
-      op_record("lcm", 2, [d for d in int_dtypes + unsigned_dtypes if d != np.uint64],
-                all_shapes, jtu.rand_default, []),
+      op_record("gcd", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
+      op_record("lcm", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
   ]
   JAX_REDUCER_NO_DTYPE_RECORDS += [
       op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
@@ -593,6 +596,35 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
                             check_dtypes=jtu.PYTHON_SCALAR_SHAPE not in shapes)
     self._CompileAndCheck(jnp_op, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": jtu.format_test_name_suffix(op.__name__, shapes, dtypes),
+     "op": op, "dtypes": dtypes, "shapes": shapes}
+    for op in [jnp.left_shift, jnp.right_shift]
+    for shapes in filter(
+      _shapes_are_broadcast_compatible,
+      # TODO numpy always promotes to shift dtype for zero-dim shapes:
+      itertools.combinations_with_replacement(nonzerodim_shapes, 2))
+    for dtypes in itertools.product(
+      *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))))
+  def testShiftOpAgainstNumpy(self, op, dtypes, shapes):
+    dtype, shift_dtype = dtypes
+    signed_mix = np.issubdtype(dtype, np.signedinteger) != \
+                 np.issubdtype(shift_dtype, np.signedinteger)
+    has_32 = any(np.iinfo(d).bits == 32 for d in dtypes)
+    promoting_to_64 = has_32 and signed_mix
+    if promoting_to_64 and not FLAGS.jax_enable_x64:
+      self.skipTest("np.right_shift/left_shift promoting to int64"
+                    "differs from jnp in 32 bit mode.")
+
+    info, shift_info = map(np.iinfo, dtypes)
+    x_rng = jtu.rand_int(self.rng(), low=info.min, high=info.max + 1)
+    # NumPy requires shifts to be non-negative and below the bit width:
+    shift_rng = jtu.rand_int(self.rng(), high=max(info.bits, shift_info.bits))
+    args_maker = lambda: (x_rng(shapes[0], dtype), shift_rng(shapes[1], shift_dtype))
+    self._CompileAndCheck(op, args_maker)
+    np_op = getattr(np, op.__name__)
+    self._CheckAgainstNumpy(np_op, op, args_maker)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
