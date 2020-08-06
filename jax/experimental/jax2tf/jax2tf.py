@@ -1216,8 +1216,6 @@ def _qr(operand, full_matrices):
 tf_impl[lax_linalg.qr_p] = _qr
 
 def _svd(operand, full_matrices, compute_uv):
-  if operand.dtype in [jnp.complex64, jnp.complex128]:
-    raise NotImplementedError("TODO: tf.linalg.svd does not support complex tensors")
   result = tf.linalg.svd(operand, full_matrices, compute_uv)
   if not compute_uv:
     return result,

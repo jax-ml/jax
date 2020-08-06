@@ -450,22 +450,10 @@ def _fft_harness_gen(nb_axes):
 lax_fft = tuple(_fft_harness_gen(1) + _fft_harness_gen(2) + _fft_harness_gen(3) +
                 _fft_harness_gen(4))
 
-def _linalg_svd_test(operand, full_matrices, compute_uv):
-  result = lax_linalg.svd_p.bind(operand, full_matrices=full_matrices,
-                                 compute_uv=compute_uv)
-  if compute_uv:
-    s, u, v = result
-    U = u[..., :s.shape[-1]]
-    V = v[..., :s.shape[-1], :]
-    S = s[..., None, :]
-    # Reconstructing operand as documented in numpy.linalg.svd
-    return jnp.matmul(U * S, V), s.shape, u.shape, v.shape
-  else:
-    return result
-
 lax_linalg_svd = tuple(
   Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
-          lambda *args: _linalg_svd_test(*args),
+          lambda *args: lax_linalg.svd_p.bind(args[0], full_matrices=args[1],
+                                              compute_uv=args[2]),
           [RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
           shape=shape,
           dtype=dtype,

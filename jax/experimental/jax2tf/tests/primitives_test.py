@@ -18,6 +18,8 @@ import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from functools import partial
+
 import jax
 from jax import dtypes
 from jax import lax
@@ -210,20 +212,57 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_svd)
   def test_svd(self, harness: primitive_harness.Harness):
+    expect_tf_exceptions = False
+    if harness.params["dtype"] in [jnp.float16, dtypes.bfloat16]:
+      if jtu.device_under_test() == "tpu":
+        # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
+        expect_tf_exceptions = True
+      else:
+        # Does not work in JAX
+        with self.assertRaisesRegex(NotImplementedError, "Unsupported dtype"):
+          harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+        return
+
     if harness.params["dtype"] in [jnp.complex64, jnp.complex128]:
       if jtu.device_under_test() == "tpu":
-        raise unittest.SkipTest("No TPU implementation for SVD of complex numbers")
-        # TODO: the above should be replaced by an appropriate assertRaisesRegex to
-        # detect future possible breaking changes of the conversion.
-      else:
-        # TODO: tf.linalg.svd is not compatible with complex numbers.
-        raise unittest.SkipTest("Conversion is not implemented for complex numbers")
-    elif harness.params["dtype"] in [jnp.float16, dtypes.bfloat16]:
-      with self.assertRaisesRegex(NotImplementedError, "Unsupported dtype"):
+        # TODO: on JAX on TPU there is no SVD implementation for complex
+        with self.assertRaisesRegex(RuntimeError,
+                                    "Binary op compare with different element types"):
           harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    else:
-      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                             atol=1e-4, rtol=1e-4)
+        return
+      else:
+        # TODO: on CPU and GPU "No registered 'Svd' OpKernel for XLA_CPU_JIT devices"
+        expect_tf_exceptions = True
+
+    def _custom_assert(r_jax, r_tf, atol=1e-6, rtol=1e-6):
+      def _reconstruct_operand(result, is_tf: bool):
+        # Reconstructing operand as documented in numpy.linalg.svd
+        s, u, v = result
+        if is_tf:
+          s = s.numpy()
+          u = u.numpy()
+          v = v.numpy()
+        U = u[..., :s.shape[-1]]
+        V = v[..., :s.shape[-1], :]
+        S = s[..., None, :]
+        return jnp.matmul(U * S, V), s.shape, u.shape, v.shape
+
+      if harness.params["compute_uv"]:
+        r_jax_reconstructed = _reconstruct_operand(r_jax, False)
+        r_tf_reconstructed = _reconstruct_operand(r_tf, True)
+        self.assertAllClose(r_jax_reconstructed, r_tf_reconstructed,
+                            atol=atol, rtol=rtol)
+      else:
+        self.assertAllClose(r_jax, r_tf, atol=atol, rtol=rtol)
+
+    tol = 1e-4
+    custom_assert = partial(_custom_assert, atol=tol, rtol=tol)
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=tol, rtol=tol,
+                           expect_tf_exceptions=expect_tf_exceptions,
+                           custom_assert=custom_assert)
+
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
