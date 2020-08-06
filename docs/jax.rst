@@ -92,6 +92,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: vjp
 .. autofunction:: custom_jvp
 .. autofunction:: custom_vjp
+.. autofunction:: checkpoint
 
 .. autofunction:: vmap
 .. autofunction:: jax.numpy.vectorize
