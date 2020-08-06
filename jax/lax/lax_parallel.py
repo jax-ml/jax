@@ -955,8 +955,6 @@ def omnistaging_enabler() -> None:
   # tracing time.
   @psum_p.def_custom_bind
   def psum_bind(*args, axis_name, **params):
-    if len(args) == 1 and not isinstance(args[0], core.Tracer):
-      x, = args
     if all(not isinstance(x, core.Tracer) for x in args):
       if type(axis_name) is tuple:
         size = prod([core.axis_frame(name).size for name in axis_name])  # type: ignore
