@@ -29,6 +29,14 @@ input data.
 
 Not every function in NumPy is implemented; contributions are welcome!
 
+.. Generate the list below as follows:
+   >>> import jax.numpy, numpy
+   >>> fns = set(dir(numpy)) & set(dir(jax.numpy)) - set(jax.numpy._NOT_IMPLEMENTED)
+   >>> print('\n'.join('    ' + x for x in fns if callable(getattr(jax.numpy, x))))  # doctest: +SKIP
+
+   # Finally, sort the list using sort(1), which is different than Python's
+   # sorted() function.
+
 .. autosummary::
   :toctree: _autosummary
 
@@ -57,12 +65,14 @@ Not every function in NumPy is implemented; contributions are welcome!
     argwhere
     around
     array
+    array_equal
     array_repr
     array_str
     asarray
     atleast_1d
     atleast_2d
     atleast_3d
+    average
     bartlett
     bincount
     bitwise_and
@@ -71,12 +81,21 @@ Not every function in NumPy is implemented; contributions are welcome!
     bitwise_xor
     blackman
     block
+    bool_
     broadcast_arrays
     broadcast_to
     can_cast
+    cbrt
+    cdouble
     ceil
+    character
     clip
     column_stack
+    complex_
+    complex128
+    complex64
+    complexfloating
+    ComplexWarning
     compress
     concatenate
     conj
@@ -90,27 +109,32 @@ Not every function in NumPy is implemented; contributions are welcome!
     count_nonzero
     cov
     cross
-    cumsum
+    csingle
     cumprod
     cumproduct
+    cumsum
     deg2rad
     degrees
     diag
+    diagflat
     diag_indices
     diag_indices_from
-    diagflat
     diagonal
+    diff
     digitize
     divide
     divmod
     dot
+    double
     dsplit
     dstack
+    dtype
     ediff1d
     einsum
-    equal
+    einsum_path
     empty
     empty_like
+    equal
     exp
     exp2
     expand_dims
@@ -118,11 +142,18 @@ Not every function in NumPy is implemented; contributions are welcome!
     extract
     eye
     fabs
+    finfo
     fix
     flatnonzero
+    flexible
     flip
     fliplr
     flipud
+    float_
+    float16
+    float32
+    float64
+    floating
     float_power
     floor
     floor_divide
@@ -134,6 +165,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     full_like
     gcd
     geomspace
+    gradient
     greater
     greater_equal
     hamming
@@ -145,24 +177,35 @@ Not every function in NumPy is implemented; contributions are welcome!
     hstack
     hypot
     identity
+    iinfo
     imag
     in1d
     indices
+    inexact
     inner
+    int_
+    int16
+    int32
+    int64
+    int8
+    integer
     interp
+    intersect1d
     isclose
     iscomplex
+    iscomplexobj
     isfinite
     isin
-    intersect1d
     isinf
     isnan
     isneginf
     isposinf
     isreal
+    isrealobj
     isscalar
     issubdtype
     issubsctype
+    iterable
     ix_
     kaiser
     kron
@@ -173,6 +216,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     less_equal
     lexsort
     linspace
+    load
     log
     log10
     log1p
@@ -184,6 +228,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     logical_or
     logical_xor
     logspace
+    mask_indices
     matmul
     max
     maximum
@@ -197,22 +242,29 @@ Not every function in NumPy is implemented; contributions are welcome!
     moveaxis
     msort
     multiply
-    nan_to_num
     nanargmax
     nanargmin
     nancumprod
     nancumsum
     nanmax
+    nanmean
     nanmedian
     nanmin
     nanpercentile
     nanprod
     nanquantile
+    nanstd
     nansum
+    nan_to_num
+    nanvar
+    ndarray
+    ndim
     negative
     nextafter
     nonzero
     not_equal
+    number
+    object_
     ones
     ones_like
     outer
@@ -225,8 +277,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     polymul
     polysub
     polyval
-    power
     positive
+    power
     prod
     product
     promote_types
@@ -249,13 +301,20 @@ Not every function in NumPy is implemented; contributions are welcome!
     rot90
     round
     row_stack
+    save
+    savez
     searchsorted
     select
+    set_printoptions
+    shape
     sign
     signbit
+    signedinteger
     sin
     sinc
+    single
     sinh
+    size
     sometrue
     sort
     sort_complex
@@ -276,6 +335,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     tile
     trace
     transpose
+    trapz
     tri
     tril
     tril_indices
@@ -285,9 +345,14 @@ Not every function in NumPy is implemented; contributions are welcome!
     triu_indices_from
     true_divide
     trunc
+    uint16
+    uint32
+    uint64
+    uint8
     unique
     unpackbits
     unravel_index
+    unsignedinteger
     unwrap
     vander
     var
@@ -308,23 +373,23 @@ jax.numpy.fft
   :toctree: _autosummary
 
   fft
-  ifft
   fft2
-  ifft2
-  fftn
-  ifftn
-  rfft
-  irfft
-  rfft2
-  irfft2
-  rfftn
-  irfftn
-  hfft
-  ihfft
   fftfreq
-  rfftfreq
+  fftn
   fftshift
+  hfft
+  ifft
+  ifft2
+  ifftn
   ifftshift
+  ihfft
+  irfft
+  irfft2
+  irfftn
+  rfft
+  rfft2
+  rfftfreq
+  rfftn
 
 jax.numpy.linalg
 ----------------
