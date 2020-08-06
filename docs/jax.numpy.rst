@@ -90,15 +90,15 @@ Not every function in NumPy is implemented; contributions are welcome!
     count_nonzero
     cov
     cross
-    cumsum
     cumprod
     cumproduct
+    cumsum
     deg2rad
     degrees
     diag
+    diagflat
     diag_indices
     diag_indices_from
-    diagflat
     diagonal
     digitize
     divide
@@ -108,9 +108,9 @@ Not every function in NumPy is implemented; contributions are welcome!
     dstack
     ediff1d
     einsum
-    equal
     empty
     empty_like
+    equal
     exp
     exp2
     expand_dims
@@ -150,11 +150,11 @@ Not every function in NumPy is implemented; contributions are welcome!
     indices
     inner
     interp
+    intersect1d
     isclose
     iscomplex
     isfinite
     isin
-    intersect1d
     isinf
     isnan
     isneginf
@@ -197,7 +197,6 @@ Not every function in NumPy is implemented; contributions are welcome!
     moveaxis
     msort
     multiply
-    nan_to_num
     nanargmax
     nanargmin
     nancumprod
@@ -209,6 +208,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     nanprod
     nanquantile
     nansum
+    nan_to_num
     negative
     nextafter
     nonzero
@@ -225,8 +225,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     polymul
     polysub
     polyval
-    power
     positive
+    power
     prod
     product
     promote_types
@@ -308,23 +308,23 @@ jax.numpy.fft
   :toctree: _autosummary
 
   fft
-  ifft
   fft2
-  ifft2
-  fftn
-  ifftn
-  rfft
-  irfft
-  rfft2
-  irfft2
-  rfftn
-  irfftn
-  hfft
-  ihfft
   fftfreq
-  rfftfreq
+  fftn
   fftshift
+  hfft
+  ifft
+  ifft2
+  ifftn
   ifftshift
+  ihfft
+  irfft
+  irfft2
+  irfftn
+  rfft
+  rfft2
+  rfftfreq
+  rfftn
 
 jax.numpy.linalg
 ----------------
