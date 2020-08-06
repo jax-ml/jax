@@ -94,6 +94,9 @@ def tearDownModule():
 ignore_soft_pmap_warning = partial(
   jtu.ignore_warning, message="soft_pmap is an experimental.*")
 
+ignore_jit_of_pmap_warning = partial(
+  jtu.ignore_warning, message=".*jit-of-pmap.*")
+
 
 class PmapTest(jtu.JaxTestCase):
   def _getMeshShape(self, device_mesh_shape):
@@ -1005,7 +1008,7 @@ class PmapTest(jtu.JaxTestCase):
     # Manually construct a ShardedDeviceArray with the wrong sharding for the
     # subsequent pmap
     shard_shape = (3,2)
-    shard = jnp.arange(jnp.prod(shard_shape)).reshape(shard_shape)
+    shard = jnp.arange(jnp.prod(jnp.array(shard_shape))).reshape(shard_shape)
     bufs = [xla.device_put(shard, d) for d in xla_bridge.devices()[:4]]
     aval = ShapedArray((6,4), shard.dtype)
     sharding_spec = pxla.ShardingSpec(
@@ -1134,6 +1137,7 @@ class PmapTest(jtu.JaxTestCase):
     x = pmap(lambda x: x)(x)
     x.block_until_ready()  # doesn't crash
 
+  @ignore_jit_of_pmap_warning()
   def testJitPmapComposition(self):
     f = lambda x: x - lax.psum(x, 'i')
 
@@ -1166,6 +1170,7 @@ class PmapTest(jtu.JaxTestCase):
 
     f(np.arange(1.).reshape((1, 1)))  # doesn't crash
 
+  @ignore_jit_of_pmap_warning()
   def testIssue1065(self):
     # from https://github.com/google/jax/issues/1065
     device_count = xla_bridge.device_count()
@@ -1380,6 +1385,7 @@ class PmapTest(jtu.JaxTestCase):
     f = jax.pmap(outer, axis_name='i')
     jtu.check_grads(f, (params,), 2, ["fwd", "rev"], 1e-3, 1e-3)
 
+  @ignore_jit_of_pmap_warning()
   def test_issue_1062(self):
     # code from https://github.com/google/jax/issues/1062 @shoyer
     # this tests, among other things, whether ShardedDeviceTuple constants work
@@ -1530,6 +1536,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     expected = np.ones((ndevices, 1), dtype=jnp.float_) * ndevices * 2
     self.assertAllClose(ans, expected)
 
+  @ignore_jit_of_pmap_warning()
   def testPmapInJit(self):
     @jit
     def foo(x):
@@ -1578,7 +1585,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     if jax.device_count() < shape[0]:
       raise SkipTest(f"requires {shape[0]} devices")
 
-    x = jnp.arange(jnp.prod(shape)).reshape(shape)
+    x = jnp.arange(jnp.prod(jnp.array(shape))).reshape(shape)
     sharded_x = pmap(lambda x: x)(x)
 
     num_threads = 10

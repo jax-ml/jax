@@ -116,6 +116,14 @@ the tests of ``jax.numpy.pad`` using::
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
+Note that to run the full pmap tests on a (multi-core) CPU only machine, you
+can run::
+
+ pytest tests/pmap_tests.py
+
+I.e. don't use the `-n auto` option, since that effectively runs each test on a
+single-core worker.
+
 Type checking
 =============
 
