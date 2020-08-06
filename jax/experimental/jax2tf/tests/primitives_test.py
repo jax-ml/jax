@@ -236,7 +236,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     def _custom_assert(r_jax, r_tf, atol=1e-6, rtol=1e-6):
       def _reconstruct_operand(result, is_tf: bool):
-        # Reconstructing operand as documented in numpy.linalg.svd
+        # Reconstructing operand as documented in numpy.linalg.svd (see
+        # https://numpy.org/doc/stable/reference/generated/numpy.linalg.svd.html)
         s, u, v = result
         if is_tf:
           s = s.numpy()
@@ -261,7 +262,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol,
                            expect_tf_exceptions=expect_tf_exceptions,
-                           custom_assert=custom_assert)
+                           custom_assert=custom_assert,
+                           always_custom=True)
 
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)

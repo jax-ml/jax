@@ -61,6 +61,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
   def ConvertAndCompare(self, func_jax: Callable, *args,
                         custom_assert: Optional[Callable] = None,
+                        always_custom: bool = False,
                         expect_tf_exceptions: bool = False,
                         atol=None,
                         rtol=None) -> Tuple[Any, Any]:
@@ -76,9 +77,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       custom_assert: a function that will be called
         `custom_assert(result_jax, result_tf)` to assert equality of the
         results. Use this function when JAX and TF produce different results.
-        This function is only used for "eager" and "graph" modes, not for the
-        "compiled" mode, because in that case we expect always the results
-        to be equal.
+        This function is only used for "eager" and "graph" modes by default, not for
+        the "compiled" mode, because in that case we expect the results to be equal.
+      always_custom: if True, custom_assert is also called in "compiled" mode. This is
+        useful in cases where JAX and TF produce different but equally valid results.
       expect_tf_exceptions: if True, there may be exceptions in some evaluation
         modes; when there is no exception the result should be the same
         as in JAX.
@@ -113,8 +115,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       if custom_assert is not None and mode in ("eager", "graph"):
         custom_assert(result_jax, result_tf)
       else:
-        # In compiled mode we always expect the same result as JAX
-        self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
+        if always_custom and custom_assert is not None:
+          custom_assert(result_jax, result_tf)
+        else:
+          # In compiled mode we expect the same result as JAX by default
+          self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
 
     return (result_jax, result_tf)
 
