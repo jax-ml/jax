@@ -842,10 +842,15 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   # Convert to 2D in case it's 1D and we have > 1 partitions.
   device_assignment = np.array(device_assignment).reshape(
       (num_global_replicas, num_partitions))
+  # TODO(b/162356737): Enabling SPMD partitioning causes issues with some
+  # non-partitioned workloads, so disable unless needed.
+  use_spmd_partitioning = num_partitions > 1
   compile_options = xb.get_compile_options(
       num_replicas=num_global_replicas,
       num_partitions=num_partitions,
-      device_assignment=device_assignment)
+      device_assignment=device_assignment,
+      use_spmd_partitioning=use_spmd_partitioning,
+  )
   compile_options.parameter_is_tupled_arguments = tuple_args
   compiled = backend.compile(built, compile_options=compile_options)
 
