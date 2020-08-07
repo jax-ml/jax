@@ -867,21 +867,10 @@ def _select_and_gather_add(tangents: TfVal,
   init = -np.inf if select_prim is lax.ge_p else np.inf
   jax_f = lax._reduce_window_max if select_prim is lax.ge_p else lax._reduce_window_min
 
-  a = tf.constant(0, dtype=double_word_dtype, shape=operand.shape)
-
-  out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
-                                   window_strides, padding, base_dilation,
-                                   window_dilation)
-
-  out = tfxla.reduce_window(pack(operand, tangents), pack(const(dtype, init),
-                            const(dtype, 0)),
-                            tf.function(reducer).get_concrete_function(a, a),
-                            window_dimensions, window_strides=window_strides,
-                            base_dilations=base_dilation,
-                            window_dilations=window_dilation,
-                            padding=padding)
-
-  out.set_shape(out_shape)
+  out = _reduce_window(jax_f, tf.function(reducer),
+                       pack(const(dtype, init), const(dtype, 0)),
+                       pack(operand, tangents), window_dimensions, window_strides,
+                       padding, base_dilation, window_dilation)
 
   return snd(out)
 
@@ -921,9 +910,14 @@ def _reduce_window(jax_f, reducer, init_val, operand, window_dimensions,
   out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
                                    window_strides, padding, base_dilation,
                                    window_dilation)
-  a = tf.constant(0, operand.dtype)
-  reducer_fn = reducer.get_concrete_function(a, a)
-  out = tfxla.reduce_window(operand, tf.constant(init_val, operand.dtype),
+
+  o_spec = tf.TensorSpec(operand.shape, dtype=operand.dtype)
+  reducer_fn = reducer.get_concrete_function(o_spec, o_spec)
+
+  if not isinstance(init_val, tf.Tensor):
+    init_val = tf.constant(init_val, operand.dtype)
+
+  out = tfxla.reduce_window(operand, init_val,
                             reducer_fn, window_dimensions,
                             window_strides, base_dilations=base_dilation,
                             window_dilations=window_dilation, padding=padding)
