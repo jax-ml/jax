@@ -854,11 +854,11 @@ def _select_and_gather_add(tangents: TfVal,
   else:
     raise NotImplementedError("TODO: precision reduction case is not implemented")
 
+  assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
+
   def reducer(x, y):
     which = tf_impl[select_prim]
     return tf_impl[lax.select_p](which(fst(x), fst(y)), x=x, y=y)
-
-  assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
 
   init = -np.inf if select_prim is lax.ge_p else np.inf
   jax_f = lax._reduce_window_max if select_prim is lax.ge_p else lax._reduce_window_min
