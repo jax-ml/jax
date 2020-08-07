@@ -268,6 +268,22 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            custom_assert=custom_assert,
                            always_custom_assert=True)
 
+  @primitive_harness.parameterized(primitive_harness.lax_select_and_gather_add)
+  def test_select_and_gather_add(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+
+    if dtype is dtypes.bfloat16:
+      raise unittest.SkipTest("bfloat16 not implemented")
+
+    max_bits = 64
+    if jtu.device_under_test() == "tpu":
+      max_bits = 32
+
+    if dtypes.finfo(dtype).bits * 2 > max_bits:
+      with self.assertRaisesRegex(BaseException, "XLA encountered an HLO for which this rewriting is not implemented"):
+        self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+    else:
+      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
