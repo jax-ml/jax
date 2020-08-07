@@ -32,7 +32,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/test-requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
     - name: Install dependencies
@@ -90,7 +90,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/test-requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
     - name: Install dependencies
