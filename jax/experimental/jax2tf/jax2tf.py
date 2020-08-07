@@ -817,12 +817,15 @@ def _select_and_gather_add(tangents: TfVal,
                            window_strides: Sequence[int],
                            base_dilation: Sequence[int],
                            window_dilation: Sequence[int],
-                           padding: Sequence[Tuple[int, int]],
-                           max_bits: int = 64):
+                           padding: Sequence[Tuple[int, int]]):
   # Note: this function follows the pattern in
   # jax.lax._select_and_gather_add_translation.
   dtype = to_jax_dtype(operand.dtype)
   nbits = dtypes.finfo(dtype).bits
+
+  # Specializing the function for 64 bits. Only up to 32 bits are supported on TPU,
+  # we thus intend to let the code throw a different exception on this platform.
+  max_bits = 64
 
   assert nbits <= max_bits
   double_word_reduction = nbits * 2 <= max_bits
