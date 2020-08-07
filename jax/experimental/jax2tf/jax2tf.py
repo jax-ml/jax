@@ -856,7 +856,7 @@ def _select_and_gather_add(tangents: TfVal,
       )
 
   else:
-    raise NotImplementedError("TODO: precision reduction case is not implemented")
+    raise NotImplementedError(f"TODO: need to pack {nbits * 2} bits but this platform can only go up to {max_bits} bits.")
 
   assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
 
