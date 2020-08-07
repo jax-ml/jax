@@ -4377,6 +4377,11 @@ def _astype(arr, dtype):
   lax._check_user_dtype_supported(dtype, "astype")
   return lax.convert_element_type(arr, dtype)
 
+
+def _nbytes(arr):
+  return size(arr) * _dtype(arr).itemsize
+
+
 def _view(arr, dtype=None, type=None):
   if type is not None:
     raise NotImplementedError("`type` argument of array.view()")
@@ -4533,6 +4538,7 @@ setattr(ShapedArray, "real", core.aval_property(real))
 setattr(ShapedArray, "imag", core.aval_property(imag))
 setattr(ShapedArray, "astype", core.aval_method(_astype))
 setattr(ShapedArray, "view", core.aval_method(_view))
+setattr(ShapedArray, "nbytes", core.aval_property(_nbytes))
 
 
 # Forward operators, methods, and properties on DeviceArray to lax_numpy
@@ -4548,6 +4554,7 @@ setattr(DeviceArray, "real", property(real))
 setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", _astype)
 setattr(DeviceArray, "view", _view)
+setattr(DeviceArray, "nbytes", property(_nbytes))
 
 
 # Extra methods that are handy
