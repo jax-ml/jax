@@ -280,7 +280,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       max_bits = 32
 
     if dtypes.finfo(dtype).bits * 2 > max_bits:
-      with self.assertRaisesRegex(NotImplementedError, "precision reduction case"):
+      with self.assertRaisesRegex(BaseException, "XLA encountered an HLO for which this rewriting is not implemented"):
         self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
     else:
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
