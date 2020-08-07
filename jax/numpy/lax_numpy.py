@@ -4548,6 +4548,7 @@ setattr(DeviceArray, "real", property(real))
 setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", _astype)
 setattr(DeviceArray, "view", _view)
+setattr(DeviceArray, "nbytes", property(lambda self: self.size * self.dtype.itemsize))
 
 
 # Extra methods that are handy

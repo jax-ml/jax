@@ -2663,6 +2663,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}".format(
+          jtu.format_shape_dtype_string(shape, dtype)),
+      "shape": shape, "dtype": dtype}
+      for shape in array_shapes
+      for dtype in all_dtypes))
+  def testNbytes(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_arr = rng(shape, dtype)
+    jnp_arr = jnp.array(np_arr)
+    self.assertEqual(np_arr.nbytes, jnp_arr.nbytes)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_dtype={}".format(
           jtu.format_shape_dtype_string(shape, a_dtype), dtype),
       "shape": shape, "a_dtype": a_dtype, "dtype": dtype}
