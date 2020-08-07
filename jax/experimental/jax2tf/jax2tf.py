@@ -835,20 +835,22 @@ def _select_and_gather_add(tangents: TfVal,
     def pack(a, b):
       a = _bitcast_convert_type(a, word_dtype)
       b = _bitcast_convert_type(b, word_dtype)
-      a = tfxla.convert_element_type(a, double_word_dtype)
-      b = tfxla.convert_element_type(b, double_word_dtype)
+      a = _convert_element_type(a, double_word_dtype, word_dtype)
+      b = _convert_element_type(b, double_word_dtype, word_dtype)
       a = tf.bitwise.left_shift(a, const(double_word_dtype, nbits))
       return tf.bitwise.bitwise_or(a, b)
 
     # Unpacks the first element of a tuple.
     def fst(t):
       st = _shift_right_logical(t, const(double_word_dtype, nbits))
-      return _bitcast_convert_type(tfxla.convert_element_type(st, word_dtype), dtype)
+      return _bitcast_convert_type(
+        _convert_element_type(st, word_dtype, double_word_dtype), dtype
+      )
 
     # Unpacks the second element of a tuple.
     def snd(t):
       return _bitcast_convert_type(
-        tfxla.convert_element_type(t, word_dtype), dtype
+        _convert_element_type(t, word_dtype, double_word_dtype), dtype
       )
 
   else:
