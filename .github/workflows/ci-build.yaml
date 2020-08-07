@@ -32,7 +32,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/test-requirements.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
     - name: Install dependencies
@@ -90,7 +90,7 @@ jobs:
       uses: actions/cache@v2
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/test-requirements.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
     - name: Install dependencies
@@ -127,10 +127,21 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: ${{ matrix.python-version }}
+    - name: Get pip cache dir
+      id: pip-cache
+      run: |
+        python -m pip install --upgrade pip
+        echo "::set-output name=dir::$(pip cache dir)"
+    - name: pip cache
+      uses: actions/cache@v2
+      with:
+        path: ${{ steps.pip-cache.outputs.dir }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
     - name: Install dependencies
       run: |
         sudo apt install -y pandoc
-        python -m pip install --upgrade pip
         pip install -r docs/requirements.txt
     - name: Test documentation
       run: |
