@@ -212,6 +212,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_svd)
   def test_svd(self, harness: primitive_harness.Harness):
+    if jtu.device_under_test() == "tpu":
+      raise unittest.SkipTest("TODO: test crashes the XLA compiler for some TPU variants")
     expect_tf_exceptions = False
     if harness.params["dtype"] in [jnp.float16, dtypes.bfloat16]:
       if jtu.device_under_test() == "tpu":
@@ -231,7 +233,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
         return
       else:
-        # TODO: on CPU and GPU "No registered 'Svd' OpKernel for XLA_CPU_JIT devices"
+        # TODO: on CPU and GPU "No registered 'Svd' OpKernel for XLA_CPU_JIT devices".
+        # Works on JAX because JAX uses a custom implementation.
         expect_tf_exceptions = True
 
     def _custom_assert(r_jax, r_tf, atol=1e-6, rtol=1e-6):
@@ -263,7 +266,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            atol=tol, rtol=tol,
                            expect_tf_exceptions=expect_tf_exceptions,
                            custom_assert=custom_assert,
-                           always_custom=True)
+                           always_custom_assert=True)
 
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
