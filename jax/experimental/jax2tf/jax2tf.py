@@ -819,6 +819,8 @@ def _select_and_gather_add(tangents: TfVal,
                            window_dilation: Sequence[int],
                            padding: Sequence[Tuple[int, int]],
                            max_bits: int = 64):
+  # Note: this function follows the pattern in
+  # jax.lax._select_and_gather_add_translation.
   dtype = to_jax_dtype(operand.dtype)
   nbits = dtypes.finfo(dtype).bits
 
