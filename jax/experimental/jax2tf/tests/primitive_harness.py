@@ -450,6 +450,21 @@ def _fft_harness_gen(nb_axes):
 lax_fft = tuple(_fft_harness_gen(1) + _fft_harness_gen(2) + _fft_harness_gen(3) +
                 _fft_harness_gen(4))
 
+lax_linalg_svd = tuple(
+  Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
+          lambda *args: lax_linalg.svd_p.bind(args[0], full_matrices=args[1],
+                                              compute_uv=args[2]),
+          [RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
+          shape=shape,
+          dtype=dtype,
+          full_matrices=full_matrices,
+          compute_uv=compute_uv)
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+  for shape in [(2, 2), (2, 7), (29, 29), (2, 3, 53), (2, 3, 29, 7)]
+  for full_matrices in [False, True]
+  for compute_uv in [False, True]
+)
+
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
           lax.slice,

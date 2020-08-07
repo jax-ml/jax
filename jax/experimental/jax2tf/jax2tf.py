@@ -371,7 +371,7 @@ tf_not_yet_impl = [
 
   lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
-  lax_linalg.lu_p, lax_linalg.svd_p,
+  lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
   lax.igamma_grad_a_p,
@@ -1214,6 +1214,15 @@ def _qr(operand, full_matrices):
   return tf.linalg.qr(operand, full_matrices=full_matrices)
 
 tf_impl[lax_linalg.qr_p] = _qr
+
+def _svd(operand, full_matrices, compute_uv):
+  result = tf.linalg.svd(operand, full_matrices, compute_uv)
+  if not compute_uv:
+    return result,
+  s, u, v = result
+  return s, u, tf.linalg.adjoint(v)
+
+tf_impl[lax_linalg.svd_p] = _svd
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
                            fun_jaxpr: core.TypedJaxpr,
