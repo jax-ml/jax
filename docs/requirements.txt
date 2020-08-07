@@ -1,9 +1,14 @@
-sphinx>=2.1
+# sphinx <3 is required by myst-parser[sphinx] v0.9.1, the latest version as of 2020-08-05
+sphinx >=2.1, <3
+
 sphinx_rtd_theme
+
+# sphinx-autodoc-typehints 1.11 requires sphinx >= 3, but we can't have that right now.
+sphinx-autodoc-typehints <1.11
+
 jaxlib
 ipykernel
 nbsphinx
-sphinx-autodoc-typehints
 myst-parser[sphinx]
 # The next packages are for notebooks
 matplotlib
