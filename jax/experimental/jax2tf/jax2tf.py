@@ -818,7 +818,7 @@ def _select_and_gather_add(tangents: TfVal,
                            base_dilation: Sequence[int],
                            window_dilation: Sequence[int],
                            padding: Sequence[Tuple[int, int]],
-                           max_bits=64):
+                           max_bits: int = 64):
   dtype = to_jax_dtype(operand.dtype)
   nbits = dtypes.finfo(dtype).bits
 
