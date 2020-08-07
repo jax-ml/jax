@@ -423,9 +423,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     # JAX.dynamic_slice rejects slice sizes too big; check this, and skip jax2tf
     args = harness.dyn_args_maker(self.rng())
     expect_tf_exceptions = False
-    if jtu.device_under_test() == "tpu":
-      # TODO(necula): TPU "graph" mode throws "not compilable". See README.md
-      expect_tf_exceptions = True
     if any(li - si < 0 or li - si >= sh
            for sh, si, li in zip(harness.params["shape"],
                                  harness.params["start_indices"],
@@ -461,36 +458,21 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_gather)
   def test_gather(self, harness: primitive_harness.Harness):
-    expect_tf_exceptions = False
-    if jtu.device_under_test() == "tpu":
-      # TODO(necula): TPU "graph" mode throws "not compilable". See README.md
-      expect_tf_exceptions = True
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   def test_boolean_gather(self):
-    expect_tf_exceptions = False
-    if jtu.device_under_test() == "tpu":
-      # TODO(necula): TPU "graph" mode throws "not compilable". See README.md
-      expect_tf_exceptions = True
     values = np.array([[True, True], [False, True], [False, False]],
                       dtype=np.bool_)
     indices = np.array([0, 1], dtype=np.int32)
     for axis in [0, 1]:
       f_jax = jax.jit(lambda v, i: jnp.take(v, i, axis=axis))  # pylint: disable=cell-var-from-loop
-      self.ConvertAndCompare(f_jax, values, indices,
-                             expect_tf_exceptions=expect_tf_exceptions)
+      self.ConvertAndCompare(f_jax, values, indices)
 
   def test_gather_rank_change(self):
-    expect_tf_exceptions = False
-    if jtu.device_under_test() == "tpu":
-      # TODO(necula): TPU "graph" mode throws "not compilable". See README.md
-      expect_tf_exceptions = True
     params = jnp.array([[1.0, 1.5, 2.0], [2.0, 2.5, 3.0], [3.0, 3.5, 4.0]])
     indices = jnp.array([[1, 1, 2], [0, 1, 0]])
     f_jax = jax.jit(lambda i: params[i])
-    self.ConvertAndCompare(f_jax, indices,
-                          expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(f_jax, indices)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",
@@ -513,15 +495,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
          op=op)
     for op in INDEX))
   def test_scatter_static(self, op):
-    expect_tf_exceptions = False
-    if jtu.device_under_test() == "tpu":
-      # TODO(necula): TPU "graph" mode throws "not compilable". See README.md
-      expect_tf_exceptions = True
     values = np.ones((5, 6), dtype=np.float32)
     update = np.float32(6.)
     f_jax = jax.jit(lambda v, u: op(v, jax.ops.index[::2, 3:], u))
-    self.ConvertAndCompare(f_jax, values, update,
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(f_jax, values, update)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"_{f_jax.__name__}",

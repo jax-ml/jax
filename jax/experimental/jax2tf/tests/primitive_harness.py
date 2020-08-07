@@ -496,6 +496,7 @@ lax_slice = tuple(
     [(5,), (5,), (6,), None],
     [(5,), (10,), (11,), None],
     [(5,), (0,), (100,), None],
+    [(5,), (3,), (6,), None]
   ]
   for dtype in [np.float32]
 )
