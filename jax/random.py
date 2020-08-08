@@ -264,10 +264,10 @@ def split(key: jnp.ndarray, num: int = 2) -> jnp.ndarray:
   Returns:
     An array with shape (num, 2) and dtype uint32 representing `num` new keys.
   """
-  return _split(key, int(num))
+  return _split(key, int(num))  # type: ignore
 
 @partial(jit, static_argnums=(1,))
-def _split(key, num):
+def _split(key, num) -> jnp.ndarray:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
@@ -364,10 +364,10 @@ def uniform(key: jnp.ndarray,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
-  return _uniform(key, shape, dtype, minval, maxval)
+  return _uniform(key, shape, dtype, minval, maxval)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
-def _uniform(key, shape, dtype, minval, maxval):
+def _uniform(key, shape, dtype, minval, maxval) -> jnp.ndarray:
   _check_shape("uniform", shape)
   if not jnp.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -473,7 +473,7 @@ def shuffle(key: jnp.ndarray, x: jnp.ndarray, axis: int = 0) -> jnp.ndarray:
   msg = ("jax.random.shuffle is deprecated and will be removed in a future release. "
          "Use jax.random.permutation")
   warnings.warn(msg, FutureWarning)
-  return _shuffle(key, x, axis)
+  return _shuffle(key, x, axis)  # type: ignore
 
 
 def permutation(key, x):
@@ -504,7 +504,7 @@ def permutation(key, x):
 
 
 @partial(jit, static_argnums=(2,))
-def _shuffle(key, x, axis):
+def _shuffle(key, x, axis) -> jnp.ndarray:
   # On parallel architectures, Fisher-Yates is more expensive than doing
   # multiple sorts. This algorithm is based on one developed and analyzed by
   # tjablin@. We sort according to randomly-generated 32bit keys, but those keys
@@ -606,10 +606,10 @@ def normal(key: jnp.ndarray,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
-  return _normal(key, shape, dtype)
+  return _normal(key, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
-def _normal(key, shape, dtype):
+def _normal(key, shape, dtype) -> jnp.ndarray:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), 0., dtype=dtype)
   hi = np.array(1., dtype)
@@ -648,10 +648,10 @@ def multivariate_normal(key: jnp.ndarray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype)
+  return _multivariate_normal(key, mean, cov, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4))
-def _multivariate_normal(key, mean, cov, shape, dtype):
+def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
   if not np.ndim(mean) >= 1:
     msg = "multivariate_normal requires mean.ndim >= 1, got mean.ndim == {}"
     raise ValueError(msg.format(np.ndim(mean)))
@@ -704,10 +704,10 @@ def truncated_normal(key: jnp.ndarray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
-  return _truncated_normal(key, lower, upper, shape, dtype)
+  return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4))
-def _truncated_normal(key, lower, upper, shape, dtype):
+def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(lower), np.shape(upper))
   else:
@@ -746,10 +746,10 @@ def bernoulli(key: jnp.ndarray,
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
-  return _bernoulli(key, p, shape)
+  return _bernoulli(key, p, shape)  # type: ignore
 
 @partial(jit, static_argnums=(2,))
-def _bernoulli(key, p, shape):
+def _bernoulli(key, p, shape) -> jnp.ndarray:
   if shape is None:
     shape = np.shape(p)
   else:

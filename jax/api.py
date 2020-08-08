@@ -29,7 +29,7 @@ import functools
 import inspect
 import itertools as it
 import threading
-from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, TypeVar, Union
 from warnings import warn
 
 import numpy as np
@@ -68,6 +68,17 @@ from .config import flags, config, bool_env
 
 AxisName = Any
 
+# This TypeVar is used below to express the fact that function call signatures
+# are invariant under the jit, vmap, and pmap transformations.
+# Specifically, we statically assert that the return type is invariant.
+# Until PEP-612 is implemented, we cannot express the same invariance for
+# function arguments.
+# Note that the return type annotations will generally not strictly hold
+# in JIT internals, as Tracer values are passed through the function.
+# Should this raise any type errors for the tracing code in future, we can disable
+# type checking in parts of the tracing code, or remove these annotations.
+T = TypeVar("T")
+
 map = safe_map
 zip = safe_zip
 
@@ -89,9 +100,11 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def jit(fun: Callable, static_argnums: Union[int, Iterable[int]] = (),
-        device=None, backend: Optional[str] = None,
-        donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
+def jit(fun: Callable[..., T],
+        static_argnums: Union[int, Iterable[int]] = (),
+        device=None,
+        backend: Optional[str] = None,
+        donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -756,7 +769,7 @@ def _dtype(x):
   return dtypes.canonicalize_dtype(dtypes.result_type(x))
 
 
-def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
+def vmap(fun: Callable[..., T], in_axes=0, out_axes=0) -> Callable[..., T]:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -885,7 +898,7 @@ def vmap(fun: Callable, in_axes=0, out_axes=0) -> Callable:
     msg = "vmap in_axes leaves must be non-negative integers or None, but got {}."
     raise TypeError(msg.format(in_axes))
   if any(l < 0 for l in out_axes_ if l is not batching.last):
-    msg = "vmap in_axes leaves must be non-negative integers or None, but got {}."
+    msg = "vmap out_axes leaves must be non-negative integers or None, but got {}."
     raise TypeError(msg.format(out_axes))
   del in_axes_, out_axes_
 
@@ -945,11 +958,12 @@ def _mapped_axis_size(tree, vals, dims, name):
       sizes = tree_unflatten(tree, sizes)
       raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from None
 
-def pmap(fun: Callable, axis_name: Optional[AxisName] = None, *, in_axes=0,
+def pmap(fun: Callable[..., T],
+         axis_name: Optional[AxisName] = None, *, in_axes=0,
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None,
-         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
+         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
   """Parallel map with support for collectives.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data (SPMD)
