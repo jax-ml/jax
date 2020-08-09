@@ -671,7 +671,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
 
   chol_factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
-  return mean + jnp.tensordot(normal_samples, chol_factor, [-1, 1])
+  return mean + jnp.einsum('...ij,...j->...i', chol_factor, normal_samples)
 
 
 def truncated_normal(key: jnp.ndarray,
