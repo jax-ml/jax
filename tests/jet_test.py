@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from functools import reduce
+from functools import reduce, partial
 
 from absl.testing import absltest
 import numpy as np
@@ -256,6 +256,15 @@ class JetTest(jtu.JaxTestCase):
   def test_erfc(self):       self.unary_check(lax.erfc)
   @jtu.skip_on_devices("tpu")
   def test_erf_inv(self):    self.unary_check(lax.erf_inv, lims=[-1, 1])
+  @jtu.skip_on_devices("tpu")
+  def test_cumsum(self):     self.unary_check(jnp.cumsum)
+  @jtu.skip_on_devices("tpu")
+  def test_cumprod(self):    self.unary_check(jnp.cumprod)
+  @jtu.skip_on_devices("tpu")
+  def test_cummax(self):     self.unary_check(partial(lax.cummax, axis=0))
+  @jtu.skip_on_devices("tpu")
+  def test_cummin(self):     self.unary_check(partial(lax.cummin, axis=0))
+
 
   @jtu.skip_on_devices("tpu")
   def test_div(self):         self.binary_check(lambda x, y: x / y, lims=[0.8, 4.0])
