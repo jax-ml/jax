@@ -627,6 +627,31 @@ class LaxRandomTest(jtu.JaxTestCase):
       # eigenvectors follow a standard normal distribution.
       self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dim={}_mean_batch_size={}_cov_batch_size={}_shape={}"\
+       .format(dim, mean_batch_size, cov_batch_size, shape),
+       "dim": dim,
+       "mean_batch_size": mean_batch_size,
+       "cov_batch_size": cov_batch_size,
+       "shape": shape}
+      for dim in [1, 2, 4]
+      for mean_batch_size in [(), (3,), (2, 3)]
+      for cov_batch_size in [(), (3,), (2, 3)]
+      for shape in [(), (1,), (5,)]))
+  def testMultivariateNormalShapes(self, dim, mean_batch_size, cov_batch_size,
+                                   shape):
+    r = np.random.RandomState(0)
+    key = random.PRNGKey(0)
+    eff_batch_size = mean_batch_size \
+      if len(mean_batch_size) > len(cov_batch_size) else cov_batch_size
+    mean = r.randn(*(mean_batch_size + (dim,)))
+    cov_factor = r.randn(*(cov_batch_size + (dim, dim)))
+    cov = np.einsum('...ij,...kj->...ik', cov_factor, cov_factor)
+    cov += 1e-3 * np.eye(dim)
+    shape = shape + eff_batch_size
+    samples = random.multivariate_normal(key, mean, cov, shape=shape)
+    assert samples.shape == shape + (dim,)
+
   def testMultivariateNormalCovariance(self):
     # test code based on https://github.com/google/jax/issues/1869
     N = 100000

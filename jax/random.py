@@ -667,11 +667,11 @@ def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
   if shape is None:
     shape = lax.broadcast_shapes(mean.shape[:-1], cov.shape[:-2])
   else:
-    _check_shape("normal", shape, mean.shape[:-1], mean.shape[:-2])
+    _check_shape("normal", shape, mean.shape[:-1], cov.shape[:-2])
 
   chol_factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
-  return mean + jnp.tensordot(normal_samples, chol_factor, [-1, 1])
+  return mean + jnp.einsum('...ij,...j->...i', chol_factor, normal_samples)
 
 
 def truncated_normal(key: jnp.ndarray,
