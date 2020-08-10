@@ -45,6 +45,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+numpy_version = tuple(map(int, np.version.version.split('.')))
+
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 one_dim_array_shapes = [(1,), (6,), (12,)]
@@ -400,7 +402,6 @@ for rec in JAX_OPERATOR_OVERLOADS + JAX_RIGHT_OPERATOR_OVERLOADS:
     setattr(_OverrideNothing, rec.name, lambda self, other: NotImplemented)
 
 
-numpy_version = tuple(map(int, np.version.version.split('.')))
 if numpy_version >= (1, 15):
   JAX_COMPOUND_OP_RECORDS += [
       op_record("isclose", 2, [t for t in all_dtypes if t != jnp.bfloat16],
