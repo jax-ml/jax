@@ -641,7 +641,7 @@ class TraceStack:
     return new
 
 class Sublevel(int): pass
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size'])
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'tag'])
 
 
 class TraceState:
@@ -1170,6 +1170,10 @@ class MapPrimitive(Primitive):
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_map(self, out_tracers, params)
 
+# This is a no-op with omnistaging disabled
+@contextmanager
+def extend_axis_env(axis_name, size: int, tag: Any):
+  yield
 
 # ------------------- Jaxpr checking -------------------
 
@@ -1562,8 +1566,8 @@ def omnistaging_enabler() -> None:
   Primitive.bind = bind
 
   @contextmanager
-  def extend_axis_env(axis_name, size: int):
-    frame = AxisEnvFrame(axis_name, size)
+  def extend_axis_env(axis_name, size: int, tag: Any):
+    frame = AxisEnvFrame(axis_name, size, tag)
     thread_local_state.trace_state.axis_env.append(frame)
     try:
       yield

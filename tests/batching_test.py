@@ -14,6 +14,7 @@
 
 
 import numpy as np
+from unittest import skipIf
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -976,6 +977,30 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(scalar_f2)(xs)
     expected = jnp.array([scalar_f2(x) for x in xs])
     self.assertAllClose(ans, expected)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_collective={}".format(seq.__name__).replace(" ", ""),
+       "collective": collective,
+       "seq": seq}
+      for collective, seq in [(lax.psum, jnp.sum),
+                              (lax.pmean, jnp.mean),
+                              (lambda x, n: lax.pmax(x, n)[0], jnp.max),
+                              (lambda x, n: lax.pmin(x, n)[0], jnp.min)])
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testCollective(self, collective, seq):
+    x = jnp.arange(1000).reshape((10, 10, 10))
+    self.assertAllClose(
+      vmap(lambda x: x - collective(x, 'i'), axis_name='i')(x),
+      x - seq(x, axis=0))
+
+    self.assertAllClose(
+      vmap(vmap(lambda x: x - collective(x, ('j', 'i')), axis_name='i'), axis_name='j')(x),
+      x - seq(x, axis=(0, 1)))
+
+    self.assertAllClose(
+      vmap(vmap(lambda x: x - collective(x, ('i', 'j')), axis_name='i'), axis_name='j')(x),
+      x - seq(x, axis=(1, 0)))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
