@@ -63,6 +63,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("expit", 1, float_dtypes, jtu.rand_small_positive, True),
     # TODO: gammaln has slightly high error.
     op_record("gammaln", 1, float_dtypes, jtu.rand_positive, False),
+    op_record("i0", 1, float_dtypes, jtu.rand_default, True),
+    op_record("i0e", 1, float_dtypes, jtu.rand_default, True),
+    op_record("i1", 1, float_dtypes, jtu.rand_default, True),
+    op_record("i1e", 1, float_dtypes, jtu.rand_default, True),
     op_record("logit", 1, float_dtypes, jtu.rand_uniform, True),
     op_record("log_ndtr", 1, float_dtypes, jtu.rand_default, True),
     op_record("ndtri", 1, float_dtypes, partial(jtu.rand_uniform, low=0.05,
@@ -214,21 +218,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def testGradOfXlog1pyAtZero(self):
     partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
     self.assertAllClose(api.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_op={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), op),
-       "shape": shape, "dtype": dtype, "op": op}
-      for shape in all_shapes
-      for dtype in float_dtypes + int_dtypes
-      for op in ["i0", "i0e", "i1", "i1e"]))
-  def testBesselFunctions(self, shape, dtype, op):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-    scipy_fun = getattr(osp_special, op)
-    lax_fun = getattr(lsp_special, op)
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
-    self._CompileAndCheck(lax_fun, args_maker)
 
 
 if __name__ == "__main__":
