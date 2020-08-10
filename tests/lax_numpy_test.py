@@ -141,8 +141,6 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("trunc", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan, []),
     op_record("trunc", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, [], check_dtypes=False),
-    op_record("i0", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
-              tolerance={np.complex64: 1E-5, np.complex128: 1E-14}),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
               inexact=True),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
@@ -175,6 +173,13 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("arctanh", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
               inexact=True, tolerance={np.float64: 1e-9}),
 ]
+
+# Skip np.i0() tests on older numpy: https://github.com/numpy/numpy/issues/11205
+if numpy_version >= (1, 17, 0):
+  JAX_ONE_TO_ONE_OP_RECORDS.append(
+      op_record("i0", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
+                tolerance={np.complex64: 1E-5, np.complex128: 1E-14}),
+  )
 
 JAX_COMPOUND_OP_RECORDS = [
     # angle has inconsistent 32/64-bit return types across numpy versions.
