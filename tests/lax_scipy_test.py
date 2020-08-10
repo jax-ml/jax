@@ -63,6 +63,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record("expit", 1, float_dtypes, jtu.rand_small_positive, True),
     # TODO: gammaln has slightly high error.
     op_record("gammaln", 1, float_dtypes, jtu.rand_positive, False),
+    op_record("i0", 1, float_dtypes, jtu.rand_default, True),
+    op_record("i0e", 1, float_dtypes, jtu.rand_default, True),
+    op_record("i1", 1, float_dtypes, jtu.rand_default, True),
+    op_record("i1e", 1, float_dtypes, jtu.rand_default, True),
     op_record("logit", 1, float_dtypes, jtu.rand_uniform, True),
     op_record("log_ndtr", 1, float_dtypes, jtu.rand_default, True),
     op_record("ndtri", 1, float_dtypes, partial(jtu.rand_uniform, low=0.05,

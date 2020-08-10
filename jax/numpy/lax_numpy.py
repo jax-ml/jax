@@ -2553,6 +2553,12 @@ def meshgrid(*args, **kwargs):
   return output
 
 
+@_wraps(np.i0)
+def i0(x):
+  x = lax.abs(*_promote_args_inexact("i0", x))
+  return lax.mul(lax.exp(x), lax.bessel_i0e(x))
+
+
 @_wraps(np.ix_)
 def ix_(*args):
   n = len(args)

@@ -176,6 +176,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     hsplit
     hstack
     hypot
+    i0
     identity
     iinfo
     imag

@@ -79,7 +79,9 @@ jax.scipy.special
    gammainc
    gammaincc
    gammaln
+   i0
    i0e
+   i1
    i1e
    log_ndtr
    logit

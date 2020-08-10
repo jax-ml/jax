@@ -45,6 +45,8 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+numpy_version = tuple(map(int, np.version.version.split('.')))
+
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 one_dim_array_shapes = [(1,), (6,), (12,)]
@@ -173,6 +175,13 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("arctanh", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
               inexact=True, tolerance={np.float64: 1e-9}),
 ]
+
+# Skip np.i0() tests on older numpy: https://github.com/numpy/numpy/issues/11205
+if numpy_version >= (1, 17, 0):
+  JAX_ONE_TO_ONE_OP_RECORDS.append(
+      op_record("i0", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
+                tolerance={np.complex64: 1E-5, np.complex128: 1E-14}),
+  )
 
 JAX_COMPOUND_OP_RECORDS = [
     # angle has inconsistent 32/64-bit return types across numpy versions.
@@ -395,7 +404,6 @@ for rec in JAX_OPERATOR_OVERLOADS + JAX_RIGHT_OPERATOR_OVERLOADS:
     setattr(_OverrideNothing, rec.name, lambda self, other: NotImplemented)
 
 
-numpy_version = tuple(map(int, np.version.version.split('.')))
 if numpy_version >= (1, 15):
   JAX_COMPOUND_OP_RECORDS += [
       op_record("isclose", 2, [t for t in all_dtypes if t != jnp.bfloat16],

@@ -36,7 +36,7 @@ from .lax_numpy import (
     float64, float_, float_power, floating, floor, floor_divide, fmax, fmin,
     fmod, frexp, full, full_like, function, gcd, geomspace, gradient, greater,
     greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges,
-    hsplit, hstack, hypot, identity, iinfo, imag,
+    hsplit, hstack, hypot, i0, identity, iinfo, imag,
     indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer, 
     interp, intersect1d, invert,
     isclose, iscomplex, iscomplexobj, isfinite, isin, isinf, isnan, isneginf,
