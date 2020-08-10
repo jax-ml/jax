@@ -191,6 +191,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     integer
     interp
     intersect1d
+    invert
     isclose
     iscomplex
     iscomplexobj

@@ -38,7 +38,7 @@ from .lax_numpy import (
     greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges,
     hsplit, hstack, hypot, identity, iinfo, imag,
     indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer, 
-    interp, intersect1d,
+    interp, intersect1d, invert,
     isclose, iscomplex, iscomplexobj, isfinite, isin, isinf, isnan, isneginf,
     isposinf, isreal, isrealobj, isscalar, issubdtype, issubsctype, iterable,
     ix_, kaiser, kron, lcm, ldexp, left_shift, less, less_equal, lexsort, linspace,

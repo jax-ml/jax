@@ -287,6 +287,8 @@ JAX_BITWISE_OP_RECORDS = [
               jtu.rand_bool, []),
     op_record("bitwise_not", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_bool, []),
+    op_record("invert", 1, int_dtypes + unsigned_dtypes, all_shapes,
+              jtu.rand_bool, []),
     op_record("bitwise_or", 2, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_bool, []),
     op_record("bitwise_xor", 2, int_dtypes + unsigned_dtypes, all_shapes,

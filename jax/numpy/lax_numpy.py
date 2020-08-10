@@ -365,6 +365,7 @@ def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn):
 
 fabs = _one_to_one_unop(np.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
+invert = _one_to_one_unop(np.invert, lax.bitwise_not)
 negative = _one_to_one_unop(np.negative, lax.neg)
 positive = _one_to_one_unop(np.positive, lambda x: x)
 
