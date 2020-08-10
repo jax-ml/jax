@@ -2554,7 +2554,7 @@ def meshgrid(*args, **kwargs):
 
 @_wraps(np.i0)
 def i0(x):
-  x = lax.abs(x)
+  x = lax.abs(*_promote_dtypes_inexact(x))
   return lax.mul(lax.exp(x), lax.bessel_i0e(x))
 
 
