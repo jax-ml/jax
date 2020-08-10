@@ -635,8 +635,20 @@ def _norm_logpdf(x):
 
 @_wraps(osp_special.i0e)
 def i0e(x):
+  x, = _promote_args_inexact("i0e", x)
   return lax.bessel_i0e(x)
+
+@_wraps(osp_special.i0)
+def i0(x):
+  x, = _promote_args_inexact("i0", x)
+  return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i0e(x))
 
 @_wraps(osp_special.i1e)
 def i1e(x):
+  x, = _promote_args_inexact("i1e", x)
   return lax.bessel_i1e(x)
+
+@_wraps(osp_special.i1)
+def i1(x):
+  x, = _promote_args_inexact("i1", x)
+  return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))

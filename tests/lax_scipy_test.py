@@ -215,6 +215,21 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
     self.assertAllClose(api.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_op={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), op),
+       "shape": shape, "dtype": dtype, "op": op}
+      for shape in all_shapes
+      for dtype in float_dtypes + int_dtypes
+      for op in ["i0", "i0e", "i1", "i1e"]))
+  def testBesselFunctions(self, shape, dtype, op):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    scipy_fun = getattr(osp_special, op)
+    lax_fun = getattr(lsp_special, op)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
+    self._CompileAndCheck(lax_fun, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
