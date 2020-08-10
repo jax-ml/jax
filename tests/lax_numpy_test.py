@@ -141,6 +141,8 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("trunc", 1, float_dtypes, all_shapes, jtu.rand_some_inf_and_nan, []),
     op_record("trunc", 1, int_dtypes + unsigned_dtypes, all_shapes,
               jtu.rand_some_inf_and_nan, [], check_dtypes=False),
+    op_record("i0", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
+              tolerance={np.complex64: 1E-5, np.complex128: 1E-14}),
     op_record("sin", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
               inexact=True),
     op_record("cos", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
