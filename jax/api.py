@@ -118,7 +118,7 @@ def jit(fun: Callable[..., T],
     static_argnums: An int or collection of ints specifying which positional
       arguments to treat as static (compile-time constant). Operations that only
       depend on static arguments will be constant-folded in Python (during
-      tracing), and so the corrersponding argument values can be any Python
+      tracing), and so the corresponding argument values can be any Python
       object. Calling the jitted function with different values for these
       constants will trigger recompilation. If the jitted function is called
       with fewer positional arguments than indicated by ``static_argnums`` then
@@ -134,10 +134,10 @@ def jit(fun: Callable[..., T],
     donate_argnums: Specify which arguments are "donated" to the computation.
       It is safe to donate arguments if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
-      buffers to reduce the amount of memory needed to perfom a computation, for
-      example recycling one of your input buffers to store a result. You should
-      not re-use buffers that you donate to a computation, JAX will raise an
-      error if you try to.
+      buffers to reduce the amount of memory needed to perform a computation,
+      for example recycling one of your input buffers to store a result. You
+      should not re-use buffers that you donate to a computation, JAX will raise
+      an error if you try to.
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.
@@ -278,7 +278,7 @@ def xla_computation(fun: Callable,
     the unoptimized XLA HLO computation can be extracted using methods like
     ``as_hlo_text``, ``as_serialized_hlo_module_proto``, and
     ``as_hlo_dot_graph``. If the argument ``return_shape`` is ``True``, then the
-    wrapped function eturns a pair where the first element is the XLA
+    wrapped function returns a pair where the first element is the XLA
     Computation and the second element is a pytree representing the structure,
     shapes, and dtypes of the output of ``fun``.
 
@@ -774,10 +774,10 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0) -> Callable[..., T]:
 
   Args:
     fun: Function to be mapped over additional axes.
-    in_axes: A nonnegative integer, None, or (nested) standard Python container
+    in_axes: A non-negative integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof specifying which input array axes to map over.
       If each positional argument to ``fun`` is an array, then ``in_axes`` can
-      be a nonnegative integer, a None, or a tuple of integers and Nones with
+      be a non-negative integer, a None, or a tuple of integers and Nones with
       length equal to the number of positional arguments to ``fun``. An integer
       or None indicates which array axis to map over for all arguments (with
       None indicating not to map any axis), and a tuple indicates which axis to
@@ -791,7 +791,7 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0) -> Callable[..., T]:
       of the mapped input axes for all mapped positional arguments must all
       be equal.
 
-    out_axes: A nonnegative integer, None, or (nested) standard Python container
+    out_axes: A non-negative integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof indicating where the mapped axis should appear
       in the output. All outputs with a mapped axis must have a non-None
       ``out_axes`` specification.
@@ -1012,14 +1012,14 @@ def pmap(fun: Callable[..., T],
       hashable and have an equality operation defined.
     axis_name: Optional, a hashable Python object used to identify the mapped
       axis so that parallel collectives can be applied.
-    in_axes: A nonnegative integer, None, or nested Python container thereof
+    in_axes: A non-negative integer, None, or nested Python container thereof
       that specifies which axes in the input to map over (see :py:func:`vmap`).
       Currently, only 0 and None are supported axes for pmap.
     static_broadcasted_argnums: An int or collection of ints specifying which
       positional arguments to treat as static (compile-time constant).
       Operations that only depend on static arguments will be constant-folded.
-      Calling the pmaped function with different values for these constants will
-      trigger recompilation. If the pmaped function is called with fewer
+      Calling the pmapped function with different values for these constants will
+      trigger recompilation. If the pmapped function is called with fewer
       positional arguments than indicated by ``static_argnums`` then an error is
       raised. Each of the static arguments will be broadcasted to all devices.
       Arguments that are not arrays or containers thereof must be marked as
@@ -1036,10 +1036,10 @@ def pmap(fun: Callable[..., T],
     donate_argnums: Specify which arguments are "donated" to the computation.
       It is safe to donate arguments if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
-      buffers to reduce the amount of memory needed to perfom a computation, for
-      example recycling one of your input buffers to store a result. You should
-      not re-use buffers that you donate to a computation, JAX will raise an
-      error if you try to.
+      buffers to reduce the amount of memory needed to perform a computation,
+      for example recycling one of your input buffers to store a result. You
+      should not re-use buffers that you donate to a computation, JAX will raise
+      an error if you try to.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -1128,8 +1128,8 @@ def pmap(fun: Callable[..., T],
   1.0
 
   On multi-host platforms, collective operations operate over all devices,
-  including those those on other hosts. For example, assuming the following code
-  runs on two hosts with 4 XLA devices each:
+  including those on other hosts. For example, assuming the following code runs
+  on two hosts with 4 XLA devices each:
 
   >>> f = lambda x: x + jax.lax.psum(x, axis_name='i')
   >>> data = jnp.arange(4) if jax.host_id() == 0 else jnp.arange(4,8)
@@ -1140,7 +1140,7 @@ def pmap(fun: Callable[..., T],
 
   Each host passes in a different length-4 array, corresponding to its 4 local
   devices, and the psum operates over all 8 values. Conceptually, the two
-  length-4 arrays can be thought of as sharded length-8 array (in this example
+  length-4 arrays can be thought of as a sharded length-8 array (in this example
   equivalent to jnp.arange(8)) that is mapped over, with the length-8 mapped axis
   given name 'i'. The pmap call on each host then returns the corresponding
   length-4 output shard.
@@ -1803,7 +1803,7 @@ def checkpoint(fun: Callable, concrete: bool = False) -> Callable:
   linearization points (e.g. inputs to elementwise nonlinear primitive
   operations) are stored when evaluating the forward pass so that they can be
   reused on the backward pass. This evaluation strategy can lead to a high
-  memory cost, or even to poor performance on hardware acceleartors where memory
+  memory cost, or even to poor performance on hardware accelerators where memory
   access is much more expensive than FLOPs.
 
   An alternative evaluation strategy is for some of the linearization points to
