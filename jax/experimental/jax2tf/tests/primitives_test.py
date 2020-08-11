@@ -279,11 +279,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if jtu.device_under_test() == "tpu":
       max_bits = 32
 
+    expect_tf_exceptions = False
     if dtypes.finfo(dtype).bits * 2 > max_bits:
-      with self.assertRaisesRegex(BaseException, "XLA encountered an HLO for which this rewriting is not implemented"):
-        self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-    else:
-      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+      # TODO: getting an exception "XLA encountered an HLO for which this rewriting is not implemented"
+      expect_tf_exceptions = True
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           expect_tf_exceptions=expect_tf_exceptions)
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
