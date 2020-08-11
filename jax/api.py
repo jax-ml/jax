@@ -1625,7 +1625,7 @@ def make_jaxpr(fun: Callable,
       wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    in_avals = map(xla.abstractify, jax_args)
+    in_avals = [raise_to_shaped(core.get_aval(x)) for x in jax_args]
     if config.omnistaging_enabled:
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
     else:
