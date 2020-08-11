@@ -2982,13 +2982,7 @@ class InvertibleADTest(jtu.JaxTestCase):
 
     finv = jax.invertible(f)
 
-    x = jnp.ones((1,))
-
-    def primal_vjp_trace(fun, primals, cotangents):
-      def run(primals, cotangents):
-        out, fun_vjp = jax.vjp(fun, *primals)
-        return fun_vjp(cotangents)
-      return jax.make_jaxpr(run)(primals, cotangents)
+    x = jnp.ones((5,))
 
     if config.omnistaging_enabled:
       expected = """
@@ -3076,6 +3070,19 @@ class InvertibleADTest(jtu.JaxTestCase):
     self.assertAllClose(jax.value_and_grad(partial(reduce, jax.invertible(g)), argnums=(0, 1))(x, x + 2),
                         jax.value_and_grad(partial(reduce, g), argnums=(0, 1))(x, x + 2),
                         check_dtypes=True)
+
+  def test_invertible_partial_diff(self):
+    # Check that we don't have to differentiate with respect to inputs
+    # of the invertible function.
+    def f(x, y):
+      return (jnp.exp(x) * 4) * x, y + 4
+
+    finv = jax.invertible(f)
+    o = np.ones((5,))
+    self.assertAllClose(jax.value_and_grad(lambda x: np.sum(f(x, o)[0]))(o),
+                        jax.value_and_grad(lambda x: np.sum(finv(x, o)[0]))(o),
+                        check_dtypes=True)
+
 
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):

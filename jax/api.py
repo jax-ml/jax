@@ -2044,7 +2044,7 @@ def custom_gradient(fun):
 def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
   return (x,) if isinstance(x, int) else tuple(x)
 
-def invertible(fun: Callable, concrete: bool = False) -> Callable:
+def invertible(fun: Callable) -> Callable:
   """Asserts that the decorated function is invertible.
 
   Applying reverse-mode AD to a decorated function will use a more memory efficient
@@ -2054,13 +2054,5 @@ def invertible(fun: Callable, concrete: bool = False) -> Callable:
 
   Args:
     fun: The function assumed to be invertible.
-    concrete: See the documentation of checkpoint.
   """
-  @wraps(fun)
-  def fun_invertible(*args, **kwargs):
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-    out_flat = iad.invertible_call(flat_fun, *args_flat, name=flat_fun.__name__,
-                                   concrete=concrete)
-    return tree_unflatten(out_tree(), out_flat)
-  return fun_invertible
+  return iad.invertible(fun)

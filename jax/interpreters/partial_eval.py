@@ -663,12 +663,7 @@ remat_call_p = core.CallPrimitive('remat_call')
 remat_call = remat_call_p.bind
 remat_call_p.def_impl(core.call_impl)
 
-# We reuse the _remat_partial_eval function both for remat_call and for
-# invertible_call, both of which in a sense stage out operations to
-# rematerialize values. The two usages differ only in details of what jaxpr eqn
-# and output tracers are formed. As a result we parameterize _remat_partial_eval
-# by a `process_out` function.
-def _remat_partial_eval(process_out, trace, _, f, tracers, params):
+def _remat_partial_eval(trace, _, f, tracers, params):
   concrete = params['concrete']
 
   # Unlike JaxprTrace.process_call, we want to form a jaxpr for the entirety of
@@ -744,29 +739,18 @@ def _remat_partial_eval(process_out, trace, _, f, tracers, params):
   # Unknown outputs get wrapped in tracers with the appropriate recipe
   unknown_output_tracers = [JaxprTracer(trace, out_pval, None)
                             for out_pval in out_unknown_pvals]
-  out_tracers = _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
 
-  in_tracers = (*const_tracers, *env_tracers, *instantiated_tracers)
-  new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(typed_jaxpr.jaxpr))
-  return process_out(trace, in_tracers, out_tracers, new_params)
-
-def _remat_make_output_tracers(_, in_tracers, out_tracers, params):
   # dce jaxpr outputs
-  jaxpr = params['call_jaxpr']
-  out_unknowns = [not t.pval.is_known() for t in out_tracers]
-  typed_jaxpr = core.TypedJaxpr(jaxpr, (), [v.aval for v in jaxpr.invars],
-                                [v.aval for v in jaxpr.outvars])
   new_jaxpr = _dce_jaxpr(typed_jaxpr, out_unknowns, drop_outputs=True).jaxpr
   new_params = dict(params, call_jaxpr=new_jaxpr)
 
   # set up eqn for unknown outputs
-  unknown_out_tracers = [t for t in out_tracers if not t.pval.is_known()]
-  eqn = new_eqn_recipe(in_tracers, unknown_out_tracers, remat_call_p, new_params,
+  in_tracers = (*const_tracers, *env_tracers, *instantiated_tracers)
+  eqn = new_eqn_recipe(in_tracers, unknown_output_tracers, remat_call_p, new_params,
                        source_info_util.current())
-  for t in unknown_out_tracers: t.recipe = eqn
-  return out_tracers
-call_partial_eval_rules[remat_call_p] = partial(
-    _remat_partial_eval, _remat_make_output_tracers)
+  for t in unknown_output_tracers: t.recipe = eqn
+  return _zip_knowns(known_output_tracers, unknown_output_tracers, out_unknowns)
+call_partial_eval_rules[remat_call_p] = _remat_partial_eval
 
 def _partition_knowns(pvals, unknowns: Sequence[bool]):
   return ([e for e, unknown in zip(pvals, unknowns) if not unknown],
