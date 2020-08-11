@@ -272,14 +272,18 @@ def _gmres_solve(A, b, x0, *, tol, atol, restart, maxiter, M):
   else:
     x = x0
 
-  iters_left = maxiter % restart
-  sqr_error = _vdot_tree(residual, residual, assume_real=False)
-  x_final = lax.cond(
-    (iters_left > 0) & (sqr_error > atol2),
-    true_fun=lambda values: _gmres(A, b, values[0], iters_left, M, values[1]),
-    false_fun=lambda values: values[0],
-    operand=(x, residual),
-  )
+  iters = maxiter % restart
+  sqr_error = _vdot_tree(residual, residual)
+  if iters > 0:
+    x_final = lax.cond(
+      sqr_error > atol2,
+      true_fun=lambda values: _gmres(A, b, values[0], iters, M, values[1]),
+      false_fun=lambda values: values[0],
+      operand=(x, residual),
+    )
+  else:
+    x_final = x
+
   return x_final
 
 
