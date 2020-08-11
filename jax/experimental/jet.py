@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Callable
 
 from functools import partial
 
@@ -239,6 +240,21 @@ deflinear(xla.device_put_p)
 # TODO(mattjj): remove when omnistaging fully lands
 try: deflinear(lax.tie_in_p)
 except AttributeError: pass
+
+def _cumulative_jet_rule(primals_in, series_in, *, axis: int,
+                         prefix_scan: Callable):
+  # Irrespective of backend, we always use the parallel prefix scan
+  # implementation when differentiating because reduce_window is not
+  # arbitrarily differentiable.
+  return jet(partial(prefix_scan, axis=axis), primals_in, series_in)
+
+deflinear(lax.cumsum_p)
+jet_rules[lax.cumprod_p] = partial(_cumulative_jet_rule,
+                                   prefix_scan=lax._cumprod_prefix_scan)
+jet_rules[lax.cummax_p] = partial(_cumulative_jet_rule,
+                                   prefix_scan=lax._cummax_prefix_scan)
+jet_rules[lax.cummin_p] = partial(_cumulative_jet_rule,
+                                   prefix_scan=lax._cummin_prefix_scan)
 
 
 def def_deriv(prim, deriv):
