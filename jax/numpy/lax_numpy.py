@@ -1510,12 +1510,8 @@ def clip(a, a_min=None, a_max=None):
   if a_min is None and a_max is None:
     raise ValueError("At most one of a_min and a_max may be None")
   if a_min is not None:
-    if _dtype(a_min) != _dtype(a):
-      a_min = lax.convert_element_type(a_min, _dtype(a))
     a = maximum(a_min, a)
   if a_max is not None:
-    if _dtype(a_max) != _dtype(a):
-      a_max = lax.convert_element_type(a_max, _dtype(a))
     a = minimum(a_max, a)
   return a
 

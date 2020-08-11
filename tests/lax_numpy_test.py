@@ -1081,10 +1081,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "a_min": a_min, "a_max": a_max,
        "rng_factory": jtu.rand_default}
       for shape in all_shapes for dtype in number_dtypes
-      for a_min, a_max in [(-1, None), (None, 1), (-1, 1),
+      for a_min, a_max in [(-1, None), (None, 1), (-0.9, 1),
                            (-np.ones(1), None),
                            (None, np.ones(1)),
-                           (-np.ones(1), np.ones(1))]))
+                           (np.full(1, -0.9), np.ones(1))]))
   def testClipStaticBounds(self, shape, dtype, a_min, a_max, rng_factory):
     rng = rng_factory(self.rng())
     np_fun = lambda x: np.clip(x, a_min=a_min, a_max=a_max)
