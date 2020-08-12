@@ -1,0 +1,74 @@
+# Copyright 2020 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import operator
+
+from absl.testing import absltest
+from absl.testing import parameterized
+
+import numpy as np
+from jax import numpy as jnp
+from jax import test_util as jtu
+from jax import dtypes
+from jax.experimental import sparse
+
+from jax.config import config, flags
+config.parse_flags_with_absl()
+
+FLAGS = flags.FLAGS
+
+
+def rng_sparse(rng, shape, dtype, nnz=0.2):
+  mat = rng(shape, dtype)
+  size = int(np.prod(shape))
+  if 0 < nnz < 1:
+    nnz = nnz * size
+  nnz = int(nnz)
+  if nnz == 0:
+    return np.zeros_like(mat)
+  elif nnz >= size:
+    return mat
+  else:
+    # TODO(jakevdp): do we care about duplicates?
+    cutoff = np.sort(mat.ravel())[nnz]
+    mat[mat >= cutoff] = 0
+    return mat.astype(dtypes.canonicalize_dtype(mat.dtype))
+
+test_shapes = {
+  sparse.CSR: [(1, 5), (2, 3), (10, 1)],
+  sparse.ELL: [(1, 5), (2, 3), (10, 1)],
+  sparse.COO: [(5,), (2, 3), (4, 2, 5)]
+}
+
+
+class SparseTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_{}_nnz={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), sparse_type.__name__, nnz),
+      "dtype": dtype, "shape": shape, "sparse_type": sparse_type, "nnz": nnz}
+    for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
+    for sparse_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for nnz in [0, 0.2, 0.8]
+    for shape in test_shapes[sparse_type]))
+  def testDenseRoundTrip(self, dtype, shape, sparse_type, nnz):
+    rng = jtu.rand_default(self.rng())
+    x_dense = rng_sparse(rng, shape, dtype, nnz=nnz)
+    x_sparse = sparse_type.fromdense(x_dense)
+
+    self.assertEqual(x_sparse.nnz, (x_dense != 0).sum())
+    self.assertArraysEqual(x_sparse.todense(), x_dense)
+
+
+if __name__ == '__main__':
+  absltest.main(testLoader=jtu.JaxTestLoader())

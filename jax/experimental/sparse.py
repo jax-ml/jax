@@ -99,6 +99,8 @@ class CSR(SparseArray):
     nz = (x != 0)
     data = x[nz]
     row, col = jnp.where(nz)
+    if len(row) == 0:
+      return cls(row, jnp.zeros(x.shape[0] + 1, row.dtype), data, x.shape)
     row, col = lax.sort_key_val(row, col)
     indices = jnp.ravel(col)
     indptr = jnp.cumsum(jnp.bincount(row))
@@ -181,16 +183,5 @@ class ELL(SparseArray):
 
 
 if __name__ == '__main__':
-  import jax.numpy as jnp
-  import numpy as np
-  x = (5 * np.random.randn(5, 8)).astype(int)
-  x[x < 0] = 0
-  print(x)
-
-  for Sparse in [COO, CSR, ELL]:
-    xS = Sparse.fromdense(x)
-    print(40 * '-')
-    print(xS)
-    print(" - shape matches:     ", xS.shape == x.shape)
-    print(" - nnz matches:       ", xS.nnz == (x != 0).sum())
-    print(" - round trip matches:", np.all(xS.todense() == x))
+  x = jnp.zeros((3, 4))
+  print(CSR.fromdense(x))
