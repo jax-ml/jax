@@ -812,6 +812,8 @@ class PmapTest(jtu.JaxTestCase):
                      [b.device() for b in expected_sharded.device_buffers])
 
   def testNestedPmapConstantError(self):
+    raise SkipTest("TODO(skye): re-enable once pmap_test consistently uses "
+                   "correct number of devices")
     f = pmap(pmap(lambda x: 3))
     shape = (2, xla_bridge.device_count() // 2 + 1, 3)
     x = jnp.arange(prod(shape)).reshape(shape)
