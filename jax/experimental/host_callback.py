@@ -136,6 +136,7 @@ import itertools
 
 from jax import api
 from jax import core
+from jax import custom_derivatives
 from jax import lax
 from jax.lib import pytree
 from jax.interpreters import ad, xla, batching, masking
@@ -654,6 +655,39 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 call_jaxpr=_rewrite_jaxpr(call_jaxpr, True,
                                           True)), eqn.source_info))
+  elif eqn.primitive is custom_derivatives.custom_jvp_call_jaxpr_p:
+    fun_jaxpr = eqn.params["fun_jaxpr"]
+    new_invars = [*eqn.invars, input_token_var]
+    def unreachable_thunk():
+      assert False, "Should not be reached"
+    eqns.append(
+        core.new_jaxpr_eqn(
+            new_invars, eqn.outvars + [output_token_var], eqn.primitive,
+            dict(
+                eqn.params,
+                fun_jaxpr=_rewrite_typed_jaxpr(fun_jaxpr, True, True),
+                jvp_jaxpr_thunk=unreachable_thunk
+            ),
+            eqn.source_info))
+  elif eqn.primitive is custom_derivatives.custom_vjp_call_jaxpr_p:
+    fun_jaxpr = eqn.params["fun_jaxpr"]
+    new_invars = [*eqn.invars, input_token_var]
+    def unreachable_thunk():
+      assert False, "Should not be reached"
+    eqns.append(
+        core.new_jaxpr_eqn(
+            new_invars, eqn.outvars + [output_token_var], eqn.primitive,
+            dict(
+                eqn.params,
+                fun_jaxpr=_rewrite_typed_jaxpr(fun_jaxpr, True, True),
+                fwd_jaxpr_thunk=unreachable_thunk,
+                # The following are illegal values for the parameters, they
+                # should not be needed because this rewrite is just before
+                # compilation to XLA, which does not use those parameters.
+                bwd="illegal param",
+                out_trees="illegal param"
+            ),
+            eqn.source_info))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")
 

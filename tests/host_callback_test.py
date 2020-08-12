@@ -90,6 +90,10 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
   what = re.sub(r"\-?\d*\.[\-\def]*", repl_floats, what)
   what = re.sub(r"output_stream=[^\]\n]*", "", what)
   what = re.sub(r"threshold=[^\]\n]*", "", what)
+  what = re.sub(r"bwd=[^\]\n]*", "", what)
+  what = re.sub(r"out_trees=[^\]\n]*", "", what)
+  what = re.sub(r"fwd_jaxpr_thunk=[^\]\n]*", "", what)
+  what = re.sub(r"jvp_jaxpr_thunk=[^\]\n]*", "", what)
   # Empty lines
   what = re.sub(r"^\s*\n", "", what, flags=re.MULTILINE)
   def repl_func(match_group):
@@ -916,6 +920,94 @@ transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 3
     expected_res = jnp.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
     self.assertAllClose(expected_res, res, check_dtypes=False)
 
+  def test_scan_custom_jvp(self):
+    """custom JVP, inside scan.
+    This exercises the custom_jvp_call_jaxpr primitives."""
+    @api.custom_jvp
+    def f(x):
+      return x * hcb.id_print(x, output_stream=testing_stream, what="x")
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * hcb.id_print(x_dot, output_stream=testing_stream, what="x_dot")
+      return primal_out, tangent_out
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((2,), 0.7)
+    self.assertAllClose(0.7 * 0.7 * 2, g(arg))
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+    what: x
+    0.7
+    what: x
+    0.7""", testing_stream.output)
+    testing_stream.reset()
+
+    self.assertAllClose(np.array([2.1, 2.1]), api.grad(g)(arg), check_dtypes=False)
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+    what: x
+    0.7
+    what: x
+    0.7
+    transforms: ({'name': 'transpose'},) what: x_dot
+    2.1
+    transforms: ({'name': 'transpose'},) what: x_dot
+    2.1""", testing_stream.output)
+
+  def test_scan_custom_vjp(self):
+    """custom VJP, inside scan.
+    This exercises the custom_vjp_call_jaxpr primitives."""
+    @api.custom_vjp
+    def f(x):
+      return x * hcb.id_print(x, output_stream=testing_stream, what="x")
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), 3. * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * hcb.id_print(ct_b, output_stream=testing_stream, what="ct_b"),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((2,), 0.7)
+
+    self.assertAllClose(0.7 * 0.7 * 2, g(arg))
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+      what: x
+      0.7
+      what: x
+      0.7""", testing_stream.output)
+    testing_stream.reset()
+
+    self.assertAllClose(np.array([2.1, 2.1]), api.grad(g)(arg), check_dtypes=False)
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+      what: x
+      0.7
+      what: x
+      0.7
+      what: ct_b
+      1.
+      what: ct_b
+      1.""", testing_stream.output)
+
   def test_mask(self):
     # TODO(necula)
     raise SkipTest("masking has regressed")
@@ -1186,9 +1278,176 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
               linear=(False, False, False, False, False)
               num_carry=3
               num_consts=1
-              reverse=False ] b 1 2 f a
+              reverse=False
+              unroll=1 ] b 1 2 f a
   in (c, d, e, g) }""", func, [y])
 
+  def test_scan_custom_jvp(self):
+    """custom JVP, inside scan.
+    This exercises the custom_jvp_call_jaxpr primitives."""
+    @api.custom_jvp
+    def f(x):
+      return x * hcb.id_print(x)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * hcb.id_print(x_dot)
+      return primal_out, tangent_out
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((5,), 0.7)
+    self.assertRewrite("""
+    { lambda  ; a c.
+      let b d _ = scan[ jaxpr={ lambda  ; a e b.
+                                let c f = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d.
+                                                                             let b e = id_tap[ arg_treedef_=*
+                                                                                               has_token_=True
+                                                                                               nr_tapped_args_=1
+                                                                                               tap_func_=_print
+                                                                                               ] a d
+                                                                                 c = mul a b
+                                                                             in (c, e) }
+                                                                 ] b e
+                                    d = add a c
+                                in (d, f, 0.00) }
+                        length=5
+                        linear=(False, False, False)
+                        num_carry=2
+                        num_consts=0
+                        reverse=False
+                        unroll=1 ] 0.00 c a
+      in (b, d) }""", g, [arg])
+    self.assertRewrite("""
+    { lambda  ; a d.
+      let _ _ e _ b =
+            scan[ jaxpr={ lambda  ; a b h c d.
+                          let e i = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d.
+                                                                       let b e = id_tap[ arg_treedef_=*
+                                                                                         has_token_=True
+                                                                                         nr_tapped_args_=1
+                                                                                         tap_func_=_print
+                                                                                         ] a d
+                                                                           c = mul a b
+                                                                       in (c, e) }
+                                                           ] c h
+                              f = add a e
+                              g = mul c 3.00
+                          in (f, *, i, 0.00, g) }
+                  length=5
+                  linear=(False, True, False, True, False)
+                  num_carry=3
+                  num_consts=0
+                  reverse=False
+                  unroll=1 ] 0.00 * d a *
+          _ _ f _ c =
+            scan[ jaxpr={ lambda  ; a b g c d.
+                          let e = mul b d
+                              f h = id_tap[ arg_treedef_=*
+                                            has_token_=True
+                                            nr_tapped_args_=1
+                                            tap_func_=_print
+                                            transforms=(('transpose',),) ] e g
+                          in (*, b, h, *, f) }
+                  length=5
+                  linear=(True, True, True, False, False)
+                  num_carry=3
+                  num_consts=0
+                  reverse=True
+                  unroll=1 ] * 1.00 e * b
+      in (c, f) }""", api.grad(g), [arg])
+
+  def test_scan_custom_vjp(self):
+    """custom VJP, inside scan.
+    This exercises the custom_vjp_call_jaxpr primitives."""
+    @api.custom_vjp
+    def f(x):
+      return x * hcb.id_print(x)
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), 3. * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * hcb.id_print(ct_b),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((2,), 0.7)
+    self.assertRewrite("""
+    { lambda  ; a c.
+      let b d _ = scan[ jaxpr={ lambda  ; a e b.
+                                let c f = custom_vjp_call_jaxpr[
+                                                                 fun_jaxpr={ lambda  ; a d.
+                                                                             let b e = id_tap[ arg_treedef_=*
+                                                                                               has_token_=True
+                                                                                               nr_tapped_args_=1
+                                                                                               tap_func_=_print
+                                                                                               ] a d
+                                                                                 c = mul a b
+                                                                             in (c, e) }
+                                                                 ] b e
+                                    d = add a c
+                                in (d, f, 0.00) }
+                        length=2
+                        linear=(False, False, False)
+                        num_carry=2
+                        num_consts=0
+                        reverse=False
+                        unroll=1 ] 0.00 c a
+      in (b, d) }""", g, [arg])
+    self.assertRewrite("""
+    { lambda  ; a d.
+      let _ _ e _ b =
+            scan[ jaxpr={ lambda  ; a b h c d.
+                          let e i = custom_vjp_call_jaxpr[
+                                                           fun_jaxpr={ lambda  ; a d.
+                                                                       let b e = id_tap[ arg_treedef_=*
+                                                                                         has_token_=True
+                                                                                         nr_tapped_args_=1
+                                                                                         tap_func_=_print
+                                                                                         ] a d
+                                                                           c = mul a b
+                                                                       in (c, e) }
+                                                           ] c h
+                              f = add a e
+                              g = mul c 3.00
+                          in (f, *, i, 0.00, g) }
+                  length=2
+                  linear=(False, True, False, True, False)
+                  num_carry=3
+                  num_consts=0
+                  reverse=False
+                  unroll=1 ] 0.00 * d a *
+          _ _ f _ c =
+            scan[ jaxpr={ lambda  ; a b g c d.
+                          let e h = id_tap[ arg_treedef_=*
+                                            has_token_=True
+                                            nr_tapped_args_=1
+                                            tap_func_=_print
+                                            ] b g
+                              f = mul d e
+                          in (*, b, h, *, f) }
+                  length=2
+                  linear=(True, True, True, False, False)
+                  num_carry=3
+                  num_consts=0
+                  reverse=True
+                  unroll=1 ] * 1.00 e * b
+      in (c, f) }""", api.grad(g), [arg])
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
