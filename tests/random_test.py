@@ -732,7 +732,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testDtypeErrorMessage(self):
     with self.assertRaisesRegex(ValueError, r"dtype argument to.*"):
       random.normal(random.PRNGKey(0), (), dtype=jnp.int32)
-  
+
   def testRandomBroadcast(self):
     """Issue 4033"""
     # test for broadcast issue in https://github.com/google/jax/issues/4033
