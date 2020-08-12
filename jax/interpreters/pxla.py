@@ -656,6 +656,22 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
+  if axis_size > xb.local_device_count():
+    if xb.host_count() > 1:
+      raise ValueError(
+          f'Input to pmapped function must have axis size less than or equal '
+          f'to the number of *local* devices. Got axis_size={axis_size}, '
+          f'local_device_count={xb.local_device_count()}\n\n'
+          f'You may need to use jax.local_device_count()/jax.local_devices() '
+          f'instead of jax.device_count()/jax.devices(). See the "Multi-host '
+          f'platforms" section of the pmap documenation for more information '
+          f'(https://jax.readthedocs.io/en/latest/jax.html#jax.pmap).')
+    else:
+      raise ValueError(
+          f'Input to pmapped function must have axis size less than or equal '
+          f'to the number of local devices. Got axis_size={axis_size}, '
+          f'local_device_count={xb.local_device_count()}')
+
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.host_count() > 1 and global_axis_size is None and inner_pmap:

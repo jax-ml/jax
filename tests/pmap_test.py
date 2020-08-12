@@ -701,11 +701,13 @@ class PmapTest(jtu.JaxTestCase):
 
     f = pmap(lambda x: x)
     x = jnp.arange(device_count + 1)
-    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    self.assertRaisesRegex(ValueError, "Input to pmapped function.*",
+                           lambda: f(x))
 
     f = pmap(lambda x: x)
     x = np.ones((device_count + 1, 10))
-    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    self.assertRaisesRegex(ValueError, "Input to pmapped function.*",
+                           lambda: f(x))
 
     f = pmap(lambda x: pmap(lambda x: x)(x))
     x = np.ones((device_count, 2, 10))
@@ -749,29 +751,19 @@ class PmapTest(jtu.JaxTestCase):
     device_count = xla_bridge.device_count()
     f = pmap(lambda x: 3)
     x = jnp.arange(device_count + 1)
-    if config.omnistaging_enabled:
-      self.assertRaisesRegex(
-          ValueError,
-          (r"compiling computation that requires \d+ logical devices, "
-          r"but only \d+ XLA devices are available .*"),
-          lambda: f(x))
+    self.assertRaisesRegex(
+        ValueError,
+        f"Input to pmapped function must have axis size less than or equal to"
+        f" the number of local devices. Got axis_size={device_count + 1}, "
+        f"local_device_count={device_count}",
+        lambda: f(x))
 
-      # TODO(mattjj): test error message with explicit devices
-      # f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
-      # x = jnp.arange(2)
-      # self.assertRaisesRegex(
-      #     ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
-      #     r"local devices are available.", lambda: f(x))
-    else:
-      self.assertRaisesRegex(
-          ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
-          r"local devices are available.", lambda: f(x))
-
-      f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
-      x = jnp.arange(2)
-      self.assertRaisesRegex(
-          ValueError, "Cannot replicate across 2 replicas because only 1 "
-          "local devices are available.", lambda: f(x))
+    # TODO(mattjj): test error message with explicit devices
+    # f = pmap(lambda x: 3, devices=[xla_bridge.devices()[0]])
+    # x = jnp.arange(2)
+    # self.assertRaisesRegex(
+    #     ValueError, r"Cannot replicate across \d+ replicas because only \d+ "
+    #     r"local devices are available.", lambda: f(x))
 
   def testNestedPmapConstant(self):
     if xla_bridge.device_count() == 1:
@@ -1475,11 +1467,11 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       f(x)
 
   def testBadAxisSizeError(self):
-    if xla_bridge.device_count() == 1:
+    if jax.device_count() == 1:
       raise SkipTest("this test requires multiple devices")
 
     f = pmap(lambda x: lax.psum(x, 'i'), axis_name='i',
-             devices=xla_bridge.devices())
+             devices=jax.devices())
     with self.assertRaisesRegex(
         ValueError, r"Leading axis size of input to pmapped function must "
         r"equal the number of local devices passed to pmap. Got axis_size=1, "
@@ -1487,10 +1479,11 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       f(jnp.ones(1))
 
     with self.assertRaisesRegex(
-        ValueError, r"Leading axis size of input to pmapped function must "
-        r"equal the number of local devices passed to pmap. Got axis_size=\d, "
-        r"num_local_devices=\d."):
-      f(jnp.ones(xla_bridge.device_count() + 1))
+        ValueError,
+        f"Input to pmapped function must have axis size less than or equal to"
+        f" the number of local devices. Got axis_size={jax.device_count() + 1},"
+        f" local_device_count={jax.device_count()}"):
+      f(jnp.ones(jax.device_count() + 1))
 
   def testNestedPmaps(self):
     if xla_bridge.device_count() % 2 != 0:
