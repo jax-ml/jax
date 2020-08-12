@@ -551,7 +551,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       return x
 
     tf_fn = jax2tf.convert(jax_fn)
-    self.assertEqual(tf_fn(tf.convert_to_tensor(1.0)), 2.0)
+    self.assertEqual(tf_fn(tf.convert_to_tensor(1.375)), 2.750)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
