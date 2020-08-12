@@ -98,7 +98,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     def run_tf(mode):
       if mode == "eager":
-        return func_tf(*args)
+        return func_tf(*tf_args)
       elif mode == "graph":
         return tf.function(func_tf, autograph=False)(*tf_args)
       elif mode == "compiled":
