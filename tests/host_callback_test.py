@@ -1390,7 +1390,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     self.assertRewrite("""
     { lambda  ; a c.
       let b d _ = scan[ jaxpr={ lambda  ; a e b.
-                                let c f = custom_vjp_call_jaxpr[ 
+                                let c f = custom_vjp_call_jaxpr[
                                                                  fun_jaxpr={ lambda  ; a d.
                                                                              let b e = id_tap[ arg_treedef_=*
                                                                                                has_token_=True
