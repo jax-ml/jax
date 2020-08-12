@@ -353,8 +353,8 @@ def uniform(key: jnp.ndarray,
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
-    minval: optional, a minimum (inclusive) value for the range (default 0).
-    maxval: optional, a maximum (exclusive) value for the range (default 1).
+    minval: optional, a minimum (inclusive) value broadcast-compatible with shape for the range (default 0).
+    maxval: optional, a maximum (exclusive) value broadcast-compatible with shape for the range (default 1).
 
   Returns:
     A random array with the specified shape and dtype.
@@ -374,6 +374,9 @@ def _uniform(key, shape, dtype, minval, maxval) -> jnp.ndarray:
 
   minval = lax.convert_element_type(minval, dtype)
   maxval = lax.convert_element_type(maxval, dtype)
+  minval = lax.broadcast_to_rank(minval, len(shape))
+  maxval = lax.broadcast_to_rank(maxval, len(shape))
+
   finfo = jnp.finfo(dtype)
   nbits, nmant = finfo.bits, finfo.nmant
 
@@ -427,6 +430,8 @@ def _randint(key, shape, minval, maxval, dtype):
 
   minval = lax.convert_element_type(minval, dtype)
   maxval = lax.convert_element_type(maxval, dtype)
+  minval = lax.broadcast_to_rank(minval, len(shape))
+  maxval = lax.broadcast_to_rank(maxval, len(shape))
   nbits = jnp.iinfo(dtype).bits
 
   if nbits not in (8, 16, 32, 64):

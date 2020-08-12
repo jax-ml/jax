@@ -733,6 +733,16 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r"dtype argument to.*"):
       random.normal(random.PRNGKey(0), (), dtype=jnp.int32)
 
+  def testRandomBroadcast(self):
+    """Issue 4033"""
+    # test for broadcast issue in https://github.com/google/jax/issues/4033
+    key = random.PRNGKey(0)
+    shape = (10, 2)
+    x = random.uniform(key, shape, minval=jnp.zeros(2), maxval=jnp.ones(2))
+    assert x.shape == shape
+    x = random.randint(key, shape, jnp.array([0, 1]), jnp.array([1, 2]))
+    assert x.shape == shape
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
