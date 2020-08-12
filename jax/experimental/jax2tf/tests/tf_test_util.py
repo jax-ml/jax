@@ -91,14 +91,19 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # Run TF in all execution modes
     func_tf = jax2tf.convert(func_jax)
 
+    def convert_if_bfloat16(v):
+      return jax2tf.safe_convert_to_tensor(v) if hasattr(v, "dtype") else v
+
+    tf_args = tuple(map(convert_if_bfloat16, args))
+
     def run_tf(mode):
       if mode == "eager":
         return func_tf(*args)
       elif mode == "graph":
-        return tf.function(func_tf, autograph=False)(*args)
+        return tf.function(func_tf, autograph=False)(*tf_args)
       elif mode == "compiled":
         return tf.function(func_tf, autograph=False,
-                           experimental_compile=True)(*args)
+                           experimental_compile=True)(*tf_args)
       else:
         assert False
 

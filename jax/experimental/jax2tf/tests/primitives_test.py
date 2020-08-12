@@ -88,7 +88,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_type_promotion(self, f_jax=jnp.add):
     # We only test a few types here, as tensorflow does not support many
     # types like uint* or bool in binary ops.
-    types = [np.int32, np.int64, np.float32]
+    types = [dtypes.bfloat16, np.int32, np.int64, np.float32]
     for x_dtype in types:
       for y_dtype in types:
         x = np.array([1, 2], dtype=x_dtype)
