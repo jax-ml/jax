@@ -59,7 +59,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     atol=tol, rtol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_pytree_state(self):
     """Test calling odeint with y(t) values that are pytrees."""
     def dynamics(y, _t):
@@ -89,7 +89,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_decay(self):
     def decay(_np, y, t, arg1, arg2):
         return -_np.sqrt(t) - y + arg1 - _np.mean((y + arg2)**2)
@@ -107,7 +107,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_swoop(self):
     def swoop(_np, y, t, arg1, arg2):
       return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
