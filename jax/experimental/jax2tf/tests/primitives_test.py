@@ -104,9 +104,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_pad)
   def test_pad(self, harness: primitive_harness.Harness):
-    # TODO: figure out the bfloat16 story
-    if harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
     # TODO: fix pad with negative padding in XLA (fixed on 06/16/2020)
     if any([lo < 0 or hi < 0 for lo, hi, mid in harness.params["pads"]]):
       raise unittest.SkipTest("pad with negative pad not supported")
@@ -118,9 +115,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         harness.params["k"] < 0):
       with self.assertRaisesRegex(ValueError, "k argument to top_k must be"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    # TODO: figure out what's up with bfloat16
-    elif harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 support not implemented")
     elif harness.params["dtype"] in jtu.dtypes.complex:
       # TODO(necula): fix top_k complex bug on TPU
       if jtu.device_under_test() == "tpu":
@@ -135,9 +129,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_sort)
   def test_sort(self, harness: primitive_harness.Harness):
-    if harness.params["dtype"] is dtypes.bfloat16 or harness.params["dtype"] in jtu.dtypes.complex:
-      # TODO: implement bfloat16/complex support in XlaSort
-      raise unittest.SkipTest("bfloat16/complex support not implemented")
+    if harness.params["dtype"] in jtu.dtypes.complex:
+      # TODO: implement complex support in XlaSort
+      raise unittest.SkipTest("complex support not implemented")
     if harness.params["dtype"] is dtypes.bool_ and len(harness.arg_descriptors) == 4:
       # TODO: _sort uses tfxla.key_value_sort to handle 2 operandes, but the operation is not compatible with boolean keys.
       raise unittest.SkipTest("boolean key key value sort not implemented")
