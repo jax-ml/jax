@@ -1228,6 +1228,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "a_shape={}".format(
+      jtu.format_shape_dtype_string(a_shape, dtype)),
+     "dtype": dtype, "a_shape": a_shape}
+    for dtype in default_dtypes
+    for a_shape in one_dim_array_shapes))
+  def testTrimZeros(self, a_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda arg1: np.trim_zeros(arg1)
+    jnp_fun = lambda arg1: jnp.trim_zeros(arg1)
+    args_maker = lambda: [rng(a_shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "a_shape={} , b_shape={}".format(
           jtu.format_shape_dtype_string(a_shape, dtype),
           jtu.format_shape_dtype_string(b_shape, dtype)),

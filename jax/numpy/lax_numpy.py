@@ -2851,6 +2851,26 @@ def _trim_zeros(a):
       return a[i:]
   return a[:0]
 
+@_wraps(np.trim_zeros)
+def trim_zeros(filt, trim='fb'):
+  first = 0
+  trim = trim.upper()
+  if 'F' in trim:
+    for v in filt:
+      if v != 0:
+        break
+      else:
+        first = first + 1
+  last = len(filt)
+  if 'B' in trim:
+    for v in filt[::-1]:
+      if v != 0:
+        break
+      else:
+        last = last - 1
+  
+  return filt[first:last]
+
 _LEADING_ZEROS_DOC="""\
 Setting trim_leading_zeros=True makes the output match that of numpy.
 But prevents the function from being able to be used in compiled code.
