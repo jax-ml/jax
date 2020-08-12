@@ -59,7 +59,6 @@ from .interpreters import xla
 from .interpreters import pxla
 from .interpreters import ad
 from .interpreters import batching
-from .interpreters import parallel
 from .interpreters import masking
 from .interpreters import invertible_ad as iad
 from .interpreters.invertible_ad import custom_ivjp
@@ -1251,22 +1250,6 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
                           axis_size=axis_size, mapped_invars=mapped_invars)
     return tree_unflatten(out_tree(), outs)
   return f_pmapped
-
-
-def _papply(fun):
-  # This function is for testing purposes.
-  axis_name = _TempAxisName(fun)
-
-  def papply_fun(*args, **kwargs):
-    f = lu.wrap_init(fun)
-    args_flat, in_tree = tree_flatten((args, kwargs))
-    flat_fun, out_tree = flatten_fun(f, in_tree)
-    axis_size = _mapped_axis_size(
-        in_tree, args_flat, (0,) * len(args_flat), "papply")
-    out_flat = parallel.papply(flat_fun, axis_name, args_flat, axis_size)
-    return tree_unflatten(out_tree(), out_flat)
-
-  return papply_fun, axis_name
 
 
 def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
