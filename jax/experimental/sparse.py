@@ -14,6 +14,18 @@ class SparseArray(abc.ABC):
   def todense(self):
     ...
 
+  @abc.abstractmethod
+  def tocoo(self):
+    ...
+
+  @abc.abstractmethod
+  def tocsr(self):
+    ...
+
+  @abc.abstractmethod
+  def toell(self):
+    ...
+
   @abc.abstractproperty
   def dtype(self):
     ...
@@ -90,6 +102,27 @@ class COO(SparseArray):
     dv = self.data * v[cols]
     return jnp.zeros(self.shape[0], dtype=dv.dtype).at[rows].add(dv)
 
+  def tocoo(self):
+    return self
+
+  def tocsr(self):
+    assert self.ndim == 2
+    row, col, data = lax.sort(tuple(self.coords) + (self.data,))
+    if len(row) == 0:
+      return CSR(row, jnp.zeros(self.shape[0] + 1, row.dtype), data, self.shape)
+    indices = jnp.ravel(col)
+    indptr = jnp.cumsum(jnp.bincount(row))
+    indptr = jnp.concatenate([
+      jnp.zeros(1, indptr.dtype),
+      indptr,
+      jnp.full(self.shape[0] - len(indptr), indptr[-1])
+    ])
+    return CSR(indices, indptr, data, self.shape)
+
+  def toell(self):
+    # TODO(jakevdp): implement this more directly.
+    return self.tocsr().toell()
+
 
 class CSR(SparseArray):
   """JAX-based sparse array stored in CSR format."""
@@ -130,9 +163,29 @@ class CSR(SparseArray):
     col = self.indices
     return d.at[row, col].add(self.data)
 
+  def tocsr(self):
+    return self
+
+  def tocoo(self):
+    row = jnp.repeat(jnp.arange(self.shape[0]), jnp.diff(self.indptr))
+    col = self.indices
+    return COO(jnp.vstack([row, col]), self.data, self.shape)
+
+  def toell(self):
+    rownz = jnp.diff(self.indptr)
+    shape = (self.shape[0], rownz.max())
+    columns = jnp.zeros(shape, dtype=self.index_dtype)
+    data = jnp.zeros(shape, dtype=self.dtype)
+    row = jnp.repeat(jnp.arange(self.shape[0]), rownz)
+    # TODO(jakevdp): faster way to do this?
+    col = jnp.concatenate([jnp.arange(n) for n in rownz])
+    data = data.at[row, col].set(self.data)
+    columns = columns.at[row, col].set(self.indices)
+    return ELL(rownz, columns, data, self.shape)
+
   @property
   def index_dtype(self):
-    return self.coords.dtype
+    return self.indices.dtype
 
   @property
   def dtype(self):
@@ -186,6 +239,23 @@ class ELL(SparseArray):
     valid = jnp.arange(self.columns.shape[1]) < self.rownz[:, None]
     rows = jnp.broadcast_to(jnp.arange(self.columns.shape[0])[:, None], self.columns.shape)
     return jnp.zeros(self.shape, self.dtype).at[rows[valid], self.columns[valid]].add(self.data[valid])
+
+  def toell(self):
+    return self
+
+  def tocsr(self):
+    valid = (jnp.arange(self.data.shape[1]) < self.rownz[:, None])
+    indices = self.columns[valid]
+    indptr = jnp.cumsum(jnp.concatenate([jnp.zeros(1, dtype=indices.dtype), valid.sum(1)]))
+    data = self.data[valid]
+    return CSR(indices, indptr, data, self.shape)
+
+  def tocoo(self):
+    valid = (jnp.arange(self.data.shape[1]) < self.rownz[:, None])
+    col = self.columns[valid]
+    row = jnp.where(valid)[0]
+    data = self.data[valid]
+    return COO(jnp.vstack([row, col]), data, self.shape)
 
   @property
   def index_dtype(self):

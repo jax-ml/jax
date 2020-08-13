@@ -43,9 +43,10 @@ def rng_sparse(rng, shape, dtype, nnz=0.2):
     mat[mat >= cutoff] = 0
     return mat
 
+test_shapes_2d = [(1, 5), (2, 3), (10, 1)]
 test_shapes = {
-  sparse.CSR: [(1, 5), (2, 3), (10, 1)],
-  sparse.ELL: [(1, 5), (2, 3), (10, 1)],
+  sparse.CSR: test_shapes_2d,
+  sparse.ELL: test_shapes_2d,
   sparse.COO: [(5,), (2, 3), (4, 2, 5)]
 }
 
@@ -75,7 +76,7 @@ class SparseTest(jtu.JaxTestCase):
     for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
     for sparse_type in [sparse.COO, sparse.CSR, sparse.ELL]
     for nnz in [0, 0.2, 0.8]
-    for shape in [(1, 5), (2, 4), (5, 3)]))
+    for shape in test_shapes_2d))
   def testMatvec(self, dtype, shape, sparse_type, nnz):
     rng = jtu.rand_default(self.rng())
     dtype = dtypes.canonicalize_dtype(dtype)
@@ -85,6 +86,29 @@ class SparseTest(jtu.JaxTestCase):
     jnp_fun = lambda a, b: sparse_type.fromdense(a).matvec(b)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol={np.float16: 2E-3})
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_{}->{}_nnz={}".format(
+        jtu.format_shape_dtype_string(shape, dtype),
+        input_type.__name__, output_type.__name__, nnz),
+      "dtype": dtype, "shape": shape, "input_type": input_type,
+      "output_type": output_type, "nnz": nnz}
+    for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
+    for input_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for output_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for nnz in [0, 0.2, 0.8]
+    for shape in test_shapes_2d))
+  def testFormatConversions(self, dtype, shape, input_type, output_type, nnz):
+    rng = jtu.rand_default(self.rng())
+    dtype = dtypes.canonicalize_dtype(dtype)
+    x_dense = rng_sparse(rng, shape, dtype, nnz=nnz)
+    x_input = input_type.fromdense(x_dense)
+    expected = output_type.fromdense(x_dense)
+    actual = getattr(x_input, f"to{output_type.__name__.lower()}")()
+
+    self.assertEqual(expected.dtype, actual.dtype)
+    self.assertEqual(expected.index_dtype, actual.index_dtype)
+    self.assertEqual(expected.nnz, actual.nnz)
+    self.assertArraysEqual(expected.todense(), actual.todense())
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
