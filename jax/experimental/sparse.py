@@ -1,6 +1,6 @@
 import abc
 
-from jax import lax
+from jax import jit, lax, partial
 import jax.numpy as jnp
 from jax.numpy.lax_numpy import _promote_args
 
@@ -28,6 +28,10 @@ class SparseArray(abc.ABC):
 
   @abc.abstractproperty
   def shape(self):
+    ...
+
+  @abc.abstractmethod
+  def matvec(self, v):
     ...
 
   @property
@@ -76,6 +80,15 @@ class COO(SparseArray):
   @property
   def shape(self):
     return tuple(self._shape)
+
+  def matvec(self, v):
+    v = jnp.asarray(v)
+    assert v.ndim == 1
+    assert self.ndim == 2
+    assert v.shape[0] == self.shape[1]
+    rows, cols = self.coords
+    dv = self.data * v[cols]
+    return jnp.zeros(self.shape[0], dtype=dv.dtype).at[rows].add(dv)
 
 
 class CSR(SparseArray):
@@ -133,6 +146,14 @@ class CSR(SparseArray):
   def shape(self):
     return tuple(self._shape)
 
+  def matvec(self, v):
+    v = jnp.asarray(v)
+    assert v.ndim == 1
+    assert v.shape[0] == self.shape[1]
+    dv = self.data * v[self.indices]
+    ind = jnp.cumsum(jnp.zeros_like(self.indices).at[self.indptr].add(1))
+    return jnp.zeros(len(self.indptr) - 1, dv.dtype).at[ind - 1].add(dv)
+
 
 class ELL(SparseArray):
   def __init__(self, rownz, columns, data, shape=None):
@@ -180,8 +201,11 @@ class ELL(SparseArray):
   @property
   def shape(self):
     return tuple(self._shape)
-
-
-if __name__ == '__main__':
-  x = jnp.zeros((3, 4))
-  print(CSR.fromdense(x))
+  
+  def matvec(self, v):
+    v = jnp.asarray(v)
+    assert v.ndim == 1
+    assert v.shape[0] == self.shape[1]
+    invalid = (jnp.arange(self.data.shape[1]) >= self.rownz[:, None])
+    dv = self.data * v[self.columns]
+    return dv.at[invalid].set(0).sum(1, dtype=dv.dtype)

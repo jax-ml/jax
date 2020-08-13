@@ -43,7 +43,7 @@ def rng_sparse(rng, shape, dtype, nnz=0.2):
     # TODO(jakevdp): do we care about duplicates?
     cutoff = np.sort(mat.ravel())[nnz]
     mat[mat >= cutoff] = 0
-    return mat.astype(dtypes.canonicalize_dtype(mat.dtype))
+    return mat
 
 test_shapes = {
   sparse.CSR: [(1, 5), (2, 3), (10, 1)],
@@ -63,11 +63,29 @@ class SparseTest(jtu.JaxTestCase):
     for shape in test_shapes[sparse_type]))
   def testDenseRoundTrip(self, dtype, shape, sparse_type, nnz):
     rng = jtu.rand_default(self.rng())
+    dtype = dtypes.canonicalize_dtype(dtype)
     x_dense = rng_sparse(rng, shape, dtype, nnz=nnz)
     x_sparse = sparse_type.fromdense(x_dense)
 
     self.assertEqual(x_sparse.nnz, (x_dense != 0).sum())
     self.assertArraysEqual(x_sparse.todense(), x_dense)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_{}_nnz={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), sparse_type.__name__, nnz),
+      "dtype": dtype, "shape": shape, "sparse_type": sparse_type, "nnz": nnz}
+    for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
+    for sparse_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for nnz in [0, 0.2, 0.8]
+    for shape in [(1, 5), (2, 4), (5, 3)]))
+  def testMatvec(self, dtype, shape, sparse_type, nnz):
+    rng = jtu.rand_default(self.rng())
+    dtype = dtypes.canonicalize_dtype(dtype)
+    args_maker = lambda: [rng_sparse(rng, shape, dtype, nnz), rng(shape[-1:], dtype)]
+
+    np_fun = lambda a, b: np.dot(a, b)
+    jnp_fun = lambda a, b: sparse_type.fromdense(a).matvec(b)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol={np.float16: 2E-3})
 
 
 if __name__ == '__main__':
