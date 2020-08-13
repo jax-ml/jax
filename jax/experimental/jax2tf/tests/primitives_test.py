@@ -88,7 +88,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_type_promotion(self, f_jax=jnp.add):
     # We only test a few types here, as tensorflow does not support many
     # types like uint* or bool in binary ops.
-    types = [np.int32, np.int64, np.float32]
+    types = [dtypes.bfloat16, np.int32, np.int64, np.float32]
     for x_dtype in types:
       for y_dtype in types:
         x = np.array([1, 2], dtype=x_dtype)
@@ -104,9 +104,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_pad)
   def test_pad(self, harness: primitive_harness.Harness):
-    # TODO: figure out the bfloat16 story
-    if harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
     # TODO: fix pad with negative padding in XLA (fixed on 06/16/2020)
     if any([lo < 0 or hi < 0 for lo, hi, mid in harness.params["pads"]]):
       raise unittest.SkipTest("pad with negative pad not supported")
@@ -118,9 +115,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         harness.params["k"] < 0):
       with self.assertRaisesRegex(ValueError, "k argument to top_k must be"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    # TODO: figure out what's up with bfloat16
-    elif harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 support not implemented")
     elif harness.params["dtype"] in jtu.dtypes.complex:
       # TODO(necula): fix top_k complex bug on TPU
       if jtu.device_under_test() == "tpu":
@@ -135,9 +129,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_sort)
   def test_sort(self, harness: primitive_harness.Harness):
-    if harness.params["dtype"] is dtypes.bfloat16 or harness.params["dtype"] in jtu.dtypes.complex:
-      # TODO: implement bfloat16/complex support in XlaSort
-      raise unittest.SkipTest("bfloat16/complex support not implemented")
+    if harness.params["dtype"] in jtu.dtypes.complex:
+      # TODO: implement complex support in XlaSort
+      raise unittest.SkipTest("complex support not implemented")
     if harness.params["dtype"] is dtypes.bool_ and len(harness.arg_descriptors) == 4:
       # TODO: _sort uses tfxla.key_value_sort to handle 2 operandes, but the operation is not compatible with boolean keys.
       raise unittest.SkipTest("boolean key key value sort not implemented")
@@ -549,6 +543,25 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     f = jax2tf.convert(lax.stop_gradient)
     self.assertEqual(f(tf.ones([])), 1.)
 
+  # test_bfloat16_constant checks that https://github.com/google/jax/issues/3942 is
+  # fixed
+  def test_bfloat16_constant(self):
+    def jax_fn_scalar(x):
+      x = x.astype(jnp.bfloat16)
+      x *= 2.
+      return x
+
+    def jax_fn_array(x):
+      x = x.astype(jnp.bfloat16)
+      x *= np.array([1.5, 2.5, 3.5], jnp.bfloat16)
+      return x
+
+    tf_fn_scalar = jax2tf.convert(jax_fn_scalar)
+    self.assertAllClose(tf_fn_scalar(1.375).numpy(), jnp.bfloat16(2.750))
+
+    tf_fn_array = jax2tf.convert(jax_fn_array)
+    self.assertAllClose(tf_fn_array(np.array([3, 4, 5])),
+                        np.array([4.5, 10, 17.5], jnp.bfloat16))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

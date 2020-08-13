@@ -57,10 +57,38 @@ def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
     return True
   try:
-    tf.convert_to_tensor(v)
+    # Note: this conversion is overkill and just intended as a type check; this code
+    # is in principle only run if core.skip_checks is False.
+    _safe_convert_to_tensor(v)
     return True
   except ValueError:
     return False
+
+def _safe_convert_to_tensor(val, dtype=None):
+  """Converts val to a Tensor.
+
+  This method wraps TensorFlow's `convert_to_tensor
+  <https://www.tensorflow.org/api_docs/python/tf/convert_to_tensor>`_ operator with
+  special case handling for when `val` is an instance of `jnp.bfloat16` or has a
+  `jnp.bfloat16` dtype. Because this type is not supported in numpy and different
+  from `tf.bfloat16.as_numpy_dtype`, `tf.convert_to_tensor` runs into trouble when
+  trying to convert it. In such a case, we solve the problem by viewing val as a
+  `ndarray` with a `uint16` dtype, for which conversion is properly defined. Then, we
+  simply bitcast it back to `bfloat16`.
+  """
+  dtype = dtype if dtype else (val.dtype if hasattr(val, "dtype") else None)
+  if (dtype == jnp.bfloat16 or isinstance(val, jnp.bfloat16)):
+    if not isinstance(val, jnp.ndarray):
+      val = np.array(val, jnp.bfloat16)
+
+    val = tf.bitcast(tf.convert_to_tensor(val.view(jnp.uint16),
+                                          dtype=to_tf_dtype(jnp.uint16)),
+                     type=to_tf_dtype(jnp.bfloat16))
+  else:
+    conversion_type = to_tf_dtype(dtype) if dtype else None
+    val = tf.convert_to_tensor(val, dtype=conversion_type)
+
+  return val
 
 # During JAX transformations we sometimes produce a Jaxpr that has arguments
 # of abstract value core.abstract_unit and results equal to core.unit.
@@ -244,7 +272,9 @@ class TensorFlowTracer(core.Tracer):
     else:  # Must be a numeric value
       assert core.skip_checks or _is_tfval(val), f"Non TfVal: {val}"
       aval = xla.abstractify(val)  # type: ignore
-      self.val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore
+
+      self.val = _safe_convert_to_tensor(val, dtype=aval.dtype)
+
       assert core.skip_checks or aval.strip_weak_type() == self.aval.strip_weak_type(), (
               f"Expected {aval}, got {self.aval}")
 
