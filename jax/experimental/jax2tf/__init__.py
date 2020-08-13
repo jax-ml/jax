@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from .jax2tf import convert, safe_convert_to_tensor
+from .jax2tf import convert

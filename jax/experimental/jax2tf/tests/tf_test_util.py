@@ -92,7 +92,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     func_tf = jax2tf.convert(func_jax)
 
     def convert_if_bfloat16(v):
-      return jax2tf.safe_convert_to_tensor(v) if hasattr(v, "dtype") else v
+      if hasattr(v, "dtype"):
+        return tf.convert_to_tensor(np.array(v, jnp.float32) if
+                                      v.dtype == jnp.bfloat16 else v,
+                                    to_tf_dtype(v.dtype))
+      return v
 
     tf_args = tuple(map(convert_if_bfloat16, args))
 

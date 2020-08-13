@@ -57,16 +57,16 @@ def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
     return True
   try:
-    safe_convert_to_tensor(v)
+    # Note: this conversion is overkill and just intended as a type check; this code
+    # is in principle only run if core.skip_checks is False.
+    if hasattr(v, "dtype"):
+      tf.convert_to_tensor(np.array(v, jnp.float32) if v.dtype == jnp.bfloat16 else v,
+                           to_tf_dtype(v.dtype))
+    else:
+      tf.convert_to_tensor(v)
     return True
   except ValueError:
     return False
-
-def safe_convert_to_tensor(v):
-  if not hasattr(v, "dtype"):
-      return tf.convert_to_tensor(v)
-  return tf.convert_to_tensor(np.array(v, jnp.float32) if v.dtype == jnp.bfloat16
-                              else v, to_tf_dtype(v.dtype))
 
 # During JAX transformations we sometimes produce a Jaxpr that has arguments
 # of abstract value core.abstract_unit and results equal to core.unit.
