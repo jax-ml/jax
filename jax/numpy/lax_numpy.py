@@ -30,6 +30,7 @@ import operator
 import os
 import types
 from typing import Sequence, Set, Tuple, Union
+from textwrap import dedent as _dedent
 import warnings
 
 import numpy as np
@@ -341,27 +342,40 @@ iterable = np.iterable
 def result_type(*args):
   return dtypes.result_type(*args)
 
-def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False):
+def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
   if promote_to_inexact:
     def fn(x):
       x = lax.convert_element_type(x, _to_inexact_dtype(_dtype(x)))
       return lax_fn(x)
   else:
     fn = lambda x: lax_fn(x)
-  return _wraps(numpy_fn)(fn)
+  if lax_doc:
+    doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
+    return _wraps(numpy_fn, lax_description=doc)(fn)
+  else:
+    return _wraps(numpy_fn)(fn)
 
-def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False):
+def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
   if promote_to_inexact:
     fn = lambda x1, x2: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x1, x2))
   else:
     fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
-  return _wraps(numpy_fn)(fn)
+  if lax_doc:
+    doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
+    return _wraps(numpy_fn, lax_description=doc)(fn)
+  else:
+    return _wraps(numpy_fn)(fn)
 
-def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn):
+def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn, lax_doc=False):
   def fn(x1, x2):
     x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
     return lax_fn(x1, x2) if x1.dtype != bool_ else bool_lax_fn(x1, x2)
   return _wraps(numpy_fn)(fn)
+  if lax_doc:
+    doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
+    return _wraps(numpy_fn, lax_description=doc)(fn)
+  else:
+    return _wraps(numpy_fn)(fn)
 
 fabs = _one_to_one_unop(np.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
@@ -404,7 +418,7 @@ arctan2 = _one_to_one_binop(np.arctan2, lax.atan2, True)
 minimum = _one_to_one_binop(np.minimum, lax.min)
 maximum = _one_to_one_binop(np.maximum, lax.max)
 float_power = _one_to_one_binop(np.float_power, lax.pow, True)
-nextafter = _one_to_one_binop(np.nextafter, lax.nextafter, True)
+nextafter = _one_to_one_binop(np.nextafter, lax.nextafter, True, True)
 
 
 def _comparison_op(numpy_fn, lax_fn):
