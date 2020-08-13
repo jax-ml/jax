@@ -65,6 +65,17 @@ def _is_tfval(v: TfVal) -> bool:
     return False
 
 def _safe_convert_to_tensor(val, dtype=None):
+  """Converts val to a Tensor.
+
+  This method wraps TensorFlow's `convert_to_tensor
+  <https://www.tensorflow.org/api_docs/python/tf/convert_to_tensor>`_ operator with
+  special case handling for when `val` is an instance of `jnp.bfloat16` or has a
+  `jnp.bfloat16` dtype. Because this type is not supported in numpy and different
+  from `tf.bfloat16.as_numpy_dtype`, `tf.convert_to_tensor` runs into trouble when
+  trying to convert it. In such a case, we solve the problem by viewing val as a
+  `ndarray` with a `uint16` dtype, for which conversion is properly defined. Then, we
+  simply bitcast it back to `bfloat16`.
+  """
   dtype = dtype if dtype else (val.dtype if hasattr(val, "dtype") else None)
   if (dtype == jnp.bfloat16 or isinstance(val, jnp.bfloat16)):
     if not isinstance(val, jnp.ndarray):
