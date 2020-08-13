@@ -557,10 +557,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       return x
 
     tf_fn_scalar = jax2tf.convert(jax_fn_scalar)
-    self.assertEqual(tf_fn_scalar(tf.convert_to_tensor(1.375)), 2.750)
+    self.assertAllClose(tf_fn_scalar(1.375).numpy(), jnp.bfloat16(2.750))
 
     tf_fn_array = jax2tf.convert(jax_fn_array)
-    self.assertAllClose(tf_fn_array(tf.convert_to_tensor([3, 4, 5])),
+    self.assertAllClose(tf_fn_array(np.array([3, 4, 5])),
                         np.array([4.5, 10, 17.5], jnp.bfloat16))
 
 if __name__ == "__main__":
