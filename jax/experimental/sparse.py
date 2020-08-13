@@ -1,6 +1,6 @@
 import abc
 
-from jax import jit, lax, partial
+from jax import lax
 import jax.numpy as jnp
 from jax.numpy.lax_numpy import _promote_args
 
@@ -156,6 +156,7 @@ class CSR(SparseArray):
 
 
 class ELL(SparseArray):
+  """JAX-based sparse array stored in ELL format."""
   def __init__(self, rownz, columns, data, shape=None):
     self.rownz = jnp.asarray(rownz)
     self.columns = jnp.asarray(columns)
@@ -201,7 +202,7 @@ class ELL(SparseArray):
   @property
   def shape(self):
     return tuple(self._shape)
-  
+
   def matvec(self, v):
     v = jnp.asarray(v)
     assert v.ndim == 1
