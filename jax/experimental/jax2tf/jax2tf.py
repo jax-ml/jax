@@ -59,14 +59,25 @@ def _is_tfval(v: TfVal) -> bool:
   try:
     # Note: this conversion is overkill and just intended as a type check; this code
     # is in principle only run if core.skip_checks is False.
-    if hasattr(v, "dtype"):
-      tf.convert_to_tensor(np.array(v, jnp.float32) if v.dtype == jnp.bfloat16 else v,
-                           to_tf_dtype(v.dtype))
-    else:
-      tf.convert_to_tensor(v)
+    _safe_convert_to_tensor(v)
     return True
   except ValueError:
     return False
+
+def _safe_convert_to_tensor(val, dtype=None):
+  dtype = dtype if dtype else (val.dtype if hasattr(val, "dtype") else None)
+  if (dtype == jnp.bfloat16 or isinstance(val, jnp.bfloat16)):
+    if not isinstance(val, jnp.ndarray):
+      val = np.array(val, jnp.bfloat16)
+
+    val = tf.bitcast(tf.convert_to_tensor(val.view(jnp.uint16),
+                                          dtype=to_tf_dtype(jnp.uint16)),
+                     type=to_tf_dtype(jnp.bfloat16))
+  else:
+    conversion_type = to_tf_dtype(dtype) if dtype else None
+    val = tf.convert_to_tensor(val, dtype=conversion_type)
+
+  return val
 
 # During JAX transformations we sometimes produce a Jaxpr that has arguments
 # of abstract value core.abstract_unit and results equal to core.unit.
@@ -251,15 +262,8 @@ class TensorFlowTracer(core.Tracer):
       assert core.skip_checks or _is_tfval(val), f"Non TfVal: {val}"
       aval = xla.abstractify(val)  # type: ignore
 
-      if aval.dtype == jnp.bfloat16:
-        if not isinstance(val, jnp.ndarray):
-          val = np.array(val, jnp.bfloat16)
+      self.val = _safe_convert_to_tensor(val, dtype=aval.dtype)
 
-        self.val = tf.bitcast(tf.convert_to_tensor(val.view(jnp.uint16),
-                                                   dtype=to_tf_dtype(jnp.uint16)),
-                                type=to_tf_dtype(jnp.bfloat16))
-      else:
-        self.val = tf.convert_to_tensor(val, dtype=to_tf_dtype(aval.dtype))  # type: ignore
       assert core.skip_checks or aval.strip_weak_type() == self.aval.strip_weak_type(), (
               f"Expected {aval}, got {self.aval}")
 
