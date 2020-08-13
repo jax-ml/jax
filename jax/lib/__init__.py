@@ -51,7 +51,8 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-from jaxlib import pytree
+pytree = xla_client._xla.pytree
+jax_jit = xla_client._xla.jax_jit
 from jaxlib import cusolver
 try:
   from jaxlib import cuda_prng
