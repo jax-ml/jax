@@ -354,9 +354,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # b/158006398: TF kernels are missing for 'rem' and 'atan2'
       if dtype in [np.float16, dtypes.bfloat16]:
         raise unittest.SkipTest("TODO: TF kernels are missing for {lax_name}.")
-      # TODO(bchetioui): do we need that here too?
-      if dtype is np.float32 and jtu.device_under_test() == "tpu":
-        raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
     if lax_name in ("igamma", "igammac"):
       # TODO(necula): fix bug with igamma/f16
       if dtype in [np.float16, dtypes.bfloat16]:
