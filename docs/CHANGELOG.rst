@@ -57,6 +57,9 @@ jax 0.1.73 (July 22, 2020)
   * hfft and ihfft (#3664)
   * jax.numpy.intersect1d (#3726)
   * jax.numpy.lexsort (#3812)
+  * ``lax.scan`` and the ``scan`` primitive support an ``unroll``
+    parameter for loop unrolling when lowering to XLA
+    (`#3738 <https://github.com/google/jax/pull/3738>`_).
 
 * Bug Fixes:
 
