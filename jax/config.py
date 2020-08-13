@@ -126,6 +126,9 @@ class Config:
         enabler()
       self.omnistaging_enabled = True
 
+  def disable_omnistaging(self):
+    pass
+
 
 class NameSpace(object):
   def __init__(self, getter):
