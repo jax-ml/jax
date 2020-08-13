@@ -175,41 +175,40 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
   def test_qr(self, harness: primitive_harness.Harness):
     # See jax.lib.lapack.geqrf for the list of compatible types
-    if (harness.params["dtype"] in [jnp.float32, jnp.float64] or
-        harness.params["dtype"] == jnp.float16 and jtu.device_under_test() == "tpu"):
-      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                             atol=1e-5, rtol=1e-5)
-    elif harness.params["dtype"] in [jnp.complex64, jnp.complex128]:
-      if (jtu.device_under_test() == "tpu" and
-          harness.params["dtype"] in [jnp.complex64]):
-        raise unittest.SkipTest("QR for c64 not implemented on TPU")
 
-      # TODO: see https://github.com/google/jax/pull/3775#issuecomment-659407824.
-      # - check_compiled=True breaks for complex types;
-      # - for now, the performance of the HLO QR implementation called when
-      #   compiling with TF is expected to have worse performance than the
-      #   custom calls made in JAX.
-      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                             expect_tf_exceptions=True, atol=1e-5, rtol=1e-5)
+    dtype = harness.params["dtype"]
+    dut = jtu.device_under_test()
+    # These cases are not implemented in JAX
+    if dtype in (jtu.dtypes.all_integer + [jnp.bfloat16]):
+      unimplemented_jax = True
+    elif dtype is np.complex64 and dut == "tpu":
+      unimplemented_jax = True
+    elif dtype is np.float16 and dut in ("cpu", "gpu"):
+      unimplemented_jax = True
     else:
-      # TODO(necula): fix QR bug on TPU
-      if (jtu.device_under_test() == "tpu" and
-          harness.params["dtype"] in (jnp.bfloat16, jnp.int32, jnp.uint32)):
-        raise unittest.SkipTest("QR bug on TPU for certain types: error not raised")
-      if (jtu.device_under_test() == "tpu" and
-          harness.params["dtype"] in (jnp.bool_,)):
-        raise unittest.SkipTest("QR bug on TPU for certain types: invalid cast")
+      unimplemented_jax = False
 
-      expected_error = ValueError if jtu.device_under_test() == "gpu" else NotImplementedError
-      with self.assertRaisesRegex(expected_error, "Unsupported dtype"):
-        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+    if unimplemented_jax:
+      raise unittest.SkipTest(f"QR not implemented in JAX for {dtype} on {dut}")
+
+    expect_tf_exceptions = False
+    if dtype in (np.complex64, np.complex128):
+      expect_tf_exceptions = True
+    # TODO: see https://github.com/google/jax/pull/3775#issuecomment-659407824.
+    # - experimental_compile=True breaks for complex types;
+    # - for now, the performance of the HLO QR implementation called when
+    #   compiling with TF is expected to have worse performance than the
+    #   custom calls made in JAX.
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           expect_tf_exceptions=expect_tf_exceptions,
+                           atol=1e-5, rtol=1e-5)
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_svd)
   def test_svd(self, harness: primitive_harness.Harness):
     if jtu.device_under_test() == "tpu":
       raise unittest.SkipTest("TODO: test crashes the XLA compiler for some TPU variants")
     expect_tf_exceptions = False
-    if harness.params["dtype"] in [jnp.float16, dtypes.bfloat16]:
+    if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
       if jtu.device_under_test() == "tpu":
         # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
         expect_tf_exceptions = True
@@ -219,7 +218,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
         return
 
-    if harness.params["dtype"] in [jnp.complex64, jnp.complex128]:
+    if harness.params["dtype"] in [np.complex64, np.complex128]:
       if jtu.device_under_test() == "tpu":
         # TODO: on JAX on TPU there is no SVD implementation for complex
         with self.assertRaisesRegex(RuntimeError,
@@ -416,10 +415,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_shift_right_logical)
   def test_shift_right_logical(self, harness):
+    if jtu.device_under_test() == "tpu" and harness.params["dtype"] in [np.int8, np.int16]:
+      raise unittest.SkipTest("TODO: silent error for negative inputs")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_shift_right_arithmetic)
   def test_shift_right_arithmetic(self, harness):
+    if jtu.device_under_test() == "tpu" and harness.params["dtype"] in [np.uint8, np.uint16]:
+      raise unittest.SkipTest("TODO: silent error for negative inputs")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_slice)

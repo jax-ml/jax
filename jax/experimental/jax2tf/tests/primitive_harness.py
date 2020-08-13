@@ -413,7 +413,7 @@ lax_linalg_qr = tuple(
           shape=shape,
           dtype=dtype,
           full_matrices=full_matrices)
-  for dtype in jtu.dtypes.all
+  for dtype in jtu.dtypes.all_floating  + jtu.dtypes.complex
   for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
   for full_matrices in [False, True]
 )
@@ -576,14 +576,16 @@ lax_shift_left = tuple(
 lax_shift_right_logical = tuple(
   Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
           lax.shift_right_logical,
-          [arg, StaticArg(np.array([shift_amount], dtype=dtype))])
+          [arg, StaticArg(np.array([shift_amount], dtype=dtype))],
+          dtype=dtype)
   for arg, dtype, shift_amount in shift_inputs
 )
 
 lax_shift_right_arithmetic = tuple(
   Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
           lax.shift_right_arithmetic,
-          [arg, StaticArg(np.array([shift_amount], dtype=dtype))])
+          [arg, StaticArg(np.array([shift_amount], dtype=dtype))],
+          dtype=dtype)
   for arg, dtype, shift_amount in shift_inputs
 )
 
