@@ -546,22 +546,21 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   # test_bfloat16_constant checks that https://github.com/google/jax/issues/3942 is
   # fixed
   def test_bfloat16_constant(self):
-    def jax_fn(x):
+    def jax_fn_scalar(x):
       x = x.astype(jnp.bfloat16)
       x *= 2.
       return x
 
-    tf_fn = jax2tf.convert(jax_fn)
-    self.assertEqual(tf_fn(tf.convert_to_tensor(1.375)), 2.750)
-
-  def test_bfloat16_array(self):
-    def jax_fn(x):
+    def jax_fn_array(x):
       x = x.astype(jnp.bfloat16)
       x *= np.array([1.5, 2.5, 3.5], jnp.bfloat16)
       return x
 
-    tf_fn = jax2tf.convert(jax_fn)
-    self.assertAllClose(tf_fn(tf.convert_to_tensor([3, 4, 5])),
+    tf_fn_scalar = jax2tf.convert(jax_fn_scalar)
+    self.assertEqual(tf_fn_scalar(tf.convert_to_tensor(1.375)), 2.750)
+
+    tf_fn_array = jax2tf.convert(jax_fn_array)
+    self.assertAllClose(tf_fn_array(tf.convert_to_tensor([3, 4, 5])),
                         np.array([4.5, 10, 17.5], jnp.bfloat16))
 
 if __name__ == "__main__":
