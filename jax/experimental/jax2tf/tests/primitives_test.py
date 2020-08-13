@@ -156,8 +156,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if len(harness.params["fft_lengths"]) > 3:
       with self.assertRaisesRegex(RuntimeError, "FFT only supports ranks 1-3"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    elif harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 support not implemented")
     elif jtu.device_under_test() == "tpu" and len(harness.params["fft_lengths"]) > 1:
       # TODO(b/140351181): FFT is mostly unimplemented on TPU, even for JAX
       with self.assertRaisesRegex(RuntimeError, "only 1D FFT is currently supported."):
