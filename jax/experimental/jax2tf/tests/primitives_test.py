@@ -349,19 +349,23 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
-    if harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
-    if harness.params["lax_name"] in ("igamma", "igammac", "rem", "atan2"):
-      # b/158006398: TF kernels are missing for 'rem' and 'atan2'.
+    if harness.params["lax_name"] in ("rem", "atan2"):
+      # b/158006398: TF kernels are missing for 'rem' and 'atan2'
+      if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
+        raise unittest.SkipTest("TODO: TF kernels are missing for 'rem' and 'atan2'.")
+      # TODO(bchetioui): do we need that here too?
+      if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
+        raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
+    if harness.params["lax_name"] in ("igamma", "igammac"):
       # TODO(necula): fix bug with igamma/f16
-      if harness.params["dtype"] is np.float16:
-        raise unittest.SkipTest("TODO: fix bug")
+      if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
+        raise unittest.SkipTest("TODO: igamma(c) unsupported with (b)float16 in JAX")
       # TODO(necula): fix bug with igamma/f32 on TPU
       if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
     # TODO(necula): fix bug with nextafter/f16
     if (harness.params["lax_name"] == "nextafter" and
-        harness.params["dtype"] is np.float16):
+        harness.params["dtype"] in [np.float16, dtypes.bfloat16]):
       raise unittest.SkipTest("TODO: understand unimplemented case")
     arg1, arg2 = harness.dyn_args_maker(self.rng())
     custom_assert = None
