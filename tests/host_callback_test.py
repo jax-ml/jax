@@ -1116,6 +1116,21 @@ what: x times i
           comp, token, 123,
           [xla_bridge.constant(comp, np.zeros((2,), dtype=np.float32))])
 
+  def test_odeint(self):
+    # TODO: find a smaller repro for bug #4015
+    # Seems to be xla_call(scan(xla_call)), all under grad.
+    from jax.experimental.ode import odeint
+
+    def f(x, t, k):
+      x = hcb.id_print(x)
+      return -k * x
+
+    def loss(k=1.0):
+      t = jnp.linspace(0, 0.001, num=2)
+      xs = odeint(f, 1.0, t, k)
+      return xs[-1]
+
+    api.grad(loss)(1.0)  # should not fail
 
 class OutfeedRewriterTest(jtu.JaxTestCase):
 
@@ -1240,7 +1255,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                                                                  ] b f
                                                                    e = add d 1
                                                                in (c, e, g) }
-                                                  donated_invars=(False, False, False, False, False, False, False)
+                                                  donated_invars=(False, False, False, False)
                                                   name=body ] n p q r
                                 v w = xla_call[ call_jaxpr={ lambda  ; c a b f.
                                                              let _ d g = id_tap[ arg_treedef_=*
@@ -1250,7 +1265,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                                                                  ] c b f
                                                                  e = lt d 5
                                                              in (e, g) }
-                                                donated_invars=(False, False, False, False, False, False)
+                                                donated_invars=(False, False, False, False)
                                                 name=cond_body ] m s t u
                             in (v, s, t, w) }
                body_nconsts=2
