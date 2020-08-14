@@ -242,6 +242,7 @@ def _jit_is_disabled():
 def xla_computation(fun: Callable,
                     static_argnums: Union[int, Iterable[int]] = (),
                     axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+                    in_parts=None, out_parts=None,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
                     instantiate_const_outputs: Optional[bool] = None,
@@ -257,6 +258,12 @@ def xla_computation(fun: Callable,
       functions that involve parallel communication collectives, and it
       specifies the axis name/size environment that would be set up by
       applications of :py:func:`jax.pmap`. See the examples below.
+    in_parts: Optional, how each argument to ``fun`` should partitioned or
+      replicated. This is used to specify partitioned XLA computations, see
+      ``sharded_jit`` for more info.
+    out_parts: Optional, how each output of ``fun`` should partitioned or
+      replicated. This is used to specify partitioned XLA computations, see
+      ``sharded_jit`` for more info.
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
@@ -372,6 +379,11 @@ def xla_computation(fun: Callable,
     else:
       dyn_args = args
     jax_args, in_tree = tree_flatten((dyn_args, kwargs))
+    if in_parts is None:
+      in_parts_flat = None
+    else:
+      in_parts_flat = tuple(flatten_axes(
+          "xla_computation in_parts", in_tree.children()[0], in_parts))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
     if config.omnistaging_enabled:
@@ -383,13 +395,24 @@ def xla_computation(fun: Callable,
       out_avals = [raise_to_shaped(pval.get_aval()) for pval in out_pvals]
     jaxpr = xla.apply_outfeed_rewriter(jaxpr)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
+    if out_parts is None:
+      out_parts_flat = None
+    else:
+      out_parts_flat = tuple(flatten_axes(
+          "xla_computation out_parts", out_tree(), out_parts))
     c = xb.make_computation_builder('xla_computation_{}'.format(fun_name))
     xla_consts = map(partial(xb.constant, c), consts)
-    xla_args = xla._xla_callable_args(c, avals, tuple_args)
+    xla_args = xla._xla_callable_args(c, avals, tuple_args,
+                                      partitions=in_parts_flat)
     outs = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, 'xla_computation')), *xla_args)
-    built = c.build(xc.ops.Tuple(c, outs))
+    build_out_tuple = partial(xc.ops.Tuple, c, outs)
+    if out_parts is not None:
+      out_tuple = xb.with_sharding(c, out_parts_flat, build_out_tuple)
+    else:
+      out_tuple = build_out_tuple()
+    built = c.build(out_tuple)
     if return_shape:
       out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
       out_shape = tree_unflatten(out_tree(), out_shapes_flat)
