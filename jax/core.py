@@ -1049,14 +1049,16 @@ abstract_token = AbstractToken()
 
 
 def raise_to_shaped(aval: AbstractValue, weak_type=False):
-  if isinstance(aval, ShapedArray):
-    return ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
-  elif aval is abstract_unit:
-    return abstract_unit
-  elif aval is abstract_token:
-    return abstract_token
-  else:
-    raise TypeError(type(aval))
+  for typ in type(aval).mro():
+    handler = raise_to_shaped_mappings.get(typ)
+    if handler: return handler(aval, weak_type)
+  raise TypeError(type(aval))
+
+raise_to_shaped_mappings : Dict[type, Callable] = {
+  AbstractUnit: lambda aval, _: aval,
+  AbstractToken: lambda aval, _: aval,
+  ShapedArray: lambda aval, weak_type: ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
+}
 
 # Registry for valid dimension types. This is used by masking.Poly.
 _DIMENSION_TYPES: Set[type] = {int}
