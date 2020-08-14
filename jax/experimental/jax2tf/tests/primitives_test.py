@@ -348,23 +348,25 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
-    if harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
-    if harness.params["lax_name"] in ("igamma", "igammac", "rem", "atan2"):
-      # b/158006398: TF kernels are missing for 'rem' and 'atan2'.
+    lax_name, dtype = harness.params["lax_name"], harness.params["dtype"]
+    if lax_name in ("rem", "atan2"):
+      # b/158006398: TF kernels are missing for 'rem' and 'atan2'
+      if dtype in [np.float16, dtypes.bfloat16]:
+        raise unittest.SkipTest("TODO: TF kernels are missing for {lax_name}.")
+    if lax_name in ("igamma", "igammac"):
       # TODO(necula): fix bug with igamma/f16
-      if harness.params["dtype"] is np.float16:
-        raise unittest.SkipTest("TODO: fix bug")
+      if dtype in [np.float16, dtypes.bfloat16]:
+        raise unittest.SkipTest("TODO: igamma(c) unsupported with (b)float16 in JAX")
       # TODO(necula): fix bug with igamma/f32 on TPU
-      if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
+      if dtype is np.float32 and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
     # TODO(necula): fix bug with nextafter/f16
-    if (harness.params["lax_name"] == "nextafter" and
-        harness.params["dtype"] is np.float16):
+    if (lax_name == "nextafter" and
+        dtype in [np.float16, dtypes.bfloat16]):
       raise unittest.SkipTest("TODO: understand unimplemented case")
     arg1, arg2 = harness.dyn_args_maker(self.rng())
     custom_assert = None
-    if harness.params["lax_name"] == "igamma":
+    if lax_name == "igamma":
       # igamma is not defined when the first argument is <=0
       def custom_assert(result_jax, result_tf):
         # lax.igamma returns NaN when arg1 == arg2 == 0; tf.math.igamma returns 0
@@ -377,7 +379,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         # non-special cases are equal
         self.assertAllClose(result_jax[~ special_cases],
                             result_tf[~ special_cases])
-    if harness.params["lax_name"] == "igammac":
+    if lax_name == "igammac":
       # igammac is not defined when the first argument is <=0
       def custom_assert(result_jax, result_tf):  # noqa: F811
         # lax.igammac returns 1. when arg1 <= 0; tf.math.igammac returns NaN
