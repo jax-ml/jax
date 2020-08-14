@@ -1002,5 +1002,21 @@ class BatchingTest(jtu.JaxTestCase):
       vmap(vmap(lambda x: x - collective(x, ('i', 'j')), axis_name='i'), axis_name='j')(x),
       x - seq(x, axis=(1, 0)))
 
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPpermute(self):
+    nelem = 10
+    ntests = 10
+    x = np.arange(nelem)
+    rng = np.random.RandomState(1)
+    for i in range(ntests):
+      perm = np.arange(nelem)
+      rng.shuffle(perm)
+      perm_pairs = np.stack([np.arange(nelem), perm], axis=-1)
+      rng.shuffle(perm_pairs)
+      self.assertAllClose(
+        vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs)[0], axis_name='i')(x),
+        x - x[perm])
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
