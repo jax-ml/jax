@@ -2845,12 +2845,6 @@ def polyder(p, m=1):
   coeff = (arange(len(p), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
   return p[:-m] * coeff
 
-def _trim_zeros(a):
-  for i, v in enumerate(a):
-    if v != 0:
-      return a[i:]
-  return a[:0]
-
 @_wraps(np.trim_zeros)
 def trim_zeros(filt, trim='fb'):
   first = 0
@@ -2883,7 +2877,7 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   if isinstance(a2, np.poly1d):
     a2 = asarray(a2)
   if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
-    a1, a2 = _trim_zeros(a1), _trim_zeros(a2)
+    a1, a2 = trim_zeros(a1, trim='f'), trim_zeros(a2, trim='f')
   if len(a1) == 0:
     a1 = asarray([0.])
   if len(a2) == 0:
