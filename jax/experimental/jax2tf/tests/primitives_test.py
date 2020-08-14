@@ -282,34 +282,35 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
     lax_name = harness.params["lax_name"]
-    if dtype is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
+    # TODO(bchetioui): do they have bfloat16 support, though?
     if lax_name in ("sinh", "cosh", "atanh", "asinh", "acosh") and dtype is np.float16:
       raise unittest.SkipTest("b/158006398: float16 support is missing from '%s' TF kernel" % lax_name)
     arg, = harness.dyn_args_maker(self.rng())
     custom_assert = None
     if lax_name == "digamma":
       # TODO(necula): fix bug with digamma/f32 on TPU
-      if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
+      if dtype is np.float32 and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
-      if harness.params["dtype"] is np.float16 and jtu.device_under_test() == "tpu":
+      if dtype is np.float16 and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nans and infs")
 
-      # digamma is not defined at 0 and -1
-      def custom_assert(result_jax, result_tf):
-        # lax.digamma returns NaN and tf.math.digamma returns inf
-        special_cases = (arg == 0.) | (arg == -1.)
-        nr_special_cases = np.count_nonzero(special_cases)
-        self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
-                            result_jax[special_cases])
-        self.assertAllClose(np.full((nr_special_cases,), dtype(np.inf)),
-                            result_tf[special_cases])
-        # non-special cases are equal
-        self.assertAllClose(result_jax[~ special_cases],
-                            result_tf[~ special_cases])
+      # In the bfloat16 case, TF and lax both return NaN in undefined cases.
+      if not dtype is dtypes.bfloat16:
+        # digamma is not defined at 0 and -1
+        def custom_assert(result_jax, result_tf):
+          # lax.digamma returns NaN and tf.math.digamma returns inf
+          special_cases = (arg == 0.) | (arg == -1.)
+          nr_special_cases = np.count_nonzero(special_cases)
+          self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
+                              result_jax[special_cases])
+          self.assertAllClose(np.full((nr_special_cases,), dtype(np.inf)),
+                              result_tf[special_cases])
+          # non-special cases are equal
+          self.assertAllClose(result_jax[~ special_cases],
+                              result_tf[~ special_cases])
     if lax_name == "erf_inv":
       # TODO(necula): fix bug with erf_inv/f16
-      if dtype is np.float16:
+      if dtype in [np.float16, dtypes.bfloat16]:
         raise unittest.SkipTest("TODO: fix bug")
       # TODO(necula): fix erf_inv bug on TPU
       if jtu.device_under_test() == "tpu":
@@ -317,7 +318,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # erf_inf is not defined for arg <= -1 or arg >= 1
       def custom_assert(result_jax, result_tf):  # noqa: F811
         # for arg < -1 or arg > 1
-        # lax.erf_inf returns NaN; tf.math.erf_inv return +/- inf
+        # lax.erf_inv returns NaN; tf.math.erf_inv return +/- inf
         special_cases = (arg < -1.) | (arg > 1.)
         nr_special_cases = np.count_nonzero(special_cases)
         self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
