@@ -19,7 +19,7 @@ echo "cudnn version: $CUDNN_VERSION"
 
 apt-get update
 apt-get remove -y --allow-change-held-packages cuda-license-10-0 libcudnn7 libnccl2
-apt-get install -y --no-install-recommends \
+apt-get install -y --no-install-recommends --allow-downgrades \
   cuda-nvml-dev-$CUDA_VERSION \
   cuda-command-line-tools-$CUDA_VERSION \
   cuda-libraries-dev-$CUDA_VERSION \
