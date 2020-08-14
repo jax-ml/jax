@@ -156,8 +156,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if len(harness.params["fft_lengths"]) > 3:
       with self.assertRaisesRegex(RuntimeError, "FFT only supports ranks 1-3"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    elif harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 support not implemented")
     elif jtu.device_under_test() == "tpu" and len(harness.params["fft_lengths"]) > 1:
       # TODO(b/140351181): FFT is mostly unimplemented on TPU, even for JAX
       with self.assertRaisesRegex(RuntimeError, "only 1D FFT is currently supported."):
@@ -284,52 +282,51 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
     lax_name = harness.params["lax_name"]
-    if dtype is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
+    # TODO(bchetioui): do they have bfloat16 support, though?
     if lax_name in ("sinh", "cosh", "atanh", "asinh", "acosh") and dtype is np.float16:
       raise unittest.SkipTest("b/158006398: float16 support is missing from '%s' TF kernel" % lax_name)
     arg, = harness.dyn_args_maker(self.rng())
     custom_assert = None
     if lax_name == "digamma":
-      # TODO(necula): fix bug with digamma/f32 on TPU
-      if harness.params["dtype"] is np.float32 and jtu.device_under_test() == "tpu":
+      # TODO(necula): fix bug with digamma/(f32|f16) on TPU
+      if dtype in [np.float16, np.float32] and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
-      if harness.params["dtype"] is np.float16 and jtu.device_under_test() == "tpu":
-        raise unittest.SkipTest("TODO: fix bug: nans and infs")
 
-      # digamma is not defined at 0 and -1
-      def custom_assert(result_jax, result_tf):
-        # lax.digamma returns NaN and tf.math.digamma returns inf
-        special_cases = (arg == 0.) | (arg == -1.)
-        nr_special_cases = np.count_nonzero(special_cases)
-        self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
-                            result_jax[special_cases])
-        self.assertAllClose(np.full((nr_special_cases,), dtype(np.inf)),
-                            result_tf[special_cases])
-        # non-special cases are equal
-        self.assertAllClose(result_jax[~ special_cases],
-                            result_tf[~ special_cases])
+      # In the bfloat16 case, TF and lax both return NaN in undefined cases.
+      if not dtype is dtypes.bfloat16:
+        # digamma is not defined at 0 and -1
+        def custom_assert(result_jax, result_tf):
+          # lax.digamma returns NaN and tf.math.digamma returns inf
+          special_cases = (arg == 0.) | (arg == -1.)
+          nr_special_cases = np.count_nonzero(special_cases)
+          self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
+                              result_jax[special_cases])
+          self.assertAllClose(np.full((nr_special_cases,), dtype(np.inf)),
+                              result_tf[special_cases])
+          # non-special cases are equal
+          self.assertAllClose(result_jax[~ special_cases],
+                              result_tf[~ special_cases])
     if lax_name == "erf_inv":
-      # TODO(necula): fix bug with erf_inv/f16
-      if dtype is np.float16:
-        raise unittest.SkipTest("TODO: fix bug")
       # TODO(necula): fix erf_inv bug on TPU
       if jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("erf_inv bug on TPU: nan vs non-nan")
-      # erf_inf is not defined for arg <= -1 or arg >= 1
-      def custom_assert(result_jax, result_tf):  # noqa: F811
-        # for arg < -1 or arg > 1
-        # lax.erf_inf returns NaN; tf.math.erf_inv return +/- inf
-        special_cases = (arg < -1.) | (arg > 1.)
-        nr_special_cases = np.count_nonzero(special_cases)
-        self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
-                            result_jax[special_cases])
-        signs = np.where(arg[special_cases] < 0., -1., 1.)
-        self.assertAllClose(np.full((nr_special_cases,), signs * dtype(np.inf)),
-                            result_tf[special_cases])
-        # non-special cases are equal
-        self.assertAllClose(result_jax[~ special_cases],
-                            result_tf[~ special_cases])
+      # TODO: investigate: in the (b)float16 cases, TF and lax both return the same
+      # result in undefined cases.
+      if not dtype in [np.float16, dtypes.bfloat16]:
+        # erf_inv is not defined for arg <= -1 or arg >= 1
+        def custom_assert(result_jax, result_tf):  # noqa: F811
+          # for arg < -1 or arg > 1
+          # lax.erf_inv returns NaN; tf.math.erf_inv return +/- inf
+          special_cases = (arg < -1.) | (arg > 1.)
+          nr_special_cases = np.count_nonzero(special_cases)
+          self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
+                              result_jax[special_cases])
+          signs = np.where(arg[special_cases] < 0., -1., 1.)
+          self.assertAllClose(np.full((nr_special_cases,), signs * dtype(np.inf)),
+                              result_tf[special_cases])
+          # non-special cases are equal
+          self.assertAllClose(result_jax[~ special_cases],
+                              result_tf[~ special_cases])
     atol = None
     if jtu.device_under_test() == "gpu":
       # TODO(necula): revisit once we fix the GPU tests
@@ -404,11 +401,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_betainc)
   def test_betainc(self, harness: primitive_harness.Harness):
-    if harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
-    # TODO(necula): fix bug with betainc/f16
-    if harness.params["dtype"] is np.float16:
-      raise unittest.SkipTest("TODO: understand betainc/f16 bug")
+    # TODO: https://www.tensorflow.org/api_docs/python/tf/math/betainc only supports
+    # float32/64 tests.
+    if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest("(b)float16 not implemented in TF")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   # TODO(necula): combine tests that are identical except for the harness
