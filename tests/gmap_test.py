@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +25,9 @@ from absl.testing import parameterized
 
 import jax.numpy as jnp
 from jax import test_util as jtu
-from jax.api import vmap, gmap
+from jax import vmap
+from jax.experimental.general_map import gmap
+from jax.lib import xla_bridge
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -54,8 +56,13 @@ class GmapTest(jtu.JaxTestCase):
       return jnp.dot(jnp.sin(x), x.T) * 4 + x
 
     x = jnp.arange(800).reshape((8, 10, 10))
+
+    for loop, n in schedule:
+      approx_n = x.shape[0] if n is None else n
+      if loop == 'parallel' and approx_n > xla_bridge.device_count():
+        raise SkipTest("this test requires more XLA devices")
+
     self.assertAllClose(vmap(f)(x), gmap(f, schedule)(x))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
-

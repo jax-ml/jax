@@ -14,12 +14,45 @@
 
 import enum
 from collections import namedtuple
+from typing import Callable
+from warnings import warn
+from functools import wraps
 
 import jax
-from . import core
-from . import linear_util as lu
-from .interpreters import partial_eval as pe
-from .interpreters import batching
+from .. import core
+from .. import linear_util as lu
+from ..api import _TempAxisName, _mapped_axis_size, _check_callable, _check_arg
+from ..tree_util import tree_flatten, tree_unflatten
+from ..api_util import flatten_fun
+from ..interpreters import partial_eval as pe
+
+
+def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
+  warn("gmap is an experimental feature and probably has bugs!")
+  _check_callable(fun)
+
+  if axis_name is not None:
+    raise ValueError("gmap doesn't support binding axis names yet")
+
+  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+
+  @wraps(fun)
+  def f_gmapped(*args, **kwargs):
+    f = lu.wrap_init(fun)
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    mapped_invars = (True,) * len(args_flat)
+    axis_size = _mapped_axis_size(in_tree, args_flat, (0,) * len(args_flat), "gmap")
+    for arg in args_flat: _check_arg(arg)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    outs = gmap_p.bind(
+        flat_fun, *args_flat,
+        axis_name=axis_name,
+        axis_size=axis_size,
+        mapped_invars=mapped_invars,
+        schedule=tuple(schedule))
+    return tree_unflatten(out_tree(), outs)
+  return f_gmapped
+
 
 class LoopType(enum.Enum):
     vectorized = enum.auto()
@@ -27,6 +60,7 @@ class LoopType(enum.Enum):
     sequential = enum.auto()
 
 Loop = namedtuple('Loop', ['type', 'size'])
+
 
 def gmap_impl(fun: lu.WrappedFun, *args, axis_size, axis_name, mapped_invars, schedule):
   avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
@@ -90,5 +124,4 @@ def _apply_schedule(fun: lu.WrappedFun, axis_size, mapped_invars, schedule, *ava
   return sched_fun_wrapper
 
 gmap_p = core.MapPrimitive('gmap')
-gmap = gmap_p.bind
 gmap_p.def_impl(gmap_impl)

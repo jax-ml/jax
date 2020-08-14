@@ -40,7 +40,6 @@ from .api import (
   disable_jit,
   eval_shape,
   flatten_fun_nokwargs,  # TODO(phawkins): update users to avoid this.
-  gmap,
   grad,
   hessian,
   host_count,
