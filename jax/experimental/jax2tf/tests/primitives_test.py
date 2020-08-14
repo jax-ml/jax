@@ -282,8 +282,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
     lax_name = harness.params["lax_name"]
+    if (lax_name in ("acosh", "asinh", "atanh", "bessel_i0e", "bessel_i1e", "digamma",
+                     "erf", "erf_inv", "erfc", "lgamma", "round", "rsqrt") and
+        dtype is dtypes.bfloat16 and
+        jtu.device_under_test() in ["cpu", "gpu"]):
+        raise unittest.SkipTest(f"bfloat16 support is missing from '{lax_name}' TF kernel on {jtu.device_under_test()} devices.")
     # TODO(bchetioui): do they have bfloat16 support, though?
-    if lax_name in ("sinh", "cosh", "atanh", "asinh", "acosh") and dtype is np.float16:
+    if lax_name in ("sinh", "cosh", "atanh", "asinh", "acosh", "erf_inv") and dtype is np.float16:
       raise unittest.SkipTest("b/158006398: float16 support is missing from '%s' TF kernel" % lax_name)
     arg, = harness.dyn_args_maker(self.rng())
     custom_assert = None
