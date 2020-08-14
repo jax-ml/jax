@@ -661,10 +661,8 @@ lax_reduce_window = tuple(
           window_dilation=window_dilation)
   for dtype in jtu.dtypes.all_floating
   for shape in [(4, 6)]
-  for init_value, computation in [(0, lax.add),
-                                  (-np.inf, lax.max),
-                                  (np.inf, lax.min),
-                                  (1, lax.mul)]
+  for init_value in map(dtype, [0, -np.inf, np.inf, 1])
+  for computation in [lax.add, lax.max, lax.min, lax.mul]
   for window_dimensions in [(2, 1), (1, 2)]
   for window_strides in [(1, 1), (2, 1), (1, 2)]
   for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
@@ -691,10 +689,8 @@ lax_reduce_window = tuple(
           window_dilation=window_dilation)
   for dtype in jtu.dtypes.all_floating
   for shape in [(3, 2, 4, 6)]
-  for init_value, computation in [(0, lax.add),
-                                  (-np.inf, lax.max),
-                                  (np.inf, lax.min),
-                                  (1, lax.mul)]
+  for init_value in map(dtype, [0, -np.inf, np.inf, 1])
+  for computation in [lax.add, lax.max, lax.min, lax.mul]
   for window_dimensions in [(1, 1, 2, 1), (2, 1, 2, 1)]
   for window_strides in [(1, 2, 2, 1), (1, 1, 1, 1)]
   for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,

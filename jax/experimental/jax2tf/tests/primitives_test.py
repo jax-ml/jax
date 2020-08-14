@@ -279,8 +279,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_reduce_window)
   def test_reduce_window(self, harness: primitive_harness.Harness):
-    if harness.params['computation'].__name__ not in ['max', 'min', 'sum']:
-      raise unittest.SkipTest('TODO: only max, min and sum supported for now.')
+    computation = harness.params['computation'].__name__
+    init_value = harness.params['init_value']
+    dtype = harness.params['dtype']
+
+    if (computation, init_value) not in [('max', dtype(-np.inf)), ('sum', dtype(0)),
+                                         ('min', dtype(np.inf))]:
+      raise unittest.SkipTest('TODO: only specific instances of max/min/sum are supported for now.')
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
