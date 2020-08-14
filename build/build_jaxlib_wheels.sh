@@ -16,7 +16,7 @@ do
     for CUDA_VARIANT in $CUDA_VARIANTS
     do
       mkdir -p dist/${CUDA_VARIANT}${CUDA_VERSION//.}
-      docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION $CUDA_VARIANT
+      docker run -it --tmpfs /build:exec --rm -v $(pwd)/dist:/dist jaxbuild $PYTHON_VERSION $CUDA_VARIANT $CUDA_VERSION
       mv -f dist/*.whl dist/${CUDA_VARIANT}${CUDA_VERSION//.}/
     done
   done
