@@ -51,7 +51,10 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-from jaxlib import pytree
+if version <  (0, 1, 53):
+  from jaxlib import pytree
+else:
+  pytree = xla_client._xla.pytree
 from jaxlib import cusolver
 try:
   from jaxlib import cuda_prng
