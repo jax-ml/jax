@@ -1424,6 +1424,7 @@ def pp_kv_pairs(kv_pairs):
   else:
     return pp('')
 
+axis_frame = None
 
 # TODO(mattjj): remove when omnistaging fully lands
 @config.omnistaging_enablers.append
