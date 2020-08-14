@@ -401,11 +401,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_betainc)
   def test_betainc(self, harness: primitive_harness.Harness):
-    if harness.params["dtype"] is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
-    # TODO(necula): fix bug with betainc/f16
-    if harness.params["dtype"] is np.float16:
-      raise unittest.SkipTest("TODO: understand betainc/f16 bug")
+    # TODO: https://www.tensorflow.org/api_docs/python/tf/math/betainc only supports
+    # float32/64 tests.
+    if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest("(b)float16 not implemented in TF")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   # TODO(necula): combine tests that are identical except for the harness
