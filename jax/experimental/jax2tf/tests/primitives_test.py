@@ -361,9 +361,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       if dtype is np.float32 and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
     # TODO(necula): fix bug with nextafter/f16
+    # See https://www.tensorflow.org/api_docs/python/tf/math/nextafter, params to
+    # nextafter can only be float32/float64.
     if (lax_name == "nextafter" and
         dtype in [np.float16, dtypes.bfloat16]):
-      raise unittest.SkipTest("TODO: understand unimplemented case")
+      raise unittest.SkipTest("TODO: nextafter not supported for (b)float16 in TF")
     arg1, arg2 = harness.dyn_args_maker(self.rng())
     custom_assert = None
     if lax_name == "igamma":
