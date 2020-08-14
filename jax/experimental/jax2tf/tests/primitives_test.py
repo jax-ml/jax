@@ -309,26 +309,24 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           self.assertAllClose(result_jax[~ special_cases],
                               result_tf[~ special_cases])
     if lax_name == "erf_inv":
-      # TODO(necula): fix bug with erf_inv/f16
-      if dtype in [np.float16, dtypes.bfloat16]:
-        raise unittest.SkipTest("TODO: fix bug")
       # TODO(necula): fix erf_inv bug on TPU
       if jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("erf_inv bug on TPU: nan vs non-nan")
-      # erf_inf is not defined for arg <= -1 or arg >= 1
-      def custom_assert(result_jax, result_tf):  # noqa: F811
-        # for arg < -1 or arg > 1
-        # lax.erf_inv returns NaN; tf.math.erf_inv return +/- inf
-        special_cases = (arg < -1.) | (arg > 1.)
-        nr_special_cases = np.count_nonzero(special_cases)
-        self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
-                            result_jax[special_cases])
-        signs = np.where(arg[special_cases] < 0., -1., 1.)
-        self.assertAllClose(np.full((nr_special_cases,), signs * dtype(np.inf)),
-                            result_tf[special_cases])
-        # non-special cases are equal
-        self.assertAllClose(result_jax[~ special_cases],
-                            result_tf[~ special_cases])
+      if not dtype in [np.float16, dtypes.bfloat16]:
+        # erf_inv is not defined for arg <= -1 or arg >= 1
+        def custom_assert(result_jax, result_tf):  # noqa: F811
+          # for arg < -1 or arg > 1
+          # lax.erf_inv returns NaN; tf.math.erf_inv return +/- inf
+          special_cases = (arg < -1.) | (arg > 1.)
+          nr_special_cases = np.count_nonzero(special_cases)
+          self.assertAllClose(np.full((nr_special_cases,), dtype(np.nan)),
+                              result_jax[special_cases])
+          signs = np.where(arg[special_cases] < 0., -1., 1.)
+          self.assertAllClose(np.full((nr_special_cases,), signs * dtype(np.inf)),
+                              result_tf[special_cases])
+          # non-special cases are equal
+          self.assertAllClose(result_jax[~ special_cases],
+                              result_tf[~ special_cases])
     atol = None
     if jtu.device_under_test() == "gpu":
       # TODO(necula): revisit once we fix the GPU tests
