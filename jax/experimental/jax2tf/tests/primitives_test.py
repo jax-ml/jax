@@ -288,11 +288,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     arg, = harness.dyn_args_maker(self.rng())
     custom_assert = None
     if lax_name == "digamma":
-      # TODO(necula): fix bug with digamma/f32 on TPU
-      if dtype is np.float32 and jtu.device_under_test() == "tpu":
+      # TODO(necula): fix bug with digamma/(f32|f16) on TPU
+      if dtype in [np.float16, np.float32] and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
-      if dtype is np.float16 and jtu.device_under_test() == "tpu":
-        raise unittest.SkipTest("TODO: fix bug: nans and infs")
 
       # In the bfloat16 case, TF and lax both return NaN in undefined cases.
       if not dtype is dtypes.bfloat16:
@@ -312,6 +310,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO(necula): fix erf_inv bug on TPU
       if jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("erf_inv bug on TPU: nan vs non-nan")
+      # TODO: investigate: in the (b)float16 cases, TF and lax both return the same
+      # result in undefined cases.
       if not dtype in [np.float16, dtypes.bfloat16]:
         # erf_inv is not defined for arg <= -1 or arg >= 1
         def custom_assert(result_jax, result_tf):  # noqa: F811
