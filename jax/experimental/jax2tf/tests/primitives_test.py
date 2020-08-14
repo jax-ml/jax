@@ -283,9 +283,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     init_value = harness.params['init_value']
     dtype = harness.params['dtype']
 
-    if (computation, init_value) not in [('max', dtype(-np.inf)), ('sum', dtype(0)),
-                                         ('min', dtype(np.inf))]:
+    safe_computations = [('sum', dtype(0))]
+
+    if dtype in jtu.dtypes.all_floating:
+      # Only in this case, np.inf can be casted safely to a meaningful value.
+      safe_computations += [('max', dtype(-np.inf)), ('min', dtype(np.inf))]
+
+    if (computation, init_value) not in safe_computations:
       raise unittest.SkipTest('TODO: only specific instances of max/min/sum are supported for now.')
+
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)

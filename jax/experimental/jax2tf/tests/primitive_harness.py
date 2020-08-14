@@ -659,9 +659,9 @@ lax_reduce_window = tuple(
           padding=padding,
           base_dilation=base_dilation,
           window_dilation=window_dilation)
-  for dtype in jtu.dtypes.all_floating
+  for dtype in jtu.dtypes.all
   for shape in [(4, 6)]
-  for init_value in map(dtype, [0, -np.inf, np.inf, 1])
+  for init_value in map(dtype, [0, 1] if not dtype in jtu.dtypes.all_floating else [0, -np.inf, np.inf, 1])
   for computation in [lax.add, lax.max, lax.min, lax.mul]
   for window_dimensions in [(2, 1), (1, 2)]
   for window_strides in [(1, 1), (2, 1), (1, 2)]
@@ -689,7 +689,7 @@ lax_reduce_window = tuple(
           window_dilation=window_dilation)
   for dtype in jtu.dtypes.all_floating
   for shape in [(3, 2, 4, 6)]
-  for init_value in map(dtype, [0, -np.inf, np.inf, 1])
+  for init_value in map(dtype, [0, 1] if not dtype in jtu.dtypes.all_floating else [0, -np.inf, np.inf, 1])
   for computation in [lax.add, lax.max, lax.min, lax.mul]
   for window_dimensions in [(1, 1, 2, 1), (2, 1, 2, 1)]
   for window_strides in [(1, 2, 2, 1), (1, 1, 1, 1)]
