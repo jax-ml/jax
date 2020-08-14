@@ -1432,6 +1432,22 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
     self.assertAllClose(ans, expected)
 
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testCollectivesWithVmap(self):
+    def f(map1, map2):
+      @partial(map1, axis_name='i')
+      @partial(map2, axis_name='j')
+      def f(x, y):
+        return x + jax.lax.psum(x.dot(y), ('i', 'j'))
+      return f
+
+    x = jnp.ones((2, 2, 64, 64))
+    y = f(jax.pmap, jax.pmap)(x, x)
+    self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
+    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
@@ -1782,22 +1798,6 @@ class ShardArgsTest(jtu.JaxTestCase):
     for buf, idx in zip(bufs, indices):
       self.assertEqual(len(buf), 1)
       self.assertAllClose(buf[0].to_py(), x[idx], check_dtypes=False)
-
-  @skipIf(not jax.config.omnistaging_enabled,
-          "vmap collectives only supported when omnistaging is enabled")
-  def testCollectivesWithVmap(self):
-    def f(map1, map2):
-      @partial(map1, axis_name='i')
-      @partial(map2, axis_name='j')
-      def f(x, y):
-        return x + jax.lax.psum(x.dot(y), ('i', 'j'))
-      return f
-
-    x = jnp.ones((2, 2, 64, 64))
-    y = f(jax.pmap, jax.pmap)(x, x)
-    self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
-    self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
-    self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
 
 
 if __name__ == '__main__':

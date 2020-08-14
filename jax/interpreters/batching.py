@@ -143,6 +143,8 @@ class BatchTrace(Trace):
             raise NotImplementedError("axis_index_groups not supported in vmap collectives")
           result = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
           remaining_axes = axes_names[:i] + axes_names[(i+1):]
+          # TODO: This assumes that the collective always returns the same result for each
+          #       array element, which is not true for the ones that are not reductions!
           if remaining_axes:
             new_params = dict(params, axis_name=remaining_axes)
             return primitive.bind(*result, **new_params)
