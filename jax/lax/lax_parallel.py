@@ -27,6 +27,7 @@ from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
+from jax.interpreters import batching
 from jax.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
 from jax.config import config
@@ -385,12 +386,19 @@ xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
 ad.deflinear(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
+batching.collective_rules[psum_p] = \
+    lambda vals, dims, axis_size, **_: [v.sum(d) if d is not batching.not_mapped else
+                                        axis_size * v
+                                        for v, d in zip(vals, dims)]
 
 
 pmax_p = core.Primitive('pmax')
 pmax_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
+batching.collective_rules[pmax_p] = \
+    lambda vals, dims, axis_size, **_: [v.max(d) if d is not batching.not_mapped else v
+                                        for v, d in zip(vals, dims)]
 # pxla.split_axis_rules[pmax_p] = \
 #     partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
 
@@ -399,6 +407,9 @@ pmin_p = core.Primitive('pmin')
 pmin_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
+batching.collective_rules[pmin_p] = \
+    lambda vals, dims, axis_size, **_: [v.min(d) if d is not batching.not_mapped else v
+                                        for v, d in zip(vals, dims)]
 # pxla.split_axis_rules[pmin_p] = \
 #     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
 

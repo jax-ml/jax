@@ -29,9 +29,9 @@ from . import partial_eval as pe
 map = safe_map
 
 
-def batch(fun : lu.WrappedFun, in_vals, in_dims, out_dim_dests):
+def batch(fun: lu.WrappedFun, in_vals, in_dims, out_dim_dests, axis_name):
   # executes a batched version of `fun` following out_dim_dests
-  batched_fun = batch_fun(fun, in_dims, out_dim_dests)
+  batched_fun = batch_fun(fun, in_dims, out_dim_dests, axis_name=axis_name)
   return batched_fun.call_wrapped(*in_vals)
 
 @lu.transformation_with_aux
@@ -45,17 +45,20 @@ def batch_subtrace(master, in_dims, *in_vals, **params):
   yield out_vals, out_dims
 
 
-def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, sum_match=False):
+def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, axis_name,
+              sum_match=False):
   # transformation version of batch, which doesn't call the function
   fun, out_dims = batch_subtrace(fun)
-  return _batch_fun(fun, sum_match, in_dims, out_dims, out_dim_dests)
+  return _batch_fun(fun, axis_name, sum_match, in_dims, out_dims, out_dim_dests)
 
 @lu.transformation
-def _batch_fun(sum_match, in_dims, out_dims_thunk, out_dim_dests, *in_vals, **params):
+def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
+               *in_vals, **params):
   in_dims = in_dims() if callable(in_dims) else in_dims
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   with core.new_master(BatchTrace) as master:
-    out_vals = yield (master, in_dims,) + in_vals, params
+    with core.extend_axis_env(axis_name, size, master):
+      out_vals = yield (master, in_dims,) + in_vals, params
     del master
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_dims = out_dims_thunk()
@@ -129,14 +132,31 @@ class BatchTrace(Trace):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
+    elif config.omnistaging_enabled and primitive in collective_rules:
+      axes_names = params['axis_name']
+      if not isinstance(axes_names, (tuple, list)):
+        axes_names = (axes_names,)
+      for i, axis_name in enumerate(axes_names):
+        frame = core.axis_frame(axis_name)
+        if frame.tag is self.master:
+          if params['axis_index_groups'] is not None:
+            raise NotImplementedError("axis_index_groups not supported in vmap collectives")
+          result = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
+          remaining_axes = axes_names[:i] + axes_names[(i+1):]
+          # TODO: This assumes that the collective always returns the same result for each
+          #       array element, which is not true for the ones that are not reductions!
+          if remaining_axes:
+            new_params = dict(params, axis_name=remaining_axes)
+            return primitive.bind(*result, **new_params)
+          else:
+            return result
+    # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
+    batched_primitive = get_primitive_batcher(primitive)
+    val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
+    if primitive.multiple_results:
+      return map(partial(BatchTracer, self), val_out, dim_out)
     else:
-      # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
-      batched_primitive = get_primitive_batcher(primitive)
-      val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
-      if primitive.multiple_results:
-        return map(partial(BatchTracer, self), val_out, dim_out)
-      else:
-        return BatchTracer(self, val_out, dim_out)
+      return BatchTracer(self, val_out, dim_out)
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
@@ -197,7 +217,9 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     fun, out_dims1 = batch_subtrace(fun, self.master, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.master, in_dims)
-    bwd = batch_fun(bwd, out_dims2, in_dims, sum_match=True)
+    # TODO: Support collectives in custom_vjp?
+    bwd = batch_fun(bwd, out_dims2, in_dims,
+                    axis_name='__unused_axis_name', sum_match=True)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
@@ -420,3 +442,11 @@ def omnistaging_enabler() -> None:
     jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f, avals_in)
     jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
     return jaxpr_out, batched_out()
+
+
+# It is assumed that all collectives specified below are commutative
+# and associative over axis names if they support tuples. That is,
+# they have to satisfy:
+#   collective(x, ('i', 'j')) == collective(x, ('j', 'i'))
+#                             == collective(collective(x, 'j'), 'i')
+collective_rules: Dict[core.Primitive, Callable] = {}
