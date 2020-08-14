@@ -1442,6 +1442,8 @@ class VmapOfPmapTest(jtu.JaxTestCase):
         return x + jax.lax.psum(x.dot(y), ('i', 'j'))
       return f
 
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
     x = jnp.ones((2, 2, 64, 64))
     y = f(jax.pmap, jax.pmap)(x, x)
     self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
