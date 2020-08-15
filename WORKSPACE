@@ -28,12 +28,13 @@ http_archive(
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5",
-    strip_prefix = "tensorflow-8c3b7438dbe6193757f949540e072fcf0ae8985f",
+    sha256 = "949c715a3d5412fb2fa5485e998bbe7ac3871a2479a829f78404589b54c41692",
+    strip_prefix = "tensorflow-43cfb92ac5e2348718155905245194723f674697",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/8c3b7438dbe6193757f949540e072fcf0ae8985f.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/43cfb92ac5e2348718155905245194723f674697.tar.gz",
     ],
 )
+
 
 # For development, one can use a local TF repository instead.
 # local_repository(

@@ -55,6 +55,8 @@ if version <  (0, 1, 53):
   from jaxlib import pytree  # pytype: disable=import-error
 else:
   pytree = xla_client._xla.pytree
+if version >=  (0, 1, 54):
+  jax_jit = xla_client._xla.jax_jit
 from jaxlib import cusolver
 try:
   from jaxlib import cuda_prng
