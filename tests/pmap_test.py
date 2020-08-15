@@ -470,7 +470,7 @@ class PmapTest(jtu.JaxTestCase):
     expected = x - expected_psum
 
     ans = f(x)
-    self.assertAllClose(ans, expected, check_dtypes=False)    
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPsumReplicaGroups(self):
     replicas = xla_bridge.device_count()
