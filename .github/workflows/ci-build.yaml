@@ -61,9 +61,7 @@ jobs:
             enable-x64: 1
             enable-omnistaging: 0
             # Test experimental NumPy dispatch
-            # TODO(shoyer): remove cython after
-            # https://github.com/seberg/numpy-dispatch/pull/5 is merged
-            package-overrides: "cython git+https://github.com/seberg/numpy-dispatch.git"
+            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 25
           - python-version: 3.6
             os: ubuntu-latest
