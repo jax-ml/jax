@@ -757,7 +757,7 @@ _INT_DTYPES = {
 @_wraps(np.ldexp)
 @jit
 def ldexp(x1, x2):
-  dtype = _result_dtype(np.ldexp, x1, x2)
+  dtype = dtypes.canonicalize_dtype(_result_dtype(np.ldexp, x1, x2))
   x1, x2 = _promote_shapes("ldexp", x1, x2)
   x1 = lax.convert_element_type(x1, dtype)
 
