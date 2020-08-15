@@ -33,7 +33,6 @@ from jax import util
 from jax.api_util import flatten_fun
 from jax.lax import lax_control_flow
 from jax.lax import lax_fft
-from jax.lax.lax import tie_in_p
 from jax import lax_linalg
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
@@ -415,7 +414,7 @@ tf_not_yet_impl = [
 ]
 
 try:
-  tf_impl[tie_in_p] = lambda x, y: y
+  tf_impl[lax.lax.tie_in_p] = lambda x, y: y
 except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
