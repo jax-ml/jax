@@ -4577,7 +4577,7 @@ setattr(DeviceArray, "nbytes", property(_nbytes))
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch
-_JAX_ARRAY_TYPES = (UnshapedArray, DeviceArray, core.Tracer)
+_JAX_ARRAY_TYPES = (DeviceArray, core.Tracer)
 _HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
 
 def __array_module__(self, types):
