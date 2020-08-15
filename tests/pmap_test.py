@@ -455,6 +455,23 @@ class PmapTest(jtu.JaxTestCase):
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPsumConstantReplicaGroups(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest
+    axis_index_groups = np.arange(replicas).reshape(
+      2, replicas // 2).tolist()
+    f = lambda x: x - lax.psum(2., 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    expected_psum = 2. * replicas // 2
+    expected = x - expected_psum
+
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testPsumReplicaGroups(self):
     replicas = xla_bridge.device_count()
     if replicas % 2 != 0:
