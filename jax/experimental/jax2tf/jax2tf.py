@@ -21,7 +21,6 @@ import jax
 from jax import abstract_arrays
 from jax import ad_util
 from jax import api
-from jax import config
 from jax import core
 from jax import custom_derivatives
 from jax import dtypes
