@@ -529,7 +529,10 @@ def omnistaging_enabler() -> None:
   @psum_p.def_custom_bind
   def psum_bind(*args, axis_name, **params):
     if all(not isinstance(x, core.Tracer) for x in args):
-      if type(axis_name) is tuple:
+      axis_index_groups = params['axis_index_groups']
+      if axis_index_groups is not None:
+        size = len(axis_index_groups[0])
+      elif type(axis_name) is tuple:
         size = prod([core.axis_frame(name).size for name in axis_name])  # type: ignore
       else:
         size = core.axis_frame(axis_name).size  # type: ignore
