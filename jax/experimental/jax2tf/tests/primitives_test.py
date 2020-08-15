@@ -73,6 +73,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     all_primitives = tuple(sorted(all_primitives, key=str))
     for p in all_primitives:
+      if p.name == "axis_index":
+        continue
       if p in tf_not_yet_impl:
         self.assertNotIn(p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl
       else:
