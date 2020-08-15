@@ -696,7 +696,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   if config.omnistaging_enabled:
     sharded_avals = tuple(shard_aval(axis_size, aval) if m else aval
                           for m, aval in zip(mapped_invars, avals))
-    with core.extend_axis_env(axis_name, axis_size, None):  # type: ignore
+    with core.extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, sharded_avals)
     jaxpr = xla.apply_outfeed_rewriter(jaxpr)
   else:
