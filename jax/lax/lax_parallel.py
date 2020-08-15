@@ -527,9 +527,8 @@ def omnistaging_enabler() -> None:
   # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
   # tracing time.
   @psum_p.def_custom_bind
-  def psum_bind(*args, axis_name, **params):
+  def psum_bind(*args, axis_name, axis_index_groups):
     if all(not isinstance(x, core.Tracer) for x in args):
-      axis_index_groups = params['axis_index_groups']
       if axis_index_groups is not None:
         size = len(axis_index_groups[0])
       elif type(axis_name) is tuple:
@@ -537,4 +536,5 @@ def omnistaging_enabler() -> None:
       else:
         size = core.axis_frame(axis_name).size  # type: ignore
       return tuple(size * x for x in args)
-    return core.Primitive.bind(psum_p, *args, axis_name=axis_name, **params)
+    return core.Primitive.bind(
+        psum_p, *args, axis_name=axis_name, axis_index_groups=axis_index_groups)
