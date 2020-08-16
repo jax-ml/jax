@@ -471,7 +471,7 @@ class Tracer:
 
   # Python looks up special methods only on classes, not instances. This means
   # these methods needs to be defined explicitly rather than relying on
-  # __getattr__ (short of using a metaclass).
+  # __getattr__.
   def __neg__(self): return self.aval._neg(self)
   def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
