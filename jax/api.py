@@ -30,7 +30,6 @@ import inspect
 import itertools as it
 import threading
 from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, TypeVar, Union
-import uuid
 from warnings import warn
 
 import numpy as np
@@ -365,7 +364,7 @@ def xla_computation(fun: Callable,
       return xla.AxisEnv(nreps, (), (), None)
     else:
       nreps = nreps * prod(size for name, size in axis_env)
-      names, sizes = zip(*axis_env)
+      names, sizes = unzip2(axis_env)
       return xla.AxisEnv(nreps, names, sizes, None)
 
   def abstractify(x):
@@ -1241,11 +1240,17 @@ def pmap(fun: Callable[..., T],
 
   return f_pmapped
 
+# When a mapped function is given no axis name, we generate a name object based
+# on the id of the function object. Collisions aren't important because this
+# name can't be used in collectives, as user code never gets a ref to this
+# object. We don't want to use the function object itself because that might
+# persist references to the function object.
+# TODO(mattjj): revisit this unique axis name strategy
 class _TempAxisName:
   def __init__(self, obj):
-    self.id = uuid.uuid4()
+    self.id = id(obj)
   def __repr__(self):
-    return f'<axis {self.id}>'
+    return f'<axis {hex(self.id)}>'
   def __hash__(self):
     return hash(self.id)
   def __eq__(self, other):
