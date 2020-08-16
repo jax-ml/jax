@@ -388,7 +388,7 @@ def xla_computation(fun: Callable,
     avals = map(abstractify, jax_args)
     if config.omnistaging_enabled:
       with ExitStack() as stack:
-        for axis_name, size in axis_env:
+        for axis_name, size in axis_env or []:
           stack.enter_context(core.extend_axis_env(axis_name, size, None))
         jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
     else:
