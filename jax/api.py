@@ -30,6 +30,7 @@ import inspect
 import itertools as it
 import threading
 from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, TypeVar, Union
+import uuid
 from warnings import warn
 
 import numpy as np
@@ -1242,13 +1243,13 @@ def pmap(fun: Callable[..., T],
 
 class _TempAxisName:
   def __init__(self, obj):
-    self.obj = obj
+    self.id = uuid.uuid4()
   def __repr__(self):
-    return '<axis {}>'.format(hex(id(self.obj)))
+    return f'<axis {self.id}>'
   def __hash__(self):
-    return id(self.obj)
+    return hash(self.id)
   def __eq__(self, other):
-    return type(other) is _TempAxisName and self.obj is other.obj
+    return type(other) is _TempAxisName and self.id == other.id
 
 
 def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
