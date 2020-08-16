@@ -364,7 +364,7 @@ def xla_computation(fun: Callable,
       return xla.AxisEnv(nreps, (), (), None)
     else:
       nreps = nreps * prod(size for name, size in axis_env)
-      names, sizes = zip(*axis_env)
+      names, sizes = unzip2(axis_env)
       return xla.AxisEnv(nreps, names, sizes, None)
 
   def abstractify(x):
@@ -1240,16 +1240,21 @@ def pmap(fun: Callable[..., T],
 
   return f_pmapped
 
+# When a mapped function is given no axis name, we generate a name object based
+# on the id of the function object. Collisions aren't important because this
+# name can't be used in collectives, as user code never gets a ref to this
+# object. We don't want to use the function object itself because that might
+# persist references to the function object.
+# TODO(mattjj): revisit this unique axis name strategy
 class _TempAxisName:
   def __init__(self, obj):
-    self.obj = id(obj)
-    self.hash = hash(obj)
+    self.id = id(obj)
   def __repr__(self):
-    return '<axis {}>'.format(hex(self.obj))
+    return f'<axis {hex(self.id)}>'
   def __hash__(self):
-    return self.hash
+    return hash(self.id)
   def __eq__(self, other):
-    return type(other) is _TempAxisName and self.obj == other.obj
+    return type(other) is _TempAxisName and self.id == other.id
 
 
 def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
