@@ -118,7 +118,7 @@ def sharded_device_array_indexing_benchmark():
     nshards = min(8, jax.local_device_count())
     shape = (nshards, 8, 8)
     def benchmark_fn():
-      arr = pmap(lambda x: x)(jnp.arange(jnp.prod(shape)).reshape(shape))
+      arr = pmap(lambda x: x)(jnp.arange(np.prod(shape)).reshape(shape))
       indices = indices_fn()
       for idx in indices:
         arr[idx]

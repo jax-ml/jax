@@ -195,7 +195,7 @@ class ShardedJitTest(jtu.JaxTestCase):
       return vjp_f(p)
 
     shape = (4, 4)
-    x = jnp.arange(jnp.prod(shape), dtype=jnp.float32).reshape(shape)
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
     actual = f(x)
     expected = expected_f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
