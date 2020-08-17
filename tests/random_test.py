@@ -33,7 +33,6 @@ from jax import random
 from jax import test_util as jtu
 from jax import vmap
 from jax.interpreters import xla
-from jax.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -255,7 +254,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for shape in [100, (10, 10), (10, 5, 2)]))
   def testPermutationArray(self, dtype, shape):
     key = random.PRNGKey(0)
-    x = jnp.arange(prod(shape)).reshape(shape).astype(dtype)
+    x = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
     rand = lambda key: random.permutation(key, x)
     crand = api.jit(rand)
 
@@ -266,7 +265,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertFalse(np.all(perm1 == x))  # seems unlikely!
     self.assertAllClose(np.sort(perm1.ravel()), x.ravel(), check_dtypes=False)
     self.assertArraysAllClose(
-      x, jnp.arange(prod(shape)).reshape(shape).astype(dtype))
+      x, jnp.arange(np.prod(shape)).reshape(shape).astype(dtype))
 
   def testPermutationInteger(self):
     key = random.PRNGKey(0)
