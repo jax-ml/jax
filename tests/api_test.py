@@ -979,6 +979,12 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('sharding={replicated}', hlo_text)
     self.assertIn('sharding={{devices=[4,1]0,1,2,3}, {replicated}}', hlo_text)
 
+  def test_xla_computation_psum_constant(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test requires omnistaging")
+    f = lambda: jax.lax.psum(1, "i")
+    api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
+
   def test_jit_device(self):
     device = xb.devices()[-1]
     x = api.jit(lambda x: x, device=device)(3.)

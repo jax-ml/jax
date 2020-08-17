@@ -33,7 +33,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence, Tuple, TypeVar, 
 from warnings import warn
 
 import numpy as np
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 
 from . import core
 from . import linear_util as lu
@@ -387,7 +387,10 @@ def xla_computation(fun: Callable,
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     avals = map(abstractify, jax_args)
     if config.omnistaging_enabled:
-      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
+      with ExitStack() as stack:
+        for axis_name, size in axis_env or []:
+          stack.enter_context(core.extend_axis_env(axis_name, size, None))
+        jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
     else:
       pvals = [pe.PartialVal.unknown(aval) for aval in avals]
       jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
