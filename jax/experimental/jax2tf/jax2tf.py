@@ -395,7 +395,6 @@ for unexpected in [
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
   lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
-  lax.select_and_scatter_p,
 
   lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
@@ -914,6 +913,12 @@ tf_impl[lax.reduce_window_max_p] = (
     functools.partial(_reduce_window, lax._reduce_window_max, _max_fn, -np.inf))
 # pylint: enable=protected-access
 
+def _select_and_scatter(
+    operand, source, init_value, select_jaxpr, select_consts, scatter_jaxpr,
+    scatter_consts, window_dimensions, window_strides, padding):
+  raise NotImplementedError("TODO: jax2tf can not convert _select_and_scatter")
+
+tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 
 def _select_and_scatter_add(
     operand, source, init_value, select_jaxpr, select_consts, scatter_jaxpr,
