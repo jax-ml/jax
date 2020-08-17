@@ -799,8 +799,8 @@ def _select_and_gather_add(tangents: TfVal,
                            padding: Sequence[Tuple[int, int]]):
   # Note: this function follows the pattern in
   # jax.lax._select_and_gather_add_translation.
-  dtype = to_jax_dtype(operand.dtype)
-  nbits = dtypes.finfo(dtype).bits
+  dtype = operand.dtype
+  nbits = dtypes.finfo(dtype.as_numpy_dtype).bits
 
   # Specializing the function for 64 bits. Only up to 32 bits are supported on TPU,
   # we thus intend to let the code throw a different exception on this platform.

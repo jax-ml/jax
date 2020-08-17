@@ -265,9 +265,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_select_and_gather_add(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
 
-    if dtype is dtypes.bfloat16:
-      raise unittest.SkipTest("bfloat16 not implemented")
-
     max_bits = 64
     if jtu.device_under_test() == "tpu":
       max_bits = 32
