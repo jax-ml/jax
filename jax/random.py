@@ -296,7 +296,7 @@ def _random_bits(key, bit_width, shape):
     raise TypeError("_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
-  size = np.prod(shape)
+  size = prod(shape)
   max_count = int(np.ceil(bit_width * size / 32))
   if max_count >= jnp.iinfo(np.uint32).max:
     # TODO(mattjj): just split the key here
@@ -560,7 +560,7 @@ def choice(key, a, shape=(), replace=True, p=None):
   if a.ndim not in [0, 1]:
     raise ValueError("a must be an integer or 1-dimensional")
   n_inputs = int(a) if a.ndim == 0 else len(a)
-  n_draws = np.prod(shape).astype(int)
+  n_draws = prod(shape)
   if n_draws == 0:
     return jnp.zeros(shape, dtype=a.dtype)
   if n_inputs <= 0:

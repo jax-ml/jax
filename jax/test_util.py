@@ -33,7 +33,7 @@ from . import core
 from . import dtypes as _dtypes
 from . import lax
 from .config import flags, bool_env
-from .util import partial
+from .util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
@@ -674,7 +674,7 @@ def rand_int(rng, low=0, high=None):
 
 def rand_unique_int(rng, high=None):
   def fn(shape, dtype):
-    return rng.choice(np.arange(high or np.prod(shape), dtype=dtype),
+    return rng.choice(np.arange(high or prod(shape), dtype=dtype),
                       size=shape, replace=False)
   return fn
 

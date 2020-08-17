@@ -1724,7 +1724,7 @@ class ShapeDtypeStruct(object):
     self.shape = shape
     self.dtype = np.dtype(dtype)
 
-  size = property(lambda self: np.prod(self.shape))
+  size = property(lambda self: prod(self.shape))
   ndim = property(lambda self: len(self.shape))
 
   def __len__(self):
