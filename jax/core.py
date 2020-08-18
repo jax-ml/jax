@@ -1579,7 +1579,8 @@ def omnistaging_enabler() -> None:
     try:
       yield
     finally:
-      thread_local_state.trace_state.axis_env.pop()
+      frame_ = thread_local_state.trace_state.axis_env.pop()
+    assert frame is frame_  # Only runs if there was was no exception
 
   def axis_frame(axis_name):
     frames = thread_local_state.trace_state.axis_env

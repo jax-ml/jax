@@ -27,8 +27,10 @@ from absl.testing import parameterized
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import vmap
+from jax import lax
 from jax.experimental.general_map import gmap
 from jax.lib import xla_bridge
+from jax.util import curry
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -58,17 +60,36 @@ def tearDownModule():
   xla_bridge.get_backend.cache_clear()
 
 
+@curry
+def skip_insufficient_devices(axis_size, fun):
+  @functools.wraps(fun)
+  def wrapper(*args, schedule, **kwargs):
+    for loop, n in schedule:
+      approx_n = axis_size if n is None else n
+      if loop == 'parallel' and approx_n > xla_bridge.device_count():
+        raise SkipTest("this test requires more XLA devices")
+    return fun(*args, schedule=schedule, **kwargs)
+  return wrapper
+
+@curry
+def check_default_schedules(cond, fun):
+  schedules = [
+    ('seq', [('sequential', None)]),
+    ('vec', [('vectorized', None)]),
+    ('par', [('parallel', None)]),
+    ('lim_vmap', [('sequential', None), ('vectorized', 2)]),
+    ('soft_pmap', [('parallel', 2), ('vectorized', None)])
+  ]
+  schedules = [s for s in schedules if cond(s[1])]
+  return parameterized.named_parameters(
+    {"testcase_name": "_" + name, "schedule": schedule}
+    for name, schedule in schedules)(fun)
+
+
 class GmapTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(
-    {"testcase_name": "_" + name, "schedule": schedule}
-    for name, schedule in [
-      ('seq', [('sequential', None)]),
-      ('vec', [('vectorized', None)]),
-      ('par', [('parallel', None)]),
-      ('lim_vmap', [('sequential', None), ('vectorized', 2)]),
-      ('soft_pmap', [('parallel', 2), ('vectorized', None)])
-    ])
+  @check_default_schedules(lambda _: True)
+  @skip_insufficient_devices(8)
   @ignore_gmap_warning()
   @skipIf(not config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
@@ -78,12 +99,30 @@ class GmapTest(jtu.JaxTestCase):
 
     x = jnp.arange(800).reshape((8, 10, 10))
 
-    for loop, n in schedule:
-      approx_n = x.shape[0] if n is None else n
-      if loop == 'parallel' and approx_n > xla_bridge.device_count():
-        raise SkipTest("this test requires more XLA devices")
+    self.assertAllClose(gmap(f, schedule)(x), vmap(f)(x))
 
-    self.assertAllClose(vmap(f)(x), gmap(f, schedule)(x))
+  @check_default_schedules(lambda s: not any(c[0] == 'sequential' for c in s))
+  @skip_insufficient_devices(8)
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAxisName(self, schedule):
+    def f(x):
+      return x - lax.psum(x, 'i')
+    x = jnp.arange(8)
+    self.assertAllClose(gmap(f, schedule, axis_name='i')(x),
+                        vmap(f, axis_name='i')(x))
+
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAxisName2d(self):
+    def f(x):
+      return x - lax.psum(x, 'i') + lax.pmax(x, 'j')
+    x = jnp.arange(8 * 8).reshape((8, 8))
+    s = [('vectorized', None)]
+    self.assertAllClose(gmap(gmap(f, s, axis_name='i'), s, axis_name='j')(x),
+                        vmap(vmap(f, axis_name='i'), axis_name='j')(x))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

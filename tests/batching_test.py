@@ -984,12 +984,12 @@ class BatchingTest(jtu.JaxTestCase):
        "seq": seq}
       for collective, seq in [(lax.psum, jnp.sum),
                               (lax.pmean, jnp.mean),
-                              (lambda x, n: lax.pmax(x, n)[0], jnp.max),
-                              (lambda x, n: lax.pmin(x, n)[0], jnp.min)])
+                              (lambda x, n: lax.pmax(x, n), jnp.max),
+                              (lambda x, n: lax.pmin(x, n), jnp.min)])
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
   def testCollective(self, collective, seq):
-    x = jnp.arange(1000).reshape((10, 10, 10))
+    x = jnp.arange(64).reshape((4, 4, 4))
     self.assertAllClose(
       vmap(lambda x: x - collective(x, 'i'), axis_name='i')(x),
       x - seq(x, axis=0))
@@ -1015,7 +1015,7 @@ class BatchingTest(jtu.JaxTestCase):
       perm_pairs = np.stack([np.arange(nelem), perm], axis=-1)
       rng.shuffle(perm_pairs)
       self.assertAllClose(
-        vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs)[0], axis_name='i')(x),
+        vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs), axis_name='i')(x),
         x - x[perm])
 
 

@@ -150,7 +150,9 @@ class BatchTrace(Trace):
         if len(axis_names) > 1:
           return split_axis(primitive, axis_name, tracers, params)
         vals_out, dims_out = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
-        return map(partial(BatchTracer, self), vals_out, dims_out)
+        results = map(partial(BatchTracer, self), vals_out, dims_out)
+        print(results)
+        return results if primitive.multiple_results else results[0]
     # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
     batched_primitive = get_primitive_batcher(primitive)
     val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
