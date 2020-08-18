@@ -1223,6 +1223,12 @@ def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
   xla_update_computation = (
     tf.function(update_computation).get_concrete_function(o_spec, o_spec))
 
+  out = tf.function(
+      lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
+                                    indices_are_sorted=indices_are_sorted),
+      experimental_compile=True
+  )(operand, scatter_indices, updates)
+
   out = tfxla.scatter(operand, scatter_indices, updates, xla_update_computation,
                       proto, indices_are_sorted=indices_are_sorted)
   out.set_shape(out_shape)
