@@ -20,6 +20,8 @@ NumPy (lax_reference) or TensorFlow.
 import operator
 from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence, Tuple, Union
 
+from functools import partial
+
 from absl import testing
 from jax import config
 from jax import test_util as jtu
@@ -318,10 +320,10 @@ lax_scatter = tuple(
   # Directly from lax.scatter in tests/lax_test.py
   Harness(
     f"fun={f_lax.__name__}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}".replace(' ', ''),
-    (lambda f_lax: lambda *args: f_lax(*args[:-2], indices_are_sorted=args[-2], unique_indices=args[-1]))(f_lax),
-    [RandArg(shape, dtype), StaticArg(scatter_indices), RandArg(update_shape, dtype),
-     StaticArg(dimension_numbers), StaticArg(indices_are_sorted),
-     StaticArg(unique_indices)],
+    partial(f_lax, indices_are_sorted=indices_are_sorted,
+            unique_indices=unique_indices),
+    [RandArg(shape, dtype), StaticArg(scatter_indices),
+     RandArg(update_shape, dtype), StaticArg(dimension_numbers)],
     f_lax=f_lax,
     shape=shape,
     dtype=dtype,
