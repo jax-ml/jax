@@ -326,16 +326,18 @@ def _split_axis_comm_assoc(primitive, split_name, args, params):
   split_params = dict(params, axis_name=split_name)
   remain_params = dict(params, axis_name=remaining_axes)
   split_result = primitive.bind(*args, **split_params)
+  if not primitive.multiple_results:
+    split_result = (split_result,)
   return primitive.bind(*split_result, **remain_params)
 
 # NB: This is only used for collectives that do not include the vmapped axis name,
 #     which is why the rule is so simple. All other collectives go through split_axis.
 def _collective_batcher(prim, args, dims, **params):
-  return prim.bind(*args, **params), dims
+  return prim.bind(*args, **params), dims if prim.multiple_results else dims[0]
 
 def _batched_reduction_collective(prim, if_mapped, if_unmapped,
-                                 vals_in, dims_in, axis_size,
-                                 axis_name, axis_index_groups):
+                                  vals_in, dims_in, axis_size,
+                                  axis_name, axis_index_groups):
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not implemented in vmap collectives. "
                               "Please open a feature request!")
