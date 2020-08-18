@@ -132,6 +132,7 @@ Still to do:
 from absl import logging
 import atexit
 import contextlib
+import functools
 import itertools
 
 from jax import api
@@ -152,7 +153,8 @@ import numpy as np
 import threading
 import traceback
 from typing import (Any, Callable, Dict, List, Optional, NamedTuple, Sequence,
-                    Tuple, cast)
+                    Tuple, TypeVar, cast)
+import typing
 import warnings
 
 xops = xla_client._xla.ops
@@ -165,27 +167,38 @@ XlaDevice = Any  # xla_client.Device
 XlaLocalClient = Any  # xla_extension.LocalClient
 
 
-def id_tap(tap_func: Callable, arg, *, result=None, **kwargs):
+T = TypeVar('T')
+U = TypeVar('U')
+_Transforms = Sequence[Tuple[str, Dict[str, Any]]]
+_TapFunc = Callable[[T, _Transforms], Any]
+
+@typing.overload
+def id_tap(tap_func: _TapFunc, arg: T) -> T:
+  ...
+
+@typing.overload
+def id_tap(tap_func: _TapFunc, arg: T, *, result: U) -> U:
+  ...
+
+def id_tap(tap_func, arg, *, result=None):
   """Host-callback tap primitive, like identity function with a call to ``tap_func``.
 
   **Experimental: please give feedback, and expect changes!**
 
   ``id_tap`` behaves semantically like the identity function but has the
-  side-effect
-  that a user-defined Python function is called with the runtime values of the
-  argument.
+  side-effect that a user-defined Python function is called with the runtime
+  values of the argument.
 
   Args:
-    * tap_func: the tap function to call.
+    * tap_func: tap function to call like ``tap_func(arg, transforms)``, with
+      ``arg`` as described below and where ``transforms`` is sequence of applied
+      JAX transformations in the form ``(name, params)``.
     * arg: the argument passed to the tap function, can be a pytree of JAX
       types.
     * result: if given, specifies the return value of ``id_tap``. This value is
       not passed to the tap function, and in fact is not sent from the device to
       the host. If the ``result`` parameter is not specified then the return
       value of ``id_tap`` is ``arg``.
-    * kwargs: will be passed directly to the tap function. Can be anything that
-      is hashable, these are kept in the host Python process until outfeeds are
-      received.
 
   Returns:
     * ``arg``, or ``result`` if given.
@@ -214,8 +227,8 @@ def id_tap(tap_func: Callable, arg, *, result=None, **kwargs):
   flat_args, arg_treedef = pytree.flatten(arg)
   for arg in flat_args:
     api._check_arg(arg)
-  params = dict(kwargs)  #  we pass a copy of params to the primitive
   # See definition of id_tap_p for what parameters it takes
+  params = {}
   params["tap_func_"] = tap_func
   params["arg_treedef_"] = arg_treedef
   params["nr_tapped_args_"] = len(flat_args)
@@ -225,14 +238,11 @@ def id_tap(tap_func: Callable, arg, *, result=None, **kwargs):
       api._check_arg(result)
     all_args = flat_args + flat_results
     nr_results = len(flat_results)
-  else:
-    all_args = flat_args
-    nr_results = 0
-  flat_outs = id_tap_p.bind(*all_args, **params)  # Returns all_args
-  if result is not None:
+    flat_outs = id_tap_p.bind(*all_args, **params)  # Returns all_args
     flat_results = flat_outs[-nr_results:]  # type: ignore[unsupported-operands]
     return result_treedef.unflatten(flat_results)
   else:
+    flat_outs = id_tap_p.bind(*flat_args, **params)
     return arg_treedef.unflatten(flat_outs)
 
 
@@ -254,41 +264,35 @@ def id_print(arg, *, result=None, output_stream=None, threshold=None, **kwargs):
      ``output_stream.write(s)``.
    * ``threshold`` is passed to ``numpy.array2string``.
   """
-  return id_tap(
+  printer = functools.partial(
       _print_consumer,
-      arg,
-      result=result,
       output_stream=output_stream,
       threshold=threshold,
-      **kwargs)
+      **kwargs,
+  )
+  return id_tap(printer, arg, result=result)
+
+
+def _unpack_transform(name, *params):
+  if name == "batch":
+    return name, dict(batch_dims=params[0])
+  elif name == "mask":
+    return name, dict(logical_shapes=params[0])
+  else:
+    assert not params, f"{name}, {params}"
+    return name, dict()
 
 
 # A registry of outfeed consumers, used upon receiving outfeeds
 class _ConsumerCallable(NamedTuple):
   """Host-side information for an outfeed consumer."""
   func: Callable
-  kwargs: Tuple[Tuple[str, Any], ...]
+  transforms: Tuple[tuple, ...]
   arg_treedef: Any
   arg_shape: XlaShape  # XlaShape implements __hash__.
 
-  def unpack_kwargs(self):
-    kwargs = dict(self.kwargs)
-    transforms = kwargs.get("transforms")
-    if transforms is None:
-      return kwargs
-    else:
-
-      def unpack_transform(name, *params):
-        if name == "batch":
-          return dict(name=name, batch_dims=params[0])
-        elif name == "mask":
-          return dict(name=name, logical_shapes=params[0])
-        else:
-          assert not params, f"{name}, {params}"
-          return dict(name=name)
-
-      return dict(
-          kwargs, transforms=tuple([unpack_transform(*t) for t in transforms]))
+  def unpack_transforms(self) -> Tuple[Tuple[str, Dict[str, Any]], ...]:
+    return tuple(_unpack_transform(*t) for t in self.transforms)
 
 
 def _register_consumer(cons: _ConsumerCallable) -> int:
@@ -305,7 +309,8 @@ def _register_consumer(cons: _ConsumerCallable) -> int:
   return cons_id
 
 
-def _print_consumer(arg, *, output_stream=None, threshold=1024, **kwargs):
+def _print_consumer(
+    arg, transforms, *, output_stream=None, threshold=1024, **kwargs):
   """The consumer for id_print.
 
   We provide this as a simple tapping function for printing.
@@ -325,6 +330,9 @@ def _print_consumer(arg, *, output_stream=None, threshold=1024, **kwargs):
     else:
       print(s)
 
+  if transforms:
+    kwargs['transforms'] = [(name, params) if params else name
+                            for name, params in transforms]
   kv_pairs = " ".join([
       f"{k}: {v}" for k, v in sorted(kwargs.items())
   ])
@@ -487,7 +495,7 @@ def _id_tap_translation_rule(comp: XlaComputationBuilder,
                              nr_tapped_args_,
                              arg_treedef_=None,
                              has_token_=False,
-                             **params):
+                             transforms=()):
 
   # We expect the current token at the end, inserted by _rewrite_jaxpr.
   assert has_token_
@@ -497,7 +505,7 @@ def _id_tap_translation_rule(comp: XlaComputationBuilder,
 
   args_to_outfeed = args_op[0:nr_tapped_args_]
   consumer_id = _register_consumer(
-      _ConsumerCallable(tap_func_, tuple(sorted(params.items())), arg_treedef_,
+      _ConsumerCallable(tap_func_, transforms, arg_treedef_,
                         comp.get_shape(xops.Tuple(comp, args_to_outfeed))))
   next_token = _outfeed_receiver.receiver.add_outfeed(comp, current_token,
                                                       consumer_id,
@@ -863,8 +871,7 @@ def _outfeed_receiver_callback(device, consumer_id, arrays):
   assert consumer is not None, "We should have crashed in the runtime"
   try:
     arg = api.tree_unflatten(consumer.arg_treedef, arrays)
-    consumer.func(arg,
-                  **consumer.unpack_kwargs())  # type: ignore[attribute-error]
+    consumer.func(arg, consumer.unpack_transforms())  # type: ignore[attribute-error]
   except Exception as e:
     logging.error("Postponing exception raised in tap function: %s\n%s", str(e),
                   traceback.format_exc())
@@ -942,7 +949,7 @@ def barrier_wait():
   cv = threading.Condition(lock=lock)
   num_at_large = len(_outfeed_receiver.devices)  # Protected by lock
 
-  def barrier_tap(dev_idx):
+  def barrier_tap(dev_idx, _):
     nonlocal num_at_large
     logging.vlog(
         2, f"barrier_wait: thread {threading.current_thread()} for "
