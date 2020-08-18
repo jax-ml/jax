@@ -459,7 +459,7 @@ def chain(*args: GradientTransformation) -> GradientTransformation:
   def update_fn(updates: Updates, state: OptState, params: Params = None
     ) -> Tuple[Updates, Sequence[OptState]]:
     new_state = []
-    for s, fn in zip(state, update_fns):
+    for s, fn in zip(state, update_fns):  # pytype: disable=wrong-arg-types
       updates, new_s = fn(updates, s, params)
       new_state.append(new_s)
     return updates, new_state
