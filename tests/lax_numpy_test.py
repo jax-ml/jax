@@ -1234,11 +1234,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for dtype in default_dtypes
     for a_shape in one_dim_array_shapes))
   def testTrimZeros(self, a_shape, dtype):
-    rng = jtu.rand_default(self.rng())
+    rng = jtu.rand_some_zero(self.rng())
     np_fun = lambda arg1: np.trim_zeros(arg1)
     jnp_fun = lambda arg1: jnp.trim_zeros(arg1)
+
+    np_fun_f = lambda arg1: np.trim_zeros(arg1, trim='f')
+    jnp_fun_f = lambda arg1: np.trim_zeros(arg1, trim='f')
+
+    np_fun_b = lambda arg1: np.trim_zeros(arg1, trim='b')
+    jnp_fun_b = lambda arg1: np.trim_zeros(arg1, trim='b')
+
     args_maker = lambda: [rng(a_shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fun_f, jnp_fun_f, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fun_b, jnp_fun_b, args_maker, check_dtypes=True)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
