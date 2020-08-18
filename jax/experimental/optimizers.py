@@ -277,41 +277,6 @@ def nesterov(step_size: Schedule, mass: float):
     return x
   return init, update, get_params
 
-@optimizer
-def qhm(step_size: Schedule, n: float = 0.7, b: float = 0.999):
-  """Construct optimizer triple for Quasi-Hyperbolic Momentum (QHM) Optimizer.
-
-  https://arxiv.org/abs/1810.06801
-
-  The QHM optimizer is a n-weeighted average of the momentum update step
-  and the plain SGD update step.
-
-  With n = 0, qhm recovers sgd.
-  With n = 1, qhm recovers momentum.
-  With n = b, qhm recovers nesterov.
-
-  Args:
-    step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
-    n: optional, a positive scalar, the immediate discount factor. Recommended default = 0.7.
-    b: optional, a positive scalar representing the momentum coefficient. Recommended default = 0.999.
-
-  Returns:
-    An (init_fun, update_fun, get_params) triple.
-  """
-  step_size = make_schedule(step_size)
-  def init(x0):
-    v0 = jnp.zeros_like(x0)
-    return x0, v0
-  def update(i, g, state):
-    x, velocity = state
-    velocity = b * velocity + (1-b) * g
-    x = x - step_size(i) * ((1-n) * g + n * velocity)
-    return x, velocity
-  def get_params(state):
-    x, _ = state
-    return x
-  return init, update, get_params
 
 @optimizer
 def adagrad(step_size, momentum=0.9):
@@ -441,49 +406,6 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
     vhat = v / (1 - b2 ** (i + 1))
     x = x - step_size(i) * mhat / (jnp.sqrt(vhat) + eps)
-    return x, m, v
-  def get_params(state):
-    x, _, _ = state
-    return x
-  return init, update, get_params
-
-@optimizer
-def qhadam(step_size, b1=0.999, b2=0.999, nu1=0.7, nu2=1.0, eps=1e-8):
-  """Construct optimizer triple for QHAdam, basically QHM applied to Adam.
-
-  https://arxiv.org/abs/1810.06801
-
-  With nu1=nu2=1.0, qhadam recovers adam.
-  With nu1=0, nu2=1.0, qhadam recovers (a bias corrected) rmsprop.
-  With nu1=b1, nu2=1.0, qhadam recovers NAdam.
-
-  Args:
-    step_size: positive scalar, or a callable representing a step size schedule
-      that maps the iteration index to positive scalar.
-    b1: optional, a positive scalar value for beta_1, the exponential decay rate
-      for the first moment estimates (default 0.999).
-    b2: optional, a positive scalar value for beta_2, the exponential decay rate
-      for the second moment estimates (default 0.999).
-    nu1: optional, a positive scalar value for the immediate first moment updates. (default 0.7)
-    nu2: optional, a positive scalar value for the immediate second moment updaates. (default 1.0)
-    eps: optional, a positive scalar value for epsilon, a small constant for
-      numerical stability (default 1e-8).
-
-  Returns:
-    An (init_fun, update_fun, get_params) triple.
-  """
-  step_size = make_schedule(step_size)
-  def init(x0):
-    m0 = jnp.zeros_like(x0)
-    v0 = jnp.zeros_like(x0)
-    return x0, m0, v0
-  def update(i, g, state):
-    x, m, v = state
-    m = (1 - b1) * g + b1 * m  # First  moment estimate.
-    v = (1 - b2) * jnp.square(g) + b2 * v  # Second moment estimate.
-    mhat = m / (1 - b1 ** (i + 1))  # Bias correction.
-    vhat = v / (1 - b2 ** (i + 1))
-    x = x - step_size(i) * ((1-nu1) * g + nu1 * mhat) / (jnp.sqrt((1-nu2)*jnp.square(g) + nu2 * vhat) + eps)
     return x, m, v
   def get_params(state):
     x, _, _ = state
