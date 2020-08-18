@@ -133,23 +133,20 @@ class BatchTrace(Trace):
     if all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     elif config.omnistaging_enabled and primitive in collective_rules:
-      axes_names = params['axis_name']
-      if not isinstance(axes_names, (tuple, list)):
-        axes_names = (axes_names,)
-      for i, axis_name in enumerate(axes_names):
+      axis_names = params['axis_name']
+      if not isinstance(axis_names, (tuple, list)):
+        axis_names = (axis_names,)
+      for i, axis_name in enumerate(axis_names):
         frame = core.axis_frame(axis_name)
-        if frame.tag is self.master:
-          if params['axis_index_groups'] is not None:
-            raise NotImplementedError("axis_index_groups not supported in vmap collectives")
-          result = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
-          remaining_axes = axes_names[:i] + axes_names[(i+1):]
-          # TODO: This assumes that the collective always returns the same result for each
-          #       array element, which is not true for the ones that are not reductions!
-          if remaining_axes:
-            new_params = dict(params, axis_name=remaining_axes)
-            return primitive.bind(*result, **new_params)
-          else:
-            return result
+        if frame.tag is not self.master:
+          continue
+        # We run the split_axis rule with tracers, which is supposed to never
+        # mix this axis name with another one. We will handle any invocations
+        # of collectives over the vmapped axis in a recursive call from a tracer.
+        if len(axis_names) > 1:
+          return split_axis(primitive, axis_name, tracers, params)
+        vals_out, dims_out = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
+        return map(partial(BatchTracer, self), vals_out, dims_out)
     # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
     batched_primitive = get_primitive_batcher(primitive)
     val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
@@ -444,9 +441,10 @@ def omnistaging_enabler() -> None:
     return jaxpr_out, batched_out()
 
 
-# It is assumed that all collectives specified below are commutative
-# and associative over axis names if they support tuples. That is,
-# they have to satisfy:
-#   collective(x, ('i', 'j')) == collective(x, ('j', 'i'))
-#                             == collective(collective(x, 'j'), 'i')
+# collective_rules can assume that the collective is only carried out throughout
+# the vmapped axis (i.e. no tuples in axis_name).
 collective_rules: Dict[core.Primitive, Callable] = {}
+split_axis_rules: Dict[core.Primitive, Callable] = {}
+
+def split_axis(primitive, split_name, args, params):
+  return split_axis_rules[primitive](split_name, args, params)
