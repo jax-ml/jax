@@ -108,7 +108,7 @@ register_pytree_node(
     lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 
-Array = jnp.ndarray
+Array = Any
 Params = Any  # Parameters are arbitrary nests of `jnp.ndarrays`.
 State = Any   # internal State
 Updates = Params  # Gradient updates are of the same type as parameters.
