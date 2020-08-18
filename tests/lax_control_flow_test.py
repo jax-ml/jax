@@ -2309,10 +2309,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertRaisesRegex(
         ValueError,
-        re.escape(
-            "compiling a primitive computation `while` that requires {} "
-            "replicas, but only {} XLA devices are available on backend {}."
-            .format(too_big, api.device_count(), jtu.device_under_test())),
+        f"Input to pmapped function must have axis size less than or equal to "
+        f"the number of local devices. Got axis_size={too_big}, "
+        f"local_device_count={api.device_count()}",
         lambda: f_loop(jnp.ones(too_big)))
 
   @parameterized.named_parameters(

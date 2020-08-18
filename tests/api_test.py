@@ -913,6 +913,9 @@ class APITest(jtu.JaxTestCase):
                      xb.xla_client.PrimitiveType.TUPLE)
 
   def test_staging_out_multi_replica(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("Requires omnistaging")
+
     def f(x):
       return api.pmap(jnp.mean)(x)
     xla_comp = api.xla_computation(f)

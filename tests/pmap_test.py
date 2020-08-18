@@ -709,9 +709,10 @@ class PmapTest(jtu.JaxTestCase):
     self.assertRaisesRegex(ValueError, "Input to pmapped function.*",
                            lambda: f(x))
 
-    f = pmap(lambda x: pmap(lambda x: x)(x))
-    x = np.ones((device_count, 2, 10))
-    self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
+    if jax.device_count() > 1:
+      f = pmap(lambda x: pmap(lambda x: x)(x))
+      x = np.ones((device_count, 2, 10))
+      self.assertRaisesRegex(ValueError, ".*requires.*replicas", lambda: f(x))
 
   def testPmapConstant(self):
     device_count = xla_bridge.device_count()
