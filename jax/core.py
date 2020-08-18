@@ -469,6 +469,9 @@ class Tracer:
   def aval(self):
     raise NotImplementedError("must override")
 
+  # Python looks up special methods only on classes, not instances. This means
+  # these methods needs to be defined explicitly rather than relying on
+  # __getattr__.
   def __neg__(self): return self.aval._neg(self)
   def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
@@ -527,6 +530,9 @@ class Tracer:
 
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
+
+  # NumPy also only looks up special methods on classes.
+  def __array_module__(self, types): return self.aval._array_module(self, types)
 
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here

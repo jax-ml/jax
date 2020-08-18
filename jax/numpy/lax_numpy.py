@@ -36,6 +36,7 @@ import warnings
 import numpy as np
 import opt_einsum
 
+import jax
 from jax import jit, custom_jvp
 from .vectorize import vectorize
 from ._util import _wraps
@@ -4572,6 +4573,21 @@ setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", _astype)
 setattr(DeviceArray, "view", _view)
 setattr(DeviceArray, "nbytes", property(_nbytes))
+
+
+# Experimental support for NumPy's module dispatch with NEP-37.
+# Currently requires https://github.com/seberg/numpy-dispatch
+_JAX_ARRAY_TYPES = (DeviceArray, core.Tracer)
+_HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
+
+def __array_module__(self, types):
+  if builtins.all(issubclass(t, _HANDLED_ARRAY_TYPES) for t in types):
+    return jax.numpy
+  else:
+    return NotImplemented
+
+setattr(ShapedArray, "_array_module", staticmethod(__array_module__))
+setattr(DeviceArray, "__array_module__", __array_module__)
 
 
 # Extra methods that are handy

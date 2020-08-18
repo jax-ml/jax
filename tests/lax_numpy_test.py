@@ -28,6 +28,10 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
+try:
+  import numpy_dispatch
+except ImportError:
+  numpy_dispatch = None
 
 import jax
 import jax.ops
@@ -584,6 +588,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         op(other, arg)
       with self.assertRaises(TypeError):
         op(arg, other)
+
+  def testArrayModule(self):
+    if numpy_dispatch is None:
+      raise SkipTest('requires https://github.com/seberg/numpy-dispatch')
+
+    jnp_array = jnp.array(1.0)
+    np_array = np.array(1.0)
+
+    module = numpy_dispatch.get_array_module(jnp_array)
+    self.assertIs(module, jnp)
+
+    module = numpy_dispatch.get_array_module(jnp_array, np_array)
+    self.assertIs(module, jnp)
+
+    def f(x):
+      module = numpy_dispatch.get_array_module(x)
+      self.assertIs(module, jnp)
+      return x
+    jax.jit(f)(jnp_array)
+    jax.grad(f)(jnp_array)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
