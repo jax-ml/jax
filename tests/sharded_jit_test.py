@@ -304,7 +304,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     if num_shards > jax.local_device_count():
       raise SkipTest("requires %d devices" % num_shards)
 
-    x = np.arange(prod(shape, dtype=dtype)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     y = x + 1
     result = pmap(
         sharded_jit(f, in_parts=in_partitions, out_parts=out_partitions))(x, y)
