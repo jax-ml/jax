@@ -394,7 +394,7 @@ for unexpected in [
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
+  lax.reduce_p, lax.rng_uniform_p,
 
   lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
@@ -911,6 +911,7 @@ tf_impl[lax.reduce_window_min_p] = (
     functools.partial(_reduce_window, lax._reduce_window_min, _min_fn, np.inf))
 tf_impl[lax.reduce_window_max_p] = (
     functools.partial(_reduce_window, lax._reduce_window_max, _max_fn, -np.inf))
+tf_impl[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
 def _select_and_scatter(
