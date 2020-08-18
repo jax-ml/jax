@@ -1025,7 +1025,7 @@ class PmapTest(jtu.JaxTestCase):
     # Manually construct a ShardedDeviceArray with the wrong sharding for the
     # subsequent pmap
     shard_shape = (3,2)
-    shard = jnp.arange(jnp.prod(jnp.array(shard_shape))).reshape(shard_shape)
+    shard = jnp.arange(prod(shard_shape)).reshape(shard_shape)
     bufs = [xla.device_put(shard, d) for d in xla_bridge.devices()[:4]]
     aval = ShapedArray((6,4), shard.dtype)
     sharding_spec = pxla.ShardingSpec(
@@ -1620,7 +1620,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     if jax.device_count() < shape[0]:
       raise SkipTest(f"requires {shape[0]} devices")
 
-    x = jnp.arange(jnp.prod(jnp.array(shape))).reshape(shape)
+    x = jnp.arange(prod(shape)).reshape(shape)
     sharded_x = pmap(lambda x: x)(x)
 
     num_threads = 10
@@ -1816,7 +1816,7 @@ class ShardArgsTest(jtu.JaxTestCase):
     nshards = len(indices)
     if jax.device_count() < nshards:
       raise SkipTest
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     arg = make_arg(x)
     bufs = pxla.shard_args(jax.devices()[:nshards],
                            [indices], [arg])

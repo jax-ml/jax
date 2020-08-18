@@ -35,6 +35,7 @@ from jax import test_util as jtu
 from jax.config import config
 from jax.experimental import host_callback as hcb
 from jax.lib import xla_bridge
+from jax.util import prod
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -593,7 +594,7 @@ where: 10
     if jtu.device_under_test() == "tpu":
       if dtype in (jnp.int16,):
         raise SkipTest(f"transfering {dtype} not supported on TPU")
-    args = [jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)]
+    args = [jnp.arange(prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args
     jit_fun1 = api.jit(lambda xs: hcb.id_print(

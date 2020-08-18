@@ -30,6 +30,7 @@ from jax import dtypes
 from jax import lax
 from jax import test_util as jtu
 from jax.test_util import check_grads
+from jax.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -799,7 +800,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
     def args_maker():
-      flat_keys = np.arange(np.prod(shape, dtype=int), dtype=key_dtype)
+      flat_keys = np.arange(prod(shape), dtype=key_dtype)
       keys = self.rng().permutation(flat_keys).reshape(shape)
       values = rng(shape, val_dtype)
       return keys, values
@@ -817,7 +818,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for k in [1, 3]
       for rng_factory in [jtu.rand_default]))
   def testTopKGrad(self, shape, dtype, k, rng_factory):
-    flat_values = np.arange(np.prod(shape, dtype=int), dtype=dtype)
+    flat_values = np.arange(prod(shape), dtype=dtype)
     values = self.rng().permutation(flat_values).reshape(shape)
     fun = lambda vs: lax.top_k(vs, k=k)[0]
     check_grads(fun, (values,), 2, ["fwd", "rev"], eps=1e-2)
