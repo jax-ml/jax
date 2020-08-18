@@ -1404,12 +1404,12 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
+  fill_value = convert_element_type(fill_value, dtype)
   if config.omnistaging_enabled:
-    fill_value = convert_element_type(fill_value, dtype)
     if not isinstance(fill_value, (xla.DeviceArray, core.Tracer)):
       fill_value = _device_put_raw(fill_value)
   else:
-    fill_value = xla.device_put_p.bind(convert_element_type(fill_value, dtype))
+    fill_value = xla.device_put_p.bind(fill_value)
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x):
