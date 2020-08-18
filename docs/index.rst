@@ -38,6 +38,7 @@ For an introduction to JAX, start at the
    concurrency
    gpu_memory_allocation
    profiling
+   device_memory_profiling
    pytrees
    rank_promotion_warning
    type_promotion

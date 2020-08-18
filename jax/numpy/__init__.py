@@ -36,29 +36,31 @@ from .lax_numpy import (
     float64, float_, float_power, floating, floor, floor_divide, fmax, fmin,
     fmod, frexp, full, full_like, function, gcd, geomspace, gradient, greater,
     greater_equal, hamming, hanning, heaviside, histogram, histogram_bin_edges,
-    hsplit, hstack, hypot, identity, iinfo, imag,
-    indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer,
+    hsplit, hstack, hypot, i0, identity, iinfo, imag,
+    indices, inexact, in1d, inf, inner, int16, int32, int64, int8, int_, integer, 
+    interp, intersect1d, invert,
     isclose, iscomplex, iscomplexobj, isfinite, isin, isinf, isnan, isneginf,
     isposinf, isreal, isrealobj, isscalar, issubdtype, issubsctype, iterable,
-    ix_, kaiser, kron, lcm, ldexp, left_shift, less, less_equal, linspace,
+    ix_, kaiser, kron, lcm, ldexp, left_shift, less, less_equal, lexsort, linspace,
     load, log, log10, log1p, log2, logaddexp, logaddexp2, logical_and,
     logical_not, logical_or, logical_xor, logspace, mask_indices, matmul, max,
-    maximum, mean, median, meshgrid, min, minimum, mod, moveaxis, msort,
+    maximum, mean, median, meshgrid, min, minimum, mod, modf, moveaxis, msort,
     multiply, nan, nan_to_num, nanargmax, nanargmin, nancumprod, nancumsum,
     nanmedian, nanpercentile, nanquantile,
     nanmax, nanmean, nanmin, nanprod, nanstd, nansum, nanvar, ndarray, ndim,
     negative, newaxis, nextafter, nonzero, not_equal, number, numpy_version,
     object_, ones, ones_like, operator_name, outer, packbits, pad, percentile,
-    pi, polyadd, polyder, polymul, polysub, polyval, positive, power, prod, product, promote_types, ptp, quantile,
+    pi, piecewise, polyadd, polyder, polymul, polysub, polyval, positive, power,
+    prod, product, promote_types, ptp, quantile,
     rad2deg, radians, ravel, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
     save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
-    signedinteger, sin, sinc, single, sinh, size, sometrue, sort, split, sqrt,
+    signedinteger, sin, sinc, single, sinh, size, sometrue, sort, sort_complex, split, sqrt,
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,
-    triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
+    trim_zeros, triu, triu_indices, triu_indices_from, true_divide, trunc, uint16, uint32, uint64, uint8, unique,
     unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
-    vstack, where, zeros, zeros_like)
+    vstack, where, zeros, zeros_like, _NOT_IMPLEMENTED)
 
 from .polynomial import roots
 from .vectorize import vectorize
@@ -71,9 +73,10 @@ def _init():
   from . import lax_numpy
   from .. import util
   # Builds a set of all unimplemented NumPy functions.
-  for func in util.get_module_functions(np):
-    if func.__name__ not in globals():
-      globals()[func.__name__] = lax_numpy._not_implemented(func)
+  for name, func in util.get_module_functions(np).items():
+    if name not in globals():
+      _NOT_IMPLEMENTED.append(name)
+      globals()[name] = lax_numpy._not_implemented(func)
 
 _init()
 del _init

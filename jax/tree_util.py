@@ -31,7 +31,7 @@ The primary purpose of this module is to enable the interoperability between
 user defined data structures and JAX transformations (e.g. `jit`). This is not
 meant to be a general purpose tree-like data structure handling library.
 
-See the `JAX pytrees notebook <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html>`_
+See the `JAX pytrees note <pytrees.html>`_
 for examples.
 """
 
@@ -112,7 +112,7 @@ def all_leaves(iterable):
 def register_pytree_node(nodetype, flatten_func, unflatten_func):
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See `example usage <https://jax.readthedocs.io/en/latest/notebooks/JAX_pytrees.html#Pytrees-are-extensible>`_.
+  See `example usage <pytrees.html>`_.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node.
@@ -194,12 +194,11 @@ def build_tree(treedef, xs):
 
 def tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose):
   flat, treedef = tree_flatten(pytree_to_transpose)
-  expected_treedef = outer_treedef.compose(inner_treedef)
-  if treedef != expected_treedef:
-    raise TypeError("Mismatch\n{}\n != \n{}".format(treedef, expected_treedef))
-
   inner_size = inner_treedef.num_leaves
   outer_size = outer_treedef.num_leaves
+  if treedef.num_leaves != (inner_size * outer_size):
+    expected_treedef = outer_treedef.compose(inner_treedef)
+    raise TypeError(f"Mismatch\n{treedef}\n != \n{expected_treedef}")
   flat = iter(flat)
   lol = [[next(flat) for _ in range(inner_size)] for __ in range(outer_size)]
   transposed_lol = zip(*lol)

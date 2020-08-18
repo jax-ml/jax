@@ -40,7 +40,6 @@ except ImportError:
 dlpack_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                    jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                    jnp.float16, jnp.float32, jnp.float64]
-all_dtypes = dlpack_dtypes + [jnp.bool_, jnp.bfloat16]
 torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 
@@ -135,4 +134,4 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

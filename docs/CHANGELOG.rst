@@ -9,6 +9,99 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.1.75 (July 30, 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.74...jax-v0.1.75>`_.
+
+* Bug Fixes:
+
+  * make jnp.abs() work for unsigned inputs (#3914)
+
+* Improvements:
+
+  * "Omnistaging" behavior added behind a flag, disabled by default (#3370)
+
+jax 0.1.74 (July 29, 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.73...jax-v0.1.74>`_.
+
+* New Features:
+
+  * BFGS (#3101)
+  * TPU suppot for half-precision arithmetic (#3878)
+
+* Bug Fixes:
+
+  * Prevent some accidental dtype warnings (#3874)
+  * Fix a multi-threading bug in custom derivatives (#3845, #3869)
+
+* Improvements:
+
+  * Faster searchsorted implementation (#3873)
+  * Better test coverage for jax.numpy sorting algorithms (#3836)
+
+
+jaxlib 0.1.52 (July 22, 2020)
+------------------------------
+
+* Update XLA.
+
+jax 0.1.73 (July 22, 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.72...jax-v0.1.73>`_.
+* The minimum jaxlib version is now 0.1.51.
+
+* New Features:
+
+  * jax.image.resize. (#3703)
+  * hfft and ihfft (#3664)
+  * jax.numpy.intersect1d (#3726)
+  * jax.numpy.lexsort (#3812)
+  * ``lax.scan`` and the ``scan`` primitive support an ``unroll``
+    parameter for loop unrolling when lowering to XLA
+    (`#3738 <https://github.com/google/jax/pull/3738>`_).
+
+* Bug Fixes:
+
+  * Fix reduction repeated axis error (#3618)
+  * Fix shape rule for lax.pad for input dimensions of size 0. (#3608)
+  * make psum transpose handle zero cotangents (#3653)
+  * Fix shape error when taking JVP of reduce-prod over size 0 axis. (#3729)
+  * Support differentiation through jax.lax.all_to_all (#3733)
+  * address nan issue in jax.scipy.special.zeta (#3777)
+
+* Improvements:
+
+  * Many improvements to jax2tf
+  * Reimplement argmin/argmax using a single pass variadic reduction. (#3611)
+  * Enable XLA SPMD partitioning by default. (#3151)
+  * Add support for 0d transpose convolution (#3643)
+  * Make LU gradient work for low-rank matrices (#3610)
+  * support multiple_results and custom JVPs in jet (#3657)
+  * Generalize reduce-window padding to support (lo, hi) pairs. (#3728)
+  * Implement complex convolutions on CPU and GPU. (#3735)
+  * Make jnp.take work for empty slices of empty arrays. (#3751)
+  * Relax dimension ordering rules for dot_general. (#3778)
+  * Enable buffer donation for GPU. (#3800)
+  * Add support for base dilation and window dilation to reduce window op… (#3803)
+
+jaxlib 0.1.51 (July 2, 2020)
+------------------------------
+
+* Update XLA.
+* Add new runtime support for host_callback.
+
+jax 0.1.72 (June 28, 2020)
+---------------------------
+
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.71...jax-v0.1.72>`_.
+
+* Bug fixes:
+
+  * Fix an odeint bug introduced in the previous release, see
+    `#3587 <https://github.com/google/jax/pull/3587>`_.
+
+
 jax 0.1.71 (June 25, 2020)
 ---------------------------
 
@@ -255,7 +348,7 @@ jax 0.1.60 (March 17, 2020)
   * Added :py:func:`jax.nn.one_hot` utility function.
   * Added :py:module:`jax.experimental.jet` for exponentially faster
     higher-order automatic differentiation.
-  * Added more sanity checking to arguments of :py:func:`jax.lax.broadcast_in_dim`.
+  * Added more correctness checking to arguments of :py:func:`jax.lax.broadcast_in_dim`.
 
 * The minimum jaxlib version is now 0.1.41.
 

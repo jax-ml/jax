@@ -16,6 +16,7 @@ jax.scipy.linalg
    det
    eigh
    expm
+   expm_frechet
    inv
    lu
    lu_factor
@@ -78,7 +79,9 @@ jax.scipy.special
    gammainc
    gammaincc
    gammaln
+   i0
    i0e
+   i1
    i1e
    log_ndtr
    logit

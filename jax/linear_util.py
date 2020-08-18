@@ -62,7 +62,7 @@ dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
 
-from typing import Any, Tuple
+from typing import Any, Tuple, Callable
 import weakref
 
 from .util import curry
@@ -200,15 +200,18 @@ def wrap_init(f, params={}) -> WrappedFun:
   return WrappedFun(f, (), (), tuple(sorted(params.items())))
 
 
-def cache(call):
-  """Cache decorator for WrappedFun calls.
+def cache(call: Callable):
+  """Memoization decorator for functions taking a WrappedFun as first argument.
+
   Args:
-    call: a function that takes a WrappedFun as a first argument
+    call: a Python callable that takes a WrappedFun as its first argument. The
+      underlying transforms and params on the WrappedFun are used as part of the
+      memoization cache key.
 
   Returns:
-     the memoized `call` function.
+     A memoized version of ``call``.
   """
-  fun_caches = weakref.WeakKeyDictionary()
+  fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
@@ -222,7 +225,7 @@ def cache(call):
       cache[key] = (ans, fun.stores)
     return ans
 
-  memoized_fun.cache_clear = fun_caches.clear
+  memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   return memoized_fun
 
 @transformation

@@ -206,6 +206,7 @@ def zeta(x, q=None):
   T0 = (a + N) ** -s
   s_over_a = (s_ + np.arange(2 * M, dtype=M.dtype)) / (a_ + N)
   T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
+  T1 = jnp.clip(T1, a_max=jnp.finfo(dtype).max)
   coefs = np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype)
   T1 = T1 / coefs
   T = T0 * (dtype(0.5) + T1.sum(-1))
@@ -634,8 +635,20 @@ def _norm_logpdf(x):
 
 @_wraps(osp_special.i0e)
 def i0e(x):
+  x, = _promote_args_inexact("i0e", x)
   return lax.bessel_i0e(x)
+
+@_wraps(osp_special.i0)
+def i0(x):
+  x, = _promote_args_inexact("i0", x)
+  return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i0e(x))
 
 @_wraps(osp_special.i1e)
 def i1e(x):
+  x, = _promote_args_inexact("i1e", x)
   return lax.bessel_i1e(x)
+
+@_wraps(osp_special.i1)
+def i1(x):
+  x, = _promote_args_inexact("i1", x)
+  return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))

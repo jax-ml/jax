@@ -90,26 +90,6 @@ py_library(
 )
 
 pybind_extension(
-    name = "pytree",
-    srcs = ["pytree.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "pytree",
-    deps = [
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@pybind11",
-    ],
-)
-
-pybind_extension(
     name = "cublas_kernels",
     srcs = ["cublas.cc"],
     copts = [

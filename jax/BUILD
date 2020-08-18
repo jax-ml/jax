@@ -27,6 +27,7 @@ pytype_library(
     srcs = glob(
         [
             "*.py",
+            "image/**/*.py",
             "lib/**/*.py",
             "interpreters/**/*.py",
             "lax/**/*.py",
@@ -107,6 +108,5 @@ pytype_library(
     srcs_version = "PY3",
     deps = [
         ":jax",
-        "//third_party/py/msgpack",
     ],
 )

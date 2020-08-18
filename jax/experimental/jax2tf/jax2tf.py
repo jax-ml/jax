@@ -13,11 +13,9 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 
-import contextlib
 import functools
 import string
-import threading
-from typing import Any, Callable, Dict, Iterable, Sequence, Union
+from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union
 
 import jax
 from jax import abstract_arrays
@@ -25,6 +23,7 @@ from jax import ad_util
 from jax import api
 from jax import core
 from jax import custom_derivatives
+from jax import dtypes
 from jax import lax
 from jax import linear_util as lu
 from jax import numpy as jnp
@@ -39,6 +38,8 @@ from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import pxla
+
+from jaxlib import xla_client
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -55,10 +56,38 @@ def _is_tfval(v: TfVal) -> bool:
   if isinstance(v, (tf.Tensor, tf.Variable)):
     return True
   try:
-    tf.convert_to_tensor(v)
+    # Note: this conversion is overkill and just intended as a type check; this code
+    # is in principle only run if core.skip_checks is False.
+    _safe_convert_to_tensor(v)
     return True
   except ValueError:
     return False
+
+def _safe_convert_to_tensor(val, dtype=None):
+  """Converts val to a Tensor.
+
+  This method wraps TensorFlow's `convert_to_tensor
+  <https://www.tensorflow.org/api_docs/python/tf/convert_to_tensor>`_ operator with
+  special case handling for when `val` is an instance of `jnp.bfloat16` or has a
+  `jnp.bfloat16` dtype. Because this type is not supported in numpy and different
+  from `tf.bfloat16.as_numpy_dtype`, `tf.convert_to_tensor` runs into trouble when
+  trying to convert it. In such a case, we solve the problem by viewing val as a
+  `ndarray` with a `uint16` dtype, for which conversion is properly defined. Then, we
+  simply bitcast it back to `bfloat16`.
+  """
+  dtype = dtype if dtype else (val.dtype if hasattr(val, "dtype") else None)
+  if (dtype == jnp.bfloat16 or isinstance(val, jnp.bfloat16)):
+    if not isinstance(val, jnp.ndarray):
+      val = np.array(val, jnp.bfloat16)
+
+    val = tf.bitcast(tf.convert_to_tensor(val.view(jnp.uint16),
+                                          dtype=to_tf_dtype(jnp.uint16)),
+                     type=to_tf_dtype(jnp.bfloat16))
+  else:
+    conversion_type = to_tf_dtype(dtype) if dtype else None
+    val = tf.convert_to_tensor(val, dtype=conversion_type)
+
+  return val
 
 # During JAX transformations we sometimes produce a Jaxpr that has arguments
 # of abstract value core.abstract_unit and results equal to core.unit.
@@ -80,13 +109,20 @@ def _tfval_remove_unit(args: Sequence[TfValOrUnit]) -> Sequence[TfVal]:
 def _tfval_add_unit(vals: Sequence[TfValOrUnit],
                     avals: Sequence[core.AbstractValue]) -> Sequence[TfValOrUnit]:
   """Turn regular TfVals into TfValOrUnit, based on expected abstract values.
-  This function is sometimes called with a mix of core.unit and tf.nan in places
-  of units.
+  When the aval is a unit, the corresponding value is either core.unit,
+  or an EagerTensor with the value NaN (we use tf.nan as a concrete TF value
+  for units, see _tfval_remove_unit) or may even be a Tensor if we are building
+  graphs and the NaN value is abstracted.
   """
   def add_unit(v: TfValOrUnit, aval: core.AbstractValue):
     if not core.skip_checks:
-      assert ((v is core.unit or tf.math.is_nan(v))
-              if aval is core.abstract_unit else _is_tfval(v))
+      if aval is core.abstract_unit:
+        if v is not core.unit:
+          assert isinstance(v, tf.Tensor)
+          if v.device:  # Only for EagerTensor
+            assert tf.math.is_nan(v)
+      else:
+        assert _is_tfval(v)
     return core.unit if aval is core.abstract_unit else v
   return util.safe_map(add_unit, vals, avals)
 
@@ -98,64 +134,18 @@ def _tfval_add_unit(vals: Sequence[TfValOrUnit],
 tf_impl: Dict[core.Primitive,
               Callable[..., Any]] = {}
 
-# TODO(necula): used for tests, until we handle all control-flow primitives
-class _JitState(threading.local):
-
-  def __init__(self):
-    super().__init__()
-    self.disable_jit = True
-
-_jit_state = _JitState()
-
-
-@contextlib.contextmanager
-def enable_jit():
-  """Temporarily allow JAX jit."""
-  old_state = _jit_state.disable_jit
-  _jit_state.disable_jit = False
-  try:
-    yield
-  finally:
-    _jit_state.disable_jit = old_state
-
-
-def disable_gradient(fun):
-  """Prevents the wrapped function from being differentiated."""
-
-  def grad_disabled(*dy, variables=None):
-    raise ValueError("jax2tf currently does not support gradients. Please "
-                     "reach out to tomhennigan@ if this feature is a blocker "
-                     "for you, we are working on it!")
-
-  is_tensor = lambda t: isinstance(t, (tf.Tensor, tf.Variable))
-
-  def wrapper(*args, **kwargs):
-    flat_args, treedef = jax.tree_flatten((args, kwargs))
-    tensor_idxs = [i for i, t in enumerate(flat_args) if is_tensor(t)]
-    tensor_args = [t for t in flat_args if is_tensor(t)]
-
-    @tf.custom_gradient
-    def inner_wrapper(*tensor_args):
-      flat_copy = list(flat_args)
-      for i, t in zip(tensor_idxs, tensor_args):
-        flat_copy[i] = t
-
-      args, kwargs = jax.tree_unflatten(treedef, flat_copy)
-      out = fun(*args, **kwargs)
-      return out, grad_disabled
-
-    return inner_wrapper(*tensor_args)
-
-  return wrapper
-
-
-def convert(fun):
+def convert(fun, with_gradient=False):
   """Transforms `fun` to be executed by TensorFlow.
 
   Args:
     fun: Function to be transformed. Its arguments and return value should be
       JAX arrays, or (nested) standard Python containers (tuple/list/dict)
       thereof.
+    with_gradient: if set, will add a tf.custom_gradient to the converted
+      function, by converting the ``jax.vjp(fun)``. Only first-order
+      differentiation is supported for now. If the converted function is
+      saved in a SavedModel, the custom gradients are currently lost and
+      an error will be raised if a gradient computation is attempted.
 
   Returns:
     A version of `fun` that expects TfVals as arguments (or
@@ -163,30 +153,59 @@ def convert(fun):
   """
   api._check_callable(fun)
 
-  @disable_gradient
-  def wrapped_fun(*args: TfValOrUnit) -> TfValOrUnit:
-    # TODO(necula): remove the jit disabling once we handle all control-flow.
-    # Disabling the jit helps to avoid some unsupported jax primitives.
-    # E.g. scan will be statically unrolled.
-    def doit():
-      f = lu.wrap_init(fun)
-      args_flat, in_tree = tree_util.tree_flatten((args, {}))
-      for a in args_flat:
-        if not _is_tfvalorunit(a):
-          msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
-                 "be NumPy array, scalar, tf.Variable, or tf.Tensor")
-          raise TypeError(msg)
-      flat_fun, out_tree = flatten_fun(f, in_tree)
-      out_flat = _interpret_fun(flat_fun, args_flat)
-      return tree_util.tree_unflatten(out_tree(), out_flat)
+  def converted_fun(*args: TfVal) -> TfVal:
+    # This function may take pytrees of TfVals. We can only set
+    # tf.custom_gradient on functions that take a flat argument list.
+    args_flat, in_tree = tree_util.tree_flatten((args, {}))
+    for a in args_flat:
+      if not _is_tfvalorunit(a):
+        msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
+               "be NumPy array, scalar, tf.Variable, or tf.Tensor")
+        raise TypeError(msg)
 
-    if _jit_state.disable_jit:
-      with jax.disable_jit():
-        return doit()
+    f = lu.wrap_init(fun)
+    # out_tree_thunk() will be the output tree, after running _interpret_fun.
+    flat_fun, out_tree_thunk = flatten_fun(f, in_tree)
+
+    # Prepare the grad_fn for tf.custom_gradient.
+    def converted_grad_fn(*out_cts_flat: TfVal, **kwargs):
+      # TODO(cl/318778369): change **kwargs with variables=None
+      variables = kwargs.get("variables", [])
+      if variables:
+        raise ValueError("Unexpected variables used in forward pass. "
+                         "This should not happen for first-order differentiation. "
+                         f"variables={variables}")
+
+      def fun_vjp_jax(args_jax, out_cts_jax):
+        # One may think that we can get the pullback while we are converting
+        # the main function in the first place. That is problematic, because the
+        # pullback may contain captured tracers from the conversion of the
+        # main function. Those tracers will confuse the conversion of the
+        # pullback. So, we construct the vjp anew.
+        _, pullback_jax = jax.vjp(fun, *args_jax)
+        return pullback_jax(out_cts_jax)
+      out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
+      in_cts = convert(fun_vjp_jax, with_gradient=False)(args, out_cts)
+      return in_cts
+
+    if with_gradient:
+      @tf.custom_gradient
+      def converted_fun_flat_with_custom_gradient(*args_flat: TfVal) -> TfVal:
+        return _interpret_fun(flat_fun, args_flat), converted_grad_fn
+
+      out_flat = converted_fun_flat_with_custom_gradient(*args_flat)
     else:
-      return doit()
+      out_flat_raw = _interpret_fun(flat_fun, args_flat)
+      message = ("The jax2tf-converted function does not support gradients. "
+                 "Use `with_gradient` parameter to enable gradients")
+      # We use PreventGradient, which is propagated through a SavedModel.
+      out_flat = [tf.raw_ops.PreventGradient(input=o, message=message)
+                  for o in out_flat_raw]
 
-  return wrapped_fun
+    out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
+    return out
+
+  return converted_fun
 
 # Internals
 
@@ -227,7 +246,7 @@ def _interpret_jaxpr(jaxpr: core.TypedJaxpr, *args: TfValOrUnit) -> Sequence[TfV
 
 
 def abstractify(t: Union[tf.Tensor, tf.Variable]):
-  return abstract_arrays.ShapedArray(tuple(t.shape), t.dtype.as_numpy_dtype)
+  return abstract_arrays.ShapedArray(tuple(t.shape), to_jax_dtype(t.dtype))
 
 # TODO(b/26854495): pylint doesn't understand slots and inheritance.
 # pylint: disable=assigning-non-slot
@@ -244,7 +263,7 @@ class TensorFlowTracer(core.Tracer):
       self.val = val
     elif isinstance(val, (tf.Tensor, tf.Variable)):
       aval: core.ShapedArray = abstractify(val)
-      if np.dtype(aval.dtype) != val.dtype.as_numpy_dtype:  # type: ignore
+      if np.dtype(aval.dtype) != to_jax_dtype(val.dtype):  # type: ignore
         # This is expected when JAX 64-bit is not enabled
         self.val = tf.cast(val, dtype=aval.dtype)
       else:
@@ -252,7 +271,9 @@ class TensorFlowTracer(core.Tracer):
     else:  # Must be a numeric value
       assert core.skip_checks or _is_tfval(val), f"Non TfVal: {val}"
       aval = xla.abstractify(val)  # type: ignore
-      self.val = tf.convert_to_tensor(np.array(val, aval.dtype), dtype=aval.dtype)  # type: ignore
+
+      self.val = _safe_convert_to_tensor(val, dtype=aval.dtype)
+
       assert core.skip_checks or aval.strip_weak_type() == self.aval.strip_weak_type(), (
               f"Expected {aval}, got {self.aval}")
 
@@ -315,8 +336,17 @@ class TensorFlowTrace(core.Trace):
     vals_out: Sequence[TfValOrUnit] = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v) for v in vals_out]
 
-  def post_process_call(self, call_primitive, out_tracers, params):
-    raise NotImplementedError("post_process_call")
+  def post_process_call(self, call_primitive: core.Primitive,
+                        out_tracers: Sequence[TensorFlowTracer], params):
+    # We encountered a call primitive, e.g., remat_call_p, whose result
+    # (out_tracers) include TensorFlowTracer that were not passed through
+    # its arguments (captured from the environment).
+    vals = tuple(t.val for t in out_tracers)
+    master = self.master
+    def todo(vals: Sequence[TfValOrUnit]):
+      trace = TensorFlowTrace(master, core.cur_sublevel())
+      return map(functools.partial(TensorFlowTracer, trace), vals)
+    return vals, todo
 
   def process_map(self, map_primitive, f, tracers, params):
     raise NotImplementedError("process_map")
@@ -331,11 +361,19 @@ class TensorFlowTrace(core.Trace):
       msg = "TensorFlow interpretation rule for '{}' not implemented"
       raise NotImplementedError(msg.format(p))
 
+def to_tf_dtype(jax_dtype):
+  if jax_dtype == jnp.bfloat16:
+    return tf.bfloat16
+  else:
+    return tf.dtypes.as_dtype(jax_dtype)
+
+def to_jax_dtype(tf_dtype):
+  return jnp.bfloat16 if tf_dtype == tf.bfloat16 else tf_dtype.as_numpy_dtype
 
 def promote_types(*values):
   """Returns values casted to a common type using jnp.promote_types."""
-  dtype = tf.dtypes.as_dtype(functools.reduce(
-      jnp.promote_types, (v.dtype.as_numpy_dtype for v in values)))
+  dtype = to_tf_dtype(functools.reduce(
+      jnp.promote_types, (to_jax_dtype(v.dtype) for v in values)))
   return tuple(tf.cast(v, dtype) for v in values)
 
 
@@ -349,37 +387,35 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 
 
 for unexpected in [
-  xla.xla_call_p]:  # Not part of the public API
+    # Call primitives are inlined
+    xla.xla_call_p, pe.remat_call_p, core.call_p]:
 
   tf_impl[unexpected] = functools.partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
-  ad.custom_lin_p,
+  lax.reduce_p, lax.rng_uniform_p,
 
-  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax_fft.fft_p,
-  lax.igamma_grad_a_p, lax.infeed_p, lax.linear_solve_p, lax.outfeed_p,
-  lax.sort_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
-  lax.population_count_p, lax.reduce_p, lax.reduce_window_p, lax.rng_uniform_p,
-  lax.select_and_gather_add_p, lax.select_and_scatter_p,
-  lax.top_k_p,
-
-  core.call_p,
+  lax.linear_solve_p,
   lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
-  lax_linalg.lu_p, lax_linalg.qr_p, lax_linalg.svd_p,
+  lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
-  custom_derivatives.custom_jvp_call_jaxpr_p,
-  custom_derivatives.custom_vjp_call_jaxpr_p,
-
+  lax.igamma_grad_a_p,
   random.random_gamma_p,
   lax.random_gamma_grad_p,
-  pe.remat_call_p,
+
+  # Not high priority?
+  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
+  lax.infeed_p, lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
+
   pxla.xla_pmap_p, pxla.axis_index_p,
 ]
 
-tf_impl[lax.tie_in_p] = lambda x, y: y
-tf_impl[core.identity_p] = lambda x: x
+try:
+  tf_impl[lax.lax.tie_in_p] = lambda x, y: y
+except AttributeError:
+  pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
 tf_impl[ad_util.add_jaxvals_p] = wrap_binary_op(tf.math.add)
@@ -392,6 +428,11 @@ tf_impl[lax.ceil_p] = tf.math.ceil
 tf_impl[lax.round_p] = tf.math.round
 tf_impl[lax.nextafter_p] = tf.math.nextafter
 
+def _population_count(x):
+  orig_dtype = x.dtype
+  return tf.bitcast(tf.raw_ops.PopulationCount(x=x), orig_dtype)
+
+tf_impl[lax.population_count_p] = _population_count
 tf_impl[lax.is_finite_p] = tf.math.is_finite
 
 tf_impl[lax.abs_p] = tf.math.abs
@@ -542,7 +583,7 @@ tf_impl[lax.lt_p] = wrap_binary_op(tf.math.less)
 
 def _convert_element_type(operand, new_dtype, old_dtype):
   del old_dtype
-  return tf.dtypes.cast(operand, new_dtype)
+  return tf.dtypes.cast(operand, to_tf_dtype(new_dtype))
 tf_impl[lax.convert_element_type_p] = _convert_element_type
 
 
@@ -712,26 +753,6 @@ tf_impl[lax.rev_p] = _rev
 
 tf_impl[lax.select_p] = tf.where
 
-
-def _slice(operand, start_indices, limit_indices, strides):
-  if strides is None:
-    strides = [1] * len(start_indices)
-  slices = tuple(map(slice, start_indices, limit_indices, strides))
-  return operand[slices]
-tf_impl[lax.slice_p] = _slice
-
-
-def _dynamic_slice(operand, *start_indices, slice_sizes=None):
-  return tf.slice(operand, tf.stack(start_indices), slice_sizes)
-tf_impl[lax.dynamic_slice_p] = _dynamic_slice
-
-
-def _dynamic_update_slice(operand, update, *start_indices):
-  return tfxla.dynamic_update_slice(*promote_types(operand, update),
-                                    tf.stack(start_indices))
-tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
-
-
 def _transpose(operand, permutation):
   return tf.transpose(operand, permutation)
 tf_impl[lax.transpose_p] = _transpose
@@ -749,6 +770,14 @@ tf_impl[lax.reduce_min_p] = (
 tf_impl[lax.reduce_or_p] = axes_to_axis(tf.reduce_any)
 tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
+def _argminmax(fn, operand, axes, index_dtype):
+  axis, = axes
+  # TODO(phawkins): handle axes larger than 2^31.
+  return fn(operand, axis=axis, output_type=to_tf_dtype(index_dtype))
+
+tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
+tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
+
 
 _add_fn = tf.function(tf.math.add)
 _ge_fn = tf.function(tf.math.greater_equal)
@@ -759,13 +788,85 @@ _max_fn = tf.function(tf.math.maximum)
 tf_impl[lax.cumsum_p] = tf.math.cumsum
 tf_impl[lax.cumprod_p] = tf.math.cumprod
 
+def _select_and_gather_add(tangents: TfVal,
+                           operand: TfVal,
+                           select_prim: core.Primitive,
+                           window_dimensions: Sequence[int],
+                           window_strides: Sequence[int],
+                           base_dilation: Sequence[int],
+                           window_dilation: Sequence[int],
+                           padding: Sequence[Tuple[int, int]]):
+  # Note: this function follows the pattern in
+  # jax.lax._select_and_gather_add_translation.
+  dtype = operand.dtype
+  nbits = dtypes.finfo(dtype.as_numpy_dtype).bits
+
+  # Specializing the function for 64 bits. Only up to 32 bits are supported on TPU,
+  # we thus intend to let the code throw a different exception on this platform.
+  max_bits = 64
+
+  assert nbits <= max_bits
+  double_word_reduction = nbits * 2 <= max_bits
+
+  const = lambda dtype, x: tf.constant(np.array(x), dtype)
+
+  if double_word_reduction:
+    word_dtype = lax.lax._UINT_DTYPES[nbits]
+    double_word_dtype = lax.lax._UINT_DTYPES[nbits * 2]
+
+    # Packs two values into a tuple.
+    def pack(a, b):
+      a = _bitcast_convert_type(a, word_dtype)
+      b = _bitcast_convert_type(b, word_dtype)
+      a = _convert_element_type(a, double_word_dtype, word_dtype)
+      b = _convert_element_type(b, double_word_dtype, word_dtype)
+      a = tf.bitwise.left_shift(a, const(double_word_dtype, nbits))
+      return tf.bitwise.bitwise_or(a, b)
+
+    # Unpacks the first element of a tuple.
+    def fst(t):
+      st = _shift_right_logical(t, const(double_word_dtype, nbits))
+      return _bitcast_convert_type(
+        _convert_element_type(st, word_dtype, double_word_dtype), dtype
+      )
+
+    # Unpacks the second element of a tuple.
+    def snd(t):
+      return _bitcast_convert_type(
+        _convert_element_type(t, word_dtype, double_word_dtype), dtype
+      )
+
+  else:
+    raise NotImplementedError(f"TODO: need to pack {nbits * 2} bits but this platform can only go up to {max_bits} bits.")
+
+  assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
+
+  def reducer(x, y):
+    which = tf_impl[select_prim]
+    return tf_impl[lax.select_p](which(fst(x), fst(y)), x=x, y=y)
+
+  init = -np.inf if select_prim is lax.ge_p else np.inf
+  jax_f = lax._reduce_window_max if select_prim is lax.ge_p else lax._reduce_window_min
+
+  out = _reduce_window(jax_f, tf.function(reducer),
+                       pack(const(dtype, init), const(dtype, 0)),
+                       pack(operand, tangents), window_dimensions, window_strides,
+                       padding, base_dilation, window_dilation)
+
+  return snd(out)
+
+tf_impl[lax.select_and_gather_add_p] = _select_and_gather_add
+
 
 def _reduce_window_shape(jax_f, operand, window_dimensions,
-                         window_strides, padding, input_shape=None):
+                         window_strides, padding, base_dilation,
+                         window_dilation, input_shape=None):
   """Shape inference function for reduce_window_{sum,min,max}."""
   params = dict(window_dimensions=window_dimensions,
                 window_strides=window_strides,
                 padding=padding,
+                base_dilation=base_dilation,
+                window_dilation=window_dilation,
                 input_shape=input_shape)
   try:
     out, = _infer_shape_jax(jax_f, operand, **params)
@@ -782,20 +883,25 @@ def _get_shape_from_tensor_or_array(x):
 
 
 def _reduce_window(jax_f, reducer, init_val, operand, window_dimensions,
-                   window_strides, padding, input_shape=None):
+                   window_strides, padding, base_dilation, window_dilation,
+                   input_shape=None):
   """TensorFlow implementation of reduce_window_{sum,min,max}."""
   del input_shape
   # TODO(tomhennigan): tf2xla should have a shape inference function.
   out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
-                                   window_strides, padding)
-  padding = lax.padtype_to_pads(_get_shape_from_tensor_or_array(operand),
-                                window_dimensions,
-                                window_strides, padding)
-  a = tf.constant(0, operand.dtype)
-  reducer_fn = reducer.get_concrete_function(a, a)
-  out = tfxla.reduce_window(operand, tf.constant(init_val, operand.dtype),
+                                   window_strides, padding, base_dilation,
+                                   window_dilation)
+
+  o_spec = tf.TensorSpec(operand.shape, dtype=operand.dtype)
+  reducer_fn = reducer.get_concrete_function(o_spec, o_spec)
+
+  if not isinstance(init_val, tf.Tensor):
+    init_val = tf.constant(init_val, operand.dtype)
+
+  out = tfxla.reduce_window(operand, init_val,
                             reducer_fn, window_dimensions,
-                            window_strides, padding=padding)
+                            window_strides, base_dilations=base_dilation,
+                            window_dilations=window_dilation, padding=padding)
   out.set_shape(out_shape)
   return out
 # pylint: disable=protected-access
@@ -805,8 +911,15 @@ tf_impl[lax.reduce_window_min_p] = (
     functools.partial(_reduce_window, lax._reduce_window_min, _min_fn, np.inf))
 tf_impl[lax.reduce_window_max_p] = (
     functools.partial(_reduce_window, lax._reduce_window_max, _max_fn, -np.inf))
+tf_impl[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
+def _select_and_scatter(
+    operand, source, init_value, select_jaxpr, select_consts, scatter_jaxpr,
+    scatter_consts, window_dimensions, window_strides, padding):
+  raise NotImplementedError("TODO: jax2tf can not convert _select_and_scatter")
+
+tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 
 def _select_and_scatter_add(
     operand, source, init_value, select_jaxpr, select_consts, scatter_jaxpr,
@@ -902,21 +1015,93 @@ def _gather_shape(operand, start_indices, dimension_numbers, slice_sizes):
   return out.shape
 
 
+def _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes):
+  # TODO: this function is not used (see comment for dynamic_slice).
+
+  # Handle only the case when batch_dims=0.
+
+  # Find axis to match the tf.gather semantics
+  # Let I = len(start_indices_shape)
+  # let O = len(op_shape)
+  # slice_sizes == op_shape[:axis] + (1,) + op_shape[axis+1:]
+  # collapsed_slice_dims == (axis,)
+  # start_index_map == (axis,)
+  # offset_dims == (0, 1, ..., axis - 1, axis + I, ..., O + I - 1)
+  op_shape = np.shape(operand)
+  assert len(op_shape) == len(slice_sizes)
+  if not (len(op_shape) >= 1 and
+          len(dimension_numbers.start_index_map) == 1 and
+          len(dimension_numbers.collapsed_slice_dims) == 1 and
+          dimension_numbers.collapsed_slice_dims[0] == dimension_numbers.start_index_map[0] and
+          len(dimension_numbers.offset_dims) == len(op_shape) - 1):
+    return None
+  # We added a trailing dimension of size 1
+  if start_indices.shape[-1] != 1:
+    return None
+  # Guess the axis
+  axis = dimension_numbers.collapsed_slice_dims[0]
+  index_dims = len(np.shape(start_indices)) - 1
+  expected_offset_dims = tuple(
+      list(range(axis)) +
+      list(range(axis + index_dims, len(op_shape) + index_dims - 1)))
+  if dimension_numbers.offset_dims != expected_offset_dims:
+    return None
+  expected_slice_sizes = op_shape[:axis] + (1,) + op_shape[axis + 1:]
+  if slice_sizes != expected_slice_sizes:
+    return None
+  # TODO: should we allow ourselves to add a reshape, or should we strictly
+  #  convert 1:1, or go to TFXLA when not possible?
+  start_indices_reshaped = tf.reshape(start_indices, start_indices.shape[0:-1])
+  # We do not use tf.gather directly because in the non-compiled version it
+  # rejects indices that are out of bounds, while JAX and XLA clamps them.
+  # We fix this by ensuring that we always compile tf.gather, to use XLA.
+  # TODO: see comment for dynamic_slice
+  return tf.function(lambda o, s: tf.gather(o, s, axis=axis, batch_dims=0),
+                     experimental_compile=True)(operand, start_indices_reshaped)
+
 @functools.partial(bool_to_int8, argnums=0)
-def _gather(operand, start_indices, dimension_numbers, slice_sizes,
-            indices_are_sorted=False):
+def _gather(operand, start_indices, dimension_numbers, slice_sizes):
   """Tensorflow implementation of gather."""
+  # TODO: see comment for dynamic_slice
+  #res = _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes)
+  #if res is not None:
+  #  return res
   out_shape = _gather_shape(
       operand, start_indices, dimension_numbers, slice_sizes)
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
-  out, = tf.xla.experimental.compile(
-      lambda o, s: tfxla.gather(o, s, proto, slice_sizes, indices_are_sorted),
-      [operand, start_indices])
+  # We compile because without it we run into a TF bug:
+  # tfxla.gather fails on constant inputs with "must be a compile-time constant"
+  # b/153556869
+  out = tf.function(lambda o, s: tfxla.gather(o, s, proto, slice_sizes, False),
+                    experimental_compile=True)(operand, start_indices)
   out.set_shape(out_shape)
   return out
-
 tf_impl[lax.gather_p] = _gather
 
+def _slice(operand, start_indices, limit_indices, strides):
+  if strides is None:
+    strides = [1] * len(start_indices)
+  slices = tuple(map(slice, start_indices, limit_indices, strides))
+  return operand[slices]
+tf_impl[lax.slice_p] = _slice
+
+
+def _dynamic_slice(operand, *start_indices, slice_sizes):
+  # Here we could use tf.slice. Similarly, for lax.gather we can sometimes use
+  # tf.gather. But those have different semantics for index-out-of-bounds than
+  # JAX (and XLA). We have tried to force compilation, by wrapping into
+  # tf.xla.experimental.compile, or tf.function(experimental_compile=True), but
+  # those solutions are brittle because they do not work when nested into an
+  # outer compilation (see b/162814494 and b/163006262). They also do not
+  # survive well being put in a SavedModel. Hence, we now use TFXLA slicing
+  # and gather ops.
+  res = tfxla.dynamic_slice(operand, tf.stack(start_indices),
+                            size_indices=slice_sizes)
+  # TODO: implement shape inference for XlaShape
+  res.set_shape(tuple(slice_sizes))
+  return res
+
+tf_impl[lax.dynamic_slice_p] = _dynamic_slice
 
 def _scatter_dimensions_proto(indices_shape, dimension_numbers):
   proto = xla_data_pb2.ScatterDimensionNumbers()
@@ -938,18 +1123,20 @@ def _scatter_shape(operand, scatter_indices, updates, dimension_numbers):
 
 @functools.partial(bool_to_int8, argnums=(1, 3))
 def _scatter(update_computation, operand, scatter_indices, updates,
-             update_jaxpr, update_consts, dimension_numbers):
+             update_jaxpr, update_consts, dimension_numbers,
+             indices_are_sorted, unique_indices):
   """Tensorflow implementation of scatter with an update computation."""
-  del update_jaxpr, update_consts
+  del update_jaxpr, update_consts, unique_indices
   out_shape = _scatter_shape(operand, scatter_indices, updates,
                              dimension_numbers)
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
   o_spec = tf.TensorSpec(None, dtype=operand.dtype)
   xla_update_computation = (
       tf.function(update_computation).get_concrete_function(o_spec, o_spec))
-  out, = tf.xla.experimental.compile(
-      lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto),
-      [operand, scatter_indices, updates])
+  # We compile due to TF bug, see comment on gather
+  out = tf.function(lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
+                                                  indices_are_sorted=indices_are_sorted),
+                    experimental_compile=True)(operand, scatter_indices, updates)
   out.set_shape(out_shape)
   return out
 
@@ -958,6 +1145,11 @@ tf_impl[lax.scatter_min_p] = functools.partial(_scatter, tf.math.minimum)
 tf_impl[lax.scatter_max_p] = functools.partial(_scatter, tf.math.maximum)
 tf_impl[lax.scatter_mul_p] = functools.partial(_scatter, tf.math.multiply)
 tf_impl[lax.scatter_add_p] = functools.partial(_scatter, tf.math.add)
+
+def _dynamic_update_slice(operand, update, *start_indices):
+  return tfxla.dynamic_update_slice(*promote_types(operand, update),
+                                    tf.stack(start_indices))
+tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 
 def _cond(index: TfVal, *operands: TfValOrUnit,
@@ -1051,6 +1243,103 @@ def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
 
 tf_impl[lax.scan_p] = _scan
 
+def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
+  # Some types originally incompatible with tf.math.top_k can be promoted
+  # to a compatible type without loss of precision.
+  def promote_tf_dtype(tf_dtype):
+    if tf_dtype in [tf.bool, tf.uint8, tf.uint16]:
+      return tf.uint32
+    if tf_dtype in [tf.int8, tf.int16]:
+      return tf.int32
+    if tf_dtype is tf.float16:
+      return tf.float32
+    return None
+
+  conversion_dtype = promote_tf_dtype(operand.dtype)
+  if conversion_dtype:
+    values, indices = tf.math.top_k(tf.dtypes.cast(operand, conversion_dtype), k=k, sorted=True)
+    return tf.dtypes.cast(values, operand.dtype), indices
+  else:
+    return tf.math.top_k(operand, k=k, sorted=True)
+
+tf_impl[lax.top_k_p] = _top_k
+
+def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tuple[TfVal, ...]:
+  if num_keys != 1:
+    raise NotImplementedError("TODO: multiple keys")
+  if len(operand) > 2:
+    raise NotImplementedError("TODO: handle > 2 tensors")
+  if is_stable:
+    raise NotImplementedError("TODO: implement stable version of XlaSort")
+  if dimension == len(operand[0].shape) - 1:
+    if len(operand) == 2:
+      return tuple(tfxla.key_value_sort(operand[0], operand[1]))
+    else:
+      return (tfxla.sort(operand[0]),)
+  else:
+    raise NotImplementedError("TODO: implement XlaSort for all axes")
+
+tf_impl[lax.sort_p] = _sort
+
+def _fft(x, fft_type, fft_lengths):
+  shape = x.shape
+  assert len(fft_lengths) <= len(shape)
+  if ((fft_type == xla_client.FftType.IRFFT and
+       fft_lengths != shape[-len(fft_lengths):-1] + ((shape[-1] - 1) * 2,)) or
+      (fft_type != xla_client.FftType.IRFFT and
+       fft_lengths != shape[-len(fft_lengths):])):
+     raise NotImplementedError(f"Unsupported fft_lengths={fft_lengths} for fft_type={fft_type} of array with shape={shape}.")
+  tf_funcs = {xla_client.FftType.FFT: [tf.signal.fft, tf.signal.fft2d,
+                                       tf.signal.fft3d],
+              xla_client.FftType.IFFT: [tf.signal.ifft, tf.signal.ifft2d,
+                                        tf.signal.ifft3d],
+              xla_client.FftType.RFFT: [tf.signal.rfft, tf.signal.rfft2d,
+                                        tf.signal.rfft3d],
+              xla_client.FftType.IRFFT: [tf.signal.irfft, tf.signal.irfft2d,
+                                         tf.signal.irfft3d]}
+
+  return tf_funcs[fft_type][len(fft_lengths) - 1](x)
+
+tf_impl[lax_fft.fft_p] = _fft
+
+def _qr(operand, full_matrices):
+  return tf.linalg.qr(operand, full_matrices=full_matrices)
+
+tf_impl[lax_linalg.qr_p] = _qr
+
+def _svd(operand, full_matrices, compute_uv):
+  result = tf.linalg.svd(operand, full_matrices, compute_uv)
+  if not compute_uv:
+    return result,
+  s, u, v = result
+  return s, u, tf.linalg.adjoint(v)
+
+tf_impl[lax_linalg.svd_p] = _svd
+
+def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
+                           fun_jaxpr: core.TypedJaxpr,
+                           jvp_jaxpr_thunk: Callable) -> Sequence[TfValOrUnit]:
+  # TODO(necula): ensure that there is no AD transformation in scope
+  res = _interpret_jaxpr(fun_jaxpr, *args)
+  return _tfval_add_unit(res, fun_jaxpr.out_avals)
+
+tf_impl[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr
+
+
+def _custom_vjp_call_jaxpr(*args: TfValOrUnit,
+                           fun_jaxpr: core.TypedJaxpr,
+                           **_) -> Sequence[TfValOrUnit]:
+  # TODO(necula): ensure that there is no AD transformation in scope
+  res = _interpret_jaxpr(fun_jaxpr, *args)
+  return _tfval_add_unit(res, fun_jaxpr.out_avals)
+
+tf_impl[custom_derivatives.custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr
+
+def _custom_lin(*args: TfValOrUnit, **_) -> Sequence[TfValOrUnit]:
+  raise TypeError("can't apply forward-mode autodiff (jvp) to a custom_vjp "
+                  "function.")
+
+tf_impl[ad.custom_lin_p] = _custom_lin
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""

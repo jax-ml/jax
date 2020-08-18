@@ -22,7 +22,7 @@ __all__ = [
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 48)
+_minimum_jaxlib_version = (0, 1, 51)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
@@ -51,7 +51,11 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-from jaxlib import pytree
+if version <  (0, 1, 53):
+  from jaxlib import pytree  # pytype: disable=import-error
+else:
+  pytree = xla_client._xla.pytree
+  jax_jit = xla_client._xla.jax_jit
 from jaxlib import cusolver
 try:
   from jaxlib import cuda_prng

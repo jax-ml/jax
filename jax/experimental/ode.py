@@ -29,6 +29,7 @@ import operator as op
 import jax
 import jax.numpy as jnp
 from jax import core
+from jax import dtypes
 from jax import lax
 from jax import ops
 from jax.util import safe_map, safe_zip, cache, split_list
@@ -37,6 +38,7 @@ from jax.flatten_util import ravel_pytree
 from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 from jax.interpreters import partial_eval as pe
 from jax import linear_util as lu
+from jax import config
 
 map = safe_map
 zip = safe_zip
@@ -44,22 +46,41 @@ zip = safe_zip
 
 @cache()
 def closure_convert(fun, in_tree, in_avals):
-  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  with core.initial_style_staging():
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-      wrapped_fun, in_pvals, instantiate=True, stage_out=False)
+  if config.omnistaging_enabled:
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  else:
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    with core.initial_style_staging():
+      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        wrapped_fun, in_pvals, instantiate=True, stage_out=False)
   out_tree = out_tree()
-  num_consts = len(consts)
 
-  def converted_fun(y, t, *consts_args):
-    consts, args = split_list(consts_args, [num_consts])
+  # We only want to closure convert for constants with respect to which we're
+  # differentiating. As a proxy for that, we hoist consts with float dtype.
+  # TODO(mattjj): revise this approach
+  is_float = lambda c: dtypes.issubdtype(dtypes.dtype(c), jnp.inexact)
+  (closure_consts, hoisted_consts), merge = partition_list(is_float, consts)
+  num_consts = len(hoisted_consts)
+
+  def converted_fun(y, t, *hconsts_args):
+    hoisted_consts, args = split_list(hconsts_args, [num_consts])
+    consts = merge(closure_consts, hoisted_consts)
     all_args, in_tree2 = tree_flatten((y, t, *args))
     assert in_tree == in_tree2
     out_flat = core.eval_jaxpr(jaxpr, consts, *all_args)
     return tree_unflatten(out_tree, out_flat)
 
-  return converted_fun, consts
+  return converted_fun, hoisted_consts
+
+def partition_list(choice, lst):
+  out = [], []
+  which = [out[choice(elt)].append(elt) or choice(elt) for elt in lst]
+  def merge(l1, l2):
+    i1, i2 = iter(l1), iter(l2)
+    return [next(i2 if snd else i1) for snd in which]
+  return out, merge
 
 def abstractify(x):
   return core.raise_to_shaped(core.get_aval(x))

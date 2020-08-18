@@ -7,7 +7,7 @@ from jax.numpy._util import _wraps
 
 def _isEmpty2d(arr):
   # check size first for efficiency
-  return arr.size == 0 and jnp.product(arr.shape[-2:]) == 0
+  return arr.size == 0 and np.product(arr.shape[-2:]) == 0
 
 
 def _assertNoEmpty2d(*arrays):

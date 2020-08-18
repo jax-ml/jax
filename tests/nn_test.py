@@ -75,7 +75,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 2)
+    self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
 
   def testSoftplusValue(self):
     val = nn.softplus(89.)
@@ -148,6 +148,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
                          [False, False, True]])
     self.assertAllClose(actual, expected)
 
+  def testOneHotConcretizationError(self):
+    # https://github.com/google/jax/issues/3654
+    msg = r"Abstract tracer.*\(in jax.nn.one_hot argument `num_classes`\).*"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      jax.jit(nn.one_hot)(3, 5)
+
+
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
   ["name", "initializer", "shapes"])
@@ -218,4 +225,4 @@ class NNInitializersTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -15,13 +15,15 @@
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Optional, Tuple
 import tensorflow as tf  # type: ignore[import]
 
+import jax
 from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
 from jax import test_util as jtu
+from jax import numpy as jnp
 
 class JaxToTfTestCase(jtu.JaxTestCase):
 
@@ -58,16 +60,104 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                        to_numpy_dtype(jtu._dtype(y)))
 
   def ConvertAndCompare(self, func_jax: Callable, *args,
-                        with_function: bool = False,
+                        custom_assert: Optional[Callable] = None,
+                        always_custom_assert: bool = False,
+                        expect_tf_exceptions: bool = False,
                         atol=None,
                         rtol=None) -> Tuple[Any, Any]:
-    """Compares jax_func(*args) with convert(jax_func)(*args)."""
+    """Compares jax_func(*args) with convert(jax_func)(*args).
+
+    It compares the result of JAX, TF ("eager" mode),
+    TF with tf.function ("graph" mode), and TF with
+    tf.function(experimental_compile=True) ("compiled" mode). In each mode,
+    either we expect an exception (see `expect_tf_exceptions`) or the value
+    should match the value from the JAX execution.
+
+    Args:
+      custom_assert: a function that will be called
+        `custom_assert(result_jax, result_tf)` to assert equality of the
+        results. Use this function when JAX and TF produce different results.
+        This function is only used for "eager" and "graph" modes by default, not for
+        the "compiled" mode, because in that case we expect the results to be equal.
+      always_custom_assert: if True, custom_assert is also called in "compiled" mode.
+        This is useful in cases where JAX and TF produce different but equally valid
+        results.
+      expect_tf_exceptions: if True, there may be exceptions in some evaluation
+        modes; when there is no exception the result should be the same
+        as in JAX.
+    """
+    # Run JAX
+    result_jax = func_jax(*args)
+    # Run TF in all execution modes
     func_tf = jax2tf.convert(func_jax)
-    if with_function:
-      func_tf = tf.function(func_tf)
-    res_jax = func_jax(*args)
-    #logging.info(f"res_jax is {res_jax} on {res_jax.device_buffer.device()}")
-    res_tf = func_tf(*args)
-    #logging.info(f"res_tf is {res_tf} on {res_tf.backing_device}")
-    self.assertAllClose(res_jax, res_tf, atol=atol, rtol=rtol)
-    return (res_jax, res_tf)
+
+    def convert_if_bfloat16(v):
+      if hasattr(v, "dtype"):
+        return tf.convert_to_tensor(np.array(v, jnp.float32) if
+                                      v.dtype == jnp.bfloat16 else v,
+                                    jax2tf.jax2tf.to_tf_dtype(v.dtype))
+      return v
+
+    tf_args = tuple(map(convert_if_bfloat16, args))
+
+    def run_tf(mode):
+      if mode == "eager":
+        return func_tf(*tf_args)
+      elif mode == "graph":
+        return tf.function(func_tf, autograph=False)(*tf_args)
+      elif mode == "compiled":
+        return tf.function(func_tf, autograph=False,
+                           experimental_compile=True)(*tf_args)
+      else:
+        assert False
+
+    result_tf = None
+    for mode in ("eager", "graph", "compiled"):
+      try:
+        result_tf = run_tf(mode)
+      except Exception as e:
+        if not expect_tf_exceptions:
+          raise e
+        else:
+          print(f"Encountered expected exception for mode={mode}: {e}")
+          continue
+
+      if custom_assert is not None and (mode in ("eager", "graph") or
+                                        always_custom_assert):
+        custom_assert(result_jax, result_tf)
+      else:
+        # In compiled mode we expect the same result as JAX by default
+        self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
+
+    return (result_jax, result_tf)
+
+  def TransformConvertAndCompare(self, func: Callable,
+                                 arg,
+                                 transform: Optional[str]):
+    """Like ConvertAndCompare but first applies a transformation.
+
+    `func` must be a function from one argument to one result. `arg` is
+    the argument before the transformation.
+
+    `transform` can be None, "jvp", "grad", "vmap", "jvp_vmap", "grad_vmap"
+    """
+    if transform is None:
+      return self.ConvertAndCompare(func, arg)
+    if transform == "jvp":
+      t_func = lambda x, xt: jax.jvp(func, (x,), (xt,))
+      return self.ConvertAndCompare(t_func, arg, np.full_like(arg, 0.1))
+    if transform == "grad":
+      return self.ConvertAndCompare(jax.grad(func), arg)
+    if transform == "vmap":
+      t_arg = np.stack([arg] * 4)
+      return self.ConvertAndCompare(jax.vmap(func), t_arg)
+    if transform == "jvp_vmap":
+      jvp_func = lambda x, xt: jax.jvp(jax.vmap(func), (x,), (xt,))
+      t_arg = np.stack([arg] * 4)
+      return self.ConvertAndCompare(jvp_func, t_arg,
+                                    np.full_like(t_arg, 0.1))
+    if transform == "grad_vmap":
+      grad_func = jax.grad(lambda x: jnp.sum(jax.vmap(func)(x)))
+      t_arg = np.stack([arg] * 4)
+      return self.ConvertAndCompare(grad_func, t_arg)
+    assert False, transform

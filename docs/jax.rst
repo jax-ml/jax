@@ -12,6 +12,7 @@ Subpackages
     jax.numpy
     jax.scipy
     jax.experimental
+    jax.image
     jax.lax
     jax.nn
     jax.ops
@@ -91,6 +92,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: vjp
 .. autofunction:: custom_jvp
 .. autofunction:: custom_vjp
+.. autofunction:: checkpoint
 
 .. autofunction:: vmap
 .. autofunction:: jax.numpy.vectorize

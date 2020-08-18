@@ -79,7 +79,7 @@ def matrix_power(a, n):
     return jnp.broadcast_to(jnp.eye(a.shape[-2], dtype=a.dtype), a.shape)
   elif n < 0:
     a = inv(a)
-    n = jnp.abs(n)
+    n = np.abs(n)
 
   if n == 1:
     return a
@@ -479,11 +479,6 @@ def solve(a, b):
     return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 
-for func in get_module_functions(np.linalg):
-  if func.__name__ not in globals():
-    globals()[func.__name__] = _not_implemented(func)
-
-
 @_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\
     It has two important differences:
 
@@ -535,3 +530,10 @@ def lstsq(a, b, rcond=None, *, numpy_resid=False):
   if b_orig_ndim == 1:
     x = x.ravel()
   return x, resid, rank, s
+
+
+_NOT_IMPLEMENTED = []
+for name, func in get_module_functions(np.linalg).items():
+  if name not in globals():
+    _NOT_IMPLEMENTED.append(name)
+    globals()[name] = _not_implemented(func)

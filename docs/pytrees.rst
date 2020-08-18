@@ -94,7 +94,7 @@ reference cycles.
 Here is a simple example::
 
   from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
-  from jax import numpy as np
+  import jax.numpy as jnp
 
   # The structured value to be transformed
   value_structured = [1., (2., 3.)]
@@ -129,7 +129,7 @@ treated as leaves::
       (1., {'b': 2., 'a': 3.}),
       1.,
       None,
-      np.zeros(2),
+      jnp.zeros(2),
       Point(1., 2.)
   ]
   def show_example(structured):

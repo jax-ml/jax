@@ -91,6 +91,7 @@ def _wraps(fun, update_doc=True, lax_description=""):
 
       op.__name__ = fun.__name__
       op.__doc__ = docstr
+      op.__np_wrapped__ = fun
     finally:
       return op
   return wrap
