@@ -141,7 +141,7 @@ class BatchTrace(Trace):
         if frame.tag is not self.master:
           continue
         # We run the split_axis rule with tracers, which is supposed to never
-        # mix this axis name with another one. We will handly any invocations
+        # mix this axis name with another one. We will handle any invocations
         # of collectives over the vmapped axis in a recursive call from a tracer.
         if len(axis_names) > 1:
           return split_axis(primitive, axis_name, tracers, params)
@@ -441,8 +441,8 @@ def omnistaging_enabler() -> None:
     return jaxpr_out, batched_out()
 
 
-# Those rules can assume that the collective is only carried out throughout
-# the vmapped axis.
+# collective_rules can assume that the collective is only carried out throughout
+# the vmapped axis (i.e. no tuples in axis_name).
 collective_rules: Dict[core.Primitive, Callable] = {}
 split_axis_rules: Dict[core.Primitive, Callable] = {}
 
