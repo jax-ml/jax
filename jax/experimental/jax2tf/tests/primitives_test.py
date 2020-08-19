@@ -285,7 +285,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     expect_tf_exceptions = False
 
     if (jtu.device_under_test() == 'tpu' and dtype is np.complex64):
-      raise unittest.SkipTest('TODO: reduce_window on TPU does not handle complex64')
+      raise unittest.SkipTest(
+          'TODO: JAX reduce_window on TPU does not handle complex64'
+      )
 
     if ((f_name == 'min' or f_name == 'max') and
         dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
