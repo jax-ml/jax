@@ -354,7 +354,7 @@ lax_scatter = tuple(
         scatter_dims_to_operand_dims=(0,))),
   ]
   for indices_are_sorted in [False, True]
-  for unique_indices in [False, True]
+  for unique_indices in [False] # TODO: add True case when testing for performance
 )
 
 lax_pad = tuple(
