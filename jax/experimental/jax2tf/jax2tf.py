@@ -909,27 +909,29 @@ def _specialized_reduce_window(jax_f, reducer, identity, operand,
   out.set_shape(out_shape)
   return out
 
-def _get_max_identity(dtype):
-  jax_dtype = to_jax_dtype(dtype)
-  val = None
-  if dtypes.issubdtype(jax_dtype, np.inexact):
-    val = -np.inf
-  elif dtypes.issubdtype(jax_dtype, np.integer):
-    val = dtypes.iinfo(jax_dtype).min
-  elif dtypes.issubdtype(jax_dtype, np.bool_):
-    val = False
-  return _safe_convert_to_tensor(val, dtype)
+def _get_max_identity(tf_dtype):
+  numpy_tf_dtype = tf_dtype.as_numpy_dtype
+  if tf_dtype == tf.bfloat16 or dtypes.issubdtype(numpy_tf_dtype, np.inexact):
+    return numpy_tf_dtype(-np.inf)
+  elif dtypes.issubdtype(numpy_tf_dtype, np.integer):
+    return dtypes.iinfo(numpy_tf_dtype).min
+  else:
+    assert dtypes.issubdtype(numpy_tf_dtype, np.bool_), (
+        f"{tf_dtype} has no defined max identity"
+    )
+    return False
 
-def _get_min_identity(dtype):
-  jax_dtype = to_jax_dtype(dtype)
-  val = None
-  if dtypes.issubdtype(jax_dtype, np.inexact):
-    val = np.inf
-  elif dtypes.issubdtype(jax_dtype, np.integer):
-    val = dtypes.iinfo(jax_dtype).max
-  elif dtypes.issubdtype(jax_dtype, np.bool_):
-    val = True
-  return _safe_convert_to_tensor(val, dtype)
+def _get_min_identity(tf_dtype):
+  numpy_tf_dtype = tf_dtype.as_numpy_dtype
+  if tf_dtype == tf.bfloat16 or dtypes.issubdtype(numpy_tf_dtype, np.inexact):
+    return numpy_tf_dtype(np.inf)
+  elif dtypes.issubdtype(numpy_tf_dtype, np.integer):
+    return dtypes.iinfo(numpy_tf_dtype).max
+  else:
+    assert dtypes.issubdtype(numpy_tf_dtype, np.bool_), (
+        f"{tf_dtype} has no defined min identity"
+    )
+    return True
 
 def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
                    window_strides, padding, base_dilation, window_dilation):
