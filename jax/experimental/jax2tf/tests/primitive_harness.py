@@ -669,21 +669,21 @@ lax_reduce_window = tuple(
       dtype,
       (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
           { lax.add: ([0, 1], [0, 1])
-          , lax.mul: ([0, 1], [0, 1])
+          , lax.mul: ([1], [1])
           , lax.max: ([1], [-np.inf, 1])
           , lax.min: ([0], [np.inf, 0])
           }[computation]
       )
   )
   for shape in [(4, 6)]
-  for window_dimensions in [(2, 1), (1, 2)]
-  for window_strides in [(1, 1), (2, 1), (1, 2)]
+  for window_dimensions in [(1, 2)]
+  for window_strides in [(2, 1)]
   for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
                                                       window_strides, p))
                             for p in ['VALID', 'SAME']] +
                            [((0, 3), (1, 2))]))
-  for base_dilation in [(1, 1), (2, 3)]
-  for window_dilation in [(1, 1), (1, 2)]
+  for base_dilation in [(2, 3)]
+  for window_dilation in [(1, 2)]
 ) + tuple(
   # Tests with 4d shapes (see tests.lax_test.testReduceWindow)
   Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
@@ -710,19 +710,19 @@ lax_reduce_window = tuple(
       dtype,
       (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
           { lax.add: ([0, 1], [0, 1])
-          , lax.mul: ([0, 1], [0, 1])
-          , lax.max: ([0], [-np.inf, 1])
-          , lax.min: ([1], [np.inf, 1])
+          , lax.mul: ([1], [1])
+          , lax.max: ([1], [-np.inf, 1])
+          , lax.min: ([0], [np.inf, 0])
           }[computation]
       )
   )
   for shape in [(3, 2, 4, 6)]
-  for window_dimensions in [(1, 1, 2, 1), (2, 1, 2, 1)]
-  for window_strides in [(1, 2, 2, 1), (1, 1, 1, 1)]
+  for window_dimensions in [(1, 1, 2, 1)]
+  for window_strides in [(1, 2, 2, 1)]
   for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
                                                       window_strides, p))
                             for p in ['VALID', 'SAME']] +
                            [((0, 1), (1, 0), (2, 3), (0, 2))]))
-  for base_dilation in [(1, 1, 1, 1), (2, 1, 3, 2)]
-  for window_dilation in [(1, 1, 1, 1), (1, 2, 2, 1)]
+  for base_dilation in [(2, 1, 3, 2)]
+  for window_dilation in [(1, 2, 2, 1)]
 )
