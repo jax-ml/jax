@@ -726,8 +726,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   if is_multi_host_pmap:
     used_collectives = set(xla.jaxpr_collectives(jaxpr))
     if not used_collectives.issubset(multi_host_supported_collectives):
+      bad_collectives = used_collectives - multi_host_supported_collectives
       msg = "using collectives that aren't supported for multi-host: {}"
-      raise TypeError(msg.format(", ".join(map(str, used_collectives))))
+      raise TypeError(msg.format(", ".join(map(str, bad_collectives))))
 
   if not config.omnistaging_enabled:
     if all(pv is None for pv in out_pvs):
