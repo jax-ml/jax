@@ -32,9 +32,17 @@ _jax_message_append = (
     'The following is the original exception that occurred, unmodified.\n'
     '\n--------------------')
 
+def path_starts_with(path, path_prefix):
+  path = os.path.abspath(path)
+  path_prefix = os.path.abspath(path_prefix)
+  common = os.path.commonpath([path, path_prefix])
+  return os.path.samefile(common, path_prefix)
+
 def include_frame(f):
-  return (not f.f_code.co_filename.startswith(_jax_path) or
-          any(f.f_code.co_filename.startswith(path) for path in _include_paths))
+  return (
+      not path_starts_with(f.f_code.co_filename, _jax_path) or
+      any(path_starts_with(f.f_code.co_filename, path)
+          for path in _include_paths))
 
 # When scanning stack traces, we might encounter frames from cpython that are
 # removed from printed stack traces, such as frames from parts of importlib. We
