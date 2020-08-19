@@ -890,6 +890,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
   reducer_fn = tf.function(reducer).get_concrete_function(o_spec, o_spec)
 
   if not isinstance(init_val, tf.Tensor):
+    assert core.skip_checks or _is_tfval(init_val), f"Non TfVal: {init_val}"
     init_val = tf.constant(init_val, operand.dtype)
 
   out = tfxla.reduce_window(operand, init_val,
