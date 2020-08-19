@@ -781,9 +781,6 @@ tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
 
 _add_fn = tf.function(tf.math.add)
 _ge_fn = tf.function(tf.math.greater_equal)
-_min_fn = tf.function(tf.math.minimum)
-_max_fn = tf.function(tf.math.maximum)
-
 
 tf_impl[lax.cumsum_p] = tf.math.cumsum
 tf_impl[lax.cumprod_p] = tf.math.cumprod
@@ -848,7 +845,7 @@ def _select_and_gather_add(tangents: TfVal,
   init = -np.inf if select_prim is lax.ge_p else np.inf
   init_identity = lambda x: pack(const(dtype, init), const(dtype, 0))
 
-  out = _specialized_reduce_window(tf.function(reducer), init_identity,
+  out = _specialized_reduce_window(reducer, init_identity,
                                    pack(operand, tangents), window_dimensions,
                                    window_strides, padding, base_dilation,
                                    window_dilation)
@@ -890,7 +887,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
                                    window_dilation)
 
   o_spec = tf.TensorSpec(operand.shape, dtype=operand.dtype)
-  reducer_fn = reducer.get_concrete_function(o_spec, o_spec)
+  reducer_fn = tf.function(reducer).get_concrete_function(o_spec, o_spec)
 
   if not isinstance(init_val, tf.Tensor):
     init_val = tf.constant(init_val, operand.dtype)
@@ -911,8 +908,6 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
     typed_jaxpr = _mk_typed_jaxpr(jaxpr, consts)
     res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
     return res
-
-  reducer = tf.function(reducer)
 
   return _common_reduce_window(
       operand, init_value, reducer, window_dimensions, window_strides, padding,
@@ -954,11 +949,13 @@ def _get_min_identity(tf_dtype):
 
 # pylint: disable=protected-access
 tf_impl[lax.reduce_window_sum_p] = (
-    functools.partial(_specialized_reduce_window, _add_fn, lambda x: 0))
+    functools.partial(_specialized_reduce_window, tf.math.add, lambda x: 0))
 tf_impl[lax.reduce_window_min_p] = (
-    functools.partial(_specialized_reduce_window, _min_fn, _get_min_identity))
+    functools.partial(_specialized_reduce_window, tf.math.minimum,
+                      _get_min_identity))
 tf_impl[lax.reduce_window_max_p] = (
-    functools.partial(_specialized_reduce_window, _max_fn, _get_max_identity))
+    functools.partial(_specialized_reduce_window, tf.math.maximum,
+                      _get_max_identity))
 tf_impl[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
