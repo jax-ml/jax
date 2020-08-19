@@ -37,6 +37,9 @@ from jax.interpreters.pxla import axis_index
 
 xops = xc.ops
 
+pxla.multi_host_supported_collectives.add(pxla.axis_index_p)
+
+
 ### parallel traceables
 
 def psum(x, axis_name, *, axis_index_groups=None):
