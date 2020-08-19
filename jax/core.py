@@ -116,8 +116,6 @@ class TypedJaxpr:
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
 
-    assert not any(isinstance(l, Tracer) for l in literals), literals
-
     if not skip_checks:
       in_avals_raised = [raise_to_shaped(v) for v in in_avals]
       out_avals_raised = [raise_to_shaped(v) for v in out_avals]
