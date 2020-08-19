@@ -846,10 +846,9 @@ def _select_and_gather_add(tangents: TfVal,
     return tf_impl[lax.select_p](which(fst(x), fst(y)), x=x, y=y)
 
   init = -np.inf if select_prim is lax.ge_p else np.inf
-  jax_f = lax._reduce_window_max if select_prim is lax.ge_p else lax._reduce_window_min
   init_identity = lambda x: pack(const(dtype, init), const(dtype, 0))
 
-  out = _specialized_reduce_window(jax_f, tf.function(reducer), init_identity,
+  out = _specialized_reduce_window(tf.function(reducer), init_identity,
                                    pack(operand, tangents), window_dimensions,
                                    window_strides, padding, base_dilation,
                                    window_dilation)
@@ -882,17 +881,11 @@ def _get_shape_from_tensor_or_array(x):
     return tuple(x.shape.as_list())
   return tuple(x.shape)
 
-
-def _specialized_reduce_window(jax_f, reducer, identity, operand,
-                               window_dimensions, window_strides, padding,
-                               base_dilation, window_dilation,
-                               input_shape=None):
-  """TensorFlow implementation of reduce_window_{sum,min,max}."""
-  del input_shape
-
-  init_val = identity(operand.dtype)
+def _common_reduce_window(operand, init_val, reducer, window_dimensions,
+                          window_strides, padding, base_dilation,
+                          window_dilation):
   # TODO(tomhennigan): tf2xla should have a shape inference function.
-  out_shape = _reduce_window_shape(jax_f, operand, window_dimensions,
+  out_shape = _reduce_window_shape(lax._reduce_window_sum, operand, window_dimensions,
                                    window_strides, padding, base_dilation,
                                    window_dilation)
 
@@ -908,6 +901,32 @@ def _specialized_reduce_window(jax_f, reducer, identity, operand,
                             window_dilations=window_dilation, padding=padding)
   out.set_shape(out_shape)
   return out
+
+def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
+                   window_strides, padding, base_dilation, window_dilation):
+  """TensorFlow implementation of reduce_window."""
+  assert len(consts) == 0, "Reduction computation cannot have constants"
+
+  def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
+    typed_jaxpr = _mk_typed_jaxpr(jaxpr, consts)
+    res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
+    return res
+
+  reducer = tf.function(reducer)
+
+  return _common_reduce_window(
+      operand, init_value, reducer, window_dimensions, window_strides, padding,
+      base_dilation, window_dilation
+  )
+
+def _specialized_reduce_window(reducer, identity, operand, window_dimensions,
+                               window_strides, padding, base_dilation,
+                               window_dilation):
+  """TensorFlow implementation of reduce_window_{sum,min,max}."""
+  return _common_reduce_window(
+      operand, identity(operand.dtype), reducer, window_dimensions,
+      window_strides, padding, base_dilation, window_dilation
+  )
 
 def _get_max_identity(tf_dtype):
   numpy_tf_dtype = tf_dtype.as_numpy_dtype
@@ -933,43 +952,13 @@ def _get_min_identity(tf_dtype):
     )
     return True
 
-def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
-                   window_strides, padding, base_dilation, window_dilation):
-  """TensorFlow implementation of reduce_window."""
-  assert len(consts) == 0, "Reduction computation cannot have constants"
-
-  out_shape = _reduce_window_shape(lax._reduce_window_sum, operand, window_dimensions,
-                                   window_strides, padding, base_dilation,
-                                   window_dilation)
-
-  def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
-    typed_jaxpr = _mk_typed_jaxpr(jaxpr, consts)
-    res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
-    return res
-
-  o_spec = tf.TensorSpec(operand.shape, dtype=operand.dtype)
-  reducer_fn = tf.function(reducer).get_concrete_function(o_spec, o_spec)
-
-  if not isinstance(init_value, tf.Tensor):
-    init_value = tf.constant(init_value, operand.dtype)
-
-  out = tfxla.reduce_window(operand, init_value,
-                            reducer_fn, window_dimensions,
-                            window_strides, base_dilations=base_dilation,
-                            window_dilations=window_dilation, padding=padding)
-  out.set_shape(out_shape)
-  return out
-
 # pylint: disable=protected-access
 tf_impl[lax.reduce_window_sum_p] = (
-    functools.partial(_specialized_reduce_window, lax._reduce_window_sum,
-                      _add_fn, lambda x: 0))
+    functools.partial(_specialized_reduce_window, _add_fn, lambda x: 0))
 tf_impl[lax.reduce_window_min_p] = (
-    functools.partial(_specialized_reduce_window, lax._reduce_window_min,
-                      _min_fn, _get_min_identity))
+    functools.partial(_specialized_reduce_window, _min_fn, _get_min_identity))
 tf_impl[lax.reduce_window_max_p] = (
-    functools.partial(_specialized_reduce_window, lax._reduce_window_max,
-                      _max_fn, _get_max_identity))
+    functools.partial(_specialized_reduce_window, _max_fn, _get_max_identity))
 tf_impl[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
