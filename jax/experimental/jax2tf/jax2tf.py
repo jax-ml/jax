@@ -625,7 +625,7 @@ def _concatenate(*operands, dimension=None):
 tf_impl[lax.concatenate_p] = _concatenate
 
 
-def _conv_general_proto(dimension_numbers):
+def _conv_general_dimension_numbers_proto(dimension_numbers):
   """Converts a ConvDimensionNumbers to an XLA ConvolutionDimensionNumbers."""
   assert isinstance(dimension_numbers, lax.ConvDimensionNumbers)
   lhs_spec, rhs_spec, out_spec = dimension_numbers
@@ -664,6 +664,14 @@ def _conv_general_dilated_shape(lhs, rhs, window_strides, padding, lhs_dilation,
       precision=precision)
   return out.shape
 
+def _conv_general_precision_config_proto(precision):
+  """Convert an integer to an XLA.PrecisionConfig."""
+  if precision is None:
+    return None
+
+  proto = xla_data_pb2.PrecisionConfig()
+  proto.operand_precision.append(precision)
+  return proto
 
 def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
                           rhs_dilation, dimension_numbers, feature_group_count,
@@ -673,12 +681,13 @@ def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
       lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
       dimension_numbers, feature_group_count, batch_group_count, lhs_shape,
       rhs_shape, precision)
-  # TODO(phawkins): handle precision
-  dnums_proto = _conv_general_proto(dimension_numbers)
+  dnums_proto = _conv_general_dimension_numbers_proto(dimension_numbers)
+  precision_config_proto = _conv_general_precision_config_proto(precision)
   assert batch_group_count == 1  # TODO(phawkins): implement batch_group_count
   out = tfxla.conv(
       lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
-      dnums_proto, feature_group_count)
+      dnums_proto, feature_group_count=feature_group_count,
+      precision_config=precision_config_proto)
   # TODO(tomhennigan): tf2xla should have a shape inference function.
   out.set_shape(out_shape)
   return out

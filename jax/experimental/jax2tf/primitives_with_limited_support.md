@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-09-11*
+*Last generated on (YYYY-MM-DD): 2020-09-14*
 
 ## Updating the documentation
 
@@ -33,6 +33,9 @@ conversion to Tensorflow.
 | atanh | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
 | bessel_i0e | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
 | bessel_i1e | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
+| conv_general_dilated | Missing TF support | Primitive is unimplemented for dtype complex128; likely bug in the HLO -> LLVM IR lowering of XlaConv | CPU, GPU, TPU |
+| conv_general_dilated | Missing TF support | Primitive is unimplemented for dtype complex64; likely bug in the HLO -> LLVM IR lowering of XlaConv | CPU, GPU, TPU |
+| conv_general_dilated | Missing TF support | Primitive is unimplemented; batch_group_count != 1 unsupported | CPU, GPU, TPU |
 | cosh | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
 | digamma | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
 | erf | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
@@ -100,4 +103,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `conv_general_dilated`, `custom_lin`, `dot_general`, `fft`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`
+`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `dot_general`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`

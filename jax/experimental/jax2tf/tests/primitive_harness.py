@@ -875,3 +875,99 @@ random_split = tuple(
                                np.array([0, 0xFFFFFFFF], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )
+
+lax_conv_general_dilated_general = tuple(
+  Harness(f"_general_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_windowstrides={window_strides}_padding={padding}_lhsdilation={lhs_dilation}_rhsdilation={rhs_dilation}_dimensionnumbers={dimension_numbers}_featuregroupcount={feature_group_count}_batchgroupcount={batch_group_count}_precision={precision}".replace(' ', ''),
+    lax.conv_general_dilated,
+    [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype),
+     StaticArg(window_strides), StaticArg(padding), StaticArg(lhs_dilation),
+     StaticArg(rhs_dilation), StaticArg(dimension_numbers),
+     StaticArg(feature_group_count), StaticArg(batch_group_count),
+     StaticArg(precision)],
+    lhs_shape=lhs_shape,
+    rhs_shape=rhs_shape,
+    dtype=dtype,
+    window_strides=window_strides,
+    padding=padding,
+    lhs_dilation=lhs_dilation,
+    rhs_dilation=rhs_dilation,
+    dimension_numbers=dimension_numbers,
+    feature_group_count=feature_group_count,
+    batch_group_count=batch_group_count,
+    precision=precision
+  )
+  for batch_group_count, feature_group_count in [
+      (1, 1), # simplest case
+      (1, 2), # feature_group_count != 1
+      (2, 1), # batch_group_count != 1
+  ]
+  for base_lhs_shape, base_rhs_shape in [
+      ((b * batch_group_count, i * feature_group_count, 9, w),
+       (j * feature_group_count * batch_group_count, i, 4, 5))
+      for w, b, i, j in [(10, 2, 3, 3)]
+  ]
+  for dtype in jtu.dtypes.all_inexact
+  for window_strides in [
+      (1, 1), # window starts at every element
+      (2, 3)  # custom window
+  ]
+  for padding in [
+      ((0, 0), (0, 0)), # no padding
+      ((1, 2), (0, 0)), # padding only one spatial axis
+      ((1, 2), (2, 1))  # padding on both spatial axes
+  ]
+  for lhs_dilation, rhs_dilation in [
+      ((1, 1), (1, 1)), # no dilation
+      ((2, 2), (1, 1)), # dilation only on LHS (transposed)
+      ((1, 1), (2, 3)), # dilation only on RHS (atrous)
+      ((2, 3), (3, 2))  # dilation on both LHS and RHS (transposed & atrous)
+  ]
+  # Dimension numbers and corresponding permutation
+  for dimension_numbers, perms in [
+      (("NCHW", "OIHW", "NCHW"), ((0, 1, 2, 3), (0, 1, 2, 3))), # default
+      (("NHWC", "HWIO", "NHWC"), ((0, 2, 3, 1), (2, 3, 1, 0))), # TF default
+      (("NCHW", "HWIO", "NHWC"), ((0, 1, 2, 3), (2, 3, 1, 0))), # custom
+  ]
+  for lhs_shape, rhs_shape in [[
+      tuple(ps[1][ps[0][i]] for i in range(len(ps[0]))) for ps in zip(
+          perms, [base_lhs_shape, base_rhs_shape]
+      )
+  ]]
+  for precision in [None, lax.Precision.DEFAULT, lax.Precision.HIGH,
+                    lax.Precision.HIGHEST]
+)
+
+lax_conv_general_dilated_known_limitations = tuple(
+  Harness(f"_known_limitations_{limitation_name}",
+    lax.conv_general_dilated,
+    [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype),
+     StaticArg(window_strides), StaticArg(padding), StaticArg(lhs_dilation),
+     StaticArg(rhs_dilation), StaticArg(dimension_numbers),
+     StaticArg(feature_group_count), StaticArg(batch_group_count),
+     StaticArg(precision)],
+    lhs_shape=lhs_shape,
+    rhs_shape=rhs_shape,
+    dtype=dtype,
+    window_strides=window_strides,
+    padding=padding,
+    lhs_dilation=lhs_dilation,
+    rhs_dilation=rhs_dilation,
+    dimension_numbers=dimension_numbers,
+    feature_group_count=feature_group_count,
+    batch_group_count=batch_group_count,
+    precision=precision
+  )
+  for (limitation_name, lhs_shape, rhs_shape, dtype, window_strides, padding,
+       lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
+       batch_group_count, precision) in [
+      ("Complex64Failure", (2, 9, 10, 3), (4, 5, 3, 3), np.complex64, (1, 1),
+       ((1, 2), (0, 0)), (2, 3), (3, 2), ('NHWC', 'HWIO', 'NHWC'), 1, 1,
+       lax.Precision.HIGHEST),
+      ("Complex128Failure", (2, 9, 10, 3), (4, 5, 3, 3), np.complex128, (1, 1),
+       ((1, 2), (0, 0)), (2, 3), (3, 2), ('NHWC', 'HWIO', 'NHWC'), 1, 1,
+       lax.Precision.HIGHEST),
+      ("BatchGroupCountBiggerThan1Failure", (4, 9, 10, 3), (4, 5, 3, 6),
+       np.float32, (1, 1), ((1, 2), (0, 0)), (2, 3), (3, 2),
+       ('NHWC', 'HWIO', 'NHWC'), 1, 2, lax.Precision.HIGHEST)
+  ]
+)
