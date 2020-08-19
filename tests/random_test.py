@@ -743,11 +743,11 @@ class LaxRandomTest(jtu.JaxTestCase):
     x = random.randint(key, shape, jnp.array([0, 1]), jnp.array([1, 2]))
     assert x.shape == shape
 
-  def testOneSidedMaxwellSample(self):
+  def testMaxwellSample(self):
     num_samples = 10**5
     rng = random.PRNGKey(0)
 
-    rand = lambda x: random.one_sided_maxwell(x, (num_samples, ))
+    rand = lambda x: random.maxwell(x, (num_samples, ))
     crand = api.jit(rand)
 
     loc = scipy.stats.maxwell.mean()

@@ -1376,7 +1376,7 @@ def _rademacher(key, shape, dtype):
   return (2 * random_bernoulli - 1).astype(dtype)
 
 
-def one_sided_maxwell(key, shape=(), dtype=dtypes.float_):
+def maxwell(key, shape=(), dtype=dtypes.float_):
   """Sample from a one sided Maxwell distribution.
 
   The scipy counterpart is `scipy.stats.maxwell`.
@@ -1393,15 +1393,15 @@ def one_sided_maxwell(key, shape=(), dtype=dtypes.float_):
   # Generate samples using:
   # sqrt(X^2 + Y^2 + Z^2), X,Y,Z ~N(0,1)
   if not dtypes.issubdtype(dtype, np.floating):
-    raise ValueError(f"dtype argument to `one_sided_maxwell` must be a float "
+    raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
-  return _one_sided_maxwell(key, shape, dtype)
+  return _maxwell(key, shape, dtype)
 
 
 @partial(jit, static_argnums=(1, 2))
-def _one_sided_maxwell(key, shape, dtype):
+def _maxwell(key, shape, dtype):
   shape = shape + (3,)
   norm_rvs = normal(key=key, shape=shape, dtype=dtype)
   return jnp.linalg.norm(norm_rvs, axis=-1)
@@ -1440,7 +1440,7 @@ def _double_sided_maxwell(key, loc, scale, shape, dtype):
 
   shape = shape + params_shapes
   maxwell_key, rademacher_key = split(key)
-  maxwell_rvs = one_sided_maxwell(maxwell_key, shape=shape, dtype=dtype)
+  maxwell_rvs = maxwell(maxwell_key, shape=shape, dtype=dtype)
   # Generate random signs for the symmetric variates.
   random_sign = rademacher(rademacher_key, shape=shape, dtype=dtype)
   assert random_sign.shape == maxwell_rvs.shape
