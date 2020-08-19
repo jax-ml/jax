@@ -901,7 +901,22 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
 
 def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
                    window_strides, padding, base_dilation, window_dilation):
-  """TensorFlow implementation of reduce_window."""
+  """TensorFlow implementation of reduce_window.
+
+  Args:
+    operand: N dimensional array containing elements of type T
+    init_value: starting value of the reduction
+    jaxpr: the jaxpr corresponding to the reduction function
+    consts: the constants associated with jaxpr.
+    window_dimensions: array of integers for window dimension values
+    window_strides: array of integers for window stride values
+    padding: array of pairs of integers for padding values
+    base_dilation: array of integers for base dilation values
+    window_dilation: array of integers for window dilation values
+
+  Returns:
+    The reduced operand.
+  """
   assert len(consts) == 0, "Reduction computation cannot have constants"
 
   def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
@@ -917,7 +932,25 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
 def _specialized_reduce_window(reducer, identity, operand, window_dimensions,
                                window_strides, padding, base_dilation,
                                window_dilation):
-  """TensorFlow implementation of reduce_window_{sum,min,max}."""
+  """Wraps the TensorFlow reduce window operation based on a reducer and an identity
+  function defining the initial value of the reduction depending on the dtype of the
+  operand.
+
+  Args:
+    reducer: reduction function of type T -> T -> T
+    identity: function that takes a dtype as a parameter and returns the starting
+      value of the reduction.
+    operand: N dimensional array containing elements of type T
+    window_dimensions: array of integers for window dimension values
+    window_strides: array of integers for window stride values
+    padding: array of pairs of integers for padding values
+    base_dilation: array of integers for base dilation values
+    window_dilation: array of integers for window dilation values
+
+  Returns:
+    The reduced operand.
+  """
+
   return _common_reduce_window(
       operand, identity(operand.dtype), reducer, window_dimensions,
       window_strides, padding, base_dilation, window_dilation
