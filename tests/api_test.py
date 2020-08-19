@@ -41,13 +41,42 @@ from jax.lib import xla_bridge as xb
 from jax import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
+from jax.lib import version
 
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 
-class JitTest(jtu.JaxTestCase):
+class CPPJitTest(jtu.JaxTestCase):
+  """Shared tests between the Python and the C++ jax,jit implementations.
+
+  Because the Python implementation supports more features, we need to have the
+  Python tests that extend the C++ tests (and not the other way around).
+  """
+
+  @property
+  def jit(self):
+    # Right now, the CPP tests also test the Python code-path when jaxlib is
+    # too old.
+    # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
+    if version < (0, 1, 53):
+      return jax.api._python_jit
+    else:
+      return jax.api._cpp_jit
+
+  def test_jit_of_noncallable(self):
+    self.assertRaisesRegex(TypeError, "Expected a callable value.*",
+                           lambda: self.jit(3))
+
+  def test_jit_of_generator(self):
+
+    def gen(x):
+      yield x
+
+    self.assertRaisesRegex(TypeError,
+                           "Expected a function, got a generator function.*",
+                           lambda: self.jit(gen))
 
   @parameterized.parameters([
       # Integer support
@@ -70,7 +99,7 @@ class JitTest(jtu.JaxTestCase):
       side.append(None)
       return 100 * x + 10 * y + z
 
-    f1 = jax.jit(f, static_argnums=(3, 4))
+    f1 = self.jit(f, static_argnums=(3, 4))
     assert f1(one, two, three, True, False) == 123
     assert len(side) == 1
     assert f1(one, two, three, True, False) == 123
@@ -81,7 +110,7 @@ class JitTest(jtu.JaxTestCase):
     assert len(side) == 2
 
     side[:] = []
-    f2 = jax.jit(f, static_argnums=(0, 2, 3, 4))
+    f2 = self.jit(f, static_argnums=(0, 2, 3, 4))
     assert f2(one, two, three, True, False) == 123
     assert len(side) == 1
     assert f2(one, three, three, True, False) == 133
@@ -111,7 +140,7 @@ class JitTest(jtu.JaxTestCase):
       side.append(None)
       return 100 * x + 10 * y + z
 
-    f = jax.jit(f)
+    f = self.jit(f)
     assert f(one, two, three) == 123
     assert len(side) == 1
     assert f(one, two, three) == 123
@@ -130,30 +159,122 @@ class JitTest(jtu.JaxTestCase):
 
   def test_jit_device(self):
     device = xb.devices()[-1]
-    x = jax.jit(lambda x: x, device=device)(3.)
+    x = self.jit(lambda x: x, device=device)(3.)
     self.assertIsInstance(x, xla.DeviceArray)
     self.assertEqual(x.device_buffer.device(), device)
 
   def test_complex_support(self):
-    self.assertEqual(jax.jit(lambda x: x+1)(1+1j), 2+1j)
+    self.assertEqual(self.jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
 
   def test_jit_with_many_args_works(self):
 
-    @jax.jit
+    @self.jit
     def f(args_list):
       return sum(args_list)
 
     self.assertEqual(f(list(range(500))), sum(range(500)))
 
+  # Jit and Donate arguments
+  assertDeleted = lambda self, x: self._assertDeleted(x, True)
+  assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
+
+  def _assertDeleted(self, x, deleted):
+    if hasattr(x, "device_buffer"):
+      self.assertEqual(x.device_buffer.is_deleted(), deleted)
+    else:
+      for buffer in x.device_buffers:
+        self.assertEqual(buffer.is_deleted(), deleted)
+
+  def test_jit_donate_argnums_warning_raised(self):
+    x = jnp.array([1.0, 2.0], jnp.float32)
+    y = jnp.array([1, 2], jnp.int32)
+    f = self.jit(lambda x, y: x.sum() + y.sum(), donate_argnums=(0, 1))
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      f(x, y)
+
+      self.assertLen(w, 1)
+      self.assertTrue(issubclass(w[-1].category, UserWarning))
+      self.assertIn(
+          "Some donated buffers were not usable: f32[2]{0}, s32[2]{0}",
+          str(w[-1].message))
+
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  def test_jit_donate_argnums_invalidates_input(self):
+    # We can't just use `lambda x: x` because JAX simplifies this away to an
+    # empty XLA computation.
+    move = self.jit(lambda x: x + x - x, donate_argnums=0)
+    x = jnp.ones([])
+    y = move(x)
+    self.assertDeleted(x)
+    self.assertEqual(y, 1.)
+
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
+  def test_jit_donate_argnums_static_argnums(self):
+    jit_fun = self.jit(
+        lambda a, b, c, d: ((a + b + c), (a + b + d)),
+        static_argnums=(0, 1),
+        donate_argnums=(2, 3))
+
+    a = jnp.array(1)
+    b = jnp.array(2)
+    c = jax.device_put(jnp.array([1., 1.]))
+    d = jax.device_put(jnp.array([1., 1., 1.]))
+    e, f = jit_fun(a, b, c, d)
+    np.testing.assert_allclose(e, jnp.array([4., 4.]))
+    np.testing.assert_allclose(f, jnp.array([4., 4., 4.]))
+    self.assertNotDeleted(a)
+    self.assertNotDeleted(b)
+    self.assertDeleted(c)
+    self.assertDeleted(d)
+
+  def test_jit_nested_donate_ignored(self):
+    jit_fun = self.jit(lambda x: self.jit(lambda y: y**2, donate_argnums=0)(x))
+    a = jax.device_put(jnp.array(1))
+
+    # NOTE(mattjj): stopped raising error here and instead just ignored
+    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+    #   jit_fun(a)
+
+    jit_fun(a)  # doesn't crash
+
+  def test_jnp_array_copy(self):
+    # https://github.com/google/jax/issues/3412
+
+    @partial(self.jit, donate_argnums=(0,))
+    def _test(array):
+      return array.at[0].set(77)
+
+    x = jnp.asarray([0, 1])
+    x_copy = jnp.array(x, copy=True)
+    with warnings.catch_warnings():
+      warnings.simplefilter("ignore")
+      _test(x)  # donation
+
+    # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
+    print(x_copy)  # doesn't crash
+
+
+class PythonJitTest(CPPJitTest):
+
+  @property
+  def jit(self):
+    return jax.api._python_jit
+
   def test_static_argnum_on_method(self):
 
     class A:
 
-      @functools.partial(jax.jit, static_argnums=(0,))
-      def my_func(self, x):
+      @functools.partial(jax.api._python_jit, static_argnums=(0,))
+      def my_func_python_jit(self, x):
         return x+2
 
-    A().my_func(3)
+      @functools.partial(jax.api._python_jit, static_argnums=(0,))
+      def my_func_jit(self, x):
+        return x+2
+
+    A().my_func_python_jit(3)
+    A().my_func_jit(3)
 
 
 class APITest(jtu.JaxTestCase):
@@ -1038,21 +1159,6 @@ class APITest(jtu.JaxTestCase):
     f = lambda: jax.lax.psum(1, "i")
     api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
 
-  def test_jit_device(self):
-    device = xb.devices()[-1]
-    x = api.jit(lambda x: x, device=device)(3.)
-    self.assertIsInstance(x, xla.DeviceArray)
-    self.assertEqual(x.device_buffer.device(), device)
-
-  def test_jit_of_noncallable(self):
-    self.assertRaisesRegex(TypeError, "Expected a callable value.*",
-                           lambda: api.jit(3))
-
-  def test_jit_of_generator(self):
-    def gen(x):
-      yield x
-    self.assertRaisesRegex(TypeError, "Expected a function, got a generator function.*",
-                           lambda: api.jit(gen))
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -1270,8 +1376,8 @@ class APITest(jtu.JaxTestCase):
       y, z = dct['a'], dct['b']
       return jnp.dot(x, jnp.dot(y, z))
 
-    tree = (x, {'a':y, 'b':z})
-    vfoo = api.vmap(foo, in_axes=((0, {'a':1, 'b':2}),))
+    tree = (x, {'a': y, 'b': z})
+    vfoo = api.vmap(foo, in_axes=((0, {'a': 1, 'b': 2}),))
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
     tree = (x, collections.OrderedDict([('a', y), ('b', z)]))
@@ -2610,26 +2716,26 @@ class CustomJVPTest(jtu.JaxTestCase):
     # from https://github.com/google/jax/issues/2657
     @api.custom_jvp
     def f(A, b):
-        return A @ b
+      return A @ b
 
     def f_jvp(primals, tangents):
-        A, b = primals
-        dA, db = tangents
-        z = f(A, b)
-        dz = A @ db + dA @ b
-        return z, dz
+      A, b = primals
+      dA, db = tangents
+      z = f(A, b)
+      dz = A @ db + dA @ b
+      return z, dz
 
     f.defjvp(f_jvp)
 
     def experiment(theta):
-        def step(q, _):
-            z = f(jnp.eye(3), jnp.ones(3) * theta)
-            q += z[0]
-            return q, q
+      def step(q, _):
+        z = f(jnp.eye(3), jnp.ones(3) * theta)
+        q += z[0]
+        return q, q
 
-        q = 0.
-        q, _ = lax.scan(step, q, None, 4)
-        return q
+      q = 0.
+      q, _ = lax.scan(step, q, None, 4)
+      return q
 
     grad(experiment)(1.)  # doesn't crash
 
@@ -3034,18 +3140,18 @@ class CustomVJPTest(jtu.JaxTestCase):
   def test_nestable_vjp(self):
     # Verify that https://github.com/google/jax/issues/3667 is resolved.
     def f(x):
-        return x ** 2
+      return x ** 2
 
     @api.custom_vjp
     def g(x):
-        return f(x)
+      return f(x)
 
     def g_fwd(x):
-        y, f_vjp = api.vjp(f, x)
-        return y, f_vjp
+      y, f_vjp = api.vjp(f, x)
+      return y, f_vjp
 
     def g_bwd(f_vjp, y_bar):
-        return f_vjp(y_bar)
+      return f_vjp(y_bar)
 
     g.defvjp(g_fwd, g_bwd)
 
@@ -3059,8 +3165,8 @@ class CustomVJPTest(jtu.JaxTestCase):
     # vjp can't treat the closed-over tracer x as a static argument.
     @jit
     def z(x):
-        _, g_vjp = api.vjp(g, x)
-        return g_vjp
+      _, g_vjp = api.vjp(g, x)
+      return g_vjp
     y, = z(1.0)(3.0)
     self.assertAllClose(y, jnp.array(6.0))
 
@@ -3409,74 +3515,6 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
 
 class BufferDonationTest(jtu.JaxTestCase):
 
-  def test_jit_donate_argnums_warning_raised(self):
-    x = jnp.array([1.0, 2.0], jnp.float32)
-    y = jnp.array([1, 2], jnp.int32)
-    f = jit(lambda x, y: x.sum() + y.sum(), donate_argnums=(0, 1))
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("always")
-      f(x, y)
-
-      self.assertLen(w, 1)
-      self.assertTrue(issubclass(w[-1].category, UserWarning))
-      self.assertIn(
-          "Some donated buffers were not usable: f32[2]{0}, s32[2]{0}",
-          str(w[-1].message))
-
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
-  def test_jit_donate_argnums_invalidates_input(self):
-    # We can't just use `lambda x: x` because JAX simplifies this away to an
-    # empty XLA computation.
-    move = jit(lambda x: x + x - x, donate_argnums=0)
-    x = jnp.ones([])
-    y = move(x)
-    self.assertDeleted(x)
-    self.assertEqual(y, 1.)
-
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
-  def test_jit_donate_argnums_static_argnums(self):
-    jit_fun = jit(lambda a, b, c, d: ((a + b + c), (a + b + d)),
-                  static_argnums=(0, 1), donate_argnums=(2, 3))
-
-    a = jnp.array(1)
-    b = jnp.array(2)
-    c = jax.device_put(jnp.array([1., 1.]))
-    d = jax.device_put(jnp.array([1., 1., 1.]))
-    e, f = jit_fun(a, b, c, d)
-    np.testing.assert_allclose(e, jnp.array([4., 4.]))
-    np.testing.assert_allclose(f, jnp.array([4., 4., 4.]))
-    self.assertNotDeleted(a)
-    self.assertNotDeleted(b)
-    self.assertDeleted(c)
-    self.assertDeleted(d)
-
-  def test_jit_nested_donate_ignored(self):
-    jit_fun = jit(lambda x: jit(lambda y: y ** 2, donate_argnums=0)(x))
-    a = jax.device_put(jnp.array(1))
-
-    # NOTE(mattjj): stopped raising error here and instead just ignored
-    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
-    #   jit_fun(a)
-
-    jit_fun(a)  # doesn't crash
-
-  def test_jnp_array_copy(self):
-    # https://github.com/google/jax/issues/3412
-
-    @partial(api.jit, donate_argnums=(0,))
-    def _test(array):
-      return array.at[0].set(77)
-
-    x = jnp.asarray([0, 1])
-    x_copy = jnp.array(x, copy=True)
-    with warnings.catch_warnings():
-      warnings.simplefilter("ignore")
-      _test(x)  # donation
-
-    # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
-    print(x_copy)  # doesn't crash
-
-
   # === pmap ===
 
   @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
@@ -3507,6 +3545,7 @@ class BufferDonationTest(jtu.JaxTestCase):
     else:
       for buffer in x.device_buffers:
         self.assertEqual(buffer.is_deleted(), deleted)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
