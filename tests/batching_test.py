@@ -1020,7 +1020,6 @@ class BatchingTest(jtu.JaxTestCase):
 
 
   def testNegativeAxes(self):
-    rng = jtu.rand_default(self.rng())
     x = np.arange(3*4*5).reshape(3, 4, 5)
     self.assertAllClose(jax.vmap(jnp.sum, in_axes=-3)(x),
                         jnp.sum(x, axis=(1, 2)))
