@@ -1368,7 +1368,8 @@ class LaxTest(jtu.JaxTestCase):
                                window_dimensions=(1,), window_strides=(0,))
 
     for failure_fun in [empty_window_test, zero_stride_test]:
-      self.assertRaisesRegex(TypeError, "must have every element be")
+      with self.assertRaisesRegex(TypeError, "must have every element be"):
+        failure_fun()
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}"
