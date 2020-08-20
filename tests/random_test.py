@@ -844,9 +844,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       assert len(counts) == 2
 
       self.assertAllClose(
-          counts[0]/ num_samples, 0.5, rtol=1e-03, atol=1e-03)
+          counts[0]/ num_samples, 0.5, rtol=1e-02, atol=1e-02)
       self.assertAllClose(
-          counts[1]/ num_samples, 0.5, rtol=1e-03, atol=1e-03)
+          counts[1]/ num_samples, 0.5, rtol=1e-02, atol=1e-02)
 
 
 if __name__ == "__main__":

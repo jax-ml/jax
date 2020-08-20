@@ -1371,9 +1371,8 @@ def rademacher(key, shape, dtype=dtypes.int_):
 
 @partial(jit, static_argnums=(1, 2))
 def _rademacher(key, shape, dtype):
-  random_bernoulli = categorical(
-      key=key, logits=jnp.array([0.5, 0.5]), shape=shape)
-  return (2 * random_bernoulli - 1).astype(dtype)
+  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape)
+  return (2 * bernoulli_samples - 1).astype(dtype)
 
 
 def maxwell(key, shape=(), dtype=dtypes.float_):
