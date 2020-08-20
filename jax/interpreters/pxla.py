@@ -1242,7 +1242,8 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
   compile_options = xb.get_compile_options(
           num_replicas=num_devices, num_partitions=1, device_assignment=None)
   compile_options.tuple_arguments = tuple_args
-  compiled = xla.backend_compile(xb.get_backend(None), built, compile_options)
+  backend = xb.get_backend(None)
+  compiled = xla.backend_compile(backend, built, compile_options)
 
   input_specs = [
       ShardingSpec(shards_per_axis=(num_devices,) + (1,) * (aval.ndim - 1),
