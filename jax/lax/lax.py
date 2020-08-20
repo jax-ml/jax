@@ -545,7 +545,8 @@ def conv_general_dilated(
   (for a 2D convolution).
   """
   dnums: ConvDimensionNumbers
-  dnums = conv_dimension_numbers(lhs.shape, rhs.shape, dimension_numbers)
+  lhs_shape, rhs_shape = map(masking.logical_shape, (lhs.shape, rhs.shape))
+  dnums = conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers)
   if lhs_dilation is None:
     lhs_dilation = (1,) * (lhs.ndim - 2)
   elif isinstance(padding, str) and not len(lhs_dilation) == lhs_dilation.count(1):
@@ -557,10 +558,11 @@ def conv_general_dilated(
     rhs_dilation = (1,) * (rhs.ndim - 2)
   if isinstance(padding, str):
     lhs_perm, rhs_perm, _ = dnums
-    rhs_shape = np.take(rhs.shape, rhs_perm)[2:]
-    effective_rhs_shape = [(k-1) * r + 1 for k, r in zip(rhs_shape, rhs_dilation)]
+    effective_rhs_shape = [
+        (k-1) * r + 1 for k, r in
+        zip(np.take(rhs_shape, rhs_perm)[2:], rhs_dilation)]
     padding = padtype_to_pads(
-        np.take(lhs.shape, lhs_perm)[2:], effective_rhs_shape,
+        np.take(lhs_shape, lhs_perm)[2:], effective_rhs_shape,
         window_strides, padding)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
@@ -568,7 +570,7 @@ def conv_general_dilated(
       dimension_numbers=dnums,
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count,
-      lhs_shape=lhs.shape, rhs_shape=rhs.shape,
+      lhs_shape=lhs_shape, rhs_shape=rhs_shape,
       precision=_canonicalize_precision(precision))
 
 def dot(lhs: Array, rhs: Array, precision: Optional[PrecisionType] = None) -> Array:
@@ -1980,7 +1982,7 @@ def _broadcasting_shape_rule(name, *avals):
 
 def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
   dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
-  shape_rule = partial(_broadcasting_shape_rule, name)
+  shape_rule = masking.lift(partial(_broadcasting_shape_rule, name))
   prim = standard_primitive(shape_rule, dtype_rule, name,
                             translation_rule=translation_rule)
   batching.defbroadcasting(prim)
@@ -2475,6 +2477,7 @@ batching.defvectorized(bitcast_convert_type_p)
 masking.defvectorized(bitcast_convert_type_p)
 
 
+@masking.lift
 def _conv_general_dilated_shape_rule(
     lhs: ShapedArray, rhs: ShapedArray, *, window_strides, padding,
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
@@ -2770,6 +2773,7 @@ def _conv_general_dilated_masking_rule(
               "Conv filter masking not yet implemented."
 
   n, c, *padded_dimensions = dimension_numbers.lhs_spec
+  padding = tuple((int(l), int(h)) for l, h in padding)
 
   return conv_general_dilated(
     _masked(lhs, logical_lhs_shape, padded_dimensions),
@@ -2823,6 +2827,7 @@ def _precision_config(precision):
   return None
 
 
+@masking.lift
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
   if not all(np.all(np.greater_equal(d, 0)) and np.all(np.less(d, lhs.ndim))
@@ -3048,6 +3053,8 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
                                broadcast_dimensions=broadcast_dimensions)
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
+  if any(isinstance(d, masking.AxisConstraint) for d in shape):
+    raise NotImplementedError
   _check_shapelike('broadcast_in_dim', 'shape', shape)
   _check_shapelike('broadcast_in_dim', 'broadcast_dimensions',
                    broadcast_dimensions)
@@ -3125,6 +3132,7 @@ ad.defjvp(clamp_p,
 batching.defbroadcasting(clamp_p)
 
 
+@masking.lift
 def _concatenate_shape_rule(*operands, **kwargs):
   dimension = kwargs.pop('dimension')
   if not operands:
@@ -3199,6 +3207,7 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
 
   return _input_dtype(operand, padding_value)
 
+@masking.lift
 def _pad_shape_rule(operand, padding_value, *, padding_config):
   lo, hi, interior = zip(*padding_config)
   out_shape = np.add(
@@ -3434,6 +3443,7 @@ def _transpose_impl(operand, *, permutation):
   else:
     return xla.apply_primitive(transpose_p, operand, permutation=permutation)
 
+@masking.lift
 def _transpose_shape_rule(operand, *, permutation):
   if not isinstance(permutation, (tuple, list, np.ndarray)):
     msg = "transpose permutation must be a tuple/list/ndarray, got {}."
@@ -3543,6 +3553,7 @@ batching.primitive_batchers[select_p] = _select_batch_rule
 masking.masking_rules[select_p] = _select_masking_rule
 
 
+@masking.lift
 def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
   _check_shapelike("slice", "start_indices", start_indices)
   _check_shapelike("slice", "limit_indices", limit_indices)

@@ -1218,6 +1218,7 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
              "leading axis sizes {}.")
       raise ValueError(msg.format(length, [x.shape[0] for x in xs_flat]))
   else:
+    lengths = [getattr(l, 'logical', l) for l in lengths]
     unique_lengths = set(lengths)
     if len(unique_lengths) > 1:
       msg = "scan got values with different leading axis sizes: {}."
@@ -1824,7 +1825,7 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
 def scan_bind(*args, **params):
   if not core.skip_checks:
     avals = _map(core.get_aval, args)
-    _scan_typecheck(True, *avals, **params)
+    _scan_typecheck(True, *_map(masking.logical_aval, avals), **params)
     core.check_jaxpr(params['jaxpr'].jaxpr)
   return core.Primitive.bind(scan_p, *args, **params)
 
