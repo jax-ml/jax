@@ -780,20 +780,6 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, handlers, *args):
   return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
           else h(device_put(x, device)) for h, x in zip(handlers, outs)]
 
-@memoize
-def _get_device(device, backend):
-  # TODO(mattjj): after jaxlib update, avoid compile here, just to get device
-  c = xb.make_computation_builder("get_device")
-  built = c.build(_make_unit(c))
-  options = xb.get_compile_options(
-      num_replicas=1,
-      num_partitions=1,
-      device_assignment=(device.id,) if device else None)
-  backend = xb.get_backend(backend)
-  compiled = backend.compile(built, compile_options=options)
-  out, = compiled.local_devices()
-  return out
-
 xla_call_p = core.CallPrimitive('xla_call')
 xla_call = xla_call_p.bind
 xla_call_p.def_impl(_xla_call_impl)
@@ -1208,8 +1194,7 @@ def _lazy_force_computation(aval: core.ShapedArray,
       num_replicas=1,
       num_partitions=1,
       device_assignment=device and (device.id,))
-  backend = xb.get_device_backend(device)
-  compiled = backend.compile(built_c, compile_options=options)
+  compiled = backend_compile(xb.get_device_backend(device), built_c, options)
 
   force_fun: Callable[[DeviceArray], DeviceArray]
   if lazy.is_constant(lexpr):

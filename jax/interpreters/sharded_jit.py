@@ -121,9 +121,9 @@ def _sharded_callable(
   device_assignment = np.reshape(device_assignment, (-1, num_partitions))
   # device_assignment = None  # TODO(skye): replace with default device assignment?
 
-  compiled = xb.get_backend().compile(
-      built, compile_options=xb.get_compile_options(
-          nrep, num_partitions, device_assignment))
+  compiled = xla.backend_compile(
+      xb.get_backend(), built,
+      xb.get_compile_options(nrep, num_partitions, device_assignment))
 
   input_specs = [
       pxla.partitioned_sharding_spec(num_partitions, parts, aval)
