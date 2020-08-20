@@ -34,7 +34,7 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                abstract_token)
 from ..core import Literal, pp_eqn_compact
 from ..pprint_util import pp
-from ..util import (partial, partialmethod, cache, prod, unzip2, memoize,
+from ..util import (partial, partialmethod, cache, prod, unzip2,
                     extend_name_stack, wrap_name, safe_zip, safe_map)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
@@ -261,7 +261,7 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
       num_partitions=1,
       device_assignment=device and (device.id,))
   options.parameter_is_tupled_arguments = tuple_args
-  compiled = _backend_compile(backend, built_c, options)
+  compiled = backend_compile(backend, built_c, options)
   if nreps == 1:
     return partial(_execute_compiled_primitive, prim, compiled, handle_result)
   else:
@@ -319,7 +319,7 @@ def primitive_subcomputation(prim, *avals, **params):
   axis_env = AxisEnv(1, (), (), None)
   return primitive_computation(prim, axis_env, None, False, *avals, **params)
 
-def _backend_compile(backend, built_c, options):
+def backend_compile(backend, built_c, options):
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
   return backend.compile(built_c, compile_options=options)
@@ -662,7 +662,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
   options.parameter_is_tupled_arguments = tuple_args
-  compiled = _backend_compile(backend, built, options)
+  compiled = backend_compile(backend, built, options)
   if nreps == 1:
     return partial(_execute_compiled, compiled, result_handlers)
   else:
@@ -779,20 +779,6 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, handlers, *args):
           for v in jaxpr.outvars]
   return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
           else h(device_put(x, device)) for h, x in zip(handlers, outs)]
-
-@memoize
-def _get_device(device, backend):
-  # TODO(mattjj): after jaxlib update, avoid compile here, just to get device
-  c = xb.make_computation_builder("get_device")
-  built = c.build(_make_unit(c))
-  options = xb.get_compile_options(
-      num_replicas=1,
-      num_partitions=1,
-      device_assignment=(device.id,) if device else None)
-  backend = xb.get_backend(backend)
-  compiled = backend.compile(built, compile_options=options)
-  out, = compiled.local_devices()
-  return out
 
 xla_call_p = core.CallPrimitive('xla_call')
 xla_call = xla_call_p.bind
@@ -1208,8 +1194,7 @@ def _lazy_force_computation(aval: core.ShapedArray,
       num_replicas=1,
       num_partitions=1,
       device_assignment=device and (device.id,))
-  backend = xb.get_device_backend(device)
-  compiled = backend.compile(built_c, compile_options=options)
+  compiled = backend_compile(xb.get_device_backend(device), built_c, options)
 
   force_fun: Callable[[DeviceArray], DeviceArray]
   if lazy.is_constant(lexpr):

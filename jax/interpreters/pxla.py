@@ -853,7 +853,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
       use_spmd_partitioning=use_spmd_partitioning,
   )
   compile_options.parameter_is_tupled_arguments = tuple_args
-  compiled = backend.compile(built, compile_options=compile_options)
+  compiled = xla.backend_compile(backend, built, compile_options)
 
   arg_parts_ = arg_parts or [None] * len(avals)
   input_sharding_specs = [
@@ -1243,7 +1243,7 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
           num_replicas=num_devices, num_partitions=1, device_assignment=None)
   compile_options.tuple_arguments = tuple_args
   backend = xb.get_backend(None)
-  compiled = backend.compile(built, compile_options=compile_options)
+  compiled = xla.backend_compile(backend, built, compile_options)
 
   input_specs = [
       ShardingSpec(shards_per_axis=(num_devices,) + (1,) * (aval.ndim - 1),

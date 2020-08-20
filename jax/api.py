@@ -302,12 +302,9 @@ def _cpp_jit(
       options.parameter_is_tupled_arguments = True
 
     return (
-        # We call xla._backend_compile to ensure the XLA computation appears
+        # We call xla.backend_compile to ensure the XLA computation appears
         # separately in Python profiling results.
-        xla._backend_compile(
-            backend,
-            xla_result.xla_computation,
-            options=options),
+        xla.backend_compile(backend, xla_result.xla_computation, options),
         xla_result.out_pytree_def,
         xla_result.shaped_arrays,
         xla_result.lazy_expressions)
