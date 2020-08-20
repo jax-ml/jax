@@ -176,7 +176,10 @@ def id_tap(tap_func: Callable, arg, *, result=None, **kwargs):
   argument.
 
   Args:
-    * tap_func: the tap function to call.
+    * tap_func: the tap function to call. Must have a signature of the form
+      ``tap_func(arg, *, transforms=None, **kwargs)`` where ``arg`` and
+      ``kwargs`` are as described below and ``transforms`` is an optional
+      sequence describing the applied JAX transformations.
     * arg: the argument passed to the tap function, can be a pytree of JAX
       types.
     * result: if given, specifies the return value of ``id_tap``. This value is
