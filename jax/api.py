@@ -1022,14 +1022,20 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callab
 
   Args:
     fun: Function to be mapped over additional axes.
-    in_axes: A non-negative integer, None, or (nested) standard Python container
+    in_axes: An integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof specifying which input array axes to map over.
       If each positional argument to ``fun`` is an array, then ``in_axes`` can
-      be a non-negative integer, a None, or a tuple of integers and Nones with
-      length equal to the number of positional arguments to ``fun``. An integer
-      or None indicates which array axis to map over for all arguments (with
+      be an integer, a None, or a tuple of integers and Nones with
+      length equal to the number of positional arguments to ``fun``.
+
+      An integer or ``None`` indicates which array axis to map over for all
+      arguments (with
       None indicating not to map any axis), and a tuple indicates which axis to
-      map for each corresponding positional argument. If the positional
+      map for each corresponding positional argument. Axis integers must be
+      in the range ``[-ndim, ndim)`` for each array, where ``ndim`` is the
+      number of dimensions of the corresponding input array.
+
+      If the positional
       arguments to ``fun`` are container types, the corresponding element of
       ``in_axes`` can itself be a matching container, so that distinct array
       axes can be mapped for different container elements. ``in_axes`` must be a
@@ -1039,10 +1045,12 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callab
       of the mapped input axes for all mapped positional arguments must all
       be equal.
 
-    out_axes: A non-negative integer, None, or (nested) standard Python container
+    out_axes: An integer, None, or (nested) standard Python container
       (tuple/list/dict) thereof indicating where the mapped axis should appear
       in the output. All outputs with a mapped axis must have a non-None
-      ``out_axes`` specification.
+      ``out_axes`` specification. Axis integers must be
+      in the range ``[-ndim, ndim)`` for each output array, where ``ndim`` is
+      the number of dimensions of the output array.
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to

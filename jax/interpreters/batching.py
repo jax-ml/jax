@@ -353,7 +353,8 @@ def matchaxis(sz, src, dst, x, sum_match=False):
   elif type(src) == int and dst is last:
     return moveaxis(x, src, -1)
   elif src is not_mapped and dst is not not_mapped:
-    return broadcast(x, sz, canonicalize_axis(dst, np.ndim(x) + 1))
+    return broadcast(
+      x, sz, canonicalize_axis(dst, np.ndim(x) + 1) if dst is not last else dst)
   elif dst is None and sum_match:
     return x.sum(src)
   else:
