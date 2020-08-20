@@ -1020,6 +1020,41 @@ class DynamicJaxprTrace(core.Trace):
   def post_process_map(self, map_primitive, out_tracers, params):
     assert False  # unreachable
 
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+    # if self.level == 0:
+    #   # staging out of the system, so we can drop the custom jvp rule
+    #   return fun.call_wrapped(*tracers)
+    in_avals = [t.aval for t in tracers]
+    fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.master, in_avals)
+    jvp_jaxpr_thunk = _memoize(
+        lambda: trace_to_subjaxpr_dynamic(jvp, self.master, 2 * in_avals)[::2])
+    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    invars = map(self.getvar, tracers)
+    outvars = map(self.getvar, out_tracers)
+    constvars = map(self.getvar, map(self.instantiate_const, consts))
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim.initial_style,
+                        dict(fun_jaxpr=convert_constvars_jaxpr(fun_jaxpr),
+                             jvp_jaxpr_thunk=jvp_jaxpr_thunk, num_consts=len(consts)),
+                        source_info_util.current())
+    self.frame.eqns.append(eqn)
+    return out_tracers
+
+  def post_process_custom_jvp_call(self, out_tracers, params):
+    assert False  # unreachable
+
+def _memoize(thunk):
+  cell = []
+  saved_state = core.thread_local_state.trace_state.copy()
+  def memoized():
+    if not cell:
+      prev_state = core.thread_local_state.trace_state
+      core.thread_local_state.trace_state = saved_state
+      try:
+        cell.append(thunk())
+      finally:
+        core.thread_local_state.trace_state = prev_state
+    return cell[0]
+  return memoized
 
 def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
   assert config.omnistaging_enabled

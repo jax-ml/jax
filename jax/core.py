@@ -67,15 +67,16 @@ class Jaxpr:
   def __init__(self, constvars: Sequence['Var'], invars: Sequence['Var'],
                outvars: Sequence['Atom'], eqns: Sequence['JaxprEqn']):
     """
-    Params:
+    Args:
       constvars: list of variables introduced for constants (either literals
         in the Python program, or the result of constant folding during the
-        generation of the Jaxpr). Array constants are replaced with such variables
-        while scalar constants are kept inline.
+        generation of the Jaxpr). Array constants are replaced with such
+        variables while scalar constants are kept inline.
       invars: list of input variables. Together, `constvars` and `invars` are
         the inputs to the Jaxpr.
       outvars: list of output variables.
-      eqns: list of equations."""
+      eqns: list of equations.
+    """
     self.constvars = list(constvars)
     self.invars = list(invars)
     self.outvars = list(outvars)
@@ -111,9 +112,11 @@ class TypedJaxpr:
   out_avals: List['AbstractValue']
 
   def __init__(self, jaxpr: Jaxpr, literals: Sequence,
-               in_avals: Sequence['AbstractValue'],
-               out_avals: Sequence['AbstractValue']):
+               in_avals: Optional[Sequence['AbstractValue']] = None,
+               out_avals: Optional[Sequence['AbstractValue']] = None):
     assert len(literals) == len(jaxpr.constvars)
+    if in_avals is None: in_avals = [v.aval for v in jaxpr.invars]
+    if out_avals is None: out_avals = [v.aval for v in jaxpr.outvars]
     assert len(in_avals) == len(jaxpr.invars)
 
     if not skip_checks:
@@ -1436,8 +1439,8 @@ axis_frame = None
 def omnistaging_enabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
       new_master, reset_trace_state, extend_axis_env, axis_frame, \
-      axis_index, axis_index_p, new_base_master, eval_context, \
-      TraceStack, TraceState
+      axis_index, axis_index_p, new_base_master, maybe_new_sublevel, \
+      eval_context, TraceStack, TraceState
   del initial_style_staging
 
   class TraceStack:

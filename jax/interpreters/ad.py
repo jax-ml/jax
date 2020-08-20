@@ -300,6 +300,15 @@ class JVPTrace(Trace):
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
+  def post_process_custom_jvp_call(self, out_tracers, params):
+    msg = ("Detected differentiation of a custom_jvp function with respect to "
+           "a closed-over value. That isn't supported because the custom JVP "
+           "rule only specifies how to differentiate the custom_jvp function "
+           "with respect to explicit input parameters. Try passing the "
+           "closed-over value into the custom_jvp function as an argument, and "
+           "adapting the custom_jvp rule to specify its derivative.")
+    raise Exception(msg)
+
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     tangents_in = map(instantiate_zeros, tangents_in)

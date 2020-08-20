@@ -2498,10 +2498,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       g.defjvp(g_jvp)
       return g(1.)
 
-    self.assertRaises(
-        core.UnexpectedTracerError, lambda: api.jvp(f, (3.,), (1.,)))
-    self.assertRaises(
-        core.UnexpectedTracerError, lambda: api.grad(f)(3.))
+    self.assertRaises(Exception, lambda: api.jvp(f, (3.,), (1.,)))
+    self.assertRaises(Exception, lambda: api.grad(f)(3.))
 
   def test_nondiff_arg(self):
     @partial(api.custom_jvp, nondiff_argnums=(0,))
@@ -2790,6 +2788,48 @@ class CustomJVPTest(jtu.JaxTestCase):
       results = [f.result() for f in futures]
     for ans in results:
       self.assertAllClose(ans, expected)
+
+  def test_nondiff_argnums_vmap_tracer(self):
+    # https://github.com/google/jax/issues/3964
+    @partial(jax.custom_jvp, nondiff_argnums=(0, 2))
+    def sample(shape, param, seed):
+      return jax.random.uniform(key=seed, shape=shape, minval=param)
+
+    @sample.defjvp
+    def sample_jvp(shape, seed, primals, tangents):
+      param, = primals
+      dparam, = tangents
+      dparam = jnp.broadcast_to(dparam, shape)
+      samples = sample(shape, param, seed)
+      return samples, samples * dparam  # dummy jvp for proof of concept
+
+    # check these don't crash
+    jax.vmap(lambda seed: sample((2,3), 1., seed))(
+        jax.random.split(jax.random.PRNGKey(1), 10))
+    jax.jvp(lambda x: sample((2, 3), x, jax.random.PRNGKey(1)),
+            (1.,), (1.,))
+
+  def test_fun_with_nested_calls_2(self):
+    def call(f, *args):
+      f = api.custom_jvp(f)
+      f.defjvp(lambda primals, tangents: (f(*primals), sum(tangents)))
+      return f(*args)
+
+    def fun_with_nested_calls_2(x):
+      def bar(y):
+        def baz(w):
+          q = call(lambda x: y, x)
+          q = q + call(lambda: y)
+          q = q + call(lambda y: w + y, y)
+          q = call(lambda w: call(jnp.sin, x) * y, 1.0) + q
+          return q
+        return jax.jit(baz)(x)
+      return call(bar, x)
+
+    # test these don't crash
+    self.assertAllClose(jax.jit(fun_with_nested_calls_2)(3.),
+                        fun_with_nested_calls_2(3.))
+    api.vmap(fun_with_nested_calls_2)(jnp.arange(3.))
 
 
 class CustomVJPTest(jtu.JaxTestCase):

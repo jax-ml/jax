@@ -45,14 +45,14 @@ def _resolve_kwargs(fun, args, kwargs):
   else:
     return ba.args
 
-def _add_args(f, extra_args, left):
-  return _add_args_(f, tuple(map(wrap_hashably, extra_args)), left)
+def _add_args(f, extra_args):
+  return _add_args_(f, tuple(map(wrap_hashably, extra_args)))
 
 @lu.transformation
-def _add_args_(extra_args, left, *args, **kwargs):
+def _add_args_(extra_args, *args, **kwargs):
   extra_args = tuple([arg.val for arg in extra_args])
-  args = (extra_args + args) if left else (args + extra_args)
-  yield (yield args, kwargs)
+  full_args = (extra_args + args)
+  yield (yield full_args, kwargs)
 
 def _memoize(thunk):
   cell = []
@@ -219,19 +219,15 @@ class custom_jvp:
       dyn_argnums = [i for i, b in enumerate(is_nondiff) if not b]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
-      jvp = _add_args(lu.wrap_init(self.jvp), static_args, left=True)
+      jvp = _add_args(lu.wrap_init(self.jvp), static_args)
     else:
       f_, dyn_args = lu.wrap_init(self.fun), args
       jvp = lu.wrap_init(self.jvp)
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_tree1 = flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_tree2 = _flatten_jvp(jvp, in_tree)
-    if _initial_style_staging():
-      out_flat = custom_jvp_call_jaxpr(flat_fun, flat_jvp, *args_flat)
-      out_tree = out_tree1()
-    else:
-      out_flat = custom_jvp_call(flat_fun, flat_jvp, *args_flat)
-      _, out_tree = lu.merge_linear_aux(out_tree1, out_tree2)
+    out_flat = custom_jvp_call_p.bind(flat_fun, flat_jvp, *args_flat)
+    _, out_tree = lu.merge_linear_aux(out_tree1, out_tree2)
     return tree_unflatten(out_tree, out_flat)
 
 @lu.transformation_with_aux
@@ -283,66 +279,77 @@ class CustomJVPCallPrimitive(core.CallPrimitive):
       tracers = map(top_trace.full_raise, args)
       outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    if env_trace_todo:
-      raise core.UnexpectedTracerError
-    return map(core.full_lower, outs)
+    return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
 
   def impl(self, fun, _, *args):
     return fun.call_wrapped(*args)
 
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_custom_jvp_call(out_tracers, params)
+
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
-custom_jvp_call = custom_jvp_call_p.bind
 
 
-def custom_jvp_call_jaxpr(fun, jvp, *args):
-  in_avals = [raise_to_shaped(core.get_aval(x)) for x in args]
-  fun_jaxpr = _initial_style_jaxpr(fun, in_avals)
-  jvp_jaxpr_thunk = _memoize(lambda: _initial_style_jaxpr(jvp, in_avals * 2))
-  return custom_jvp_call_jaxpr_p.bind(*args, fun_jaxpr=fun_jaxpr,
-                                      jvp_jaxpr_thunk=jvp_jaxpr_thunk)
+def _custom_jvp_call_jaxpr_impl(*args, fun_jaxpr, **params):
+  del params  # other params ignored because we're just executing the primal fun
+  return core.eval_jaxpr(fun_jaxpr, (), *args)
 
-def _custom_jvp_call_jaxpr_impl(*args, fun_jaxpr, **_):
-  return core.jaxpr_as_fun(fun_jaxpr)(*args)
-
-def _custom_jvp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
-  return fun_jaxpr.out_avals
+def _custom_jvp_call_jaxpr_abstract_eval(*args, fun_jaxpr, **params):
+  del args, params
+  return [v.aval for v in fun_jaxpr.outvars]
 
 custom_jvp_call_jaxpr_p = core.Primitive('custom_jvp_call_jaxpr')
 custom_jvp_call_jaxpr_p.multiple_results = True
 custom_jvp_call_jaxpr_p.def_impl(_custom_jvp_call_jaxpr_impl)
 custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
+CustomJVPCallPrimitive.initial_style = custom_jvp_call_jaxpr_p
 
-def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk):
-  jvp_jaxpr = jvp_jaxpr_thunk()
-  tangents = map(ad.instantiate_zeros, tangents)
-  outs = core.jaxpr_as_fun(jvp_jaxpr)(*primals, *tangents)
+def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk,
+                               num_consts):
+  _, args = split_list(primals, [num_consts])
+  consts_dot, args_dot = split_list(tangents, [num_consts])
+  if any(type(t) is not Zero for t in consts_dot):
+    msg = ("Detected differentiation of a custom_jvp function with respect to "
+           "a closed-over value. That isn't supported because the custom JVP "
+           "rule only specifies how to differentiate the custom_jvp function "
+           "with respect to explicit input parameters. Try passing the "
+           "closed-over value into the custom_jvp function as an argument, and "
+           "adapting the custom_jvp rule to specify its derivative.")
+    raise Exception(msg)
+  jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
+  args_dot = map(ad.instantiate_zeros, args_dot)
+  outs = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *args, *args_dot)
   return split_list(outs, [len(outs) // 2])
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
-def _custom_jvp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, jvp_jaxpr_thunk):
+def _custom_jvp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, jvp_jaxpr_thunk,
+                                num_consts):
   size, = {x.shape[d] for x, d in zip(args, in_dims) if d is not not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
-  num_out = len(fun_jaxpr.out_avals)
+  num_out = len(fun_jaxpr.outvars)
 
   in_batched = [d is not not_mapped for d in in_dims]
-  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(fun_jaxpr, size, in_batched, False)
+  batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
+    core.TypedJaxpr(fun_jaxpr, ()), size, in_batched, False)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
   @_memoize
   def batched_jvp_jaxpr_thunk():
-    jvp_jaxpr = jvp_jaxpr_thunk()
-    _, all_batched = batching.batch_jaxpr(jvp_jaxpr, size, in_batched * 2, False)
+    jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
+    _, all_batched = batching.batch_jaxpr(core.TypedJaxpr(jvp_jaxpr, jvp_consts),
+                                          size, in_batched * 2, False)
     primals_batched, tangents_batched = split_list(all_batched, [num_out])
     out_batched = map(op.or_, primals_batched, tangents_batched)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
-    batched_jvp_jaxpr, _ = batching.batch_jaxpr(jvp_jaxpr, size, in_batched * 2,
-                                                out_batched * 2)
-    return batched_jvp_jaxpr
+    batched_jvp_jaxpr, _ = batching.batch_jaxpr(core.TypedJaxpr(jvp_jaxpr, jvp_consts),
+                                                size, in_batched * 2, out_batched * 2)
+    return batched_jvp_jaxpr.jaxpr, jvp_consts
 
   batched_outs = custom_jvp_call_jaxpr_p.bind(
-      *args, fun_jaxpr=batched_fun_jaxpr, jvp_jaxpr_thunk=batched_jvp_jaxpr_thunk)
+      *args, fun_jaxpr=batched_fun_jaxpr.jaxpr,
+      jvp_jaxpr_thunk=batched_jvp_jaxpr_thunk, num_consts=num_consts)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
 batching.primitive_batchers[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_vmap
@@ -353,9 +360,10 @@ xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_jaxpr can appear in jaxprs to be transposed. Since it's
 # already been linearized, we can drop the jvp rule.
-def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk):
-  del jvp_jaxpr_thunk
-  return ad.backward_pass(fun_jaxpr.jaxpr, fun_jaxpr.literals, args, cts)
+def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk,
+                                      num_consts):
+  del jvp_jaxpr_thunk, num_consts
+  return ad.backward_pass(fun_jaxpr, (), args, cts)
 ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 
@@ -461,7 +469,7 @@ class custom_vjp:
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)
-      bwd = _add_args(lu.wrap_init(self.bwd), static_args, left=True)
+      bwd = _add_args(lu.wrap_init(self.bwd), static_args)
     else:
       f_, dyn_args = lu.wrap_init(self.fun), args
       fwd, bwd = lu.wrap_init(self.fwd), lu.wrap_init(self.bwd)
@@ -615,14 +623,11 @@ def omnistaging_enabler() -> None:
   def bind(self, fun, jvp, *args):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
-    fun, env_trace_todo1 = core.process_env_traces(
-        fun, self, top_trace and top_trace.level, ())
-    jvp, env_trace_todo2 = core.process_env_traces(
-        jvp, self, top_trace and top_trace.level, ())
+    fun, env_trace_todo1 = core.process_env_traces(fun, self, top_trace.level, ())
+    jvp, env_trace_todo2 = core.process_env_traces(jvp, self, top_trace.level, ())
     tracers = map(top_trace.full_raise, args)  # type: ignore
-    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
+    with core.maybe_new_sublevel(top_trace):
+      outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    if env_trace_todo:
-      raise core.UnexpectedTracerError
-    return map(core.full_lower, outs)
+    return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
   CustomJVPCallPrimitive.bind = bind  # type: ignore
