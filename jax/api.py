@@ -1049,7 +1049,9 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callab
       in the output. All outputs with a mapped axis must have a non-None
       ``out_axes`` specification. Axis integers must be
       in the range ``[-ndim, ndim)`` for each output array, where ``ndim`` is
-      the number of dimensions of the output array.
+      the number of dimensions of the array returned by the :func:`vmap`-ed
+      function, which is one more than the number of dimensions of the
+      corresponding array returned by ``fun``.
 
   Returns:
     Batched/vectorized version of ``fun`` with arguments that correspond to
