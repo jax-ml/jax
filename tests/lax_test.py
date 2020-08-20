@@ -1359,6 +1359,35 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": (f"_shape={shape}_windowdimensions={window_dimensions}"
+                         f"_basedilation={base_dilation}_windowdilation="
+                         f"{window_dilation}"),
+       "shape": shape, "window_dimensions": window_dimensions,
+       "base_dilation": base_dilation, "window_dilation": window_dilation}
+      for shape, window_dimensions, base_dilation, window_dilation in (
+        itertools.chain(
+          itertools.product(
+            [(4, 6)],
+            [(1, 1), (3, 4)],
+            [(1, 1), (1, 2), (2, 13), (40, 60)],
+            [(1, 1), (1, 2), (2, 13), (40, 60)]),
+          itertools.product(
+            [(3, 2, 4, 6)],
+            [(1, 1, 1, 1), (2, 1, 2, 1)],
+            [(1, 1, 1, 1), (1, 2, 2, 1), (30, 40, 3, 2)],
+            [(1, 1, 1, 1), (1, 2, 2, 1), (30, 40, 3, 2)])))))
+  def testReduceWindowShapeDilation(self, shape, window_dimensions,
+                                    base_dilation, window_dilation):
+      operand, padding, strides = np.ones(shape), 'SAME', (1,) * len(shape)
+      result = lax.reduce_window(operand, 0., lax.add, padding=padding,
+                                 window_strides=strides,
+                                 window_dimensions=window_dimensions)
+      # With a stride of 1 in each direction and a padding of 'SAME', the
+      # shape of the input should be equal to the shape of the result according
+      # to https://www.tensorflow.org/xla/operation_semantics#reducewindow.
+      self.assertEqual(shape, result.shape)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
        "op": op, "np_op": np_op, "shape": shape, "dtype": dtype,
