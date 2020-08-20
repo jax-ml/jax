@@ -1143,7 +1143,9 @@ def reduce_window(operand: Array, init_value: Array, computation: Callable,
   operator.
   """
   if isinstance(padding, str):
-    padding = tuple(padtype_to_pads(operand.shape, window_dimensions,
+    dilated_window_dims = (window_dimensions if window_dilation is None else
+                           _dilate_shape(window_dimensions, window_dilation))
+    padding = tuple(padtype_to_pads(operand.shape, dilated_window_dims,
                                     window_strides, padding))
   else:
     padding = tuple(padding)
