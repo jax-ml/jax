@@ -938,9 +938,9 @@ def _specialized_reduce_window(reducer, identity, operand, window_dimensions,
   operand.
 
   Args:
-    reducer: reduction function of type T -> T -> T
-    identity: function that takes a dtype as a parameter and returns the starting
-      value of the reduction.
+    reducer: reduction function of type TfVal -> TfVal -> TfVal
+    identity: function that takes a TensorFlow dtype as a parameter and returns the
+      starting value of the reduction.
     operand: N dimensional array containing elements of type T
     window_dimensions: array of integers for window dimension values
     window_strides: array of integers for window stride values
