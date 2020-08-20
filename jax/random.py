@@ -1349,3 +1349,132 @@ def _t(key, df, shape, dtype):
   half_df = lax.div(df, two)
   g = gamma(key_n, half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)
+
+
+def rademacher(key, shape, dtype=dtypes.int_):
+  """Sample from a Rademacher distribution.
+
+  Args:
+    key: a PRNGKey key.
+    shape: The shape of the returned samples.
+    dtype: The type used for samples.
+
+  Returns:
+    A jnp.array of samples, of shape `shape`. Each element in the output has
+    a 50% change of being 1 or -1.
+
+  """
+  dtype = dtypes.canonicalize_dtype(dtype)
+  shape = abstract_arrays.canonicalize_shape(shape)
+  return _rademacher(key, shape, dtype)
+
+
+@partial(jit, static_argnums=(1, 2))
+def _rademacher(key, shape, dtype):
+  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape)
+  return (2 * bernoulli_samples - 1).astype(dtype)
+
+
+def maxwell(key, shape=(), dtype=dtypes.float_):
+  """Sample from a one sided Maxwell distribution.
+
+  The scipy counterpart is `scipy.stats.maxwell`.
+
+  Args:
+    key: a PRNGKey key.
+    shape: The shape of the returned samples.
+    dtype: The type used for samples.
+
+  Returns:
+    A jnp.array of samples, of shape `shape`.
+
+  """
+  # Generate samples using:
+  # sqrt(X^2 + Y^2 + Z^2), X,Y,Z ~N(0,1)
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `maxwell` must be a float "
+                     f"dtype, got {dtype}")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  shape = abstract_arrays.canonicalize_shape(shape)
+  return _maxwell(key, shape, dtype)
+
+
+@partial(jit, static_argnums=(1, 2))
+def _maxwell(key, shape, dtype):
+  shape = shape + (3,)
+  norm_rvs = normal(key=key, shape=shape, dtype=dtype)
+  return jnp.linalg.norm(norm_rvs, axis=-1)
+
+
+def double_sided_maxwell(key, loc, scale, shape=(), dtype=dtypes.float_):
+  """Sample from a double sided Maxwell distribution.
+
+  Samples using:
+     loc + scale* sgn(U-0.5)* one_sided_maxwell U~Unif;
+
+  Args:
+    key: a PRNGKey key.
+    loc: The location parameter of the distribution.
+    scale: The scale parameter of the distribution.
+    shape: The shape added to the parameters loc and scale broadcastable shape.
+    dtype: The type used for samples.
+
+  Returns:
+    A jnp.array of samples.
+
+  """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
+                     f" dtype, got {dtype}")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  shape = abstract_arrays.canonicalize_shape(shape)
+  return _double_sided_maxwell(key, loc, scale, shape, dtype)
+
+
+@partial(jit, static_argnums=(1, 2, 3, 4))
+def _double_sided_maxwell(key, loc, scale, shape, dtype):
+  params_shapes = lax.broadcast_shapes(np.shape(loc), np.shape(scale))
+  if not shape:
+    shape = params_shapes
+
+  shape = shape + params_shapes
+  maxwell_key, rademacher_key = split(key)
+  maxwell_rvs = maxwell(maxwell_key, shape=shape, dtype=dtype)
+  # Generate random signs for the symmetric variates.
+  random_sign = rademacher(rademacher_key, shape=shape, dtype=dtype)
+  assert random_sign.shape == maxwell_rvs.shape
+
+  return random_sign * maxwell_rvs * scale + loc
+
+
+def weibull_min(key, scale, concentration, shape=(), dtype=dtypes.float_):
+  """Sample from a Weibull distribution.
+
+  The scipy counterpart is `scipy.stats.weibull_min`.
+
+  Args:
+    key: a PRNGKey key.
+    scale: The scale parameter of the distribution.
+    concentration: The concentration parameter of the distribution.
+    shape: The shape added to the parameters loc and scale broadcastable shape.
+    dtype: The type used for samples.
+
+  Returns:
+    A jnp.array of samples.
+
+  """
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `weibull_min` must be a float "
+                     f"dtype, got {dtype}")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  shape = abstract_arrays.canonicalize_shape(shape)
+  return _weibull_min(key, scale, concentration, shape, dtype)
+
+
+@partial(jit, static_argnums=(1, 2, 3, 4))
+def _weibull_min(key, scale, concentration, shape, dtype):
+  random_uniform = uniform(
+      key=key, shape=shape, minval=0, maxval=1, dtype=dtype)
+
+  # Inverse weibull CDF.
+  return jnp.power(-jnp.log1p(-random_uniform), 1.0/concentration) * scale
