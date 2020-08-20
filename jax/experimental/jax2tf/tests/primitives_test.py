@@ -279,20 +279,39 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_reduce_window)
   def test_reduce_window(self, harness: primitive_harness.Harness):
-    computation = harness.params['computation'].__name__
-    init_value = harness.params['init_value']
+    f_name = harness.params['computation'].__name__
     dtype = harness.params['dtype']
 
-    safe_computations = [('sum', dtype(0))]
+    expect_tf_exceptions = False
 
-    if dtype in jtu.dtypes.all_floating:
-      # Only in this case, np.inf can be casted safely to a meaningful value.
-      safe_computations += [('max', dtype(-np.inf)), ('min', dtype(np.inf))]
+    if (jtu.device_under_test() == 'tpu' and dtype is np.complex64):
+      raise unittest.SkipTest(
+          'TODO: JAX reduce_window on TPU does not handle complex64'
+      )
 
-    if (computation, init_value) not in safe_computations:
-      raise unittest.SkipTest('TODO: only specific instances of max/min/sum are supported for now.')
+    if ((f_name == 'min' or f_name == 'max') and
+        dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
+                      np.int16, np.int32, np.int64]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/minimum for a list of
+      # the types supported by tf.math.minimum/tf.math.maximum.
+      expect_tf_exceptions = True
+    elif (f_name == 'add' and
+          dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
+                        np.int8, np.int16, np.int32, np.int64, np.complex64,
+                        np.complex128]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/add for a list of the
+      # types supported by tf.math.add.
+      expect_tf_exceptions = True
+    elif (f_name == 'mul' and
+          dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
+                        np.int8, np.uint16, np.int16, np.int32, np.int64,
+                        np.complex64, np.complex128]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/multiply for a list of
+      # the types supported by tf.math.multiply.
+      expect_tf_exceptions = True
 
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           expect_tf_exceptions=expect_tf_exceptions)
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
