@@ -261,7 +261,7 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
       num_partitions=1,
       device_assignment=device and (device.id,))
   options.parameter_is_tupled_arguments = tuple_args
-  compiled = _backend_compile(backend, built_c, options)
+  compiled = backend_compile(backend, built_c, options)
   if nreps == 1:
     return partial(_execute_compiled_primitive, prim, compiled, handle_result)
   else:
@@ -319,7 +319,7 @@ def primitive_subcomputation(prim, *avals, **params):
   axis_env = AxisEnv(1, (), (), None)
   return primitive_computation(prim, axis_env, None, False, *avals, **params)
 
-def _backend_compile(backend, built_c, options):
+def backend_compile(backend, built_c, options):
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
   return backend.compile(built_c, compile_options=options)
@@ -662,7 +662,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
       num_partitions=1,
       device_assignment=(device.id,) if device else None)
   options.parameter_is_tupled_arguments = tuple_args
-  compiled = _backend_compile(backend, built, options)
+  compiled = backend_compile(backend, built, options)
   if nreps == 1:
     return partial(_execute_compiled, compiled, result_handlers)
   else:
