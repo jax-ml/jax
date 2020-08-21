@@ -60,7 +60,9 @@ class CPPJitTest(jtu.JaxTestCase):
     # Right now, the CPP tests also test the Python code-path when jaxlib is
     # too old.
     # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
-    if version < (0, 1, 53):
+    # This is in the future, because we are making a breaking change to
+    # Tensorflow.
+    if version < (0, 1, 54):
       return jax.api._python_jit
     else:
       return jax.api._cpp_jit
