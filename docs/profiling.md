@@ -37,11 +37,13 @@ from a running program.
 
    ```python
    import jax.profiler
-   jax.profiler.start_server(9999)
+   server = jax.profiler.start_server(9999)
    ```
 
     This starts the profiler server that TensorBoard connects to. The profiler
-    server must be running before you move on to the next step.
+    server must be running before you move on to the next step. It will remain
+    alive and listening until the object returned by `start_server()` is 
+    destroyed.
 
     If you'd like to profile a snippet of a long-running program (e.g. a long
     training loop), you can put this at the beginning of the program and start
