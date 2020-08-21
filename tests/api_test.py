@@ -1159,7 +1159,6 @@ class APITest(jtu.JaxTestCase):
     f = lambda: jax.lax.psum(1, "i")
     api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
 
-
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
