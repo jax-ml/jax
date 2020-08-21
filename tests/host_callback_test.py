@@ -16,7 +16,6 @@ import functools
 import logging
 import os
 import re
-import textwrap
 import threading
 import time
 from typing import Callable, Sequence
@@ -100,7 +99,7 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
     else:
       return "..."
   what = re.sub(r"tap_func_=(.*)", repl_func, what)
-  tst.assertMultiLineStrippedEqual(textwrap.dedent(expected), what)
+  tst.assertMultiLineStrippedEqual(expected, what)
 
 
 class HostCallbackTest(jtu.JaxTestCase):
