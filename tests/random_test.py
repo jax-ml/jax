@@ -848,6 +848,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertAllClose(
           counts[1]/ num_samples, 0.5, rtol=1e-02, atol=1e-02)
 
+  def testChoiceShapeIsNotSequenceError(self):
+    key = random.PRNGKey(0)
+    with self.assertRaises(TypeError):
+      random.choice(key, 5, 2, replace=False)
+    with self.assertRaises(TypeError):
+      random.choice(key, 5, 2, replace=True)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

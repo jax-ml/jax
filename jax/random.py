@@ -556,6 +556,9 @@ def choice(key, a, shape=(), replace=True, p=None):
   Returns:
     An array of shape `shape` containing samples from `a`.
   """
+  if not isinstance(shape, Sequence):
+    raise TypeError("shape argument of jax.random.choice must be a sequence, "
+                    f"got {shape}")
   a = jnp.asarray(a)
   if a.ndim not in [0, 1]:
     raise ValueError("a must be an integer or 1-dimensional")
