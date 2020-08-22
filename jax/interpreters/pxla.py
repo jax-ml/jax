@@ -1399,7 +1399,7 @@ def omnistaging_enable() -> None:
 
   soft_pmap_rules[axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
 
-  axis_index_p.bind = partial(core.Primitive.bind, axis_index_p)
+  axis_index_p.bind = partial(core.Primitive.bind, axis_index_p)  # type: ignore
   axis_index_p.def_abstract_eval(lambda *, axis_name: ShapedArray((), np.int32))
   del xla.translations[axis_index_p]
 
