@@ -1436,7 +1436,7 @@ axis_frame = None
 def omnistaging_enabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
       new_master, reset_trace_state, extend_axis_env, axis_frame, \
-      axis_index, axis_index_p, new_base_master, eval_context, \
+      axis_index, new_base_master, eval_context, \
       TraceStack, TraceState
   del initial_style_staging
 
@@ -1629,5 +1629,5 @@ def omnistaging_enabler() -> None:
     """
     return axis_index_p.bind(axis_name=axis_name)
 
-  axis_index_p = Primitive('axis_index')
-  axis_index_p.def_abstract_eval(lambda *, axis_name: ShapedArray((), np.int32))
+
+axis_index_p = Primitive('axis_index')

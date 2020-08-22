@@ -45,7 +45,7 @@ from .. import linear_util as lu
 from .. import lazy
 from .. import source_info_util
 from ..abstract_arrays import ConcreteArray, ShapedArray, array_types
-from ..core import Var, Literal
+from ..core import Var, Literal, axis_index_p
 from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
                     extend_name_stack, wrap_name)
 from ..lib import xla_bridge as xb
@@ -483,7 +483,6 @@ def _axis_index_translation_rule(c, nreps, sizes, axis_name):
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
-axis_index_p = core.Primitive('axis_index')
 axis_index_p.def_custom_bind(_axis_index_bind)
 axis_index_p.def_abstract_eval(
     lambda *args, **params: ShapedArray((), np.int32))
@@ -1363,13 +1362,13 @@ def omnistaging_enable() -> None:
   global DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
       axis_index, _axis_index_bind, _axis_index_translation_rule, \
-      axis_index_p, apply_parallel_primitive, parallel_pure_rules, \
+      apply_parallel_primitive, parallel_pure_rules, \
       _pvals_to_results_handler, _pval_to_result_handler, replicate, \
       avals_to_results_handler, axis_index
   del DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
       axis_index, _axis_index_bind, _axis_index_translation_rule, \
-      axis_index_p, apply_parallel_primitive, parallel_pure_rules, \
+      apply_parallel_primitive, parallel_pure_rules, \
       _pvals_to_results_handler, _pval_to_result_handler, replicate
 
   def avals_to_results_handler(size, nrep, npart, out_parts, out_avals):
@@ -1398,6 +1397,10 @@ def omnistaging_enable() -> None:
       return [h(bufs) for h, bufs in zip(handlers, buffers)]
     return handler
 
-  soft_pmap_rules[core.axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
+  soft_pmap_rules[axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
 
-  from ..core import axis_index, axis_index_p  # type: ignore # noqa: F401
+  axis_index_p.bind = partial(core.Primitive.bind, axis_index_p)
+  axis_index_p.def_abstract_eval(lambda *, axis_name: ShapedArray((), np.int32))
+  del xla.translations[axis_index_p]
+
+  from ..core import axis_index  # type: ignore # noqa: F401
