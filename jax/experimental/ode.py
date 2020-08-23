@@ -276,6 +276,8 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
     y_bar, t0_bar, args_bar = carry
     # Compute effect of moving measurement time
     t_bar = jnp.dot(func(ys[i], ts[i], *args), g[i])
+    # `t_bar` should not be complex as it represents time
+    t_bar = lax.convert_element_type(t_bar, t0_bar.dtype)
     t0_bar = t0_bar - t_bar
     # Run augmented system backwards to previous observation
     _, y_bar, t0_bar, args_bar = odeint(
