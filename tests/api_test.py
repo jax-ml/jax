@@ -94,6 +94,10 @@ class CPPJitTest(jtu.JaxTestCase):
   ])
   def test_jit_static_args(self, one, two, three, four, five):
     side = []
+    # For the CPP jit, we need to clear the cache to prevent cache hits between
+    # parameterized tests.
+    if hasattr(self.jit, "cache_clear"):
+      self.jit.cache_clear()
 
     def f(x, y, z, flag=False, flag2=False):
       del flag2  # unused
@@ -136,6 +140,10 @@ class CPPJitTest(jtu.JaxTestCase):
   ])
   def test_jit_kwargs(self, one, two, three):
     side = []
+    # For the CPP jit, we need to clear the cache to prevent cache hits between
+    # parameterized tests.
+    if hasattr(self.jit, "cache_clear"):
+      self.jit.cache_clear()
 
     def f(x, y, z):
       print(x, y, z)
@@ -256,6 +264,85 @@ class CPPJitTest(jtu.JaxTestCase):
     # Gives: RuntimeError: Invalid argument: CopyToHostAsync() called on invalid buffer.
     print(x_copy)  # doesn't crash
 
+  def test_jit_global_cache(self):
+    def f(x):
+      assert python_should_be_executing
+      return x
+
+    python_should_be_executing = True
+    self.jit(f)(2)
+    python_should_be_executing = False
+    self.jit(f)(3)
+
+  def test_jit_shallow_copy(self):
+    def f(x):
+      return copy.copy(x)
+    self.jit(f)(1)
+
+  def test_jit_deep_copy(self):
+    def f(x):
+      return copy.deepcopy(x)
+    self.jit(f)(1)
+
+  def test_disable_jit(self):
+    effects = []
+
+    @self.jit
+    def f(x):
+      effects.append(1)
+      return x
+
+    with api.disable_jit():
+      f(2)
+      f(2)
+    assert len(effects) == 2
+
+    f(2)
+    f(2)
+    assert len(effects) == 3
+
+  def test_static_argnum_on_method(self):
+
+    class A:
+
+      @functools.partial(self.jit, static_argnums=(0,))
+      def my_func_jit(self, x):
+        return x+2
+
+    A().my_func_jit(3)
+
+  def test_static_argnum_on_static_method_is_not_supported(self):
+    with self.assertRaisesRegex(TypeError, "Expected a callable value"):
+
+      class A:
+
+        @functools.partial(self.jit, static_argnums=(0,))
+        @classmethod
+        def my_classmethod_jit(cls, x):
+          return x+2
+
+  def test_classmethod_is_not_supported(self):
+    with self.assertRaisesRegex(TypeError, "Expected a callable value"):
+
+      class A:
+
+        @functools.partial(self.jit)
+        @staticmethod
+        def my_staticmethod_jit(x):
+          return x + 2
+
+  def test_concurrent_jit(self):
+    @self.jit
+    def f(x):
+      return x + x - 3.
+
+    xs = [np.random.randn(i) for i in range(10)]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [executor.submit(partial(f, x)) for x in xs]
+      ys = [f.result() for f in futures]
+    for x, y in zip(xs, ys):
+      self.assertAllClose(x * 2 - 3., y)
+
 
 class PythonJitTest(CPPJitTest):
 
@@ -263,23 +350,62 @@ class PythonJitTest(CPPJitTest):
   def jit(self):
     return jax.api._python_jit
 
-  def test_static_argnum_on_method(self):
+  def test_jit_reference_dropping(self):
+    x = jnp.ones(10)
+    f = (lambda x: lambda: x)(x)  # reference to x in f's closure
+    g = self.jit(f)
+    x = weakref.ref(x)      # no more strong ref to x in this scope
+    assert x() is not None  # x is still around
+    f()                     # f runs
+    g()                     # g runs
+    g()                     # g runs a second time
+    del f                   # delete the raw callable
+    assert x() is not None  # x is still around
+    g()                     # g still runs
+    del g                   # no more references to x
+    assert x() is None      # x is gone
 
-    class A:
+  def test_trivial_computations(self):
+    x = jnp.array([1, 2, 3])
+    y = self.jit(lambda x: x)(x)
+    self.assertIs(x, y)
 
-      @functools.partial(jax.api._python_jit, static_argnums=(0,))
-      def my_func_python_jit(self, x):
-        return x+2
+    z1, z2 = self.jit(lambda x: (x, x))(x)
+    self.assertIs(z1, z2)
 
-      @functools.partial(jax.api._python_jit, static_argnums=(0,))
-      def my_func_jit(self, x):
-        return x+2
+    x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
+    z1, z2, z3 = self.jit(lambda x, y: (y, 1, x))(x1, x2)
+    self.assertIs(z1, x2)
+    self.assertIs(z3, x1)
+    self.assertEqual(z2, 1)
 
-    A().my_func_python_jit(3)
-    A().my_func_jit(3)
+  def test_jit_bad_input(self):
+    def f(x):
+      return x
+
+    self.assertRaisesRegex(
+        TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
+        lambda: jit(f)("foo"))
+
+  def test_jit_on_all_devices(self):
+    # Verifies we can run the same computation on every device present, even
+    # if they are, for example, different models of GPU.
+    data = np.random.rand(1000).astype(np.float32)
+    f = self.jit(jnp.negative)
+    for device in jax.local_devices():
+      x = device_put(data, device=device)
+      np.testing.assert_array_equal(-data, f(x))
 
 
 class APITest(jtu.JaxTestCase):
+
+  def test_grad_bad_input(self):
+    def f(x):
+      return x
+
+    self.assertRaisesRegex(
+        TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
+        lambda: grad(f)("foo"))
 
   def test_grad_argnums(self):
     def f(x, y, z, flag=False):
@@ -499,15 +625,6 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.device_buffer.device(), cpu_device)
 
-  def test_jit_on_all_devices(self):
-    # Verifies we can run the same computation on every device present, even
-    # if they are, for example, different models of GPU.
-    data = np.random.rand(1000).astype(np.float32)
-    f = api.jit(jnp.negative)
-    for device in jax.local_devices():
-      x = device_put(data, device=device)
-      np.testing.assert_array_equal(-data, f(x))
-
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
     R = np.random.RandomState(0).randn
@@ -617,22 +734,6 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(fwd(rev(f, 0), 1)(x, u).shape, (5, 2))
     self.assertEqual(fwd(fwd(f, 0), 1)(x, u).shape, (5, 2))
 
-  def test_disable_jit(self):
-    effects = []
-
-    @api.jit
-    def f(x):
-      effects.append(1)
-      return x
-
-    with api.disable_jit():
-      f(2)
-      f(2)
-    assert len(effects) == 2
-
-    f(2)
-    f(2)
-    assert len(effects) == 3
 
   def test_large_device_constant(self):
     ans = jit(lambda x: 2 * x)(jnp.ones(int(2e6)))  # doesn't crash
@@ -1175,18 +1276,6 @@ class APITest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x, y)
 
-  def test_concurrent_jit(self):
-    @jit
-    def f(x):
-      return x + x - 3.
-
-    xs = [np.random.randn(i) for i in range(10)]
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-      futures = [executor.submit(partial(f, x)) for x in xs]
-      ys = [f.result() for f in futures]
-    for x, y in zip(xs, ys):
-      self.assertAllClose(x * 2 - 3., y)
-
   def test_dtype_warning(self):
     # cf. issue #1230
     if FLAGS.jax_enable_x64:
@@ -1386,40 +1475,6 @@ class APITest(jtu.JaxTestCase):
         foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
-  def test_jit_reference_dropping(self):
-    x = jnp.ones(10)
-    f = (lambda x: lambda: x)(x)  # reference to x in f's closure
-    g = jit(f)
-    x = weakref.ref(x)      # no more strong ref to x in this scope
-    assert x() is not None  # x is still around
-    f()                     # f runs
-    g()                     # g runs
-    g()                     # g runs a second time
-    del f                   # delete the raw callable
-    assert x() is not None  # x is still around
-    g()                     # g still runs
-    del g                   # no more references to x
-    assert x() is None      # x is gone
-
-  def test_jit_global_cache(self):
-    def f(x):
-      assert python_should_be_executing
-      return x
-
-    python_should_be_executing = True
-    api.jit(f)(2)
-    python_should_be_executing = False
-    api.jit(f)(3)
-
-  def test_jit_shallow_copy(self):
-    def f(x):
-      return copy.copy(x)
-    api.jit(f)(1)
-
-  def test_jit_deep_copy(self):
-    def f(x):
-      return copy.deepcopy(x)
-    api.jit(f)(1)
 
   def test_pmap_global_cache(self):
     def f(x):
