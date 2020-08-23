@@ -19,7 +19,7 @@ import numpy as np
 import jax.numpy as jnp
 from jax import scipy as jsp
 from jax import lax, device_put, jit
-from jax.tree_util import tree_leaves, tree_map, tree_multimap, tree_structure
+from jax.tree_util import tree_leaves, tree_map, tree_multimap, tree_structure, tree_reduce
 from jax.util import safe_map as map
 
 
@@ -183,8 +183,17 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
+def _project_on_columns(A, v):
+  v_proj = tree_multimap(
+    lambda X, y: jnp.tensordot(X.T.conj(), y, axes=X.ndim - 1),
+    A,
+    v,
+  )
+  return tree_reduce(operator.add, v_proj)
+
+
 def _normalize(x, return_norm=False):
-  norm = jnp.sqrt(_vdot_tree(x, x, assume_real=False))
+  norm = jnp.sqrt(_vdot_tree(x, x))
   normalized_x = tree_map(lambda v: v / norm, x)
   if return_norm:
     return normalized_x, norm
@@ -196,11 +205,15 @@ def _iterative_classical_gram_schmidt(Q, x, iterations=2):
   """Orthogonalize x against the columns of Q."""
   # "twice is enough"
   # http://slepc.upv.es/documentation/reports/str1.pdf
+
+  # This assumes that Q's leaves all have the same dimension in the last
+  # axis.
+  r = jnp.zeros((tree_leaves(Q)[0].shape[-1]))
   q = x
-  r = tree_map(lambda X: jnp.zeros(X.shape[1]), Q)
+
   for _ in range(iterations):
-    h = _dot_tree(tree_map(lambda X: X.T.conj(), Q), q)
-    q = _sub(q, _dot_tree(Q, h))
+    h = _project_on_columns(Q, q)
+    q = _sub(q, tree_map(lambda X: jnp.dot(X, h), Q))
     r = _add(r, h)
   return q, r
 
@@ -210,15 +223,19 @@ def arnoldi_iteration(A, b, n, M=None):
   if M is None:
     M = _identity
   q = _normalize(b)
-  Q = tree_map(lambda x: jnp.pad(x[:, None], ((0, 0), (0, n))), q)
-  H = jnp.zeros((n, n + 1), tree_leaves(b)[0].dtype)
+  Q = tree_map(
+    lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, n),)),
+    q,
+  )
+  H = jnp.zeros((n, n + 1), jnp.result_type(*tree_leaves(b)))
+
   def step(carry, k):
     Q, H = carry
-    q = tree_map(lambda x: x[:, k], Q)
+    q = tree_map(lambda x: x[..., k], Q)
     v = A(M(q))
     v, h = _iterative_classical_gram_schmidt(Q, v, iterations=1)
     v, v_norm = _normalize(v, return_norm=True)
-    Q = tree_multimap(lambda X, y: X.at[:, k + 1].set(y), Q, v)
+    Q = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), Q, v)
     h = h.at[k + 1].set(v_norm)
     H = H.at[k, :].set(h)
     return (Q, H), None
@@ -244,7 +261,7 @@ def _gmres(A, b, x0, n, M, residual=None):
   e1 = jnp.concatenate([jnp.ones((1,), dtype), jnp.zeros((n,), dtype)])
   y = _lstsq(H.T, beta * e1)
 
-  dx = M(tree_map(lambda X: _dot(X[:, :-1], y), Q))
+  dx = M(tree_map(lambda X: jnp.dot(X[..., :-1], y), Q))
   x = _add(x0, dx)
   return x
 
@@ -283,7 +300,6 @@ def _gmres_solve(A, b, x0, *, tol, atol, restart, maxiter, M):
     )
   else:
     x_final = x
-
   return x_final
 
 
@@ -294,9 +310,11 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   if M is None:
     M = _identity
 
+  size = sum(bi.size for bi in tree_leaves(b))
   if maxiter is None:
-    size = sum(bi.size for bi in tree_leaves(b))
     maxiter = 10 * size  # copied from scipy
+  if restart > size:
+    restart = size
 
   if tree_structure(x0) != tree_structure(b):
     raise ValueError(
