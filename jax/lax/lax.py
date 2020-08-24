@@ -868,8 +868,9 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -902,8 +903,9 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -936,8 +938,9 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -970,8 +973,9 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -1010,8 +1014,9 @@ def scatter(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
