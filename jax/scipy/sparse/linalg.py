@@ -185,16 +185,22 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
 def _project_on_columns(A, v):
   v_proj = tree_multimap(
-    lambda X, y: jnp.tensordot(X.T.conj(), y, axes=X.ndim - 1),
+    lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
     A,
     v,
   )
   return tree_reduce(operator.add, v_proj)
 
 
-def _normalize(x, return_norm=False):
-  norm = jnp.sqrt(_vdot_tree(x, x))
-  normalized_x = tree_map(lambda v: v / norm, x)
+def _safe_normalize(x, return_norm=False):
+  norm = jnp.sqrt(_vdot_tree(x, x, assume_real=False))
+
+  normalized_x, norm = lax.cond(
+    norm > 1e-12,
+    lambda y: (tree_map(lambda v: v / norm, y), norm),
+    lambda y: (y, 0.),
+    x,
+  )
   if return_norm:
     return normalized_x, norm
   else:
@@ -222,7 +228,7 @@ def arnoldi_iteration(A, b, n, M=None):
   # https://en.wikipedia.org/wiki/Arnoldi_iteration#The_Arnoldi_iteration
   if M is None:
     M = _identity
-  q = _normalize(b)
+  q = _safe_normalize(b)
   Q = tree_map(
     lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, n),)),
     q,
@@ -234,7 +240,7 @@ def arnoldi_iteration(A, b, n, M=None):
     q = tree_map(lambda x: x[..., k], Q)
     v = A(M(q))
     v, h = _iterative_classical_gram_schmidt(Q, v, iterations=1)
-    v, v_norm = _normalize(v, return_norm=True)
+    v, v_norm = _safe_normalize(v, return_norm=True)
     Q = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), Q, v)
     h = h.at[k + 1].set(v_norm)
     H = H.at[k, :].set(h)
@@ -246,8 +252,7 @@ def arnoldi_iteration(A, b, n, M=None):
 
 @jit
 def _lstsq(a, b):
-  # slightly faster than jnp.linalg.lstsq
-  return jsp.linalg.solve(_dot(a.T, a), _dot(a.T, b), sym_pos=True)
+  return jnp.linalg.lstsq(a, b)[0]
 
 
 def _gmres(A, b, x0, n, M, residual=None):
@@ -274,7 +279,7 @@ def _gmres_solve(A, b, x0, *, tol, atol, restart, maxiter, M):
   def cond_fun(value):
     x, residual, k = value
     sqr_error = _vdot_tree(residual, residual, assume_real=False)
-    return (sqr_error > atol2) & (k < num_restarts)
+    return (sqr_error > atol2) & (k < num_restarts) & ~jnp.isnan(sqr_error)
 
   def body_fun(value):
     x, residual, k = value
