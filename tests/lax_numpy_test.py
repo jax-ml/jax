@@ -3836,22 +3836,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.named_parameters(
       jtu.cases_from_list(
         {"testcase_name": ("_start_shape={}_stop_shape={}_num={}_endpoint={}"
-                           "_dtype={}").format(
-            start_shape, stop_shape, num, endpoint, dtype),
+                           "_dtype={}_axis={}").format(
+            start_shape, stop_shape, num, endpoint,
+            dtype.__name__ if dtype else "None", axis),
          "start_shape": start_shape,
          "stop_shape": stop_shape,
          "num": num, "endpoint": endpoint,
-         "dtype": dtype, "rng_factory": rng_factory}
+         "dtype": dtype, "axis": axis}
         for start_shape in [(), (2,), (2, 2)]
         for stop_shape in [(), (2,), (2, 2)]
         for num in [0, 1, 2, 5, 20]
         for endpoint in [True, False]
         # NB: numpy's geomspace gives nonsense results on integer types
         for dtype in inexact_dtypes + [None,]
-        for rng_factory in [jtu.rand_default]))
+        for axis in range(-max(len(start_shape), len(stop_shape)),
+                          max(len(start_shape), len(stop_shape)))))
   def testGeomspace(self, start_shape, stop_shape, num,
-                    endpoint, dtype, rng_factory):
-    rng = rng_factory(self.rng())
+                    endpoint, dtype, axis):
+    rng = jtu.rand_default(self.rng())
     # relax default tolerances slightly
     tol = {np.float16: 4e-3, np.float32: 2e-3, np.float64: 1e-14,
            np.complex128: 1e-14}
@@ -3870,23 +3872,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       start = start * jnp.sign(start) * jnp.sign(stop)
       return start, stop
     start, stop = args_maker()
-    ndim = len(np.shape(start + stop))
-    for axis in range(-ndim, ndim):
-      def jnp_op(start, stop):
-        return jnp.geomspace(start, stop, num, endpoint=endpoint, dtype=dtype,
-                             axis=axis)
-      def np_op(start, stop):
-        start = start.astype(np.float32) if dtype == jnp.bfloat16 else start
-        stop = stop.astype(np.float32) if dtype == jnp.bfloat16 else stop
-        return np.geomspace(
-          start, stop, num, endpoint=endpoint,
-          dtype=dtype if dtype != jnp.bfloat16 else np.float32,
-          axis=axis).astype(dtype)
-      self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
-                              check_dtypes=False, tol=tol)
-      if dtype in (inexact_dtypes + [None,]):
-        self._CompileAndCheck(jnp_op, args_maker,
-                              check_dtypes=False, atol=tol, rtol=tol)
+    def jnp_op(start, stop):
+      return jnp.geomspace(start, stop, num, endpoint=endpoint, dtype=dtype,
+                           axis=axis)
+    def np_op(start, stop):
+      start = start.astype(np.float32) if dtype == jnp.bfloat16 else start
+      stop = stop.astype(np.float32) if dtype == jnp.bfloat16 else stop
+      return np.geomspace(
+        start, stop, num, endpoint=endpoint,
+        dtype=dtype if dtype != jnp.bfloat16 else np.float32,
+        axis=axis).astype(dtype)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
+                            check_dtypes=False, tol=tol)
+    if dtype in (inexact_dtypes + [None,]):
+      self._CompileAndCheck(jnp_op, args_maker,
+                            check_dtypes=False, atol=tol, rtol=tol)
 
   def testDisableNumpyRankPromotionBroadcasting(self):
     try:
