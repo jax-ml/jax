@@ -22,7 +22,8 @@ from ..core import Trace, Tracer
 from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
-from ..util import unzip2, partial, safe_map, wrap_name, split_list
+from ..util import (unzip2, partial, safe_map, wrap_name, split_list,
+                    canonicalize_axis)
 from . import xla
 from . import partial_eval as pe
 
@@ -55,6 +56,9 @@ def batch_fun(fun : lu.WrappedFun, in_dims, out_dim_dests, axis_name,
 def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
                *in_vals, **params):
   in_dims = in_dims() if callable(in_dims) else in_dims
+  in_dims = [
+    canonicalize_axis(dim, np.ndim(val)) if isinstance(dim, int) else dim
+    for val, dim in zip(in_vals, in_dims)]
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   with core.new_master(BatchTrace) as master:
     with core.extend_axis_env(axis_name, size, master):
@@ -334,7 +338,9 @@ def moveaxis(x, src, dst):
     return core.unit
   if src == dst:
     return x
-  src, dst = src % x.ndim, dst % x.ndim
+  src = canonicalize_axis(src, x.ndim)
+  # TODO(phawkins): replace the `min(...)` clause with `dst` after fixing users.
+  dst = canonicalize_axis(min(dst, x.ndim - 1), x.ndim)
   perm = [i for i in range(np.ndim(x)) if i != src]
   perm.insert(dst, src)
   return x.transpose(perm)
@@ -349,7 +355,8 @@ def matchaxis(sz, src, dst, x, sum_match=False):
   elif type(src) == int and dst is last:
     return moveaxis(x, src, -1)
   elif src is not_mapped and dst is not not_mapped:
-    return broadcast(x, sz, dst)
+    return broadcast(
+      x, sz, canonicalize_axis(dst, np.ndim(x) + 1) if dst is not last else dst)
   elif dst is None and sum_match:
     return x.sum(src)
   else:

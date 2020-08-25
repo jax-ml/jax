@@ -29,7 +29,7 @@ from .lax_numpy import _not_implemented
 from ._util import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as jnp
-from ..util import get_module_functions
+from ..util import get_module_functions, canonicalize_axis
 from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve # noqa: F401
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
@@ -351,9 +351,9 @@ def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
       return jnp.sqrt(jnp.sum(jnp.real(x * jnp.conj(x)), keepdims=keepdims))
     axis = tuple(range(ndim))
   elif isinstance(axis, tuple):
-    axis = tuple(jnp._canonicalize_axis(x, ndim) for x in axis)
+    axis = tuple(canonicalize_axis(x, ndim) for x in axis)
   else:
-    axis = (jnp._canonicalize_axis(axis, ndim),)
+    axis = (canonicalize_axis(axis, ndim),)
 
   num_axes = len(axis)
   if num_axes == 1:

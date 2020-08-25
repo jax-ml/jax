@@ -296,7 +296,7 @@ from .lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
                   _const, _eq_meet, _broadcasting_select,
                   _check_user_dtype_supported, _one, _zero, _const,
                   _upcast_fp16_for_computation, _broadcasting_shape_rule,
-                  _eye, _tri, _delta, _ones, _zeros, _canonicalize_axis)
+                  _eye, _tri, _delta, _ones, _zeros)
 from .lax_control_flow import (
   cond,
   cond_p,

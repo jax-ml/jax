@@ -1018,5 +1018,38 @@ class BatchingTest(jtu.JaxTestCase):
         vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs)[0], axis_name='i')(x),
         x - x[perm])
 
+
+  def testNegativeAxes(self):
+    x = np.arange(3*4*5).reshape(3, 4, 5)
+    self.assertAllClose(jax.vmap(jnp.sum, in_axes=-3)(x),
+                        jnp.sum(x, axis=(1, 2)))
+    self.assertAllClose(jax.vmap(jnp.sum, in_axes=-2)(x),
+                        jnp.sum(x, axis=(0, 2)))
+    self.assertAllClose(jax.vmap(jnp.sum, in_axes=-1)(x),
+                        jnp.sum(x, axis=(0, 1)))
+
+    with self.assertRaisesRegex(ValueError, "vmap got arg 0 of rank 3 but axis to be mapped -4"):
+      jax.vmap(jnp.sum, in_axes=-4)(x)
+
+    id = lambda y: y
+    self.assertAllClose(x, jax.vmap(id, in_axes=0, out_axes=-3)(x))
+    self.assertAllClose(x.transpose(1, 0, 2),
+                        jax.vmap(id, in_axes=0, out_axes=-2)(x))
+    self.assertAllClose(x.transpose(1, 2, 0),
+                        jax.vmap(id, in_axes=0, out_axes=-1)(x))
+
+    with self.assertRaisesRegex(ValueError, "axis -4 is out of bounds.*"):
+      jax.vmap(id, in_axes=0, out_axes=-4)(x)
+
+    self.assertAllClose(
+      np.full((5,), 7),
+      jax.vmap(lambda *xs: xs, in_axes=(0, None), out_axes=(0, -1))(
+        np.arange(5), 7)[1])
+
+    with self.assertRaisesRegex(ValueError, "axis -2 is out of bounds.*"):
+      jax.vmap(lambda *xs: xs, in_axes=(0, None), out_axes=(0, -2))(
+        np.arange(5), 7)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

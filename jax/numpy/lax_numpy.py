@@ -50,7 +50,7 @@ from .. import lax
 from ..lax.lax import _device_put_raw
 from .. import ops
 from ..util import (partial, unzip2, prod as _prod,
-                    subvals, safe_zip)
+                    subvals, safe_zip, canonicalize_axis as _canonicalize_axis)
 from ..tree_util import tree_leaves, tree_flatten
 
 FLAGS = flags.FLAGS
@@ -203,8 +203,6 @@ load = np.load
 
 
 ### utility functions
-
-_canonicalize_axis = lax._canonicalize_axis
 
 _DEFAULT_TYPEMAP = {
   np.bool_: bool_,

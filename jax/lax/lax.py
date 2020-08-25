@@ -39,7 +39,7 @@ from ..interpreters import ad
 from ..interpreters import invertible_ad as iad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..util import cache, safe_zip, partial, prod, safe_map
+from ..util import cache, safe_zip, partial, prod, safe_map, canonicalize_axis
 from ..tree_util import tree_map
 from ..lib import pytree
 from ..lib import xla_bridge
@@ -1347,20 +1347,20 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
       raise TypeError("Sort requires at least one operand")
     if not (1 <= num_keys <= len(operand)):
       raise ValueError(f"num_keys={num_keys} must be between 1 and len(operand)={len(operand)}")
-    dimension = _canonicalize_axis(dimension, len(operand[0].shape))
+    dimension = canonicalize_axis(dimension, len(operand[0].shape))
     return tuple(sort_p.bind(*operand, dimension=dimension,
                              is_stable=is_stable,
                              num_keys=num_keys))
   else:
     if num_keys != 1:
       raise ValueError(f"num_keys={num_keys} must equal 1 for a single operand.")
-    dimension = _canonicalize_axis(dimension, len(operand.shape))
+    dimension = canonicalize_axis(dimension, len(operand.shape))
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, num_keys=1)[0]
 
 def sort_key_val(keys: Array, values: Array, dimension: int = -1,
                  is_stable: bool = True) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
-  dimension = _canonicalize_axis(dimension, len(keys.shape))
+  dimension = canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
@@ -3276,7 +3276,7 @@ masking.masking_rules[pad_p] = _pad_masking_rule
 def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Squeeze any number of size 1 dimensions from an array."""
   ndim = np.ndim(array)
-  dimensions = tuple(sorted(_canonicalize_axis(i, ndim) for i in dimensions))
+  dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
   if not dimensions:
     return array
   return squeeze_p.bind(array, dimensions=dimensions)
@@ -3323,7 +3323,7 @@ batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Insert any number of size 1 dimensions into an array."""
   ndim_out = np.ndim(array) + len(dimensions)
-  dims_set = frozenset(_canonicalize_axis(i, ndim_out) for i in dimensions)
+  dims_set = frozenset(canonicalize_axis(i, ndim_out) for i in dimensions)
   result_shape = list(np.shape(array))
   for i in sorted(dims_set):
     result_shape.insert(i, 1)
@@ -5960,18 +5960,6 @@ def _check_user_dtype_supported(dtype, fun_name=None):
     fun_name = "requested in {}".format(fun_name) if fun_name else ""
     truncated_dtype = dtypes.canonicalize_dtype(dtype).name
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype))
-
-
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
-  axis = operator.index(axis)
-  if not -num_dims <= axis < num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  if axis < 0:
-    axis = axis + num_dims
-  return axis
 
 
 @config.omnistaging_enablers.append
