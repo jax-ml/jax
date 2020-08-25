@@ -1616,7 +1616,7 @@ class APITest(jtu.JaxTestCase):
       g(jnp.ones((1, 1)), b=1)
 
   def test_vmap_unmapped_last(self):
-    @partial(jax.vmap, out_axes=jax.interpreters.batching.last)
+    @partial(jax.vmap, out_axes=-1)
     def f(x):
       return np.zeros((2,))
     f(np.zeros((5,)))
