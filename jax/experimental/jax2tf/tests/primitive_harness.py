@@ -332,10 +332,12 @@ lax_scatter = tuple(
     dimension_numbers=dimension_numbers,
     indices_are_sorted=indices_are_sorted,
     unique_indices=unique_indices)
-  for f_lax in [lax.scatter, lax.scatter_min, lax.scatter_max, lax.scatter_mul,
+  # We explicitly decide against testing lax.scatter, as its reduction function
+  # is lambda x, y: y, which is not commutative and thus makes results
+  # non-deterministic when an index into the operand is updated several times.
+  for f_lax in [lax.scatter_min, lax.scatter_max, lax.scatter_mul,
                 lax.scatter_add]
-  for dtype in { lax.scatter: jtu.dtypes.all
-               , lax.scatter_min: jtu.dtypes.all
+  for dtype in { lax.scatter_min: jtu.dtypes.all
                , lax.scatter_max: jtu.dtypes.all
                  # lax.scatter_mul and lax.scatter_add are not compatible with
                  # np.bool_ operands.
@@ -354,7 +356,13 @@ lax_scatter = tuple(
         scatter_dims_to_operand_dims=(0,))),
   ]
   for indices_are_sorted in [False, True]
-  for unique_indices in [False] # TODO: add True case when testing for performance
+  # `unique_indices` does not affect correctness, only performance, and thus
+  # does not need to be tested here. If/when it will make sense to add a test
+  # with `unique_indices` = True, particular care will have to be taken with
+  # regards to the choice of parameters, as the results are only predictable
+  # when all the indices to be updated are pairwise non-overlapping. Identifying
+  # such cases is non-trivial.
+  for unique_indices in [False]
 )
 
 lax_pad = tuple(
