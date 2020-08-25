@@ -559,13 +559,12 @@ def choice(key, a, shape=(), replace=True, p=None):
   if not isinstance(shape, Sequence):
     raise TypeError("shape argument of jax.random.choice must be a sequence, "
                     f"got {shape}")
-  a = jnp.asarray(a)
-  if a.ndim not in [0, 1]:
+  if np.ndim(a) not in [0, 1]:
     raise ValueError("a must be an integer or 1-dimensional")
-  n_inputs = int(a) if a.ndim == 0 else len(a)
+  n_inputs = int(a) if np.ndim(a) == 0 else len(a)
   n_draws = prod(shape)
   if n_draws == 0:
-    return jnp.zeros(shape, dtype=a.dtype)
+    return jnp.zeros(shape, dtype=lax.dtype(a))
   if n_inputs <= 0:
     raise ValueError("a must be greater than 0 unless no samples are taken")
   if not replace and n_draws > n_inputs:
@@ -574,23 +573,22 @@ def choice(key, a, shape=(), replace=True, p=None):
   if p is None:
     if replace:
       ind = randint(key, shape, 0, n_inputs)
-      result = ind if a.ndim == 0 else a[ind]
+      result = ind if np.ndim(a) == 0 else a[ind]
     else:
       result = permutation(key, a)[:n_draws]
   else:
-    p = jnp.asarray(p)
-    if p.shape != (n_inputs,):
+    if np.shape(p) != (n_inputs,):
       raise ValueError("p must be None or match the shape of a")
     if replace:
       p_cuml = jnp.cumsum(p)
       r = p_cuml[-1] * (1 - uniform(key, shape))
       ind = jnp.searchsorted(p_cuml, r)
-      result = ind if a.ndim == 0 else a[ind]
+      result = ind if np.ndim(a) == 0 else a[ind]
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
       g = -gumbel(key, (n_inputs,)) - jnp.log(p)
       ind = jnp.argsort(g)[:n_draws]
-      result = ind if a.ndim == 0 else a[ind]
+      result = ind if np.ndim(a) == 0 else a[ind]
   return result.reshape(shape)
 
 
