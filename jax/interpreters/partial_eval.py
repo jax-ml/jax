@@ -315,14 +315,13 @@ call_param_updaters: Dict[core.Primitive, Callable] = {}
 
 
 def abstract_eval_fun(fun, *avals, **params):
-  pvals_in = [PartialVal.unknown(a) for a in avals]
   if config.omnistaging_enabled:
-    _, pvals_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
-                                    instantiate=True)
+    _, avals_out, _ = trace_to_jaxpr_dynamic(lu.wrap_init(fun, params), avals)
   else:
+    pvals_in = [PartialVal.unknown(a) for a in avals]
     _, pvals_out, _ = trace_to_jaxpr(lu.wrap_init(fun, params), pvals_in,
                                     instantiate=True, stage_out=True)
-  avals_out, _ = unzip2(pvals_out)
+    avals_out, _ = unzip2(pvals_out)
   for aval_out in avals_out:
     assert isinstance(aval_out, AbstractValue)  # instantiate=True
   return avals_out
