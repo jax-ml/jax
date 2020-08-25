@@ -67,7 +67,7 @@ def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_dims = out_dims_thunk()
   for od, od_dest in zip(out_dims, out_dim_dests):
-    if od is not None and not isinstance(od_dest, int) and not od_dest is last and not sum_match:
+    if od is not None and not isinstance(od_dest, int) and not sum_match:
       msg = f"vmap has mapped output but out_axes is {od_dest}"
       raise ValueError(msg)
   out_vals = map(partial(matchaxis, size, sum_match=sum_match), out_dims, out_dim_dests, out_vals)
@@ -320,14 +320,9 @@ defvectorized(xla.device_put_p)
 
 ### util
 
-class _Last(object): pass
-last = _Last()
-
 def broadcast(x, sz, axis):
   if core.get_aval(x) is core.abstract_unit:
     return core.unit
-  if axis is last:
-    axis = np.ndim(x)
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
@@ -351,11 +346,9 @@ def matchaxis(sz, src, dst, x, sum_match=False):
     return x
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
-  elif type(src) == int and dst is last:
-    return moveaxis(x, src, -1)
   elif src is not_mapped and dst is not not_mapped:
     return broadcast(
-      x, sz, canonicalize_axis(dst, np.ndim(x) + 1) if dst is not last else dst)
+      x, sz, canonicalize_axis(dst, np.ndim(x) + 1))
   elif dst is None and sum_match:
     return x.sum(src)
   else:
