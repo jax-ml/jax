@@ -3872,7 +3872,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       start = start * jnp.sign(start) * jnp.sign(stop)
       return start, stop
     start, stop = args_maker()
-    ndim = len(np.shape(start + stop))
     def jnp_op(start, stop):
       return jnp.geomspace(start, stop, num, endpoint=endpoint, dtype=dtype,
                            axis=axis)
