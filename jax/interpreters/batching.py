@@ -339,8 +339,7 @@ def moveaxis(x, src, dst):
   if src == dst:
     return x
   src = canonicalize_axis(src, x.ndim)
-  # TODO(phawkins): replace the `min(...)` clause with `dst` after fixing users.
-  dst = canonicalize_axis(min(dst, x.ndim - 1), x.ndim)
+  dst = canonicalize_axis(dst, x.ndim)
   perm = [i for i in range(np.ndim(x)) if i != src]
   perm.insert(dst, src)
   return x.transpose(perm)
