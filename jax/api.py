@@ -1214,7 +1214,7 @@ def pmap(fun: Callable[..., T],
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None,
          donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
-  """Parallel map with support for collectives.
+  """Parallel map with support for collective operations.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data (SPMD)
   programs. Applying :py:func:`pmap` to a function will compile the function with XLA
@@ -1355,7 +1355,7 @@ def pmap(fun: Callable[..., T],
   The argument ``axis_name`` to :py:func:`pmap` names the mapped axis so that
   collective operations, like :func:`jax.lax.psum`, can refer to it. Axis names
   are important particularly in the case of nested :py:func:`pmap` functions,
-  where collectives can operate over distinct axes:
+  where collective operations can operate over distinct axes:
 
   >>> from functools import partial
   >>> import jax
