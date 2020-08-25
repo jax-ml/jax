@@ -799,7 +799,7 @@ def ldexp(x1, x2):
 @_wraps(np.frexp)
 @jit
 def frexp(x):
-  x = asarray(x)
+  x = _strict_asarray(x)
   if issubdtype(x.dtype, complexfloating):
     raise TypeError("frexp does not support complex-valued inputs")
   elif not issubdtype(x.dtype, floating):
@@ -1054,12 +1054,12 @@ loses precision.
 
 @_wraps(np.ediff1d, lax_description=_EDIFF1D_DOC)
 def ediff1d(ary, to_end=None, to_begin=None):
-  ary = ravel(asarray(ary))
+  ary = ravel(_strict_asarray(ary))
   result = lax.sub(ary[1:], ary[:-1])
   if to_begin is not None:
-    result = concatenate((ravel(asarray(to_begin, dtype=ary.dtype)), result))
+    result = concatenate((ravel(_strict_asarray(to_begin, dtype=ary.dtype)), result))
   if to_end is not None:
-    result = concatenate((result, ravel(asarray(to_end, dtype=ary.dtype))))
+    result = concatenate((result, ravel(_strict_asarray(to_end, dtype=ary.dtype))))
   return result
 
 
@@ -1185,9 +1185,9 @@ and out-of-bounds indices are clipped.
 
 @_wraps(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices, shape):
-  indices = asarray(indices)
-  sizes = pad(shape, (0, 1), constant_values=1)
-  cumulative_sizes = cumprod(sizes[::-1])[::-1]
+  indices = _strict_asarray(indices)
+  sizes = np.pad(shape, (0, 1), constant_values=1).astype(int)
+  cumulative_sizes = np.cumprod(sizes[::-1])[::-1]
   total_size = cumulative_sizes[0]
   # Clip so raveling and unraveling an oob index will not change the behavior
   clipped_indices = clip(indices, -total_size, total_size - 1)
@@ -1240,7 +1240,7 @@ def moveaxis(a, source, destination):
 
 @_wraps(np.isclose)
 def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
-  a, b = _promote_args("isclose", asarray(a), asarray(b))
+  a, b = _promote_args("isclose", a, b)
   dtype = _dtype(a)
   if issubdtype(dtype, inexact):
     if issubdtype(dtype, complexfloating):
@@ -2102,7 +2102,6 @@ def _pad_edge(array, pad_width):
 
 @partial(jit, static_argnums=(1, 2))
 def _pad(array, pad_width, mode, constant_values):
-  array = asarray(array)
   nd = ndim(array)
   pad_width = np.broadcast_to(np.asarray(pad_width), (nd, 2))
   if np.any(pad_width < 0):
@@ -2126,6 +2125,7 @@ def _pad(array, pad_width, mode, constant_values):
 
 @_wraps(np.pad)
 def pad(array, pad_width, mode='constant', constant_values=0):
+  array = _strict_asarray(array)
   if isinstance(pad_width, list):
     pad_width = tuple(pad_width)
   return _pad(array, pad_width, mode, constant_values)
@@ -2323,6 +2323,17 @@ def _can_call_numpy_array(x):
               for l in tree_leaves(x))
 
 
+def _strict_asarray(a, dtype=None):
+  """A more restrictive jnp.asarray.
+
+  Accepts scalars and JAX or numpy array-like objects, but raises
+  an error for tuples or lists.
+  """
+  if not isinstance(a, (np.ndarray, ndarray) + _scalar_types):
+    raise TypeError(f"Array input required; got {a} of type {type(a)}")
+  return asarray(a, dtype)
+
+
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):
   lax._check_user_dtype_supported(dtype, "asarray")
@@ -2454,8 +2465,8 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
   computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
-  start = asarray(start, dtype=computation_dtype)
-  stop = asarray(stop, dtype=computation_dtype)
+  start = _strict_asarray(start, dtype=computation_dtype)
+  stop = _strict_asarray(stop, dtype=computation_dtype)
 
   bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
@@ -2498,8 +2509,8 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
   """Implementation of logspace differentiable in start and stop args."""
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
   computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
-  start = asarray(start, dtype=computation_dtype)
-  stop = asarray(stop, dtype=computation_dtype)
+  start = _strict_asarray(start, dtype=computation_dtype)
+  stop = _strict_asarray(stop, dtype=computation_dtype)
   lin = linspace(start, stop, num,
                  endpoint=endpoint, retstep=False, dtype=None, axis=axis)
   return lax.convert_element_type(power(base, lin), dtype)
@@ -2510,8 +2521,8 @@ def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
   """Implementation of geomspace differentiable in start and stop args."""
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
   computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
-  start = asarray(start, dtype=computation_dtype)
-  stop = asarray(stop, dtype=computation_dtype)
+  start = _strict_asarray(start, dtype=computation_dtype)
+  stop = _strict_asarray(stop, dtype=computation_dtype)
   # follow the numpy geomspace convention for negative and complex endpoints
   signflip = 1 - (1 - sign(real(start))) * (1 - sign(real(stop))) // 2
   res = signflip * logspace(log10(signflip * start),
@@ -2541,7 +2552,7 @@ def meshgrid(*args, **kwargs):
 
   shape = []
   for i, a in enumerate(args):
-    args[i] = a = asarray(a)
+    args[i] = a = _strict_asarray(a)
     if len(a.shape) != 1:
       msg = "Arguments to jax.numpy.meshgrid must be 1D, got shape {}"
       raise ValueError(msg.format(a.shape))
@@ -2549,7 +2560,7 @@ def meshgrid(*args, **kwargs):
 
   output = []
   for i, a in enumerate(args):
-    a = asarray(a)
+    a = _strict_asarray(a)
     s = shape
     if sparse:
       s = list(s)
@@ -2573,7 +2584,7 @@ def ix_(*args):
   n = len(args)
   output = []
   for i, a in enumerate(args):
-    a = asarray(a)
+    a = _strict_asarray(a)
     if len(a.shape) != 1:
       msg = "Arguments to jax.numpy.ix_ must be 1-dimensional, got shape {}"
       raise ValueError(msg.format(a.shape))
@@ -2860,7 +2871,8 @@ def polyder(p, m=1):
 
 @_wraps(np.trim_zeros)
 def trim_zeros(filt, trim='fb'):
-  nz = asarray(filt) == 0
+  filt = _strict_asarray(filt)
+  nz = (filt == 0)
   if all(nz):
     return empty(0, _dtype(filt))
   start = argmin(nz) if 'f' in trim.lower() else 0
@@ -3233,7 +3245,7 @@ def kron(a, b):
 
 @_wraps(np.vander)
 def vander(x, N=None, increasing=False):
-  x = asarray(x)
+  x = _strict_asarray(x)
   dtype = _dtype(x)
   if ndim(x) != 1:
     raise ValueError("x must be a one-dimensional array")
@@ -3357,7 +3369,6 @@ def msort(a):
 
 @partial(jit, static_argnums=(2,))
 def _roll(a, shift, axis):
-  a = asarray(a)
   a_shape = shape(a)
   if axis is None:
     return lax.reshape(roll(ravel(a), shift, axis=0), a_shape)
@@ -3381,11 +3392,13 @@ def _roll(a, shift, axis):
 
 @_wraps(np.roll)
 def roll(a, shift, axis=None):
+  a = _strict_asarray(a)
   return _roll(a, shift, axis)
 
 
 @_wraps(np.rollaxis)
 def rollaxis(a, axis, start=0):
+  a = _strict_asarray(a)
   a_ndim = ndim(a)
   if not (-a_ndim <= axis < a_ndim):
     raise ValueError(f"axis={axis} is out of bounds for array of dimension {a_ndim}")
@@ -3402,7 +3415,7 @@ def rollaxis(a, axis, start=0):
 
 @_wraps(np.packbits)
 def packbits(a, axis=None, bitorder='big'):
-  a = asarray(a)
+  a = _strict_asarray(a)
   if not (issubdtype(dtype(a), integer) or issubdtype(dtype(a), bool_)):
     raise TypeError('Expected an input array of integer or boolean data type')
   if bitorder not in ['little', 'big']:
@@ -3427,7 +3440,7 @@ def packbits(a, axis=None, bitorder='big'):
 
 @_wraps(np.unpackbits)
 def unpackbits(a, axis=None, count=None, bitorder='big'):
-  a = asarray(a)
+  a = _strict_asarray(a)
   if dtype(a) != uint8:
     raise TypeError("Expected an input array of unsigned byte data type")
   if bitorder not in ['little', 'big']:
@@ -3449,8 +3462,8 @@ def take(a, indices, axis=None, out=None, mode=None):
   if out:
     raise NotImplementedError("The 'out' argument to np.take is not supported.")
 
-  a = asarray(a)
-  indices = asarray(indices)
+  a = _strict_asarray(a)
+  indices = _strict_asarray(indices)
 
   if axis is None:
     a = ravel(a)
@@ -3569,7 +3582,7 @@ def _unique1d_sorted_mask(ar, optional_indices=False):
   Helper function for unique which is jit-able
   """
 
-  ar = asarray(ar).flatten()
+  ar = _strict_asarray(ar).flatten()
 
   if optional_indices:
     perm = ar.argsort()
@@ -3636,7 +3649,7 @@ def _rewriting_take(arr, idx):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
-  arr = asarray(arr)
+  arr = _strict_asarray(arr)
   treedef, static_idx, dynamic_idx = _split_index_for_jit(idx)
   return _gather(arr, treedef, static_idx, dynamic_idx)
 
@@ -4136,7 +4149,7 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
       raise RuntimeError("cannot handle multidimensional fweights")
     if np.shape(fweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and fweights")
-    w = asarray(fweights)
+    w = _strict_asarray(fweights)
   if aweights is not None:
     if np.ndim(aweights) > 1:
       raise RuntimeError("cannot handle multidimensional aweights")
@@ -4205,8 +4218,8 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
   if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
     raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
                      "'midpoint', or 'nearest'")
-  a = asarray(a, dtype=promote_types(_dtype(a), float32))
-  q = asarray(q, dtype=promote_types(_dtype(q), float32))
+  a = _strict_asarray(a, dtype=promote_types(_dtype(a), float32))
+  q = _strict_asarray(q, dtype=promote_types(_dtype(q), float32))
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -4322,8 +4335,8 @@ def searchsorted(a, v, side='left', sorter=None):
     raise ValueError(f"{side!r} is an invalid value for keyword 'side'")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
-  a = asarray(a)
-  v = asarray(v)
+  a = _strict_asarray(a)
+  v = _strict_asarray(v)
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
   return _searchsorted(a, v, side)
@@ -4369,14 +4382,14 @@ def piecewise(x, condlist, funclist, *args, **kw):
 @_wraps(np.percentile)
 def percentile(a, q, axis=None, out=None, overwrite_input=False,
                interpolation="linear", keepdims=False):
-  q = true_divide(asarray(q), float32(100.0))
+  q = true_divide(_strict_asarray(q), float32(100.0))
   return quantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, keepdims=keepdims)
 
 @_wraps(np.nanpercentile)
 def nanpercentile(a, q, axis=None, out=None, overwrite_input=False,
                   interpolation="linear", keepdims=False):
-  q = true_divide(asarray(q), float32(100.0))
+  q = true_divide(_strict_asarray(q), float32(100.0))
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                      interpolation=interpolation, keepdims=keepdims)
 

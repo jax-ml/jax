@@ -49,7 +49,7 @@ from . import lax
 from . import numpy as jnp
 from . import dtypes
 from .api import jit, vmap
-from .numpy.lax_numpy import _constant_like, asarray
+from .numpy.lax_numpy import _constant_like, _strict_asarray, asarray
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
@@ -428,6 +428,8 @@ def randint(key: jnp.ndarray,
   """
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
+  minval = _strict_asarray(minval)
+  maxval = _strict_asarray(maxval)
   return _randint(key, shape, minval, maxval, dtype)
 
 @partial(jit, static_argnums=(1, 4))
@@ -486,6 +488,7 @@ def shuffle(key: jnp.ndarray, x: jnp.ndarray, axis: int = 0) -> jnp.ndarray:
   msg = ("jax.random.shuffle is deprecated and will be removed in a future release. "
          "Use jax.random.permutation")
   warnings.warn(msg, FutureWarning)
+  x = _strict_asarray(x)
   return _shuffle(key, x, axis)  # type: ignore
 
 
@@ -564,6 +567,7 @@ def choice(key, a, shape=(), replace=True, p=None):
   Returns:
     An array of shape `shape` containing samples from `a`.
   """
+  a = _strict_asarray(a)
   if not isinstance(shape, Sequence):
     raise TypeError("shape argument of jax.random.choice must be a sequence, "
                     f"got {shape}")
@@ -664,6 +668,8 @@ def multivariate_normal(key: jnp.ndarray,
     raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
+  mean = _strict_asarray(mean)
+  cov = _strict_asarray(cov)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
   return _multivariate_normal(key, mean, cov, shape, dtype)  # type: ignore
@@ -693,10 +699,10 @@ def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
 
 
 def truncated_normal(key: jnp.ndarray,
-                    lower: Union[float, jnp.ndarray],
-                    upper: Union[float, jnp.ndarray],
-                    shape: Optional[Sequence[int]] = None,
-                    dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
+                     lower: Union[float, jnp.ndarray],
+                     upper: Union[float, jnp.ndarray],
+                     shape: Optional[Sequence[int]] = None,
+                     dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
@@ -720,6 +726,8 @@ def truncated_normal(key: jnp.ndarray,
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
+  lower = _strict_asarray(lower)
+  upper = _strict_asarray(upper)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
   return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
@@ -805,6 +813,8 @@ def beta(key: jnp.ndarray,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
+  a = _strict_asarray(a)
+  b = _strict_asarray(b)
   return _beta(key, a, b, shape, dtype)
 
 def _beta(key, a, b, shape, dtype):
@@ -877,6 +887,7 @@ def dirichlet(key, alpha, shape=None, dtype=dtypes.float_):
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
+  alpha = _strict_asarray(alpha)
   return _dirichlet(key, alpha, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1040,6 +1051,7 @@ def gamma(key, a, shape=None, dtype=dtypes.float_):
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
+  a = _strict_asarray(a)
   return _gamma(key, a, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1217,6 +1229,7 @@ def categorical(key, logits, axis=-1, shape=None):
     _check_shape("categorical", shape, batch_shape)
 
   sample_shape = shape[:len(shape)-len(batch_shape)]
+  logits = _strict_asarray(logits)
   return jnp.argmax(gumbel(key, sample_shape + logits.shape, logits.dtype) + logits, axis=axis)
 
 
@@ -1292,7 +1305,7 @@ def pareto(key, b, shape=None, dtype=dtypes.float_):
 
   Args:
     key: a PRNGKey used as the random key.
-    a: a float or array of floats broadcast-compatible with ``shape``
+    b: a float or array of floats broadcast-compatible with ``shape``
       representing the parameter of the distribution.
     shape: optional, a tuple of nonnegative integers specifying the result
       shape. Must be broadcast-compatible with ``b``. The default (None)
@@ -1310,6 +1323,7 @@ def pareto(key, b, shape=None, dtype=dtypes.float_):
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = abstract_arrays.canonicalize_shape(shape)
+  b = _strict_asarray(b)
   return _pareto(key, b, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1346,6 +1360,7 @@ def t(key, df, shape=(), dtype=dtypes.float_):
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
+  df = _strict_asarray(df)
   return _t(key, df, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1441,6 +1456,8 @@ def double_sided_maxwell(key, loc, scale, shape=(), dtype=dtypes.float_):
                      f" dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
+  loc = _strict_asarray(loc)
+  scale = _strict_asarray(scale)
   return _double_sided_maxwell(key, loc, scale, shape, dtype)
 
 
@@ -1481,6 +1498,8 @@ def weibull_min(key, scale, concentration, shape=(), dtype=dtypes.float_):
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = abstract_arrays.canonicalize_shape(shape)
+  scale = _strict_asarray(scale)
+  concentration = _strict_asarray(concentration)
   return _weibull_min(key, scale, concentration, shape, dtype)
 
 

@@ -2692,13 +2692,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     (0, (2, 1, 3)),
     (5, (2, 1, 3)),
     (0, ()),
-    ([0, 1, 2], (2, 2)),
-    ([[[0, 1], [2, 3]]], (2, 2)))
+    (np.arange(3), (2, 2)),
+    (np.arange(4).reshape(2, 2), (2, 2)))
   def testUnravelIndex(self, flat_index, shape):
-    args_maker = lambda: (flat_index, shape)
-    self._CheckAgainstNumpy(np.unravel_index, jnp.unravel_index,
-                            args_maker)
-    self._CompileAndCheck(jnp.unravel_index, args_maker)
+    args_maker = lambda: [flat_index]
+    np_fun = lambda x: np.unravel_index(x, shape)
+    jnp_fun = lambda x: jnp.unravel_index(x, shape)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testUnravelIndexOOB(self):
     self.assertEqual(jnp.unravel_index(2, (2,)), (1,))
