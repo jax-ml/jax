@@ -1356,8 +1356,10 @@ def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
   idx = core.axis_index(axis_name)  # type: ignore
   return idx * chunk_size + np.arange(chunk_size), True
 
+def deleted_with_omnistaging(*a, **k):
+  assert False, "Should be deleted"
 
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enable() -> None:
   global DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
@@ -1368,8 +1370,10 @@ def omnistaging_enable() -> None:
   del DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
       axis_index, _axis_index_bind, _axis_index_translation_rule, \
-      apply_parallel_primitive, parallel_pure_rules, \
       _pvals_to_results_handler, _pval_to_result_handler, replicate
+
+  apply_parallel_primitive = deleted_with_omnistaging
+  parallel_pure_rules.clear()
 
   def avals_to_results_handler(size, nrep, npart, out_parts, out_avals):
     nouts = len(out_avals)

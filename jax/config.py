@@ -42,10 +42,8 @@ class Config:
     self.meta = {}
     self.FLAGS = NameSpace(self.read)
     self.use_absl = False
-    self.omnistaging_enabled = False
-
-    self.omnistaging_enabled = False
-    self.omnistaging_enablers = []
+    self.omnistaging_enabled = bool_env('JAX_OMNISTAGING', False)
+    self._omnistaging_enablers = []
 
   def update(self, name, val):
     if self.use_absl:
@@ -119,10 +117,16 @@ class Config:
       if FLAGS.jax_omnistaging:
         self.enable_omnistaging()
 
+  def register_omnistaging_enabler(self, enabler):
+    if not self.omnistaging_enabled:
+      self._omnistaging_enablers.append(enabler)
+    else:
+      enabler()
+
   # TODO(mattjj): remove this when omnistaging fully lands
   def enable_omnistaging(self):
     if not self.omnistaging_enabled:
-      for enabler in self.omnistaging_enablers:
+      for enabler in self._omnistaging_enablers:
         enabler()
       self.omnistaging_enabled = True
 

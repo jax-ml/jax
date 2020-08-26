@@ -426,7 +426,7 @@ def _merge_bdims(x, y):
     return x  # arbitrary
 
 
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global batch_jaxpr
 
