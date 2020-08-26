@@ -389,10 +389,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     dtype = harness.params["dtype"]
     f_name = harness.params["f_jax"].__name__
 
-    if not dtype in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                     np.int8, np.uint16, np.int16, np.int32, np.int64, np.complex64,
-                     np.complex128]:
-      # TODO(bchetioui): tf.math.multiply is only defined for the above types.
+    if dtype in [np.uint32, np.uint64]:
+      # TODO(bchetioui): tf.math.multiply is not defined for the above types.
       expect_tf_exceptions = True
     elif dtype is np.uint16 and f_name == "add":
       # TODO(bchetioui): tf.math.add is defined for the same types as multiply,
@@ -406,9 +404,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     expect_tf_exceptions = False
     dtype = harness.params["dtype"]
 
-    if not dtype in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                     np.int16, np.int32, np.int64]:
-      # TODO(bchetioui): tf.math.maximum and tf.math.minimum are only defined for
+    if dtype in [np.int8, np.uint16, np.uint32, np.uint64, np.complex64,
+                 np.complex128]:
+      # TODO(bchetioui): tf.math.maximum and tf.math.minimum are not defined for
       # the above types.
       expect_tf_exceptions = True
 
