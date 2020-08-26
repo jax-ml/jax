@@ -1023,9 +1023,8 @@ def angle(z):
 
 @_wraps(np.diff)
 def diff(a, n=1, axis=-1,):
-  if not isinstance(a, ndarray) or a.ndim == 0:
-    return a
-  if n == 0:
+  a = _strict_asarray(a)
+  if a.ndim == 0 or n == 0:
     return a
   if n < 0:
     raise ValueError(
@@ -1291,7 +1290,7 @@ else:
 def interp(x, xp, fp, left=None, right=None, period=None):
   if shape(xp) != shape(fp) or ndim(xp) != 1:
     raise ValueError("xp and fp must be one-dimensional arrays of equal size")
-  x, xp, fp = map(asarray, _promote_dtypes_inexact(x, xp, fp))
+  x, xp, fp = map(_strict_asarray, _promote_dtypes_inexact(x, xp, fp))
   if period is not None:
     if period == 0:
       raise ValueError(f"period must be a non-zero value; got {period}")
@@ -1470,7 +1469,7 @@ def broadcast_arrays(*args):
 The JAX version does not necessarily return a view of the input.
 """)
 def broadcast_to(arr, shape):
-  arr = arr if isinstance(arr, ndarray) else array(arr)
+  arr = _strict_asarray(arr)
   shape = canonicalize_shape(shape)  # check that shape is concrete
   arr_shape = _shape(arr)
   if arr_shape == shape:
@@ -1657,12 +1656,7 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
-
-    if isinstance(a, (list, tuple)):
-      msg = ("jax.numpy reductions won't accept lists and tuples in future "
-             "versions, only scalars and ndarrays")
-      warnings.warn(msg, category=FutureWarning)
-    a = a if isinstance(a, ndarray) else asarray(a)
+    a = _strict_asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
     result_dtype = dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a))))
@@ -1735,7 +1729,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
 
 @_wraps(np.average)
 def average(a, axis=None, weights=None, returned=False):
-  a = asarray(a)
+  a = _strict_asarray(a)
 
   if weights is None: # Treat all weights as 1
     avg = mean(a, axis=axis)
@@ -1744,7 +1738,7 @@ def average(a, axis=None, weights=None, returned=False):
     else:
       weights_sum = full_like(avg, a.shape[axis], dtype=avg.dtype)
   else:
-    weights = asarray(weights)
+    weights = _strict_asarray(weights)
 
     if issubdtype(a.dtype, inexact):
       out_dtype = result_type(a.dtype, weights.dtype)
@@ -2017,7 +2011,7 @@ def _check_no_padding(axis_padding, mode):
 
 def _pad_constant(array, pad_width, constant_values):
   nd = ndim(array)
-  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+  constant_values = broadcast_to(constant_values, (nd, 2))
   constant_values = lax.convert_element_type(constant_values, array.dtype)
   for i in range(nd):
     widths = [(0, 0, 0)] * nd
