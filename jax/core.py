@@ -1431,7 +1431,7 @@ def pp_kv_pairs(kv_pairs):
 axis_frame = None
 
 # TODO(mattjj): remove when omnistaging fully lands
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 @no_type_check
 def omnistaging_enabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \

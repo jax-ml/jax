@@ -579,7 +579,7 @@ def all_gather(x, axis_name):
   return _allgather(x, 0, psum(1, axis_name), axis_name)
 
 
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
   # tracing time.
@@ -595,3 +595,5 @@ def omnistaging_enabler() -> None:
       return tuple(size * x for x in args)
     return core.Primitive.bind(
         psum_p, *args, axis_name=axis_name, axis_index_groups=axis_index_groups)
+
+  del pxla.parallel_pure_rules[psum_p]

@@ -1280,7 +1280,17 @@ call_translations[core.call_p] = _call_translation_rule
 
 # TODO(mattjj): remove when omnistaging fully lands
 
-@config.omnistaging_enablers.append
+def _pval_to_result_handler(device, pval):
+  pv, const = pval
+  if pv is None:
+    const = _device_put_impl(const, device) if device else const
+    return lambda _: const
+  else:
+    return aval_to_result_handler(device, pv)
+
+pe.staged_out_calls.add(xla_call_p)
+
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global _pval_to_result_handler
   del _pval_to_result_handler
@@ -1292,13 +1302,3 @@ def omnistaging_enabler() -> None:
     unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
     return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
   parallel_translations[core.axis_index_p] = _axis_index_translation_rule  # type: ignore
-
-def _pval_to_result_handler(device, pval):
-  pv, const = pval
-  if pv is None:
-    const = _device_put_impl(const, device) if device else const
-    return lambda _: const
-  else:
-    return aval_to_result_handler(device, pv)
-
-pe.staged_out_calls.add(xla_call_p)

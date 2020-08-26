@@ -5962,7 +5962,7 @@ def _check_user_dtype_supported(dtype, fun_name=None):
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype))
 
 
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global _tie_in_transpose_rule, _tie_in_batch_rule, _tie_in_impl, tie_in_p
   del _tie_in_transpose_rule, _tie_in_batch_rule, _tie_in_impl, tie_in_p

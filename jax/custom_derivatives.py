@@ -603,7 +603,7 @@ batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 
 
 # TODO(mattjj): remove when omnistaging fully lands
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global _initial_style_jaxpr
 

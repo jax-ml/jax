@@ -1080,7 +1080,7 @@ def fun_sourceinfo(fun):
 
 # TODO(mattjj): remove when omnistaging fully lands
 
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global trace_to_jaxpr, partial_eval_jaxpr
 

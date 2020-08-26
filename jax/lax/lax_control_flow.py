@@ -2437,7 +2437,7 @@ def associative_scan(fn, elems):
 
 
 # TODO(mattjj): remove when omnistaging fully lands
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global _initial_style_untyped_jaxpr, _initial_style_jaxpr, \
       _initial_style_jaxprs_with_common_consts

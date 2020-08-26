@@ -354,7 +354,7 @@ def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
   return sharding_constraint_p.bind(x, partitions=partitions)
 
 
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global _avals_to_results_handler, _aval_to_result_handler, \
       _pvals_to_results_handler, _pval_to_result_handler
