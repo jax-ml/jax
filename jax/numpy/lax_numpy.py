@@ -1185,7 +1185,7 @@ and out-of-bounds indices are clipped.
 @_wraps(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices, shape):
   indices = _strict_asarray(indices)
-  sizes = np.pad(shape, (0, 1), constant_values=1).astype(int)
+  sizes = np.pad(shape, (0, 1), mode='constant', constant_values=1).astype(int)
   cumulative_sizes = np.cumprod(sizes[::-1])[::-1]
   total_size = cumulative_sizes[0]
   # Clip so raveling and unraveling an oob index will not change the behavior
