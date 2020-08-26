@@ -1523,7 +1523,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     else:
       args_maker = lambda: [m]
 
-    for repeats in [2, [1,3,2,1,1,2], [1,3,0,1,1,2], [2], jnp.array([1,3,2,1,1,2]), jnp.array([2])]:
+    for repeats in [2, np.array([1,3,2,1,1,2]), np.array([1,3,0,1,1,2]), np.array([2]),
+                    jnp.array([1,3,2,1,1,2]), jnp.array([2])]:
       test_single(m, args_maker, repeats, axis=None)
       test_single(m, args_maker, repeats, axis=0)
 
@@ -1533,10 +1534,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     else:
       args_maker = lambda: [m_rect]
 
-    for repeats in [2, [2,1], [2], jnp.array([2,1]), jnp.array([2])]:
+    for repeats in [2, np.array([2,1]), np.array([2]), jnp.array([2,1]), jnp.array([2])]:
       test_single(m_rect, args_maker, repeats, axis=0)
 
-    for repeats in [2, [1,3,2], [2], jnp.array([1,3,2]), jnp.array([2])]:
+    for repeats in [2, np.array([1,3,2]), np.array([2]), jnp.array([1,3,2]), jnp.array([2])]:
       test_single(m_rect, args_maker, repeats, axis=1)
 
   def testIssue2330(self):
