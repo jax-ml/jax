@@ -98,6 +98,14 @@ def _is_prng_key(key: jnp.ndarray) -> bool:
 ### utilities
 
 
+# TODO(mattjj,jakevdp): add more info to error message, use this utility more
+def _asarray(x):
+  """A more restrictive jnp.asarray, only accepts JAX arrays and np.ndarrays."""
+  if not isinstance(x, (np.ndarray, jnp.ndarray)):
+    raise TypeError(f"Function requires array input, got {x} of type {type(x)}.")
+  return jnp.asarray(x)
+
+
 def _make_rotate_left(dtype):
   if not jnp.issubdtype(dtype, np.integer):
     raise TypeError("_rotate_left only accepts integer dtypes.")
@@ -561,7 +569,11 @@ def choice(key, a, shape=(), replace=True, p=None):
                     f"got {shape}")
   if np.ndim(a) not in [0, 1]:
     raise ValueError("a must be an integer or 1-dimensional")
-  n_inputs = int(a) if np.ndim(a) == 0 else len(a)
+  if np.ndim(a) == 0:
+    a = int(a)
+  else:
+    a = _asarray(a)
+  n_inputs = a if np.ndim(a) == 0 else len(a)
   n_draws = prod(shape)
   if n_draws == 0:
     return jnp.zeros(shape, dtype=lax.dtype(a))
@@ -577,7 +589,7 @@ def choice(key, a, shape=(), replace=True, p=None):
     else:
       result = permutation(key, a)[:n_draws]
   else:
-    if np.shape(p) != (n_inputs,):
+    if p.shape != (n_inputs,):
       raise ValueError("p must be None or match the shape of a")
     if replace:
       p_cuml = jnp.cumsum(p)

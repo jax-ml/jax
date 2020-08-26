@@ -228,11 +228,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       for shape in [(), (5,), (4, 5)]
       for replace in [True, False]
       for weighted in [True, False]
-      for array_input in [True, False]))
+      for array_input in [False, 'jnp', 'np']))
   def testChoice(self, dtype, shape, replace, weighted, array_input):
     N = 100
     key = random.PRNGKey(0)
-    x = N if not array_input else jnp.arange(N, dtype=dtype)
+    x = (N if not array_input else
+         jnp.arange(N, dtype=dtype) if array_input == 'jnp' else
+         np.arange(N, dtype=dtype))
     p = None if not weighted else jnp.arange(N)
     rand = lambda key: random.choice(key, x, shape, p=p, replace=replace)
     crand = api.jit(rand)
@@ -241,7 +243,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     sample2 = crand(key)
 
     self.assertEqual(shape, sample1.shape)
-    if array_input:
+    if array_input == 'jnp':
       self.assertEqual(x.dtype, sample1.dtype)
     if not replace:
       assert len(np.unique(sample1)) == len(np.ravel(sample1))
