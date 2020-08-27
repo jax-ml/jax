@@ -383,6 +383,36 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            expect_tf_exceptions=True)
 
+  @primitive_harness.parameterized(primitive_harness.lax_add_mul)
+  def test_add_mul(self, harness: primitive_harness.Harness):
+    expect_tf_exceptions = False
+    dtype = harness.params["dtype"]
+    f_name = harness.params["f_jax"].__name__
+
+    if dtype in [np.uint32, np.uint64]:
+      # TODO(bchetioui): tf.math.multiply is not defined for the above types.
+      expect_tf_exceptions = True
+    elif dtype is np.uint16 and f_name == "add":
+      # TODO(bchetioui): tf.math.add is defined for the same types as multiply,
+      # except uint16.
+      expect_tf_exceptions = True
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           expect_tf_exceptions=expect_tf_exceptions)
+
+  @primitive_harness.parameterized(primitive_harness.lax_min_max)
+  def test_min_max(self, harness: primitive_harness.Harness):
+    expect_tf_exceptions = False
+    dtype = harness.params["dtype"]
+
+    if dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+                 np.complex64, np.complex128]:
+      # TODO(bchetioui): tf.math.maximum and tf.math.minimum are not defined for
+      # the above types.
+      expect_tf_exceptions = True
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           expect_tf_exceptions=expect_tf_exceptions)
+
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
     lax_name, dtype = harness.params["lax_name"], harness.params["dtype"]

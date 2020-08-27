@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence
 
 from absl import testing
 from jax import config
+from jax import dtypes
 from jax import test_util as jtu
 from jax import lax
 from jax import lax_linalg
@@ -203,6 +204,72 @@ lax_population_count = tuple(
   for dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned
   for arg in [
     np.array([-1, -2, 0, 1], dtype=dtype)
+  ]
+)
+
+def _get_max_identity(dtype):
+  if dtypes.issubdtype(dtype, np.inexact):
+    return np.array(-np.inf, dtype)
+  elif dtypes.issubdtype(dtype, np.integer):
+    return np.array(dtypes.iinfo(dtype).min, dtype)
+  elif dtypes.issubdtype(dtype, np.bool_):
+    return np.array(False, np.bool_)
+
+def _get_min_identity(dtype):
+  if dtypes.issubdtype(dtype, np.inexact):
+    return np.array(np.inf, dtype)
+  elif dtypes.issubdtype(dtype, np.integer):
+    return np.array(dtypes.iinfo(dtype).max, dtype)
+  elif dtypes.issubdtype(dtype, np.bool_):
+    return np.array(True, np.bool_)
+
+lax_add_mul = tuple(
+  Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
+          f_jax,
+          [lhs, rhs],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.add, lax.mul]
+  for dtype in filter(lambda t: t != np.bool_, jtu.dtypes.all)
+  for lhs, rhs in [
+    (np.array([1, 2], dtype=dtype), np.array([3, 4], dtype=dtype))
+  ]
+) + tuple(
+  Harness(f"fun={f_jax.__name__}_bounds_{jtu.dtype_str(dtype)}",
+          f_jax,
+          [StaticArg(lhs), StaticArg(rhs)],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.add, lax.mul]
+  for dtype in filter(lambda t: t != np.bool_, jtu.dtypes.all)
+  for lhs, rhs in [
+    (np.array([3, 3], dtype=dtype),
+     np.array([_get_max_identity(dtype), _get_min_identity(dtype)], dtype=dtype))
+  ]
+)
+
+lax_min_max = tuple(
+  Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
+          f_jax,
+          [lhs, rhs],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.min, lax.max]
+  for dtype in jtu.dtypes.all
+  for lhs, rhs in [
+    (np.array([1, 2], dtype=dtype), np.array([3, 4], dtype=dtype))
+  ]
+) + tuple(
+  Harness(f"fun={f_jax.__name__}_inf_nan_{jtu.dtype_str(dtype)}_{lhs[0]}_{rhs[0]}",
+          f_jax,
+          [StaticArg(lhs), StaticArg(rhs)],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.min, lax.max]
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+  for lhs, rhs in [
+    (np.array([np.inf], dtype=dtype), np.array([np.nan], dtype=dtype)),
+    (np.array([-np.inf], dtype=dtype), np.array([np.nan], dtype=dtype))
   ]
 )
 
