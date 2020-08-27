@@ -596,4 +596,5 @@ def omnistaging_enabler() -> None:
     return core.Primitive.bind(
         psum_p, *args, axis_name=axis_name, axis_index_groups=axis_index_groups)
 
-  del pxla.parallel_pure_rules[psum_p]
+  if psum_p in pxla.parallel_pure_rules:
+    del pxla.parallel_pure_rules[psum_p]
