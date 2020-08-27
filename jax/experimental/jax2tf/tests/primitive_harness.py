@@ -255,7 +255,7 @@ lax_min_max = tuple(
           f_jax=f_jax,
           dtype=dtype)
   for f_jax in [lax.min, lax.max]
-  for dtype in filter(lambda t: t != np.bool_, jtu.dtypes.all)
+  for dtype in jtu.dtypes.all
   for lhs, rhs in [
     (np.array([1, 2], dtype=dtype), np.array([3, 4], dtype=dtype))
   ]

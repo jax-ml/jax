@@ -404,8 +404,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     expect_tf_exceptions = False
     dtype = harness.params["dtype"]
 
-    if dtype in [np.int8, np.uint16, np.uint32, np.uint64, np.complex64,
-                 np.complex128]:
+    if dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+                 np.complex64, np.complex128]:
       # TODO(bchetioui): tf.math.maximum and tf.math.minimum are not defined for
       # the above types.
       expect_tf_exceptions = True
