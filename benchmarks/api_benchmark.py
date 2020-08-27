@@ -17,6 +17,7 @@ import operator
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import google_benchmark as benchmark
 
@@ -35,14 +36,37 @@ def required_devices(num_devices_required):
 
 
 @benchmark.register
+def jit_trivial_dispatch(state):
+  """Benchmarks only the duration for jitted_f to return the future."""
+  f = jax.jit(swap)
+  a, b = f(1, 2)
+  f(a, b)
+
+  while state:
+    f(a, b)
+
+
+@benchmark.register
 def jit_trivial(state):
   f = jax.jit(swap)
   a, b = f(1, 2)
+  f(a, b)
 
   while state:
     c, d = f(a, b)
     c.block_until_ready()
     d.block_until_ready()
+
+
+@benchmark.register
+def jit_simple_dispatch(state):
+  a = jax.device_put(1)
+  b = jax.device_put(2)
+  f = jax.jit(operator.add)
+  f(a, b)
+
+  while state:
+    f(a, b)
 
 
 @benchmark.register
@@ -57,6 +81,16 @@ def jit_simple(state):
 
 
 @benchmark.register
+def jit_simple_many_args_dispatch(state):
+  args = [jax.device_put(i) for i in range(50)]
+  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
+  f(args)
+
+  while state:
+    f(args)
+
+
+@benchmark.register
 def jit_simple_many_args(state):
   args = [jax.device_put(i) for i in range(50)]
   f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
@@ -64,6 +98,31 @@ def jit_simple_many_args(state):
 
   while state:
     f(args).block_until_ready()
+
+
+@benchmark.register
+def jit_dispatch_without_transfer(state):
+  # We pick up a realistic input. 224 is usual for classification and 128 a
+  # TPU-friendly batch-size.
+  imgs = np.ones((128, 224, 224), np.float32)
+  imgs = jax.device_put(imgs)
+
+  f = jax.api.jit(lambda x: x+1)
+  f(imgs)
+
+  while state:
+    f(imgs)
+
+
+@benchmark.register
+def jit_dispatch_with_transfer(state):
+  imgs = np.ones((128, 224, 224), np.float32)
+
+  f = jax.api.jit(lambda x: x+1)
+  f(imgs)
+
+  while state:
+    f(imgs)
 
 
 @benchmark.register
