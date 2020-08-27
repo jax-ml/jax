@@ -1229,8 +1229,6 @@ def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
       experimental_compile=True
   )(operand, scatter_indices, updates)
 
-  out = tfxla.scatter(operand, scatter_indices, updates, xla_update_computation,
-                      proto, indices_are_sorted=indices_are_sorted)
   out.set_shape(out_shape)
 
   return out
