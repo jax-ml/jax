@@ -1223,7 +1223,6 @@ device_put_p.def_impl(_device_put_impl)
 device_put_p.def_abstract_eval(lambda x, device=None: x)
 translations[device_put_p] = lambda c, x, device=None: x
 ad.deflinear(device_put_p, lambda cotangent, **kwargs: [cotangent])
-device_put_p.def_abstract_eval(lambda x, **params: x)
 masking.defvectorized(device_put_p)
 
 
