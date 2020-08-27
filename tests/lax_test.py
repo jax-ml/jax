@@ -1765,7 +1765,7 @@ class LaxTest(jtu.JaxTestCase):
       for rng_idx_factory in [partial(jtu.rand_int, high=max(arg_shape))]
       for rng_factory in [jtu.rand_default]))
   def testScatter(self, arg_shape, dtype, idxs, update_shape, dnums,
-                     rng_factory, rng_idx_factory):
+                  rng_factory, rng_idx_factory):
     rng = rng_factory(self.rng())
     rng_idx = rng_idx_factory(self.rng())
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
@@ -1773,6 +1773,95 @@ class LaxTest(jtu.JaxTestCase):
                           rng(update_shape, dtype)]
     fun = partial(lax.scatter, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker)
+
+  # These tests are adapted from the corresponding tests in
+  # tensorflow/compiler/xla/service/shape_inference_test.cc with slight
+  # variations to account for the implicit setting of index_vector_dim in JAX.
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
+       "scatter_indices": scatter_indices, "update_shape": update_shape,
+       "dimension_numbers": lax.ScatterDimensionNumbers(
+          update_window_dims=update_window_dims,
+          inserted_window_dims=inserted_window_dims,
+          scatter_dims_to_operand_dims=scatter_dims_to_operand_dims),
+       "msg": msg}
+      for (testcase_name, operand_shape, scatter_indices, update_shape,
+           update_window_dims, inserted_window_dims,
+           scatter_dims_to_operand_dims, msg) in [
+              ("ScatterWithUpdatesBiggerThanInput", (64, 48), np.zeros((32, 1)),
+               (65, 32), (0,), (1,), (1,), "Bounds of the window dimensions"),
+              ("ScatterWithUpdatesBiggerThanInputV2", (64, 48),
+               np.zeros((32, 1)), (32, 49), (1,), (0,), (1,),
+               "Bounds of the window dimensions"),
+              ("ScatterWithUpdatesNotMatchingIndices", (64, 48),
+               np.zeros((32, 1)), (64, 31), (0,), (1,), (1,),
+               "Bounds of the scatter dimensions"),
+              ("ScatterWithUpdatesNotMatchingIndicesV2", (64, 48),
+               np.zeros((32, 1)), (31, 48), (1,), (0,), (1,),
+               "Bounds of the scatter dimensions"),
+              ("ScatterNdWithUpdatesBiggerThanInput", (64, 48),
+               np.zeros((10, 9, 8, 7, 1)), (10, 9, 8, 7, 65), (4,), (1,),
+               (0,), "Bounds of the window dimensions"),
+              ("ScatterNdWithUpdatesNotMatchingIndices", (64, 48),
+               np.zeros((10, 9, 8, 7, 1)), (9, 9, 8, 7, 64), (4,), (1,), (0,),
+               "Bounds of the scatter dimensions"),
+              ("InvalidUpdates", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4, 1),
+               (4, 5, 6), (1, 2), (0, 1, 2, 3, 4),
+               "Updates tensor must be of rank 7; got 8."),
+              ("NonAscendingUpdateWindowDims", (6, 5, 4, 3, 2),
+               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               (4, 5, 6, 8, 7), (), (0, 1, 2, 3, 4),
+               "update_window_dims in scatter op must be sorted"),
+              ("RepeatedUpdateWindowDims", (6, 5, 4, 3, 2),
+               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               (4, 5, 6, 7, 7), (), (0, 1, 2, 3, 4),
+               "update_window_dims in scatter op must not repeat"),
+              ("OutOfBoundsUpdateWindowDims", (6, 5, 4, 3, 2),
+               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               (4, 5, 6, 7, 9), (), (0, 1, 2, 3, 4),
+               "Invalid update_window_dims set in scatter op"),
+              ("NonAscendingInsertedWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (2, 1), (0, 1, 2, 3, 4),
+               "inserted_window_dims in scatter op must be sorted"),
+              ("RepeatedInsertedWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 1), (0, 1, 2, 3, 4),
+               "inserted_window_dims in scatter op must not repeat"),
+              ("OutOfBoundsInsertedWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 5), (0, 1, 2, 3, 4),
+               "Invalid inserted_window_dims set in scatter op"),
+              ("MismatchingScatterDimsToOperandDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 2), (0, 1, 2, 3),
+               "Scatter op has 4 elements in scatter_dims_to_operand_dims and "
+               "the bound of dimension index_vector_dim=4 of scatter_indices "
+               "is 5. These two numbers must be equal"),
+              ("OutOfBoundsScatterDimsToOperandDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 2), (0, 1, 2, 3, 10),
+               "Invalid scatter_dims_to_operand_dims mapping"),
+              ("RepeatedValuesInScatterDimsToOperandDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 2), (0, 1, 2, 2, 3),
+               "scatter_dims_to_operand_dims in scatter op must not repeat"),
+              ("InsufficientWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1,), (0, 1, 2, 3),
+               "Scatter op has window of size 4; doesn't match operand of "
+               "rank 5.")
+           ]
+      ))
+  def testScatterShapeCheckingRule(self, operand_shape, scatter_indices,
+                                   update_shape, dimension_numbers, msg):
+
+      operand = np.ones(operand_shape, dtype=np.int32)
+      updates = np.ones(update_shape, dtype=np.int32)
+
+      with self.assertRaisesRegex(TypeError, msg):
+        lax.scatter(operand, scatter_indices, updates, dimension_numbers)
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler
