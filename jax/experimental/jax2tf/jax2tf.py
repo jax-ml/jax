@@ -1204,30 +1204,40 @@ def _mk_typed_jaxpr(jaxpr: core.Jaxpr, literals: Sequence) -> core.TypedJaxpr:
                          tuple(map(lambda v: v.aval, jaxpr.invars)),
                          tuple(map(lambda v: v.aval, jaxpr.outvars)))
 
-@functools.partial(bool_to_int8, argnums=(1, 3))
-def _scatter(update_computation, operand, scatter_indices, updates,
-             update_jaxpr, update_consts, dimension_numbers,
-             indices_are_sorted, unique_indices):
-  """Tensorflow implementation of scatter with an update computation."""
-  del update_jaxpr, update_consts, unique_indices
+@functools.partial(bool_to_int8, argnums=(0, 2))
+def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
+             dimension_numbers, indices_are_sorted, unique_indices):
+  del unique_indices
+  assert len(update_consts) == 0, "Update computation cannot have constants"
+
   out_shape = _scatter_shape(operand, scatter_indices, updates,
                              dimension_numbers)
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
-  o_spec = tf.TensorSpec(None, dtype=operand.dtype)
+
+  def update_computation(arg1: TfVal, arg2: TfVal) -> TfVal:
+    typed_jaxpr = _mk_typed_jaxpr(update_jaxpr, update_consts)
+    res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
+    return res
+
+  o_spec = tf.TensorSpec((), dtype=operand.dtype)
   xla_update_computation = (
-      tf.function(update_computation).get_concrete_function(o_spec, o_spec))
-  # We compile due to TF bug, see comment on gather
-  out = tf.function(lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
-                                                  indices_are_sorted=indices_are_sorted),
-                    experimental_compile=True)(operand, scatter_indices, updates)
+    tf.function(update_computation).get_concrete_function(o_spec, o_spec))
+
+  out = tf.function(
+      lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
+                                    indices_are_sorted=indices_are_sorted),
+      experimental_compile=True
+  )(operand, scatter_indices, updates)
+
   out.set_shape(out_shape)
+
   return out
 
-tf_impl[lax.scatter_p] = functools.partial(_scatter, lambda x, y: y)
-tf_impl[lax.scatter_min_p] = functools.partial(_scatter, tf.math.minimum)
-tf_impl[lax.scatter_max_p] = functools.partial(_scatter, tf.math.maximum)
-tf_impl[lax.scatter_mul_p] = functools.partial(_scatter, tf.math.multiply)
-tf_impl[lax.scatter_add_p] = functools.partial(_scatter, tf.math.add)
+tf_impl[lax.scatter_p] = _scatter
+tf_impl[lax.scatter_min_p] = _scatter
+tf_impl[lax.scatter_max_p] = _scatter
+tf_impl[lax.scatter_mul_p] = _scatter
+tf_impl[lax.scatter_add_p] = _scatter
 
 def _dynamic_update_slice(operand, update, *start_indices):
   return tfxla.dynamic_update_slice(*promote_types(operand, update),

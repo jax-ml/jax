@@ -549,6 +549,39 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_gather(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_scatter)
+  def test_scatter(self, harness: primitive_harness.Harness):
+    f_name = harness.params['f_lax'].__name__
+    dtype = harness.params['dtype']
+    expect_tf_exceptions = False
+
+    if jtu.device_under_test() == 'tpu':
+      if dtype is np.complex64:
+        if f_name in ['scatter_min', 'scatter_max']:
+          raise unittest.SkipTest(f"TODO: complex {f_name} on TPU fails in JAX")
+        else:
+          # TODO: TensorFlow fails because of unimplemented cases
+          expect_tf_exceptions = True
+
+    if (f_name in ['scatter_min', 'scatter_max'] and
+        dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+                  np.complex64, np.complex128]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/minimum for a
+      # list of the types supported by tf.math.minimum/tf.math.maximum.
+      expect_tf_exceptions = True
+    elif (f_name == 'scatter_add' and
+          dtype in [np.uint16, np.uint32, np.uint64]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/add for a list
+      # of the types supported by tf.math.add.
+      expect_tf_exceptions = True
+    elif (f_name == 'scatter_mul' and dtype in [np.uint32, np.uint64]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/multiply for a
+      # list of the types supported by tf.math.multiply.
+      expect_tf_exceptions = True
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           expect_tf_exceptions=expect_tf_exceptions)
+
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
                       dtype=np.bool_)
