@@ -4748,8 +4748,10 @@ def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
 def _common_reduce_window_shape_rule(operand, window_dimensions,
                                      window_strides, padding, base_dilation,
                                      window_dilation):
-  _check_shapelike("reduce_window", "window_dimensions", window_dimensions)
-  _check_shapelike("reduce_window", "window_strides", window_strides)
+  _check_shapelike("reduce_window", "window_dimensions", window_dimensions,
+                   non_zero_shape=True)
+  _check_shapelike("reduce_window", "window_strides", window_strides,
+                   non_zero_shape=True)
   _check_shapelike("reduce_window", "base_dilation", base_dilation)
   _check_shapelike("reduce_window", "window_dilation", window_dilation)
   if operand.ndim != len(window_dimensions):
@@ -5730,7 +5732,7 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   return tuple(np.take(out_trans, np.argsort(out_perm)))
 
 
-def _check_shapelike(fun_name, arg_name, obj):
+def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
   if not isinstance(obj, (tuple, list, np.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
@@ -5747,9 +5749,11 @@ def _check_shapelike(fun_name, arg_name, obj):
   except TypeError:
     msg = "{} {} must have every element be an integer type, got {}."
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
-  if not (obj_arr >= 0).all():
-    msg = "{} {} must have every element be nonnegative, got {}."
-    raise TypeError(msg.format(fun_name, arg_name, obj))
+  lower_bound, bound_error = (
+      (1, "strictly positive") if non_zero_shape else (0, "nonnegative"))
+  if not (obj_arr >= lower_bound).all():
+    msg = "{} {} must have every element be {}, got {}."
+    raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 
 
 def _dynamic_slice_indices(operand, start_indices):

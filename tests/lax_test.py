@@ -1358,6 +1358,19 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
 
+  def testReduceWindowFailures(self):
+    def empty_window_test():
+      return lax.reduce_window(np.ones((1,)), 0., lax.add, padding='VALID',
+                               window_dimensions=(0,), window_strides=(1,))
+
+    def zero_stride_test():
+      return lax.reduce_window(np.ones((1,)), 0., lax.add, padding='VALID',
+                               window_dimensions=(1,), window_strides=(0,))
+
+    for failure_fun in [empty_window_test, zero_stride_test]:
+      with self.assertRaisesRegex(TypeError, "must have every element be"):
+        failure_fun()
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": (f"_shape={shape}_windowdimensions={window_dimensions}"
                          f"_basedilation={base_dilation}_windowdilation="
