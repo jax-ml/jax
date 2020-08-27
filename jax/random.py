@@ -512,7 +512,7 @@ def permutation(key, x):
   elif np.ndim(x) == 1:
     return _shuffle(key, x, 0)
   else:
-    ind = _shuffle(key, jnp.arange(x.shape[0]), 0)
+    ind = _shuffle(key, jnp.arange(x.shape[0]), 0)  # type: ignore[attribute-error]
     return x[ind]
 
 
