@@ -525,25 +525,28 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     dtype = harness.params['dtype']
     expect_tf_exceptions = False
 
-    if ((f_name == 'scatter_min' or f_name == 'scatter_max') and
-        dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                      np.int16, np.int32, np.int64]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/minimum for a list of
-      # the types supported by tf.math.minimum/tf.math.maximum.
+    if jtu.device_under_test() == 'tpu':
+      if dtype is np.complex64:
+        if f_name in ['scatter_min', 'scatter_max']:
+          raise unittest.SkipTest(f"TODO: complex {f_name} on TPU fails in JAX")
+        else:
+          # TODO: TensorFlow fails because of unimplemented cases
+          expect_tf_exceptions = True
+
+    if (f_name in ['scatter_min', 'scatter_max'] and
+        dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+                  np.complex64, np.complex128]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/minimum for a
+      # list of the types supported by tf.math.minimum/tf.math.maximum.
       expect_tf_exceptions = True
     elif (f_name == 'scatter_add' and
-          dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                        np.int8, np.int16, np.int32, np.int64, np.complex64,
-                        np.complex128]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/add for a list of the
-      # types supported by tf.math.add.
+          dtype in [np.uint16, np.uint32, np.uint64]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/add for a list
+      # of the types supported by tf.math.add.
       expect_tf_exceptions = True
-    elif (f_name == 'scatter_mul' and
-          dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                        np.int8, np.uint16, np.int16, np.int32, np.int64,
-                        np.complex64, np.complex128]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/multiply for a list of
-      # the types supported by tf.math.multiply.
+    elif (f_name == 'scatter_mul' and dtype in [np.uint32, np.uint64]):
+      # See https://www.tensorflow.org/api_docs/python/tf/math/multiply for a
+      # list of the types supported by tf.math.multiply.
       expect_tf_exceptions = True
 
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
