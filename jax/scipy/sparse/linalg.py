@@ -19,7 +19,8 @@ import numpy as np
 import jax.numpy as jnp
 from jax import scipy as jsp
 from jax import lax, device_put, jit
-from jax.tree_util import tree_leaves, tree_map, tree_multimap, tree_structure, tree_reduce, Partial
+from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
+                           tree_reduce, Partial)
 from jax.util import safe_map as map
 
 
@@ -193,58 +194,16 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
-def _project_on_columns(A, v):
-  v_proj = tree_multimap(
-    lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
-    A,
-    v,
-  )
-  return tree_reduce(operator.add, v_proj)
-
-
-def _iterative_classical_gram_schmidt(Q, x, iterations=2):
-  """Orthogonalize x against the columns of Q."""
-  # "twice is enough"
-  # http://slepc.upv.es/documentation/reports/str1.pdf
-
-  # This assumes that Q's leaves all have the same dimension in the last
-  # axis.
-  r = jnp.zeros((tree_leaves(Q)[0].shape[-1]))
-  q = x
-
-  for _ in range(iterations):
-    h = _project_on_columns(Q, q)
-    q = _sub(q, tree_map(lambda X: jnp.dot(X, h), Q))
-    r = _add(r, h)
-  return q, r
-
-
-def kth_arnoldi_iteration(k, A, M, V, H, tol):
-    # https://en.wikipedia.org/wiki/Arnoldi_iteration#The_Arnoldi_iteration
-    v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
-    v = A(M(v))
-
-    def gram_schmidt_step(r, v_i):
-      h_i = _vdot_tree(r, v_i)
-      r_i = _sub(r, _mul(h_i, v_i))
-      return r_i, h_i
-    v, h = lax.scan(gram_schmidt_step, v, xs=V.T)
-    #v, h = _iterative_classical_gram_schmidt(V, v, iterations=1)
-    unit_v, v_norm = _safe_normalize(v, return_norm=True)
-    V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
-    h = h.at[k + 1].set(v_norm)
-    H = H.at[k, :].set(h)
-    return V, H
-
-
-def _safe_normalize(x, return_norm=False):
+def _safe_normalize(x, return_norm=False, thresh=None):
   norm = jnp.sqrt(_vdot_tree(x, x, assume_real=False))
-  thresh = jnp.finfo(x.dtype).eps
+  if thresh is None:
+    thresh = jnp.finfo(x.dtype).eps
+  thresh = thresh.astype(norm.dtype)
 
   normalized_x, norm = lax.cond(
     norm > thresh,
     lambda y: (_div(y, norm), norm),
-    lambda y: (_mul(0.*norm, y), thresh),  # To get the dtype right
+    lambda y: (_mul(0.*y, thresh), thresh),  # To get the dtype right
     x,
   )
   if return_norm:
@@ -253,11 +212,62 @@ def _safe_normalize(x, return_norm=False):
     return normalized_x
 
 
-@jit
-def _lstsq(a, b):
-  Q, R = jnp.linalg.qr(a)
-  out = jsp.linalg.solve_triangular(R[:, :-1], b[:-1])
-  return out
+def kth_arnoldi_iteration(k, A, M, V, H, tol):
+  """
+  Performs a single (the k'th) step of the Arnoldi process. Thus,
+  adds a new orthonormalized Krylov vector A(M(V[:, k])) to V[:, k+1],
+  and that vectors overlaps with the existing Krylov vectors to
+  H[k, :]. The tolerance 'tol' sets the threshold at which an invariant
+  subspace is declared to have been found, in which case the new
+  vector is taken to be the zero vector.
+  """
+
+  v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
+  v = A(M(v))
+
+  def gram_schmidt_step(r, v_i):
+    h_i = _vdot_tree(r, v_i)
+    r_i = _sub(r, _mul(h_i, v_i))
+    return r_i, h_i
+  v, h = lax.scan(gram_schmidt_step, v, xs=V.T)
+  unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
+  V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
+  h = h.at[k + 1].set(v_norm)
+  H = H.at[k, :].set(h)
+  return V, H
+
+
+def apply_givens_rotations(H_row, givens, k):
+  """
+  Applies the Givens rotations stored in the vectors cs and sn to the vector
+  H_row. Then constructs and applies a new Givens rotation that eliminates
+  H_row's k'th element.
+  """
+  # This call successively applies each of the
+  # Givens rotations stored in givens[:, :k] to H_col.
+
+  def apply_ith_rotation(i, H_row):
+    cs, sn = givens[i, :]
+    H_i = cs * H_row[i] - sn * H_row[i + 1]
+    H_ip1 = sn * H_row[i] + cs * H_row[i + 1]
+    H_row = H_row.at[i].set(H_i)
+    H_row = H_row.at[i + 1].set(H_ip1)
+    return H_row
+
+  R_row = lax.fori_loop(0, k, apply_ith_rotation, H_row)
+
+  def givens_rotation(v1, v2):
+    t = jnp.sqrt(v1**2 + v2**2)
+    cs = v1 / t
+    sn = -v2 / t
+    return cs, sn
+  givens_factors = givens_rotation(R_row[k], R_row[k + 1])
+  givens = givens.at[k, :].set(givens_factors)
+  cs_k, sn_k = givens_factors
+
+  R_row = R_row.at[k].set(cs_k * R_row[k] - sn_k * R_row[k + 1])
+  R_row = R_row.at[k + 1].set(0.)
+  return R_row, givens
 
 
 def _gmres(A, b, x0, tol, n_kry, M):
@@ -267,29 +277,52 @@ def _gmres(A, b, x0, tol, n_kry, M):
   projection of the true solution into this subspace is returned.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
+  converged = False
   residual = _sub(b, A(x0))
   unit_residual, beta = _safe_normalize(residual, return_norm=True)
+  b_norm = jnp.sqrt(_vdot_tree(b, b, assume_real=False))
 
   V = tree_map(
     lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, n_kry),)),
     unit_residual,
   )
-  H = jnp.zeros((n_kry, n_kry + 1), jnp.result_type(*tree_leaves(b)))
-  print(H.shape)
+  R = jnp.zeros((n_kry, n_kry + 1), jnp.result_type(*tree_leaves(b)))
 
-  for k in range(n_kry):
-    V, H = kth_arnoldi_iteration(k, A, M, V, H, tol)
+  givens = jnp.zeros((n_kry, 2), dtype=x0.dtype)
+  beta_vec = jnp.zeros((n_kry + 1), dtype=x0.dtype)
+  beta_vec = beta_vec.at[0].set(beta)
 
-  dtype = beta.dtype
-  e1 = jnp.concatenate([jnp.ones((1,), dtype), jnp.zeros((n_kry,), dtype)])
-  y = jsp.linalg.solve(H[:, :-1].T, beta*e1[:-1])
+  def loop_cond(carry):
+    k, err, _, _, _, _ = carry
+    #  return lax.cond(k < n_kry,
+    #                  lambda x: x[0]**2 > x[1],
+    #                  lambda x: False,
+    #                  (err, tol))
+    return k < n_kry #and err**2 > tol
+
+  def arnoldi_qr_step(carry):
+    k, err, V, R, beta_vec, givens = carry
+    V, H = kth_arnoldi_iteration(k, A, M, V, R, tol)
+    R_row, givens = apply_givens_rotations(H[k, :], givens, k)
+    R = R.at[k, :].set(R_row[:])
+    cs, sn = givens[k, :] * beta_vec[k]
+    beta_vec = beta_vec.at[k].set(cs)
+    beta_vec = beta_vec.at[k + 1].set(sn)
+    err = jnp.abs(sn) / b_norm
+    return k + 1, err, V, R, beta_vec, givens
+
+  carry = (0, beta, V, R, beta_vec, givens)
+  carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
+  k, err, V, R, beta_vec, _ = carry
+  converged = err**2 < tol
+
+
+  q = min(k, R.shape[1])
+  y = jsp.linalg.solve(R[:q, :q].T, beta_vec[:q])
   dx = M(tree_map(lambda X: jnp.dot(X[..., :-1], y), V))
   x = _add(x0, dx)
 
-  residual = _sub(b, A(x)) # TODO: Remove this
-  err = _vdot_tree(residual, residual, assume_real=False)
-  done = err < tol
-  return x, done
+  return x, converged
 
 
 def _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M):
@@ -304,56 +337,16 @@ def _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M):
   true_tol = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
 
   def cond_fun(value):
-    x, k, done = value
-    return ~done & (k < maxiter)
+    x, k, converged = value
+    return ~converged & (k < maxiter)
 
   def body_fun(value):
     x, k, _ = value
-    x, done = _gmres(A, b, x, true_tol, restart, M)
-    return x, k + 1, done
-  x_final, k, done = lax.while_loop(cond_fun, body_fun, (x0, 0, False))
-  info = lax.cond(done, lambda y: 0, lambda y: k, 0)
-  return x_final
-
-
-#  def _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M):
-#    """
-#    The main function call wrapped by custom_linear_solve.
-#    """
-#    bs = _vdot_tree(b, b, assume_real=False)
-#    atol2 = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
-#    num_restarts = maxiter // restart
-
-#    def cond_fun(value):
-#      x, residual, k = value
-#      sqr_error = _vdot_tree(residual, residual, assume_real=False)
-#      return (sqr_error > atol2) & (k < num_restarts) & ~jnp.isnan(sqr_error)
-
-#    def body_fun(value):
-#      x, residual, k = value
-#      x = _gmres(A, b, x, restart, M, residual)
-#      residual = _sub(b, A(x))
-#      return x, residual, k + 1
-
-#    residual = _sub(b, A(x0))
-#    if num_restarts:
-#      x, residual, _ = lax.while_loop(
-#        cond_fun, body_fun, (x0, residual, 0))
-#    else:
-#      x = x0
-
-#    iters = maxiter % restart
-#    sqr_error = _vdot_tree(residual, residual)
-#    if iters > 0:  # TODO: fix the extraneous call
-#      x_final = lax.cond(
-#        sqr_error > atol2,
-#        true_fun=lambda values: _gmres(A, b, values[0], iters, M, values[1]),
-#        false_fun=lambda values: values[0],
-#        operand=(x, residual),
-#      )
-#    else:
-#      x_final = x
-#    return x_final
+    x, converged = _gmres(A, b, x, true_tol, restart, M)
+    return x, k + 1, converged
+  x_final, k, converged = lax.while_loop(cond_fun, body_fun, (x0, 0, False))
+  # info = lax.cond(converged, lambda y: 0, lambda y: k, 0)
+  return x_final  #, info
 
 
 def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
