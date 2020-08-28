@@ -408,8 +408,9 @@ tf_not_yet_impl = [
   # Not high priority?
   lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
   lax.infeed_p, lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
+  lax.axis_index_p,
 
-  pxla.xla_pmap_p, pxla.axis_index_p,
+  pxla.xla_pmap_p,
 ]
 
 try:
