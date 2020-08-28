@@ -294,11 +294,11 @@ def _gmres(A, b, x0, tol, n_kry, M):
 
   def loop_cond(carry):
     k, err, _, _, _, _ = carry
-    #  return lax.cond(k < n_kry,
-    #                  lambda x: x[0]**2 > x[1],
-    #                  lambda x: False,
-    #                  (err, tol))
-    return k < n_kry #and err**2 > tol
+    return lax.cond(k < n_kry,
+                    lambda x: x[0]**2 > x[1],
+                    lambda x: False,
+                    (err, tol))
+    #return k < n_kry and err**2 > tol
 
   def arnoldi_qr_step(carry):
     k, err, V, R, beta_vec, givens = carry
@@ -314,14 +314,11 @@ def _gmres(A, b, x0, tol, n_kry, M):
   carry = (0, beta, V, R, beta_vec, givens)
   carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
   k, err, V, R, beta_vec, _ = carry
-  converged = err**2 < tol
+  converged = k < n_kry - 1
 
-
-  q = min(k, R.shape[1])
-  y = jsp.linalg.solve(R[:q, :q].T, beta_vec[:q])
+  y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
   dx = M(tree_map(lambda X: jnp.dot(X[..., :-1], y), V))
   x = _add(x0, dx)
-
   return x, converged
 
 
