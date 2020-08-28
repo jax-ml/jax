@@ -200,6 +200,10 @@ class Poly(dict):
       return False  # See above.
     elif self == other:
       return True
+    else:
+      diff = self - other
+      if diff.is_constant:
+        return int(diff) >= 0
 
     raise ValueError('Polynomials comparison "{} >= {}" is inconclusive.'
                      .format(self, other))
