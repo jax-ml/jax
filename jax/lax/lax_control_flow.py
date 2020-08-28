@@ -2344,18 +2344,17 @@ def associative_scan(fn, elems):
       `elems`. For example, given `elems = [a, b, c, ...]`, the result
       would be `[a, fn(a, b), fn(fn(a, b), c), ...]`.
 
-  #### Examples
+  Example 1: partial sums of an array of numbers:
 
-  ```python
-  # Example 1: Partials sums of numbers.
+  >>> lax.associative_scan(jnp.add, jnp.arange(0, 4))
+  [ 0, 1, 3, 6]
 
-  np.associative_scan(operator.add, np.arange(0, 4))
-  # ==> [ 0, 1, 3, 6]
+  Example 2: partial products of an array of matrices
 
-  # Example 2: Partial products of random matrices.
-
-  np.associative_scan(np.matmul, matrices)
-  ```
+  >>> mats = random.uniform(random.PRNGKey(0), (4, 2, 2))
+  >>> partial_prods = lax.associative_scan(jnp.matmul, mats)
+  >>> partial_prods.shape
+  (4, 2, 2)
   """
   elems_flat, tree = tree_flatten(elems)
 
