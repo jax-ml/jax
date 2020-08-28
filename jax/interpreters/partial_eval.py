@@ -427,7 +427,7 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
 
 
 @lu.transformation
-def trace_to_subjaxpr(master: core.MasterTrace, instantiate: Union[bool, Sequence[bool]],
+def trace_to_subjaxpr(master: core.MainTrace, instantiate: Union[bool, Sequence[bool]],
                       pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
   trace = JaxprTrace(master, core.cur_sublevel())
@@ -1029,7 +1029,7 @@ def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]
     del master
   return jaxpr, out_avals, consts
 
-def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, master: core.MasterTrace,
+def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, master: core.MainTrace,
                        in_avals: Sequence[AbstractValue]):
   frame = JaxprStackFrame()
   with extend_jaxpr_stack(master, frame):

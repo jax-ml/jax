@@ -220,7 +220,7 @@ def _interpret_fun(fun: lu.WrappedFun,
 
 
 @lu.transformation
-def _interpret_subtrace(master: core.MasterTrace, *in_vals: TfValOrUnit):
+def _interpret_subtrace(master: core.MainTrace, *in_vals: TfValOrUnit):
   trace = TensorFlowTrace(master, core.cur_sublevel())
   in_tracers = tuple(TensorFlowTracer(trace, val) for val in in_vals)
   outs = yield in_tracers, {}  # type: Sequence[TfValOrUnit]
