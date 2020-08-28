@@ -22,22 +22,21 @@ import numpy as np
 from jax import core
 from jax import dtypes
 from jax import tree_util
+from jax import source_info_util
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
+from jax.interpreters import partial_eval as pe
 from jax.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
+from jax.lib import xla_bridge as xb
 from jax.config import config
 from jax.numpy import lax_numpy
 
-from jax.interpreters.pxla import axis_index
-
 xops = xc.ops
-
-pxla.multi_host_supported_collectives.add(core.axis_index_p)
 
 
 ### parallel traceables
@@ -288,6 +287,46 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
     return all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
                              axis_name=axis_name)
   return tree_util.tree_map(bind, x)
+
+def axis_index(axis_name):
+  """Return the index along the mapped axis ``axis_name``.
+
+  Args:
+    axis_name: hashable Python object used to name the mapped axis.
+
+  Returns:
+    An integer representing the index.
+
+  For example, with 8 XLA devices available:
+
+  >>> from functools import partial
+  >>> @partial(jax.pmap, axis_name='i')
+  ... def f(_):
+  ...   return lax.axis_index('i')
+  ...
+  >>> f(np.zeros(4))
+  ShardedDeviceArray([0, 1, 2, 3], dtype=int32)
+  >>> f(np.zeros(8))
+  ShardedDeviceArray([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
+  >>> @partial(jax.pmap, axis_name='i')
+  ... @partial(jax.pmap, axis_name='j')
+  ... def f(_):
+  ...   return lax.axis_index('i'), lax.axis_index('j')
+  ...
+  >>> x, y = f(np.zeros((4, 2)))
+  >>> print(x)
+  [[0 0]
+  [1 1]
+  [2 2]
+  [3 3]]
+  >>> print(y)
+  [[0 1]
+  [0 1]
+  [0 1]
+  [0 1]]
+  """
+  return axis_index_p.bind(axis_name=axis_name)
+
 
 ### parallel primitives
 
@@ -581,6 +620,41 @@ def all_gather(x, axis_name):
   return _allgather(x, 0, psum(1, axis_name), axis_name)
 
 
+def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
+  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
+                                dtype=np.uint32))
+  mod = xb.constant(c, np.array(axis_env.sizes[-1], dtype=np.uint32))
+  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
+  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
+
+def _axis_index_bind(*, axis_name):
+  dynamic_axis_env = pxla._thread_local_state.dynamic_axis_env
+  frame = dynamic_axis_env[axis_name]
+  trace = frame.pmap_trace
+
+  out_aval = ShapedArray((), np.int32)
+  out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
+  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
+                          dict(axis_name=axis_name),
+                          source_info_util.current())
+  out_tracer.recipe = eqn
+
+  return out_tracer
+
+def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
+  assert not vals and not mapped
+  idx = axis_index(axis_name)  # type: ignore
+  return idx * chunk_size + np.arange(chunk_size), True
+
+axis_index_p = core.Primitive('axis_index')
+xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
+pxla.soft_pmap_rules[axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
+axis_index_p.def_custom_bind(_axis_index_bind)
+axis_index_p.def_abstract_eval(
+    lambda *args, **params: ShapedArray((), np.int32))
+pxla.multi_host_supported_collectives.add(axis_index_p)
+
+
 @config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
@@ -600,3 +674,21 @@ def omnistaging_enabler() -> None:
 
   if psum_p in pxla.parallel_pure_rules:
     del pxla.parallel_pure_rules[psum_p]
+
+  # Axis index doesn't get any arguments, so that the default bind would have no
+  # way to call into a data-dependency based trace such as vmap. Each trace that
+  # wants to bind an axis name has to additionally implement `process_axis_index`
+  # and put its master trace on the axis env stack.
+  def _axis_index_bind(*, axis_name):
+    frame = core.axis_frame(axis_name)
+    if frame.master_trace is not None:
+      trace = frame.master_trace.trace_type(frame.master_trace, core.cur_sublevel())
+      return trace.process_axis_index(frame)
+    return core.Primitive.bind(axis_index_p, axis_name=axis_name)
+
+  axis_index_p.def_custom_bind(_axis_index_bind)
+
+  def process_axis_index(self, frame):
+    return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
+
+  batching.BatchTrace.process_axis_index = process_axis_index

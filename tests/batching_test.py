@@ -1004,7 +1004,7 @@ class BatchingTest(jtu.JaxTestCase):
 
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
-  def testPpermute(self):
+  def testPPermute(self):
     nelem = 10
     ntests = 10
     x = np.arange(nelem)
@@ -1017,7 +1017,6 @@ class BatchingTest(jtu.JaxTestCase):
       self.assertAllClose(
         vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs), axis_name='i')(x),
         x - x[perm])
-
 
   def testNegativeAxes(self):
     x = np.arange(3*4*5).reshape(3, 4, 5)
@@ -1049,6 +1048,14 @@ class BatchingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "axis -2 is out of bounds.*"):
       jax.vmap(lambda *xs: xs, in_axes=(0, None), out_axes=(0, -2))(
         np.arange(5), 7)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAxisIndex(self):
+    x = np.arange(10)
+    self.assertAllClose(
+      vmap(lambda x: x - lax.axis_index('i'), axis_name='i')(x),
+      x - np.arange(x.shape[0]))
 
 
 if __name__ == '__main__':

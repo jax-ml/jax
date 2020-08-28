@@ -645,7 +645,7 @@ class TraceStack:
     return new
 
 class Sublevel(int): pass
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'tag'])
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'master_trace'])
 
 
 class TraceState:
@@ -1436,7 +1436,7 @@ axis_frame = None
 def omnistaging_enabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
       new_master, reset_trace_state, extend_axis_env, axis_frame, \
-      axis_index, new_base_master, eval_context, \
+      new_base_master, eval_context, \
       TraceStack, TraceState
   del initial_style_staging
 
@@ -1573,8 +1573,8 @@ def omnistaging_enabler() -> None:
   Primitive.bind = bind
 
   @contextmanager
-  def extend_axis_env(axis_name, size: int, tag: Any):
-    frame = AxisEnvFrame(axis_name, size, tag)
+  def extend_axis_env(axis_name, size: int, master_trace: Optional[MasterTrace]):
+    frame = AxisEnvFrame(axis_name, size, master_trace)
     thread_local_state.trace_state.axis_env.append(frame)
     try:
       yield
@@ -1589,45 +1589,3 @@ def omnistaging_enabler() -> None:
         return frame
     else:
       raise NameError("unbound axis name: {}".format(axis_name))
-
-  def axis_index(axis_name):
-    """Return the index along the mapped axis ``axis_name``.
-
-    Args:
-      axis_name: hashable Python object used to name the mapped axis.
-
-    Returns:
-      An integer representing the index.
-
-    For example, with 8 XLA devices available:
-
-    >>> from functools import partial
-    >>> @partial(jax.pmap, axis_name='i')
-    ... def f(_):
-    ...   return lax.axis_index('i')
-    ...
-    >>> f(np.zeros(4))
-    ShardedDeviceArray([0, 1, 2, 3], dtype=int32)
-    >>> f(np.zeros(8))
-    ShardedDeviceArray([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-    >>> @partial(jax.pmap, axis_name='i')
-    ... @partial(jax.pmap, axis_name='j')
-    ... def f(_):
-    ...   return lax.axis_index('i'), lax.axis_index('j')
-    ...
-    >>> x, y = f(np.zeros((4, 2)))
-    >>> print(x)
-    [[0 0]
-    [1 1]
-    [2 2]
-    [3 3]]
-    >>> print(y)
-    [[0 1]
-    [0 1]
-    [0 1]
-    [0 1]]
-    """
-    return axis_index_p.bind(axis_name=axis_name)
-
-
-axis_index_p = Primitive('axis_index')
