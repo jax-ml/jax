@@ -628,8 +628,6 @@ def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
 def _axis_index_bind(*, axis_name):
   dynamic_axis_env = pxla._thread_local_state.dynamic_axis_env
   frame = dynamic_axis_env[axis_name]
-  sizes = dynamic_axis_env.sizes[:dynamic_axis_env.index(frame)+1]
-  nreps = dynamic_axis_env.nreps
   trace = frame.pmap_trace
 
   out_aval = ShapedArray((), np.int32)

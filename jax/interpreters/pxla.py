@@ -43,7 +43,6 @@ from ..config import flags, config
 from .. import core
 from .. import linear_util as lu
 from .. import lazy
-from .. import source_info_util
 from ..abstract_arrays import ConcreteArray, ShapedArray, array_types
 from ..core import Var, Literal
 from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
