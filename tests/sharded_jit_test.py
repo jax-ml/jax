@@ -436,7 +436,7 @@ class PmapOfShardedJitTest(jtu.JaxTestCase):
     num_args = 200
 
     def f(*args):
-      return jnp.sum(args)
+      return jnp.asarray(args).sum()
 
     shape = (2, 4, 4)
     args = [np.arange(prod(shape)).reshape(shape)] * num_args
