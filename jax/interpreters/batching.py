@@ -142,7 +142,7 @@ class BatchTrace(Trace):
         axis_names = (axis_names,)
       for i, axis_name in enumerate(axis_names):
         frame = core.axis_frame(axis_name)
-        if frame.tag is not self.master:
+        if frame.master_trace is not self.master:
           continue
         # We run the split_axis rule with tracers, which is supposed to never
         # mix this axis name with another one. We will handle any invocations
