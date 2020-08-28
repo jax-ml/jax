@@ -3829,6 +3829,29 @@ def _gather_dtype_rule(operand, start_indices, **kwargs):
     raise ValueError("start_indices must have an integer type")
   return dtypes.canonicalize_dtype(operand.dtype)
 
+_rank = lambda arr: len(arr.shape)
+
+def _is_sorted(dims, op_name, name):
+  for i in range(1, len(dims)):
+    if dims[i] < dims[i - 1]:
+      raise TypeError(f"{name} in {op_name} op must be sorted; got {dims}")
+
+def _sorted_dims_in_range(dims, rank, op_name, name):
+  if len(dims) == 0:
+    return
+  invalid_dim = None
+  if dims[0] < 0:
+    invalid_dim = dims[0]
+  elif dims[-1] >= rank:
+    invalid_dim = dims[-1]
+  if invalid_dim:
+    raise TypeError(f"Invalid {name} set in {op_name} op; valid range is "
+                    f"[0, {rank}); got: {invalid_dim}.")
+
+def _no_duplicate_dims(dims, op_name, name):
+  if len(set(dims)) != len(dims):
+    raise TypeError(f"{name} in {op_name} op must not repeat; got: {dims}.")
+
 def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
                        slice_sizes):
   """Validates the well-formedness of the arguments to Gather.
@@ -4051,29 +4074,6 @@ def _scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
     raise ValueError("scatter_indices must have an integer type")
   _check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
   return dtypes.canonicalize_dtype(operand.dtype)
-
-_rank = lambda arr: len(arr.shape)
-
-def _is_sorted(dims, op_name, name):
-  for i in range(1, len(dims)):
-    if dims[i] < dims[i - 1]:
-      raise TypeError(f"{name} in {op_name} op must be sorted; got {dims}")
-
-def _sorted_dims_in_range(dims, rank, op_name, name):
-  if len(dims) == 0:
-    return
-  invalid_dim = None
-  if dims[0] < 0:
-    invalid_dim = dims[0]
-  elif dims[-1] >= rank:
-    invalid_dim = dims[-1]
-  if invalid_dim:
-    raise TypeError(f"Invalid {name} set in {op_name} op; valid range is "
-                    f"[0, {rank}); got: {invalid_dim}.")
-
-def _no_duplicate_dims(dims, op_name, name):
-  if len(set(dims)) != len(dims):
-    raise TypeError(f"{name} in {op_name} op must not repeat; got: {dims}.")
 
 def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers, indices_are_sorted,
