@@ -673,6 +673,10 @@ def omnistaging_enabler() -> None:
   if psum_p in pxla.parallel_pure_rules:
     del pxla.parallel_pure_rules[psum_p]
 
+  # Axis index doesn't get any arguments, so that the default bind would have no
+  # way to call into a data-dependency based trace such as vmap. Each trace that
+  # wants to bind an axis name has to additionally implement `process_axis_index`
+  # and put its master trace on the axis env stack.
   def _axis_index_bind(*, axis_name):
     frame = core.axis_frame(axis_name)
     if frame.master_trace is not None:
