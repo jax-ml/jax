@@ -550,9 +550,6 @@ def _xla_computation(
       names, sizes = unzip2(axis_env)
       return xla.AxisEnv(nreps, names, sizes, None)
 
-  def abstractify(x):
-    return ShapedArray(np.shape(x), dtypes.result_type(x))
-
   @wraps(fun)
   @api_boundary
   def computation_maker(*args, **kwargs):
@@ -579,7 +576,7 @@ def _xla_computation(
       in_parts_flat = tuple(flatten_axes(
           "xla_computation in_parts", in_tree.children()[0], in_parts))
     jaxtree_fun, out_tree = flatten_fun(f, in_tree)
-    avals = map(abstractify, args_flat)
+    avals = map(xla.abstractify, args_flat)
     if config.omnistaging_enabled:
       with ExitStack() as stack:
         for axis_name, size in axis_env or []:
