@@ -1650,6 +1650,75 @@ class LaxTest(jtu.JaxTestCase):
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     self._CompileAndCheck(fun, args_maker)
 
+  # These tests are adapted from the corresponding tests in
+  # tensorflow/compiler/xla/service/shape_inference_test.cc with slight
+  # variations to account for the implicit setting of index_vector_dim in JAX.
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
+       "start_indices_shape": start_indices_shape,
+       "dimension_numbers": lax.GatherDimensionNumbers(
+          offset_dims=offset_dims,
+          collapsed_slice_dims=collapsed_slice_dims,
+          start_index_map=start_index_map),
+       "slice_sizes": slice_sizes, "msg": msg}
+      for (testcase_name, operand_shape, start_indices_shape, offset_dims,
+           collapsed_slice_dims, start_index_map, slice_sizes, msg) in [
+        ("NonAscendingWindowIndices", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 6, 8, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "offset_dims in gather op must be sorted"),
+        ("RepeatedWindowIndices", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 6, 7, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "offset_dims in gather op must not repeat"),
+        ("WindowIndexOutOfBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 100, 101, 102), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Offset dimension 2 in gather op is out of bounds"),
+        ("WindowIndexBarelyOutOfBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 6, 7, 9), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Offset dimension 4 in gather op is out of bounds"),
+        ("MismatchingElidedWindowDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (4,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "All components of the offset index in a gather op must either be a "
+         "offset dimension or explicitly collapsed"),
+        ("OutOfBoundsWindowToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (0, 1, 2, 3, 19), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Invalid collapsed_slice_dims set in gather op; valid range is"),
+        ("RepeatedWindowToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (0, 1, 2, 3, 3), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "collapsed_slice_dims in gather op must not repeat"),
+        ("MismatchingGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (), (0, 1, 2, 3), (10, 9, 8, 7, 6),
+         "Gather op has 4 elements in start_index_map and the bound of "
+         "dimension index_vector_dim=4 of start_indices is 5. These two "
+         "numbers must be equal."),
+        ("OutOfBoundsGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 7), (10, 9, 8, 7, 6),
+         "Invalid start_index_map"),
+        ("RepeatedGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 3), (10, 9, 8, 7, 6),
+         "start_index_map in gather op must not repeat"),
+        ("NonAscendingElidedWindowDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (2, 1), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "collapsed_slice_dims in gather op must be sorted"),
+        ("WindowBoundsTooLarge", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7), (2,), (0, 1, 2, 3, 4), (10, 9, 8, 100, 6),
+         "Slice size at index 3 in gather op is out of range"),
+        ("MismatchingNumberOfWindowBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7),
+         "Gather op must have one slice size for every input dimension"),
+        ("WindowBoundsNot1ForElidedDim", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7), (1,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Gather op can only collapse slice dims with bound 1 or 0, but bound "
+         "is 9 for index 1 at position 0.")
+      ]
+  ))
+  def testGatherShapeCheckingRule(self, operand_shape, start_indices_shape,
+                                  dimension_numbers, slice_sizes, msg):
+    operand = np.ones(operand_shape, dtype=np.int32)
+    start_indices = np.ones(start_indices_shape, dtype=np.int32)
+
+    with self.assertRaisesRegex(TypeError, msg):
+      lax.gather(operand, start_indices, dimension_numbers, slice_sizes)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
           jtu.format_shape_dtype_string(arg_shape, dtype),
