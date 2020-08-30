@@ -322,6 +322,7 @@ from .lax_parallel import (
   all_to_all,
   all_to_all_p,
   axis_index,
+  axis_index_p,
   pmax,
   pmax_p,
   pmean,
