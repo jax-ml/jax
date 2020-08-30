@@ -59,10 +59,10 @@ def jet(fun, primals, series):
 
 @lu.transformation
 def jet_fun(order, primals, series):
-  with core.new_master(JetTrace) as master:
-    master.order = order
-    out_primals, out_terms = yield (master, primals, series), {}
-    del master
+  with core.new_main(JetTrace) as main:
+    main.order = order
+    out_primals, out_terms = yield (main, primals, series), {}
+    del main
   out_terms = [[np.zeros_like(p)] * order if s is zero_series else s
                for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms
@@ -115,7 +115,7 @@ class JetTrace(core.Trace):
     return JetTracer(self, val.primal, val.terms)
 
   def process_primitive(self, primitive, tracers, params):
-    order = self.master.order              # pytype: disable=attribute-error
+    order = self.main.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
@@ -133,7 +133,7 @@ class JetTrace(core.Trace):
   def process_call(self, call_primitive, f, tracers, params):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
-    f_jet, out_tree_def = traceable(jet_subtrace(f, self.master), in_tree_def)
+    f_jet, out_tree_def = traceable(jet_subtrace(f, self.main), in_tree_def)
     update_params = call_param_updaters.get(call_primitive)
     new_params = (update_params(params, len(primals_and_series))
                   if update_params else params)
@@ -145,7 +145,7 @@ class JetTrace(core.Trace):
     primals, series = unzip2((t.primal, t.terms) for t in out_tracers)
     out, treedef = tree_flatten((primals, series))
     del primals, series
-    master = self.master
+    master = self.main
     def todo(x):
       primals, series = tree_unflatten(treedef, x)
       trace = JetTrace(master, core.cur_sublevel())

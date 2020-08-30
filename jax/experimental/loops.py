@@ -277,22 +277,22 @@ class Scope(object):
 
   def start_subtrace(self):
     """Starts a nested trace, returns the Trace object."""
-    # TODO: This follows the __enter__ part of core.new_master.
+    # TODO: This follows the __enter__ part of core.new_main.
     if config.omnistaging_enabled:
       level = core.thread_local_state.trace_state.trace_stack.next_level()
-      master = core.MasterTrace(level, pe.JaxprTrace)
+      master = core.MainTrace(level, pe.JaxprTrace)
       core.thread_local_state.trace_state.trace_stack.push(master)
       self._count_subtraces += 1
       return pe.JaxprTrace(master, core.cur_sublevel())
     else:
       level = core.thread_local_state.trace_state.trace_stack.next_level(False)
-      master = core.MasterTrace(level, pe.JaxprTrace)
+      master = core.MainTrace(level, pe.JaxprTrace)
       core.thread_local_state.trace_state.trace_stack.push(master, False)
       self._count_subtraces += 1
       return pe.JaxprTrace(master, core.cur_sublevel())
 
   def end_subtrace(self):
-    # TODO: This follows the __exit__ part of core.new_master
+    # TODO: This follows the __exit__ part of core.new_main
     if config.omnistaging_enabled:
       core.thread_local_state.trace_state.trace_stack.pop()
     else:

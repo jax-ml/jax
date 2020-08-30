@@ -490,7 +490,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   if config.omnistaging_enabled:
     partial_eval_jaxpr = pe.partial_eval_jaxpr
   else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.master.trace_type)
+    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
 
   cond_consts_uk, body_consts_uk, carry_init_uk = split_list(unknowns, [cond_nconsts, body_nconsts])
   # Fixpoint computation of unknown carry. Each iteration promotes
@@ -844,7 +844,7 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   if config.omnistaging_enabled:
     partial_eval_jaxpr = pe.partial_eval_jaxpr
   else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.master.trace_type)
+    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
 
   if index_uk:
     # When the branch index is unknown, we stage out the whole cond.
@@ -1517,7 +1517,7 @@ def _prune_zeros(ts):
 
 def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                        jaxpr, linear, unroll):
-  if not config.omnistaging_enabled and trace.master.trace_type is pe.StagingJaxprTrace:
+  if not config.omnistaging_enabled and trace.main.trace_type is pe.StagingJaxprTrace:
     params = dict(reverse=reverse, length=length, num_consts=num_consts,
                   num_carry=num_carry, jaxpr=jaxpr, linear=linear,
                   unroll=unroll)
@@ -1531,7 +1531,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   if config.omnistaging_enabled:
     partial_eval_jaxpr = pe.partial_eval_jaxpr
   else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.master.trace_type)
+    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
 
   # Fixpoint computation of which carry are unknown (not a constant): either
   # unknown from init, or the carry out is unknown. Each iteration promotes
