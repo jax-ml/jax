@@ -46,9 +46,9 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
-  with core.new_main(JVPTrace) as master:
-    out_primals, out_tangents = yield (master, primals, tangents), {}
-    del master
+  with core.new_main(JVPTrace) as main:
+    out_primals, out_tangents = yield (main, primals, tangents), {}
+    del main
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_tangents)
   out_tangents = [instantiate_zeros(t) if inst else t for t, inst
@@ -56,8 +56,8 @@ def jvpfun(instantiate, primals, tangents):
   yield out_primals, out_tangents
 
 @lu.transformation
-def jvp_subtrace(master, primals, tangents):
-  trace = JVPTrace(master, core.cur_sublevel())
+def jvp_subtrace(main, primals, tangents):
+  trace = JVPTrace(main, core.cur_sublevel())
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
       assert x._trace.level < trace.level
@@ -69,8 +69,8 @@ def jvp_subtrace(master, primals, tangents):
                 for out_tracer in out_tracers])
 
 @lu.transformation_with_aux
-def jvp_subtrace_aux(master, primals, tangents):
-  trace = JVPTrace(master, core.cur_sublevel())
+def jvp_subtrace_aux(main, primals, tangents):
+  trace = JVPTrace(main, core.cur_sublevel())
   for x in list(primals) + list(tangents):
     if isinstance(x, Tracer):
       assert x._trace.level < trace.level
@@ -280,10 +280,10 @@ class JVPTrace(Trace):
     primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
     out, treedef = tree_flatten((primals, tangents))
     del primals, tangents
-    master = self.main
+    main = self.main
     def todo(x):
       primals, tangents = tree_unflatten(treedef, x)
-      trace = JVPTrace(master, core.cur_sublevel())
+      trace = JVPTrace(main, core.cur_sublevel())
       return map(partial(JVPTracer, trace), primals, tangents)
     return out, todo
 

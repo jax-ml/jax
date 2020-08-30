@@ -93,8 +93,8 @@ def callback_fun(fun : lu.WrappedFun, in_vals, callback, strip_calls):
   return fun.call_wrapped(*in_vals)
 
 @lu.transformation
-def callback_subtrace(master, *in_vals, **params):
-  trace = CallbackTrace(master, core.cur_sublevel())
+def callback_subtrace(main, *in_vals, **params):
+  trace = CallbackTrace(main, core.cur_sublevel())
   in_tracers = [CallbackTracer(trace, val) for val in in_vals]
   outs = yield in_tracers, params
   out_tracers = map(trace.full_raise, outs)

@@ -80,19 +80,19 @@ def mask_fun(fun, logical_env, padded_env, in_vals, polymorphic_shapes):
   logical_env_vals = [logical_env[k] for k in env_keys]
   # Make padded_env hashable
   padded_env = (env_keys, padded_env_vals)
-  with core.new_main(MaskTrace) as master:
-    fun, out_shapes = mask_subtrace(fun, master, polymorphic_shapes, padded_env)
+  with core.new_main(MaskTrace) as main:
+    fun, out_shapes = mask_subtrace(fun, main, polymorphic_shapes, padded_env)
     out_vals = fun.call_wrapped(*(logical_env_vals + in_vals))
-    del master
+    del main
   return out_vals, out_shapes()
 
 @lu.transformation_with_aux
-def mask_subtrace(master, shapes, padded_env, *in_vals):
+def mask_subtrace(main, shapes, padded_env, *in_vals):
   env_keys, _ = padded_env
   logical_env_vals, in_vals = in_vals[:len(env_keys)], in_vals[len(env_keys):]
   logical_env = dict(zip(env_keys, logical_env_vals))
   padded_env = dict(zip(*padded_env))
-  trace = MaskTrace(master, core.cur_sublevel())
+  trace = MaskTrace(main, core.cur_sublevel())
   in_tracers = [MaskTracer(trace, x, s).full_lower()
                 for x, s in zip(in_vals, shapes)]
   with extend_shape_envs(logical_env, padded_env):
@@ -430,9 +430,9 @@ class MaskTrace(Trace):
 
   def post_process_call(self, call_primitive, out_tracers, params):
     vals, shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
-    master = self.main
+    main = self.main
     def todo(vals):
-      trace = MaskTrace(master, core.cur_sublevel())
+      trace = MaskTrace(main, core.cur_sublevel())
       return map(partial(MaskTracer, trace), vals, shapes)
     return vals, todo
 

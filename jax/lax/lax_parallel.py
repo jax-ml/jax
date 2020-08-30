@@ -678,11 +678,11 @@ def omnistaging_enabler() -> None:
   # Axis index doesn't get any arguments, so that the default bind would have no
   # way to call into a data-dependency based trace such as vmap. Each trace that
   # wants to bind an axis name has to additionally implement `process_axis_index`
-  # and put its master trace on the axis env stack.
+  # and put its main trace on the axis env stack.
   def _axis_index_bind(*, axis_name):
     frame = core.axis_frame(axis_name)
-    if frame.master_trace is not None:
-      trace = frame.master_trace.trace_type(frame.master_trace, core.cur_sublevel())
+    if frame.main_trace is not None:
+      trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
       return trace.process_axis_index(frame)
     return core.Primitive.bind(axis_index_p, axis_name=axis_name)
 

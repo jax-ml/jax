@@ -212,16 +212,16 @@ def convert(fun, with_gradient=False):
 
 def _interpret_fun(fun: lu.WrappedFun,
                    in_vals: Sequence[TfValOrUnit]) -> Sequence[TfValOrUnit]:
-  with core.new_main(TensorFlowTrace) as master:
-    fun = _interpret_subtrace(fun, master)
+  with core.new_main(TensorFlowTrace) as main:
+    fun = _interpret_subtrace(fun, main)
     out_vals: Sequence[TfValOrUnit] = fun.call_wrapped(*in_vals)
-    del master
+    del main
   return out_vals
 
 
 @lu.transformation
-def _interpret_subtrace(master: core.MainTrace, *in_vals: TfValOrUnit):
-  trace = TensorFlowTrace(master, core.cur_sublevel())
+def _interpret_subtrace(main: core.MainTrace, *in_vals: TfValOrUnit):
+  trace = TensorFlowTrace(main, core.cur_sublevel())
   in_tracers = tuple(TensorFlowTracer(trace, val) for val in in_vals)
   outs = yield in_tracers, {}  # type: Sequence[TfValOrUnit]
   out_tracers: Iterable[TensorFlowTracer] = map(trace.full_raise, outs)  # type: ignore
@@ -295,7 +295,7 @@ class TensorFlowTrace(core.Trace):
     return TensorFlowTracer(self, val)
 
   def lift(self, val: core.Tracer):
-    """Lifts a core.Tracer from a lower-level master into the TensorFlowTrace."""
+    """Lifts a core.Tracer from a lower-level main into the TensorFlowTrace."""
     # TODO(necula): this should never be needed
     return TensorFlowTracer(self, val)
 
@@ -342,9 +342,9 @@ class TensorFlowTrace(core.Trace):
     # (out_tracers) include TensorFlowTracer that were not passed through
     # its arguments (captured from the environment).
     vals = tuple(t.val for t in out_tracers)
-    master = self.main
+    main = self.main
     def todo(vals: Sequence[TfValOrUnit]):
-      trace = TensorFlowTrace(master, core.cur_sublevel())
+      trace = TensorFlowTrace(main, core.cur_sublevel())
       return map(functools.partial(TensorFlowTracer, trace), vals)
     return vals, todo
 
