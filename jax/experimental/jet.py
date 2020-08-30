@@ -59,10 +59,10 @@ def jet(fun, primals, series):
 
 @lu.transformation
 def jet_fun(order, primals, series):
-  with core.new_master(JetTrace) as master:
-    master.order = order
-    out_primals, out_terms = yield (master, primals, series), {}
-    del master
+  with core.new_master(JetTrace) as main:
+    main.order = order
+    out_primals, out_terms = yield (main, primals, series), {}
+    del main
   out_terms = [[np.zeros_like(p)] * order if s is zero_series else s
                for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms

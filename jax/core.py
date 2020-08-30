@@ -1527,21 +1527,21 @@ def omnistaging_enabler() -> None:
                  ) -> Generator[MainTrace, None, None]:
     stack = thread_local_state.trace_state.trace_stack
     level = stack.next_level()
-    master = MainTrace(level, trace_type)
-    stack.push(master)
+    main = MainTrace(level, trace_type)
+    stack.push(main)
     if dynamic:
-      prev_dynamic, stack.dynamic = stack.dynamic, master
+      prev_dynamic, stack.dynamic = stack.dynamic, main
 
     try:
-      yield master
+      yield main
     finally:
       thread_local_state.trace_state.trace_stack.pop()
       if dynamic:
         stack.dynamic = prev_dynamic
 
     if check_leaks:
-      t = ref(master)
-      del master
+      t = ref(main)
+      del main
       if t() is not None:
         print(thread_local_state.trace_state.trace_stack)
         raise Exception('Leaked trace {}'.format(t()))
@@ -1549,11 +1549,11 @@ def omnistaging_enabler() -> None:
   @contextmanager
   def new_base_master(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
     stack = thread_local_state.trace_state.trace_stack
-    master = MainTrace(0, trace_type)
-    prev_dynamic, stack.dynamic = stack.dynamic, master
-    prev_base, stack.stack[0] = stack.stack[0], master
+    main = MainTrace(0, trace_type)
+    prev_dynamic, stack.dynamic = stack.dynamic, main
+    prev_base, stack.stack[0] = stack.stack[0], main
     try:
-      yield master
+      yield main
     finally:
       stack.dynamic = prev_dynamic
       stack.stack[0] = prev_base

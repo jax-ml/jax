@@ -1022,18 +1022,18 @@ class DynamicJaxprTrace(core.Trace):
 
 def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
   assert config.omnistaging_enabled
-  with core.new_master(DynamicJaxprTrace, dynamic=True) as master:  # type: ignore
-    master.source_info = fun_sourceinfo(fun.f)  # type: ignore
-    master.jaxpr_stack = ()  # type: ignore
-    jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, master, in_avals)
-    del master
+  with core.new_master(DynamicJaxprTrace, dynamic=True) as main:  # type: ignore
+    main.source_info = fun_sourceinfo(fun.f)  # type: ignore
+    main.jaxpr_stack = ()  # type: ignore
+    jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
+    del main
   return jaxpr, out_avals, consts
 
-def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, master: core.MainTrace,
-                       in_avals: Sequence[AbstractValue]):
+def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, main: core.MainTrace,
+                              in_avals: Sequence[AbstractValue]):
   frame = JaxprStackFrame()
-  with extend_jaxpr_stack(master, frame):
-    trace = DynamicJaxprTrace(master, core.cur_sublevel())
+  with extend_jaxpr_stack(main, frame):
+    trace = DynamicJaxprTrace(main, core.cur_sublevel())
     in_tracers = map(trace.new_arg, in_avals)
     ans = fun.call_wrapped(*in_tracers)
     out_tracers = map(trace.full_raise, ans)
@@ -1041,21 +1041,21 @@ def trace_to_subjaxpr_dynamic(fun: lu.WrappedFun, master: core.MainTrace,
   return jaxpr, out_avals, consts
 
 @contextlib.contextmanager
-def extend_jaxpr_stack(master, frame):
-  master.jaxpr_stack = master.jaxpr_stack + (frame,)
+def extend_jaxpr_stack(main, frame):
+  main.jaxpr_stack = main.jaxpr_stack + (frame,)
   try:
     yield
   finally:
-    assert frame is master.jaxpr_stack[-1]
-    master.jaxpr_stack = master.jaxpr_stack[:-1]
+    assert frame is main.jaxpr_stack[-1]
+    main.jaxpr_stack = main.jaxpr_stack[:-1]
 
 def trace_to_jaxpr_final(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
   assert config.omnistaging_enabled
-  with core.new_base_master(DynamicJaxprTrace) as master:  # type: ignore
-    master.source_info = fun_sourceinfo(fun.f)  # type: ignore
-    master.jaxpr_stack = ()  # type: ignore
-    jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, master, in_avals)
-    del master
+  with core.new_base_master(DynamicJaxprTrace) as main:  # type: ignore
+    main.source_info = fun_sourceinfo(fun.f)  # type: ignore
+    main.jaxpr_stack = ()  # type: ignore
+    jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
+    del main
   return jaxpr, out_avals, consts
 
 def partial_eval_to_jaxpr_dynamic(fun: lu.WrappedFun, in_pvals: Sequence[PartialVal]):
