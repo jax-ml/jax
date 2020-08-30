@@ -103,11 +103,11 @@ def callback_subtrace(master, *in_vals, **params):
 
 @lu.transformation
 def _callback_fun(callback, strip_calls, *in_vals, **params):
-  with core.new_master(CallbackTrace) as master:
-    master.callback = callback # NOTE: Is this OK?
-    master.strip_calls = strip_calls
-    out_vals = yield (master,) + in_vals, params
-    del master
+  with core.new_main(CallbackTrace) as main:
+    main.callback = callback # NOTE: Is this OK?
+    main.strip_calls = strip_calls
+    out_vals = yield (main,) + in_vals, params
+    del main
   yield out_vals
 
 def _check_callable(fun):
@@ -144,15 +144,15 @@ class CallbackTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in = [t.val for t in tracers]
-    vals_out = self.master.callback(primitive, vals_in, params)  # type: ignore
+    vals_out = self.main.callback(primitive, vals_in, params)  # type: ignore
     if primitive.multiple_results:
       return [CallbackTracer(self, val) for val in vals_out]
     return CallbackTracer(self, vals_out)
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
-    if self.master.strip_calls: # type: ignore
+    if self.main.strip_calls: # type: ignore
       return f.call_wrapped(*tracers)
     vals_in = [t.val for t in tracers]
-    f = callback_subtrace(f, self.master)
+    f = callback_subtrace(f, self.main)
     vals_out = call_primitive.bind(f, *vals_in, **params)
     return [CallbackTracer(self, val) for val in vals_out]
