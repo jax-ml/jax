@@ -262,7 +262,7 @@ class JVPTrace(Trace):
     assert call_primitive.multiple_results
     primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
     nonzero_tangents, tangent_tree_def = tree_flatten(tangents)
-    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.master),
+    f_jvp, out_tree_def = traceable(jvp_subtrace(f, self.main),
                                     len(primals), tangent_tree_def)
     nz_tangents = [type(t) is not Zero for t in tangents]
     params = dict(params, name=wrap_name(params['name'], 'jvp'))
@@ -280,7 +280,7 @@ class JVPTrace(Trace):
     primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
     out, treedef = tree_flatten((primals, tangents))
     del primals, tangents
-    master = self.master
+    master = self.main
     def todo(x):
       primals, tangents = tree_unflatten(treedef, x)
       trace = JVPTrace(master, core.cur_sublevel())

@@ -356,15 +356,15 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
 
 
 class Trace:
-  __slots__ = ['master', 'level', 'sublevel']
+  __slots__ = ['main', 'level', 'sublevel']
 
-  master: 'MainTrace'
+  main: 'MainTrace'
   level: int
   sublevel: 'Sublevel'
 
-  def __init__(self, master: 'MainTrace', sublevel: 'Sublevel') -> None:
-    self.master = master
-    self.level = master.level
+  def __init__(self, main: 'MainTrace', sublevel: 'Sublevel') -> None:
+    self.main = main
+    self.level = main.level
     self.sublevel = sublevel
 
   def full_raise(self, val) -> 'Tracer':
@@ -372,7 +372,7 @@ class Trace:
       return self.pure(val)
     level = self.level
     sublevel = self.sublevel
-    if val._trace.master is self.master:
+    if val._trace.main is self.main:
       if val._trace.sublevel == sublevel:
         return val
       elif val._trace.sublevel < sublevel:
@@ -689,17 +689,17 @@ def cur_sublevel() -> Sublevel:
 @contextmanager
 def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
   level = thread_local_state.trace_state.trace_stack.next_level(bottom)
-  master = MainTrace(level, trace_type)
-  thread_local_state.trace_state.trace_stack.push(master, bottom)
+  main = MainTrace(level, trace_type)
+  thread_local_state.trace_state.trace_stack.push(main, bottom)
 
   try:
-    yield master
+    yield main
   finally:
     thread_local_state.trace_state.trace_stack.pop(bottom)
 
   if check_leaks:
-    t = ref(master)
-    del master
+    t = ref(main)
+    del main
     if t() is not None:
       print(thread_local_state.trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
@@ -728,7 +728,7 @@ def full_lower(val):
 def find_top_trace(xs) -> Optional[Trace]:
   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
                   key=attrgetter('level'), default=None)
-  return top_trace and type(top_trace)(top_trace.master, cur_sublevel())
+  return top_trace and type(top_trace)(top_trace.main, cur_sublevel())
 
 @contextmanager
 def initial_style_staging():
@@ -1116,7 +1116,7 @@ def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
       ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans._trace)(ans._trace.master, cur_sublevel())
+    trace = type(ans._trace)(ans._trace.main, cur_sublevel())
     outs = map(trace.full_raise, outs)
     outs, cur_todo = primitive.post_process(trace, outs, params)
     todo.append(cur_todo)
@@ -1512,15 +1512,15 @@ def omnistaging_enabler() -> None:
   def maybe_new_sublevel(trace):
     # dynamic traces run the WrappedFun, so we raise the sublevel for them
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    return new_sublevel() if trace.master is dynamic else suppress()
+    return new_sublevel() if trace.main is dynamic else suppress()
 
   def find_top_trace(xs) -> Trace:
-    top_master = max((x._trace.master for x in xs if isinstance(x, Tracer)),
+    top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
                      default=None, key=attrgetter('level'))
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    top_master = (dynamic if top_master is None or dynamic.level > top_master.level
-                  else top_master)
-    return top_master and top_master.trace_type(top_master, cur_sublevel())  # type: ignore
+    top_main = (dynamic if top_main is None or dynamic.level > top_main.level
+                  else top_main)
+    return top_main and top_main.trace_type(top_main, cur_sublevel())  # type: ignore
 
   @contextmanager
   def new_master(trace_type: Type[Trace], dynamic: bool = False,

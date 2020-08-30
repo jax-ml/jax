@@ -332,7 +332,7 @@ class TensorFlowTrace(core.Trace):
                    tracers: Sequence[TensorFlowTracer], params):
     assert call_primitive.multiple_results
     vals: Sequence[TfValOrUnit] = [t.val for t in tracers]
-    f = _interpret_subtrace(f, self.master)
+    f = _interpret_subtrace(f, self.main)
     vals_out: Sequence[TfValOrUnit] = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v) for v in vals_out]
 
@@ -342,7 +342,7 @@ class TensorFlowTrace(core.Trace):
     # (out_tracers) include TensorFlowTracer that were not passed through
     # its arguments (captured from the environment).
     vals = tuple(t.val for t in out_tracers)
-    master = self.master
+    master = self.main
     def todo(vals: Sequence[TfValOrUnit]):
       trace = TensorFlowTrace(master, core.cur_sublevel())
       return map(functools.partial(TensorFlowTracer, trace), vals)

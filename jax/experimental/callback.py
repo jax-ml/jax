@@ -144,15 +144,15 @@ class CallbackTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     vals_in = [t.val for t in tracers]
-    vals_out = self.master.callback(primitive, vals_in, params)  # type: ignore
+    vals_out = self.main.callback(primitive, vals_in, params)  # type: ignore
     if primitive.multiple_results:
       return [CallbackTracer(self, val) for val in vals_out]
     return CallbackTracer(self, vals_out)
 
   def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
-    if self.master.strip_calls: # type: ignore
+    if self.main.strip_calls: # type: ignore
       return f.call_wrapped(*tracers)
     vals_in = [t.val for t in tracers]
-    f = callback_subtrace(f, self.master)
+    f = callback_subtrace(f, self.main)
     vals_out = call_primitive.bind(f, *vals_in, **params)
     return [CallbackTracer(self, val) for val in vals_out]
