@@ -645,7 +645,7 @@ class TraceStack:
     return new
 
 class Sublevel(int): pass
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'master_trace'])
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
 
 
 class TraceState:
@@ -1435,7 +1435,7 @@ axis_frame = None
 @no_type_check
 def omnistaging_enabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
-      new_master, reset_trace_state, extend_axis_env, axis_frame, \
+      new_main, reset_trace_state, extend_axis_env, axis_frame, \
       new_base_main, eval_context, \
       TraceStack, TraceState
   del initial_style_staging
@@ -1573,8 +1573,8 @@ def omnistaging_enabler() -> None:
   Primitive.bind = bind
 
   @contextmanager
-  def extend_axis_env(axis_name, size: int, master_trace: Optional[MasterTrace]):
-    frame = AxisEnvFrame(axis_name, size, master_trace)
+  def extend_axis_env(axis_name, size: int, main_trace: Optional[MainTrace]):
+    frame = AxisEnvFrame(axis_name, size, main_trace)
     thread_local_state.trace_state.axis_env.append(frame)
     try:
       yield

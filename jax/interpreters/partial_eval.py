@@ -239,7 +239,7 @@ class JaxprTrace(Trace):
     out_pvs, out_pv_consts = unzip2(t.pval for t in out_tracers)
     out = out_pv_consts + consts
     del consts, out_pv_consts
-    master = self.main
+    main = self.main
 
     if primitive.map_primitive:
       sz = params['axis_size']
@@ -249,7 +249,7 @@ class JaxprTrace(Trace):
     def todo(x):
       n = len(jaxpr.outvars)
       out_pv_consts, consts = x[:n], x[n:]
-      trace = JaxprTrace(master, core.cur_sublevel())
+      trace = JaxprTrace(main, core.cur_sublevel())
       const_tracers = map(trace.new_instantiated_const, consts)
       out_tracers = [JaxprTracer(trace, PartialVal((out_pv, out_pv_const)), None)
                      for out_pv, out_pv_const in zip(out_pvs, out_pv_consts)]
@@ -417,20 +417,20 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
     consts = [3, 6]  # values for `ka` and `kb` constvars
   """
   trace_type = trace_type or (StagingJaxprTrace if stage_out else JaxprTrace)
-  with core.new_main(trace_type, bottom=bottom) as master:
-    fun = trace_to_subjaxpr(fun, master, instantiate)
+  with core.new_main(trace_type, bottom=bottom) as main:
+    fun = trace_to_subjaxpr(fun, main, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
     assert not env
-    del master
+    del main
 
   return jaxpr, out_pvals, consts
 
 
 @lu.transformation
-def trace_to_subjaxpr(master: core.MainTrace, instantiate: Union[bool, Sequence[bool]],
+def trace_to_subjaxpr(main: core.MainTrace, instantiate: Union[bool, Sequence[bool]],
                       pvals: Sequence[PartialVal]):
   assert all([isinstance(pv, PartialVal) for pv in pvals]), pvals
-  trace = JaxprTrace(master, core.cur_sublevel())
+  trace = JaxprTrace(main, core.cur_sublevel())
   in_tracers = map(trace.new_arg, pvals)
   ans = yield in_tracers, {}
   instantiate = [instantiate] * len(ans) if isinstance(instantiate, bool) else instantiate
@@ -869,8 +869,8 @@ class JaxprStackFrame:
     self.tracer_to_var = {}
     self.constid_to_var = {}
     self.constvar_to_val = {}
-    self.tracers = []   # circ refs, frame->tracer->trace->master->frame,
-    self.eqns = []      # cleared when we pop frame from master
+    self.tracers = []   # circ refs, frame->tracer->trace->main->frame,
+    self.eqns = []      # cleared when we pop frame from main
 
   def to_jaxpr(self, in_tracers, out_tracers):
     invars = [self.tracer_to_var[id(t)] for t in in_tracers]
@@ -1090,11 +1090,11 @@ def omnistaging_enabler() -> None:
   def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
                     instantiate: Union[bool, Sequence[bool]] = False,
                     ) -> Tuple[Jaxpr, Tuple[PartialVal, ...], Tuple[core.Value, ...]]:
-    with core.new_main(JaxprTrace) as master:
-      fun = trace_to_subjaxpr(fun, master, instantiate)
+    with core.new_main(JaxprTrace) as main:
+      fun = trace_to_subjaxpr(fun, main, instantiate)
       jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
       assert not env
-      del master
+      del main
 
     return jaxpr, out_pvals, consts
 

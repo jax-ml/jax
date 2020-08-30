@@ -68,8 +68,8 @@ def jet_fun(order, primals, series):
   yield out_primals, out_terms
 
 @lu.transformation
-def jet_subtrace(master, primals, series):
-  trace = JetTrace(master, core.cur_sublevel())
+def jet_subtrace(main, primals, series):
+  trace = JetTrace(main, core.cur_sublevel())
   in_tracers = map(partial(JetTracer, trace), primals, series)
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
@@ -145,10 +145,10 @@ class JetTrace(core.Trace):
     primals, series = unzip2((t.primal, t.terms) for t in out_tracers)
     out, treedef = tree_flatten((primals, series))
     del primals, series
-    master = self.main
+    main = self.main
     def todo(x):
       primals, series = tree_unflatten(treedef, x)
-      trace = JetTrace(master, core.cur_sublevel())
+      trace = JetTrace(main, core.cur_sublevel())
       return map(partial(JetTracer, trace), primals, series)
     return out, todo
 
