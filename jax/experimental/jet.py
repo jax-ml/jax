@@ -59,7 +59,7 @@ def jet(fun, primals, series):
 
 @lu.transformation
 def jet_fun(order, primals, series):
-  with core.new_master(JetTrace) as main:
+  with core.new_main(JetTrace) as main:
     main.order = order
     out_primals, out_terms = yield (main, primals, series), {}
     del main

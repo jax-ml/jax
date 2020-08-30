@@ -60,7 +60,7 @@ def _batch_fun(axis_name, sum_match, in_dims, out_dims_thunk, out_dim_dests,
     canonicalize_axis(dim, np.ndim(val)) if isinstance(dim, int) else dim
     for val, dim in zip(in_vals, in_dims)]
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
-  with core.new_master(BatchTrace) as master:
+  with core.new_main(BatchTrace) as master:
     with core.extend_axis_env(axis_name, size, master):
       out_vals = yield (master, in_dims,) + in_vals, params
     del master
@@ -80,7 +80,7 @@ def batch_fun2(fun : lu.WrappedFun, in_dims):
 
 @lu.transformation
 def _batch_fun2(in_dims, *in_vals, **params):
-  with core.new_master(BatchTrace) as master:
+  with core.new_main(BatchTrace) as master:
     out_vals = yield (master, in_dims,) + in_vals, params
     del master
   yield out_vals
@@ -392,7 +392,7 @@ def batch_jaxpr(jaxpr, size, batched, instantiate):
 @lu.transformation_with_aux
 def batched_traceable(size, batched, instantiate, *vals):
   in_dims = [0 if b else None for b in batched]
-  with core.new_master(BatchTrace) as master:
+  with core.new_main(BatchTrace) as master:
     trace = BatchTrace(master, core.cur_sublevel())
     ans = yield map(partial(BatchTracer, trace), vals, in_dims), {}
     out_tracers = map(trace.full_raise, ans)

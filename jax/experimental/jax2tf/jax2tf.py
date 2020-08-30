@@ -212,7 +212,7 @@ def convert(fun, with_gradient=False):
 
 def _interpret_fun(fun: lu.WrappedFun,
                    in_vals: Sequence[TfValOrUnit]) -> Sequence[TfValOrUnit]:
-  with core.new_master(TensorFlowTrace) as master:
+  with core.new_main(TensorFlowTrace) as master:
     fun = _interpret_subtrace(fun, master)
     out_vals: Sequence[TfValOrUnit] = fun.call_wrapped(*in_vals)
     del master

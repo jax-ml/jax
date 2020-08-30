@@ -103,7 +103,7 @@ def callback_subtrace(master, *in_vals, **params):
 
 @lu.transformation
 def _callback_fun(callback, strip_calls, *in_vals, **params):
-  with core.new_master(CallbackTrace) as main:
+  with core.new_main(CallbackTrace) as main:
     main.callback = callback # NOTE: Is this OK?
     main.strip_calls = strip_calls
     out_vals = yield (main,) + in_vals, params

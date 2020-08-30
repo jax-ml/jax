@@ -417,7 +417,7 @@ def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
     consts = [3, 6]  # values for `ka` and `kb` constvars
   """
   trace_type = trace_type or (StagingJaxprTrace if stage_out else JaxprTrace)
-  with core.new_master(trace_type, bottom=bottom) as master:
+  with core.new_main(trace_type, bottom=bottom) as master:
     fun = trace_to_subjaxpr(fun, master, instantiate)
     jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
     assert not env
@@ -1022,7 +1022,7 @@ class DynamicJaxprTrace(core.Trace):
 
 def trace_to_jaxpr_dynamic(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
   assert config.omnistaging_enabled
-  with core.new_master(DynamicJaxprTrace, dynamic=True) as main:  # type: ignore
+  with core.new_main(DynamicJaxprTrace, dynamic=True) as main:  # type: ignore
     main.source_info = fun_sourceinfo(fun.f)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
@@ -1051,7 +1051,7 @@ def extend_jaxpr_stack(main, frame):
 
 def trace_to_jaxpr_final(fun: lu.WrappedFun, in_avals: Sequence[AbstractValue]):
   assert config.omnistaging_enabled
-  with core.new_base_master(DynamicJaxprTrace) as main:  # type: ignore
+  with core.new_base_main(DynamicJaxprTrace) as main:  # type: ignore
     main.source_info = fun_sourceinfo(fun.f)  # type: ignore
     main.jaxpr_stack = ()  # type: ignore
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, main, in_avals)
@@ -1064,7 +1064,7 @@ def partial_eval_to_jaxpr_dynamic(fun: lu.WrappedFun, in_pvals: Sequence[Partial
   # custom_derivatives.py, which we work around by adding the EvalTrace.
   # TODO(mattjj): alias to trace_to_jaxpr after revising custom_derivatives.py
   assert config.omnistaging_enabled
-  with core.new_master(core.EvalTrace, dynamic=True) as _:  # type: ignore
+  with core.new_main(core.EvalTrace, dynamic=True) as _:  # type: ignore
     return trace_to_jaxpr(fun, in_pvals)
 
 def fun_sourceinfo(fun):
@@ -1090,7 +1090,7 @@ def omnistaging_enabler() -> None:
   def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
                     instantiate: Union[bool, Sequence[bool]] = False,
                     ) -> Tuple[Jaxpr, Tuple[PartialVal, ...], Tuple[core.Value, ...]]:
-    with core.new_master(JaxprTrace) as master:
+    with core.new_main(JaxprTrace) as master:
       fun = trace_to_subjaxpr(fun, master, instantiate)
       jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
       assert not env

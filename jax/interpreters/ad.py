@@ -46,7 +46,7 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
-  with core.new_master(JVPTrace) as master:
+  with core.new_main(JVPTrace) as master:
     out_primals, out_tangents = yield (master, primals, tangents), {}
     del master
   if type(instantiate) is bool:

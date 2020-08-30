@@ -109,7 +109,7 @@ def screen_nones(num_heads, in_tree_def, *heads_and_tails):
 
 @lu.transformation
 def doubling_transform(*args):
-  with core.new_master(DoublingTrace) as master:
+  with core.new_main(DoublingTrace) as master:
     trace = DoublingTrace(master, core.cur_sublevel())
     in_tracers = [DoublingTracer(trace, head, tail) for head, tail in args]
     outputs = yield in_tracers, {}

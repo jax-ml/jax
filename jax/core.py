@@ -687,7 +687,7 @@ def cur_sublevel() -> Sublevel:
   return thread_local_state.trace_state.substack[-1]
 
 @contextmanager
-def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
+def new_main(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
   level = thread_local_state.trace_state.trace_stack.next_level(bottom)
   main = MainTrace(level, trace_type)
   thread_local_state.trace_state.trace_stack.push(main, bottom)
@@ -1435,8 +1435,8 @@ axis_frame = None
 @no_type_check
 def omnistaging_enabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
-      new_master, reset_trace_state, extend_axis_env, axis_frame, \
-      axis_index, new_base_master, eval_context, \
+      new_main, reset_trace_state, extend_axis_env, axis_frame, \
+      axis_index, new_base_main, eval_context, \
       TraceStack, TraceState
   del initial_style_staging
 
@@ -1523,7 +1523,7 @@ def omnistaging_enabler() -> None:
     return top_main and top_main.trace_type(top_main, cur_sublevel())  # type: ignore
 
   @contextmanager
-  def new_master(trace_type: Type[Trace], dynamic: bool = False,
+  def new_main(trace_type: Type[Trace], dynamic: bool = False,
                  ) -> Generator[MainTrace, None, None]:
     stack = thread_local_state.trace_state.trace_stack
     level = stack.next_level()
@@ -1547,7 +1547,7 @@ def omnistaging_enabler() -> None:
         raise Exception('Leaked trace {}'.format(t()))
 
   @contextmanager
-  def new_base_master(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
+  def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
     stack = thread_local_state.trace_state.trace_stack
     main = MainTrace(0, trace_type)
     prev_dynamic, stack.dynamic = stack.dynamic, main
@@ -1560,7 +1560,7 @@ def omnistaging_enabler() -> None:
 
   @contextmanager
   def eval_context():
-    with new_base_master(EvalTrace):
+    with new_base_main(EvalTrace):
       yield
 
   def bind(self, *args, **params):

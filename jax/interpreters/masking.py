@@ -80,7 +80,7 @@ def mask_fun(fun, logical_env, padded_env, in_vals, polymorphic_shapes):
   logical_env_vals = [logical_env[k] for k in env_keys]
   # Make padded_env hashable
   padded_env = (env_keys, padded_env_vals)
-  with core.new_master(MaskTrace) as master:
+  with core.new_main(MaskTrace) as master:
     fun, out_shapes = mask_subtrace(fun, master, polymorphic_shapes, padded_env)
     out_vals = fun.call_wrapped(*(logical_env_vals + in_vals))
     del master
