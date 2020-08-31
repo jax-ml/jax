@@ -2154,6 +2154,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_{}sections".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
+       "shape": shape, "num_sections": num_sections, "axis": axis, "dtype": dtype}
+      # All testcases split the specified axis unequally
+      for shape, axis, num_sections in [
+          ((3,), 0, 2), ((12,), 0, 5), ((12, 4), 0, 7), ((12, 4), 1, 3),
+          ((2, 3, 5), -1, 2), ((2, 4, 4), -2, 3), ((7, 2, 2), 0, 3)]
+      for dtype in default_dtypes))
+  def testArraySplitStaticInt(self, shape, num_sections, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x: np.array_split(x, num_sections, axis=axis)
+    jnp_fun = lambda x: jnp.array_split(x, num_sections, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testSplitTypeError(self):
     # If we pass an ndarray for indices_or_sections -> no error
     self.assertEqual(3, len(jnp.split(jnp.zeros(3), jnp.array([1, 2]))))
