@@ -142,7 +142,7 @@ class BatchTrace(Trace):
         axis_names = (axis_names,)
       for i, axis_name in enumerate(axis_names):
         frame = core.axis_frame(axis_name)
-        if frame.tag is not self.main:
+        if frame.main_trace is not self.main:
           continue
         # We run the split_axis rule with tracers, which is supposed to never
         # mix this axis name with another one. We will handle any invocations
@@ -151,7 +151,6 @@ class BatchTrace(Trace):
           return split_axis(primitive, axis_name, tracers, params)
         vals_out, dims_out = collective_rules[primitive](vals_in, dims_in, frame.size, **params)
         results = map(partial(BatchTracer, self), vals_out, dims_out)
-        print(results)
         return results if primitive.multiple_results else results[0]
     # TODO(mattjj,phawkins): if no rule implemented, could vmap-via-map here
     batched_primitive = get_primitive_batcher(primitive)
