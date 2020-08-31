@@ -273,7 +273,6 @@ def _promote_dtypes_inexact(*args):
   to_dtype = _to_inexact_dtype(result_type(*args))
   return [lax.convert_element_type(x, to_dtype) for x in args]
 
-
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
   return dtype if issubdtype(dtype, inexact) else promote_types(dtype, float_)
@@ -493,7 +492,7 @@ def sign(x):
 def copysign(x1, x2):
   if issubdtype(_dtype(x1), complexfloating) or issubdtype(_dtype(x2), complexfloating):
     raise TypeError("copysign does not support complex-valued inputs")
-  x1, x2 = _promote_shapes("copysign", x1, x2)
+  x1, x2 = _promote_args_inexact("copysign", x1, x2)
   return where(signbit(x2), -lax.abs(x1), lax.abs(x1))
 
 
