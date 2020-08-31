@@ -2369,7 +2369,7 @@ def associative_scan(fn, elems, reverse=False):
   elems_flat, tree = tree_flatten(elems)
 
   if reverse:
-    elems_flat = [jnp.flip(elem) for elem in elems_flat]
+    elems_flat = [jnp.flip(elem, 0) for elem in elems_flat]
 
   def lowered_fn(a_flat, b_flat):
     # Lower `fn` to operate on flattened sequences of elems.
@@ -2446,7 +2446,7 @@ def associative_scan(fn, elems, reverse=False):
   scans = _scan(elems_flat)
 
   if reverse:
-    scans = [jnp.flip(scanned) for scanned in scans]
+    scans = [jnp.flip(scanned, 0) for scanned in scans]
 
   return tree_unflatten(tree, scans)
 
