@@ -54,7 +54,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
   def test_gradient_disabled(self):
     f_jax = lambda x: x * x
     model = tf.Module()
-    model.f = tf.function(jax2tf.convert(f_jax),
+    model.f = tf.function(jax2tf.convert(f_jax, with_gradient=False),
                           autograph=False,
                           input_signature=[tf.TensorSpec([], tf.float32)])
     x = np.array(0.7)

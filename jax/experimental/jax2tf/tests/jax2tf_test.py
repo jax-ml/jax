@@ -120,7 +120,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
          with_function=with_function)
     for with_function in [False, True]))
   def test_gradients_disabled(self, with_function=False):
-    f_tf = jax2tf.convert(jnp.tan)
+    f_tf = jax2tf.convert(jnp.tan, with_gradient=False)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
     x = tf.ones([])
