@@ -4344,7 +4344,7 @@ def _all_numpy_ufuncs() -> Iterator[str]:
 def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:
   """Generate valid dtypes of inputs to the given numpy ufunc."""
   func = getattr(np, name)
-  for arg_dtypes in itertools.product(*(func.nin * (_all_dtypes,))):
+  for arg_dtypes in itertools.product(_all_dtypes, repeat=func.nin):
     args = (np.ones(1, dtype=dtype) for dtype in arg_dtypes)
     try:
       with warnings.catch_warnings():
@@ -4363,8 +4363,9 @@ class NumpyUfuncTests(jtu.JaxTestCase):
     for name in _all_numpy_ufuncs()
     for arg_dtypes in jtu.cases_from_list(_dtypes_for_ufunc(name)))
   def testUfuncInputTypes(self, name, arg_dtypes):
-    if (name in ['copysign', 'divmod', 'floor_divide', 'fmod', 'gcd', 'left_shift',
-                 'mod', 'power', 'remainder', 'right_shift', 'rint', 'square']
+    # TODO(jakevdp): fix following failures and remove from this exception list.
+    if (name in ['divmod', 'floor_divide', 'fmod', 'gcd', 'left_shift', 'mod',
+                 'power', 'remainder', 'right_shift', 'rint', 'square']
         and 'bool_' in arg_dtypes):
       self.skipTest(f"jax.numpy does not support {name}{tuple(arg_dtypes)}")
     if name == 'arctanh' and jnp.issubdtype(arg_dtypes[0], jnp.complexfloating):
