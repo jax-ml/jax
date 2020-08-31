@@ -2365,7 +2365,6 @@ def associative_scan(fn, elems, reverse=False):
   >>> lax.associative_scan(jnp.add, jnp.arange(0, 4), reverse=True)
   [ 6, 6, 5, 3]
   """
-  import jax.numpy as jnp
   elems_flat, tree = tree_flatten(elems)
 
   if reverse:
