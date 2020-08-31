@@ -104,7 +104,7 @@ def op_record(name, nargs, dtypes, shapes, rng_factory, diff_modes,
                   test_name, check_dtypes, tolerance, inexact)
 
 JAX_ONE_TO_ONE_OP_RECORDS = [
-    op_record("abs", 1, number_dtypes + unsigned_dtypes,
+    op_record("abs", 1, number_dtypes + unsigned_dtypes + bool_dtypes,
               all_shapes, jtu.rand_default, ["rev"]),
     op_record("add", 2, all_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("ceil", 1, float_dtypes, all_shapes, jtu.rand_default, []),

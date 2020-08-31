@@ -464,7 +464,8 @@ def right_shift(x1, x2):
 
 @_wraps(np.absolute)
 def absolute(x):
-  return x if issubdtype(_dtype(x), unsignedinteger) else lax.abs(x)
+  dt = _dtype(x)
+  return x if dt == bool_ or issubdtype(dt, unsignedinteger) else lax.abs(x)
 abs = _wraps(np.abs)(absolute)
 
 
