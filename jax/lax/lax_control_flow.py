@@ -2446,7 +2446,7 @@ def associative_scan(fn, elems, reverse=False):
   scans = _scan(elems_flat)
 
   if reverse:
-    scans = [jnp.flip(scanned, 0) for scanned in scans]
+    scans = [lax.rev(scanned, [0]) for scanned in scans]
 
   return tree_unflatten(tree, scans)
 
