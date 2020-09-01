@@ -8,6 +8,8 @@ primitives using TensorFlow operations. In practice this means that you can take
 some code written in JAX and execute it using TensorFlow eager mode, or stage it 
 out as a TensorFlow graph.
 
+As of today, the tests are run using `tf_nightly==2.4.0.dev20200829`.
+
 Most commonly people want to use this tool in order to:
 
 1.  Serialize JAX programs (and state) to disk as `tf.Graph`s.
