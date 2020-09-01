@@ -274,8 +274,11 @@ JAX_COMPOUND_OP_RECORDS = [
               jtu.rand_default, [], check_dtypes=False),
     op_record("sign", 1, number_dtypes + unsigned_dtypes,
               all_shapes, jtu.rand_some_inf_and_nan, []),
-    op_record('copysign', 2, default_dtypes, all_shapes, jtu.rand_some_inf_and_nan, [],
-              check_dtypes=False),
+    # numpy 1.16 has trouble mixing uint and bfloat16, so we test these separately.
+    op_record("copysign", 2, default_dtypes,
+              all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
+    op_record("copysign", 2, unsigned_dtypes,
+              all_shapes, jtu.rand_some_inf_and_nan, [], check_dtypes=False),
     op_record("sinc", 1, [t for t in number_dtypes if t != jnp.bfloat16],
               all_shapes, jtu.rand_default, ["rev"],
               tolerance={np.complex64: 1e-5}, inexact=True,
