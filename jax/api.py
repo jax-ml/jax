@@ -35,6 +35,7 @@ import numpy as np
 from contextlib import contextmanager, ExitStack
 
 from . import core
+from . import lib
 from . import linear_util as lu
 from . import ad_util
 from . import dtypes
@@ -230,10 +231,10 @@ def _cache_for_cpp_jit(call):
   fun_caches = weakref.WeakKeyDictionary()
 
   def memoized_fun(fun: Callable,
-                   static_argnums=(),
+                   static_argnums: Union[int, Iterable[int]] = (),
                    device=None,
                    backend=None,
-                   donate_argnums=()):
+                   donate_argnums: Union[int, Iterable[int]] = ()):
     _check_callable(fun)
     # We need tuples if we want them to be hashable.
     static_argnums = _ensure_tuple(static_argnums)
@@ -253,11 +254,10 @@ def _cache_for_cpp_jit(call):
 @_cache_for_cpp_jit
 def _cpp_jit(
     fun: Callable,
-    static_argnums: Union[int, Iterable[int]] = (),
+    static_argnums: Iterable[int] = (),
     device=None,
     backend: Optional[str] = None,
-    donate_argnums: Union[int, Iterable[int]] = ()
-) -> Callable:
+    donate_argnums: Iterable[int] = ()) -> Callable:
   """An implementation of `jit` that tries to do as much as possible in C++.
 
   The goal of this function is to speed up the time it takes to process the
@@ -267,8 +267,6 @@ def _cpp_jit(
   the C++ code will fallback to `_python_jit` when it faces some unsupported
   feature.
   """
-  # TODO(jblespiau): Add support for `disable_jit.`
-
   # `_check_callable(fun)` and the normalization of the argnums are in
   # `_cache_for_cpp_jit`.
 
@@ -281,13 +279,14 @@ def _cpp_jit(
   python_jitted_f = _python_jit(fun, static_argnums, device, backend,
                                 donate_argnums)
 
-  backend = device.platform if device else backend
-  backend = xb.get_backend(backend)
-
-  if device is None:
-    device = local_devices()[0]
-
   def cache_miss(*args, **kw):
+    backend_ = device.platform if device else backend
+    backend_ = xb.get_backend(backend_)
+
+    device_ = device
+    if device_ is None:
+      device_ = xb.get_backend(backend).get_default_device_assignment(1)[0]
+
     xla_result = _xla_computation(
         fun,
         backend=backend,
@@ -297,22 +296,78 @@ def _cpp_jit(
     options = xb.get_compile_options(
         num_replicas=1,
         num_partitions=1,
-        device_assignment=(device.id,) if device else None)
+        device_assignment=(device_.id,) if device_ else None)
     if xla_result.parameter_is_tupled_arguments:
       options.parameter_is_tupled_arguments = True
 
     return (
         # We call xla.backend_compile to ensure the XLA computation appears
         # separately in Python profiling results.
-        xla.backend_compile(backend, xla_result.xla_computation, options),
+        xla.backend_compile(backend_, xla_result.xla_computation, options),
         xla_result.out_pytree_def,
         xla_result.shaped_arrays,
         xla_result.lazy_expressions)
 
+  # TODO(jblespiau): Remove when C++ jit has landed (jaxlib.version >= 0.1.54)
   # Delay the import, because it requires a new version of jaxlib.
   from .lib import jax_jit  # pylint: disable=g-import-not-at-top
-  return jax_jit.jit(cache_miss, python_jitted_f, FLAGS.jax_enable_x64,
-                     static_argnums, device)
+  cpp_jitted_f = jax_jit.jit(fun, cache_miss,
+                             python_jitted_f, FLAGS.jax_enable_x64,
+                             config.read("jax_disable_jit"), static_argnums)
+
+  # The following exists for the ony purpose of supporting the following usage:
+  # class A:
+  #   @functools.partial(jax.jit, static_argnums=0)
+  #   def _compute_log_data(self, ...)
+  #     ...
+  # We discourage this practice as it's not a pure stateless functions, but
+  # the C++ codepath supports this for backward compatibility.
+  # Note that the JAX team is thinking of requiring the static arguments to be
+  # hashable, so maybe such usage will be forbidden in the future.
+  # Prefer for example an attribute or property access:
+  # class A:
+  #   def __init__(self):
+  #     self.jitted_f = jax.jit(self.f)
+
+  # We try to do this more expensive path only when it's needed and assume
+  # users respect the `self` convention.
+  # See `_IsMethodDecorator`
+  # Note that @classmethod and @staticmethod are *not* supported, both in
+  # _python_jit and _cpp_jit as they won't be callable.
+  if 0 in static_argnums and inspect.getfullargspec(fun).args[0] == "self":
+    return _IsMethodDecorator(cpp_jitted_f)
+  else:
+    return cpp_jitted_f
+
+
+class _IsMethodDecorator:
+  """Detects whether `fun` is a method and resolves the instance.
+
+  A function is decorated *before* it is bound, so we cannot directly
+  determine whether it is a 'method' or 'function'. We can rely on the
+  Descriptor protocol (see below) to detect, at *call time* whether it was a
+  method and retrieve the associated object.
+
+  We prefer to do this only when we think it's needed as the goal is to remove
+  all overheads.
+
+  https://docs.python.org/3/howto/descriptor.html#functions-and-methods
+  """
+
+  def __init__(self, func):
+    self.func = func
+    self.is_method = False
+
+  def __get__(self, instance, owner):
+    self.is_method = True
+    self.instance = instance
+    return self
+
+  def __call__(self, *args, **kwargs):
+    if self.is_method:
+      return self.func(self.instance, *args, **kwargs)
+    else:
+      return self.func(*args, **kwargs)
 
 
 @contextmanager
@@ -358,9 +413,17 @@ def disable_jit():
   try:
     prev_val = _thread_local_state.jit_is_disabled
     _thread_local_state.jit_is_disabled = True
+
+    # TODO(jblespiau): Remove when C++ jit has landed (jaxlib.version >= 0.1.54)
+    if hasattr(lib, "jax_jit") and hasattr(lib.jax_jit, "set_disable_jit"):
+      prev_cpp_val = lib.jax_jit.get_disable_jit()
+      lib.jax_jit.set_disable_jit(True)
+
     yield
   finally:
     _thread_local_state.jit_is_disabled = prev_val
+    if hasattr(lib, "jax_jit") and hasattr(lib.jax_jit, "set_disable_jit"):
+      lib.jax_jit.set_disable_jit(prev_cpp_val)
 
 
 def _jit_is_disabled():

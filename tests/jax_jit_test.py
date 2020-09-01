@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -19,6 +21,7 @@ from jax import lib as jaxlib
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import flags
+from jax.lib import version
 from jax.lib import xla_bridge
 import numpy as np
 
@@ -77,6 +80,16 @@ class JaxJitTest(parameterized.TestCase):
     self.assertEqual(res, 1 + 1j)
     self.assertEqual(res.dtype, complex_type)
     self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
+
+  def test_signature_support(self):
+    if version < (0, 1, 54):
+      return
+
+    def f(a, b, c):
+      return a + b + c
+
+    jitted_f = jax.api._cpp_jit(f)
+    self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
 
 
 if __name__ == '__main__':
