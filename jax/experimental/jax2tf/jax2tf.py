@@ -13,9 +13,10 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 
+import atexit
 import functools
 import string
-from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import jax
 from jax import abstract_arrays
@@ -125,6 +126,119 @@ def _tfval_add_unit(vals: Sequence[TfValOrUnit],
         assert _is_tfval(v)
     return core.unit if aval is core.abstract_unit else v
   return util.safe_map(add_unit, vals, avals)
+
+
+class SingletonDecorator:
+  def __init__(self, cls):
+    self.cls = cls
+    self.instance = None
+
+  def __call__(self, *args, **kwargs):
+    if not self.instance:
+      self.instance = self.cls(*args, **kwargs)
+    return self.instance
+
+PrimitiveName = str
+ErrorType = str
+ErrorString = str
+Devices = Tuple[str, ...]
+Limitation = Tuple[PrimitiveName, ErrorType, ErrorString, Devices]
+
+def categorize(prim: core.Primitive, *args: TfVal, **kwargs) \
+    -> List[Limitation]:
+  """
+  Given a primitive and a set of parameters one would like to pass to it,
+  categorize identifies the potential limitations the call would encounter when
+  converted to TF through jax2tf.
+
+  Args:
+    prim: the primitive to call.
+    args: the arguments to pass to prim.
+    kwargs: the keyword arguments to pass to prim.
+
+  Returns:
+    A list of limitations
+  """
+  limitations: List[Limitation] = []
+  all_devices = ["CPU", "GPU", "TPU"]
+
+  def _report_failure(error_type: str, msg: str,
+                      devs: Sequence[str] = all_devices) -> None:
+    limitations.append((prim.name, error_type, msg, tuple(devs)))
+
+  tf_unimpl = functools.partial(_report_failure, "Missing TF support")
+
+  if prim in [lax.min_p, lax.max_p]:
+    tf_dtype = args[0].dtype
+    if tf_dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+                    np.complex64, np.complex128]:
+      tf_unimpl(f"{prim.name} is unimplemented for dtype {tf_dtype.__repr__()}")
+
+  return limitations
+
+def prettify(limitations: Sequence[Limitation]) -> str:
+  """Constructs a summary .md file based on a list of limitations."""
+  limitations = sorted(list(set(limitations)))
+
+  def _pipewrap(columns):
+    return '| ' + ' | '.join(columns) + ' |'
+
+  title = '# Primitives with limited support'
+
+  column_names = [ 'Affected primitive'
+                 , 'Type of limitation'
+                 , 'Description'
+                 , 'Devices affected' ]
+
+  table = [column_names, ['---'] * len(column_names)]
+
+  for lim in limitations:
+    table.append([ lim[0], lim[1], lim[2], ', '.join(lim[3]) ])
+
+  return title + '\n\n' + '\n'.join(line for line in map(_pipewrap, table))
+
+@SingletonDecorator
+class Categorizer:
+  """Conveniently wraps the categorization utils of jax2tf in a Singleton.
+
+  Args:
+    inner_categorizer: the categorization function to call when examining
+      primitives (default: categorize).
+    inner_prettifier: the prettifying function to call at the exit of the
+      program to build a summary of the encountered limitations
+      (default: prettify).
+    output_file: the file in which to write the summary of the encountered
+      limitations. If None, the summary is written to stdout. (default: None).
+  """
+  def __init__(self, inner_categorizer: Callable = categorize,
+               inner_prettifier: Callable = prettify,
+               output_file: Optional[str] = None):
+    self.all_limitations: Sequence[Limitation] = []
+    self.inner_categorizer = inner_categorizer
+    self.inner_prettifier = inner_prettifier
+    atexit.register(self.pprint_limitations, output_file)
+
+  def wrap(self, prim: core.Primitive, func: Callable) -> Callable:
+    """
+    Wraps a primitive and its corresponding TF implementation with the inner
+    categorizer.
+    """
+    def wrapper(*args, **kwargs):
+      limitations = self.inner_categorizer(prim, *args, **kwargs)
+      self.all_limitations += limitations
+      return func(*args, **kwargs)
+    return wrapper
+
+  def prettify_limitations(self) -> str:
+    return self.inner_prettifier(self.all_limitations)
+
+  def pprint_limitations(self, output_file: Optional[str] = None) -> None:
+    output = self.prettify_limitations()
+    if output_file:
+      with open(output_file, 'w') as f:
+        f.write(output)
+    else:
+      print(output)
 
 # The implementation rules for primitives. The rule will be called with the
 # arguments (TfValOrUnit) and must return TfValOrUnit (or a sequence thereof,
@@ -356,7 +470,7 @@ class TensorFlowTrace(core.Trace):
 
   def get_primitive_impl(self, p):
     try:
-      return tf_impl[p]
+      return Categorizer().wrap(p, tf_impl[p])
     except KeyError:
       msg = "TensorFlow interpretation rule for '{}' not implemented"
       raise NotImplementedError(msg.format(p))
