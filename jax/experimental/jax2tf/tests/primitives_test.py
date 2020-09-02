@@ -631,6 +631,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
 
+  def test_random_gamma(self):
+    f_jax = jax.jit(jax.random.gamma)
+    for alpha in [1.0,
+                  np.array([1.0, 0.2, 1.2], np.float32),
+                  np.array([1.0, 0.2, 1.2], np.float64)]:
+      for rng_key in [jax.random.PRNGKey(42)]:
+        self.ConvertAndCompare(f_jax, rng_key, alpha)
+
   def test_prngsplit(self):
     f_jax = jax.jit(lambda key: jax.random.split(key, 2))
     for rng_key in [jax.random.PRNGKey(42),

@@ -29,6 +29,7 @@ from jax import test_util as jtu
 from jax import lax
 from jax import lax_linalg
 from jax import numpy as jnp
+from jax import random
 
 from jaxlib import xla_client
 
