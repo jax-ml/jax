@@ -2148,14 +2148,11 @@ def stack(arrays, axis=0):
 def tile(A, reps):
   if isinstance(reps, int):
     reps = (reps,)
-  A = reshape(A, (1,) * (len(reps) - ndim(A)) + shape(A))
-  reps = (1,) * (ndim(A) - len(reps)) + tuple(reps)
-  for i, rep in enumerate(reps):
-    if rep == 0:
-      A = A[tuple(slice(0 if j == i else None) for j in range(A.ndim))]
-    elif rep != 1:
-      A = concatenate([A] * int(rep), axis=i)
-  return A
+  A_shape = (1,) * (len(reps) - ndim(A)) + shape(A)
+  reps = (1,) * (len(A_shape) - len(reps)) + tuple(reps)
+  result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),
+                        [k for pair in zip(reps, A_shape) for k in pair])
+  return reshape(result, tuple(np.multiply(A_shape, reps)))
 
 @_wraps(np.concatenate)
 def concatenate(arrays, axis=0):
