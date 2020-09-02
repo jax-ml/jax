@@ -15,7 +15,7 @@
 
 import functools
 import string
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import jax
 from jax import abstract_arrays
@@ -137,11 +137,11 @@ class SingletonDecorator:
       self.instance = self.cls(*args, **kwargs)
     return self.instance
 
-PrimitiveName = str
-ErrorType = str
-ErrorString = str
-Devices = Tuple[str, ...]
-Limitation = Tuple[PrimitiveName, ErrorType, ErrorString, Devices]
+Limitation = NamedTuple("Limitation", [ ("PrimitiveName", str)
+                                      , ("ErrorType", str)
+                                      , ("ErrorString", str)
+                                      , ("Devices", Tuple[str,...])
+                                      ])
 
 def categorize(prim: core.Primitive, *args: TfVal, **kwargs) \
     -> List[Limitation]:
@@ -163,7 +163,7 @@ def categorize(prim: core.Primitive, *args: TfVal, **kwargs) \
 
   def _report_failure(error_type: str, msg: str,
                       devs: Sequence[str] = all_devices) -> None:
-    limitations.append((prim.name, error_type, msg, tuple(devs)))
+    limitations.append(Limitation(prim.name, error_type, msg, tuple(devs)))
 
   tf_unimpl = functools.partial(_report_failure, "Missing TF support")
 
