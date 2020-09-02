@@ -1668,7 +1668,7 @@ def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
     _check_arraylike(name, a)
-    
+
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
@@ -2325,16 +2325,6 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 def _can_call_numpy_array(x):
   return _all(not isinstance(l, (core.Tracer, DeviceArray))
               for l in tree_leaves(x))
-
-
-def _strict_asarray(a, dtype=None):
-  """A more restrictive jnp.asarray.
-  Accepts scalars and JAX or numpy array-like objects, but raises
-  an error for tuples or lists.
-  """
-  if not isinstance(a, (np.ndarray, ndarray) + _scalar_types):
-    raise TypeError(f"Array input required; got {a} of type {type(a)}")
-  return asarray(a, dtype)
 
 
 @_wraps(np.asarray)
