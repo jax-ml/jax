@@ -67,6 +67,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     array
     array_equal
     array_repr
+    array_split
     array_str
     asarray
     atleast_1d
