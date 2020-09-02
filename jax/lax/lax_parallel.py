@@ -579,17 +579,17 @@ ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 
 
-def _expand(dim, size, axis_name, x):
+def _expand(dim, size, index, x):
   shape = list(x.shape)
   shape.insert(dim, size)
   out = lax.full(shape, lax._const(x, 0))
-  return lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
+  return lax.dynamic_update_index_in_dim(out, x, index, dim)
 
-def _allgather(x, dim, size, axis_name):
-  outs = tree_util.tree_map(partial(_expand, dim, size, axis_name), x)
-  return psum(outs, axis_name)
+def _allgather(x, dim, size, index, axis_name, axis_index_groups=None):
+  outs = tree_util.tree_map(partial(_expand, dim, size, index), x)
+  return psum(outs, axis_name, axis_index_groups=axis_index_groups)
 
-def all_gather(x, axis_name):
+def all_gather(x, axis_name, *, axis_index_groups=None):
   """Gather values of x across all replicas.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -601,13 +601,17 @@ def all_gather(x, axis_name):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would run all gather over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) representing the result of an all-gather along the axis
     ``axis_name``. Shapes are the same as ``x.shape``, but with a leading
     dimension of the axis_size.
 
-  For example, with 2 XLA devices available:
+  For example, with 4 XLA devices available:
 
   >>> x = np.arange(4)
   >>> y = jax.pmap(lambda x: jax.lax.all_gather(x, 'i'), axis_name='i')(x)
@@ -616,8 +620,37 @@ def all_gather(x, axis_name):
    [0 1 2 3]
    [0 1 2 3]
    [0 1 2 3]]
+
+  An example of using axis_index_groups, groups split by even & odd device ids:
+
+  >>> x = np.arange(16).reshape(4, 4)
+  >>> print(x)
+  [[ 0.  1.  2.  3.]
+   [ 4.  5.  6.  7.]
+   [ 8.  9. 10. 11.]
+   [12. 13. 14. 15.]]
+  >>> y = jax.pmap(lambda x: jax.lax.all_gather(
+  ... x, 'i', axis_index_groups=[[0, 2], [3, 1]]))(x)
+  >>> print(y)
+  [[[ 0.  1.  2.  3.]
+    [ 8.  9. 10. 11.]]
+   [[12. 13. 14. 15.]
+    [ 4.  5.  6.  7.]]
+   [[ 0.  1.  2.  3.]
+    [ 8.  9. 10. 11.]]
+   [[12. 13. 14. 15.]
+    [ 4.  5.  6.  7.]]
   """
-  return _allgather(x, 0, psum(1, axis_name), axis_name)
+
+  index = axis_index(axis_name)
+  if axis_index_groups is not None:
+    indices = np.array(axis_index_groups).flatten()
+    axis_index_to_group_index = indices.argsort() % len(axis_index_groups[0])
+    index = lax_numpy.array(axis_index_to_group_index)[index]
+
+  axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+
+  return _allgather(x, 0, axis_size, index, axis_name, axis_index_groups)
 
 
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):

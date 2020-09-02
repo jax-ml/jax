@@ -494,6 +494,53 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testGatherReplicaGroups(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest("Test expected an even number of devices greater than 1.")
+
+    axis_index_groups = np.arange(replicas).reshape(
+        2, replicas // 2).tolist()
+
+    f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = f(x)
+
+    expected_1 = np.broadcast_to(
+        x[:replicas // 2], (replicas // 2, replicas // 2, x.shape[1]))
+    expected_2 = np.broadcast_to(
+        x[replicas // 2:], (replicas // 2, replicas // 2, x.shape[1]))
+    expected = np.concatenate([expected_1, expected_2], 0)
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherReplicaGroupsInterleaved(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest("Test expected an even number of devices greater than 1.")
+
+    indexes = np.arange(replicas)
+    indexes = np.concatenate([indexes[::2], indexes[1::2]])
+    axis_index_groups = indexes.reshape(2, replicas // 2).tolist()
+
+    f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = f(x)
+
+    expected = np.zeros((replicas, replicas // 2, x.shape[1]))
+    expected[::2] = x[::2]
+    expected[1::2] = x[1::2]
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testNestedPmapReplicaGroups(self):
     replicas = xla_bridge.device_count()
     if replicas % 4 != 0:
