@@ -27,14 +27,10 @@ from jax import test_util as jtu
 from jax import numpy as jnp
 
 class JaxToTfTestCase(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-
+  @classmethod
+  def setUpClass(cls):
     # Initialize categorizer
     categorizer = jax2tf.jax2tf.Categorizer()
-    # Making sure the exit handler is not registered several times
-    atexit.unregister(categorizer.pprint_limitations)
     # Register limitation summary atexit printing handler
     atexit.register(categorizer.pprint_limitations, None)
     # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
@@ -43,6 +39,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = (
       lambda s, p: categorizer.wrap(p, original_impl(s, p)))
 
+  def setUp(self):
+    super().setUp()
     # Ensure that all TF ops are created on the proper device (TPU or GPU or CPU)
     # TODO(necula): why doesn't TF do this automatically?
     tf_preferred_devices = (
