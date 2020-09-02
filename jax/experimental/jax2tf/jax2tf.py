@@ -167,11 +167,18 @@ def categorize(prim: core.Primitive, *args: TfVal, **kwargs) \
 
   tf_unimpl = functools.partial(_report_failure, "Missing TF support")
 
+  def _to_np_dtype(dtype):
+    try:
+      dtype = to_jax_dtype(dtype)
+    except:
+      pass
+    return np.dtype(dtype)
+
   if prim in [lax.min_p, lax.max_p]:
-    tf_dtype = args[0].dtype
-    if tf_dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
                     np.complex64, np.complex128]:
-      tf_unimpl(f"{prim.name} is unimplemented for dtype {tf_dtype.__repr__()}")
+      tf_unimpl(f"{prim.name} is unimplemented for dtype {np_dtype}")
 
   return limitations
 
