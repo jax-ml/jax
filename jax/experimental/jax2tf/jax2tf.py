@@ -13,7 +13,6 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 
-import atexit
 import functools
 import string
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -207,16 +206,12 @@ class Categorizer:
     inner_prettifier: the prettifying function to call at the exit of the
       program to build a summary of the encountered limitations
       (default: prettify).
-    output_file: the file in which to write the summary of the encountered
-      limitations. If None, the summary is written to stdout. (default: None).
   """
   def __init__(self, inner_categorizer: Callable = categorize,
-               inner_prettifier: Callable = prettify,
-               output_file: Optional[str] = None):
+               inner_prettifier: Callable = prettify):
     self.all_limitations: Sequence[Limitation] = []
     self.inner_categorizer = inner_categorizer
     self.inner_prettifier = inner_prettifier
-    atexit.register(self.pprint_limitations, output_file)
 
   def wrap(self, prim: core.Primitive, func: Callable) -> Callable:
     """
@@ -470,7 +465,7 @@ class TensorFlowTrace(core.Trace):
 
   def get_primitive_impl(self, p):
     try:
-      return Categorizer().wrap(p, tf_impl[p])
+      return tf_impl[p]
     except KeyError:
       msg = "TensorFlow interpretation rule for '{}' not implemented"
       raise NotImplementedError(msg.format(p))
