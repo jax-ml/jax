@@ -1099,6 +1099,9 @@ def _threefry2x32(key1, key2, x1, x2):
   return x1, x2
 
 tf_impl[jax.random.threefry2x32_p] = _threefry2x32
+
+# Use the vmap implementation, otherwise on TPU the performance is really bad
+# With use_vmap=True on, we get about the same performance for JAX and jax2tf.
 tf_impl[random.random_gamma_p] = _convert_jax_impl(
   functools.partial(random._gamma_impl, use_vmap=True),
   multiple_results=False)
