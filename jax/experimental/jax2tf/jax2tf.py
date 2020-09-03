@@ -127,16 +127,6 @@ def _tfval_add_unit(vals: Sequence[TfValOrUnit],
   return util.safe_map(add_unit, vals, avals)
 
 
-class SingletonDecorator:
-  def __init__(self, cls):
-    self.cls = cls
-    self.instance = None
-
-  def __call__(self, *args, **kwargs):
-    if not self.instance:
-      self.instance = self.cls(*args, **kwargs)
-    return self.instance
-
 Limitation = NamedTuple("Limitation", [ ("PrimitiveName", str)
                                       , ("ErrorType", str)
                                       , ("ErrorString", str)
@@ -203,44 +193,27 @@ def prettify(limitations: Sequence[Limitation]) -> str:
 
   return title + '\n\n' + '\n'.join(line for line in map(_pipewrap, table))
 
-@SingletonDecorator
-class Categorizer:
-  """Conveniently wraps the categorization utils of jax2tf in a Singleton.
+def pprint_limitations(limitations: Sequence[Limitation],
+                       output_file: Optional[str] = None) -> None:
+  output = prettify(limitations)
+  if output_file:
+    with open(output_file, 'w') as f:
+      f.write(output)
+  else:
+    print(output)
 
-  Args:
-    inner_categorizer: the categorization function to call when examining
-      primitives (default: categorize).
-    inner_prettifier: the prettifying function to call at the exit of the
-      program to build a summary of the encountered limitations
-      (default: prettify).
+all_limitations: Sequence[Limitation] = []
+pprint_all_limitations = functools.partial(pprint_limitations, all_limitations)
+
+def collect_limitations(prim: core.Primitive, func: Callable) -> Callable:
   """
-  def __init__(self, inner_categorizer: Callable = categorize,
-               inner_prettifier: Callable = prettify):
-    self.all_limitations: Sequence[Limitation] = []
-    self.inner_categorizer = inner_categorizer
-    self.inner_prettifier = inner_prettifier
-
-  def wrap(self, prim: core.Primitive, func: Callable) -> Callable:
-    """
-    Wraps a primitive and its corresponding TF implementation with the inner
-    categorizer.
-    """
-    def wrapper(*args, **kwargs):
-      limitations = self.inner_categorizer(prim, *args, **kwargs)
-      self.all_limitations += limitations
-      return func(*args, **kwargs)
-    return wrapper
-
-  def prettify_limitations(self) -> str:
-    return self.inner_prettifier(self.all_limitations)
-
-  def pprint_limitations(self, output_file: Optional[str] = None) -> None:
-    output = self.prettify_limitations()
-    if output_file:
-      with open(output_file, 'w') as f:
-        f.write(output)
-    else:
-      print(output)
+  Wraps a primitive and its corresponding TF implementation with `categorize`.
+  """
+  def wrapper(*args, **kwargs):
+    global all_limitations
+    all_limitations += categorize(prim, *args, **kwargs)
+    return func(*args, **kwargs)
+  return wrapper
 
 # The implementation rules for primitives. The rule will be called with the
 # arguments (TfValOrUnit) and must return TfValOrUnit (or a sequence thereof,

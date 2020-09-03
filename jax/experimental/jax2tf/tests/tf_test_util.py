@@ -26,18 +26,27 @@ from jax.experimental import jax2tf
 from jax import test_util as jtu
 from jax import numpy as jnp
 
+import os
+
 class JaxToTfTestCase(jtu.JaxTestCase):
   @classmethod
   def setUpClass(cls):
-    # Initialize categorizer
-    categorizer = jax2tf.jax2tf.Categorizer()
-    # Register limitation summary atexit printing handler
-    atexit.register(categorizer.pprint_limitations, None)
-    # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
-    # resulting primitive in the categorizer.
-    original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
-    jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = (
-      lambda s, p: categorizer.wrap(p, original_impl(s, p)))
+    if os.getenv('JAX2TF_CATEGORIZE'):
+      # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
+      # resulting primitive in the categorizer.
+      cls.old_get_primitive = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
+      wrapper = jax2tf.jax2tf.collect_limitations
+      jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = (
+        lambda s, p: wrapper(p, cls.old_get_primitive(s, p)))
+
+      output_file = os.getenv('JAX2TF_CATEGORIZE_OUT')
+      # Register limitation summary output atexit handler.
+      atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_file)
+
+  @classmethod
+  def tearDownClass(cls):
+    if os.getenv('JAX2TF_CATEGORIZE'):
+      jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = cls.old_get_primitive
 
   def setUp(self):
     super().setUp()
