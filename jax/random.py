@@ -988,7 +988,7 @@ def _gamma_grad(sample, a):
     grads = vmap(lax.random_gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
-def _gamma_impl(key, a):
+def _gamma_impl(key, a, use_vmap=False):
   a_shape = jnp.shape(a)
   # split key to match the shape of a
   key_ndim = jnp.ndim(key) - 1
@@ -996,10 +996,11 @@ def _gamma_impl(key, a):
   key = vmap(split, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
   keys = jnp.reshape(key, (-1, 2))
   alphas = jnp.reshape(a, -1)
-  if xla_bridge.get_backend().platform == 'cpu':
-    samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
-  else:
+  if use_vmap:
     samples = vmap(_gamma_one)(keys, alphas)
+  else:
+    samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
+
   return jnp.reshape(samples, a_shape)
 
 def _gamma_batching_rule(batched_args, batch_dims):
@@ -1014,7 +1015,12 @@ random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
 random_gamma_p.def_abstract_eval(lambda key, a: abstract_arrays.raise_to_shaped(a))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
-xla.translations[random_gamma_p] = xla.lower_fun(_gamma_impl, multiple_results=False)
+xla.translations[random_gamma_p] = xla.lower_fun(
+    partial(_gamma_impl, use_vmap=True),
+    multiple_results=False)
+xla.backend_specific_translations['cpu'][random_gamma_p] = xla.lower_fun(
+    partial(_gamma_impl, use_vmap=False),
+    multiple_results=False)
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key, a, shape=None, dtype=dtypes.float_):

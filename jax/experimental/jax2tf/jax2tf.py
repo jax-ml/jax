@@ -134,7 +134,7 @@ def _tfval_add_unit(vals: Sequence[TfValOrUnit],
 tf_impl: Dict[core.Primitive,
               Callable[..., Any]] = {}
 
-def convert(fun, with_gradient=True):
+def convert(fun, with_gradient=False):
   """Transforms `fun` to be executed by TensorFlow.
 
   Args:
@@ -217,6 +217,30 @@ def _interpret_fun(fun: lu.WrappedFun,
     out_vals: Sequence[TfValOrUnit] = fun.call_wrapped(*in_vals)
     del main
   return out_vals
+
+def _convert_jax_impl(jax_impl: Callable, multiple_results=True) -> Callable:
+  """Convert the JAX implementation of a primitive.
+
+  Args:
+    jax_impl: typically the impl-rule for a primitive, with signature
+      `(*args: JaxVal, **kwargs) -> Sequence[JaxVal]`. This function implements
+      a primitive in terms of other primitives.
+    multiple_results: whether `jax_impl` returns a sequence of results.
+
+  Returns:
+     a function with signature `(*args: TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]`.
+  """
+  def wrapped(*tf_args: TfValOrUnit, **kwargs) -> Union[TfValOrUnit, Sequence[TfValOrUnit]]:
+
+    # We wrap the jax_impl under _interpret_fun to abstract the TF values
+    # from jax_impl and turn them into JAX abstract values.
+    def jax_impl_jax_args(*jax_args):
+      jax_results = jax_impl(*jax_args, **kwargs)
+      return jax_results if multiple_results else [jax_results]
+
+    tf_results = _interpret_fun(lu.wrap_init(jax_impl_jax_args), tf_args)
+    return tf_results if multiple_results else tf_results[0]
+  return wrapped
 
 
 @lu.transformation
@@ -402,7 +426,6 @@ tf_not_yet_impl = [
   lax_linalg.triangular_solve_p,
 
   lax.igamma_grad_a_p,
-  random.random_gamma_p,
   lax.random_gamma_grad_p,
 
   # Not high priority?
@@ -1077,6 +1100,11 @@ def _threefry2x32(key1, key2, x1, x2):
 
 tf_impl[jax.random.threefry2x32_p] = _threefry2x32
 
+# Use the vmap implementation, otherwise on TPU the performance is really bad
+# With use_vmap=True on, we get about the same performance for JAX and jax2tf.
+tf_impl[random.random_gamma_p] = _convert_jax_impl(
+  functools.partial(random._gamma_impl, use_vmap=True),
+  multiple_results=False)
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
   proto = xla_data_pb2.GatherDimensionNumbers()
@@ -1326,16 +1354,8 @@ def _batched_cond_while(*args: TfValOrUnit,
 
 tf_impl[lax.while_p] = _while
 
-
-def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
-  # We use the scan impl rule to rewrite in terms of while. We wrap it under
-  # _interpret_fun to abstract the TF values from scan_impl.
-  def func1(*jax_args):
-    return lax_control_flow._scan_impl(*jax_args, **kwargs)
-
-  return _interpret_fun(lu.wrap_init(func1), tf_args)
-
-tf_impl[lax.scan_p] = _scan
+# We use the scan impl rule to rewrite in terms of while.
+tf_impl[lax.scan_p] = _convert_jax_impl(lax_control_flow._scan_impl)
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted
