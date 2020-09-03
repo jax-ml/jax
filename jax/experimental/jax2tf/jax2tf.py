@@ -230,7 +230,7 @@ def _convert_jax_impl(jax_impl: Callable, multiple_results=True) -> Callable:
   Returns:
      a function with signature `(*args: TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]`.
   """
-  def wrapped(*tf_args: TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
+  def wrapped(*tf_args: TfValOrUnit, **kwargs) -> Union[TfValOrUnit, Sequence[TfValOrUnit]]:
 
     # We wrap the jax_impl under _interpret_fun to abstract the TF values
     # from jax_impl and turn them into JAX abstract values.
