@@ -23,22 +23,16 @@ import jax
 from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
+from jax.experimental.jax2tf.tests import correctness_stats as jcs
 from jax import test_util as jtu
 from jax import numpy as jnp
 
 import os
 
-# Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
-# resulting primitive in the categorizer.
-original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
-wrapper = jax2tf.jax2tf.collect_limitations
-jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
-  lambda s, p: wrapper(p, original_impl(s, p)))
-
 if os.getenv('JAX2TF_CATEGORIZE_OUT'):
   output_file = os.path.join(os.path.dirname(__file__),
                              '../primitives_with_limited_support.md')
-  atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_file)
+  atexit.register(jcs.pprint_all_limitations, output_file)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
@@ -100,6 +94,16 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         modes; when there is no exception the result should be the same
         as in JAX.
     """
+    original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
+
+    def patch_get_primitive_impl():
+      wrapper = jcs.collect_limitations
+      jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
+        lambda s, p: wrapper(p, original_impl(s, p)))
+
+    def restore_get_primitive_impl():
+      jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = original_impl
+
     # Run JAX
     result_jax = func_jax(*args)
     # Run TF in all execution modes
@@ -125,18 +129,24 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       else:
         assert False
 
-    def is_tf_exception(lim: jax2tf.jax2tf.Limitation):
+    def is_tf_exception(lim: jcs.Limitation):
       return (lim.ErrorType == 'Missing TF support' and
               self.tf_default_device.device_type in lim.Devices)
 
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
-      current_limitations = jax2tf.jax2tf.all_limitations[:]
+      current_limitations = jcs.all_limitations[:]
+      # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
+      # resulting primitive in a categorizer. We do that at every loop
+      # iteration because we want to restore the original implementation
+      # before returning, and the code inside the loop may throw exceptions
+      # and thus return early.
+      patch_get_primitive_impl()
       try:
         result_tf = run_tf(mode)
       except Exception as e:
         new_limitations = (
-          jax2tf.jax2tf.all_limitations[len(current_limitations):])
+          jcs.all_limitations[len(current_limitations):])
         detected_tf_exception = any(map(is_tf_exception, new_limitations))
 
         if not (expect_tf_exceptions or detected_tf_exception):
@@ -148,6 +158,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
           print(f"Encountered expected exception for mode={mode}: {e}")
           continue
+      finally:
+        # Restore the original implementation of
+        # jax2tf.TensorFlowTrace.get_primitive_impl.
+        restore_get_primitive_impl()
 
       if custom_assert is not None and (mode in ("eager", "graph") or
                                         always_custom_assert):
