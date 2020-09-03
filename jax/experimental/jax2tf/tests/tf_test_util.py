@@ -31,7 +31,8 @@ import os
 # JAX2TF_CATEGORIZE_OUT is either not set, or contains the name of the
 # target file for the output.
 output_categories = os.getenv('JAX2TF_CATEGORIZE_OUT')
-if output_categories:
+generate_tests_from_categorize = os.getenv('GENERATE_TESTS_FROM_CATEGORIZE')
+if output_categories or generate_tests_from_categorize:
   # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
   # resulting primitive in the categorizer.
   original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
@@ -39,7 +40,8 @@ if output_categories:
   jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = (
     lambda s, p: wrapper(p, original_impl(s, p)))
 
-  atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_categories)
+  if output_categories:
+    atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_categories)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
@@ -126,12 +128,23 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       else:
         assert False
 
+    def is_tf_exception(lim: jax2tf.jax2tf.Limitation):
+      return lim.ErrorType == 'Missing TF support'
+
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
+      current_limitations = jax2tf.jax2tf.all_limitations[:]
       try:
         result_tf = run_tf(mode)
       except Exception as e:
-        if not expect_tf_exceptions:
+        detected_tf_exception = False
+
+        if generate_tests_from_categorize:
+          new_limitations = (
+            jax2tf.jax2tf.all_limitations[len(current_limitations):])
+          detected_tf_exception = any(map(is_tf_exception, new_limitations))
+
+        if not (expect_tf_exceptions or detected_tf_exception):
           raise e
         else:
           print(f"Encountered expected exception for mode={mode}: {e}")
