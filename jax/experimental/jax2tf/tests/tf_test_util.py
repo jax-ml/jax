@@ -32,7 +32,7 @@ import os
 # resulting primitive in the categorizer.
 original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
 wrapper = jax2tf.jax2tf.collect_limitations
-jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = (
+jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
   lambda s, p: wrapper(p, original_impl(s, p)))
 
 if os.getenv('JAX2TF_CATEGORIZE_OUT'):
