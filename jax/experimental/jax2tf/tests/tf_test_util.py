@@ -140,7 +140,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         result_tf = run_tf(mode)
       except Exception as e:
         detected_tf_exception = False
-
         if generate_tests_from_categorize:
           new_limitations = (
             jax2tf.jax2tf.all_limitations[len(current_limitations):])
@@ -149,6 +148,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         if not (expect_tf_exceptions or detected_tf_exception):
           raise e
         else:
+          if generate_tests_from_categorize:
+            for lim in new_limitations:
+              print("Detected limitation: {} for {} devices."
+                    .format(lim.ErrorString, ', '.join(lim.Devices)))
+
           print(f"Encountered expected exception for mode={mode}: {e}")
           continue
 
