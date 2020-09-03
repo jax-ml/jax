@@ -402,25 +402,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_min_max)
   def test_min_max(self, harness: primitive_harness.Harness):
-    expect_tf_exceptions = False
-    dtype = harness.params["dtype"]
-
-    if dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
-                 np.complex64, np.complex128]:
-      # TODO(bchetioui): tf.math.maximum and tf.math.minimum are not defined for
-      # the above types.
-      expect_tf_exceptions = True
-
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
     lax_name, dtype = harness.params["lax_name"], harness.params["dtype"]
-    if lax_name in ("rem", "atan2"):
-      # b/158006398: TF kernels are missing for 'rem' and 'atan2'
-      if dtype in [np.float16, dtypes.bfloat16]:
-        raise unittest.SkipTest("TODO: TF kernels are missing for {lax_name}.")
     if lax_name in ("igamma", "igammac"):
       # TODO(necula): fix bug with igamma/f16
       if dtype in [np.float16, dtypes.bfloat16]:
@@ -428,12 +414,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO(necula): fix bug with igamma/f32 on TPU
       if dtype is np.float32 and jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("TODO: fix bug: nan vs not-nan")
-    # TODO(necula): fix bug with nextafter/f16
-    # See https://www.tensorflow.org/api_docs/python/tf/math/nextafter, params to
-    # nextafter can only be float32/float64.
-    if (lax_name == "nextafter" and
-        dtype in [np.float16, dtypes.bfloat16]):
-      raise unittest.SkipTest("TODO: nextafter not supported for (b)float16 in TF")
     arg1, arg2 = harness.dyn_args_maker(self.rng())
     custom_assert = None
     if lax_name == "igamma":
@@ -474,6 +454,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_betainc(self, harness: primitive_harness.Harness):
     # TODO: https://www.tensorflow.org/api_docs/python/tf/math/betainc only supports
     # float32/64 tests.
+    # TODO(bchetioui): investigate why the test actually fails in JAX.
     if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
       raise unittest.SkipTest("(b)float16 not implemented in TF")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
