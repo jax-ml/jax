@@ -28,21 +28,17 @@ from jax import numpy as jnp
 
 import os
 
-output_categories = os.getenv('JAX2TF_CATEGORIZE_OUT')
-generate_tests_from_categorize = (
-  os.getenv('JAX2TF_GENERATE_TESTS_FROM_CATEGORIZE'))
-if output_categories or generate_tests_from_categorize:
-  # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
-  # resulting primitive in the categorizer.
-  original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
-  wrapper = jax2tf.jax2tf.collect_limitations
-  jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = (
-    lambda s, p: wrapper(p, original_impl(s, p)))
+# Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
+# resulting primitive in the categorizer.
+original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
+wrapper = jax2tf.jax2tf.collect_limitations
+jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = (
+  lambda s, p: wrapper(p, original_impl(s, p)))
 
-  if output_categories:
-    output_file = os.path.join(os.path.dirname(__file__),
-                               '../primitives_with_limited_support.md')
-    atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_file)
+if os.getenv('JAX2TF_CATEGORIZE_OUT'):
+  output_file = os.path.join(os.path.dirname(__file__),
+                             '../primitives_with_limited_support.md')
+  atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_file)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
@@ -139,19 +135,16 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       try:
         result_tf = run_tf(mode)
       except Exception as e:
-        detected_tf_exception = False
-        if generate_tests_from_categorize:
-          new_limitations = (
-            jax2tf.jax2tf.all_limitations[len(current_limitations):])
-          detected_tf_exception = any(map(is_tf_exception, new_limitations))
+        new_limitations = (
+          jax2tf.jax2tf.all_limitations[len(current_limitations):])
+        detected_tf_exception = any(map(is_tf_exception, new_limitations))
 
         if not (expect_tf_exceptions or detected_tf_exception):
           raise e
         else:
-          if generate_tests_from_categorize:
-            for lim in new_limitations:
-              print("Detected limitation: {} for {} devices."
-                    .format(lim.ErrorString, ', '.join(lim.Devices)))
+          for lim in new_limitations:
+            print("Detected limitation: {} for {} devices."
+                  .format(lim.ErrorString, ', '.join(lim.Devices)))
 
           print(f"Encountered expected exception for mode={mode}: {e}")
           continue
