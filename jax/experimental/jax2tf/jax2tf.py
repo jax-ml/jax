@@ -170,6 +170,17 @@ def categorize(prim: core.Primitive, *args: TfVal, **kwargs) \
                     np.complex64, np.complex128]:
       tf_unimpl(f"{prim.name} is unimplemented for dtype {np_dtype}")
 
+  if prim in [lax.rem_p, lax.atan2_p]:
+    # b/158006398: TF kernels are missing for 'rem' and 'atan2'
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.float16, dtypes.bfloat16]:
+      tf_unimpl("Missing TF kernels for {prim.name} with dtype {np_dtype}")
+
+  if prim is lax.nextafter_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.float16, dtypes.bfloat16]:
+      tf_unimpl("{prim.name} is unimplemented for dtype {np_dtype}")
+
   return limitations
 
 def prettify(limitations: Sequence[Limitation]) -> str:
