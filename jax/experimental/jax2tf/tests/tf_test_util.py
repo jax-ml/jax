@@ -28,10 +28,9 @@ from jax import numpy as jnp
 
 import os
 
-# JAX2TF_CATEGORIZE_OUT is either not set, or contains the name of the
-# target file for the output.
 output_categories = os.getenv('JAX2TF_CATEGORIZE_OUT')
-generate_tests_from_categorize = os.getenv('GENERATE_TESTS_FROM_CATEGORIZE')
+generate_tests_from_categorize = (
+  os.getenv('JAX2TF_GENERATE_TESTS_FROM_CATEGORIZE'))
 if output_categories or generate_tests_from_categorize:
   # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
   # resulting primitive in the categorizer.
@@ -41,7 +40,9 @@ if output_categories or generate_tests_from_categorize:
     lambda s, p: wrapper(p, original_impl(s, p)))
 
   if output_categories:
-    atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_categories)
+    output_file = os.path.join(os.path.dirname(__file__),
+                               '../primitives_with_limited_support.md')
+    atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_file)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
