@@ -130,7 +130,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         assert False
 
     def is_tf_exception(lim: jax2tf.jax2tf.Limitation):
-      return lim.ErrorType == 'Missing TF support'
+      return (lim.ErrorType == 'Missing TF support' and
+              jtu.device_under_test().upper() in lim.Devices)
 
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
