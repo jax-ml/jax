@@ -189,7 +189,11 @@ def prettify(limitations: Sequence[Limitation]) -> str:
   table = [column_names, ['---'] * len(column_names)]
 
   for lim in limitations:
-    table.append([ lim[0], lim[1], lim[2], ', '.join(lim[3]) ])
+    table.append([ lim.PrimitiveName
+                 , lim.ErrorType
+                 , lim.ErrorString
+                 , ', '.join(lim.Devices)
+                 ])
 
   return title + '\n\n' + '\n'.join(line for line in map(_pipewrap, table))
 
