@@ -9,6 +9,7 @@ sphinx-autodoc-typehints <1.11
 jaxlib
 ipykernel
 nbsphinx
+docutils >=0.15
 myst-parser[sphinx]
 # The next packages are for notebooks
 matplotlib
