@@ -20,7 +20,8 @@ from ..interpreters.xla import DeviceArray
 
 from .lax_numpy import (
     ComplexWarning, NINF, NZERO, PZERO, abs, absolute, add, all, allclose,
-    alltrue, amax, amin, angle, any, append, apply_along_axis, arange, arccos, arccosh, arcsin,
+    alltrue, amax, amin, angle, any, append,
+    apply_along_axis, apply_over_axes, arange, arccos, arccosh, arcsin,
     arcsinh, arctan, arctan2, arctanh, argmax, argmin, argsort, argwhere, around,
     array, array_equal, array_repr, array_split, array_str, asarray, atleast_1d, atleast_2d,
     atleast_3d, average, bartlett, bfloat16, bincount, bitwise_and, bitwise_not,
