@@ -1202,7 +1202,22 @@ def _threefry2x32(key1, key2, x1, x2):
 
   return x1, x2
 
-tf_impl[jax.random.threefry2x32_p] = _threefry2x32
+_threefry_use_jax_impl = True
+_threefry_use_rolled_loops = False
+def _threefry2x32_jax_impl(*args: TfValOrUnit):
+  # We use the random._threefry2x32_lowering, but since add is not implemented
+  # for uint32, we cast to int32 and back.
+  args = tuple([tf.cast(a, tf.int32) for a in args])
+  res = _convert_jax_impl(
+    functools.partial(random._threefry2x32_lowering,
+                      use_rolled_loops=_threefry_use_rolled_loops),
+    multiple_results=True)(*args)
+  res = tuple([tf.cast(r, tf.uint32) for r in res])
+  return res
+if _threefry_use_jax_impl:
+  tf_impl[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
+else:
+  tf_impl[jax.random.threefry2x32_p] = _threefry2x32
 
 # Use the vmap implementation, otherwise on TPU the performance is really bad
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.
