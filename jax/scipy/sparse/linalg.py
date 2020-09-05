@@ -203,7 +203,7 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   normalized_x, norm = lax.cond(
     norm > thresh,
     lambda y: (_div(y, norm), norm),
-    lambda y: (_mul(0.*y, thresh), thresh),  # To get the dtype right
+    lambda y: (tree_map(jnp.zeros_like, y), 0.),  # To get the dtype right
     x,
   )
   if return_norm:
