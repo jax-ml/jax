@@ -129,6 +129,11 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # TODO(bchetioui): tf.math.multiply is not defined for the above types.
       tf_unimpl(np_dtype)
 
+  if prim in [lax.scatter_mul_p, lax.scatter_add_p]:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype == np.complex64:
+      tf_unimpl(np_dtype, devs=["TPU"])
+
   return limitations
 
 def prettify(limitations: Sequence[Limitation]) -> str:
