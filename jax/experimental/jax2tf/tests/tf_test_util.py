@@ -23,22 +23,16 @@ import jax
 from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
+from jax.experimental.jax2tf.tests import correctness_stats
 from jax import test_util as jtu
 from jax import numpy as jnp
 
 import os
 
-# Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
-# resulting primitive in the categorizer.
-original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
-wrapper = jax2tf.jax2tf.collect_limitations
-jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
-  lambda s, p: wrapper(p, original_impl(s, p)))
-
 if os.getenv('JAX2TF_CATEGORIZE_OUT'):
   output_file = os.path.join(os.path.dirname(__file__),
                              '../primitives_with_limited_support.md')
-  atexit.register(jax2tf.jax2tf.pprint_all_limitations, output_file)
+  atexit.register(correctness_stats.pprint_all_limitations, output_file)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
@@ -91,15 +85,31 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       custom_assert: a function that will be called
         `custom_assert(result_jax, result_tf)` to assert equality of the
         results. Use this function when JAX and TF produce different results.
-        This function is only used for "eager" and "graph" modes by default, not for
-        the "compiled" mode, because in that case we expect the results to be equal.
-      always_custom_assert: if True, custom_assert is also called in "compiled" mode.
-        This is useful in cases where JAX and TF produce different but equally valid
-        results.
+        This function is only used for "eager" and "graph" modes by default, not
+        for the "compiled" mode, because in that case we expect the results to
+        be equal.
+      always_custom_assert: if True, custom_assert is also called in "compiled"
+        mode. This is useful in cases where JAX and TF produce different but
+        equally valid results.
       expect_tf_exceptions: if True, there may be exceptions in some evaluation
         modes; when there is no exception the result should be the same
         as in JAX.
     """
+    original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
+
+    # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
+    # resulting primitive in a categorizer.
+    wrapper = correctness_stats.collect_limitations
+    jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
+      lambda s, p: wrapper(p, original_impl(s, p)))
+
+    def restore_get_primitive_impl():
+      jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = original_impl
+
+    # Restore the original jax2tf.TensorFlowTrace.get_primitive_impl
+    # implementation at the end of the test.
+    self.addCleanup(restore_get_primitive_impl)
+
     # Run JAX
     result_jax = func_jax(*args)
     # Run TF in all execution modes
@@ -125,18 +135,18 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       else:
         assert False
 
-    def is_tf_exception(lim: jax2tf.jax2tf.Limitation):
-      return (lim.ErrorType == 'Missing TF support' and
-              self.tf_default_device.device_type in lim.Devices)
+    def is_tf_exception(lim: correctness_stats.Limitation):
+      return (lim.error_type == 'Missing TF support' and
+              self.tf_default_device.device_type in lim.devices)
 
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
-      current_limitations = jax2tf.jax2tf.all_limitations[:]
+      current_limitations_len = len(correctness_stats.all_limitations)
       try:
         result_tf = run_tf(mode)
       except Exception as e:
         new_limitations = (
-          jax2tf.jax2tf.all_limitations[len(current_limitations):])
+          correctness_stats.all_limitations[current_limitations_len:])
         detected_tf_exception = any(map(is_tf_exception, new_limitations))
 
         if not (expect_tf_exceptions or detected_tf_exception):
@@ -144,7 +154,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         else:
           for lim in new_limitations:
             print("Detected limitation: {} for {} devices."
-                  .format(lim.ErrorString, ', '.join(lim.Devices)))
+                  .format(lim.error_string, ', '.join(lim.devices)))
 
           print(f"Encountered expected exception for mode={mode}: {e}")
           continue
