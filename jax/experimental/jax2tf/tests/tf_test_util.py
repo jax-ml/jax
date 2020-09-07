@@ -97,13 +97,18 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     """
     original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
 
-    def patch_get_primitive_impl():
-      wrapper = correctness_stats.collect_limitations
-      jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
-        lambda s, p: wrapper(p, original_impl(s, p)))
+    # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
+    # resulting primitive in a categorizer.
+    wrapper = correctness_stats.collect_limitations
+    jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
+      lambda s, p: wrapper(p, original_impl(s, p)))
 
     def restore_get_primitive_impl():
       jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = original_impl
+
+    # Restore the original jax2tf.TensorFlowTrace.get_primitive_impl
+    # implementation at the end of the test.
+    self.addCleanup(restore_get_primitive_impl)
 
     # Run JAX
     result_jax = func_jax(*args)
@@ -137,12 +142,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
       current_limitations_len = len(correctness_stats.all_limitations)
-      # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
-      # resulting primitive in a categorizer. We do that at every loop
-      # iteration because we want to restore the original implementation
-      # before returning, and the code inside the loop may throw exceptions
-      # and thus return early.
-      patch_get_primitive_impl()
       try:
         result_tf = run_tf(mode)
       except Exception as e:
@@ -159,10 +158,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
           print(f"Encountered expected exception for mode={mode}: {e}")
           continue
-      finally:
-        # Restore the original implementation of
-        # jax2tf.TensorFlowTrace.get_primitive_impl.
-        restore_get_primitive_impl()
 
       if custom_assert is not None and (mode in ("eager", "graph") or
                                         always_custom_assert):
