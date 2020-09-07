@@ -25,10 +25,10 @@ def to_jax_dtype(tf_dtype):
     return dtypes.bfloat16
   return tf_dtype.as_numpy_dtype
 
-Limitation = NamedTuple("Limitation", [ ("PrimitiveName", str)
-                                      , ("ErrorType", str)
-                                      , ("ErrorString", str)
-                                      , ("Devices", Tuple[str,...])
+Limitation = NamedTuple("Limitation", [ ("primitive_name", str)
+                                      , ("error_type", str)
+                                      , ("error_string", str)
+                                      , ("devices", Tuple[str,...])
                                       ])
 
 def categorize(prim: core.Primitive, *args, **kwargs) \
@@ -98,10 +98,10 @@ def prettify(limitations: Sequence[Limitation]) -> str:
   table = [column_names, ['---'] * len(column_names)]
 
   for lim in limitations:
-    table.append([ lim.PrimitiveName
-                 , lim.ErrorType
-                 , lim.ErrorString
-                 , ', '.join(lim.Devices)
+    table.append([ lim.primitive_name
+                 , lim.error_type
+                 , lim.error_string
+                 , ', '.join(lim.devices)
                  ])
 
   return title + '\n\n' + '\n'.join(line for line in map(_pipewrap, table))

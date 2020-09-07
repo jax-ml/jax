@@ -136,8 +136,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         assert False
 
     def is_tf_exception(lim: correctness_stats.Limitation):
-      return (lim.ErrorType == 'Missing TF support' and
-              self.tf_default_device.device_type in lim.Devices)
+      return (lim.error_type == 'Missing TF support' and
+              self.tf_default_device.device_type in lim.devices)
 
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
@@ -154,7 +154,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         else:
           for lim in new_limitations:
             print("Detected limitation: {} for {} devices."
-                  .format(lim.ErrorString, ', '.join(lim.Devices)))
+                  .format(lim.error_string, ', '.join(lim.devices)))
 
           print(f"Encountered expected exception for mode={mode}: {e}")
           continue
