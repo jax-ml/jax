@@ -14,7 +14,6 @@
 
 import functools
 import numpy as np
-import tensorflow as tf # type: ignore[import]
 from typing import Callable, List, NamedTuple, Optional, Tuple, Sequence
 
 from jax import core
@@ -23,7 +22,15 @@ from jax import lax
 from jax import numpy as jnp
 
 def to_jax_dtype(tf_dtype):
-  return jnp.bfloat16 if tf_dtype == tf.bfloat16 else tf_dtype.as_numpy_dtype
+  np_dtype = tf_dtype.as_numpy_dtype
+  # All the TF numpy dtypes come from numpy except for bool, bfloat16.
+  if np_dtype.__module__ == np.__name__:
+    return np_dtype
+  # Only bool has less than 5 elements; in this case, we can still return
+  # np_dtype.
+  elif np_dtype(4) != 4:
+    return np_dtype
+  return jnp.bfloat16
 
 Limitation = NamedTuple("Limitation", [ ("PrimitiveName", str)
                                       , ("ErrorType", str)
