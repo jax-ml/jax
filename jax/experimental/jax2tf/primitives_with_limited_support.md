@@ -25,4 +25,4 @@
 | rem | Missing TF support | rem is unimplemented for dtype bfloat16 | CPU, GPU, TPU |
 | rem | Missing TF support | rem is unimplemented for dtype float16 | CPU, GPU, TPU |
 | select_and_gather_add | Missing TF support | select_and_gather_add is unimplemented for dtype float32 | TPU |
-| svd | Missing TF support | svd is unimplemented for dtype complex64;this works on JAX because JAX uses a custom implementation | CPU, GPU |
+| svd | Missing TF support | svd is unimplemented for dtype complex64; this works on JAX because JAX uses a custom implementation | CPU, GPU |

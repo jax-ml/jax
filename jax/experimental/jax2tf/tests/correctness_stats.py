@@ -60,7 +60,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
                 devs: Sequence[str] = all_devices) -> None:
     msg = f"{prim.name} is unimplemented for dtype {np_dtype}"
     if additional_msg:
-      msg += ';' + additional_msg
+      msg += '; ' + additional_msg
     _report_failure("Missing TF support", msg, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
