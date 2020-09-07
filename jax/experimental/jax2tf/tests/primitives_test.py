@@ -617,8 +617,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            rtol=1e-5)
 
-  @primitive_harness.parameterized(primitive_harness.random_split,
-                                   one_containing="i=0")
+  @primitive_harness.parameterized(primitive_harness.random_split)
   def test_random_split(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
