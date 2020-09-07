@@ -906,7 +906,8 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
                           window_strides, padding, base_dilation,
                           window_dilation):
   # TODO(tomhennigan): tf2xla should have a shape inference function.
-  out_shape = _reduce_window_shape(lax._reduce_window_sum, operand, window_dimensions,
+  out_shape = _reduce_window_shape(lax._reduce_window_min, operand,
+                                   window_dimensions,
                                    window_strides, padding, base_dilation,
                                    window_dilation)
 
