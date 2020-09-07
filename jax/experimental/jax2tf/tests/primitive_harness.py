@@ -848,7 +848,7 @@ lax_reduce_window = tuple(
 random_gamma = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
           jax.jit(jax.random.gamma),
-          [jax.random.PRNGKey(42), RandArg(shape, dtype)])
+          [np.array([42, 43], dtype=np.uint32), RandArg(shape, dtype)])
   for shape in ((), (3,))
   for dtype in (np.float32, np.float64)
 )
@@ -857,8 +857,8 @@ random_split = tuple(
   Harness(f"_i={key_i}",
           jax.jit(lambda key: jax.random.split(key, 2)),
           [key])
-  for key_i, key in enumerate([jax.random.PRNGKey(42),
-                               np.array([0, 0], dtype=np.uint32),
+  for key_i, key in enumerate([np.array([0, 0], dtype=np.uint32),
+                               np.array([42, 43], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0], dtype=np.uint32),
                                np.array([0, 0xFFFFFFFF], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
