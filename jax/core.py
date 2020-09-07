@@ -1588,4 +1588,5 @@ def omnistaging_enabler() -> None:
       if frame.name == axis_name:
         return frame
     else:
-      raise NameError("unbound axis name: {}".format(axis_name))
+      raise NameError(f"Unbound axis name: {axis_name}.\n"
+                      f"The currently bound axes are: {[f.name for f in frames]}")
