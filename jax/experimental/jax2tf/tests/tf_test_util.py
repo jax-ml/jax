@@ -136,7 +136,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
-      current_limitations = correctness_stats.all_limitations[:]
+      current_limitations_len = len(correctness_stats.all_limitations)
       # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
       # resulting primitive in a categorizer. We do that at every loop
       # iteration because we want to restore the original implementation
@@ -147,7 +147,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         result_tf = run_tf(mode)
       except Exception as e:
         new_limitations = (
-          correctness_stats.all_limitations[len(current_limitations):])
+          correctness_stats.all_limitations[current_limitations_len:])
         detected_tf_exception = any(map(is_tf_exception, new_limitations))
 
         if not (expect_tf_exceptions or detected_tf_exception):
