@@ -1141,68 +1141,18 @@ def _select_and_scatter_add(
                                   scatter_fn)
 tf_impl[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
+def _threefry2x32_jax_impl(*args: TfValOrUnit):
+  # We use the random._threefry2x32_lowering, but since add is not implemented
+  # for uint32, we cast to int32 and back.
+  args = tuple([tf.cast(a, tf.int32) for a in args])
+  res = _convert_jax_impl(
+    functools.partial(random._threefry2x32_lowering,
+                      use_rolled_loops=False),
+    multiple_results=True)(*args)
+  res = tuple([tf.cast(r, tf.uint32) for r in res])
+  return res
+tf_impl[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 
-def uadd(a, *b):
-  """Workaround to support + with uint32 (not supported in TF)."""
-  # Note: Tensorflow's add_n doesn't support broadcasting.
-  b = [tf.broadcast_to(b, tf.shape(a)) for b in b]
-  return tf.add_n([a] + b)
-
-# TODO(necula): do not repeat the definition of threefry here. Note that on
-#  CPU we don't have a direct definition of the primitive; we expand it
-#  using xla.lower_fun. Could we do something similar here rather than
-#  repeating its definition?
-def _threefry2x32(key1, key2, x1, x2):
-  """Tensorflow implementation of the jax PRNG."""
-  def rotate_left(x, d):
-    """Rotate left."""
-    return tf.bitwise.bitwise_or(
-        tf.bitwise.left_shift(x, np.uint32(d)),
-        tf.bitwise.right_shift(x, np.uint32(32 - d)))
-
-  def apply_round(v1, v2, rot):
-    v1 = uadd(v1, v2)
-    v2 = rotate_left(v2, rot)
-    v2 = tf.bitwise.bitwise_xor(v1, v2)
-    return v1, v2
-
-  rotations = [[13, 15, 26, 6], [17, 29, 16, 24]]
-  magic_number = tf.constant(np.uint32(0x1BD11BDA), dtype=tf.uint32)
-
-  key3 = tf.bitwise.bitwise_xor(key1,
-                                tf.bitwise.bitwise_xor(key2, magic_number))
-
-  x1 = uadd(x1, key1)
-  x2 = uadd(x2, key2)
-
-  for r in rotations[0]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key2)
-  x2 = uadd(x2, key3, np.uint32(1))
-
-  for r in rotations[1]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key3)
-  x2 = uadd(x2, key1, np.uint32(2))
-
-  for r in rotations[0]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key1)
-  x2 = uadd(x2, key2, np.uint32(3))
-
-  for r in rotations[1]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key2)
-  x2 = uadd(x2, key3, np.uint32(4))
-
-  for r in rotations[0]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key3)
-  x2 = uadd(x2, key1, np.uint32(5))
-
-  return x1, x2
-
-tf_impl[jax.random.threefry2x32_p] = _threefry2x32
 
 # Use the vmap implementation, otherwise on TPU the performance is really bad
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.

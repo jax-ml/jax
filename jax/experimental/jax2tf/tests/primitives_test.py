@@ -612,23 +612,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
 
-  def test_random_gamma(self):
-    f_jax = jax.jit(jax.random.gamma)
-    for alpha in [1.0,
-                  np.array([1.0, 0.2, 1.2], np.float32),
-                  np.array([1.0, 0.2, 1.2], np.float64)]:
-      for rng_key in [jax.random.PRNGKey(42)]:
-        self.ConvertAndCompare(f_jax, rng_key, alpha)
+  @primitive_harness.parameterized(primitive_harness.random_gamma)
+  def test_random_gamma(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           rtol=1e-5)
 
-  def test_prngsplit(self):
-    f_jax = jax.jit(lambda key: jax.random.split(key, 2))
-    for rng_key in [jax.random.PRNGKey(42),
-                    np.array([0, 0], dtype=np.uint32),
-                    np.array([0xFFFFFFFF, 0], dtype=np.uint32),
-                    np.array([0, 0xFFFFFFFF], dtype=np.uint32),
-                    np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)
-                    ]:
-      self.ConvertAndCompare(f_jax, rng_key)
+  @primitive_harness.parameterized(primitive_harness.random_split,
+                                   one_containing="i=0")
+  def test_random_split(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   def test_zeros_like(self):
     v = np.float32(2.)

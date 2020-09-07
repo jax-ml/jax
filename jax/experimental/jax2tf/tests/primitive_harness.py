@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence
 from functools import partial
 
 from absl import testing
+import jax
 from jax import config
 from jax import dtypes
 from jax import test_util as jtu
@@ -842,4 +843,23 @@ lax_reduce_window = tuple(
                            [((0, 1), (1, 0), (2, 3), (0, 2))]))
   for base_dilation in [(2, 1, 3, 2)]
   for window_dilation in [(1, 2, 2, 1)]
+)
+
+random_gamma = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          jax.jit(jax.random.gamma),
+          [jax.random.PRNGKey(42), RandArg(shape, dtype)])
+  for shape in ((), (3,))
+  for dtype in (np.float32, np.float64)
+)
+
+random_split = tuple(
+  Harness(f"_i={key_i}",
+          jax.jit(lambda key: jax.random.split(key, 2)),
+          [key])
+  for key_i, key in enumerate([jax.random.PRNGKey(42),
+                               np.array([0, 0], dtype=np.uint32),
+                               np.array([0xFFFFFFFF, 0], dtype=np.uint32),
+                               np.array([0, 0xFFFFFFFF], dtype=np.uint32),
+                               np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )
