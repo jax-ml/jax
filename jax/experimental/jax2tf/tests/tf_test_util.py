@@ -23,7 +23,7 @@ import jax
 from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
-from jax.experimental.jax2tf.tests import correctness_stats as jcs
+from jax.experimental.jax2tf.tests import correctness_stats
 from jax import test_util as jtu
 from jax import numpy as jnp
 
@@ -32,7 +32,7 @@ import os
 if os.getenv('JAX2TF_CATEGORIZE_OUT'):
   output_file = os.path.join(os.path.dirname(__file__),
                              '../primitives_with_limited_support.md')
-  atexit.register(jcs.pprint_all_limitations, output_file)
+  atexit.register(correctness_stats.pprint_all_limitations, output_file)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
@@ -97,7 +97,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
 
     def patch_get_primitive_impl():
-      wrapper = jcs.collect_limitations
+      wrapper = correctness_stats.collect_limitations
       jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
         lambda s, p: wrapper(p, original_impl(s, p)))
 
@@ -129,13 +129,13 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       else:
         assert False
 
-    def is_tf_exception(lim: jcs.Limitation):
+    def is_tf_exception(lim: correctness_stats.Limitation):
       return (lim.ErrorType == 'Missing TF support' and
               self.tf_default_device.device_type in lim.Devices)
 
     result_tf = None
     for mode in ("eager", "graph", "compiled"):
-      current_limitations = jcs.all_limitations[:]
+      current_limitations = correctness_stats.all_limitations[:]
       # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
       # resulting primitive in a categorizer. We do that at every loop
       # iteration because we want to restore the original implementation
@@ -146,7 +146,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         result_tf = run_tf(mode)
       except Exception as e:
         new_limitations = (
-          jcs.all_limitations[len(current_limitations):])
+          correctness_stats.all_limitations[len(current_limitations):])
         detected_tf_exception = any(map(is_tf_exception, new_limitations))
 
         if not (expect_tf_exceptions or detected_tf_exception):
