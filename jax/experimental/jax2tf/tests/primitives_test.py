@@ -330,8 +330,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_population_count)
   def test_population_count(self, harness: primitive_harness.Harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=True)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_add_mul)
   def test_add_mul(self, harness: primitive_harness.Harness):

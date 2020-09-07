@@ -134,6 +134,11 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype == np.complex64:
       tf_unimpl(np_dtype, devs=["TPU"])
 
+  if prim is lax.population_count_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype == np.uint32:
+      tf_unimpl(np_dtype)
+
   return limitations
 
 def prettify(limitations: Sequence[Limitation]) -> str:
