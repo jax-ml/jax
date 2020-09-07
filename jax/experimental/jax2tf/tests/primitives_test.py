@@ -192,28 +192,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     if unimplemented_jax:
       raise unittest.SkipTest(f"QR not implemented in JAX for {dtype} on {dut}")
 
-    expect_tf_exceptions = False
-    if dtype in (np.complex64, np.complex128):
-      expect_tf_exceptions = True
     # TODO: see https://github.com/google/jax/pull/3775#issuecomment-659407824.
-    # - experimental_compile=True breaks for complex types;
     # - for now, the performance of the HLO QR implementation called when
     #   compiling with TF is expected to have worse performance than the
     #   custom calls made in JAX.
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=expect_tf_exceptions,
                            atol=1e-5, rtol=1e-5)
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_svd)
   def test_svd(self, harness: primitive_harness.Harness):
     if jtu.device_under_test() == "tpu":
       raise unittest.SkipTest("TODO: test crashes the XLA compiler for some TPU variants")
-    expect_tf_exceptions = False
     if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
-      if jtu.device_under_test() == "tpu":
-        # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
-        expect_tf_exceptions = True
-      else:
+      if jtu.device_under_test() != "tpu":
         # Does not work in JAX
         with self.assertRaisesRegex(NotImplementedError, "Unsupported dtype"):
           harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
@@ -226,10 +217,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                     "Binary op compare with different element types"):
           harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
         return
-      else:
-        # TODO: on CPU and GPU "No registered 'Svd' OpKernel for XLA_CPU_JIT devices".
-        # Works on JAX because JAX uses a custom implementation.
-        expect_tf_exceptions = True
 
     def _custom_assert(r_jax, r_tf, atol=1e-6, rtol=1e-6):
       def _reconstruct_operand(result, is_tf: bool):
@@ -258,61 +245,23 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol,
-                           expect_tf_exceptions=expect_tf_exceptions,
                            custom_assert=custom_assert,
                            always_custom_assert=True)
 
   @primitive_harness.parameterized(primitive_harness.lax_select_and_gather_add)
   def test_select_and_gather_add(self, harness: primitive_harness.Harness):
-    dtype = harness.params["dtype"]
-
-    max_bits = 64
-    if jtu.device_under_test() == "tpu":
-      max_bits = 32
-
-    expect_tf_exceptions = False
-    if dtypes.finfo(dtype).bits * 2 > max_bits:
-      # TODO: getting an exception "XLA encountered an HLO for which this rewriting is not implemented"
-      expect_tf_exceptions = True
-
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_reduce_window)
   def test_reduce_window(self, harness: primitive_harness.Harness):
-    f_name = harness.params['computation'].__name__
     dtype = harness.params['dtype']
-
-    expect_tf_exceptions = False
 
     if (jtu.device_under_test() == 'tpu' and dtype is np.complex64):
       raise unittest.SkipTest(
           'TODO: JAX reduce_window on TPU does not handle complex64'
       )
 
-    if ((f_name == 'min' or f_name == 'max') and
-        dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                      np.int16, np.int32, np.int64]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/minimum for a list of
-      # the types supported by tf.math.minimum/tf.math.maximum.
-      expect_tf_exceptions = True
-    elif (f_name == 'add' and
-          dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                        np.int8, np.int16, np.int32, np.int64, np.complex64,
-                        np.complex128]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/add for a list of the
-      # types supported by tf.math.add.
-      expect_tf_exceptions = True
-    elif (f_name == 'mul' and
-          dtype not in [dtypes.bfloat16, np.float16, np.float32, np.float64, np.uint8,
-                        np.int8, np.uint16, np.int16, np.int32, np.int64,
-                        np.complex64, np.complex128]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/multiply for a list of
-      # the types supported by tf.math.multiply.
-      expect_tf_exceptions = True
-
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
@@ -386,19 +335,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_add_mul)
   def test_add_mul(self, harness: primitive_harness.Harness):
-    expect_tf_exceptions = False
-    dtype = harness.params["dtype"]
-    f_name = harness.params["f_jax"].__name__
-
-    if dtype in [np.uint32, np.uint64]:
-      # TODO(bchetioui): tf.math.multiply is not defined for the above types.
-      expect_tf_exceptions = True
-    elif dtype is np.uint16 and f_name == "add":
-      # TODO(bchetioui): tf.math.add is defined for the same types as multiply,
-      # except uint16.
-      expect_tf_exceptions = True
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_min_max)
   def test_min_max(self, harness: primitive_harness.Harness):
@@ -535,34 +472,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_scatter(self, harness: primitive_harness.Harness):
     f_name = harness.params['f_lax'].__name__
     dtype = harness.params['dtype']
-    expect_tf_exceptions = False
 
     if jtu.device_under_test() == 'tpu':
-      if dtype is np.complex64:
-        if f_name in ['scatter_min', 'scatter_max']:
+      if dtype is np.complex64 and f_name in ['scatter_min', 'scatter_max']:
           raise unittest.SkipTest(f"TODO: complex {f_name} on TPU fails in JAX")
-        else:
-          # TODO: TensorFlow fails because of unimplemented cases
-          expect_tf_exceptions = True
 
-    if (f_name in ['scatter_min', 'scatter_max'] and
-        dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
-                  np.complex64, np.complex128]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/minimum for a
-      # list of the types supported by tf.math.minimum/tf.math.maximum.
-      expect_tf_exceptions = True
-    elif (f_name == 'scatter_add' and
-          dtype in [np.uint16, np.uint32, np.uint64]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/add for a list
-      # of the types supported by tf.math.add.
-      expect_tf_exceptions = True
-    elif (f_name == 'scatter_mul' and dtype in [np.uint32, np.uint64]):
-      # See https://www.tensorflow.org/api_docs/python/tf/math/multiply for a
-      # list of the types supported by tf.math.multiply.
-      expect_tf_exceptions = True
-
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
