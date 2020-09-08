@@ -60,12 +60,13 @@ DType = Any
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
-  # Replace 1 with 0 to avoid inconclusive comparisons for polymorphic dims:
-  out_shape = np.max(np.where(shapes == 1, 0, shapes), axis=0)
-  out_shape = np.where(np.all(shapes == 1, axis=0), 1, out_shape)
-  if not np.all((shapes == out_shape) | (shapes == 1)):
-    return None
-  return canonicalize_shape(out_shape)
+  for sizes in zip(*shapes):
+    sizes = [d for d in sizes if d != 1]
+    if sizes[:-1] != sizes[1:]:
+      break
+  else:
+    return tuple(next((d for d in sizes if d != 1), 1)
+                  for sizes in zip(*shapes))
 
 @cache()
 def broadcast_shapes(*shapes):
@@ -73,7 +74,7 @@ def broadcast_shapes(*shapes):
   if len(shapes) == 1:
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
-  shapes = np.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
+  shapes = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
   result_shape = _try_broadcast_shapes(shapes)
   if result_shape is None:
     raise ValueError("Incompatible shapes for broadcasting: {}"
