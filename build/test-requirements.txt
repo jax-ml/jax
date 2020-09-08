@@ -5,3 +5,4 @@ pillow
 pytest-benchmark
 pytest-xdist
 wheel
+torch
