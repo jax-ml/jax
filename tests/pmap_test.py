@@ -958,6 +958,17 @@ class PmapTest(jtu.JaxTestCase):
     expected = 1 + np.arange(device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testAxisIndexInInitialStyle(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      def body(carry, i):
+        return carry + i + lax.axis_index('i'), None
+      return lax.scan(body, 0, x)[0]
+    device_count = xla_bridge.device_count()
+    shape = (device_count, 10)
+    self.assertAllClose(f(jnp.ones(shape, dtype=np.int32)),
+                        (np.arange(device_count) + 1) * 10)
+
   def testVmapOfPmap(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
