@@ -19,7 +19,7 @@ from functools import partial
 import inspect
 import itertools
 import operator
-from typing import cast, Optional
+from typing import cast, Iterator, Optional, List, Tuple
 import unittest
 from unittest import SkipTest
 import warnings
@@ -2150,6 +2150,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     np_fun = lambda x: np.split(x, num_sections, axis=axis)
     jnp_fun = lambda x: jnp.split(x, num_sections, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_{}sections".format(
+          jtu.format_shape_dtype_string(shape, dtype), axis, num_sections),
+       "shape": shape, "num_sections": num_sections, "axis": axis, "dtype": dtype}
+      # All testcases split the specified axis unequally
+      for shape, axis, num_sections in [
+          ((3,), 0, 2), ((12,), 0, 5), ((12, 4), 0, 7), ((12, 4), 1, 3),
+          ((2, 3, 5), -1, 2), ((2, 4, 4), -2, 3), ((7, 2, 2), 0, 3)]
+      for dtype in default_dtypes))
+  def testArraySplitStaticInt(self, shape, num_sections, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x: np.array_split(x, num_sections, axis=axis)
+    jnp_fun = lambda x: jnp.array_split(x, num_sections, axis=axis)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -4305,6 +4322,71 @@ class NumpySignaturesTest(jtu.JaxTestCase):
         mismatches[name] = {'np_params': list(np_params), 'jnp_params': list(jnp_params)}
 
     self.assertEqual(mismatches, {})
+
+
+_all_dtypes: List[str] = [
+  "bool_",
+  "uint8", "uint16", "uint32", "uint64",
+  "int8", "int16", "int32", "int64",
+  "float16", "float32", "float64",
+  "complex64", "complex128",
+]
+
+
+def _all_numpy_ufuncs() -> Iterator[str]:
+  """Generate the names of all ufuncs in the top-level numpy namespace."""
+  for name in dir(np):
+    f = getattr(np, name)
+    if isinstance(f, np.ufunc):
+      yield name
+
+
+def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:
+  """Generate valid dtypes of inputs to the given numpy ufunc."""
+  func = getattr(np, name)
+  for arg_dtypes in itertools.product(_all_dtypes, repeat=func.nin):
+    args = (np.ones(1, dtype=dtype) for dtype in arg_dtypes)
+    try:
+      with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", "divide by zero", RuntimeWarning)
+        _ = func(*args)
+    except TypeError:
+      pass
+    else:
+      yield arg_dtypes
+
+
+class NumpyUfuncTests(jtu.JaxTestCase):
+  @parameterized.named_parameters(
+    {"testcase_name": f"_{name}_{','.join(arg_dtypes)}",
+     "name": name, "arg_dtypes": arg_dtypes}
+    for name in _all_numpy_ufuncs()
+    for arg_dtypes in jtu.cases_from_list(_dtypes_for_ufunc(name)))
+  def testUfuncInputTypes(self, name, arg_dtypes):
+    # TODO(jakevdp): fix following failures and remove from this exception list.
+    if (name in ['divmod', 'floor_divide', 'fmod', 'gcd', 'left_shift', 'mod',
+                 'power', 'remainder', 'right_shift', 'rint', 'square']
+        and 'bool_' in arg_dtypes):
+      self.skipTest(f"jax.numpy does not support {name}{tuple(arg_dtypes)}")
+    if name == 'arctanh' and jnp.issubdtype(arg_dtypes[0], jnp.complexfloating):
+      self.skipTest("np.arctanh & jnp.arctanh have mismatched NaNs for complex input.")
+    for dtype in arg_dtypes:
+      jtu.skip_if_unsupported_type(dtype)
+
+    jnp_op = getattr(jnp, name)
+    np_op = getattr(np, name)
+    np_op = jtu.ignore_warning(category=RuntimeWarning,
+                               message="divide by zero.*")(np_op)
+    args_maker = lambda: tuple(np.ones(1, dtype=dtype) for dtype in arg_dtypes)
+
+    try:
+      jnp_op(*args_maker())
+    except NotImplementedError:
+      self.skipTest(f"jtu.{name} is not yet implemented.")
+
+    # large tol comes from the fact that numpy returns float16 in places
+    # that jnp returns float32. e.g. np.cos(np.uint8(0))
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False, tol=1E-2)
 
 
 if __name__ == "__main__":

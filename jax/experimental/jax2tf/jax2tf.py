@@ -218,6 +218,30 @@ def _interpret_fun(fun: lu.WrappedFun,
     del main
   return out_vals
 
+def _convert_jax_impl(jax_impl: Callable, multiple_results=True) -> Callable:
+  """Convert the JAX implementation of a primitive.
+
+  Args:
+    jax_impl: typically the impl-rule for a primitive, with signature
+      `(*args: JaxVal, **kwargs) -> Sequence[JaxVal]`. This function implements
+      a primitive in terms of other primitives.
+    multiple_results: whether `jax_impl` returns a sequence of results.
+
+  Returns:
+     a function with signature `(*args: TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]`.
+  """
+  def wrapped(*tf_args: TfValOrUnit, **kwargs) -> Union[TfValOrUnit, Sequence[TfValOrUnit]]:
+
+    # We wrap the jax_impl under _interpret_fun to abstract the TF values
+    # from jax_impl and turn them into JAX abstract values.
+    def jax_impl_jax_args(*jax_args):
+      jax_results = jax_impl(*jax_args, **kwargs)
+      return jax_results if multiple_results else [jax_results]
+
+    tf_results = _interpret_fun(lu.wrap_init(jax_impl_jax_args), tf_args)
+    return tf_results if multiple_results else tf_results[0]
+  return wrapped
+
 
 @lu.transformation
 def _interpret_subtrace(main: core.MainTrace, *in_vals: TfValOrUnit):
@@ -402,7 +426,6 @@ tf_not_yet_impl = [
   lax_linalg.triangular_solve_p,
 
   lax.igamma_grad_a_p,
-  random.random_gamma_p,
   lax.random_gamma_grad_p,
 
   # Not high priority?
@@ -431,7 +454,7 @@ tf_impl[lax.nextafter_p] = tf.math.nextafter
 
 def _population_count(x):
   orig_dtype = x.dtype
-  return tf.bitcast(tf.raw_ops.PopulationCount(x=x), orig_dtype)
+  return tf.cast(tf.raw_ops.PopulationCount(x=x), orig_dtype)
 
 tf_impl[lax.population_count_p] = _population_count
 tf_impl[lax.is_finite_p] = tf.math.is_finite
@@ -883,7 +906,8 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
                           window_strides, padding, base_dilation,
                           window_dilation):
   # TODO(tomhennigan): tf2xla should have a shape inference function.
-  out_shape = _reduce_window_shape(lax._reduce_window_sum, operand, window_dimensions,
+  out_shape = _reduce_window_shape(lax._reduce_window_min, operand,
+                                   window_dimensions,
                                    window_strides, padding, base_dilation,
                                    window_dilation)
 
@@ -1014,69 +1038,24 @@ def _select_and_scatter_add(
                                   scatter_fn)
 tf_impl[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
+def _threefry2x32_jax_impl(*args: TfValOrUnit):
+  # We use the random._threefry2x32_lowering, but since add is not implemented
+  # for uint32, we cast to int32 and back.
+  args = tuple([tf.cast(a, tf.int32) for a in args])
+  res = _convert_jax_impl(
+    functools.partial(random._threefry2x32_lowering,
+                      use_rolled_loops=False),
+    multiple_results=True)(*args)
+  res = tuple([tf.cast(r, tf.uint32) for r in res])
+  return res
+tf_impl[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 
-def uadd(a, *b):
-  """Workaround to support + with uint32 (not supported in TF)."""
-  # Note: Tensorflow's add_n doesn't support broadcasting.
-  b = [tf.broadcast_to(b, tf.shape(a)) for b in b]
-  return tf.add_n([a] + b)
 
-# TODO(necula): do not repeat the definition of threefry here. Note that on
-#  CPU we don't have a direct definition of the primitive; we expand it
-#  using xla.lower_fun. Could we do something similar here rather than
-#  repeating its definition?
-def _threefry2x32(key1, key2, x1, x2):
-  """Tensorflow implementation of the jax PRNG."""
-  def rotate_left(x, d):
-    """Rotate left."""
-    return tf.bitwise.bitwise_or(
-        tf.bitwise.left_shift(x, np.uint32(d)),
-        tf.bitwise.right_shift(x, np.uint32(32 - d)))
-
-  def apply_round(v1, v2, rot):
-    v1 = uadd(v1, v2)
-    v2 = rotate_left(v2, rot)
-    v2 = tf.bitwise.bitwise_xor(v1, v2)
-    return v1, v2
-
-  rotations = [[13, 15, 26, 6], [17, 29, 16, 24]]
-  magic_number = tf.constant(np.uint32(0x1BD11BDA), dtype=tf.uint32)
-
-  key3 = tf.bitwise.bitwise_xor(key1,
-                                tf.bitwise.bitwise_xor(key2, magic_number))
-
-  x1 = uadd(x1, key1)
-  x2 = uadd(x2, key2)
-
-  for r in rotations[0]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key2)
-  x2 = uadd(x2, key3, np.uint32(1))
-
-  for r in rotations[1]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key3)
-  x2 = uadd(x2, key1, np.uint32(2))
-
-  for r in rotations[0]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key1)
-  x2 = uadd(x2, key2, np.uint32(3))
-
-  for r in rotations[1]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key2)
-  x2 = uadd(x2, key3, np.uint32(4))
-
-  for r in rotations[0]:
-    x1, x2 = apply_round(x1, x2, r)
-  x1 = uadd(x1, key3)
-  x2 = uadd(x2, key1, np.uint32(5))
-
-  return x1, x2
-
-tf_impl[jax.random.threefry2x32_p] = _threefry2x32
-
+# Use the vmap implementation, otherwise on TPU the performance is really bad
+# With use_vmap=True on, we get about the same performance for JAX and jax2tf.
+tf_impl[random.random_gamma_p] = _convert_jax_impl(
+  functools.partial(random._gamma_impl, use_vmap=True),
+  multiple_results=False)
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
   proto = xla_data_pb2.GatherDimensionNumbers()
@@ -1326,16 +1305,8 @@ def _batched_cond_while(*args: TfValOrUnit,
 
 tf_impl[lax.while_p] = _while
 
-
-def _scan(*tf_args : TfValOrUnit, **kwargs) -> Sequence[TfValOrUnit]:
-  # We use the scan impl rule to rewrite in terms of while. We wrap it under
-  # _interpret_fun to abstract the TF values from scan_impl.
-  def func1(*jax_args):
-    return lax_control_flow._scan_impl(*jax_args, **kwargs)
-
-  return _interpret_fun(lu.wrap_init(func1), tf_args)
-
-tf_impl[lax.scan_p] = _scan
+# We use the scan impl rule to rewrite in terms of while.
+tf_impl[lax.scan_p] = _convert_jax_impl(lax_control_flow._scan_impl)
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted

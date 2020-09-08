@@ -2324,7 +2324,7 @@ def _interleave(a, b):
     return jnp.reshape(jnp.stack([a, b], axis=1),
                        (2 * half_num_elems,) + a.shape[1:])
 
-def associative_scan(fn, elems):
+def associative_scan(fn, elems, reverse=False):
   """Perform a scan with an associative binary operation, in parallel.
 
   Args:
@@ -2338,6 +2338,8 @@ def associative_scan(fn, elems):
       shape (and structure) as the two inputs ``a`` and ``b``.
     elems: A (possibly nested structure of) array(s), each with leading
       dimension ``num_elems``.
+    reverse: A boolean stating if the scan should be reversed with respect to
+      the leading dimension.
 
   Returns:
     result: A (possibly nested structure of) array(s) of the same shape
@@ -2357,8 +2359,16 @@ def associative_scan(fn, elems):
   >>> partial_prods = lax.associative_scan(jnp.matmul, mats)
   >>> partial_prods.shape
   (4, 2, 2)
+
+  Example 3: reversed partial sums of an array of numbers
+
+  >>> lax.associative_scan(jnp.add, jnp.arange(0, 4), reverse=True)
+  [ 6, 6, 5, 3]
   """
   elems_flat, tree = tree_flatten(elems)
+
+  if reverse:
+    elems_flat = [lax.rev(elem, [0]) for elem in elems_flat]
 
   def lowered_fn(a_flat, b_flat):
     # Lower `fn` to operate on flattened sequences of elems.
@@ -2433,6 +2443,9 @@ def associative_scan(fn, elems):
     return tuple(_map(_interleave, even_elems, odd_elems))
 
   scans = _scan(elems_flat)
+
+  if reverse:
+    scans = [lax.rev(scanned, [0]) for scanned in scans]
 
   return tree_unflatten(tree, scans)
 
