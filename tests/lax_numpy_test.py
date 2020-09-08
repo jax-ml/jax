@@ -1476,10 +1476,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           func, keepdims, axes),
         "shape": shape, "dtype": dtype, "func": func, "keepdims": keepdims, "axes": axes}
       for shape in nonempty_shapes
-      for dtype in default_dtypes
       for func in ["sum"]
       for keepdims in [True, False]
-      for axes in itertools.combinations(range(len(shape)), 2)))
+      for axes in itertools.combinations(range(len(shape)), 2)
+      # Avoid low-precision types in sum()
+      for dtype in default_dtypes if dtype not in [np.float16, jnp.bfloat16]))
   def testApplyOverAxes(self, shape, dtype, func, keepdims, axes):
     f = lambda x, axis: getattr(x, func)(axis=axis, keepdims=keepdims)
     rng = jtu.rand_default(self.rng())
