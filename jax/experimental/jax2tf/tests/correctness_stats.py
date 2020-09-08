@@ -21,6 +21,7 @@ from jax import core
 from jax import dtypes
 from jax import lax
 from jax import lax_linalg
+from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl
 
 def to_jax_dtype(tf_dtype):
   if tf_dtype.name == 'bfloat16':
@@ -165,25 +166,32 @@ def prettify(limitations: Sequence[Limitation]) -> str:
 
   return '\n'.join(line for line in map(_pipewrap, table))
 
-def pprint_limitations(limitations: Sequence[Limitation],
-                       output_file: Optional[str] = None,
-                       template_file: Optional[str] = None) -> None:
+def prettify_not_yet_implemented() -> str:
+  """Constructs a summary markdown list of the unimplemented primitives."""
+  ordered_unimpl: List[str]
+  ordered_unimpl = sorted(list(map(lambda prim: prim.name, tf_not_yet_impl)))
+
+  bullet = '* '
+
+  return bullet + ('\n' + bullet).join(ordered_unimpl)
+
+def pprint_limitations(limitations: Sequence[Limitation], output_file: str,
+                       template_file: str) -> None:
 
   limited_support_table = prettify(limitations)
-  output = limited_support_table
+  not_yet_impl_primitives_list = prettify_not_yet_implemented()
+  generation_date = str(datetime.date.today())
 
-  if template_file:
-    with open(template_file, 'r') as f:
-      output = f.read()
-    generation_date = str(datetime.date.today())
-    output = output.replace('{{limited-support-table}}', limited_support_table)
-    output = output.replace('{{generation-date}}', generation_date)
+  with open(template_file, 'r') as f:
+    output = f.read()
 
-  if output_file:
-    with open(output_file, 'w') as f:
-      f.write(output)
-  else:
-    print(output)
+  output = (output
+    .replace('{{limited-support-table}}', limited_support_table)
+    .replace('{{generation-date}}', generation_date)
+    .replace('{{not-yet-impl-primitives-list}}', not_yet_impl_primitives_list))
+
+  with open(output_file, 'w') as f:
+    f.write(output)
 
 all_limitations: Sequence[Limitation] = []
 pprint_all_limitations = functools.partial(pprint_limitations, all_limitations)
