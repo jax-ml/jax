@@ -154,6 +154,12 @@ class Poly:
     else:
       raise TypeError(f"'>=' not supported between Poly and {type(other)}")
 
+  def __lt__(self, other):
+    if other == 0:
+      return False
+    else:
+      raise TypeError(f"'<' not supported between Poly and {type(other)}")
+
   def __str__(self) -> str:
     out = ' + '.join('{} {}'.format(c, m) if c != 1 else str(m)
                      for m, c in self.terms.items()).strip()
@@ -165,8 +171,8 @@ abstract_arrays._DIMENSION_TYPES.add(Poly)
 
 def _is_constant(poly):
   try:
-    mon, coeff = poly.terms.items()
-    (), = mon.components
+    mon, = poly.terms
+    () = mon.components
     return True
   except (ValueError, TypeError):
     return False
@@ -424,19 +430,21 @@ def defnaryop(prim):
   masking_rules[prim] = partial(naryop_masking_rule, prim)
 
 def naryop_shape_rule(polymorphic_shapes):
-  ranks = {len(s) for s in polymorphic_shapes if s}
+  shapes = [s.aval.shape if type(s) is NotPolymorphic else s
+            for s in polymorphic_shapes]
+  ranks = {len(s) for s in shapes if s}
   if len(ranks) > 1:
     raise TypeError(f"got arrays of different rank: {polymorphic_shapes}")
   rank, = ranks or {()}
   if rank:
-    polymorphic_shapes = [s or (1,) * rank for s in polymorphic_shapes]
-    axis_sizes = zip(*polymorphic_shapes)
+    shapes = [s or (1,) * rank for s in shapes]
+    axis_sizes = zip(*shapes)
     for sizes in axis_sizes:
       sizes = [d for d in sizes if d != 1]
       if sizes[:-1] != sizes[1:]:
-        raise TypeError()  # TODO message
+        raise TypeError(f"incompatible shapes for broadcasting: {polymorphic_shapes}")
     return tuple(next((d for d in sizes if d != 1), 1)
-                 for sizes in zip(*polymorphic_shapes))
+                 for sizes in zip(*shapes))
   else:
     return ()
 

@@ -1748,7 +1748,7 @@ def _scan_batching_rule(args, dims, reverse, length, jaxpr, num_consts,
 def _scan_polymorphic_shape_rule(polymorphic_shapes, reverse, length, jaxpr,
                                  num_consts, num_carry, linear):
   const_polys, init_polys, xs_polys = split_list(polymorphic_shapes,
-                                                       [num_consts, num_carry])
+                                                 [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   ys_shapes = [(length, *y_aval.shape) for y_aval in y_avals]
   return init_polys + ys_shapes
@@ -1762,6 +1762,7 @@ def _scan_masking_rule(padded_vals, polymorphic_shapes, *, reverse, length,
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
   max_length, = {x.shape[0] for x in xs}
   const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
+  breakpoint()
   out_vals = scan_p.bind(
       *itertools.chain([dynamic_length] + consts, [0], init, xs),
       reverse=reverse, length=max_length, jaxpr=masked_jaxpr,

@@ -234,96 +234,96 @@ class MaskingTest(jtu.JaxTestCase):
       # expected = np.array([[1, 2, 3], [8, 10, 12]])
       # self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # def test_stack(self):
-  #   @partial(mask, in_shapes=['n','n'], out_shape='(2, n)')
-  #   def stack(x, y):
-  #     return jnp.stack([x, y], 0)
+  def test_stack(self):
+    @partial(mask, in_shapes=['n','n'], out_shape='(2, n)')
+    def stack(x, y):
+      return jnp.stack([x, y], 0)
 
-  #   # TODO(shoyer): enable this check when broadcast_in_dim supports masking
-  #   with self.assertRaisesRegex(
-  #       NotImplementedError,
-  #       'Masking rule for broadcast_in_dim not implemented.'):
-  #     stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
-  #     # expected = np.array([[1, 2, 3], [4, 5, 6]])
-  #     # self.assertAllClose(ans, expected, check_dtypes=False)
+    # TODO(shoyer): enable this check when broadcast_in_dim supports masking
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        'Masking rule for broadcast_in_dim not implemented.'):
+      stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
+      # expected = np.array([[1, 2, 3], [4, 5, 6]])
+      # self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # def test_monomorphic(self):
-  #   @partial(mask, in_shapes=['(_, n)'], out_shape='')
-  #   def padded_sum(x):
-  #     return jnp.sum(x)
+  def test_monomorphic(self):
+    @partial(mask, in_shapes=['(_, n)'], out_shape='')
+    def padded_sum(x):
+      return jnp.sum(x)
 
-  #   ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
-  #   expected = 8
-  #   self.assertAllClose(ans, expected, check_dtypes=False)
+    ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
+    expected = 8
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # def test_monomorphic2(self):
-  #   @partial(mask, in_shapes=['(_, n)'], out_shape='n')
-  #   def padded_sum(x):
-  #     return jnp.sum(x, axis=0)
+  def test_monomorphic2(self):
+    @partial(mask, in_shapes=['(_, n)'], out_shape='n')
+    def padded_sum(x):
+      return jnp.sum(x, axis=0)
 
-  #   ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=2))
-  #   expected = jnp.array([8, 10])
-  #   self.assertAllClose(ans, expected, check_dtypes=False)
+    ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=2))
+    expected = jnp.array([8, 10])
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # def test_monomorphic3(self):
-  #   @partial(mask, in_shapes=['(_, n)'], out_shape='_')
-  #   def padded_sum(x):
-  #     return jnp.sum(x, axis=1)
+#   def test_monomorphic3(self):
+#     @partial(mask, in_shapes=['(_, n)'], out_shape='_')
+#     def padded_sum(x):
+#       return jnp.sum(x, axis=1)
 
-  #   ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
-  #   expected = jnp.array([3, 5])
-  #   self.assertAllClose(ans, expected, check_dtypes=False)
+#     ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
+#     expected = jnp.array([3, 5])
+#     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  #   @shapecheck(['(2*n, n)'], '_, n')
-  #   def identity(x):
-  #     return x
+#     @shapecheck(['(2*n, n)'], '_, n')
+#     def identity(x):
+#       return x
 
-  # def test_rnn(self):
-  #   n = 3
+  def test_rnn(self):
+    n = 3
 
-  #   @partial(mask, in_shapes=['(_, _)', '(t, _)'], out_shape='_')
-  #   def rnn(W, xs):
-  #     def step(h, x):
-  #       new_h = jnp.dot(W, h) + jnp.dot(W, x)
-  #       return new_h, ()
-  #     predicted, _ = lax.scan(step, jnp.zeros(n), xs)
-  #     return predicted
+    @partial(mask, in_shapes=['(_, _)', '(t, _)'], out_shape='_')
+    def rnn(W, xs):
+      def step(h, x):
+        new_h = jnp.dot(W, h) + jnp.dot(W, x)
+        return new_h, ()
+      predicted, _ = lax.scan(step, jnp.zeros(n), xs)
+      return predicted
 
-  #   rng = np.random.RandomState(0)
-  #   W = jnp.eye(n)
-  #   xs = rng.randn(10, n).astype(jnp.float_)
-  #   ans = rnn([W, xs], dict(t=4))
-  #   expected = xs[:4].sum(0)
-  #   self.assertAllClose(ans, expected, check_dtypes=False)
+    rng = np.random.RandomState(0)
+    W = jnp.eye(n)
+    xs = rng.randn(10, n).astype(jnp.float_)
+    ans = rnn([W, xs], dict(t=4))
+    expected = xs[:4].sum(0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
-  # def test_rnn_grad(self):
-  #   n = 3
+  def test_rnn_grad(self):
+    n = 3
 
-  #   @partial(mask, in_shapes=['(_, _)', '(t, _)', '_'], out_shape='')
-  #   def rnn(W, xs, target):
-  #     def step(h, x):
-  #       new_h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
-  #       return new_h, ()
-  #     predicted, _ = lax.scan(step, jnp.zeros(n), xs)
-  #     return jnp.sum((predicted - target)**2)
+    @partial(mask, in_shapes=['(_, _)', '(t, _)', '_'], out_shape='')
+    def rnn(W, xs, target):
+      def step(h, x):
+        new_h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
+        return new_h, ()
+      predicted, _ = lax.scan(step, jnp.zeros(n), xs)
+      return jnp.sum((predicted - target)**2)
 
-  #   rng = np.random.RandomState(0)
-  #   W = rng.randn(n, n).astype(jnp.float_)
-  #   xs = rng.randn(10, n).astype(jnp.float_)
-  #   y = rng.randn(n).astype(jnp.float_)
+    rng = np.random.RandomState(0)
+    W = rng.randn(n, n).astype(jnp.float_)
+    xs = rng.randn(10, n).astype(jnp.float_)
+    y = rng.randn(n).astype(jnp.float_)
 
-  #   ans = grad(lambda W: rnn([W, xs, y], dict(t=4)))(W)
+    ans = grad(lambda W: rnn([W, xs, y], dict(t=4)))(W)
 
-  #   def rnn_reference(W, xs, target):
-  #     h = jnp.zeros(n)
-  #     for x in xs:
-  #       h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
-  #     predicted = h
-  #     return jnp.sum((predicted - target)**2)
+    def rnn_reference(W, xs, target):
+      h = jnp.zeros(n)
+      for x in xs:
+        h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
+      predicted = h
+      return jnp.sum((predicted - target)**2)
 
-  #   expected = grad(lambda W: rnn_reference(W, xs[:4], y))(W)
+    expected = grad(lambda W: rnn_reference(W, xs[:4], y))(W)
 
-  #   self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   # def test_ragged_batched_rnn(self):
   #   n = 3

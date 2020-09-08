@@ -167,6 +167,9 @@ class Var:
     self.count = count
     self.suffix = suffix
     self.aval = raise_to_shaped(aval)
+    # TODO remove this
+    if isinstance(aval, ShapedArray):
+      map(int, aval.shape)
 
   def __lt__(self, other):
     if not isinstance(other, Var):

@@ -60,15 +60,6 @@ DType = Any
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
-  shapes = np.array(shapes)
-  min_shape = np.min(shapes, axis=0)
-  max_shape = np.max(shapes, axis=0)
-  result_shape = np.where(min_shape == 0, 0, max_shape)
-  if not np.all((shapes == result_shape) | (shapes == 1)):
-    return None
-  return canonicalize_shape(result_shape)
-
-def _try_broadcast_shapes(shapes):
   for sizes in zip(*shapes):
     sizes = [d for d in sizes if d != 1]
     if sizes[:-1] != sizes[1:]:
