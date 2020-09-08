@@ -454,7 +454,7 @@ tf_impl[lax.nextafter_p] = tf.math.nextafter
 
 def _population_count(x):
   orig_dtype = x.dtype
-  return tf.bitcast(tf.raw_ops.PopulationCount(x=x), orig_dtype)
+  return tf.cast(tf.raw_ops.PopulationCount(x=x), orig_dtype)
 
 tf_impl[lax.population_count_p] = _population_count
 tf_impl[lax.is_finite_p] = tf.math.is_finite

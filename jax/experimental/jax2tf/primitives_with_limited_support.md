@@ -19,6 +19,7 @@
 | mul | Missing TF support | mul is unimplemented for dtype uint32 | CPU, GPU, TPU |
 | nextafter | Missing TF support | nextafter is unimplemented for dtype bfloat16 | CPU, GPU, TPU |
 | nextafter | Missing TF support | nextafter is unimplemented for dtype float16 | CPU, GPU, TPU |
+| population_count | Missing TF support | population_count is unimplemented for dtype uint32 | CPU, GPU, TPU |
 | qr | Missing TF support | qr is unimplemented for dtype complex64 | CPU, GPU, TPU |
 | reduce_window_sum | Missing TF support | reduce_window_sum is unimplemented for dtype uint16 | CPU, GPU, TPU |
 | reduce_window_sum | Missing TF support | reduce_window_sum is unimplemented for dtype uint32 | CPU, GPU, TPU |
