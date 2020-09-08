@@ -715,8 +715,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   xla_consts = map(partial(xb.constant, c), consts)
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args,
                                     map(op.not_, mapped_invars), arg_parts)
-  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
-                                extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
+  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+    out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
+                                  extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
   if out_parts is not None:
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
@@ -1281,13 +1282,17 @@ soft_pmap_rules: Dict[core.Primitive, Callable] = {}
 def deleted_with_omnistaging(*a, **k):
   assert False, "Should be deleted"
 
+@contextmanager
+def maybe_extend_axis_env(*args, **kwargs):
+  yield
+
 @config.register_omnistaging_enabler
 def omnistaging_enable() -> None:
   global DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
       apply_parallel_primitive, parallel_pure_rules, \
       _pvals_to_results_handler, _pval_to_result_handler, replicate, \
-      avals_to_results_handler
+      avals_to_results_handler, maybe_extend_axis_env
   del DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
       _pvals_to_results_handler, _pval_to_result_handler, replicate
@@ -1320,3 +1325,8 @@ def omnistaging_enable() -> None:
                     for buf in bufs)
       return [h(bufs) for h, bufs in zip(handlers, buffers)]
     return handler
+
+  @contextmanager
+  def maybe_extend_axis_env(*args, **kwargs):
+    with core.extend_axis_env(*args, **kwargs):
+      yield
