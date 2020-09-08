@@ -60,12 +60,22 @@ DType = Any
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
-  # Replace 1 with 0 to avoid inconclusive comparisons for polymorphic dims:
-  out_shape = np.max(np.where(shapes == 1, 0, shapes), axis=0)
-  out_shape = np.where(np.all(shapes == 1, axis=0), 1, out_shape)
-  if not np.all((shapes == out_shape) | (shapes == 1)):
+  shapes = np.array(shapes)
+  min_shape = np.min(shapes, axis=0)
+  max_shape = np.max(shapes, axis=0)
+  result_shape = np.where(min_shape == 0, 0, max_shape)
+  if not np.all((shapes == result_shape) | (shapes == 1)):
     return None
-  return canonicalize_shape(out_shape)
+  return canonicalize_shape(result_shape)
+
+def _try_broadcast_shapes(shapes):
+  for sizes in zip(*shapes):
+    sizes = [d for d in sizes if d != 1]
+    if sizes[:-1] != sizes[1:]:
+      break
+  else:
+    return tuple(next((d for d in sizes if d != 1), 1)
+                  for sizes in zip(*shapes))
 
 @cache()
 def broadcast_shapes(*shapes):
@@ -73,7 +83,7 @@ def broadcast_shapes(*shapes):
   if len(shapes) == 1:
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
-  shapes = np.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
+  shapes = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
   result_shape = _try_broadcast_shapes(shapes)
   if result_shape is None:
     raise ValueError("Incompatible shapes for broadcasting: {}"
@@ -3447,7 +3457,7 @@ def _transpose_shape_rule(operand, *, permutation):
     msg = ("transpose permutation isn't a permutation of operand dimensions, "
            "got permutation {} for operand shape {}.")
     raise TypeError(msg.format(permutation, operand.shape))
-  return tuple(np.take(operand.shape, permutation))
+  return tuple(operand.shape[i] for i in permutation)
 
 def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   operand, = batched_args
@@ -3559,9 +3569,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice limit_indices must have the same length as start_indices, "
            "got start_inidices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
-  if (not masking.is_polymorphic(limit_indices) and
-      not masking.is_polymorphic(operand.shape) and
-      not np.all(np.less_equal(limit_indices, operand.shape))):
+  if not np.all(np.less_equal(limit_indices, operand.shape)):
     msg = ("slice limit_indices must be less than or equal to operand shape, "
            "got limit_indices {} for operand shape {}.")
     raise TypeError(msg.format(limit_indices, operand.shape))
@@ -3569,8 +3577,7 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice start_indices must be greater than or equal to zero, "
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
-  if (not masking.is_polymorphic(limit_indices) and
-      not np.all(np.greater_equal(limit_indices, start_indices))):
+  if not np.all(np.greater_equal(limit_indices, start_indices)):
     msg = ("slice limit_indices must be greater than or equal to start_indices,"
            " got start_indices {} and limit_indices {}.")
     raise TypeError(msg.format(start_indices, limit_indices))
@@ -4606,18 +4613,25 @@ def _reduction_computation(c, jaxpr, consts, init_value):
   return subc.build(out)
 
 def _masking_defreducer(prim, identity):
+  masking.polymorphic_shape_rules[prim] = _reducer_polymorphic_shape_rule
   masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity)
 
-def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
+def _reducer_polymorphic_shape_rule(polymorphic_shapes, axes, **unused_params):
+  polymorphic_shape, = polymorphic_shapes
+  return tuple(d for i, d in enumerate(polymorphic_shape) if i not in axes)
+
+def _reducer_masking_rule(prim, identity, padded_vals, polymorphic_shapes,
                           axes, input_shape=None):
-  (padded_val,), (logical_shape,) = padded_vals, logical_shapes
-  padded_shape = masking.padded_shape_as_value(padded_val.shape)
+  (padded_val,), (polymorphic_shape,) = padded_vals, polymorphic_shapes
+  out_shape = _reducer_polymorphic_shape_rule(polymorphic_shapes, axes)
+  logical_shape = masking.shape_as_value(polymorphic_shape)
+  padded_shape = masking.padded_shape_as_value(polymorphic_shape)
   masks = [broadcasted_iota(np.int32, padded_shape, i) < d
            for i, d in enumerate(logical_shape) if i in axes]
   mask = _reduce(operator.and_, masks)
   masked_val = select(mask, padded_val, identity(padded_shape, padded_val.dtype))
   bind = prim.bind if input_shape is None else partial(prim.bind, input_shape=padded_shape)
-  return bind(masked_val, axes=axes)
+  return bind(masked_val, axes=axes), out_shape
 
 reduce_p = standard_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
                                         _reduce_translation_rule)

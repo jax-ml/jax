@@ -1609,24 +1609,23 @@ def mask(fun: Callable, in_shapes, out_shape=None) -> Callable:
       masking.check_shapes(out_specs, out_spec_tree, list(out_shapes), out_tree)
       def padded_spec(shape_spec):
         return tuple(dim if dim is masking._monomorphic_dim else
-                     masking.eval_poly(dim, padded_env) for dim in shape_spec)
+                     masking.eval_poly(padded_env, dim) for dim in shape_spec)
       masking.check_shapes(map(padded_spec, out_specs), out_spec_tree,
                            map(np.shape, outs), out_tree, "Padded output")
       return tree_unflatten(out_tree, outs)
   return wrapped_fun
 
 @curry
-def shapecheck(in_shapes, out_shape, fun: Callable):
-  _check_callable(fun)
+def shapecheck(in_shapes, out_shape, fun):
   in_shapes, in_tree = tree_flatten(in_shapes)
   in_shapes = map(masking.parse_spec, in_shapes)
-  out_specs, out_spec_tree = tree_flatten(out_shape)
-  out_specs = map(masking.parse_spec, out_specs)
-  flat_fun, out_tree_thunk = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  avals = map(partial(ShapedArray, dtype=np.float32), in_shapes)
-  out_shapes = [o.shape for o in pe.abstract_eval_fun(flat_fun.call_wrapped, *avals)]
-  masking.check_shapes(map(tuple, out_specs), out_spec_tree,
-                       map(tuple, out_shapes), out_tree_thunk())
+  out_shapes, out_tree = tree_flatten(out_shape)
+  out_shapes = map(masking.parse_spec, out_shapes)
+  flat_fun, out_tree_ = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  out_shapes_ = masking.shapecheck(flat_fun, in_shapes)
+  if out_tree != out_tree_(): raise TypeError("pytree mismatch")
+  if not all(map(_shape_spec_consistent, out_shapes, out_shapes_)):
+    raise masking.ShapeError
   return fun
 
 def jvp(fun: Callable, primals, tangents) -> Tuple[Any, Any]:

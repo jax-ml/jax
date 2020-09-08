@@ -1745,8 +1745,18 @@ def _scan_batching_rule(args, dims, reverse, length, jaxpr, num_consts,
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-def _scan_masking_rule(padded_vals, logical_shapes, reverse, length,
+def _scan_polymorphic_shape_rule(polymorphic_shapes, reverse, length, jaxpr,
+                                 num_consts, num_carry, linear):
+  const_polys, init_polys, xs_polys = split_list(polymorphic_shapes,
+                                                       [num_consts, num_carry])
+  _, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  ys_shapes = [(length, *y_aval.shape) for y_aval in y_avals]
+  return init_polys + ys_shapes
+
+def _scan_masking_rule(padded_vals, polymorphic_shapes, *, reverse, length,
                        jaxpr, num_consts, num_carry, linear, unroll):
+  out_shape = _scan_polymorphic_shape_rule(polymorphic_shapes, reverse, length,
+                                           jaxpr, num_consts, num_carry, linear)
   dynamic_length, = masking.shape_as_value((length,))
   masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
@@ -1758,7 +1768,7 @@ def _scan_masking_rule(padded_vals, logical_shapes, reverse, length,
       num_consts=1 + num_consts, num_carry=1 + num_carry,
       linear=tuple([False] + const_linear + [False] + init_linear + xs_linear),
       unroll=unroll)
-  return out_vals[1:]
+  return out_vals[1:], out_shape
 
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   fun = core.jaxpr_as_fun(jaxpr)
