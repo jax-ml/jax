@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
-
 import functools
 import string
 from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union
@@ -25,22 +24,19 @@ from jax import core
 from jax import custom_derivatives
 from jax import dtypes
 from jax import lax
+from jax import lax_linalg
 from jax import linear_util as lu
 from jax import numpy as jnp
 from jax import random
 from jax import tree_util
 from jax import util
 from jax.api_util import flatten_fun
-from jax.lax import lax_control_flow
-from jax.lax import lax_fft
-from jax import lax_linalg
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax.interpreters import pxla
-
-from jaxlib import xla_client
-
+from jax.interpreters import xla
+from jax.lax import lax_control_flow
+from jax.lax import lax_fft
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -48,6 +44,9 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
+
+from jaxlib import xla_client
+
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
