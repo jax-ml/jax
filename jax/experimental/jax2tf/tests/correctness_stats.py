@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import functools
 import numpy as np
 from typing import Any, Callable, List, NamedTuple, Optional, Tuple, Sequence
@@ -20,6 +21,7 @@ from jax import core
 from jax import dtypes
 from jax import lax
 from jax import lax_linalg
+from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl
 
 def to_jax_dtype(tf_dtype):
   if tf_dtype.name == 'bfloat16':
@@ -142,13 +144,11 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   return limitations
 
 def prettify(limitations: Sequence[Limitation]) -> str:
-  """Constructs a summary .md file based on a list of limitations."""
+  """Constructs a summary markdown table based on a list of limitations."""
   limitations = sorted(list(set(limitations)))
 
   def _pipewrap(columns):
     return '| ' + ' | '.join(columns) + ' |'
-
-  title = '# Primitives with limited support'
 
   column_names = [ 'Affected primitive'
                  , 'Type of limitation'
@@ -164,16 +164,33 @@ def prettify(limitations: Sequence[Limitation]) -> str:
                  , ', '.join(lim.devices)
                  ])
 
-  return title + '\n\n' + '\n'.join(line for line in map(_pipewrap, table))
+  return '\n'.join(line for line in map(_pipewrap, table))
 
-def pprint_limitations(limitations: Sequence[Limitation],
-                       output_file: Optional[str] = None) -> None:
-  output = prettify(limitations)
-  if output_file:
-    with open(output_file, 'w') as f:
-      f.write(output)
-  else:
-    print(output)
+def prettify_not_yet_implemented() -> str:
+  """Constructs a summary markdown list of the unimplemented primitives."""
+  ordered_unimpl: List[str]
+  ordered_unimpl = sorted(list(map(lambda prim: prim.name, tf_not_yet_impl)))
+
+  backtick_wrap = lambda prim_name: f'`{prim_name}`'
+  return ', '.join(list(map(backtick_wrap, ordered_unimpl)))
+
+def pprint_limitations(limitations: Sequence[Limitation], output_file: str,
+                       template_file: str) -> None:
+
+  limited_support_table = prettify(limitations)
+  not_yet_impl_primitives_list = prettify_not_yet_implemented()
+  generation_date = str(datetime.date.today())
+
+  with open(template_file, 'r') as f:
+    output = f.read()
+
+  output = (output
+    .replace('{{limited-support-table}}', limited_support_table)
+    .replace('{{generation-date}}', generation_date)
+    .replace('{{not-yet-impl-primitives-list}}', not_yet_impl_primitives_list))
+
+  with open(output_file, 'w') as f:
+    f.write(output)
 
 all_limitations: Sequence[Limitation] = []
 pprint_all_limitations = functools.partial(pprint_limitations, all_limitations)

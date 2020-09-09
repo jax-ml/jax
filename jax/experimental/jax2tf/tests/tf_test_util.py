@@ -29,10 +29,13 @@ from jax import numpy as jnp
 
 import os
 
-if os.getenv('JAX2TF_CATEGORIZE_OUT'):
+if os.getenv('JAX2TF_CATEGORIZE_OUT') is not None:
   output_file = os.path.join(os.path.dirname(__file__),
                              '../primitives_with_limited_support.md')
-  atexit.register(correctness_stats.pprint_all_limitations, output_file)
+  template_file = os.path.join(os.path.dirname(__file__),
+                               '../primitives_with_limited_support.md.template')
+  atexit.register(correctness_stats.pprint_all_limitations,
+                  output_file, template_file)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
