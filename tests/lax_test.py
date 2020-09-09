@@ -995,9 +995,21 @@ class LaxTest(jtu.JaxTestCase):
       {"testcase_name": "_inshape={}_pads={}"
        .format(jtu.format_shape_dtype_string(shape, dtype), pads),
        "shape": shape, "dtype": dtype, "pads": pads, "rng_factory": jtu.rand_small}
-      for shape in [(0, 2), (2, 3)]
       for dtype in default_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)]]))
+      for shape, pads in [
+          ((0, 2), [(1, 2, 1), (0, 1, 0)]),
+          ((2, 3), [(1, 2, 1), (0, 1, 0)]),
+          ((2,), [(1, 2, 0)]),
+          ((1, 2), [(1, 2, 0), (3, 4, 0)]),
+          ((1, 2), [(0, 0, 0), (0, 0, 0)]),
+          ((2,), [(1, 2, 3),]),
+          ((3, 2), [(1, 2, 1), (3, 4, 2)]),
+          ((2,), [(-1, 2, 0),]),
+          ((4, 2), [(-1, -2, 0), (1, 2, 0)]),
+          ((4, 2), [(-1, 2, 0), (1, 2, 2)]),
+          ((5,), [(-1, -2, 2),]),
+          ((4, 2), [(-1, -2, 1), (1, 2, 2)])
+      ]))
   def testPad(self, shape, dtype, pads, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -1024,6 +1036,12 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.pad(x, np.array(0, dtype), pads)
     numpy_op = lambda x: lax_reference.pad(x, np.array(0, dtype), pads)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  def testPadErrors(self):
+    with self.assertRaisesRegex(ValueError, "padding_config"):
+      lax.pad(np.zeros(2), 0., [(0, 1, 0), (0, 1, 0)])
+    with self.assertRaisesRegex(ValueError, "padding_config"):
+      lax.pad(np.zeros(2), 0., [(0, 1, -1)])
 
   def testReverse(self):
     rev = api.jit(lambda operand: lax.rev(operand, dimensions))

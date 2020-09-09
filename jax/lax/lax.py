@@ -3206,11 +3206,16 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
   return _input_dtype(operand, padding_value)
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
-  lo, hi, interior = zip(*padding_config)
-  out_shape = np.add(
-    np.add(np.add(lo, hi), operand.shape),
-    np.maximum(0, np.multiply(interior, np.subtract(operand.shape, 1))))
-  return tuple(out_shape)
+  del padding_value
+  if not len(padding_config) == np.ndim(operand):
+    raise ValueError("length of padding_config must equal the number of axes "
+                     f"of operand, got padding_config {padding_config} "
+                     f"for operand shape {np.shape(operand)}")
+  if not all(i >= 0 for _, _, i in padding_config):
+    raise ValueError("interior padding in padding_config must be nonnegative, "
+                     f"got padding_config {padding_config}")
+  return tuple(l + h + d + (_max(0, d - 1) * i if i > 0 else 0)
+               for (l, h, i), d in zip(padding_config, np.shape(operand)))
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
