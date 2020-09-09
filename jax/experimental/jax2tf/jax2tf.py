@@ -153,14 +153,21 @@ def convert(fun, with_gradient=True):
   api._check_callable(fun)
 
   def converted_fun(*args: TfVal) -> TfVal:
-    # This function may take pytrees of TfVals. We can only set
-    # tf.custom_gradient on functions that take a flat argument list.
-    args_flat, in_tree = tree_util.tree_flatten((args, {}))
-    for a in args_flat:
+    def check_arg(a):
       if not _is_tfvalorunit(a):
         msg = (f"Argument {a} of type {type(a)} of jax2tf.convert(f) should "
                "be NumPy array, scalar, tf.Variable, or tf.Tensor")
         raise TypeError(msg)
+    tree_util.tree_map(check_arg, args)
+
+    # Name input tensors
+    args = [tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"),
+                               arg)
+            for i, arg in enumerate(args)]
+
+    # This function may take pytrees of TfVals. We can only set
+    # tf.custom_gradient on functions that take a flat argument list.
+    args_flat, in_tree = tree_util.tree_flatten((args, {}))
 
     f = lu.wrap_init(fun)
     # out_tree_thunk() will be the output tree, after running _interpret_fun.
@@ -184,7 +191,8 @@ def convert(fun, with_gradient=True):
         _, pullback_jax = jax.vjp(fun, *args_jax)
         return pullback_jax(out_cts_jax)
       out_cts = tree_util.tree_unflatten(out_tree_thunk(), out_cts_flat)
-      in_cts = convert(fun_vjp_jax, with_gradient=False)(args, out_cts)
+      with tf.name_scope("jax2tf_vjp"):
+        in_cts = convert(fun_vjp_jax, with_gradient=False)(args, out_cts)
       return in_cts
 
     if with_gradient:
@@ -201,6 +209,7 @@ def convert(fun, with_gradient=True):
       out_flat = [tf.raw_ops.PreventGradient(input=o, message=message)
                   for o in out_flat_raw]
 
+    out_flat = [tf.identity(x, "jax2tf_out") for x in out_flat]
     out = tree_util.tree_unflatten(out_tree_thunk(), out_flat)
     return out
 

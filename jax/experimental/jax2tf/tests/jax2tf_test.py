@@ -39,6 +39,42 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     _, res_tf = self.ConvertAndCompare(f_jax, 0.7)
     self.assertIsInstance(res_tf, tf.Tensor)
 
+  def test_input_output_naming(self):
+    @jax2tf.convert
+    def f(xs, y):
+      return [jnp.add(x, y) for x in xs]
+
+    @tf.function(autograph=False)
+    def u(xs, y):
+      xs = tf.nest.map_structure(tf.convert_to_tensor, xs)
+      with tf.GradientTape() as tape:
+        tf.nest.map_structure(tape.watch, xs)
+        y = f(xs, y)
+        tape.gradient(y, xs)
+        return y
+
+    cf = u.get_concrete_function([1., 2., 3.], 4.)
+    g = cf.graph
+    g.get_operation_by_name("jax2tf_arg_0")
+    g.get_operation_by_name("jax2tf_arg_0_1")
+    g.get_operation_by_name("jax2tf_arg_0_2")
+    g.get_operation_by_name("jax2tf_arg_1")
+    g.get_operation_by_name("jax2tf_out")
+    g.get_operation_by_name("jax2tf_out_1")
+    g.get_operation_by_name("jax2tf_out_2")
+    with self.assertRaises(KeyError):
+      g.get_operation_by_name("jax2tf_arg_2")
+    with self.assertRaises(KeyError):
+      g.get_operation_by_name("jax2tf_out_3")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_arg_0")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_arg_1")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_arg_1_1")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_arg_1_2")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_out")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_out_1")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_out_2")
+    g.get_operation_by_name("jax2tf_vjp/jax2tf_out_3")
+
   def test_pytrees(self):
     # Take and return pytrees
     def f_jax(x: Tuple[float, Dict[str, float]]) -> Tuple[float, Dict[str, float]]:
