@@ -428,7 +428,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_dynamic_slice(self, harness):
     # JAX.dynamic_slice rejects slice sizes too big; check this, and skip jax2tf
     args = harness.dyn_args_maker(self.rng())
-    expect_tf_exceptions = False
     if any(li - si < 0 or li - si >= sh
            for sh, si, li in zip(harness.params["shape"],
                                  harness.params["start_indices"],
@@ -437,15 +436,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         harness.dyn_fun(*args)
       return
 
-    # TF sometimes gives errors for out-of-bounds accesses
-    if any(si < 0 or li >= sh
-          for sh, si, li in zip(harness.params["shape"],
-                                harness.params["start_indices"],
-                                harness.params["limit_indices"])):
-      expect_tf_exceptions = True
-
-    self.ConvertAndCompare(harness.dyn_fun, *args,
-                           expect_tf_exceptions=expect_tf_exceptions)
+    self.ConvertAndCompare(harness.dyn_fun, *args)
 
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_update_slice)
   def test_dynamic_update_slice(self, harness):
