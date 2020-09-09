@@ -1762,7 +1762,6 @@ def _scan_masking_rule(padded_vals, polymorphic_shapes, *, reverse, length,
   consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
   max_length, = {x.shape[0] for x in xs}
   const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
-  breakpoint()
   out_vals = scan_p.bind(
       *itertools.chain([dynamic_length] + consts, [0], init, xs),
       reverse=reverse, length=max_length, jaxpr=masked_jaxpr,
@@ -1885,14 +1884,21 @@ def map(f, xs):
   return ys
 
 
-def _concat_masking_rule(padded_vals, logical_shapes, dimension):
+def _concat_polymorphic_shape_rule(polymorphic_shapes, dimension):
+  out_shape = list(polymorphic_shapes[0])
+  out_shape[dimension] = sum(e[dimension] for e in polymorphic_shapes)
+  return tuple(out_shape)
+
+def _concat_masking_rule(padded_vals, polymorphic_shapes, dimension):
+  out_shape = _concat_polymorphic_shape_rule(polymorphic_shapes, dimension)
   result = lax.concatenate(padded_vals, dimension)  # fragmented
   offset = 0
-  for padded_val, logical_shape in zip(padded_vals, logical_shapes):
-    result = _memcpy(dimension, logical_shape[dimension], padded_val,
+  for padded_val, shape in zip(padded_vals, polymorphic_shapes):
+    logical_size = masking.eval_poly(masking.shape_envs.logical, shape[dimension])
+    result = _memcpy(dimension, logical_size, padded_val,
                      result, offset)
-    offset = offset + logical_shape[dimension]
-  return result
+    offset = offset + logical_size
+  return result, out_shape
 
 def _memcpy(axis, num, src, dst, offset):
   def body(i, dst):
@@ -1900,6 +1906,7 @@ def _memcpy(axis, num, src, dst, offset):
     return lax.dynamic_update_index_in_dim(dst, update, i + offset, axis)
   return fori_loop(0, num, body, dst)
 
+masking.polymorphic_shape_rules[lax.concatenate_p] = _concat_polymorphic_shape_rule  # type: ignore
 masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
 
 

@@ -2748,25 +2748,21 @@ def _conv_general_dilated_batch_rule(
       out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
       return out, out_spec[1]
 
-def _masked(padded_value, logical_shape, dimensions, value=0):
-  """
-  Sets all padding to the given value (default is 0) in the given dimensions.
-  All values outside the logical shape are considered padding.
-  """
-  if len(dimensions) == 0:
+def _replace_padded_fill_value(padded_value, logical_shape, dimensions, fill_value=0):
+  if not dimensions:
     return padded_value
-
   masks = [broadcasted_iota(np.int32, padded_value.shape, d) < logical_shape[d]
            for d in dimensions]
   mask_intersection = masks[0]
   for mask in masks[1:]:
     mask_intersection &= mask
-  return select(mask_intersection, padded_value, full_like(padded_value, value))
+  return select(mask_intersection, padded_value, full_like(padded_value, fill_value))
 
 def _conv_general_dilated_masking_rule(
         padded_vals, logical_shapes, window_strides, padding, lhs_dilation,
         rhs_dilation, dimension_numbers, feature_group_count, batch_group_count,
         lhs_shape, rhs_shape, precision):
+  assert False  # TODO logical_shapes -> polymorphic_shapes
   lhs, rhs = padded_vals
   logical_lhs_shape, logical_rhs_shape = logical_shapes
 
@@ -2778,8 +2774,8 @@ def _conv_general_dilated_masking_rule(
   n, c, *padded_dimensions = dimension_numbers.lhs_spec
 
   return conv_general_dilated(
-    _masked(lhs, logical_lhs_shape, padded_dimensions),
-    _masked(rhs, logical_rhs_shape, (i,)),
+    _replace_padded_fill_value(lhs, logical_lhs_shape, padded_dimensions),
+    _replace_padded_fill_value(rhs, logical_rhs_shape, (i,)),
     window_strides=window_strides, padding=padding,
     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
     dimension_numbers=dimension_numbers,
@@ -3006,16 +3002,28 @@ def _dot_general_translation_rule(c, lhs, rhs, *, dimension_numbers, precision):
                                 multiple_results=False)
     return translation(c, lhs, rhs, dimension_numbers=dimension_numbers)
 
-def _dot_general_masking_rule(padded_vals, logical_shapes, *, dimension_numbers,
+def _dot_general_polymorphic_shape_rule(lhs_shape, rhs_shape, *,
+                                        dimension_numbers, precision):
+  # just wrap the dot_general shape rule
+  lhs = ShapedArray(lhs_shape, np.float32)
+  rhs = ShapedArray(rhs_shape, np.float32)
+  return _dot_general_shape_rule(lhs, rhs, dimension_numbers=dimension_numbers,
+                                 precision=precision)
+
+def _dot_general_masking_rule(padded_vals, polymorphic_shapes, *, dimension_numbers,
                               precision):
+  out_shape = _dot_general_polymorphic_shape_rule(
+      *polymorphic_shapes, dimension_numbers=dimension_numbers, precision=precision)
   lhs, rhs = padded_vals
   # Only need to mask off contraction dims of one side - we mask the lhs here
   # but this is arbitrary. Could check the sizes of lhs and rhs and mask
   # whichever is smallest.
-  lhs_shape, _ = logical_shapes
+  lhs_poly_shape, _ = polymorphic_shapes
+  lhs_logical_shape = masking.shape_as_value(lhs_poly_shape)
   (lhs_contract, _), _ = dimension_numbers
-  return dot_general(_masked(lhs, lhs_shape, lhs_contract),
-                     rhs, dimension_numbers, precision=precision)
+  lhs = _replace_padded_fill_value(lhs, lhs_logical_shape, lhs_contract)
+  out = dot_general(lhs, rhs, dimension_numbers, precision=precision)
+  return out, out_shape
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general',
@@ -3206,11 +3214,12 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
   return _input_dtype(operand, padding_value)
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
-  lo, hi, interior = zip(*padding_config)
-  out_shape = np.add(
-    np.add(np.add(lo, hi), operand.shape),
-    np.maximum(0, np.multiply(interior, np.subtract(operand.shape, 1))))
-  return tuple(out_shape)
+  del padding_value
+  if not all(i >= 0 for _, _, i in padding_config):
+    raise TypeError("interior padding in padding_config must be nonnegative, "
+                    f"got padding_config {padding_config}")
+  return tuple(l + h + d + (_max(0, d - 1) * i if i > 0 else 0)
+               for (l, h, i), d in zip(padding_config, operand.shape))
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
@@ -3245,16 +3254,21 @@ def _pad_translation_rule(c, operand, padding_value, *, padding_config):
   return xops.Pad(operand, padding_value,
                   xc.make_padding_config(padding_config))
 
-def _pad_masking_rule(padded_vals, logical_shapes, padding_config):
-  operand, padding_value = padded_vals
-  shape, _ = logical_shapes
+def _pad_polymorphic_shape_rule(polymorphic_shapes, padding_config):
+  breakpoint()
+  operand_shape, _ = polymorphic_shapes
+  return tuple(l + h + (d * i if i > 0 else d)
+               for (l, h, i), d in zip(padding_config, operand_shape))
 
+def _pad_masking_rule(padded_vals, polymorphic_shapes, padding_config):
+  operand, padding_value = padded_vals
+  operand_shape, _ = polymorphic_shapes
+  out_shape = _pad_polymorphic_shape_rule(polymorphic_shapes, padding_config)
   out = pad(operand, padding_value, padding_config)
-  out_shape = [lo + shape[i] * (interior + 1)
-               for i, (lo, hi, interior) in enumerate(padding_config)]
   padded_dims = [i for i, config in enumerate(padding_config)
                  if config != (0, 0, 0)]
-  return _masked(out, out_shape, padded_dims, padding_value)
+  out = _masked(out, masking.shape_as_value(out_shape), padded_dims, padding_value)
+  return out, out_shape
 
 pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad',
                            translation_rule=_pad_translation_rule)
@@ -3457,6 +3471,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
   return transpose(operand, perm), 0
 
 def _transpose_masking_rule(padded_vals, logical_shapes, permutation):
+  assert False  # TODO
   return transpose(*padded_vals, permutation=permutation)
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,

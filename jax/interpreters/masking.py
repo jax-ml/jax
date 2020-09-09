@@ -121,18 +121,29 @@ class Poly:
     self.terms = {mon: coeff for mon, coeff in sorted(terms.items())
                   if coeff != 0}
 
-  def __add__(self, other: 'Poly') -> 'Poly':
-    terms = self.terms.copy()
-    for mon, coeff in other.terms.items():
-      terms[mon] = terms.get(mon, 0) + coeff
-    return Poly(terms)
+  def __add__(self, other: Union[int, 'Poly']) -> 'Poly':
+    if type(other) is int:
+      return Poly({Mon({}): other + self.terms.get(Mon({}), 0), **self.terms})
+    elif type(other) is Poly:
+      terms = self.terms.copy()
+      for mon, coeff in other.terms.items():
+        terms[mon] = terms.get(mon, 0) + coeff
+      return Poly(terms)
+    else:
+      raise TypeError(f"unsupported operand type(s) for +: 'Poly' and '{type(other)}'")
+  __radd__ = __add__
 
-  def __mul__(self, other: 'Poly') -> 'Poly':
-    terms = {}
-    for (mon1, c1), (mon2, c2) in product(self.terms.items(), other.terms.items()):
-      mon = mon1 * mon2
-      terms[mon] = terms.get(mon, 0) + c1 * c2
-    return Poly(terms)
+  def __mul__(self, other: Union[int, 'Poly']) -> 'Poly':
+    if type(other) is int:
+      return Poly({mon: coeff * other for mon, coeff in self.terms.items()})
+    elif type(other) is Poly:
+      terms = {}
+      for (mon1, c1), (mon2, c2) in product(self.terms.items(), other.terms.items()):
+        mon = mon1 * mon2
+        terms[mon] = terms.get(mon, 0) + c1 * c2
+      return Poly(terms)
+    else:
+      raise TypeError(f"unsupported operand type(s) for *: 'Poly' and '{type(other)}'")
 
   def __eq__(self, other) -> bool:
     if type(other) is Poly:
@@ -168,6 +179,9 @@ class Poly:
   def __repr__(self) -> str:
     return f'Poly({str(self)})'
 abstract_arrays._DIMENSION_TYPES.add(Poly)
+
+def _constant_poly(x: int):
+  return Poly({Mon({}): int(x)})
 
 def _is_constant(poly):
   try:
@@ -261,7 +275,7 @@ _identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
 
-def _parse_lit(val_str): return Poly({Mon({}): int(val_str)})
+def _parse_lit(val_str): return _constant_poly(int(val_str))
 
 class MonomorphicDim:
   def __str__(self): return '_'
@@ -343,8 +357,12 @@ class MaskTracer(Tracer):
       assert isinstance(core.get_aval(self.val), core.ShapedArray)
       return ShapedArray(self.polymorphic_shape, self.val.dtype)
 
+  def _is_pure(self):
+    return (type(self.polymorphic_shape) is NotPolymorphic or
+            all(type(d) is int or _is_constant(d) for d in self.polymorphic_shape))
+
   def full_lower(self):
-    if type(self.polymorphic_shape) is NotPolymorphic:
+    if self._is_pure():
       return core.full_lower(self.val)
     else:
       return self

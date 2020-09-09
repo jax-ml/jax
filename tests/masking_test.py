@@ -100,29 +100,6 @@ class PolyTest(jtu.JaxTestCase):
 
 
 class MaskingTest(jtu.JaxTestCase):
-  def test_sum(self):
-    @partial(mask, in_shapes=['n'], out_shape='')
-    def padded_sum(x):
-      return jnp.sum(x)
-
-    ans = padded_sum([jnp.array([3, 1, 4, 1, 5])], dict(n=3))
-    expected = 8
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = padded_sum([jnp.array([3, 1, 4, 1, 5])], dict(n=4))
-    expected = 9
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  def test_sum_vmap(self):
-    @partial(mask, in_shapes=['n'], out_shape='')
-    def padded_sum(x):
-      return jnp.sum(x)
-
-    ans = vmap(padded_sum)([jnp.ones((5, 10))], dict(n=jnp.arange(5)))
-    expected = np.array([0, 1, 2, 3, 4])
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-  # TODO(mattjj): refactor into parameterized tests (to get separate test cases)
   def check(self, fun, in_shapes, out_shape, logical_env, padded_in_shapes,
             dtypes, rng, rtol=None, atol=None):
     # shapecheck(in_shapes, out_shape)(fun)  # TODO restore shapecheck
@@ -155,175 +132,197 @@ class MaskingTest(jtu.JaxTestCase):
     self.assertAllClose(padded_outs_jit, padded_outs, check_dtypes=True,
                         atol=atol, rtol=rtol)
 
-  def test_add(self):
-    self.check(lax.add, ['n', ''], 'n', {'n': 3}, [(4,), ()], ['float_', 'float_'],
-               jtu.rand_default(self.rng()))
-    addvecs = mask(lax.add, in_shapes=['n', 'n'], out_shape='n')
+  # def test_sum(self):
+  #   @partial(mask, in_shapes=['n'], out_shape='')
+  #   def padded_sum(x):
+  #     return jnp.sum(x)
 
-    x = jnp.array([3, 1, 4, 1, 5, 9])
-    y = jnp.array([2, 6, 5, 3, 5, 8])
-    ans = addvecs([x, y], dict(n=3))
-    expected = np.array([5, 7, 9])
-    self.assertAllClose(ans[:3], expected, check_dtypes=False)
+  #   ans = padded_sum([jnp.array([3, 1, 4, 1, 5])], dict(n=3))
+  #   expected = 8
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-    thunk = lambda: addvecs([jnp.arange(5), jnp.arange(6)], dict(n=3))
-    self.assertRaisesRegex(masking.ShapeError, "", thunk)
+  #   ans = padded_sum([jnp.array([3, 1, 4, 1, 5])], dict(n=4))
+  #   expected = 9
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_scan(self):
-    @partial(mask, in_shapes=['n'], out_shape='')
-    def cumsum(arr):
-      out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
-      return out
+  # def test_sum_vmap(self):
+  #   @partial(mask, in_shapes=['n'], out_shape='')
+  #   def padded_sum(x):
+  #     return jnp.sum(x)
 
-    ans = cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=3))
-    expected = 16
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  #   ans = vmap(padded_sum)([jnp.ones((5, 10))], dict(n=jnp.arange(5)))
+  #   expected = np.array([0, 1, 2, 3, 4])
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_scan_vmap(self):
-    @partial(mask, in_shapes=['n'], out_shape='')
-    def cumsum(arr):
-      out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
-      return out
+  # def test_add(self):
+  #   self.check(lax.add, ['n', ''], 'n', {'n': 3}, [(4,), ()], ['float_', 'float_'],
+  #              jtu.rand_default(self.rng()))
+  #   addvecs = mask(lax.add, in_shapes=['n', 'n'], out_shape='n')
 
-    ans = vmap(cumsum)([jnp.arange(6).reshape(2, 3)], dict(n=jnp.array([1, 2])))
-    expected = np.array([0, 7])
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  #   x = jnp.array([3, 1, 4, 1, 5, 9])
+  #   y = jnp.array([2, 6, 5, 3, 5, 8])
+  #   ans = addvecs([x, y], dict(n=3))
+  #   expected = np.array([5, 7, 9])
+  #   self.assertAllClose(ans[:3], expected, check_dtypes=False)
 
-  def test_scan_jit(self):
-    @partial(mask, in_shapes=['n'], out_shape='')
-    def cumsum(arr):
-      out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
-      return out
+  #   thunk = lambda: addvecs([jnp.arange(5), jnp.arange(6)], dict(n=3))
+  #   self.assertRaisesRegex(masking.ShapeError, "", thunk)
 
-    @jit
-    def jit_cumsum(args, shape_env):
-      assert python_should_be_executing
-      return cumsum(args, shape_env)
+  # def test_scan(self):
+  #   @partial(mask, in_shapes=['n'], out_shape='')
+  #   def cumsum(arr):
+  #     out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
+  #     return out
 
-    python_should_be_executing = True
-    ans = jit_cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=3))
-    expected = 16
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  #   ans = cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=3))
+  #   expected = 16
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-    python_should_be_executing = False
-    ans = jit_cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=4))
-    expected = 17
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  # def test_scan_vmap(self):
+  #   @partial(mask, in_shapes=['n'], out_shape='')
+  #   def cumsum(arr):
+  #     out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
+  #     return out
 
-    python_should_be_executing = False
-    ans = jit_cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=1))
-    expected = 5
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  #   ans = vmap(cumsum)([jnp.arange(6).reshape(2, 3)], dict(n=jnp.array([1, 2])))
+  #   expected = np.array([0, 7])
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_mean(self):
-    mean = lambda x: jnp.sum(x) / masking.shape_as_value(x.shape)[0]
-    self.check(mean, ['n'], '', {'n': 3}, [(4,)], ['float_'],
-               jtu.rand_default(self.rng()))
+  # def test_scan_jit(self):
+  #   @partial(mask, in_shapes=['n'], out_shape='')
+  #   def cumsum(arr):
+  #     out, _ = lax.scan(lambda c, x: (c + x, ()), 0, arr)
+  #     return out
 
-  def test_arithmetic(self):
-    @partial(mask, in_shapes=['(n, m)', 'm'], out_shape='(n, m)')
-    def times(x, y):
-      return x * y
+  #   @jit
+  #   def jit_cumsum(args, shape_env):
+  #     assert python_should_be_executing
+  #     return cumsum(args, shape_env)
 
-    # TODO(shoyer): enable this check when broadcast_in_dim supports masking
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        'Masking rule for broadcast_in_dim not implemented.'):
-      times([jnp.array([[1, 2], [3, 4], [5, 6]]), jnp.array([1, 2])],
-            dict(n=4, m=5))
-      # expected = np.array([[1, 2, 3], [8, 10, 12]])
-      # self.assertAllClose(ans, expected, check_dtypes=False)
+  #   python_should_be_executing = True
+  #   ans = jit_cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=3))
+  #   expected = 16
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_stack(self):
-    @partial(mask, in_shapes=['n','n'], out_shape='(2, n)')
-    def stack(x, y):
-      return jnp.stack([x, y], 0)
+  #   python_should_be_executing = False
+  #   ans = jit_cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=4))
+  #   expected = 17
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-    # TODO(shoyer): enable this check when broadcast_in_dim supports masking
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        'Masking rule for broadcast_in_dim not implemented.'):
-      stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
-      # expected = np.array([[1, 2, 3], [4, 5, 6]])
-      # self.assertAllClose(ans, expected, check_dtypes=False)
+  #   python_should_be_executing = False
+  #   ans = jit_cumsum([jnp.array([5, 2, 9, 1, 4])], dict(n=1))
+  #   expected = 5
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_monomorphic(self):
-    @partial(mask, in_shapes=['(_, n)'], out_shape='')
-    def padded_sum(x):
-      return jnp.sum(x)
+  # def test_mean(self):
+  #   mean = lambda x: jnp.sum(x) / masking.shape_as_value(x.shape)[0]
+  #   self.check(mean, ['n'], '', {'n': 3}, [(4,)], ['float_'],
+  #              jtu.rand_default(self.rng()))
 
-    ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
-    expected = 8
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  # def test_arithmetic(self):
+  #   @partial(mask, in_shapes=['(n, m)', 'm'], out_shape='(n, m)')
+  #   def times(x, y):
+  #     return x * y
 
-  def test_monomorphic2(self):
-    @partial(mask, in_shapes=['(_, n)'], out_shape='n')
-    def padded_sum(x):
-      return jnp.sum(x, axis=0)
+  #   # TODO(shoyer): enable this check when broadcast_in_dim supports masking
+  #   with self.assertRaisesRegex(
+  #       NotImplementedError,
+  #       'Masking rule for broadcast_in_dim not implemented.'):
+  #     times([jnp.array([[1, 2], [3, 4], [5, 6]]), jnp.array([1, 2])],
+  #           dict(n=4, m=5))
+  #     # expected = np.array([[1, 2, 3], [8, 10, 12]])
+  #     # self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=2))
-    expected = jnp.array([8, 10])
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  # def test_stack(self):
+  #   @partial(mask, in_shapes=['n','n'], out_shape='(2, n)')
+  #   def stack(x, y):
+  #     return jnp.stack([x, y], 0)
 
-#   def test_monomorphic3(self):
-#     @partial(mask, in_shapes=['(_, n)'], out_shape='_')
-#     def padded_sum(x):
-#       return jnp.sum(x, axis=1)
+  #   # TODO(shoyer): enable this check when broadcast_in_dim supports masking
+  #   with self.assertRaisesRegex(
+  #       NotImplementedError,
+  #       'Masking rule for broadcast_in_dim not implemented.'):
+  #     stack([jnp.array([1, 2, 3]), jnp.array([4, 5, 6])], dict(n=10))
+  #     # expected = np.array([[1, 2, 3], [4, 5, 6]])
+  #     # self.assertAllClose(ans, expected, check_dtypes=False)
 
-#     ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
-#     expected = jnp.array([3, 5])
-#     self.assertAllClose(ans, expected, check_dtypes=False)
+  # def test_monomorphic(self):
+  #   @partial(mask, in_shapes=['(_, n)'], out_shape='')
+  #   def padded_sum(x):
+  #     return jnp.sum(x)
 
-#     @shapecheck(['(2*n, n)'], '_, n')
-#     def identity(x):
-#       return x
+  #   ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
+  #   expected = 8
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_rnn(self):
-    n = 3
+  # def test_monomorphic2(self):
+  #   @partial(mask, in_shapes=['(_, n)'], out_shape='n')
+  #   def padded_sum(x):
+  #     return jnp.sum(x, axis=0)
 
-    @partial(mask, in_shapes=['(_, _)', '(t, _)'], out_shape='_')
-    def rnn(W, xs):
-      def step(h, x):
-        new_h = jnp.dot(W, h) + jnp.dot(W, x)
-        return new_h, ()
-      predicted, _ = lax.scan(step, jnp.zeros(n), xs)
-      return predicted
+  #   ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=2))
+  #   expected = jnp.array([8, 10])
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-    rng = np.random.RandomState(0)
-    W = jnp.eye(n)
-    xs = rng.randn(10, n).astype(jnp.float_)
-    ans = rnn([W, xs], dict(t=4))
-    expected = xs[:4].sum(0)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+# #   def test_monomorphic3(self):
+# #     @partial(mask, in_shapes=['(_, n)'], out_shape='_')
+# #     def padded_sum(x):
+# #       return jnp.sum(x, axis=1)
 
-  def test_rnn_grad(self):
-    n = 3
+# #     ans = padded_sum([jnp.array([[3, 4], [5, 6]])], dict(n=1))
+# #     expected = jnp.array([3, 5])
+# #     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    @partial(mask, in_shapes=['(_, _)', '(t, _)', '_'], out_shape='')
-    def rnn(W, xs, target):
-      def step(h, x):
-        new_h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
-        return new_h, ()
-      predicted, _ = lax.scan(step, jnp.zeros(n), xs)
-      return jnp.sum((predicted - target)**2)
+# #     @shapecheck(['(2*n, n)'], '_, n')
+# #     def identity(x):
+# #       return x
 
-    rng = np.random.RandomState(0)
-    W = rng.randn(n, n).astype(jnp.float_)
-    xs = rng.randn(10, n).astype(jnp.float_)
-    y = rng.randn(n).astype(jnp.float_)
+  # def test_rnn(self):
+  #   n = 3
 
-    ans = grad(lambda W: rnn([W, xs, y], dict(t=4)))(W)
+  #   @partial(mask, in_shapes=['(_, _)', '(t, _)'], out_shape='_')
+  #   def rnn(W, xs):
+  #     def step(h, x):
+  #       new_h = jnp.dot(W, h) + jnp.dot(W, x)
+  #       return new_h, ()
+  #     predicted, _ = lax.scan(step, jnp.zeros(n), xs)
+  #     return predicted
 
-    def rnn_reference(W, xs, target):
-      h = jnp.zeros(n)
-      for x in xs:
-        h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
-      predicted = h
-      return jnp.sum((predicted - target)**2)
+  #   rng = np.random.RandomState(0)
+  #   W = jnp.eye(n)
+  #   xs = rng.randn(10, n).astype(jnp.float_)
+  #   ans = rnn([W, xs], dict(t=4))
+  #   expected = xs[:4].sum(0)
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
-    expected = grad(lambda W: rnn_reference(W, xs[:4], y))(W)
+  # def test_rnn_grad(self):
+  #   n = 3
 
-    self.assertAllClose(ans, expected, check_dtypes=False)
+  #   @partial(mask, in_shapes=['(_, _)', '(t, _)', '_'], out_shape='')
+  #   def rnn(W, xs, target):
+  #     def step(h, x):
+  #       new_h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
+  #       return new_h, ()
+  #     predicted, _ = lax.scan(step, jnp.zeros(n), xs)
+  #     return jnp.sum((predicted - target)**2)
+
+  #   rng = np.random.RandomState(0)
+  #   W = rng.randn(n, n).astype(jnp.float_)
+  #   xs = rng.randn(10, n).astype(jnp.float_)
+  #   y = rng.randn(n).astype(jnp.float_)
+
+  #   ans = grad(lambda W: rnn([W, xs, y], dict(t=4)))(W)
+
+  #   def rnn_reference(W, xs, target):
+  #     h = jnp.zeros(n)
+  #     for x in xs:
+  #       h = jnp.tanh(jnp.dot(W, h) + jnp.dot(W, x))
+  #     predicted = h
+  #     return jnp.sum((predicted - target)**2)
+
+  #   expected = grad(lambda W: rnn_reference(W, xs[:4], y))(W)
+
+  #   self.assertAllClose(ans, expected, check_dtypes=False)
 
   # def test_ragged_batched_rnn(self):
   #   n = 3
@@ -403,34 +402,32 @@ class MaskingTest(jtu.JaxTestCase):
   #   self.check(fun, ['n'], '(n+3,)', {'n': 2}, [(3,)], ['float32'],
   #              jtu.rand_default(self.rng()))
 
-  # @parameterized.named_parameters({
-  #     'testcase_name': "padding_config={}_shapes={}".format(padding_config,
-  #                                                           shape),
-  #     'padding_config': padding_config,
-  #     'shape': shape} for padding_config, shape in (
-  #         (((1, 2, 0),), (2,)),
-  #         (((1, 2, 0), (3, 4, 0)), (1, 2)),
-  #         (((0, 0, 0), (0, 0, 0)), (1, 2)),
-  #         (((1, 2, 3),), (2,)),
-  #         (((1, 2, 1), (3, 4, 2)), (3, 2)),
-  #         (((-1, 2, 0),), (2,)),
-  #         (((-1, -2, 0), (1, 2, 0)), (4, 2)),
-  #         (((-1, 2, 0), (1, 2, 2)), (4, 2)),
-  #         (((-1, -2, 2),), (5,)),
-  #         (((-1, -2, 1), (1, 2, 2)), (4, 2))))
-  # def test_pad(self, padding_config, shape):
-  #   def pad(x):
-  #     return lax.pad(x, jnp.array(1., x.dtype), padding_config)
+  @parameterized.named_parameters({
+      'testcase_name': "padding_config={}_shapes={}".format(padding_config, shape),
+      'padding_config': padding_config, 'shape': shape}
+    for padding_config, shape in [
+        (((1, 2, 0),), (2,)),
+        # (((1, 2, 0), (3, 4, 0)), (1, 2)),
+        # (((0, 0, 0), (0, 0, 0)), (1, 2)),
+        (((1, 2, 3),), (2,)),
+        # (((1, 2, 1), (3, 4, 2)), (3, 2)),
+        (((-1, 2, 0),), (2,)),
+        # (((-1, -2, 0), (1, 2, 0)), (4, 2)),
+        # (((-1, 2, 0), (1, 2, 2)), (4, 2)),
+        (((-1, -2, 2),), (5,)),
+        # (((-1, -2, 1), (1, 2, 2)), (4, 2))
+    ])
+  def test_pad(self, padding_config, shape):
+    def pad(x):
+      return lax.pad(x, jnp.array(1., x.dtype), padding_config)
 
-  #   if len(shape) == 1:
-  #     padding_config_, = padding_config
-  #     linear_coeff = padding_config_[2] + 1
-  #     const_coeff = sum(padding_config_[:2]) - padding_config_[2]
-  #     out_shape = str(linear_coeff) + ' * h + ' + str(const_coeff)
-  #     self.check(pad, ['h'], out_shape, dict(h=shape[0]),
-  #                [tuple(np.add(shape, 1))], ['float_'],
-  #                jtu.rand_default(self.rng()))
-
+    padding_config_, = padding_config
+    linear_coeff = padding_config_[2] + 1
+    const_coeff = sum(padding_config_[:2]) - padding_config_[2]
+    out_shape = str(linear_coeff) + ' * h + ' + str(const_coeff)
+    self.check(pad, ['h'], out_shape, dict(h=shape[0]),
+                [tuple(np.add(shape, 1))], ['float_'],
+                jtu.rand_default(self.rng()))
 
   # # TODO(mattjj,j-towns): fix test failure and reenable.
   # @jtu.skip_on_devices("tpu")
