@@ -45,7 +45,7 @@ jobs:
           pip install build/dist/*.whl
           pip install -e .
           # Disabled the tests, as an experiment
-          JAX_SKIP_SLOW_TESTS=1 pytest -n auto --verbosity 1 -k "not testGeomspace and not testLinspace and not testLogspace and not testMatmul and not testOpAgainstNumpyDigamma and not testMultivariateNormalCovariance and not ParallelizeTest and not PapplyTest and not PmapTest and not OptixTest" tests
+          pytest -n auto --verbosity 1 -k "CoreTest or APITest" tests
       - uses: actions/upload-artifact@v2
         with:
           name: jaxlib
