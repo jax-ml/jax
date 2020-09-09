@@ -440,7 +440,7 @@ lax_pad = tuple(
           rng_factory=jtu.rand_small,
           arg_shape=arg_shape, dtype=dtype, pads=pads)
   for arg_shape in [(2, 3)]
-  for dtype in jtu.dtypes.all_floating + jtu.dtypes.all_integer
+  for dtype in jtu.dtypes.all
   for pads in [
     [(0, 0, 0), (0, 0, 0)],  # no padding
     [(1, 1, 0), (2, 2, 0)],  # only positive edge padding

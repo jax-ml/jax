@@ -107,9 +107,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_pad)
   def test_pad(self, harness: primitive_harness.Harness):
-    # TODO: fix pad with negative padding in XLA (fixed on 06/16/2020)
-    if any([lo < 0 or hi < 0 for lo, hi, mid in harness.params["pads"]]):
-      raise unittest.SkipTest("pad with negative pad not supported")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_top_k)
