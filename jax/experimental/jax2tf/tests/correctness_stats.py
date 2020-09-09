@@ -58,9 +58,12 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
                       devs: Sequence[str] = all_devices) -> None:
     limitations.append(Limitation(prim.name, error_type, msg, tuple(devs)))
 
-  def tf_unimpl(np_dtype: NpDType, additional_msg: Optional[str] = None,
+  def tf_unimpl(np_dtype: Optional[NpDType] = None,
+                additional_msg: Optional[str] = None,
                 devs: Sequence[str] = all_devices) -> None:
-    msg = f"{prim.name} is unimplemented for dtype {np_dtype}"
+    msg = f"{prim.name} is unimplemented"
+    if np_dtype is not None:
+      msg += f" for dtype {np_dtype}"
     if additional_msg:
       msg += '; ' + additional_msg
     _report_failure("Missing TF support", msg, devs=devs)
@@ -135,6 +138,22 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype == np.complex64:
       tf_unimpl(np_dtype, devs=["TPU"])
+
+  if prim is lax.sort_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.complex64, np.complex128]:
+      tf_unimpl(np_dtype)
+    if np_dtype == np.bool_ and len(args) == 2:
+      tf_unimpl(np_dtype, additional_msg=(
+        "sorting 2 arrays where the first one is an array of booleans is not "
+        "supported for XlaSort"))
+    if kwargs["is_stable"]:
+      tf_unimpl(additional_msg="stable sort not implemented for XlaSort")
+    if kwargs["dimension"] != len(np.shape(args[0])) - 1:
+      tf_unimpl(additional_msg="only sorting on last dimension is supported for XlaSort")
+    if len(args) > 2:
+      tf_unimpl(additional_msg=(
+        "sorting more than 2 arrays is not supported for XlaSort"))
 
   if prim is lax.population_count_p:
     np_dtype = _to_np_dtype(args[0].dtype)

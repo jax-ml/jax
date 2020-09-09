@@ -42,6 +42,11 @@ certain data types.
 | scatter-add | Missing TF support | scatter-add is unimplemented for dtype complex64 | TPU |
 | scatter-mul | Missing TF support | scatter-mul is unimplemented for dtype complex64 | TPU |
 | select_and_gather_add | Missing TF support | select_and_gather_add is unimplemented for dtype float32 | TPU |
+| sort | Missing TF support | sort is unimplemented for dtype bool; sorting 2 arrays where the first one is an array of booleans is not supported for XlaSort | CPU, GPU, TPU |
+| sort | Missing TF support | sort is unimplemented for dtype complex64 | CPU, GPU, TPU |
+| sort | Missing TF support | sort is unimplemented; only sorting on last dimension is supported for XlaSort | CPU, GPU, TPU |
+| sort | Missing TF support | sort is unimplemented; sorting more than 2 arrays is not supported for XlaSort | CPU, GPU, TPU |
+| sort | Missing TF support | sort is unimplemented; stable sort not implemented for XlaSort | CPU, GPU, TPU |
 | svd | Missing TF support | svd is unimplemented for dtype complex64; this works on JAX because JAX uses a custom implementation | CPU, GPU |
 
 ## Not yet implemented primitive conversions

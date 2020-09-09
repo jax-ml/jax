@@ -29,7 +29,8 @@ from jax import numpy as jnp
 
 import os
 
-if os.getenv('JAX2TF_CATEGORIZE_OUT') is not None:
+
+if os.getenv('JAX2TF_OUTPUT_LIMITATIONS') is not None:
   output_file = os.path.join(os.path.dirname(__file__),
                              '../primitives_with_limited_support.md')
   template_file = os.path.join(os.path.dirname(__file__),
