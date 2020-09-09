@@ -2917,7 +2917,7 @@ def apply_over_axes(func, a, axes):
     if b.ndim == a.ndim:
       a = b
     elif b.ndim == a.ndim - 1:
-      a = b.reshape(b.shape[:axis] + (1,) + b.shape[axis:])
+      a = expand_dims(b, axis)
     else:
       raise ValueError("function is not returning an array of the correct shape")
   return a
