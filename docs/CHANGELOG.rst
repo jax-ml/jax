@@ -9,6 +9,12 @@ Change Log
 
 These are the release notes for JAX.
 
+jaxlib 0.1.55 (September 8, 2020)
+------------------------------
+* Update XLA:
+
+  * Fix bug in DLPackManagedTensorToBuffer (#4196)
+
 jax 0.1.76 (September 8, 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.75...jax-v0.1.76>`_.
