@@ -171,9 +171,8 @@ def prettify_not_yet_implemented() -> str:
   ordered_unimpl: List[str]
   ordered_unimpl = sorted(list(map(lambda prim: prim.name, tf_not_yet_impl)))
 
-  bullet = '* '
-
-  return bullet + ('\n' + bullet).join(ordered_unimpl)
+  backtick_wrap = lambda prim_name: f'`{prim_name}`'
+  return ', '.join(list(map(backtick_wrap, ordered_unimpl)))
 
 def pprint_limitations(limitations: Sequence[Limitation], output_file: str,
                        template_file: str) -> None:

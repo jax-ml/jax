@@ -18,6 +18,6 @@ certain data types.
 
 ## Not yet implemented primitive conversions
 
-The conversion of the following JAX primitives is not yet implemented.
+The conversion of the following JAX primitives is not yet implemented:
 
 {{not-yet-impl-primitives-list}}
