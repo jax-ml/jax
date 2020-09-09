@@ -61,7 +61,7 @@ xops = xc.ops
 
 FLAGS = flags.FLAGS
 
-unsafe_map, map = map, safe_map
+unsafe_map, map = map, safe_map  # type: ignore
 
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
@@ -239,7 +239,7 @@ shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
     lambda x, devices, _: device_put(core.unit, devices, replicate=True)
 def _shard_array(x, devices, indices):
-  return [xla.device_put(x[i], d) for (i, d) in zip(indices, devices)]
+  return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
@@ -525,12 +525,11 @@ class ShardedDeviceArray(xla.DeviceArray):
       return super(ShardedDeviceArray, self).__getitem__(idx)
 
 
-def device_put(x, devices: Sequence[xb.xla_client.Device], replicate=False) -> Sequence[xb.xla_client._xla.PyLocalBuffer]:
+def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> Sequence[xb.xla_client._xla.PyLocalBuffer]:
   """Call device_put on a sequence of devices and return a flat sequence of buffers."""
   if replicate:
-    return [xla.device_put(x, device) for device in devices]
-  else:
-    return [xla.device_put(s, device) for s, device in safe_zip(x, devices)]
+    x = [x for d in devices]
+  return [xla.device_put(s, d) for s, d in safe_zip(x, devices)]
 
 
 def _hashable_index(idx):
