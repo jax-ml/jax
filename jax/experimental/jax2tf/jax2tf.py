@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
-
 import functools
 import string
 from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union
@@ -25,22 +24,19 @@ from jax import core
 from jax import custom_derivatives
 from jax import dtypes
 from jax import lax
+from jax import lax_linalg
 from jax import linear_util as lu
 from jax import numpy as jnp
 from jax import random
 from jax import tree_util
 from jax import util
 from jax.api_util import flatten_fun
-from jax.lax import lax_control_flow
-from jax.lax import lax_fft
-from jax import lax_linalg
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax.interpreters import pxla
-
-from jaxlib import xla_client
-
+from jax.interpreters import xla
+from jax.lax import lax_control_flow
+from jax.lax import lax_fft
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
@@ -48,6 +44,9 @@ import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
+
+from jaxlib import xla_client
+
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
@@ -1073,66 +1072,13 @@ def _gather_shape(operand, start_indices, dimension_numbers, slice_sizes):
       slice_sizes=slice_sizes)
   return out.shape
 
-
-def _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes):
-  # TODO: this function is not used (see comment for dynamic_slice).
-
-  # Handle only the case when batch_dims=0.
-
-  # Find axis to match the tf.gather semantics
-  # Let I = len(start_indices_shape)
-  # let O = len(op_shape)
-  # slice_sizes == op_shape[:axis] + (1,) + op_shape[axis+1:]
-  # collapsed_slice_dims == (axis,)
-  # start_index_map == (axis,)
-  # offset_dims == (0, 1, ..., axis - 1, axis + I, ..., O + I - 1)
-  op_shape = np.shape(operand)
-  assert len(op_shape) == len(slice_sizes)
-  if not (len(op_shape) >= 1 and
-          len(dimension_numbers.start_index_map) == 1 and
-          len(dimension_numbers.collapsed_slice_dims) == 1 and
-          dimension_numbers.collapsed_slice_dims[0] == dimension_numbers.start_index_map[0] and
-          len(dimension_numbers.offset_dims) == len(op_shape) - 1):
-    return None
-  # We added a trailing dimension of size 1
-  if start_indices.shape[-1] != 1:
-    return None
-  # Guess the axis
-  axis = dimension_numbers.collapsed_slice_dims[0]
-  index_dims = len(np.shape(start_indices)) - 1
-  expected_offset_dims = tuple(
-      list(range(axis)) +
-      list(range(axis + index_dims, len(op_shape) + index_dims - 1)))
-  if dimension_numbers.offset_dims != expected_offset_dims:
-    return None
-  expected_slice_sizes = op_shape[:axis] + (1,) + op_shape[axis + 1:]
-  if slice_sizes != expected_slice_sizes:
-    return None
-  # TODO: should we allow ourselves to add a reshape, or should we strictly
-  #  convert 1:1, or go to TFXLA when not possible?
-  start_indices_reshaped = tf.reshape(start_indices, start_indices.shape[0:-1])
-  # We do not use tf.gather directly because in the non-compiled version it
-  # rejects indices that are out of bounds, while JAX and XLA clamps them.
-  # We fix this by ensuring that we always compile tf.gather, to use XLA.
-  # TODO: see comment for dynamic_slice
-  return tf.function(lambda o, s: tf.gather(o, s, axis=axis, batch_dims=0),
-                     experimental_compile=True)(operand, start_indices_reshaped)
-
 @functools.partial(bool_to_int8, argnums=0)
 def _gather(operand, start_indices, dimension_numbers, slice_sizes):
   """Tensorflow implementation of gather."""
-  # TODO: see comment for dynamic_slice
-  #res = _try_tf_gather(operand, start_indices, dimension_numbers, slice_sizes)
-  #if res is not None:
-  #  return res
   out_shape = _gather_shape(
       operand, start_indices, dimension_numbers, slice_sizes)
   proto = _gather_dimensions_proto(start_indices.shape, dimension_numbers)
-  # We compile because without it we run into a TF bug:
-  # tfxla.gather fails on constant inputs with "must be a compile-time constant"
-  # b/153556869
-  out = tf.function(lambda o, s: tfxla.gather(o, s, proto, slice_sizes, False),
-                    experimental_compile=True)(operand, start_indices)
+  out = tfxla.gather(operand, start_indices, proto, slice_sizes, False)
   out.set_shape(out_shape)
   return out
 tf_impl[lax.gather_p] = _gather
@@ -1156,7 +1102,7 @@ def _dynamic_slice(operand, *start_indices, slice_sizes):
   # and gather ops.
   res = tfxla.dynamic_slice(operand, tf.stack(start_indices),
                             size_indices=slice_sizes)
-  # TODO: implement shape inference for XlaShape
+  # TODO: implement shape inference for XlaDynamicSlice
   res.set_shape(tuple(slice_sizes))
   return res
 
@@ -1201,14 +1147,10 @@ def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
 
   o_spec = tf.TensorSpec((), dtype=operand.dtype)
   xla_update_computation = (
-    tf.function(update_computation).get_concrete_function(o_spec, o_spec))
-
-  out = tf.function(
-      lambda o, s, u: tfxla.scatter(o, s, u, xla_update_computation, proto,
-                                    indices_are_sorted=indices_are_sorted),
-      experimental_compile=True
-  )(operand, scatter_indices, updates)
-
+      tf.function(update_computation).get_concrete_function(o_spec, o_spec))
+  out = tfxla.scatter(operand, scatter_indices, updates, xla_update_computation, proto,
+                      indices_are_sorted=indices_are_sorted)
+  # TODO: implement shape analysis for XlaScatter
   out.set_shape(out_shape)
 
   return out

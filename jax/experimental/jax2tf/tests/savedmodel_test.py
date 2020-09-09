@@ -21,7 +21,6 @@ from jax import lax
 import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
-import unittest
 
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -125,16 +124,10 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     self._compare_with_saved_model(f_jax, arr)
 
   def test_xla_context_preserved_gather(self):
-    raise unittest.SkipTest("Disable in preparation for fixing b/153556869")
     def f_jax(arr):
       return arr[100]  # out of bounds, should return the last element
     arr = np.arange(10, dtype=np.float32)
-    if jtu.device_under_test() != "tpu":
-      # TODO(b/153556869): the compilation attributes are not saved in savedmodel
-      with self.assertRaisesRegex(BaseException, "Input 2 to .* XlaGather must be a compile-time constant"):
-        self._compare_with_saved_model(f_jax, arr)
-    else:
-      self._compare_with_saved_model(f_jax, arr)
+    self._compare_with_saved_model(f_jax, arr)
 
 
 if __name__ == "__main__":

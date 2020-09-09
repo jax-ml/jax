@@ -155,6 +155,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_fft)
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_fft(self, harness: primitive_harness.Harness):
     if len(harness.params["fft_lengths"]) > 3:
       with self.assertRaisesRegex(RuntimeError, "FFT only supports ranks 1-3"):
@@ -200,6 +201,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            atol=1e-5, rtol=1e-5)
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_svd)
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_svd(self, harness: primitive_harness.Harness):
     if jtu.device_under_test() == "tpu":
       raise unittest.SkipTest("TODO: test crashes the XLA compiler for some TPU variants")
