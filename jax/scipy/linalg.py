@@ -105,23 +105,25 @@ def inv(a, overwrite_a=False, check_finite=True):
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  return lax_linalg.lu(a)
+  lu, pivots, _ = lax_linalg.lu(a)
+  return lu, pivots
 
 
 @_wraps(scipy.linalg.lu_solve)
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   lu, pivots = lu_and_piv
-  return lax_linalg.lu_solve(lu, pivots, b, trans)
+  m, n = lu.shape[-2:]
+  perm = lax_linalg.lu_pivots_to_permutation(pivots, m)
+  return lax_linalg.lu_solve(lu, perm, b, trans)
 
 
 @partial(jit, static_argnums=(1,))
 def _lu(a, permute_l):
   a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  lu, pivots = lax_linalg.lu(a)
+  lu, pivots, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
-  permutation = lax_linalg.lu_pivots_to_permutation(pivots, m)
   p = jnp.real(jnp.array(permutation == jnp.arange(m)[:, None], dtype=dtype))
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
@@ -442,9 +444,10 @@ def expm_frechet_algo_64(A, E):
   Lv = jnp.select((A_norm_1<=ell_table_61_local99), (Lv3579, Lv3579), Lv13)
   s = jnp.select((A_norm_1<=ell_table_61_local99), (s3579, s3579), s13)
 
-  lu_piv = lu_factor(-U + V)
-  R = lu_solve(lu_piv, U + V)
-  L = lu_solve(lu_piv, Lu + Lv + _precise_dot((Lu - Lv), R))
+  lu, _, permutation = lax_linalg.lu(-U + V)
+  R = lax_linalg.lu_solve(lu, permutation, U + V, trans=False)
+  L = lax_linalg.lu_solve(lu, permutation, Lu + Lv + _precise_dot((Lu - Lv), R),
+                          trans=False)
   # squaring
   def my_body_fun(i,my_arg):
     R, L = my_arg
