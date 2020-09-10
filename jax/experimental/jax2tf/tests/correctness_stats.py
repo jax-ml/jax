@@ -23,6 +23,9 @@ from jax import dtypes
 from jax import lax
 from jax import lax_linalg
 from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import pxla
+from jax.interpreters import xla
 
 def to_jax_dtype(tf_dtype):
   if tf_dtype.name == 'bfloat16':
@@ -216,7 +219,12 @@ def prettify_not_yet_covered(covered_set: Set[core.Primitive]) -> str:
   Builds an ordered summary markdown list of all the primitives that are
   implemented but not in the set passed as an argument.
   """
-  return prettify_as_ordered_list(set(tf_impl) - covered_set)
+  ignore = set([xla.xla_call_p, pxla.xla_pmap_p, pe.remat_call_p, core.call_p,
+                lax.cond_p, lax.scan_p, lax.while_p])
+  not_yet_covered = (
+    set(filter(lambda prim: not prim in ignore, set(tf_impl) - covered_set)))
+
+  return prettify_as_ordered_list(not_yet_covered)
 
 def pprint_limitations(limitations: Sequence[Limitation],
                        covered_primitives: Set[core.Primitive],

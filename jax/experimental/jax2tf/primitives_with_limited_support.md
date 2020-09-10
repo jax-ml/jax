@@ -81,4 +81,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`add_any`, `argmax`, `argmin`, `broadcast`, `call`, `clamp`, `complex`, `cond`, `conj`, `conv_general_dilated`, `custom_jvp_call_jaxpr`, `custom_lin`, `custom_vjp_call_jaxpr`, `dot_general`, `imag`, `integer_pow`, `real`, `remat_call`, `rev`, `scan`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `transpose`, `xla_call`
+`add_any`, `argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `conv_general_dilated`, `custom_jvp_call_jaxpr`, `custom_lin`, `custom_vjp_call_jaxpr`, `dot_general`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `transpose`
