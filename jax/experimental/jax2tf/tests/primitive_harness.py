@@ -336,8 +336,7 @@ lax_betainc = tuple(
    for arg1, arg2, arg3 in [
      (np.array([-1.6, -1.4, -1.0, 0.0, 0.1, 0.3, 1, 1.4, 1.6], dtype=dtype),
       np.array([-1.6, 1.4, 1.0, 0.0, 0.2, 0.1, 1, 1.4, -1.6], dtype=dtype),
-      np.array([1.0, -1.0, 2.0, 1.0, 0.3, 0.3, -1.0, 2.4, 1.6],
-               dtype=np.float32))
+      np.array([1.0, -1.0, 2.0, 1.0, 0.3, 0.3, -1.0, 2.4, 1.6], dtype=dtype))
   ]
 )
 
@@ -667,7 +666,7 @@ lax_dynamic_update_slice = tuple(
   ]
   for dtype, update_dtype in [
     (np.float32, np.float32),
-    (np.float64, np.float32)
+    (np.float64, np.float64)
   ])
 
 lax_squeeze = tuple(
