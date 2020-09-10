@@ -61,7 +61,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   def tf_unimpl(np_dtype: Optional[NpDType] = None,
                 additional_msg: Optional[str] = None,
                 devs: Sequence[str] = all_devices) -> None:
-    msg = f"Primitive is unimplemented"
+    msg = "Primitive is unimplemented"
     if np_dtype is not None:
       msg += f" for dtype {np_dtype}"
     if additional_msg:
