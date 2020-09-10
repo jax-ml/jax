@@ -61,7 +61,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   def tf_unimpl(np_dtype: Optional[NpDType] = None,
                 additional_msg: Optional[str] = None,
                 devs: Sequence[str] = all_devices) -> None:
-    msg = f"{prim.name} is unimplemented"
+    msg = "Primitive is unimplemented"
     if np_dtype is not None:
       msg += f" for dtype {np_dtype}"
     if additional_msg:
@@ -158,6 +158,21 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   if prim is lax.population_count_p:
     np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype == np.uint32:
+      tf_unimpl(np_dtype)
+
+  if prim in [lax.acosh_p, lax.asinh_p, lax.atanh_p, lax.bessel_i0e_p,
+              lax.bessel_i1e_p, lax.digamma_p, lax.erf_p, lax.erf_inv_p,
+              lax.erfc_p, lax.lgamma_p, lax.round_p, lax.rsqrt_p]:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype == dtypes.bfloat16:
+      tf_unimpl(np_dtype, devs=["CPU", "GPU"])
+
+  if prim in [lax.sinh_p, lax.cosh_p, lax.atanh_p, lax.asinh_p, lax.acosh_p,
+              lax.erf_inv_p]:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype == np.float16:
+      # b/158006398: float16 support missing from the kernel of the above
+      # operations.
       tf_unimpl(np_dtype)
 
   return limitations
