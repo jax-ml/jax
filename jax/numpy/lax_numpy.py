@@ -2914,20 +2914,12 @@ def apply_along_axis(func1d, axis, arr, *args, **kwargs):
     axis = axis + num_dims
   if axis < 0 or axis >= num_dims:
     raise ValueError(f"axis {axis} is out of bounds for array of dimension {num_dims}")
-  if size(arr) == 0:
-    raise ValueError("apply_along_axis does not support empty arrays.")
-  # TODO(jakevdp): can we implement this directly in vmap, without roll, reshape & transpose?
-  axis_size = shape(arr)[axis]
-  reshaped = rollaxis(arr, axis, num_dims)
-  flattened = reshape(reshaped, (-1, axis_size))
-  result_flat = jax.vmap(lambda a: func1d(a, *args, **kwargs))(flattened)
-  result = reshape(result_flat, shape(reshaped)[:-1] + shape(result_flat)[1:])
-  permutation = (
-      list(range(axis)) +
-      list(range(ndim(reshaped) - 1, ndim(result))) +
-      list(range(axis, ndim(reshaped) - 1))
-  )
-  return transpose(result, permutation)
+  func = lambda arr: func1d(arr, *args, **kwargs)
+  for i in range(1, num_dims - axis):
+    func = jax.vmap(func, in_axes=i, out_axes=-1)
+  for i in range(axis):
+    func = jax.vmap(func, in_axes=0, out_axes=0)
+  return func(arr)
 
 
 ### Tensor contraction operations
