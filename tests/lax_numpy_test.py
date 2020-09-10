@@ -1445,6 +1445,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_axis={}_out_dims={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          axis, out_dims),
+        "shape": shape, "dtype": dtype, "axis": axis, "out_dims": out_dims}
+      for shape in nonempty_array_shapes
+      for dtype in default_dtypes
+      for axis in range(-len(shape), len(shape))
+      for out_dims in [0, 1, 2]))
+  def testApplyAlongAxis(self, shape, dtype, axis, out_dims):
+    def func(x, out_dims):
+      if out_dims == 0:
+        return x.sum()
+      elif out_dims == 1:
+        return x * x[0]
+      elif out_dims == 2:
+        return x[:, None] + x
+      else:
+        raise NotImplementedError(f"out_dims={out_dims}")
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = lambda arr: np.apply_along_axis(func, axis, arr, out_dims=out_dims)
+    jnp_fun = lambda arr: jnp.apply_along_axis(func, axis, arr, out_dims=out_dims)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape=[{}]_axis={}_repeats={}_fixed_size={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           axis, repeats, fixed_size),
