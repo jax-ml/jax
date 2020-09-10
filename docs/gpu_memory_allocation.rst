@@ -20,7 +20,6 @@ override the default behavior:
   amount preallocated can fix OOMs that occur when the JAX program starts.
 
 ``XLA_PYTHON_CLIENT_ALLOCATOR=platform``
-
   This makes JAX allocate exactly what is needed on demand, and deallocate
   memory that is no longer needed (note that this is the only configuration that
   will deallocate GPU memory, instead of reusing it). This is very slow, so is

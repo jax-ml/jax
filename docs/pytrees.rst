@@ -55,8 +55,8 @@ to only map over the dictionary argument, we can use::
 
   (None, 0)  # equivalent to (None, {"k1": 0, "k2": 0})
 
-Or, if want every argument to be mapped, we can simply write a single leaf value
-that is applied over the entire argument tuple pytree::
+Or, if we want every argument to be mapped, we can simply write a single leaf 
+value that is applied over the entire argument tuple pytree::
 
   0
 
@@ -94,7 +94,7 @@ reference cycles.
 Here is a simple example::
 
   from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
-  from jax import numpy as np
+  import jax.numpy as jnp
 
   # The structured value to be transformed
   value_structured = [1., (2., 3.)]
@@ -103,7 +103,7 @@ Here is a simple example::
   value_flat, value_tree = tree_flatten(value_structured)
   print("value_flat={}\nvalue_tree={}".format(value_flat, value_tree))
 
-  # Transform the flt value list using an element-wise numeric transformer
+  # Transform the flat value list using an element-wise numeric transformer
   transformed_flat = list(map(lambda v: v * 2., value_flat))
   print("transformed_flat={}".format(transformed_flat))
 
@@ -129,7 +129,7 @@ treated as leaves::
       (1., {'b': 2., 'a': 3.}),
       1.,
       None,
-      np.zeros(2),
+      jnp.zeros(2),
       Point(1., 2.)
   ]
   def show_example(structured):

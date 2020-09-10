@@ -15,7 +15,7 @@
 
 import operator
 from operator import attrgetter
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from collections import namedtuple
 from functools import total_ordering
 import itertools as it
@@ -24,21 +24,22 @@ import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast)
+                    Type, Union, cast, no_type_check)
 
-import numpy as onp
+import numpy as np
 
 from . import dtypes
-from .config import FLAGS
+from .config import FLAGS, config
 from . import linear_util as lu
+from . import source_info_util
 
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
 
-# TODO(dougalm): the trace cache breaks the leak detector. Consisder solving.
+# TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
 check_leaks = False
 
-"""Disables internal invariant checks."""
+# Disables internal invariant checks
 skip_checks = not FLAGS.jax_enable_checks  # not __debug__  # google doesn't use -O
 
 @contextmanager
@@ -141,16 +142,17 @@ def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
   return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
 
 
-
 class JaxprEqn(NamedTuple):
   invars: List['Atom']
   outvars: List['Var']
   primitive: 'Primitive'
   params: Dict[str, Any]
+  source_info: Optional[source_info_util.Traceback]
 
   def __repr__(self): return str(pp_eqn(self)).rstrip()
 
-new_jaxpr_eqn = JaxprEqn
+def new_jaxpr_eqn(invars, outvars, primitive, params, source_info=None):
+  return JaxprEqn(invars, outvars, primitive, params, source_info)
 
 
 @total_ordering
@@ -229,7 +231,7 @@ class Literal:
       if type(val) in literalable_types:
         try:
           self.hash = hash((val.item(), val.dtype))
-        except (TypeError, AttributeError):
+        except (TypeError, AttributeError, ValueError):
           self.hash = None
 
   @property
@@ -243,10 +245,10 @@ class Literal:
     assert False
 
   def __repr__(self):
-    if self.hash is None:
-      return 'Literal(val={})'.format(self.val)
-    else:
+    if hasattr(self, 'hash'):
       return '{}'.format(self.val)
+    else:
+      return 'Literal(val={})'.format(self.val)
 
 literalable_types: Set[type] = set()
 
@@ -290,11 +292,11 @@ class Primitive:
     self.bind = bind
     return bind
 
-  def impl(self, *args, **kwargs):
+  def impl(self, *args, **params):
     raise NotImplementedError("Evaluation rule for '{}' not implemented"
                               .format(self.name))
 
-  def abstract_eval(self, *args, **kwargs):
+  def abstract_eval(self, *args, **params):
     raise NotImplementedError("Abstract evaluation for '{}' not implemented"
                               .format(self.name))
 
@@ -341,7 +343,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
       subfuns = [lu.wrap_init(partial(eval_jaxpr, call_jaxpr, ()))]
     else:
       subfuns = []
-    ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
+    with source_info_util.user_context(eqn.source_info):
+      ans = eqn.primitive.bind(*(subfuns + in_vals), **params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
     else:
@@ -353,13 +356,15 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
 
 
 class Trace:
-  master: 'MasterTrace'
+  __slots__ = ['main', 'level', 'sublevel']
+
+  main: 'MainTrace'
   level: int
   sublevel: 'Sublevel'
 
-  def __init__(self, master: 'MasterTrace', sublevel: 'Sublevel') -> None:
-    self.master = master
-    self.level = master.level
+  def __init__(self, main: 'MainTrace', sublevel: 'Sublevel') -> None:
+    self.main = main
+    self.level = main.level
     self.sublevel = sublevel
 
   def full_raise(self, val) -> 'Tracer':
@@ -367,7 +372,7 @@ class Trace:
       return self.pure(val)
     level = self.level
     sublevel = self.sublevel
-    if val._trace.master is self.master:
+    if val._trace.main is self.main:
       if val._trace.sublevel == sublevel:
         return val
       elif val._trace.sublevel < sublevel:
@@ -406,6 +411,9 @@ class Trace:
   def process_call(self, call_primitive, f, tracers, params):
     raise NotImplementedError("must override to handle call-like primitives")
 
+  def process_map(self, call_primitive, f, tracers, params):
+    raise NotImplementedError("must override to handle map-like primitives")
+
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
     # As a default implementation, drop the custom differentiation rule. This
     # behavior is desirable when staging out of the JAX system, but not when
@@ -427,7 +435,6 @@ def escaped_tracer_error(detail):
   return UnexpectedTracerError(msg.format(detail))
 
 class UnexpectedTracerError(Exception): pass
-
 
 class Tracer:
   __array_priority__ = 1000
@@ -460,6 +467,9 @@ class Tracer:
   def aval(self):
     raise NotImplementedError("must override")
 
+  # Python looks up special methods only on classes, not instances. This means
+  # these methods needs to be defined explicitly rather than relying on
+  # __getattr__.
   def __neg__(self): return self.aval._neg(self)
   def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
@@ -497,7 +507,9 @@ class Tracer:
   def __rxor__(self, other): return self.aval._rxor(self, other)
   def __invert__(self): return self.aval._invert(self)
   def __lshift__(self, other): return self.aval._lshift(self, other)
+  def __rlshift__(self, other): return self.aval._rlshift(self, other)
   def __rshift__(self, other): return self.aval._rshift(self, other)
+  def __rrshift__(self, other): return self.aval._rrshift(self, other)
   def __getitem__(self, idx): return self.aval._getitem(self, idx)
   def __nonzero__(self): return self.aval._nonzero(self)
   def __bool__(self): return self.aval._bool(self)
@@ -516,6 +528,9 @@ class Tracer:
 
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
+
+  # NumPy also only looks up special methods on classes.
+  def __array_module__(self, types): return self.aval._array_module(self, types)
 
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
@@ -562,7 +577,19 @@ aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
 
 
-class MasterTrace:
+class EvalTrace(Trace):
+  def pure(self, x): return x
+  lift = sublift = pure
+
+  def process_primitive(self, primitive, tracers, params):
+    return primitive.impl(*tracers, **params)
+
+  def process_call(self, primitive, f, tracers, params):
+    return primitive.impl(f, *tracers, **params)
+  process_map = process_call
+
+
+class MainTrace:
   level: int
   trace_type: Type[Trace]
 
@@ -571,18 +598,18 @@ class MasterTrace:
     self.trace_type = trace_type
 
   def __repr__(self) -> str:
-    return "MasterTrace({},{})".format(self.level, self.trace_type.__name__)
+    return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
 
   def __hash__(self) -> int:
     return hash((self.level, self.trace_type))
 
   def __eq__(self, other: object) -> bool:
-    return (isinstance(other, MasterTrace) and
+    return (isinstance(other, MainTrace) and
             self.level == other.level and self.trace_type == other.trace_type)
 
 class TraceStack:
-  upward: List[MasterTrace]
-  downward: List[MasterTrace]
+  upward: List[MainTrace]
+  downward: List[MainTrace]
 
   def __init__(self):
     self.upward = []
@@ -594,11 +621,11 @@ class TraceStack:
     else:
       return len(self.upward)
 
-  def push(self, master_trace: MasterTrace, bottom: bool) -> None:
+  def push(self, main_trace: MainTrace, bottom: bool) -> None:
     if bottom:
-      self.downward.append(master_trace)
+      self.downward.append(main_trace)
     else:
-      self.upward.append(master_trace)
+      self.upward.append(main_trace)
 
   def pop(self, bottom: bool) -> None:
     if bottom:
@@ -618,12 +645,10 @@ class TraceStack:
     return new
 
 class Sublevel(int): pass
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
 
 
-# The global state of the tracer is accessed by a thread-local object.
-# This allows concurrent tracing in separate threads; passing traced objects
-# between threads is forbidden.
-class TraceState(threading.local):
+class TraceState:
   trace_stack: TraceStack
   substack: List[Sublevel]
   initial_style: bool
@@ -639,47 +664,54 @@ class TraceState(threading.local):
     new.substack = self.substack[:]
     new.initial_style = self.initial_style
     return new
-trace_state = TraceState()
+
+# The global state of the tracer is accessed by a thread-local object.
+# This allows concurrent tracing in separate threads; passing traced objects
+# between threads is forbidden.
+class ThreadLocalState(threading.local):
+  def __init__(self):
+    self.trace_state = TraceState()
+thread_local_state = ThreadLocalState()
 
 def reset_trace_state() -> bool:
   "Reset the global trace state and return True if it was already clean."
-  if (trace_state.substack != [Sublevel(0)] or
-      trace_state.trace_stack.downward or
-      trace_state.trace_stack.upward):
-    trace_state.__init__()  # type: ignore
+  if (thread_local_state.trace_state.substack != [Sublevel(0)] or
+      thread_local_state.trace_state.trace_stack.downward or
+      thread_local_state.trace_state.trace_stack.upward):
+    thread_local_state.trace_state.__init__()  # type: ignore
     return False
   else:
     return True
 
 def cur_sublevel() -> Sublevel:
-  return trace_state.substack[-1]
+  return thread_local_state.trace_state.substack[-1]
 
 @contextmanager
-def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MasterTrace, None, None]:
-  level = trace_state.trace_stack.next_level(bottom)
-  master = MasterTrace(level, trace_type)
-  trace_state.trace_stack.push(master, bottom)
+def new_main(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
+  level = thread_local_state.trace_state.trace_stack.next_level(bottom)
+  main = MainTrace(level, trace_type)
+  thread_local_state.trace_state.trace_stack.push(main, bottom)
 
   try:
-    yield master
+    yield main
   finally:
-    trace_state.trace_stack.pop(bottom)
+    thread_local_state.trace_state.trace_stack.pop(bottom)
 
   if check_leaks:
-    t = ref(master)
-    del master
+    t = ref(main)
+    del main
     if t() is not None:
-      print(trace_state.trace_stack)
+      print(thread_local_state.trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
 
 @contextmanager
 def new_sublevel() -> Generator[None, None, None]:
-  sublevel = Sublevel(len(trace_state.substack))
-  trace_state.substack.append(sublevel)
+  sublevel = Sublevel(len(thread_local_state.trace_state.substack))
+  thread_local_state.trace_state.substack.append(sublevel)
   try:
     yield
   finally:
-    trace_state.substack.pop()
+    thread_local_state.trace_state.substack.pop()
 
   if check_leaks:
     t = ref(sublevel)
@@ -696,15 +728,20 @@ def full_lower(val):
 def find_top_trace(xs) -> Optional[Trace]:
   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
                   key=attrgetter('level'), default=None)
-  return top_trace and type(top_trace)(top_trace.master, cur_sublevel())
+  return top_trace and type(top_trace)(top_trace.main, cur_sublevel())
 
 @contextmanager
 def initial_style_staging():
+  trace_state = thread_local_state.trace_state
   prev, trace_state.initial_style = trace_state.initial_style, True
   try:
     yield
   finally:
     trace_state.initial_style = prev
+
+@contextmanager
+def eval_context():
+  yield  # dummy implementation for forward compatibility
 
 
 # -------------------- abstract values --------------------
@@ -739,6 +776,7 @@ class AbstractUnit(AbstractValue):
       assert other is abstract_unit, other
     return self
   def _eq(self, self_traced, other): return get_aval(other) is self
+  def str_short(self): return '*'
 
 abstract_unit = AbstractUnit()
 
@@ -804,10 +842,6 @@ unitvar = UnitVar()
 
 pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
-identity_p = Primitive('id')
-identity_p.def_impl(lambda x: x)
-identity_p.def_custom_bind(lambda x: x)
-
 class ConcretizationTypeError(TypeError): pass
 
 def raise_concretization_error(val, context=""):
@@ -829,24 +863,22 @@ def concretization_function_error(fun, context=""):
   return error
 
 
-def concrete_or_error(typ: Type, val: Any, context=""):
-  """Like typ(val), but gives the context in the error message.
-  Use with typ either `int`, or `bool`.
-  """
+def concrete_or_error(force: Any, val: Any, context=""):
+  """Like force(val), but gives the context in the error message."""
   if isinstance(val, Tracer):
     if isinstance(val.aval, ConcreteArray):
-      return typ(val.aval.val)
+      return force(val.aval.val)
     else:
       raise_concretization_error(val, context)
   else:
-    return typ(val)
+    return force(val)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
   array_abstraction_level = 2
 
   def __init__(self, dtype, weak_type=False):
-    self.dtype = onp.dtype(dtypes.canonicalize_dtype(dtype))
+    self.dtype = np.dtype(dtypes.canonicalize_dtype(dtype))
     self.weak_type = weak_type
 
   def __eq__(self, other):
@@ -858,7 +890,7 @@ class UnshapedArray(AbstractValue):
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.dtype, self.weak_type))
 
@@ -925,7 +957,7 @@ class ShapedArray(UnshapedArray):
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
-    # objects, e.g. `onp.zeros(3).dtype is onp.zeros(4).dtype`, or we can use
+    # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type))
 
@@ -968,16 +1000,16 @@ class ConcreteArray(ShapedArray):
   array_abstraction_level = 0
 
   def __init__(self, val, weak_type=False):
-    super(ConcreteArray, self).__init__(onp.shape(val), onp.result_type(val),
+    super(ConcreteArray, self).__init__(np.shape(val), np.result_type(val),
                                         weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
-    assert self.dtype != onp.dtype('O')
+    assert self.dtype != np.dtype('O')
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype
             and self.shape == other.shape and self.weak_type == other.weak_type
-            and onp.all(self.val == other.val))
+            and np.all(self.val == other.val))
 
   def __hash__(self):
     return id(self.val)
@@ -1015,19 +1047,22 @@ class AbstractToken(AbstractValue):
       return self
     else:
       assert False, f"Cannot join {self} with {other}"
+  def str_short(self): return 'Tok'
 
 abstract_token = AbstractToken()
 
 
 def raise_to_shaped(aval: AbstractValue, weak_type=False):
-  if isinstance(aval, ShapedArray):
-    return ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
-  elif aval is abstract_unit:
-    return abstract_unit
-  elif aval is abstract_token:
-    return abstract_token
-  else:
-    raise TypeError(type(aval))
+  for typ in type(aval).mro():
+    handler = raise_to_shaped_mappings.get(typ)
+    if handler: return handler(aval, weak_type)
+  raise TypeError(type(aval))
+
+raise_to_shaped_mappings : Dict[type, Callable] = {
+  AbstractUnit: lambda aval, _: aval,
+  AbstractToken: lambda aval, _: aval,
+  ShapedArray: lambda aval, weak_type: ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
+}
 
 # Registry for valid dimension types. This is used by masking.Poly.
 _DIMENSION_TYPES: Set[type] = {int}
@@ -1060,7 +1095,7 @@ def canonicalize_shape(shape):
   raise TypeError(msg.format(shape))
 
 
-# ------------------- Call and map -------------------
+# ------------------- Call -------------------
 
 def apply_todos(todos, outs):
   todos_list = list(todos)
@@ -1069,54 +1104,82 @@ def apply_todos(todos, outs):
   return outs
 
 @lu.transformation_with_aux
-def process_env_traces(post_processor: str, primitive: Primitive,
+def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
                        level: int, params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
   while True:
-    tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
+    tracers = [x for x in outs if isinstance(x, Tracer)
+               and (level is None or x._trace.level > level)]
     if tracers:
       ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans._trace)(ans._trace.master, cur_sublevel())
+    trace = type(ans._trace)(ans._trace.main, cur_sublevel())
     outs = map(trace.full_raise, outs)
-    post_process = getattr(trace, post_processor)
-    outs, cur_todo = post_process(primitive, outs, params)
+    outs, cur_todo = primitive.post_process(trace, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
-def _call_bind(processor: str, post_processor: str, primitive: Primitive,
-               f: lu.WrappedFun, *args, **params):
-  top_trace = find_top_trace(args)
-  level = trace_state.trace_stack.next_level(True) if top_trace is None else top_trace.level
+def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
+              fun: lu.WrappedFun, *args, **params):
   params_tuple = tuple(params.items())
-  f, env_trace_todo = process_env_traces(f, post_processor, primitive, level, params_tuple)
+  top_trace = find_top_trace(args)
+  level = (thread_local_state.trace_state.trace_stack.next_level(True)
+           if top_trace is None else top_trace.level)
+  params_tuple = tuple(params.items())
+  fun, env_trace_todo = process_env_traces(fun, primitive, level, params_tuple)
   if top_trace is None:
     with new_sublevel():
-      outs = primitive.impl(f, *args, **params)
+      outs = primitive.impl(fun, *args, **params)
   else:
     tracers = map(top_trace.full_raise, args)
-    process = getattr(top_trace, processor)
-    outs = map(full_lower, process(primitive, f, tracers, params))
-  return apply_todos(env_trace_todo(), outs)
+    outs = primitive.process(top_trace, fun, tracers, params)
+  return apply_todos(env_trace_todo(), map(full_lower, outs))
 
-call_bind = partial(_call_bind, 'process_call', 'post_process_call')
-map_bind = partial(_call_bind, 'process_map', 'post_process_map')
+class CallPrimitive(Primitive):
+  multiple_results = True
+  call_primitive = True
 
+  def bind(self, fun, *args, **params):
+    return call_bind(self, fun, *args, **params)
+
+  def process(self, trace, fun, tracers, params):
+    return trace.process_call(self, fun, tracers, params)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_call(self, out_tracers, params)
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
   return f.call_wrapped(*args)
 
-call_p = Primitive('call')
-call_p.multiple_results = True
-call_p.call_primitive = True
-call = partial(call_bind, call_p)
-call_p.def_custom_bind(call)
+call_p = CallPrimitive('call')
+call = call_p.bind
 call_p.def_impl(call_impl)
 
+
+# ------------------- Map -------------------
+
+class MapPrimitive(Primitive):
+  multiple_results = True
+  map_primitive = True
+
+  def bind(self, fun, *args, **params):
+    assert len(params['mapped_invars']) == len(args)
+    return call_bind(self, fun, *args, **params)
+
+  def process(self, trace, fun, tracers, params):
+    return trace.process_map(self, fun, tracers, params)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_map(self, out_tracers, params)
+
+# This is a no-op with omnistaging disabled
+@contextmanager
+def extend_axis_env(axis_name, size: int, tag: Any):
+  yield
 
 # ------------------- Jaxpr checking -------------------
 
@@ -1153,6 +1216,14 @@ def typematch(aval1: UnshapedArray, aval2: UnshapedArray) -> bool:
   return (raise_to_shaped(aval1).strip_weak_type() ==
           raise_to_shaped(aval2).strip_weak_type())
 
+class JaxprTypeError(TypeError): pass
+
+def typecheck_assert(pred, msg):
+  if not pred:
+    raise JaxprTypeError(msg)
+
+custom_typechecks: Dict[Primitive, Callable] = {}
+
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
 
@@ -1165,15 +1236,15 @@ def check_jaxpr(jaxpr: Jaxpr):
   """
   try:
     _check_jaxpr(jaxpr, [v.aval for v in jaxpr.invars])
-  except Exception as e:
-    exception_type = type(e)
-    msg_context = f"while checking jaxpr:\n\n{jaxpr}\n"
-    if len(e.args) == 0:
-      exception_args = [msg_context]
+  except JaxprTypeError as e:
+    if len(e.args) == 2:
+      msg, eqn_idx = e.args
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, eqn_idx - 10, eqn_idx + 10))
     else:
-      msg = f"{e.args[0]}\n\n" + msg_context
-      exception_args = [msg, *e.args[1:]]
-    raise exception_type(*exception_args) from e
+      msg, = e.args
+      jaxpr_str = str(pp_jaxpr_eqn_range(jaxpr, 0, 20))
+    msg = "\n\n".join([msg, "while checking jaxpr:", jaxpr_str])
+    raise JaxprTypeError(msg) from None
 
 def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
@@ -1181,17 +1252,15 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
     if isinstance(v, Literal):
       return get_aval(v.val)
     else:
-      if v not in env:
-        raise TypeError(f"Variable '{v}' not defined")
+      typecheck_assert(v in env, f"Variable '{v}' not defined")
       return env[v]
 
   def write(v: Var, a: AbstractValue) -> None:
-    if v in env:
-      raise TypeError(f"Variable '{v}' already bound")
+    typecheck_assert(v not in env, f"Variable '{v}' already bound")
     if v is not dropvar:
-      if not typecompat(v.aval, a):
-        raise TypeError(f"Variable '{v}' inconsistently typed as {a}, "
-                        f"bound as {v.aval}")
+      typecheck_assert(typecompat(v.aval, a),
+                       f"Variable '{v}' inconsistently typed as {a}, "
+                       f"bound as {v.aval}")
       env[v] = a
 
   env : Dict[Var, AbstractValue] = {}
@@ -1200,19 +1269,25 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(write, jaxpr.constvars, [v.aval for v in jaxpr.constvars])
   map(write, jaxpr.invars, in_avals)
 
-  for eqn in jaxpr.eqns:
+  for eqn_idx, eqn in enumerate(jaxpr.eqns):
     in_avals = map(read, eqn.invars)
-    if eqn.primitive.call_primitive:
-      out_avals = check_call(eqn.primitive, in_avals, eqn.params)
-    elif eqn.primitive.map_primitive:
-      out_avals = check_map(eqn.primitive, in_avals, eqn.params)
-    else:
-      out_avals = check_eqn(eqn.primitive, in_avals, eqn.params)
+    prim = eqn.primitive
     try:
+      if prim in custom_typechecks:
+        custom_typechecks[prim](*in_avals, **eqn.params)
+      if prim.call_primitive:
+        out_avals = check_call(prim, in_avals, eqn.params)
+      elif prim.map_primitive:
+        out_avals = check_map(prim, in_avals, eqn.params)
+      else:
+        out_avals = check_eqn(prim, in_avals, eqn.params)
       map(write, eqn.outvars, out_avals)
-    except TypeError as e:
+    except JaxprTypeError as e:
       msg, = e.args
-      raise TypeError(msg + f" in '{eqn}'") from None
+      src = source_info_util.summarize(eqn.source_info)
+      msg = "\n\n".join([msg, "in equation:", str(pp_eqn(eqn).indent(2)),
+                         f"from source: {src}"])
+      raise JaxprTypeError(msg, eqn_idx) from None
 
   map(read, jaxpr.outvars)
 
@@ -1226,21 +1301,20 @@ def check_eqn(prim, in_avals, params):
   return out_avals
 
 def check_call(prim, in_avals, params):
-  if "call_jaxpr" not in params:
-    raise TypeError(f"Call primitive {prim} missing 'call_jaxpr' parameter")
+  typecheck_assert("call_jaxpr" in params,
+                   f"Call primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
 
   # These checks also happen in recursive call, but give better errors here.
-  if len(in_avals) != len(call_jaxpr.invars):
-    raise TypeError(f"Call primitive {prim} with {len(call_jaxpr.invars)} "
-                    f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
-                    f"inputs")
+  typecheck_assert(len(in_avals) == len(call_jaxpr.invars),
+                   f"Call primitive {prim} with {len(call_jaxpr.invars)} "
+                   f"operands cannot call jaxpr with {len(call_jaxpr.invars)} "
+                   f"inputs")
   binder_avals = [v.aval for v in call_jaxpr.invars]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
-    if not typecompat(binder_aval, in_aval):
-      raise TypeError(
-          f"Call primitive {prim} passes operand {in_aval} "
-          f"to jaxpr expecting {binder_aval}")
+    typecheck_assert(typecompat(binder_aval, in_aval),
+                     f"Call primitive {prim} passes operand {in_aval} "
+                     f"to jaxpr expecting {binder_aval}")
 
   _check_jaxpr(call_jaxpr, in_avals)
 
@@ -1248,22 +1322,22 @@ def check_call(prim, in_avals, params):
   return out_avals
 
 def check_map(prim, in_avals, params):
-  if "call_jaxpr" not in params:
-    raise TypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
+  typecheck_assert("call_jaxpr" in params,
+                   f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-  if "axis_size" not in params:
-    raise TypeError(f"Map primitive {prim} missing 'axis_size' parameter")
+  typecheck_assert("axis_size" in params,
+                   f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
-  if "mapped_invars" not in params:
-    raise TypeError(f"Map primitive {prim} missing 'mapped_invars' parameter")
+  typecheck_assert("mapped_invars" in params,
+                   f"Map primitive {prim} missing 'mapped_invars' parameter")
   mapped_invars = params["mapped_invars"]
 
   binder_avals = [unmapped_aval(axis_size, v.aval) if mapped else v.aval
                   for v, mapped in zip(call_jaxpr.invars, mapped_invars)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
-    if not typecompat(binder_aval, in_aval):
-      raise TypeError(f"Call primitive {prim} passes operand {in_aval} "
-                      f"to jaxpr expecting {binder_aval}")
+    typecheck_assert(typecompat(binder_aval, in_aval),
+                     f"Call primitive {prim} passes operand {in_aval} "
+                     f"to jaxpr expecting {binder_aval}")
 
   mapped_avals = [mapped_aval(axis_size, aval) if mapped else aval
                   for aval, mapped in zip(in_avals, mapped_invars)]
@@ -1276,8 +1350,11 @@ def check_map(prim, in_avals, params):
 
 # ------------------- Jaxpr printed representation -------------------
 
-def pp_vars(vs: Sequence[Any]) -> str:
-  return ' '.join(map(str, vs))
+def pp_vars(vs: Sequence[Any], print_shapes: bool = False) -> str:
+  if print_shapes:
+    return ' '.join(f'{v}:{v.aval.str_short()}' for v in vs)
+  else:
+    return ' '.join(map(str, vs))
 
 def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
   filtered_params = {k: v for k, v in params.items()
@@ -1285,30 +1362,231 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
                          not isinstance(v, (Jaxpr, TypedJaxpr)))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
-def pp_eqn(eqn: JaxprEqn) -> PrettyPrint:
-  lhs = pp_vars(eqn.outvars)
-  pp_subexpr = pp('')
-  return (pp('{} = '.format(lhs)) >>
-          pp(eqn.primitive.name) >> pp_kv_pairs(sorted(eqn.params.items()))
-          >> pp(' ') >> pp(pp_vars(eqn.invars))) + pp_subexpr
+def pp_eqn(eqn: JaxprEqn, print_shapes: bool = False) -> PrettyPrint:
+  lhs = pp_vars(eqn.outvars, print_shapes)
+  pp_lhs = pp(f'{lhs} =')
+  pp_rhs = (pp(eqn.primitive.name) >>
+            pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
+            pp(pp_vars(eqn.invars, print_shapes)))
+  if len(lhs) <= 6:
+    return pp_lhs >> pp(' ') >> pp_rhs
+  else:
+    return pp_lhs + pp_rhs.indent(2)
 
-def pp_jaxpr(jaxpr: Jaxpr) -> PrettyPrint:
-  pp_outvars = str(tuple(jaxpr.outvars))
+def pp_eqns(eqns: Sequence[JaxprEqn],
+            source_info: bool = False) -> Sequence[PrettyPrint]:
+  pps = map(pp_eqn, eqns)
+  if source_info:
+    l = max((i + len(s) for x in pps for i, s in x.lines), default=None)
+    if l is not None:
+      return [p.annotate(l, source_info_util.summarize(e.source_info))
+              for e, p in zip(eqns, pps)]
+  return pps
+
+def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
+  pps = pp_eqns(jaxpr.eqns, source_info=source_info)
+  str_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
                                          pp_vars(jaxpr.invars))) +
-          ((pp('let ') >>
-            vcat(map(pp_eqn, jaxpr.eqns))) +
-           pp('in {} }}'.format(pp_outvars))).indent(2))
+          ((pp('let ') >> vcat(pps))
+           + pp('in {} }}'.format(str_outvars))).indent(2))
+
+def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
+                       source_info: bool = False) -> PrettyPrint:
+  lo = max(lo, 0)
+  hi = max(lo, min(hi, len(jaxpr.eqns)))
+  eqns = jaxpr.eqns[lo:hi]
+  pps = []
+  if len(eqns) == 0 and len(jaxpr.eqns) != 0:
+      pps.append(pp('...'))
+  else:
+    if lo != 0:
+      pps.append(pp('...'))
+    pps.extend(pp_eqns(eqns, source_info=source_info))
+    if hi != len(jaxpr.eqns):
+      pps.append(pp('...'))
+  str_outvars = str(tuple(jaxpr.outvars))
+  return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
+                                         pp_vars(jaxpr.invars))) +
+          ((pp('let ') >> vcat(pps))
+           + pp('in {} }}'.format(str_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
   jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]
   return pp('( ') >> vcat(map(pp_jaxpr, jaxprs)) >> pp(' )')
 
 def pp_kv_pair(k, v):
-  return pp(f'{k}=') >> (pp_jaxprs(v) if k == 'branches' else pp(v))
+  if type(v) is tuple and all(isinstance(j, (Jaxpr, TypedJaxpr)) for j in v):
+    pp_v = pp_jaxprs(v)
+  else:
+    pp_v = pp(v)
+  return pp(f'{k}=') >> pp_v
 
 def pp_kv_pairs(kv_pairs):
   if kv_pairs:
     return pp('[ ') >> vcat([pp_kv_pair(k, v) for k, v in kv_pairs]) >> pp(' ]')
   else:
     return pp('')
+
+axis_frame = None
+
+# TODO(mattjj): remove when omnistaging fully lands
+@config.register_omnistaging_enabler
+@no_type_check
+def omnistaging_enabler() -> None:
+  global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
+      new_main, reset_trace_state, extend_axis_env, axis_frame, \
+      new_base_main, eval_context, \
+      TraceStack, TraceState
+  del initial_style_staging
+
+  class TraceStack:
+    stack: List[MainTrace]
+    dynamic: MainTrace
+
+    def __init__(self):
+      eval_trace = MainTrace(0, EvalTrace)
+      self.stack = [eval_trace]
+      self.dynamic = eval_trace
+
+    def next_level(self) -> int:
+      return len(self.stack)
+
+    def push(self, main_trace: MainTrace) -> None:
+      self.stack.append(main_trace)
+
+    def pop(self) -> None:
+      self.stack.pop()
+
+    def __repr__(self) -> str:
+      stack_str = map('  {}\n'.format, self.stack[::-1])
+      return f'Trace stack\n{stack_str}\n{self.dynamic}'
+
+    def copy(self):
+      new = self.__new__(TraceStack)
+      new.stack = self.stack[:]
+      new.dynamic = self.dynamic
+      return new
+
+  class TraceState:
+    trace_stack: TraceStack
+    substack: List[Sublevel]
+    axis_env: List[AxisEnvFrame]
+
+    def __init__(self) -> None:
+      self.trace_stack = TraceStack()
+      self.substack = [Sublevel(0)]
+      self.axis_env = []
+
+    def copy(self):
+      new = self.__new__(TraceState)
+      new.trace_stack = self.trace_stack.copy()
+      new.substack = self.substack[:]
+      new.axis_env = self.axis_env[:]
+      return new
+
+  thread_local_state = ThreadLocalState()
+
+  def reset_trace_state() -> bool:
+    "Reset the global trace state and return True if it was already clean."
+    if (thread_local_state.trace_state.substack != [Sublevel(0)] or
+        thread_local_state.trace_state.axis_env != [] or
+        thread_local_state.trace_state.trace_stack.stack != [MainTrace(0, EvalTrace)] or
+        thread_local_state.trace_state.trace_stack.dynamic != MainTrace(0, EvalTrace)):
+      thread_local_state.trace_state.__init__()  # type: ignore
+      return False
+    else:
+      return True
+
+  def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
+                fun, *args, **params):
+    params_tuple = tuple(params.items())
+    top_trace = find_top_trace(args)
+    fun, env_trace_todo = process_env_traces(
+        fun, primitive, top_trace and top_trace.level, params_tuple)
+    tracers = map(top_trace.full_raise, args)
+    with maybe_new_sublevel(top_trace):
+      outs = primitive.process(top_trace, fun, tracers, params)
+    return map(full_lower, apply_todos(env_trace_todo(), outs))
+
+  def maybe_new_sublevel(trace):
+    # dynamic traces run the WrappedFun, so we raise the sublevel for them
+    dynamic = thread_local_state.trace_state.trace_stack.dynamic
+    return new_sublevel() if trace.main is dynamic else suppress()
+
+  def find_top_trace(xs) -> Trace:
+    top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
+                     default=None, key=attrgetter('level'))
+    dynamic = thread_local_state.trace_state.trace_stack.dynamic
+    top_main = (dynamic if top_main is None or dynamic.level > top_main.level
+                  else top_main)
+    return top_main and top_main.trace_type(top_main, cur_sublevel())  # type: ignore
+
+  @contextmanager
+  def new_main(trace_type: Type[Trace], dynamic: bool = False,
+                 ) -> Generator[MainTrace, None, None]:
+    stack = thread_local_state.trace_state.trace_stack
+    level = stack.next_level()
+    main = MainTrace(level, trace_type)
+    stack.push(main)
+    if dynamic:
+      prev_dynamic, stack.dynamic = stack.dynamic, main
+
+    try:
+      yield main
+    finally:
+      thread_local_state.trace_state.trace_stack.pop()
+      if dynamic:
+        stack.dynamic = prev_dynamic
+
+    if check_leaks:
+      t = ref(main)
+      del main
+      if t() is not None:
+        print(thread_local_state.trace_state.trace_stack)
+        raise Exception('Leaked trace {}'.format(t()))
+
+  @contextmanager
+  def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
+    stack = thread_local_state.trace_state.trace_stack
+    main = MainTrace(0, trace_type)
+    prev_dynamic, stack.dynamic = stack.dynamic, main
+    prev_base, stack.stack[0] = stack.stack[0], main
+    try:
+      yield main
+    finally:
+      stack.dynamic = prev_dynamic
+      stack.stack[0] = prev_base
+
+  @contextmanager
+  def eval_context():
+    with new_base_main(EvalTrace):
+      yield
+
+  def bind(self, *args, **params):
+    assert skip_checks or all(isinstance(arg, Tracer)
+                              or valid_jaxtype(arg) for arg in args), args
+    top_trace = find_top_trace(args)
+    tracers = map(top_trace.full_raise, args)
+    out = top_trace.process_primitive(self, tracers, params)
+    return map(full_lower, out) if self.multiple_results else full_lower(out)
+  Primitive.bind = bind
+
+  @contextmanager
+  def extend_axis_env(axis_name, size: int, main_trace: Optional[MainTrace]):
+    frame = AxisEnvFrame(axis_name, size, main_trace)
+    thread_local_state.trace_state.axis_env.append(frame)
+    try:
+      yield
+    finally:
+      frame_ = thread_local_state.trace_state.axis_env.pop()
+    assert frame is frame_  # Only runs if there was was no exception
+
+  def axis_frame(axis_name):
+    frames = thread_local_state.trace_state.axis_env
+    for frame in reversed(frames):
+      if frame.name == axis_name:
+        return frame
+    else:
+      raise NameError(f"Unbound axis name: {axis_name}.\n"
+                      f"The currently bound axes are: {[f.name for f in frames]}")

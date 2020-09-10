@@ -26,6 +26,8 @@ Operators
     abs
     add
     acos
+    argmax
+    argmin
     asin
     atan
     atan2
@@ -136,10 +138,12 @@ Control flow operators
 .. autosummary::
   :toctree: _autosummary
 
+    associative_scan
     cond
     fori_loop
     map
     scan
+    switch
     while_loop
 
 Custom gradient operators
@@ -167,5 +171,6 @@ Parallelism support is experimental.
     pmin
     pmean
     ppermute
+    pshuffle
     pswapaxes
     axis_index

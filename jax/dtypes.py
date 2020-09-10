@@ -79,7 +79,10 @@ def canonicalize_dtype(dtype):
   """Convert from a dtype to a canonical dtype based on FLAGS.jax_enable_x64."""
   if isinstance(dtype, str) and dtype == "bfloat16":
     dtype = bfloat16
-  dtype = np.dtype(dtype)
+  try:
+    dtype = np.dtype(dtype)
+  except TypeError as e:
+    raise TypeError(f'dtype {dtype!r} not understood') from e
 
   if FLAGS.jax_enable_x64:
     return dtype
@@ -141,8 +144,10 @@ def _issubclass(a, b):
 
 def issubdtype(a, b):
   if a == bfloat16:
-    return b in [bfloat16, _bfloat16_dtype, np.floating, np.inexact,
-                 np.number]
+    if isinstance(b, np.dtype):
+      return b == _bfloat16_dtype
+    else:
+      return b in [bfloat16, np.floating, np.inexact, np.number]
   if not _issubclass(b, np.generic):
     # Workaround for JAX scalar types. NumPy's issubdtype has a backward
     # compatibility behavior for the second argument of issubdtype that

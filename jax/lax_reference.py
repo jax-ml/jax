@@ -32,7 +32,13 @@ neg = np.negative
 sign = np.sign
 floor = np.floor
 ceil = np.ceil
-round = lambda x: np.trunc(x + np.copysign(.5, x)).astype(x.dtype)
+
+def round(x):
+  return np.trunc(
+    x + np.copysign(np.nextafter(np.array(.5, dtype=x.dtype),
+                                 np.array(0., dtype=x.dtype),
+                                 dtype=x.dtype), x)).astype(x.dtype)
+
 nextafter = np.nextafter
 
 is_finite = np.isfinite
@@ -113,6 +119,14 @@ shift_right_arithmetic = np.right_shift
 # TODO shift_right_logical
 
 def population_count(x):
+  assert np.issubdtype(x.dtype, np.integer)
+  dtype = x.dtype
+  iinfo = np.iinfo(x.dtype)
+  if np.iinfo(x.dtype).bits < 32:
+    assert iinfo.kind in ('i', 'u')
+    x = x.astype(np.uint32 if iinfo.kind == 'u' else np.int32)
+  if iinfo.kind == 'i':
+    x = x.view(f"uint{np.iinfo(x.dtype).bits}")
   assert x.dtype in (np.uint32, np.uint64)
   m = [
       0x5555555555555555,  # binary: 0101...
@@ -135,7 +149,7 @@ def population_count(x):
   x = (x & m[4]) + ((x >> 16) & m[4])  # put count of each 32 bits into those 32 bits
   if x.dtype == np.uint64:
     x = (x & m[5]) + ((x >> 32) & m[5])  # put count of each 64 bits into those 64 bits
-  return x
+  return x.astype(dtype)
 
 eq = np.equal
 ne = np.not_equal
@@ -232,16 +246,19 @@ def reshape(operand, new_sizes, dimensions=None):
   return np.reshape(np.transpose(operand, dimensions), new_sizes)
 
 def pad(operand, padding_value, padding_config):
+  # https://www.tensorflow.org/xla/operation_semantics#pad
   lo, hi, interior = zip(*padding_config)
-  outshape = np.add(np.add(np.add(lo, hi), operand.shape),
+  # Handle first the positive edge padding and interior
+  lo_pos, hi_pos = np.clip(lo, 0, None), np.clip(hi, 0, None)
+  outshape = np.add(np.add(np.add(lo_pos, hi_pos), operand.shape),
                      np.multiply(interior, np.subtract(operand.shape, 1)))
   out = np.full(outshape, padding_value, operand.dtype)
   lhs_slices = tuple(_slice(l if l > 0 else 0, -h if h > 0 else None, step)
-                     for l, h, step in zip(lo, hi, np.add(1, interior)))
-  rhs_slices = tuple(_slice(l if l < 0 else 0, -h if h < 0 else None)
+                     for l, h, step in zip(lo_pos, hi_pos, np.add(1, interior)))
+  out[lhs_slices] = operand
+  trim_slices = tuple(_slice(-l if l < 0 else 0, h if h < 0 else None)
                      for l, h in zip(lo, hi))
-  out[lhs_slices] = operand[rhs_slices]
-  return out
+  return out[trim_slices]
 
 def rev(operand, dimensions):
   dimensions = frozenset(dimensions)
@@ -278,10 +295,16 @@ def reduce(operand, init_value, computation, dimensions):  # pylint: disable=red
   return reducer(operand, tuple(dimensions)).astype(np.asarray(operand).dtype)
 
 def reduce_window(operand, init_value, computation, window_dimensions,
-                  window_strides, padding):
+                  window_strides, padding, base_dilation):
   op, dims, strides = operand, window_dimensions, window_strides
-  pads = padtype_to_pads(op.shape, dims, strides, padding)
-  view = _conv_view(op.reshape((1, 1) + op.shape), (1, 1) + dims, strides, pads,
+  if isinstance(padding, str):
+    pads = padtype_to_pads(op.shape, dims, strides, padding)
+  else:
+    pads = padding
+  op = op.reshape((1, 1) + op.shape)
+  if base_dilation:
+    op = _dilate(op, base_dilation, init_value)
+  view = _conv_view(op, (1, 1) + dims, strides, pads,
                     pad_value=init_value)[0]
   view = view.reshape(view.shape[1:1+len(dims)] + (-1,))
   reducer = _make_reducer(computation, init_value)
@@ -352,13 +375,13 @@ def _pad(arr, pads, pad_value):
                  for (lo, hi), dim in zip(pads, np.shape(arr)))
   return out[slices]
 
-def _dilate(operand, factors):
+def _dilate(operand, factors, fill_value=0):
   # this logic is like lax.pad, but with two leading dimensions, no edge
   # padding, and factors are at least 1 (interior padding is at least 0)
   outspace = np.add(operand.shape[2:],
                      np.multiply(np.subtract(factors, 1),
                                   np.subtract(operand.shape[2:], 1)))
-  out = np.zeros(operand.shape[:2] + tuple(outspace), operand.dtype)
+  out = np.full(operand.shape[:2] + tuple(outspace), fill_value, operand.dtype)
   lhs_slices = tuple(_slice(None, None, step) for step in factors)
   out[(_slice(None),) * 2 + lhs_slices] = operand
   return out

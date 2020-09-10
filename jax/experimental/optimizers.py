@@ -64,8 +64,21 @@ Notice that an optimizer implementation has a lot of flexibility in the form of
 opt_state: it just has to be a pytree of JaxTypes (so that it can be passed to
 the JAX transforms defined in api.py) and it has to be consumable by update_fun
 and get_params.
+
+Example Usage:
+  opt = optimizers.sgd(learning_rate)
+  opt_state = opt.init(params)
+
+  def step(step, opt_state):
+    value, grads = jax.value_and_grad(loss_fn)(opt.get_params(state))
+    opt_state = opt.update(step, grads, opt_state)
+    return value, opt_state
+
+  for step in range(num_steps):
+    value, opt_state = step(step, opt_state)
 """
 
+from typing import Any, Callable, NamedTuple, Tuple, Union
 
 from collections import namedtuple
 import functools
@@ -94,7 +107,28 @@ register_pytree_node(
     lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
     lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
-def optimizer(opt_maker):
+
+Array = Any
+Params = Any  # Parameters are arbitrary nests of `jnp.ndarrays`.
+State = Any   # internal State
+Updates = Params  # Gradient updates are of the same type as parameters.
+
+InitFn = Callable[[Params], OptimizerState]
+Step = int
+UpdateFn = Callable[[Step, Updates, OptimizerState], OptimizerState]
+ParamsFn = Callable[[OptimizerState], Params]
+
+class Optimizer(NamedTuple):
+  init_fn: InitFn
+  update_fn: UpdateFn
+  params_fn: ParamsFn
+
+Schedule = Callable[[Step], float]
+
+def optimizer(opt_maker: Callable[...,
+  Tuple[Callable[[Params], State],
+        Callable[[Step, Updates, Params], Params],
+        Callable[[State], Params]]]) -> Callable[..., Optimizer]:
   """Decorator to make an optimizer defined for arrays generalize to containers.
 
   With this decorator, you can write init, update, and get_params functions that
@@ -164,7 +198,7 @@ def optimizer(opt_maker):
       params = map(get_params, states)
       return tree_unflatten(tree, params)
 
-    return tree_init, tree_update, tree_get_params
+    return Optimizer(tree_init, tree_update, tree_get_params)
   return tree_opt_maker
 
 
@@ -188,10 +222,10 @@ def sgd(step_size):
     return x - step_size(i) * g
   def get_params(x):
     return x
-  return init, update, get_params
+  return Optimizer(init, update, get_params)
 
 @optimizer
-def momentum(step_size, mass):
+def momentum(step_size: Schedule, mass: float):
   """Construct optimizer triple for SGD with momentum.
 
   Args:
@@ -218,7 +252,7 @@ def momentum(step_size, mass):
 
 
 @optimizer
-def nesterov(step_size, mass):
+def nesterov(step_size: Schedule, mass: float):
   """Construct optimizer triple for SGD with Nesterov momentum.
 
   Args:
@@ -374,7 +408,7 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
     x = x - step_size(i) * mhat / (jnp.sqrt(vhat) + eps)
     return x, m, v
   def get_params(state):
-    x, m, v = state
+    x, _, _ = state
     return x
   return init, update, get_params
 
@@ -408,7 +442,7 @@ def adamax(step_size, b1=0.9, b2=0.999, eps=1e-8):
     x = x - (step_size(i) / (1 - b1 ** (i + 1))) * m / (u + eps)
     return x, m, u
   def get_params(state):
-    x, m, u = state
+    x, _, _ = state
     return x
   return init, update, get_params
 
@@ -462,7 +496,7 @@ def sm3(step_size, momentum=0.9):
 
 ### learning rate schedules
 
-def constant(step_size):
+def constant(step_size) -> Schedule:
   def schedule(i):
     return step_size
   return schedule
@@ -489,7 +523,7 @@ def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
 
   return schedule
 
-def piecewise_constant(boundaries, values):
+def piecewise_constant(boundaries: Any, values: Any):
   boundaries = jnp.array(boundaries)
   values = jnp.array(values)
   if not boundaries.ndim == values.ndim == 1:
@@ -501,7 +535,7 @@ def piecewise_constant(boundaries, values):
     return values[jnp.sum(i > boundaries)]
   return schedule
 
-def make_schedule(scalar_or_schedule):
+def make_schedule(scalar_or_schedule: Union[float, Schedule]) -> Schedule:
   if callable(scalar_or_schedule):
     return scalar_or_schedule
   elif jnp.ndim(scalar_or_schedule) == 0:

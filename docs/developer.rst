@@ -108,7 +108,21 @@ file directly to see more detailed information about the cases being run::
 You can skip a few tests known as slow, by passing environment variable
 JAX_SKIP_SLOW_TESTS=1.
 
+To specify a particular set of tests to run from a test file, you can pass a string
+or regular expression via the ``--test_targets`` flag. For example, you can run all
+the tests of ``jax.numpy.pad`` using::
+
+ python tests/lax_numpy_test.py --test_targets="testPad"
+
 The Colab notebooks are tested for errors as part of the documentation build.
+
+Note that to run the full pmap tests on a (multi-core) CPU only machine, you
+can run::
+
+ pytest tests/pmap_tests.py
+
+I.e. don't use the `-n auto` option, since that effectively runs each test on a
+single-core worker.
 
 Type checking
 =============

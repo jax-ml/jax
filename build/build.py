@@ -197,6 +197,8 @@ build --macos_minimum_os=10.9
 # Make Bazel print out all options from rc files.
 build --announce_rc
 
+build --define open_source_build=true
+
 # Disable enabled-by-default TensorFlow features that we don't care about.
 build --define=no_aws_support=true
 build --define=no_gcp_support=true

@@ -186,7 +186,7 @@ def inner_prod(xs, ys):
   return sum(jnp.sum(x * y) for x, y in xys)
 
 def jvp_fd(fun, args, tangents):
-  EPS = 1e-4
+  EPS = 1e-3
   def eval_eps(eps):
     return fun(*[x if t is None else x + eps * t
                  for x, t in zip(args, tangents)])
@@ -268,4 +268,4 @@ class GeneratedFunTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

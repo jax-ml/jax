@@ -23,6 +23,7 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 
 config.parse_flags_with_absl()
+FLAGS = config.FLAGS
 
 try:
   import torch
@@ -39,7 +40,6 @@ except ImportError:
 dlpack_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                    jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                    jnp.float16, jnp.float32, jnp.float64]
-all_dtypes = dlpack_dtypes + [jnp.bool_, jnp.bfloat16]
 torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.float16, jnp.float32, jnp.float64]
 
@@ -83,6 +83,8 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testTorchToJax(self, shape, dtype):
+    if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.float64]:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = torch.from_numpy(np)
@@ -132,4 +134,4 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -69,11 +69,14 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
       self.assertEqual(y.dtype, dtypes.canonicalize_dtype(dtype), msg=(f, y))
 
+  def testUnsupportedType(self):
+    with self.assertRaisesRegex(TypeError, "nonsense.* not understood"):
+      dtypes.canonicalize_dtype("nonsense")
+
   @parameterized.named_parameters(
     {"testcase_name": "_swap={}_jit={}".format(swap, jit),
      "swap": swap, "jit": jit}
     for swap in [False, True] for jit in [False, True])
-  @jtu.skip_on_devices("tpu")  # F16 not supported on TPU
   def testBinaryPromotion(self, swap, jit):
     testcases = [
       (jnp.array(1.), 0., jnp.float_),
@@ -178,4 +181,4 @@ class DtypesTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

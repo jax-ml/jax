@@ -29,16 +29,60 @@ import operator as op
 import jax
 import jax.numpy as jnp
 from jax import core
+from jax import dtypes
 from jax import lax
-from jax import ops
-from jax.util import safe_map, safe_zip
+from jax.util import safe_map, safe_zip, cache, split_list
+from jax.api_util import flatten_fun_nokwargs
 from jax.flatten_util import ravel_pytree
-from jax.tree_util import tree_map
+from jax.tree_util import tree_map, tree_flatten, tree_unflatten
+from jax.interpreters import partial_eval as pe
 from jax import linear_util as lu
+from jax import config
 
 map = safe_map
 zip = safe_zip
 
+
+@cache()
+def closure_convert(fun, in_tree, in_avals):
+  if config.omnistaging_enabled:
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  else:
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
+    wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+    with core.initial_style_staging():
+      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        wrapped_fun, in_pvals, instantiate=True, stage_out=False)
+  out_tree = out_tree()
+
+  # We only want to closure convert for constants with respect to which we're
+  # differentiating. As a proxy for that, we hoist consts with float dtype.
+  # TODO(mattjj): revise this approach
+  is_float = lambda c: dtypes.issubdtype(dtypes.dtype(c), jnp.inexact)
+  (closure_consts, hoisted_consts), merge = partition_list(is_float, consts)
+  num_consts = len(hoisted_consts)
+
+  def converted_fun(y, t, *hconsts_args):
+    hoisted_consts, args = split_list(hconsts_args, [num_consts])
+    consts = merge(closure_consts, hoisted_consts)
+    all_args, in_tree2 = tree_flatten((y, t, *args))
+    assert in_tree == in_tree2
+    out_flat = core.eval_jaxpr(jaxpr, consts, *all_args)
+    return tree_unflatten(out_tree, out_flat)
+
+  return converted_fun, hoisted_consts
+
+def partition_list(choice, lst):
+  out = [], []
+  which = [out[choice(elt)].append(elt) or choice(elt) for elt in lst]
+  def merge(l1, l2):
+    i1, i2 = iter(l1), iter(l2)
+    return [next(i2 if snd else i1) for snd in which]
+  return out, merge
+
+def abstractify(x):
+  return core.raise_to_shaped(core.get_aval(x))
 
 def ravel_first_arg(f, unravel):
   return ravel_first_arg_(lu.wrap_init(f), unravel).call_wrapped
@@ -107,9 +151,9 @@ def runge_kutta_step(func, y0, f0, t0, dt):
     ti = t0 + dt * alpha[i-1]
     yi = y0 + dt * jnp.dot(beta[i-1, :], k)
     ft = func(yi, ti)
-    return ops.index_update(k, jax.ops.index[i, :], ft)
+    return k.at[i, :].set(ft)
 
-  k = ops.index_update(jnp.zeros((7, f0.shape[0])), ops.index[0, :], f0)
+  k = jnp.zeros((7, f0.shape[0]), f0.dtype).at[0, :].set(f0)
   k = lax.fori_loop(1, 7, body_fun, k)
 
   y1 = dt * jnp.dot(c_sol, k) + y0
@@ -117,10 +161,16 @@ def runge_kutta_step(func, y0, f0, t0, dt):
   f1 = k[-1]
   return y1, f1, y1_error, k
 
+def abs2(x):
+  if jnp.iscomplexobj(x):
+    return x.real ** 2 + x.imag ** 2
+  else:
+    return x ** 2
+
 def error_ratio(error_estimate, rtol, atol, y0, y1):
   err_tol = atol + rtol * jnp.maximum(jnp.abs(y0), jnp.abs(y1))
   err_ratio = error_estimate / err_tol
-  return jnp.mean(jnp.square(err_ratio))
+  return jnp.mean(abs2(err_ratio))
 
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       dfactor=0.2, order=5.0):
@@ -159,8 +209,12 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf):
       msg = ("The contents of odeint *args must be arrays or scalars, but got "
              "\n{}.")
       raise TypeError(msg.format(arg))
-  tree_map(_check_arg, args)
-  return _odeint_wrapper(func, rtol, atol, mxstep, y0, t, *args)
+
+  flat_args, in_tree = tree_flatten((y0, t[0], *args))
+  in_avals = tuple(map(abstractify, flat_args))
+  converted, consts = closure_convert(func, in_tree, in_avals)
+
+  return _odeint_wrapper(converted, rtol, atol, mxstep, y0, t, *consts, *args)
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3))
 def _odeint_wrapper(func, rtol, atol, mxstep, y0, ts, *args):
@@ -226,7 +280,8 @@ def _odeint_rev(func, rtol, atol, mxstep, res, g):
   def scan_fun(carry, i):
     y_bar, t0_bar, args_bar = carry
     # Compute effect of moving measurement time
-    t_bar = jnp.dot(func(ys[i], ts[i], *args), g[i])
+    # `t_bar` should not be complex as it represents time
+    t_bar = jnp.dot(func(ys[i], ts[i], *args), g[i]).real
     t0_bar = t0_bar - t_bar
     # Run augmented system backwards to previous observation
     _, y_bar, t0_bar, args_bar = odeint(

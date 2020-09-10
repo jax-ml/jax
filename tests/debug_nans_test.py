@@ -38,7 +38,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
   def testMultipleResultPrimitiveNoNaN(self):
     A = jnp.array([[1., 2.], [2., 3.]])
-    _, _ = jnp.linalg.eig(A)
+    _, _ = jnp.linalg.eigh(A)
 
   def testJitComputationNoNaN(self):
     A = jnp.array([[1., 2.], [2., 3.]])
@@ -51,4 +51,4 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

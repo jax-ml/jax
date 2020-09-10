@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from functools import wraps
-from typing import Callable
+from typing import Callable, Optional
 
+from .lib import xla_bridge
 from .lib import xla_client
 
 
@@ -48,6 +49,34 @@ class TraceContext(xla_client.profiler.TraceMe):
   event occurs while the process is being traced by TensorBoard.
   """
   pass
+
+
+class StepTraceContext(TraceContext):
+  """Context manager that generates a step trace event in the profiler.
+
+  The step trace event spans the duration of the code enclosed by the context.
+  The profiler will provide the performance analysis for each step trace event.
+
+  For example, it can be used to mark training steps and enable the profiler to
+  provide the performance analysis per step:
+
+  >>> import jax
+  >>>
+  >>> while global_step < NUM_STEPS:
+  ...   with jax.profiler.StepTraceContext("train", step_num=global_step):
+  ...     train_step()
+  ...     global_step += 1
+
+  This will cause a "train xx" event to show up on the trace timeline if the
+  event occurs while the process is being traced by TensorBoard. In addition,
+  if using accelerators, the device trace timeline will also show a "train xx"
+  event. Note that "step_num" can be set as a keyword argument to pass the
+  global step number to the profiler.
+
+  """
+
+  def __init__(self, name: str, **kwargs):
+    super().__init__(name, _r=1, **kwargs)
 
 
 def trace_function(func: Callable, name: str = None, **kwargs):
@@ -86,3 +115,48 @@ def trace_function(func: Callable, name: str = None, **kwargs):
       return func(*args, **kwargs)
     return wrapper
   return wrapper
+
+
+def device_memory_profile(backend: Optional[str] = None) -> bytes:
+  """Captures a JAX device memory profile as ``pprof``-format protocol buffer.
+
+  A device memory profile is a snapshot of the state of memory, that describes the JAX
+  :class:`jax.DeviceArray` and executable objects present in memory and their
+  allocation sites.
+
+  For more information how to use the device memory profiler, see
+  :doc:`/device_memory_profiling`.
+
+  The profiling system works by instrumenting JAX on-device allocations,
+  capturing a Python stack trace for each allocation. The instrumentation is
+  always enabled; :func:`device_memory_profile` provides an API to capture it.
+
+  The output of :func:`device_memory_profile` is a binary protocol buffer that
+  can be interpreted and visualized by the `pprof tool
+  <https://github.com/google/pprof>`_.
+
+  Args:
+    backend: optional; the name of the JAX backend for which the device memory
+      profile should be collected.
+
+  Returns:
+    A byte string containing a binary `pprof`-format protocol buffer.
+  """
+  return xla_client.heap_profile(xla_bridge.get_backend(backend))
+
+
+def save_device_memory_profile(filename, backend: Optional[str] = None):
+  """Collects a device memory profile and writes it to a file.
+
+  :func:`save_device_memory_profile` is a convenience wrapper around :func:`device_memory_profile`
+  that saves its output to a ``filename``. See the
+  :func:`device_memory_profile` documentation for more information.
+
+  Args:
+    filename: the filename to which the profile should be written.
+    backend: optional; the name of the JAX backend for which the device memory
+      profile should be collected.
+  """
+  profile = device_memory_profile(backend)
+  with open(filename, "wb") as f:
+    f.write(profile)

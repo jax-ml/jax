@@ -2,7 +2,7 @@
 <img src="https://raw.githubusercontent.com/google/jax/master/images/jax_logo_250px.png" alt="logo"></img>
 </div>
 
-# JAX: Autograd and XLA [![Test status](https://travis-ci.org/google/jax.svg?branch=master)](https://travis-ci.org/google/jax)
+# JAX: Autograd and XLA ![Continuous integration](https://github.com/google/jax/workflows/Continuous%20integration/badge.svg)
 
 [**Quickstart**](#quickstart-colab-in-the-cloud)
 | [**Transformations**](#transformations)
@@ -11,7 +11,8 @@
 | [**Reference docs**](https://jax.readthedocs.io/en/latest/)
 | [**Code search**](https://cs.opensource.google/jax/jax)
 
-**Announcement:** JAX has dropped Python 2 support, and requires Python 3.6 or newer. See [docs/CHANGELOG.rst](https://jax.readthedocs.io/en/latest/CHANGELOG.html).
+
+**News:** [JAX tops largest-scale MLPerf Training 0.7 benchmarks!](https://cloud.google.com/blog/products/ai-machine-learning/google-breaks-ai-performance-records-in-mlperf-with-worlds-fastest-training-supercomputer)
 
 ## What is JAX?
 
@@ -54,18 +55,18 @@ bugs](https://github.com/google/jax/issues), and letting us know what you
 think!
 
 ```python
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import grad, jit, vmap
 
 def predict(params, inputs):
   for W, b in params:
-    outputs = np.dot(inputs, W) + b
-    inputs = np.tanh(outputs)
+    outputs = jnp.dot(inputs, W) + b
+    inputs = jnp.tanh(outputs)
   return outputs
 
 def logprob_fun(params, inputs, targets):
   preds = predict(params, inputs)
-  return np.sum((preds - targets)**2)
+  return jnp.sum((preds - targets)**2)
 
 grad_fun = jit(grad(logprob_fun))  # compiled gradient evaluation function
 perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grads
@@ -116,10 +117,10 @@ for reverse-mode gradients:
 
 ```python
 from jax import grad
-import jax.numpy as np
+import jax.numpy as jnp
 
 def tanh(x):  # Define a function
-  y = np.exp(-2.0 * x)
+  y = jnp.exp(-2.0 * x)
   return (1.0 - y) / (1.0 + y)
 
 grad_tanh = grad(tanh)  # Obtain its gradient function
@@ -178,14 +179,14 @@ You can use XLA to compile your functions end-to-end with
 used either as an `@jit` decorator or as a higher-order function.
 
 ```python
-import jax.numpy as np
+import jax.numpy as jnp
 from jax import jit
 
 def slow_f(x):
   # Element-wise ops see a large benefit from fusion
   return x * x + x * 2.0
 
-x = np.ones((5000, 5000))
+x = jnp.ones((5000, 5000))
 fast_f = jit(slow_f)
 %timeit -n10 -r3 fast_f(x)  # ~ 4.5 ms / loop on Titan X
 %timeit -n10 -r3 slow_f(x)  # ~ 14.5 ms / loop (also on GPU via JAX)
@@ -215,19 +216,19 @@ function:
 def predict(params, input_vec):
   assert input_vec.ndim == 1
   for W, b in params:
-    output_vec = np.dot(W, input_vec) + b  # `input_vec` on the right-hand side!
-    input_vec = np.tanh(output_vec)
+    output_vec = jnp.dot(W, input_vec) + b  # `input_vec` on the right-hand side!
+    input_vec = jnp.tanh(output_vec)
   return output_vec
 ```
 
-We often instead write `np.dot(inputs, W)` to allow for a batch dimension on the
+We often instead write `jnp.dot(inputs, W)` to allow for a batch dimension on the
 left side of `inputs`, but we’ve written this particular prediction function to
 apply only to single input vectors. If we wanted to apply this function to a
 batch of inputs at once, semantically we could just write
 
 ```python
 from functools import partial
-predictions = np.stack(list(map(partial(predict, params), input_batch)))
+predictions = jnp.stack(list(map(partial(predict, params), input_batch)))
 ```
 
 But pushing one example through the network at a time would be slow! It’s better
@@ -275,17 +276,17 @@ Here's an example on an 8-GPU machine:
 
 ```python
 from jax import random, pmap
-import jax.numpy as np
+import jax.numpy as jnp
 
 # Create 8 random 5000 x 6000 matrices, one per GPU
 keys = random.split(random.PRNGKey(0), 8)
 mats = pmap(lambda key: random.normal(key, (5000, 6000)))(keys)
 
 # Run a local matmul on each device in parallel (no data transfer)
-result = pmap(lambda x: np.dot(x, x.T))(mats)  # result.shape is (8, 5000, 5000)
+result = pmap(lambda x: jnp.dot(x, x.T))(mats)  # result.shape is (8, 5000, 5000)
 
 # Compute the mean on each device in parallel and print the result
-print(pmap(np.mean)(result))
+print(pmap(jnp.mean)(result))
 # prints [1.1566595 1.1805978 ... 1.2321935 1.2015157]
 ```
 
@@ -301,7 +302,7 @@ from jax import lax
 def normalize(x):
   return x / lax.psum(x, 'i')
 
-print(normalize(np.arange(4.)))
+print(normalize(jnp.arange(4.)))
 # prints [0.         0.16666667 0.33333334 0.5       ]
 ```
 
@@ -315,11 +316,11 @@ from jax import grad
 
 @pmap
 def f(x):
-  y = np.sin(x)
+  y = jnp.sin(x)
   @pmap
   def g(z):
-    return np.cos(z) * np.tan(y.sum()) * np.tanh(x).sum()
-  return grad(lambda w: np.sum(g(w)))(x)
+    return jnp.cos(z) * jnp.tan(y.sum()) * jnp.tanh(x).sum()
+  return grad(lambda w: jnp.sum(g(w)))(x)
 
 print(f(x))
 # [[ 0.        , -0.7170853 ],
@@ -327,7 +328,7 @@ print(f(x))
 #  [10.366636  , 13.135289  ],
 #  [ 0.22163185, -0.52112055]]
 
-print(grad(lambda x: np.sum(f(x)))(x))
+print(grad(lambda x: jnp.sum(f(x)))(x))
 # [[ -3.2369726,  -1.6356447],
 #  [  4.7572474,  11.606951 ],
 #  [-98.524414 ,  42.76499  ],
@@ -409,19 +410,19 @@ cloud VM), you can run
 ```bash
 # install jaxlib
 PYTHON_VERSION=cp37  # alternatives: cp36, cp37, cp38
-CUDA_VERSION=cuda92  # alternatives: cuda92, cuda100, cuda101, cuda102
-PLATFORM=linux_x86_64  # alternatives: linux_x86_64
+CUDA_VERSION=cuda100  # alternatives: cuda100, cuda101, cuda102, cuda110
+PLATFORM=manylinux2010_x86_64  # alternatives: manylinux2010_x86_64
 BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.47-$PYTHON_VERSION-none-$PLATFORM.whl
+pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.52-$PYTHON_VERSION-none-$PLATFORM.whl
 
 pip install --upgrade jax  # install jax
 ```
 
 The library package name must correspond to the version of the existing CUDA
-installation you want to use, with `cuda102` for CUDA 10.2, `cuda101` for CUDA
-10.1, `cuda100` for CUDA 10.0, and `cuda92` for CUDA 9.2. To find your CUDA and
-CUDNN versions, you can run commands like these, depending on your CUDNN install
-path:
+installation you want to use, with `cuda110` for CUDA 11.0, `cuda102` for CUDA
+10.2, `cuda101` for CUDA 10.1, and `cuda100` for CUDA 10.0. To find your CUDA
+and CUDNN versions, you can run commands like these, depending on your CUDNN
+install path:
 
 ```bash
 nvcc --version
@@ -450,7 +451,7 @@ requires Python 3.6 or above. Jax does not support Python 2 any more.
 To try automatic detection of the correct version for your system, you can run:
 
 ```bash
-pip install --upgrade https://storage.googleapis.com/jax-releases/`nvidia-smi | sed -En "s/.* CUDA Version: ([0-9]*)\.([0-9]*).*/cuda\1\2/p"`/jaxlib-0.1.47-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-linux_x86_64.whl jax
+pip install --upgrade https://storage.googleapis.com/jax-releases/`nvcc -V | sed -En "s/.* release ([0-9]*)\.([0-9]*),.*/cuda\1\2/p"`/jaxlib-0.1.52-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-manylinux2010_x86_64.whl jax
 ```
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)

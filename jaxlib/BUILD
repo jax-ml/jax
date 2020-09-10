@@ -90,26 +90,6 @@ py_library(
 )
 
 pybind_extension(
-    name = "pytree",
-    srcs = ["pytree.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "pytree",
-    deps = [
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@pybind11",
-    ],
-)
-
-pybind_extension(
     name = "cublas_kernels",
     srcs = ["cublas.cc"],
     copts = [
@@ -121,6 +101,8 @@ pybind_extension(
     deps = [
         ":gpu_kernel_helpers",
         ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cublas_lib",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -130,10 +112,8 @@ pybind_extension(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@local_config_cuda//cuda:cublas",
         "@local_config_cuda//cuda:cublas_headers",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart",
         "@pybind11",
     ],
 )
@@ -150,6 +130,8 @@ pybind_extension(
     deps = [
         ":gpu_kernel_helpers",
         ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cusolver_lib",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -160,8 +142,6 @@ pybind_extension(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart",
-        "@local_config_cuda//cuda:cusolver",
         "@pybind11",
     ],
 )
@@ -189,8 +169,8 @@ pybind_extension(
     deps = [
         ":cuda_prng_kernels_lib",
         ":kernel_pybind11_helpers",
+        "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@local_config_cuda//cuda:cuda_headers",
-        "@local_config_cuda//cuda:cudart",
         "@pybind11",
     ],
 )

@@ -26,9 +26,10 @@ from . import xla
 from .. import linear_util as lu
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
-from ..api_util import flatten_axes, flatten_fun
+from ..api_util import flatten_axes, flatten_fun, wraps
 from ..tree_util import tree_flatten, tree_unflatten
 from ..util import extend_name_stack, wrap_name, safe_zip
+from ..config import config
 
 xops = xc._xla.ops
 
@@ -43,7 +44,7 @@ result_to_populate = ResultToPopulate()
 def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
   nouts = len(out_pvals)
   handlers = [_pval_to_result_handler(npart, parts, out_pval)
-              for parts, out_pval in safe_zip(partitions, out_pvals)]
+              for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
 
   def handler(out_bufs):
     assert nrep * npart == len(out_bufs)
@@ -78,15 +79,19 @@ def _sharded_callable(
     out_parts_thunk: Callable[[], Tuple[pxla.PartitionsOrReplicated, ...]],
     name: str, *abstract_args):
   nrep = 1
-  in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
 
-  # TODO(skye): add tests for equationless jaxpr cases
-  if not jaxpr.eqns and all(outvar.aval is core.abstract_unit
-                            for outvar in jaxpr.outvars):
-    return lambda *_: [
-        const if pv is None else core.unit for pv, const in out_pvals
-    ]
+  if config.omnistaging_enabled:
+    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args)
+  else:
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
+
+    # TODO(skye): add tests for equationless jaxpr cases
+    if not jaxpr.eqns and all(outvar.aval is core.abstract_unit
+                              for outvar in jaxpr.outvars):
+      return lambda *_: [
+          const if pv is None else core.unit for pv, const in out_pvals
+      ]
 
   if xb.get_backend().platform != "tpu":
     # TODO(skye): fall back to regular jit?
@@ -104,7 +109,7 @@ def _sharded_callable(
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = _xla_sharded_args(c, abstract_args, in_parts)
-  axis_env = xla.AxisEnv(nrep, (), ())
+  axis_env = xla.AxisEnv(nrep, (), (), None)
   out_nodes = xla.jaxpr_subcomp(
       c, jaxpr, None, axis_env, xla_consts,
       extend_name_stack(wrap_name(name, "sharded_jit")), *xla_args)
@@ -116,9 +121,9 @@ def _sharded_callable(
   device_assignment = np.reshape(device_assignment, (-1, num_partitions))
   # device_assignment = None  # TODO(skye): replace with default device assignment?
 
-  compiled = xb.get_backend().compile(
-      built, compile_options=xb.get_compile_options(
-          nrep, num_partitions, device_assignment))
+  compiled = xla.backend_compile(
+      xb.get_backend(), built,
+      xb.get_compile_options(nrep, num_partitions, device_assignment))
 
   input_specs = [
       pxla.partitioned_sharding_spec(num_partitions, parts, aval)
@@ -129,8 +134,12 @@ def _sharded_callable(
 
   handle_args = partial(pxla.shard_args, compiled.local_devices(),
                         input_indices)
-  handle_outs = _pvals_to_results_handler(nrep, num_partitions, out_parts,
-                                          out_pvals)
+  if config.omnistaging_enabled:
+    handle_outs = _avals_to_results_handler(nrep, num_partitions, out_parts,  # type: ignore
+                                            out_avals)
+  else:
+    handle_outs = _pvals_to_results_handler(nrep, num_partitions, out_parts,
+                                            out_pvals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
                  handle_outs)
 
@@ -187,11 +196,8 @@ def _sharded_call_impl(fun, *args, num_partitions, in_parts, out_parts_thunk,
   return compiled_fun(*args)
 
 
-sharded_call_p = core.Primitive("sharded_call")
-sharded_call_p.call_primitive = True
-sharded_call_p.multiple_results = True
-sharded_call = partial(core.call_bind, sharded_call_p)
-sharded_call_p.def_custom_bind(sharded_call)
+sharded_call_p = core.CallPrimitive("sharded_call")
+sharded_call = sharded_call_p.bind
 sharded_call_p.def_impl(_sharded_call_impl)
 xla.call_translations[sharded_call_p] = _sharded_jit_translation_rule
 
@@ -210,7 +216,7 @@ class PartitionSpec(tuple):
     return "PartitionSpec%s" % tuple.__repr__(self)
 
 
-def sharded_jit(fun: Callable, in_parts, out_parts):
+def sharded_jit(fun: Callable, in_parts, out_parts, num_partitions: int = None):
   """Like ``jit``, but partitions ``fun`` across multiple devices.
 
   WARNING: this feature is still under active development! It may not work well,
@@ -249,22 +255,34 @@ def sharded_jit(fun: Callable, in_parts, out_parts):
     out_parts: The output partitions, i.e. how each output of ``fun`` should be
       partitioned or replicated. This follows the same convention as
      ``in_parts``.
+    num_partitions: Optional. If set, explicitly specifies the number of devices
+      ``fun`` should partitioned across (rather than inferring it from
+      ``in_parts``, ``out_parts``, and/or any ``with_sharding_constraint``
+      calls).  Setting this should usually be unnecessary, but can be used to
+      maintain device persistence across multiple sharded_jit calls when some of
+      those calls only involve replicated values.
 
   Returns:
     A version of ``fun`` that will be distributed across multiple devices.
   """
-  num_parts = pxla.get_num_partitions(in_parts, out_parts)
+  if num_partitions != None:
+    num_parts = num_partitions
+  else:
+    num_parts = pxla.get_num_partitions(in_parts, out_parts)
 
+  @wraps(fun)
   def wrapped(*args, **kwargs):
     if kwargs:
       raise NotImplementedError("sharded_jit over kwargs not yet supported")
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    in_parts_flat = tuple(flatten_axes(in_tree.children()[0], in_parts))
+    in_parts_flat = tuple(flatten_axes("sharded_jit in_parts",
+                                       in_tree.children()[0], in_parts))
     flat_fun, out_tree = flatten_fun(f, in_tree)
     # TODO(skye): having a function-typed param in a primitive seems dicey, is
     # there a better way?
-    out_parts_thunk = lambda: tuple(flatten_axes(out_tree(), out_parts))
+    out_parts_thunk = lambda: tuple(flatten_axes("sharded_jit out_parts",
+                                                 out_tree(), out_parts))
     out = sharded_call(
         flat_fun,
         *args_flat,
@@ -334,3 +352,36 @@ def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
     A new version of ``x`` with the specified sharding applied.
   """
   return sharding_constraint_p.bind(x, partitions=partitions)
+
+
+@config.register_omnistaging_enabler
+def omnistaging_enabler() -> None:
+  global _avals_to_results_handler, _aval_to_result_handler, \
+      _pvals_to_results_handler, _pval_to_result_handler
+  del _pvals_to_results_handler, _pval_to_result_handler
+
+  def _avals_to_results_handler(nrep, npart, partitions, out_avals):
+    nouts = len(out_avals)
+    handlers = [_aval_to_result_handler(npart, parts, out_aval)
+                for parts, out_aval in safe_zip(partitions, out_avals)]
+
+    def handler(out_bufs):
+      assert nrep * npart == len(out_bufs)
+      buffers = [[result_to_populate] * nrep * npart for _ in range(nouts)]
+      for r, tuple_buf in enumerate(out_bufs):
+        for i, buf in enumerate(tuple_buf):
+          buffers[i][r] = buf
+      assert not any(buf is result_to_populate for bufs in buffers
+                    for buf in bufs)
+      return [h(bufs) for h, bufs in zip(handlers, buffers)]
+
+    return handler
+
+
+  def _aval_to_result_handler(npart, parts, aval):
+    if aval is not core.abstract_unit:
+      spec = pxla.partitioned_sharding_spec(npart, parts, aval)
+      indices = pxla.spec_to_indices(aval.shape, spec)
+    else:
+      spec = indices = None
+    return pxla.aval_to_result_handler(spec, indices, aval)

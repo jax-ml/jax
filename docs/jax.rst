@@ -12,11 +12,13 @@ Subpackages
     jax.numpy
     jax.scipy
     jax.experimental
+    jax.image
     jax.lax
     jax.nn
     jax.ops
     jax.random
     jax.tree_util
+    jax.flatten_util
     jax.dlpack
     jax.profiler
 
@@ -48,6 +50,7 @@ Automatic differentiation
     vjp
     custom_jvp
     custom_vjp
+    checkpoint
 
 
 Vectorization (:code:`vmap`)
@@ -90,6 +93,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: vjp
 .. autofunction:: custom_jvp
 .. autofunction:: custom_vjp
+.. autofunction:: checkpoint
 
 .. autofunction:: vmap
 .. autofunction:: jax.numpy.vectorize

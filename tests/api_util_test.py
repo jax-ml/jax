@@ -68,4 +68,4 @@ class ApiUtilTest(jtu.JaxTestCase):
                      api_util.rebase_donate_argnums(donate, static))
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

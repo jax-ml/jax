@@ -15,9 +15,10 @@
 
 import functools
 import itertools as it
+import operator
 import types
 
-import numpy as onp
+import numpy as np
 
 
 def safe_zip(*args):
@@ -223,9 +224,9 @@ def get_module_functions(module):
   Args:
     module: A Python module.
   Returns:
-    module_fns: A set of functions, builtins or ufuncs in `module`.
+    module_fns: A dict of names mapped to functions, builtins or ufuncs in `module`.
   """
-  module_fns = set()
+  module_fns = {}
   for key in dir(module):
     # Omitting module level __getattr__, __dir__ which was added in Python 3.7
     # https://www.python.org/dev/peps/pep-0562/
@@ -233,8 +234,8 @@ def get_module_functions(module):
       continue
     attr = getattr(module, key)
     if isinstance(
-        attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
-      module_fns.add(attr)
+        attr, (types.BuiltinFunctionType, types.FunctionType, np.ufunc)):
+      module_fns[key] = attr
   return module_fns
 
 def wrap_name(name, transform_name):
@@ -242,3 +243,14 @@ def wrap_name(name, transform_name):
 
 def extend_name_stack(stack, name=''):
   return stack + name + '/'
+
+def canonicalize_axis(axis, num_dims):
+  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
+  axis = operator.index(axis)
+  if not -num_dims <= axis < num_dims:
+      raise ValueError(
+          "axis {} is out of bounds for array of dimension {}".format(
+              axis, num_dims))
+  if axis < 0:
+    axis = axis + num_dims
+  return axis

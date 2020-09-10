@@ -18,7 +18,6 @@ from absl.testing import absltest
 import numpy as np
 
 import jax
-from jax import dtypes
 from jax import test_util as jtu
 import jax.numpy as jnp
 from jax.experimental.ode import odeint
@@ -28,10 +27,6 @@ import scipy.integrate as osp_integrate
 
 from jax.config import config
 config.parse_flags_with_absl()
-
-
-def num_float_bits(dtype):
-  return dtypes.finfo(dtypes.canonicalize_dtype(dtype)).bits
 
 
 class ODETest(jtu.JaxTestCase):
@@ -56,7 +51,7 @@ class ODETest(jtu.JaxTestCase):
     y0 = [np.pi - 0.1, 0.0]
     ts = np.linspace(0., 1., 11)
     args = (0.25, 9.8)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(pend, y0, ts, *args, tol=tol)
 
@@ -64,7 +59,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     atol=tol, rtol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_pytree_state(self):
     """Test calling odeint with y(t) values that are pytrees."""
     def dynamics(y, _t):
@@ -72,7 +67,7 @@ class ODETest(jtu.JaxTestCase):
 
     y0 = (np.array(-0.1), np.array([[[0.1]]]))
     ts = np.linspace(0., 1., 11)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     integrate = partial(odeint, dynamics)
     jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
@@ -86,7 +81,7 @@ class ODETest(jtu.JaxTestCase):
 
     y0 = [np.pi - 0.1, 0.0]
     ts = np.linspace(0., 1., 11)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(dynamics, y0, ts, tol=tol)
 
@@ -94,7 +89,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_decay(self):
     def decay(_np, y, t, arg1, arg2):
         return -_np.sqrt(t) - y + arg1 - _np.mean((y + arg2)**2)
@@ -104,7 +99,7 @@ class ODETest(jtu.JaxTestCase):
     args = (rng.randn(3), rng.randn(3))
     y0 = rng.randn(3)
     ts = np.linspace(0.1, 0.2, 4)
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
     self.check_against_scipy(decay, y0, ts, *args, tol=tol)
 
@@ -112,13 +107,13 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_swoop(self):
     def swoop(_np, y, t, arg1, arg2):
       return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
 
     ts = np.array([0.1, 0.2])
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
     y0 = np.linspace(0.1, 0.9, 10)
     args = (0.1, 0.2)
 
@@ -128,13 +123,13 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_swoop_bigger(self):
     def swoop(_np, y, t, arg1, arg2):
       return _np.array(y - _np.sin(t) - _np.cos(t) * arg1 + arg2)
 
     ts = np.array([0.1, 0.2])
-    tol = 1e-1 if num_float_bits(np.float64) == 32 else 1e-3
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
     big_y0 = np.linspace(1.1, 10.9, 10)
     args = (0.1, 0.3)
 
@@ -144,6 +139,7 @@ class ODETest(jtu.JaxTestCase):
     jtu.check_grads(integrate, (big_y0, ts, *args), modes=["rev"], order=2,
                     rtol=tol, atol=tol)
 
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_odeint_vmap_grad(self):
     # https://github.com/google/jax/issues/2531
 
@@ -173,6 +169,7 @@ class ODETest(jtu.JaxTestCase):
     rtol = {jnp.float64: 2e-15}
     self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
 
+  @jtu.skip_on_devices("tpu", "gpu")
   def test_disable_jit_odeint_with_vmap(self):
     # https://github.com/google/jax/issues/2598
     with jax.disable_jit():
@@ -181,6 +178,77 @@ class ODETest(jtu.JaxTestCase):
       f = lambda x0: odeint(lambda x, _t: x, x0, t)
       jax.vmap(f)(x0_eval)  # doesn't crash
 
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_grad_closure(self):
+    # simplification of https://github.com/google/jax/issues/2718
+    def experiment(x):
+      def model(y, t):
+        return -x * y
+      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      return history[-1]
+    jtu.check_grads(experiment, (0.01,), modes=["rev"], order=1)
+
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_grad_closure_with_vmap(self):
+    # https://github.com/google/jax/issues/2718
+    @jax.jit
+    def experiment(x):
+      def model(y, t):
+        return -x * y
+      history = odeint(model, 1., np.arange(0, 10, 0.1))
+      return history[-1]
+
+    gradfun = jax.value_and_grad(experiment)
+    t = np.arange(0., 1., 0.01)
+    h, g = jax.vmap(gradfun)(t)  # doesn't crash
+    ans = h[11], g[11]
+
+    expected_h = experiment(t[11])
+    expected_g = (experiment(t[11] + 1e-5) - expected_h) / 1e-5
+    expected = expected_h, expected_g
+
+    self.assertAllClose(ans, expected, check_dtypes=False, atol=1e-2, rtol=1e-2)
+
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_forward_mode_error(self):
+    # https://github.com/google/jax/issues/3558
+
+    def f(k):
+      return odeint(lambda x, t: k*x, 1.,  jnp.linspace(0, 1., 50)).sum()
+
+    with self.assertRaisesRegex(TypeError, "can't apply forward-mode.*"):
+      jax.jacfwd(f)(3.)
+
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_closure_nondiff(self):
+    # https://github.com/google/jax/issues/3584
+
+    def dz_dt(z, t):
+      return jnp.stack([z[0], z[1]])
+
+    def f(z):
+      y = odeint(dz_dt, z, jnp.arange(10.))
+      return jnp.sum(y)
+
+    jax.grad(f)(jnp.ones(2))  # doesn't crash
+
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_complex_odeint(self):
+    # https://github.com/google/jax/issues/3986
+
+    def dy_dt(y, t, alpha):
+      return alpha * y
+
+    def f(y0, ts, alpha):
+      return odeint(dy_dt, y0, ts, alpha).real
+
+    alpha = 3 + 4j
+    y0 = 1 + 2j
+    ts = jnp.linspace(0., 1., 11)
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+
+    jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
+
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

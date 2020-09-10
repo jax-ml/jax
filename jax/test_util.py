@@ -22,6 +22,7 @@ import unittest
 import warnings
 import zlib
 
+from absl.testing import absltest
 from absl.testing import parameterized
 
 import numpy as np
@@ -29,10 +30,10 @@ import numpy.random as npr
 
 from . import api
 from . import core
-from . import dtypes
+from . import dtypes as _dtypes
 from . import lax
 from .config import flags, bool_env
-from .util import partial
+from .util import partial, prod
 from .tree_util import tree_multimap, tree_all, tree_map, tree_reduce
 from .lib import xla_bridge
 from .interpreters import xla
@@ -54,16 +55,26 @@ flags.DEFINE_integer(
 flags.DEFINE_bool(
     'jax_skip_slow_tests',
     bool_env('JAX_SKIP_SLOW_TESTS', False),
-    help=
-    'Skip tests marked as slow (> 5 sec).'
+    help='Skip tests marked as slow (> 5 sec).'
+)
+
+flags.DEFINE_string(
+  'test_targets', '',
+  'Regular expression specifying which tests to run, called via re.match on '
+  'the test name. If empty or unspecified, run all tests.'
 )
 
 EPS = 1e-4
 
 def _dtype(x):
   return (getattr(x, 'dtype', None) or
-          np.dtype(dtypes.python_scalar_dtypes.get(type(x), None)) or
+          np.dtype(_dtypes.python_scalar_dtypes.get(type(x), None)) or
           np.asarray(x).dtype)
+
+
+def num_float_bits(dtype):
+  return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
+
 
 def is_sequence(x):
   try:
@@ -83,7 +94,7 @@ _default_tolerance = {
   np.dtype(np.uint16): 0,
   np.dtype(np.uint32): 0,
   np.dtype(np.uint64): 0,
-  np.dtype(dtypes.bfloat16): 1e-2,
+  np.dtype(_dtypes.bfloat16): 1e-2,
   np.dtype(np.float16): 1e-3,
   np.dtype(np.float32): 1e-6,
   np.dtype(np.float64): 1e-15,
@@ -100,7 +111,7 @@ def default_tolerance():
   return tol
 
 default_gradient_tolerance = {
-  np.dtype(dtypes.bfloat16): 1e-1,
+  np.dtype(_dtypes.bfloat16): 1e-1,
   np.dtype(np.float16): 1e-2,
   np.dtype(np.float32): 2e-3,
   np.dtype(np.float64): 1e-5,
@@ -109,8 +120,8 @@ default_gradient_tolerance = {
 }
 
 def _assert_numpy_allclose(a, b, atol=None, rtol=None):
-  a = a.astype(np.float32) if a.dtype == dtypes.bfloat16 else a
-  b = b.astype(np.float32) if b.dtype == dtypes.bfloat16 else b
+  a = a.astype(np.float32) if a.dtype == _dtypes.bfloat16 else a
+  b = b.astype(np.float32) if b.dtype == _dtypes.bfloat16 else b
   kw = {}
   if atol: kw["atol"] = atol
   if rtol: kw["rtol"] = rtol
@@ -121,7 +132,7 @@ def tolerance(dtype, tol=None):
   if not isinstance(tol, dict):
     return tol
   tol = {np.dtype(key): value for key, value in tol.items()}
-  dtype = dtypes.canonicalize_dtype(np.dtype(dtype))
+  dtype = _dtypes.canonicalize_dtype(np.dtype(dtype))
   return tol.get(dtype, default_tolerance()[dtype])
 
 def _normalize_tolerance(tol):
@@ -154,6 +165,15 @@ def check_close(xs, ys, atol=None, rtol=None):
   assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol)
   tree_all(tree_multimap(assert_close, xs, ys))
 
+def _check_dtypes_match(xs, ys):
+  def _assert_dtypes_match(x, y):
+    if FLAGS.jax_enable_x64:
+      assert _dtype(x) == _dtype(y)
+    else:
+      assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
+              _dtypes.canonicalize_dtype(_dtype(y)))
+  tree_all(tree_multimap(_assert_dtypes_match, xs, ys))
+
 
 def inner_prod(xs, ys):
   def contract(x, y):
@@ -161,8 +181,16 @@ def inner_prod(xs, ys):
   return tree_reduce(np.add, tree_multimap(contract, xs, ys))
 
 
+def _safe_subtract(x, y, *, dtype):
+  """Subtraction that with `inf - inf == 0` semantics."""
+  with np.errstate(invalid='ignore'):
+    return np.where(np.equal(x, y), np.array(0, dtype),
+                    np.subtract(x, y, dtype=dtype))
+
 add = partial(tree_multimap, lambda x, y: np.add(x, y, dtype=_dtype(x)))
 sub = partial(tree_multimap, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
+safe_sub = partial(tree_multimap,
+                   lambda x, y: _safe_subtract(x, y, dtype=_dtype(x)))
 conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
 
 def scalar_mul(xs, a):
@@ -173,7 +201,7 @@ def rand_like(rng, x):
   shape = np.shape(x)
   dtype = _dtype(x)
   randn = lambda: np.asarray(rng.randn(*shape), dtype=dtype)
-  if dtypes.issubdtype(dtype, np.complexfloating):
+  if _dtypes.issubdtype(dtype, np.complexfloating):
     return randn() + dtype.type(1.0j) * randn()
   else:
     return randn()
@@ -183,7 +211,7 @@ def numerical_jvp(f, primals, tangents, eps=EPS):
   delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
   f_neg = f(*sub(primals, delta))
-  return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
+  return scalar_mul(safe_sub(f_pos, f_neg), 0.5 / eps)
 
 
 def _merge_tolerance(tol, default):
@@ -202,7 +230,9 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS):
   rng = np.random.RandomState(0)
   tangent = tree_map(partial(rand_like, rng), args)
   v_out, t_out = f_jvp(args, tangent)
+  _check_dtypes_match(v_out, t_out)
   v_out_expected = f(*args)
+  _check_dtypes_match(v_out, v_out_expected)
   t_out_expected = numerical_jvp(f, args, tangent, eps=eps)
   # In principle we should expect exact equality of v_out and v_out_expected,
   # but due to nondeterminism especially on GPU (e.g., due to convolution
@@ -324,18 +354,22 @@ def if_device_under_test(device_type: Union[str, Sequence[str]],
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    return {np.bool_, np.int32, np.uint32, dtypes.bfloat16, np.float32,
-            np.complex64}
+    types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
+             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
   else:
-    return {np.bool_, np.int8, np.int16, np.int32, np.int64,
-            np.uint8, np.uint16, np.uint32, np.uint64,
-            dtypes.bfloat16, np.float16, np.float32, np.float64,
-            np.complex64, np.complex128}
+    types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
+             np.uint8, np.uint16, np.uint32, np.uint64,
+             _dtypes.bfloat16, np.float16, np.float32, np.float64,
+             np.complex64, np.complex128}
+  if not FLAGS.jax_enable_x64:
+    types -= {np.uint64, np.int64, np.float64, np.complex128}
+  return types
 
 def skip_if_unsupported_type(dtype):
-  if dtype not in supported_dtypes():
+  dtype = np.dtype(dtype)
+  if dtype.type not in supported_dtypes():
     raise unittest.SkipTest(
-      f"Type {dtype} not supported on {device_under_test()}")
+      f"Type {dtype.name} not supported on {device_under_test()}")
 
 def skip_on_devices(*disabled_devices):
   """A decorator for test methods to skip the test on certain devices."""
@@ -451,7 +485,7 @@ def _rand_dtype(rand, shape, dtype, scale=1., post=lambda x: x):
     to rand but scaled, converted to the appropriate dtype, and post-processed.
   """
   r = lambda: np.asarray(scale * rand(*_dims_of_shape(shape)), dtype)
-  if dtypes.issubdtype(dtype, np.complexfloating):
+  if _dtypes.issubdtype(dtype, np.complexfloating):
     vals = r() + 1.0j * r()
   else:
     vals = r()
@@ -526,11 +560,11 @@ def rand_some_inf(rng):
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not dtypes.issubdtype(dtype, np.floating):
+    if not _dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if dtypes.issubdtype(dtype, np.complexfloating):
+    if _dtypes.issubdtype(dtype, np.complexfloating):
       base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
              np.array(1j, dtype) * rand(shape, base_dtype))
@@ -554,13 +588,13 @@ def rand_some_nan(rng):
 
   def rand(shape, dtype):
     """The random sampler function."""
-    if dtypes.issubdtype(dtype, np.complexfloating):
+    if _dtypes.issubdtype(dtype, np.complexfloating):
       base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
              np.array(1j, dtype) * rand(shape, base_dtype))
       return _cast_to_shape(out, shape, dtype)
 
-    if not dtypes.issubdtype(dtype, np.floating):
+    if not _dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
@@ -584,11 +618,11 @@ def rand_some_inf_and_nan(rng):
   """
   def rand(shape, dtype):
     """The random sampler function."""
-    if not dtypes.issubdtype(dtype, np.floating):
+    if not _dtypes.issubdtype(dtype, np.floating):
       # only float types have inf
       return base_rand(shape, dtype)
 
-    if dtypes.issubdtype(dtype, np.complexfloating):
+    if _dtypes.issubdtype(dtype, np.complexfloating):
       base_dtype = np.real(np.array(0, dtype=dtype)).dtype
       out = (rand(shape, base_dtype) +
              np.array(1j, dtype) * rand(shape, base_dtype))
@@ -628,12 +662,19 @@ def rand_some_zero(rng):
 
 def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
+    nonlocal high
+    if low == 0 and high is None:
+      if np.issubdtype(dtype, np.integer):
+        high = np.iinfo(dtype).max
+      else:
+        raise ValueError("rand_int requires an explicit `high` value for "
+                         "non-integer types.")
     return rng.randint(low, high=high, size=shape, dtype=dtype)
   return fn
 
 def rand_unique_int(rng, high=None):
   def fn(shape, dtype):
-    return rng.choice(np.arange(high or np.prod(shape), dtype=dtype),
+    return rng.choice(np.arange(high or prod(shape), dtype=dtype),
                       size=shape, replace=False)
   return fn
 
@@ -657,16 +698,16 @@ def check_raises_regexp(thunk, err_type, pattern):
     assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
 
 
-def _iter_eqns(jaxpr):
+def iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
   for eqn in jaxpr.eqns:
     yield eqn
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from _iter_eqns(subjaxpr)
+    yield from iter_eqns(subjaxpr)
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in _iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
@@ -693,6 +734,16 @@ def cases_from_gens(*gens):
   for size in sizes:
     for i in range(cases_per_size):
       yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
+
+
+class JaxTestLoader(absltest.TestLoader):
+  def getTestCaseNames(self, testCaseClass):
+    names = super().getTestCaseNames(testCaseClass)
+    if FLAGS.test_targets:
+      pattern = re.compile(FLAGS.test_targets)
+      names = [name for name in names
+               if pattern.search(f"{testCaseClass.__name__}.{name}")]
+    return names
 
 
 class JaxTestCase(parameterized.TestCase):
@@ -734,8 +785,8 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
     if not FLAGS.jax_enable_x64 and canonicalize_dtypes:
-      self.assertEqual(dtypes.canonicalize_dtype(_dtype(x)),
-                       dtypes.canonicalize_dtype(_dtype(y)))
+      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x)),
+                       _dtypes.canonicalize_dtype(_dtype(y)))
     else:
       self.assertEqual(_dtype(x), _dtype(y))
 
@@ -836,3 +887,79 @@ def ignore_warning(**kw):
   with warnings.catch_warnings():
     warnings.filterwarnings("ignore", **kw)
     yield
+
+
+class _cached_property:
+  null = object()
+
+  def __init__(self, method):
+    self._method = method
+    self._value = self.null
+
+  def __get__(self, obj, cls):
+    if self._value is self.null:
+      self._value = self._method(obj)
+    return self._value
+
+
+class _LazyDtypes:
+  """A class that unifies lists of supported dtypes.
+
+  These could be module-level constants, but device_under_test() is not always
+  known at import time, so we need to define these lists lazily.
+  """
+  def supported(self, dtypes):
+    supported = supported_dtypes()
+    return type(dtypes)(d for d in dtypes if d in supported)
+
+  @_cached_property
+  def floating(self):
+    return self.supported([np.float32, np.float64])
+
+  @_cached_property
+  def all_floating(self):
+    return self.supported([_dtypes.bfloat16, np.float16, np.float32, np.float64])
+
+  @_cached_property
+  def integer(self):
+    return self.supported([np.int32, np.int64])
+
+  @_cached_property
+  def all_integer(self):
+    return self.supported([np.int8, np.int16, np.int32, np.int64])
+
+  @_cached_property
+  def unsigned(self):
+    return self.supported([np.uint32, np.uint64])
+
+  @_cached_property
+  def all_unsigned(self):
+    return self.supported([np.uint8, np.uint16, np.uint32, np.uint64])
+
+  @_cached_property
+  def complex(self):
+    return self.supported([np.complex64, np.complex128])
+
+  @_cached_property
+  def boolean(self):
+    return self.supported([np.bool_])
+
+  @_cached_property
+  def inexact(self):
+    return self.floating + self.complex
+
+  @_cached_property
+  def all_inexact(self):
+    return self.all_floating + self.complex
+
+  @_cached_property
+  def numeric(self):
+    return self.floating + self.integer + self.unsigned + self.complex
+
+  @_cached_property
+  def all(self):
+    return (self.all_floating + self.all_integer + self.all_unsigned +
+            self.complex + self.boolean)
+
+
+dtypes = _LazyDtypes()
