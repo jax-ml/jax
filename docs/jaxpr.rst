@@ -66,7 +66,7 @@ Equations are printed as follows::
   Eqn  ::= let Var+ = Primitive [ Param* ] Expr+
 
 where:
-  * ``Var+”`` are one or more intermediate variables to be defined as the
+  * ``Var+`` are one or more intermediate variables to be defined as the
     output of a primitive invocation (some primitives can return multiple values)
   * ``Expr+`` are one or more atomic expressions, each either a variable or a
     literal constant. A special form of an atomic expression is the `unit`
