@@ -219,8 +219,7 @@ def prettify_not_yet_covered(covered_set: Set[core.Primitive]) -> str:
   Builds an ordered summary markdown list of all the primitives that are
   implemented but not in the set passed as an argument.
   """
-  ignore = set([xla.xla_call_p, pxla.xla_pmap_p, pe.remat_call_p, core.call_p,
-                lax.cond_p, lax.scan_p, lax.while_p])
+  ignore = set([xla.xla_call_p, pxla.xla_pmap_p, pe.remat_call_p, core.call_p])
   not_yet_covered = (
     set(filter(lambda prim: not prim in ignore, set(tf_impl) - covered_set)))
 
