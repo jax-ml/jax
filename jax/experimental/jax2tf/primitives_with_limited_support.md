@@ -82,4 +82,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `conv_general_dilated`, `custom_lin`, `dot_general`, `fft`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `svd`
+`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `conv_general_dilated`, `custom_lin`, `dot_general`, `fft`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`
