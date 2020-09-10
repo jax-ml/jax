@@ -510,8 +510,8 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
       [np.array([+np.inf, np.nan, -np.nan, -np.inf, 2, 4, 189], dtype=np.float32), -1]
   ]
   for is_stable in [False, True]
-) + tuple( # several arrays, random data, all axes, all dtypes
-  Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
+) + tuple( # 2 arrays, random data, all axes, all dtypes
+  Harness(f"two_arrays_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
           lambda *args: lax.sort_p.bind(*args[:-2], dimension=args[-2], is_stable=args[-1], num_keys=1),
           [RandArg(shape, dtype), RandArg(shape, dtype), StaticArg(dimension), StaticArg(is_stable)],
           shape=shape,
@@ -521,6 +521,19 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
   for dtype in jtu.dtypes.all
   for shape in [(5,), (5, 7)]
   for dimension in range(len(shape))
+  for is_stable in [False, True]
+) + tuple( # 3 arrays, random data, all axes, all dtypes
+  Harness(f"three_arrays_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
+          lambda *args: lax.sort_p.bind(*args[:-2], dimension=args[-2], is_stable=args[-1], num_keys=1),
+          [RandArg(shape, dtype), RandArg(shape, dtype), RandArg(shape, dtype),
+           StaticArg(dimension), StaticArg(is_stable)],
+          shape=shape,
+          dimension=dimension,
+          dtype=dtype,
+          is_stable=is_stable)
+  for dtype in jtu.dtypes.all
+  for shape in [(5,)]
+  for dimension in (0,)
   for is_stable in [False, True]
 )
 
