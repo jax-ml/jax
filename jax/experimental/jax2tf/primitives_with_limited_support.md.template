@@ -23,4 +23,11 @@ conversion to Tensorflow.
 
 The conversion of the following JAX primitives is not yet implemented:
 
-{{not-yet-impl-primitives-list}}
+{{not-yet-impl-primitives}}
+
+## Primitive conversions with missing tests
+
+The following JAX primitives have a defined conversion but are known to be
+missing tests:
+
+{{not-yet-covered-primitives}}

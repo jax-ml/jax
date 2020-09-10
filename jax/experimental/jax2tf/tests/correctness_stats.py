@@ -15,13 +15,14 @@
 import datetime
 import functools
 import numpy as np
-from typing import Any, Callable, List, NamedTuple, Optional, Tuple, Sequence
+from typing import Any, Callable, Collection, List, NamedTuple, Optional, \
+                   Tuple, Sequence, Set
 
 from jax import core
 from jax import dtypes
 from jax import lax
 from jax import lax_linalg
-from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl
+from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl
 
 def to_jax_dtype(tf_dtype):
   if tf_dtype.name == 'bfloat16':
@@ -150,7 +151,8 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if kwargs["is_stable"]:
       tf_unimpl(additional_msg="stable sort not implemented for XlaSort")
     if kwargs["dimension"] != len(np.shape(args[0])) - 1:
-      tf_unimpl(additional_msg="only sorting on last dimension is supported for XlaSort")
+      tf_unimpl(additional_msg="only sorting on last dimension is supported "
+                               "for XlaSort")
     if len(args) > 2:
       tf_unimpl(additional_msg=(
         "sorting more than 2 arrays is not supported for XlaSort"))
@@ -200,19 +202,30 @@ def prettify(limitations: Sequence[Limitation]) -> str:
 
   return '\n'.join(line for line in map(_pipewrap, table))
 
-def prettify_not_yet_implemented() -> str:
-  """Constructs a summary markdown list of the unimplemented primitives."""
-  ordered_unimpl: List[str]
-  ordered_unimpl = sorted(list(map(lambda prim: prim.name, tf_not_yet_impl)))
+def prettify_as_ordered_list(collec: Collection[core.Primitive]) -> str:
+  """Builds an ordered summary markdown list of a collection of primitives."""
+  ordered_list: List[str] = sorted(list(map(lambda prim: prim.name, collec)))
 
   backtick_wrap = lambda prim_name: f'`{prim_name}`'
-  return ', '.join(list(map(backtick_wrap, ordered_unimpl)))
+  return ', '.join(list(map(backtick_wrap, ordered_list)))
 
-def pprint_limitations(limitations: Sequence[Limitation], output_file: str,
-                       template_file: str) -> None:
+prettify_not_yet_implemented = lambda: prettify_as_ordered_list(tf_not_yet_impl)
+
+def prettify_not_yet_covered(covered_set: Set[core.Primitive]) -> str:
+  """
+  Builds an ordered summary markdown list of all the primitives that are
+  implemented but not in the set passed as an argument.
+  """
+  return prettify_as_ordered_list(set(tf_impl) - covered_set)
+
+def pprint_limitations(limitations: Sequence[Limitation],
+                       covered_primitives: Set[core.Primitive],
+                       output_file: str, template_file: str) -> None:
 
   limited_support_table = prettify(limitations)
-  not_yet_impl_primitives_list = prettify_not_yet_implemented()
+  not_yet_impl_primitives = prettify_not_yet_implemented()
+  not_yet_covered_primitives = prettify_not_yet_covered(covered_primitives)
+
   generation_date = str(datetime.date.today())
 
   with open(template_file, 'r') as f:
@@ -221,20 +234,25 @@ def pprint_limitations(limitations: Sequence[Limitation], output_file: str,
   output = (output
     .replace('{{limited-support-table}}', limited_support_table)
     .replace('{{generation-date}}', generation_date)
-    .replace('{{not-yet-impl-primitives-list}}', not_yet_impl_primitives_list))
+    .replace('{{not-yet-impl-primitives}}', not_yet_impl_primitives)
+    .replace('{{not-yet-covered-primitives}}', not_yet_covered_primitives))
 
   with open(output_file, 'w') as f:
     f.write(output)
 
 all_limitations: Sequence[Limitation] = []
-pprint_all_limitations = functools.partial(pprint_limitations, all_limitations)
+covered_primitives: Set[core.Primitive] = set()
+
+pprint_all_limitations = functools.partial(pprint_limitations, all_limitations,
+                                           covered_primitives)
 
 def collect_limitations(prim: core.Primitive, func: Callable) -> Callable:
   """
   Wraps a primitive and its corresponding TF implementation with `categorize`.
   """
   def wrapper(*args, **kwargs):
-    global all_limitations
+    global all_limitations, covered_primitives
+    covered_primitives.add(prim)
     all_limitations += categorize(prim, *args, **kwargs)
     return func(*args, **kwargs)
   return wrapper

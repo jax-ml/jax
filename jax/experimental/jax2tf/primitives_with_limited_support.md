@@ -75,3 +75,10 @@ conversion to Tensorflow.
 The conversion of the following JAX primitives is not yet implemented:
 
 `after_all`, `all_to_all`, `axis_index`, `cholesky`, `create_token`, `cummax`, `cummin`, `custom_linear_solve`, `eig`, `eigh`, `igamma_grad_a`, `infeed`, `lu`, `outfeed`, `pmax`, `pmin`, `ppermute`, `psum`, `random_gamma_grad`, `reduce`, `rng_uniform`, `triangular_solve`, `xla_pmap`
+
+## Primitive conversions with missing tests
+
+The following JAX primitives have a defined conversion but are known to be
+missing tests:
+
+`add_any`, `argmax`, `argmin`, `broadcast`, `call`, `clamp`, `complex`, `cond`, `conj`, `conv_general_dilated`, `custom_jvp_call_jaxpr`, `custom_lin`, `custom_vjp_call_jaxpr`, `dot_general`, `imag`, `integer_pow`, `real`, `remat_call`, `rev`, `scan`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `transpose`, `xla_call`
