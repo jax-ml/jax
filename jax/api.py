@@ -1910,11 +1910,11 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
   """
   def abstractify(x):
     return core.ShapedArray(np.shape(x), dtypes.result_type(x))
-  args_flat, in_tree = tree_flatten(args)
+  primals_flat, in_tree = tree_flatten(primals)
   flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  in_avals = map(abstractify, args_flat)
+  in_avals = map(abstractify, primals_flat)
   in_dtypes = map(dtypes.dtype, in_avals)
-  if any(np.issubdtype(dtype, np.inexact) for dtype in in_dtypes):
+  if any(not np.issubdtype(dtype, np.inexact) for dtype in in_dtypes):
     raise TypeError("linear_transpose only supports float and complex inputs, "
                     f"but got {in_dtypes}")
 
