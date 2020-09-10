@@ -1871,29 +1871,33 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
-def linear_transpose(fun: Callable, *args) -> Callable:
+def linear_transpose(fun: Callable, *primals) -> Callable:
   """Transpose a function that is promised to be linear.
 
   For linear functions, this transformation is equivalent to ``vjp``, but
   avoids the overhead of computing the forward pass.
 
   The outputs of the transposed function will always have the exact same dtypes
-  as ``*args``, even if some values are truncated (e.g., from complex to float
-  or float to integer). To avoid truncation, use dtypes in ``**args`` that
-  match the full range of output values.
+  as ``primals``, even if some values are truncated (e.g., from complex to
+  float, or from float64 to float32). To avoid truncation, use dtypes in
+  ``primals`` that match the full range of desired outputs from the transposed
+  function. Integer dtypes are not supported.
 
   Args:
     fun: the linear function to be transposed.
-    *args: a positional argument tuple of arrays, scalars, or (nested) standard
-      Python containers (tuples, lists, dicts, namedtuples, i.e. pytrees) of
-      those types used for evaluating the shape/dtype of ``fun(*args)``. Since
-      only the ``shape`` and ``dtype`` attributes are accessed, only values
-      that duck-type arrays are required, rather than real ndarrays. (Note that
-      the duck-typed objects cannot be namedtuples because those are treated
-      as standard Python containers.)
+    *primals: a positional argument tuple of arrays, scalars, or (nested)
+      standard Python containers (tuples, lists, dicts, namedtuples, i.e.,
+      pytrees) of those types used for evaluating the shape/dtype of
+      ``fun(*primals)``. These arguments may be real scalars/ndarrays, but that
+      is not required: only the ``shape`` and ``dtype`` attributes are accessed.
+      See below for an example. (Note that the duck-typed objects cannot be
+      namedtuples because those are treated as standard Python containers.)
 
   Returns:
-    A callable that calculates the transpose of ``fun``.
+    A callable that calculates the transpose of ``fun``. Valid input into this
+    function must have the same shape/dtypes/structure as the result of
+    ``fun(*primals)``. Output will be a tuple, with the same
+    shape/dtypes/structure as ``primals``.
 
   >>> import jax
   >>> import types
@@ -1909,6 +1913,11 @@ def linear_transpose(fun: Callable, *args) -> Callable:
   args_flat, in_tree = tree_flatten(args)
   flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   in_avals = map(abstractify, args_flat)
+  in_dtypes = map(dtypes.dtype, in_avals)
+  if any(np.issubdtype(dtype, np.inexact) for dtype in in_dtypes):
+    raise TypeError("linear_transpose only supports float and complex inputs, "
+                    f"but got {in_dtypes}")
+
   in_pvals = map(pe.PartialVal.unknown, in_avals)
   jaxpr, out_pvals, consts = pe.trace_to_jaxpr(flat_fun, in_pvals,
                                                instantiate=True)
