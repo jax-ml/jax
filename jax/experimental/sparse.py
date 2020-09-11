@@ -130,7 +130,7 @@ class CSR(SparseArray):
     self.indices, self.indptr = _promote_args("CSR", indices, indptr)
     self.data = jnp.array(data)
     if shape is None:
-      shape = (len(self.indptr) - 1, self.indices.max())
+      shape = (len(self.indptr) - 1, self.indices.max() + 1)
     self._shape = shape
 
     assert len(shape) == 2
@@ -280,3 +280,100 @@ class ELL(SparseArray):
     invalid = (jnp.arange(self.data.shape[1]) >= self.rownz[:, None])
     dv = self.data * v[self.columns]
     return dv.at[invalid].set(0).sum(1, dtype=dv.dtype)
+
+
+class BSR(SparseArray):
+  """JAX-based sparse array stored in BSR format."""
+  def __init__(self, indices, indptr, data, shape=None):
+    self.indices, self.indptr = _promote_args("CSR", indices, indptr)
+    self.data = jnp.array(data)
+    assert self.data.ndim == 3
+    assert self.indices.shape == self.data.shape[:1]
+
+    if shape is None:
+      shape = (self.blocksize[0] * (len(self.indptr) - 1),
+               self.blocksize[1] * (self.indices.max() + 1))
+    self._shape = shape
+
+    assert len(shape) == 2
+    assert shape[0] % self.blocksize[0] == 0
+    assert shape[1] % self.blocksize[1] == 0
+    assert shape[0] // self.blocksize[0] == (len(self.indptr) - 1)
+    assert shape[1] // self.blocksize[1] > self.indices.max()
+
+  @property
+  def blocksize(self):
+    return self.data.shape[1:]
+
+  @property
+  def blockshape(self):
+    return (self.shape[0] // self.blocksize[0], self.shape[1] // self.blocksize[1])
+
+  def __repr__(self):
+    return f"{self.__class__.__name__}({self.dtype.name}{list(self.shape)}, blocksize={self.blocksize}, nnz={self.nnz})"
+
+  @property
+  def index_dtype(self):
+    return self.indices.dtype
+
+  @property
+  def dtype(self):
+    return self.data.dtype
+
+  @property
+  def nnz(self):
+    return self.data.size
+
+  @property
+  def shape(self):
+    return tuple(self._shape)
+
+  def matvec(self, v):
+    # TODO(jakevdp): specialize this
+    return self.todense() @ v
+
+  @classmethod
+  def fromdense(cls, x, blocksize=None):
+    x = jnp.asarray(x)
+    if blocksize is None:
+      blocksize = (1, 1)
+    blocksize = tuple(blocksize)
+    assert len(blocksize) == 2
+    assert x.ndim == 2
+    assert all(i % j == 0 for i, j in zip(x.shape, blocksize))
+    blockshape = (x.shape[0] // blocksize[0], x.shape[1] // blocksize[1])
+    data = x.reshape(blockshape[0], blocksize[0], blockshape[1], blocksize[1])
+    data = data.transpose((0, 2, 1, 3))
+
+    nz = (data != 0).any(-1).any(-1)
+    row, col = jnp.where(nz)
+    dataflat = data[nz]
+    if len(row) == 0:
+      return cls(row, jnp.zeros(data.shape[0] + 1, row.dtype), dataflat, x.shape)
+    row, col = lax.sort_key_val(row, col)
+    indices = jnp.ravel(col)
+    indptr = jnp.cumsum(jnp.bincount(row))
+    indptr = jnp.concatenate([
+      jnp.zeros(1, indptr.dtype),
+      indptr,
+      jnp.full(data.shape[0] - len(indptr), indptr[-1])
+    ])
+    return cls(indices, indptr, dataflat, x.shape)
+  
+  def tocoo(self):
+    # TODO(jakevdp): specialize this
+    return COO.fromdense(self.todense())
+  
+  def tocsr(self):
+    # TODO(jakevdp): specialize this
+    return CSR.fromdense(self.todense())
+  
+  def todense(self):
+    d = jnp.zeros(self.blockshape + self.blocksize, self.dtype)
+    row = jnp.repeat(jnp.arange(self.blockshape[0]), jnp.diff(self.indptr))
+    col = self.indices
+    return d.at[row, col].add(self.data).transpose((0, 2, 1, 3)).reshape(self.shape)
+  
+  def toell(self):
+    # TODO(jakevdp): specialize this
+    return ELL.fromdense(self.todense())

@@ -45,6 +45,7 @@ def rng_sparse(rng, shape, dtype, nnz=0.2):
 
 test_shapes_2d = [(1, 5), (2, 3), (10, 1)]
 test_shapes = {
+  sparse.BSR: test_shapes_2d,
   sparse.CSR: test_shapes_2d,
   sparse.ELL: test_shapes_2d,
   sparse.COO: [(5,), (2, 3), (4, 2, 5)]
@@ -57,7 +58,7 @@ class SparseTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype), sparse_type.__name__, nnz),
       "dtype": dtype, "shape": shape, "sparse_type": sparse_type, "nnz": nnz}
     for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
-    for sparse_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for sparse_type in [sparse.COO, sparse.CSR, sparse.ELL, sparse.BSR]
     for nnz in [0, 0.2, 0.8]
     for shape in test_shapes[sparse_type]))
   def testDenseRoundTrip(self, dtype, shape, sparse_type, nnz):
@@ -74,7 +75,7 @@ class SparseTest(jtu.JaxTestCase):
         jtu.format_shape_dtype_string(shape, dtype), sparse_type.__name__, nnz),
       "dtype": dtype, "shape": shape, "sparse_type": sparse_type, "nnz": nnz}
     for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
-    for sparse_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for sparse_type in [sparse.COO, sparse.CSR, sparse.ELL, sparse.BSR]
     for nnz in [0, 0.2, 0.8]
     for shape in test_shapes_2d))
   def testMatvec(self, dtype, shape, sparse_type, nnz):
@@ -93,7 +94,7 @@ class SparseTest(jtu.JaxTestCase):
       "dtype": dtype, "shape": shape, "input_type": input_type,
       "output_type": output_type, "nnz": nnz}
     for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
-    for input_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for input_type in [sparse.COO, sparse.CSR, sparse.ELL, sparse.BSR]
     for output_type in [sparse.COO, sparse.CSR, sparse.ELL]
     for nnz in [0, 0.2, 0.8]
     for shape in test_shapes_2d))
