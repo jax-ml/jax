@@ -1964,13 +1964,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
 
     a_shape = list(shape(a))
     num_dims = len(a_shape)
-
-    if axis < 0:
-      axis = axis + num_dims
-    if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
+    axis = _canonicalize_axis(axis, num_dims)
 
     if fill_nan:
       a = where(isnan(a), _constant_like(a, fill_value), a)
@@ -2907,10 +2901,7 @@ def append(arr, values, axis=None):
 @_wraps(np.apply_along_axis)
 def apply_along_axis(func1d, axis, arr, *args, **kwargs):
   num_dims = ndim(arr)
-  if axis < 0:
-    axis = axis + num_dims
-  if axis < 0 or axis >= num_dims:
-    raise ValueError(f"axis {axis} is out of bounds for array of dimension {num_dims}")
+  axis = _canonicalize_axis(axis, num_dims)
   func = lambda arr: func1d(arr, *args, **kwargs)
   for i in range(1, num_dims - axis):
     func = jax.vmap(func, in_axes=i, out_axes=-1)
@@ -3406,14 +3397,11 @@ def roll(a, shift, axis=None):
 @_wraps(np.rollaxis)
 def rollaxis(a, axis, start=0):
   a_ndim = ndim(a)
-  if not (-a_ndim <= axis < a_ndim):
-    raise ValueError(f"axis={axis} is out of bounds for array of dimension {a_ndim}")
+  axis = _canonicalize_axis(axis, a_ndim)
   if not (-a_ndim <= start <= a_ndim):
     raise ValueError(f"start={start} must satisfy {-a_ndim}<=start<={a_ndim}")
   if start < 0:
     start += a_ndim
-  if axis < 0:
-    axis += a_ndim
   if start > axis:
     start -= 1
   return moveaxis(a, axis, start)
