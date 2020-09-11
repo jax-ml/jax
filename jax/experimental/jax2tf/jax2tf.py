@@ -161,9 +161,9 @@ def convert(fun, with_gradient=True):
     tree_util.tree_map(check_arg, args)
 
     # Name input tensors
-    args = [tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"),
-                               arg)
-            for i, arg in enumerate(args)]
+    args = tuple(
+        tree_util.tree_map(lambda x, i=i: tf.identity(x, f"jax2tf_arg_{i}"), a)
+        for i, a in enumerate(args))
 
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
