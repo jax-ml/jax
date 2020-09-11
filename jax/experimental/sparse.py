@@ -1,6 +1,6 @@
 import abc
 
-from jax import lax
+from jax import lax, vmap
 import jax.numpy as jnp
 from jax.numpy.lax_numpy import _promote_args
 
@@ -205,7 +205,7 @@ class CSR(SparseArray):
     assert v.shape[0] == self.shape[1]
     dv = self.data * v[self.indices]
     ind = jnp.cumsum(jnp.zeros_like(self.indices).at[self.indptr].add(1))
-    return jnp.zeros(len(self.indptr) - 1, dv.dtype).at[ind - 1].add(dv)
+    return jnp.zeros(self.shape[0], dv.dtype).at[ind - 1].add(dv)
 
 
 class ELL(SparseArray):
@@ -328,10 +328,6 @@ class BSR(SparseArray):
   def shape(self):
     return tuple(self._shape)
 
-  def matvec(self, v):
-    # TODO(jakevdp): specialize this
-    return self.todense() @ v
-
   @classmethod
   def fromdense(cls, x, blocksize=None):
     x = jnp.asarray(x)
@@ -359,21 +355,30 @@ class BSR(SparseArray):
       jnp.full(data.shape[0] - len(indptr), indptr[-1])
     ])
     return cls(indices, indptr, dataflat, x.shape)
-  
+
   def tocoo(self):
     # TODO(jakevdp): specialize this
     return COO.fromdense(self.todense())
-  
+
   def tocsr(self):
     # TODO(jakevdp): specialize this
     return CSR.fromdense(self.todense())
-  
+
   def todense(self):
     d = jnp.zeros(self.blockshape + self.blocksize, self.dtype)
     row = jnp.repeat(jnp.arange(self.blockshape[0]), jnp.diff(self.indptr))
     col = self.indices
     return d.at[row, col].add(self.data).transpose((0, 2, 1, 3)).reshape(self.shape)
-  
+
   def toell(self):
     # TODO(jakevdp): specialize this
     return ELL.fromdense(self.todense())
+
+  def matvec(self, v):
+    v = jnp.asarray(v)
+    assert v.ndim == 1
+    assert v.shape[0] == self.shape[1]
+    v = v.reshape(-1, self.blocksize[1])
+    dv = vmap(jnp.dot)(self.data, v[self.indices])
+    ind = jnp.cumsum(jnp.zeros_like(self.indices).at[self.indptr].add(1))
+    return jnp.zeros((self.blockshape[0], self.blocksize[0]), dv.dtype).at[ind - 1].add(dv).ravel()
