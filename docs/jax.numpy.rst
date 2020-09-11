@@ -51,6 +51,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     angle
     any
     append
+    apply_along_axis
     arange
     arccos
     arccosh
