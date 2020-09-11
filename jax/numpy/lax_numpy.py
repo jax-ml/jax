@@ -1657,7 +1657,7 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 ### Reducers
 
 
-def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
+def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
                     upcast_f16_for_computation=False):
   """Creates reduction function given a binary operation and monoid identity."""
 
@@ -1667,11 +1667,8 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
+    _check_arraylike(name, a)
 
-    if isinstance(a, (list, tuple)):
-      msg = ("jax.numpy reductions won't accept lists and tuples in future "
-             "versions, only scalars and ndarrays")
-      warnings.warn(msg, category=FutureWarning)
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
@@ -1714,14 +1711,14 @@ def _reduction_init_val(a, init_val):
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
-sum = _make_reduction(np.sum, lax.add, 0, upcast_f16_for_computation=True,
+sum = _make_reduction("sum", np.sum, lax.add, 0, upcast_f16_for_computation=True,
                       bool_op=lax.bitwise_or)
-product = prod = _make_reduction(np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
+product = prod = _make_reduction("prod", np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
                                  upcast_f16_for_computation=True)
-amax = max = _make_reduction(np.max, lax.max, -np.inf)
-amin = min = _make_reduction(np.min, lax.min, np.inf)
-all = alltrue = _make_reduction(np.all, lax.bitwise_and, True, _cast_to_bool)
-any = sometrue = _make_reduction(np.any, lax.bitwise_or, False, _cast_to_bool)
+amax = max = _make_reduction("max", np.max, lax.max, -np.inf)
+amin = min = _make_reduction("min", np.min, lax.min, np.inf)
+all = alltrue = _make_reduction("all", np.all, lax.bitwise_and, True, _cast_to_bool)
+any = sometrue = _make_reduction("any", np.any, lax.bitwise_or, False, _cast_to_bool)
 
 
 @_wraps(np.mean)
