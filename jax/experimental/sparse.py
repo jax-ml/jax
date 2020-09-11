@@ -15,6 +15,10 @@ class SparseArray(abc.ABC):
     ...
 
   @abc.abstractmethod
+  def tobsr(self, blocksize=None):
+    ...
+
+  @abc.abstractmethod
   def tocoo(self):
     ...
 
@@ -105,6 +109,10 @@ class COO(SparseArray):
   def tocoo(self):
     return self
 
+  def tobsr(self, blocksize=None):
+    # TODO(jakevdp): specialize this
+    return BSR.fromdense(self.todense(), blocksize=blocksize)
+
   def tocsr(self):
     assert self.ndim == 2
     row, col, data = lax.sort(tuple(self.coords) + (self.data,))
@@ -165,6 +173,10 @@ class CSR(SparseArray):
 
   def tocsr(self):
     return self
+
+  def tobsr(self, blocksize=None):
+    # TODO(jakevdp): specialize this
+    return BSR.fromdense(self.todense(), blocksize=blocksize)
 
   def tocoo(self):
     row = jnp.repeat(jnp.arange(self.shape[0]), jnp.diff(self.indptr))
@@ -242,6 +254,10 @@ class ELL(SparseArray):
 
   def toell(self):
     return self
+
+  def tobsr(self, blocksize=None):
+    # TODO(jakevdp): specialize this
+    return BSR.fromdense(self.todense(), blocksize=blocksize)
 
   def tocsr(self):
     valid = (jnp.arange(self.data.shape[1]) < self.rownz[:, None])
@@ -356,6 +372,18 @@ class BSR(SparseArray):
     ])
     return cls(indices, indptr, dataflat, x.shape)
 
+  def todense(self):
+    d = jnp.zeros(self.blockshape + self.blocksize, self.dtype)
+    row = jnp.repeat(jnp.arange(self.blockshape[0]), jnp.diff(self.indptr))
+    col = self.indices
+    return d.at[row, col].add(self.data).transpose((0, 2, 1, 3)).reshape(self.shape)
+
+  def tobsr(self, blocksize=None):
+    if blocksize is not None and blocksize != self.blocksize:
+      # TODO(jakevdp): specialize this
+      return self.fromdense(self.todense(), blocksize=blocksize)
+    return self
+
   def tocoo(self):
     # TODO(jakevdp): specialize this
     return COO.fromdense(self.todense())
@@ -363,12 +391,6 @@ class BSR(SparseArray):
   def tocsr(self):
     # TODO(jakevdp): specialize this
     return CSR.fromdense(self.todense())
-
-  def todense(self):
-    d = jnp.zeros(self.blockshape + self.blocksize, self.dtype)
-    row = jnp.repeat(jnp.arange(self.blockshape[0]), jnp.diff(self.indptr))
-    col = self.indices
-    return d.at[row, col].add(self.data).transpose((0, 2, 1, 3)).reshape(self.shape)
 
   def toell(self):
     # TODO(jakevdp): specialize this

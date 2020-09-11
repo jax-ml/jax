@@ -95,7 +95,7 @@ class SparseTest(jtu.JaxTestCase):
       "output_type": output_type, "nnz": nnz}
     for dtype in [np.float16, np.float32, np.float64, np.int32, np.int64]
     for input_type in [sparse.COO, sparse.CSR, sparse.ELL, sparse.BSR]
-    for output_type in [sparse.COO, sparse.CSR, sparse.ELL]
+    for output_type in [sparse.COO, sparse.CSR, sparse.ELL, sparse.BSR]
     for nnz in [0, 0.2, 0.8]
     for shape in test_shapes_2d))
   def testFormatConversions(self, dtype, shape, input_type, output_type, nnz):
