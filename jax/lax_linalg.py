@@ -47,8 +47,9 @@ def cholesky(x, symmetrize_input=True):
     x = symmetrize(x)
   return jnp.tril(cholesky_p.bind(x))
 
-def eig(x, jobvl=False, jobvr=False):
-  return eig_p.bind(x, jobvl=jobvl, jobvr=jobvr)
+def eig(x, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
+  return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
+                    compute_right_eigenvectors=compute_right_eigenvectors)
 
 def eigh(x, lower=True, symmetrize_input=True):
   if symmetrize_input:
@@ -165,14 +166,19 @@ xla.backend_specific_translations['gpu'][cholesky_p] = partial(
 
 # Asymmetric eigendecomposition
 
-def eig_impl(operand, jobvl, jobvr):
-  return xla.apply_primitive(eig_p, operand, jobvl=jobvl, jobvr=jobvr)
+def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors):
+  return (
+    xla.apply_primitive(eig_p, operand,
+                        compute_left_eigenvectors=compute_left_eigenvectors,
+                        compute_right_eigenvectors=compute_right_eigenvectors))
 
-def eig_translation_rule(c, operand, jobvl, jobvr):
+def eig_translation_rule(c, operand, *, compute_left_eigenvectors,
+                         compute_right_eigenvectors):
   raise NotImplementedError(
     "Nonsymmetric eigendecomposition is only implemented on the CPU backend")
 
-def eig_abstract_eval(operand, jobvl, jobvr):
+def eig_abstract_eval(operand, *, compute_left_eigenvectors,
+                      compute_right_eigenvectors):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError("Argument to nonsymmetric eigendecomposition must have "
@@ -187,52 +193,49 @@ def eig_abstract_eval(operand, jobvl, jobvr):
   else:
     raise NotImplementedError
 
-  if jobvl and jobvr:
-    return w, vl, vr
-  elif jobvl:
-    return w, vl
-  elif jobvr:
-    return w, vr
-  else:
-    return w,
+  output = [w]
+  if compute_left_eigenvectors:
+    output.append(vl)
+  elif compute_right_eigenvectors:
+    output.append(vr)
+  return tuple(output)
 
 _cpu_geev = lapack.geev
 
-def eig_cpu_translation_rule(c, operand, jobvl, jobvr):
+def eig_cpu_translation_rule(c, operand, *, compute_left_eigenvectors,
+                             compute_right_eigenvectors):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
 
-  w, vl, vr, info = _cpu_geev(c, operand, jobvl=jobvl, jobvr=jobvr)
+  w, vl, vr, info = _cpu_geev(c, operand, jobvl=compute_left_eigenvectors,
+                              jobvr=compute_right_eigenvectors)
 
   ok = xops.Eq(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
                            _nan_like(c, w))
   output = [w]
 
-  if jobvl:
+  if compute_left_eigenvectors:
     vl = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vl,
                               _nan_like(c, vl))
     output.append(vl)
 
-  if jobvr:
+  if compute_right_eigenvectors:
     vr = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vr,
                               _nan_like(c, vr))
     output.append(vr)
 
   return xops.Tuple(c, output)
 
-def eig_batching_rule(batched_args, batch_dims, jobvl=False, jobvr=False):
+def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
+                      compute_right_eigenvectors):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
 
-  output_shape_descriptor = [0]
-  if jobvl:
-    output_shape_descriptor.append(0)
-  if jobvr:
-    output_shape_descriptor.append(0)
-
-  return eig_p.bind(x, jobvl=jobvl, jobvr=jobvr), tuple(output_shape_descriptor)
+  return (eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
+                     compute_right_eigenvectors=compute_right_eigenvectors),
+          (0,) * (1 + compute_left_eigenvectors + compute_right_eigenvectors))
 
 eig_p = Primitive('eig')
 eig_p.multiple_results = True

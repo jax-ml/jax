@@ -256,12 +256,13 @@ def _det_jvp(primals, tangents):
 @_wraps(np.linalg.eig)
 def eig(a):
   a = _promote_arg_dtypes(jnp.asarray(a))
-  return lax_linalg.eig(a, jobvr=True)
+  return lax_linalg.eig(a, compute_left_eigenvectors=False)
 
 
 @_wraps(np.linalg.eigvals)
 def eigvals(a):
-  return lax_linalg.eig(a)[0]
+  return lax_linalg.eig(a, compute_left_eigenvectors=False,
+                        compute_right_eigenvectors=False)[0]
 
 
 @_wraps(np.linalg.eigh)
