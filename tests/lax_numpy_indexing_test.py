@@ -1058,9 +1058,28 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     expected = np.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+    # test with explicit num_segments larger than the higher index.
+    ans = ops.segment_sum(data, segment_ids, num_segments=5)
+    expected = np.array([13, 2, 7, 4, 0])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
     # test without explicit num_segments
     ans = ops.segment_sum(data, segment_ids)
     expected = np.array([13, 2, 7, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # test with negative segment ids and segment ids larger than num_segments,
+    # that will be wrapped with the `mod`.
+    segment_ids = np.array([0, 4, 8, 1, 2, -6, -1, 3])
+    ans = ops.segment_sum(data, segment_ids, num_segments=4)
+    expected = np.array([13, 2, 7, 4])
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # test with negative segment ids and without without explicit num_segments
+    # such as num_segments is defined by the smaller index.
+    segment_ids = np.array([3, 3, 3, 4, 5, 5, -7, -6])
+    ans = ops.segment_sum(data, segment_ids)
+    expected = np.array([1, 3, 0, 13, 2, 7, 0])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testIndexDtypeError(self):
