@@ -22,7 +22,8 @@ __all__ = [
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 51)
+# must be kept in sync with the version in build/test-requirements.txt
+_minimum_jaxlib_version = (0, 1, 55)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
