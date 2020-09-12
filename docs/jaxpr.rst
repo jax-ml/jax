@@ -21,7 +21,7 @@ will apply transformations incrementally during tracing.
 Nevertheless, if one wants to understand how JAX works internally, or to
 make use of the result of JAX tracing, it is useful to understand jaxpr.
 
-A jaxpr instance represents a function with one of more typed parameters (input variables)
+A jaxpr instance represents a function with one or more typed parameters (input variables)
 and one or more typed results. The results depend only on the input
 variables; there are no free variables captured from enclosing scopes.
 The inputs and outputs have types, which in JAX are represented as abstract
