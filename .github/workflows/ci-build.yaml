@@ -60,7 +60,8 @@ jobs:
             os: ubuntu-latest
             enable-x64: 1
             enable-omnistaging: 0
-            package-overrides: "none"
+            # Test experimental NumPy dispatch
+            package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 25
           - python-version: 3.6
             os: ubuntu-latest

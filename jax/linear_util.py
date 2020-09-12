@@ -147,7 +147,17 @@ class WrappedFun(object):
       stack.append((gen, out_store))
     gen = None
 
-    ans = self.f(*args, **dict(self.params, **kwargs))
+    try:
+      ans = self.f(*args, **dict(self.params, **kwargs))
+    except:
+      # Some transformations yield from inside context managers, so we have to
+      # interrupt them before reraising the exception. Otherwise they will only
+      # get garbage-collected at some later time, running their cleanup tasks only
+      # after this exception is handled, which can corrupt the global state.
+      while stack:
+        stack.pop()[0].close()
+      raise
+
     del args
     while stack:
       gen, out_store = stack.pop()

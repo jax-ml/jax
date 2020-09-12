@@ -26,6 +26,7 @@ import jax.numpy as jnp
 from jax import lax
 from jax import ops
 from jax import random
+from jax.util import prod
 
 def zeros(key, shape, dtype=jnp.float32): return jnp.zeros(shape, dtype)
 def ones(key, shape, dtype=jnp.float32): return jnp.ones(shape, dtype)
@@ -41,7 +42,7 @@ def normal(stddev=1e-2, dtype=jnp.float32):
   return init
 
 def _compute_fans(shape, in_axis=-2, out_axis=-1):
-  receptive_field_size = np.prod(shape) / shape[in_axis] / shape[out_axis]
+  receptive_field_size = prod(shape) / shape[in_axis] / shape[out_axis]
   fan_in = shape[in_axis] * receptive_field_size
   fan_out = shape[out_axis] * receptive_field_size
   return fan_in, fan_out
@@ -85,7 +86,7 @@ def orthogonal(scale=1.0, column_axis=-1, dtype=jnp.float32):
   def init(key, shape, dtype=dtype):
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
-    n_rows, n_cols = np.prod(shape) // shape[column_axis], shape[column_axis]
+    n_rows, n_cols = prod(shape) // shape[column_axis], shape[column_axis]
     matrix_shape = (n_cols, n_rows) if n_rows < n_cols else (n_rows, n_cols)
     A = random.normal(key, matrix_shape, dtype)
     Q, R = jnp.linalg.qr(A)

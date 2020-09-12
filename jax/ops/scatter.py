@@ -316,8 +316,10 @@ def segment_sum(data, segment_ids, num_segments=None,
       need not be sorted. Values outside of the range [0, num_segments) are
       wrapped into that range by applying jnp.mod.
     num_segments: optional, an int with positive value indicating the number of
-      segments. The default is ``max(segment_ids % data.shape[0]) + 1`` but
-      since `num_segments` determines the size of the output, a static value
+      segments. The default is set to be the minimum number of segments that
+      would support all positive and negative indices in `segment_ids`
+      calculated as ``max(max(segment_ids) + 1, max(-segment_ids))``.
+      Since `num_segments` determines the size of the output, a static value
       must be provided to use `segment_sum` in a `jit`-compiled function.
     indices_are_sorted: whether `segment_ids` is known to be sorted
     unique_indices: whether `segment_ids` is known to be free of duplicates
@@ -327,7 +329,7 @@ def segment_sum(data, segment_ids, num_segments=None,
     segment sums.
   """
   if num_segments is None:
-    num_segments = jnp.max(jnp.mod(segment_ids, data.shape[0])) + 1
+    num_segments = max(jnp.max(segment_ids) + 1, jnp.max(-segment_ids))
   num_segments = int(num_segments)
 
   out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)

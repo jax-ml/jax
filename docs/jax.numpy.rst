@@ -51,6 +51,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     angle
     any
     append
+    apply_along_axis
     arange
     arccos
     arccosh
@@ -67,6 +68,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     array
     array_equal
     array_repr
+    array_split
     array_str
     asarray
     atleast_1d
@@ -342,6 +344,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     tril
     tril_indices
     tril_indices_from
+    trim_zeros
     triu
     triu_indices
     triu_indices_from

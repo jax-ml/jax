@@ -32,6 +32,7 @@ from jax import test_util as jtu
 from jax import lax_reference
 from jax.test_util import check_grads
 import jax.util
+from jax.util import prod
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -994,9 +995,21 @@ class LaxTest(jtu.JaxTestCase):
       {"testcase_name": "_inshape={}_pads={}"
        .format(jtu.format_shape_dtype_string(shape, dtype), pads),
        "shape": shape, "dtype": dtype, "pads": pads, "rng_factory": jtu.rand_small}
-      for shape in [(0, 2), (2, 3)]
       for dtype in default_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)]]))
+      for shape, pads in [
+          ((0, 2), [(1, 2, 1), (0, 1, 0)]),
+          ((2, 3), [(1, 2, 1), (0, 1, 0)]),
+          ((2,), [(1, 2, 0)]),
+          ((1, 2), [(1, 2, 0), (3, 4, 0)]),
+          ((1, 2), [(0, 0, 0), (0, 0, 0)]),
+          ((2,), [(1, 2, 3),]),
+          ((3, 2), [(1, 2, 1), (3, 4, 2)]),
+          ((2,), [(-1, 2, 0),]),
+          ((4, 2), [(-1, -2, 0), (1, 2, 0)]),
+          ((4, 2), [(-1, 2, 0), (1, 2, 2)]),
+          ((5,), [(-1, -2, 2),]),
+          ((4, 2), [(-1, -2, 1), (1, 2, 2)])
+      ]))
   def testPad(self, shape, dtype, pads, rng_factory):
     rng = rng_factory(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -1023,6 +1036,12 @@ class LaxTest(jtu.JaxTestCase):
     op = lambda x: lax.pad(x, np.array(0, dtype), pads)
     numpy_op = lambda x: lax_reference.pad(x, np.array(0, dtype), pads)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
+
+  def testPadErrors(self):
+    with self.assertRaisesRegex(ValueError, "padding_config"):
+      lax.pad(np.zeros(2), 0., [(0, 1, 0), (0, 1, 0)])
+    with self.assertRaisesRegex(ValueError, "padding_config"):
+      lax.pad(np.zeros(2), 0., [(0, 1, -1)])
 
   def testReverse(self):
     rev = api.jit(lambda operand: lax.rev(operand, dimensions))
@@ -1357,6 +1376,48 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
 
+  def testReduceWindowFailures(self):
+    def empty_window_test():
+      return lax.reduce_window(np.ones((1,)), 0., lax.add, padding='VALID',
+                               window_dimensions=(0,), window_strides=(1,))
+
+    def zero_stride_test():
+      return lax.reduce_window(np.ones((1,)), 0., lax.add, padding='VALID',
+                               window_dimensions=(1,), window_strides=(0,))
+
+    for failure_fun in [empty_window_test, zero_stride_test]:
+      with self.assertRaisesRegex(TypeError, "must have every element be"):
+        failure_fun()
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": (f"_shape={shape}_windowdimensions={window_dimensions}"
+                         f"_basedilation={base_dilation}_windowdilation="
+                         f"{window_dilation}"),
+       "shape": shape, "window_dimensions": window_dimensions,
+       "base_dilation": base_dilation, "window_dilation": window_dilation}
+      for shape, window_dimensions, base_dilation, window_dilation in (
+        itertools.chain(
+          itertools.product(
+            [(4, 6)],
+            [(1, 1), (3, 4)],
+            [(1, 1), (1, 2), (2, 13), (40, 60)],
+            [(1, 1), (1, 2), (2, 13), (40, 60)]),
+          itertools.product(
+            [(3, 2, 4, 6)],
+            [(1, 1, 1, 1), (2, 1, 2, 1)],
+            [(1, 1, 1, 1), (1, 2, 2, 1), (30, 40, 3, 2)],
+            [(1, 1, 1, 1), (1, 2, 2, 1), (30, 40, 3, 2)])))))
+  def testReduceWindowShapeDilation(self, shape, window_dimensions,
+                                    base_dilation, window_dilation):
+      operand, padding, strides = np.ones(shape), 'SAME', (1,) * len(shape)
+      result = lax.reduce_window(operand, 0., lax.add, padding=padding,
+                                 window_strides=strides,
+                                 window_dimensions=window_dimensions)
+      # With a stride of 1 in each direction and a padding of 'SAME', the
+      # shape of the input should be equal to the shape of the result according
+      # to https://www.tensorflow.org/xla/operation_semantics#reducewindow.
+      self.assertEqual(shape, result.shape)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_op={}_shape={}_axis={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
@@ -1448,7 +1509,7 @@ class LaxTest(jtu.JaxTestCase):
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
     def args_maker():
-      flat_keys = np.arange(np.prod(shape, dtype=int), dtype=key_dtype)
+      flat_keys = np.arange(prod(shape), dtype=key_dtype)
       keys = self.rng().permutation(flat_keys).reshape(shape)
       values = rng(shape, val_dtype)
       return keys, values
@@ -1498,7 +1559,7 @@ class LaxTest(jtu.JaxTestCase):
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
     def args_maker():
-      flat_keys = np.arange(np.prod(shape, dtype=int), dtype=key_dtype)
+      flat_keys = np.arange(prod(shape), dtype=key_dtype)
       keys = self.rng().permutation(flat_keys).reshape(shape)
       values = rng(shape, val_dtype)
       return keys, values
@@ -1517,7 +1578,7 @@ class LaxTest(jtu.JaxTestCase):
       for rng_factory in [jtu.rand_default]))
   def testTopK(self, shape, dtype, k, rng_factory):
     def args_maker():
-      flat_values = np.arange(np.prod(shape, dtype=int), dtype=dtype)
+      flat_values = np.arange(prod(shape), dtype=dtype)
       values = self.rng().permutation(flat_values).reshape(shape)
       return [values]
     def reference_top_k(x):
@@ -1606,6 +1667,75 @@ class LaxTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), rand_idxs()]
     fun = partial(lax.gather, dimension_numbers=dnums, slice_sizes=slice_sizes)
     self._CompileAndCheck(fun, args_maker)
+
+  # These tests are adapted from the corresponding tests in
+  # tensorflow/compiler/xla/service/shape_inference_test.cc with slight
+  # variations to account for the implicit setting of index_vector_dim in JAX.
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
+       "start_indices_shape": start_indices_shape,
+       "dimension_numbers": lax.GatherDimensionNumbers(
+          offset_dims=offset_dims,
+          collapsed_slice_dims=collapsed_slice_dims,
+          start_index_map=start_index_map),
+       "slice_sizes": slice_sizes, "msg": msg}
+      for (testcase_name, operand_shape, start_indices_shape, offset_dims,
+           collapsed_slice_dims, start_index_map, slice_sizes, msg) in [
+        ("NonAscendingWindowIndices", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 6, 8, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "offset_dims in gather op must be sorted"),
+        ("RepeatedWindowIndices", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 6, 7, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "offset_dims in gather op must not repeat"),
+        ("WindowIndexOutOfBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 100, 101, 102), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Offset dimension 2 in gather op is out of bounds"),
+        ("WindowIndexBarelyOutOfBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 1),
+         (4, 5, 6, 7, 9), (), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Offset dimension 4 in gather op is out of bounds"),
+        ("MismatchingElidedWindowDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (4,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "All components of the offset index in a gather op must either be a "
+         "offset dimension or explicitly collapsed"),
+        ("OutOfBoundsWindowToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (0, 1, 2, 3, 19), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Invalid collapsed_slice_dims set in gather op; valid range is"),
+        ("RepeatedWindowToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (0, 1, 2, 3, 3), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "collapsed_slice_dims in gather op must not repeat"),
+        ("MismatchingGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (), (0, 1, 2, 3), (10, 9, 8, 7, 6),
+         "Gather op has 4 elements in start_index_map and the bound of "
+         "dimension index_vector_dim=4 of start_indices is 5. These two "
+         "numbers must be equal."),
+        ("OutOfBoundsGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 7), (10, 9, 8, 7, 6),
+         "Invalid start_index_map"),
+        ("RepeatedGatherToInputMapping", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (), (0, 1, 2, 3, 3), (10, 9, 8, 7, 6),
+         "start_index_map in gather op must not repeat"),
+        ("NonAscendingElidedWindowDims", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7, 8), (2, 1), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "collapsed_slice_dims in gather op must be sorted"),
+        ("WindowBoundsTooLarge", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7), (2,), (0, 1, 2, 3, 4), (10, 9, 8, 100, 6),
+         "Slice size at index 3 in gather op is out of range"),
+        ("MismatchingNumberOfWindowBounds", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7), (), (0, 1, 2, 3, 4), (10, 9, 8, 7),
+         "Gather op must have one slice size for every input dimension"),
+        ("WindowBoundsNot1ForElidedDim", (10, 9, 8, 7, 6), (5, 4, 3, 2, 5),
+         (4, 5, 6, 7), (1,), (0, 1, 2, 3, 4), (10, 9, 8, 7, 6),
+         "Gather op can only collapse slice dims with bound 1 or 0, but bound "
+         "is 9 for index 1 at position 0.")
+      ]
+  ))
+  def testGatherShapeCheckingRule(self, operand_shape, start_indices_shape,
+                                  dimension_numbers, slice_sizes, msg):
+    operand = np.ones(operand_shape, dtype=np.int32)
+    start_indices = np.ones(start_indices_shape, dtype=np.int32)
+
+    with self.assertRaisesRegex(TypeError, msg):
+      lax.gather(operand, start_indices, dimension_numbers, slice_sizes)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_update={}_dnums={}".format(
@@ -1722,7 +1852,7 @@ class LaxTest(jtu.JaxTestCase):
       for rng_idx_factory in [partial(jtu.rand_int, high=max(arg_shape))]
       for rng_factory in [jtu.rand_default]))
   def testScatter(self, arg_shape, dtype, idxs, update_shape, dnums,
-                     rng_factory, rng_idx_factory):
+                  rng_factory, rng_idx_factory):
     rng = rng_factory(self.rng())
     rng_idx = rng_idx_factory(self.rng())
     rand_idxs = lambda: rng_idx(idxs.shape, idxs.dtype)
@@ -1730,6 +1860,95 @@ class LaxTest(jtu.JaxTestCase):
                           rng(update_shape, dtype)]
     fun = partial(lax.scatter, dimension_numbers=dnums)
     self._CompileAndCheck(fun, args_maker)
+
+  # These tests are adapted from the corresponding tests in
+  # tensorflow/compiler/xla/service/shape_inference_test.cc with slight
+  # variations to account for the implicit setting of index_vector_dim in JAX.
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{testcase_name}", "operand_shape": operand_shape,
+       "scatter_indices": scatter_indices, "update_shape": update_shape,
+       "dimension_numbers": lax.ScatterDimensionNumbers(
+          update_window_dims=update_window_dims,
+          inserted_window_dims=inserted_window_dims,
+          scatter_dims_to_operand_dims=scatter_dims_to_operand_dims),
+       "msg": msg}
+      for (testcase_name, operand_shape, scatter_indices, update_shape,
+           update_window_dims, inserted_window_dims,
+           scatter_dims_to_operand_dims, msg) in [
+              ("ScatterWithUpdatesBiggerThanInput", (64, 48), np.zeros((32, 1)),
+               (65, 32), (0,), (1,), (1,), "Bounds of the window dimensions"),
+              ("ScatterWithUpdatesBiggerThanInputV2", (64, 48),
+               np.zeros((32, 1)), (32, 49), (1,), (0,), (1,),
+               "Bounds of the window dimensions"),
+              ("ScatterWithUpdatesNotMatchingIndices", (64, 48),
+               np.zeros((32, 1)), (64, 31), (0,), (1,), (1,),
+               "Bounds of the scatter dimensions"),
+              ("ScatterWithUpdatesNotMatchingIndicesV2", (64, 48),
+               np.zeros((32, 1)), (31, 48), (1,), (0,), (1,),
+               "Bounds of the scatter dimensions"),
+              ("ScatterNdWithUpdatesBiggerThanInput", (64, 48),
+               np.zeros((10, 9, 8, 7, 1)), (10, 9, 8, 7, 65), (4,), (1,),
+               (0,), "Bounds of the window dimensions"),
+              ("ScatterNdWithUpdatesNotMatchingIndices", (64, 48),
+               np.zeros((10, 9, 8, 7, 1)), (9, 9, 8, 7, 64), (4,), (1,), (0,),
+               "Bounds of the scatter dimensions"),
+              ("InvalidUpdates", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4, 1),
+               (4, 5, 6), (1, 2), (0, 1, 2, 3, 4),
+               "Updates tensor must be of rank 7; got 8."),
+              ("NonAscendingUpdateWindowDims", (6, 5, 4, 3, 2),
+               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               (4, 5, 6, 8, 7), (), (0, 1, 2, 3, 4),
+               "update_window_dims in scatter op must be sorted"),
+              ("RepeatedUpdateWindowDims", (6, 5, 4, 3, 2),
+               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               (4, 5, 6, 7, 7), (), (0, 1, 2, 3, 4),
+               "update_window_dims in scatter op must not repeat"),
+              ("OutOfBoundsUpdateWindowDims", (6, 5, 4, 3, 2),
+               np.zeros((5, 4, 3, 2, 1)), (10, 9, 8, 7, 6, 5, 4, 3, 2),
+               (4, 5, 6, 7, 9), (), (0, 1, 2, 3, 4),
+               "Invalid update_window_dims set in scatter op"),
+              ("NonAscendingInsertedWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (2, 1), (0, 1, 2, 3, 4),
+               "inserted_window_dims in scatter op must be sorted"),
+              ("RepeatedInsertedWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 1), (0, 1, 2, 3, 4),
+               "inserted_window_dims in scatter op must not repeat"),
+              ("OutOfBoundsInsertedWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 5), (0, 1, 2, 3, 4),
+               "Invalid inserted_window_dims set in scatter op"),
+              ("MismatchingScatterDimsToOperandDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 2), (0, 1, 2, 3),
+               "Scatter op has 4 elements in scatter_dims_to_operand_dims and "
+               "the bound of dimension index_vector_dim=4 of scatter_indices "
+               "is 5. These two numbers must be equal"),
+              ("OutOfBoundsScatterDimsToOperandDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 2), (0, 1, 2, 3, 10),
+               "Invalid scatter_dims_to_operand_dims mapping"),
+              ("RepeatedValuesInScatterDimsToOperandDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1, 2), (0, 1, 2, 2, 3),
+               "scatter_dims_to_operand_dims in scatter op must not repeat"),
+              ("InsufficientWindowDims", (50, 49, 48, 47, 46),
+               np.zeros((10, 9, 8, 7, 5)), (10, 9, 8, 7, 3, 2, 4),
+               (4, 5, 6), (1,), (0, 1, 2, 3),
+               "Scatter op has window of size 4; doesn't match operand of "
+               "rank 5.")
+           ]
+      ))
+  def testScatterShapeCheckingRule(self, operand_shape, scatter_indices,
+                                   update_shape, dimension_numbers, msg):
+
+      operand = np.ones(operand_shape, dtype=np.int32)
+      updates = np.ones(update_shape, dtype=np.int32)
+
+      with self.assertRaisesRegex(TypeError, msg):
+        lax.scatter(operand, scatter_indices, updates, dimension_numbers)
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler

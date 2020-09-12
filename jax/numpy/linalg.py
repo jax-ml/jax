@@ -29,7 +29,7 @@ from .lax_numpy import _not_implemented
 from ._util import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as jnp
-from ..util import get_module_functions
+from ..util import get_module_functions, canonicalize_axis
 from ..third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve # noqa: F401
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
@@ -121,7 +121,7 @@ def slogdet(a):
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
     msg = "Argument to slogdet() must have shape [..., n, n], got {}"
     raise ValueError(msg.format(a_shape))
-  lu, pivot = lax_linalg.lu(a)
+  lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   is_zero = jnp.any(diag == jnp.array(0, dtype=dtype), axis=-1)
   parity = jnp.count_nonzero(pivot != jnp.arange(a_shape[-1]), axis=-1)
@@ -206,7 +206,7 @@ def _cofactor_solve(a, b):
   # lu contains u in the upper triangular matrix and l in the strict lower
   # triangular matrix.
   # The diagonal of l is set to ones without loss of generality.
-  lu, pivots = lax_linalg.lu(a)
+  lu, pivots, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   batch_dims = lax.broadcast_shapes(lu.shape[:-2], b.shape[:-2])
   x = jnp.broadcast_to(b, batch_dims + b.shape[-2:])
@@ -219,7 +219,6 @@ def _cofactor_solve(a, b):
   # partial_det[:, -2] contains det(u) / u_{nn}.
   partial_det = jnp.cumprod(diag, axis=-1) * sign[..., None]
   lu = ops.index_update(lu, ops.index[..., -1, -1], 1.0 / partial_det[..., -2])
-  permutation = lax_linalg.lu_pivots_to_permutation(pivots, a_shape[-1])
   permutation = jnp.broadcast_to(permutation, batch_dims + (a_shape[-1],))
   iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims + (1,)))
   # filter out any matrices that are not full rank
@@ -351,9 +350,9 @@ def _norm(x, ord, axis: Union[None, Tuple[int, ...], int], keepdims):
       return jnp.sqrt(jnp.sum(jnp.real(x * jnp.conj(x)), keepdims=keepdims))
     axis = tuple(range(ndim))
   elif isinstance(axis, tuple):
-    axis = tuple(jnp._canonicalize_axis(x, ndim) for x in axis)
+    axis = tuple(canonicalize_axis(x, ndim) for x in axis)
   else:
-    axis = (jnp._canonicalize_axis(axis, ndim),)
+    axis = (canonicalize_axis(axis, ndim),)
 
   num_axes = len(axis)
   if num_axes == 1:
@@ -465,12 +464,13 @@ def solve(a, b):
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
-  lu, pivots = lax_linalg.lu(lax.stop_gradient(a))
+  lu, _, permutation = lax_linalg.lu(lax.stop_gradient(a))
   custom_solve = partial(
       lax.custom_linear_solve,
       lambda x: _matvec_multiply(a, x),
-      solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=0),
-      transpose_solve=lambda _, x: lax_linalg.lu_solve(lu, pivots, x, trans=1))
+      solve=lambda _, x: lax_linalg.lu_solve(lu, permutation, x, trans=0),
+      transpose_solve=lambda _, x: lax_linalg.lu_solve(lu, permutation, x,
+                                                       trans=1))
   if a.ndim == b.ndim + 1:
     # b.shape == [..., m]
     return custom_solve(b)

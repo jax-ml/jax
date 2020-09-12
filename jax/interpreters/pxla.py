@@ -43,7 +43,6 @@ from ..config import flags, config
 from .. import core
 from .. import linear_util as lu
 from .. import lazy
-from .. import source_info_util
 from ..abstract_arrays import ConcreteArray, ShapedArray, array_types
 from ..core import Var, Literal
 from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
@@ -416,80 +415,6 @@ def apply_parallel_primitive(prim, *args, **params):
 parallel_pure_rules: Dict[core.Primitive, Callable] = {}
 
 
-def axis_index(axis_name):
-  """Return the index along the pmapped axis ``axis_name``.
-
-  On multi-host platforms, returns unique indices on each host, in line with the
-  conceptual model of a multi-host pmap running over a single array sharded
-  across hosts. See the "Multi-host platforms" section of the :func:`jax.pmap`
-  documentation.
-
-  Args:
-    axis_name: hashable Python object used to name the pmapped axis (see the
-      :func:`jax.pmap` documentation for more details).
-
-  Returns:
-    An integer representing the index.
-
-  For example, with 8 XLA devices available:
-
-  >>> from functools import partial
-  >>> @partial(pmap, axis_name='i')
-  ... def f(_):
-  ...   return lax.axis_index('i')
-  ...
-  >>> f(np.zeros(4))
-  ShardedDeviceArray([0, 1, 2, 3], dtype=int32)
-  >>> f(np.zeros(8))
-  ShardedDeviceArray([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-  >>> @partial(pmap, axis_name='i')
-  ... @partial(pmap, axis_name='j')
-  ... def f(_):
-  ...   return lax.axis_index('i'), lax.axis_index('j')
-  ...
-  >>> x, y = f(np.zeros((4, 2)))
-  >>> print(x)
-  [[0 0]
-   [1 1]
-   [2 2]
-   [3 3]]
-  >>> print(y)
-  [[0 1]
-   [0 1]
-   [0 1]
-   [0 1]]
-  """
-  return axis_index_p.bind(axis_name=axis_name)
-
-def _axis_index_bind(*, axis_name):
-  dynamic_axis_env = _thread_local_state.dynamic_axis_env
-  frame = dynamic_axis_env[axis_name]
-  sizes = dynamic_axis_env.sizes[:dynamic_axis_env.index(frame)+1]
-  nreps = dynamic_axis_env.nreps
-  trace = frame.pmap_trace
-
-  out_aval = ShapedArray((), np.int32)
-  out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
-  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
-                          dict(nreps=nreps, sizes=sizes, axis_name=axis_name),
-                          source_info_util.current())
-  out_tracer.recipe = eqn
-
-  return out_tracer
-
-def _axis_index_translation_rule(c, nreps, sizes, axis_name):
-  div = xb.constant(c, np.array(nreps // prod(sizes), dtype=np.uint32))
-  mod = xb.constant(c, np.array(sizes[-1], dtype=np.uint32))
-  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
-  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
-
-axis_index_p = core.Primitive('axis_index')
-axis_index_p.def_custom_bind(_axis_index_bind)
-axis_index_p.def_abstract_eval(
-    lambda *args, **params: ShapedArray((), np.int32))
-xla.translations[axis_index_p] = _axis_index_translation_rule
-
-
 ### lazy device-memory persistence and result handling
 
 class ShardedDeviceArray(xla.DeviceArray):
@@ -726,8 +651,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   if is_multi_host_pmap:
     used_collectives = set(xla.jaxpr_collectives(jaxpr))
     if not used_collectives.issubset(multi_host_supported_collectives):
+      bad_collectives = used_collectives - multi_host_supported_collectives
       msg = "using collectives that aren't supported for multi-host: {}"
-      raise TypeError(msg.format(", ".join(map(str, used_collectives))))
+      raise TypeError(msg.format(", ".join(map(str, bad_collectives))))
 
   if not config.omnistaging_enabled:
     if all(pv is None for pv in out_pvs):
@@ -789,8 +715,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   xla_consts = map(partial(xb.constant, c), consts)
   xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args,
                                     map(op.not_, mapped_invars), arg_parts)
-  out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
-                                extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
+  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+    out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
+                                  extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
   if out_parts is not None:
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
@@ -852,7 +779,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
       use_spmd_partitioning=use_spmd_partitioning,
   )
   compile_options.parameter_is_tupled_arguments = tuple_args
-  compiled = backend.compile(built, compile_options=compile_options)
+  compiled = xla.backend_compile(backend, built, compile_options)
 
   arg_parts_ = arg_parts or [None] * len(avals)
   input_sharding_specs = [
@@ -998,7 +925,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
     A ShardedDeviceArray of length `axis_size` where each shard is equal to
     ``val``.
   """
-  device_count = (len(devices) if devices else xb.local_device_count())
+  device_count = (len(devices) if devices else xb.local_device_count(backend))
   if nrep > device_count:
     msg = ("Cannot replicate across %d replicas because only %d local devices "
            "are available." % (nrep, device_count))
@@ -1222,7 +1149,7 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
     raise NotImplementedError(msg)
 
   jaxpr, _, consts = _soft_pmap_jaxpr(jaxpr, consts, mapped_invars,
-                                      axis_name, chunk_size)
+                                      axis_name, axis_size, chunk_size)
   jaxpr_replicas = xla.jaxpr_replicas(jaxpr)
   if jaxpr_replicas != 1: raise NotImplementedError
 
@@ -1242,7 +1169,7 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
           num_replicas=num_devices, num_partitions=1, device_assignment=None)
   compile_options.tuple_arguments = tuple_args
   backend = xb.get_backend(None)
-  compiled = backend.compile(built, compile_options=compile_options)
+  compiled = xla.backend_compile(backend, built, compile_options)
 
   input_specs = [
       ShardingSpec(shards_per_axis=(num_devices,) + (1,) * (aval.ndim - 1),
@@ -1260,11 +1187,12 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
 
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
 
-def _soft_pmap_jaxpr(jaxpr, consts, mapped_invars, axis_name, chunk_size):
+def _soft_pmap_jaxpr(jaxpr, consts, mapped_invars, axis_name, axis_size, chunk_size):
   fun = partial(_soft_pmap_interp, chunk_size, jaxpr, consts, mapped_invars)
   in_avals = [core.unmapped_aval(chunk_size, v.aval) if m else v.aval
               for v, m in zip(jaxpr.invars, mapped_invars)]
-  return pe.trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
+  with core.extend_axis_env(axis_name, axis_size, None):
+    return pe.trace_to_jaxpr_dynamic(lu.wrap_init(fun), in_avals)
 
 def _soft_pmap_interp(chunk_size, jaxpr, consts, mapped_invars, *args):
   env: Dict[Var, Tuple[Any, bool]] = {}
@@ -1351,25 +1279,26 @@ soft_pmap_p.def_impl(soft_pmap_impl)
 
 soft_pmap_rules: Dict[core.Primitive, Callable] = {}
 
-def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
-  assert not vals and not mapped
-  idx = core.axis_index(axis_name)  # type: ignore
-  return idx * chunk_size + np.arange(chunk_size), True
+def deleted_with_omnistaging(*a, **k):
+  assert False, "Should be deleted"
 
+@contextmanager
+def maybe_extend_axis_env(*args, **kwargs):
+  yield
 
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enable() -> None:
   global DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
-      axis_index, _axis_index_bind, _axis_index_translation_rule, \
-      axis_index_p, apply_parallel_primitive, parallel_pure_rules, \
+      apply_parallel_primitive, parallel_pure_rules, \
       _pvals_to_results_handler, _pval_to_result_handler, replicate, \
-      avals_to_results_handler, axis_index
+      avals_to_results_handler, maybe_extend_axis_env
   del DynamicAxisEnvFrame, DynamicAxisEnv, _ThreadLocalState, \
       _thread_local_state, extend_dynamic_axis_env, unmapped_device_count, \
-      axis_index, _axis_index_bind, _axis_index_translation_rule, \
-      axis_index_p, apply_parallel_primitive, parallel_pure_rules, \
       _pvals_to_results_handler, _pval_to_result_handler, replicate
+
+  apply_parallel_primitive = deleted_with_omnistaging
+  parallel_pure_rules.clear()
 
   def avals_to_results_handler(size, nrep, npart, out_parts, out_avals):
     nouts = len(out_avals)
@@ -1397,6 +1326,7 @@ def omnistaging_enable() -> None:
       return [h(bufs) for h, bufs in zip(handlers, buffers)]
     return handler
 
-  soft_pmap_rules[core.axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
-
-  from ..core import axis_index, axis_index_p  # type: ignore # noqa: F401
+  @contextmanager
+  def maybe_extend_axis_env(*args, **kwargs):
+    with core.extend_axis_env(*args, **kwargs):
+      yield

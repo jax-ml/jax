@@ -21,7 +21,7 @@ will apply transformations incrementally during tracing.
 Nevertheless, if one wants to understand how JAX works internally, or to
 make use of the result of JAX tracing, it is useful to understand jaxpr.
 
-A jaxpr instance represents a function with one of more typed parameters (input variables)
+A jaxpr instance represents a function with one or more typed parameters (input variables)
 and one or more typed results. The results depend only on the input
 variables; there are no free variables captured from enclosing scopes.
 The inputs and outputs have types, which in JAX are represented as abstract
@@ -66,7 +66,7 @@ Equations are printed as follows::
   Eqn  ::= let Var+ = Primitive [ Param* ] Expr+
 
 where:
-  * ``Var+”`` are one or more intermediate variables to be defined as the
+  * ``Var+`` are one or more intermediate variables to be defined as the
     output of a primitive invocation (some primitives can return multiple values)
   * ``Expr+`` are one or more atomic expressions, each either a variable or a
     literal constant. A special form of an atomic expression is the `unit`

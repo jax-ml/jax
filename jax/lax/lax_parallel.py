@@ -22,19 +22,22 @@ import numpy as np
 from jax import core
 from jax import dtypes
 from jax import tree_util
+from jax import source_info_util
 from jax.lax import lax
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
+from jax.interpreters import partial_eval as pe
 from jax.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
+from jax.lib import xla_bridge as xb
 from jax.config import config
-
-from jax.interpreters.pxla import axis_index
+from jax.numpy import lax_numpy
 
 xops = xc.ops
+
 
 ### parallel traceables
 
@@ -285,6 +288,46 @@ def all_to_all(x, axis_name, split_axis, concat_axis):
                              axis_name=axis_name)
   return tree_util.tree_map(bind, x)
 
+def axis_index(axis_name):
+  """Return the index along the mapped axis ``axis_name``.
+
+  Args:
+    axis_name: hashable Python object used to name the mapped axis.
+
+  Returns:
+    An integer representing the index.
+
+  For example, with 8 XLA devices available:
+
+  >>> from functools import partial
+  >>> @partial(jax.pmap, axis_name='i')
+  ... def f(_):
+  ...   return lax.axis_index('i')
+  ...
+  >>> f(np.zeros(4))
+  ShardedDeviceArray([0, 1, 2, 3], dtype=int32)
+  >>> f(np.zeros(8))
+  ShardedDeviceArray([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
+  >>> @partial(jax.pmap, axis_name='i')
+  ... @partial(jax.pmap, axis_name='j')
+  ... def f(_):
+  ...   return lax.axis_index('i'), lax.axis_index('j')
+  ...
+  >>> x, y = f(np.zeros((4, 2)))
+  >>> print(x)
+  [[0 0]
+  [1 1]
+  [2 2]
+  [3 3]]
+  >>> print(y)
+  [[0 1]
+  [0 1]
+  [0 1]
+  [0 1]]
+  """
+  return axis_index_p.bind(axis_name=axis_name)
+
+
 ### parallel primitives
 
 def _allreduce_soft_pmap_rule(prim, reducer, vals, mapped, chunk_size,
@@ -304,6 +347,43 @@ def _allreduce_translation_rule(prim, c, val, *, axis_name, axis_index_groups,
   computation = xla.primitive_subcomputation(prim, scalar, scalar)
   replica_groups_protos = xc.make_replica_groups(replica_groups)
   return xops.AllReduce(val, computation, replica_groups_protos, None, None)
+
+# It is assumed that all collectives that use this rule are commutative
+# and associative over axis names if they support tuples. That is,
+# they have to satisfy:
+#   collective(x, ('i', 'j')) == collective(x, ('j', 'i'))
+#                             == collective(collective(x, 'j'), 'i')
+def _split_axis_comm_assoc(primitive, split_name, args, params):
+  axis_names = params['axis_name']
+  assert isinstance(axis_names, tuple)
+  if params['axis_index_groups'] is not None:
+    raise NotImplementedError("axis_index_groups not supported in axis splitting. "
+                              "Please open a feature request!")
+  remaining_axes = list(axis_names)
+  remaining_axes.remove(split_name)
+  remaining_axes = tuple(remaining_axes)
+  split_params = dict(params, axis_name=split_name)
+  remain_params = dict(params, axis_name=remaining_axes)
+  split_result = primitive.bind(*args, **split_params)
+  if not primitive.multiple_results:
+    split_result = (split_result,)
+  return primitive.bind(*split_result, **remain_params)
+
+# NB: This is only used for collectives that do not include the vmapped axis name,
+#     which is why the rule is so simple. All other collectives go through split_axis.
+def _collective_batcher(prim, args, dims, **params):
+  return prim.bind(*args, **params), dims if prim.multiple_results else dims[0]
+
+def _batched_reduction_collective(prim, if_mapped, if_unmapped,
+                                  vals_in, dims_in, axis_size,
+                                  axis_name, axis_index_groups):
+  if axis_index_groups is not None:
+    raise NotImplementedError("axis_index_groups not implemented in vmap collectives. "
+                              "Please open a feature request!")
+  vals_out = [if_mapped(v, d) if d is not batching.not_mapped else if_unmapped(v, axis_size)
+              for v, d in zip(vals_in, dims_in)]
+  dims_out = [batching.not_mapped] * len(vals_in)
+  return vals_out, dims_out
 
 def _replica_groups(axis_env, axis_name, axis_index_groups):
   replica_groups = xla.axis_groups(axis_env, axis_name)
@@ -386,32 +466,39 @@ xla.parallel_translations[psum_p] = _psum_translation_rule
 pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
 ad.deflinear(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
+batching.split_axis_rules[psum_p] = partial(_split_axis_comm_assoc, psum_p)
+batching.primitive_batchers[psum_p] = partial(_collective_batcher, psum_p)
 batching.collective_rules[psum_p] = \
-    lambda vals, dims, axis_size, **_: [v.sum(d) if d is not batching.not_mapped else
-                                        axis_size * v
-                                        for v, d in zip(vals, dims)]
+  partial(_batched_reduction_collective,
+          psum_p,
+          lambda v, d: v.sum(d),
+          lambda v, axis_size: axis_size * v)
 
 
 pmax_p = core.Primitive('pmax')
 pmax_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
+batching.split_axis_rules[pmax_p] = partial(_split_axis_comm_assoc, pmax_p)
+batching.primitive_batchers[pmax_p] = partial(_collective_batcher, pmax_p)
 batching.collective_rules[pmax_p] = \
-    lambda vals, dims, axis_size, **_: [v.max(d) if d is not batching.not_mapped else v
-                                        for v, d in zip(vals, dims)]
-# pxla.split_axis_rules[pmax_p] = \
-#     partial(_allreduce_split_axis_rule, pmax_p, lax._reduce_max)
+  partial(_batched_reduction_collective,
+          pmax_p,
+          lambda v, d: v.max(d),
+          lambda v, axis_size: v)
 
 
 pmin_p = core.Primitive('pmin')
 pmin_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
+batching.split_axis_rules[pmin_p] = partial(_split_axis_comm_assoc, pmin_p)
+batching.primitive_batchers[pmin_p] = partial(_collective_batcher, pmin_p)
 batching.collective_rules[pmin_p] = \
-    lambda vals, dims, axis_size, **_: [v.min(d) if d is not batching.not_mapped else v
-                                        for v, d in zip(vals, dims)]
-# pxla.split_axis_rules[pmin_p] = \
-#     partial(_allreduce_split_axis_rule, pmin_p, lax._reduce_min)
+  partial(_batched_reduction_collective,
+          pmin_p,
+          lambda v, d: v.min(d),
+          lambda v, axis_size: v)
 
 
 def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
@@ -433,11 +520,22 @@ def _ppermute_transpose_rule(t, perm, axis_name):
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
+def _ppermute_batcher(vals_in, dims_in, axis_size, axis_name, perm):
+  assert len(perm) == axis_size, "Permutation doesn't match the axis size!"
+  perm_indices = np.full((axis_size,), -1, dtype=np.int32)
+  for s, d in perm:
+    perm_indices[s] = d
+  vals_out = [lax_numpy.take(v, perm_indices, d) if d is not batching.not_mapped else v
+              for v, d in zip(vals_in, dims_in)]
+  return vals_out, dims_in
+
 ppermute_p = core.Primitive('ppermute')
 ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
+batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, pmin_p)
+batching.collective_rules[ppermute_p] = _ppermute_batcher
 
 
 def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
@@ -481,17 +579,17 @@ ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 
 
-def _expand(dim, size, axis_name, x):
+def _expand(dim, size, index, x):
   shape = list(x.shape)
   shape.insert(dim, size)
   out = lax.full(shape, lax._const(x, 0))
-  return lax.dynamic_update_index_in_dim(out, x, axis_index(axis_name), dim)
+  return lax.dynamic_update_index_in_dim(out, x, index, dim)
 
-def _allgather(x, dim, size, axis_name):
-  outs = tree_util.tree_map(partial(_expand, dim, size, axis_name), x)
-  return psum(outs, axis_name)
+def _allgather(x, dim, size, index, axis_name, axis_index_groups=None):
+  outs = tree_util.tree_map(partial(_expand, dim, size, index), x)
+  return psum(outs, axis_name, axis_index_groups=axis_index_groups)
 
-def all_gather(x, axis_name):
+def all_gather(x, axis_name, *, axis_index_groups=None):
   """Gather values of x across all replicas.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -503,13 +601,17 @@ def all_gather(x, axis_name):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would run all gather over the first
+      two and last two replicas). Groups must cover all axis indices exactly
+      once, and all groups must be the same size.
 
   Returns:
     Array(s) representing the result of an all-gather along the axis
     ``axis_name``. Shapes are the same as ``x.shape``, but with a leading
     dimension of the axis_size.
 
-  For example, with 2 XLA devices available:
+  For example, with 4 XLA devices available:
 
   >>> x = np.arange(4)
   >>> y = jax.pmap(lambda x: jax.lax.all_gather(x, 'i'), axis_name='i')(x)
@@ -518,11 +620,75 @@ def all_gather(x, axis_name):
    [0 1 2 3]
    [0 1 2 3]
    [0 1 2 3]]
+
+  An example of using axis_index_groups, groups split by even & odd device ids:
+
+  >>> x = np.arange(16).reshape(4, 4)
+  >>> print(x)
+  [[ 0.  1.  2.  3.]
+   [ 4.  5.  6.  7.]
+   [ 8.  9. 10. 11.]
+   [12. 13. 14. 15.]]
+  >>> y = jax.pmap(lambda x: jax.lax.all_gather(
+  ... x, 'i', axis_index_groups=[[0, 2], [3, 1]]))(x)
+  >>> print(y)
+  [[[ 0.  1.  2.  3.]
+    [ 8.  9. 10. 11.]]
+   [[12. 13. 14. 15.]
+    [ 4.  5.  6.  7.]]
+   [[ 0.  1.  2.  3.]
+    [ 8.  9. 10. 11.]]
+   [[12. 13. 14. 15.]
+    [ 4.  5.  6.  7.]]
   """
-  return _allgather(x, 0, psum(1, axis_name), axis_name)
+
+  index = axis_index(axis_name)
+  if axis_index_groups is not None:
+    indices = np.array(axis_index_groups).flatten()
+    axis_index_to_group_index = indices.argsort() % len(axis_index_groups[0])
+    index = lax_numpy.array(axis_index_to_group_index)[index]
+
+  axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+
+  return _allgather(x, 0, axis_size, index, axis_name, axis_index_groups)
 
 
-@config.omnistaging_enablers.append
+def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
+  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
+                                dtype=np.uint32))
+  mod = xb.constant(c, np.array(axis_env.sizes[-1], dtype=np.uint32))
+  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
+  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
+
+def _axis_index_bind(*, axis_name):
+  dynamic_axis_env = pxla._thread_local_state.dynamic_axis_env
+  frame = dynamic_axis_env[axis_name]
+  trace = frame.pmap_trace
+
+  out_aval = ShapedArray((), np.int32)
+  out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
+  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
+                          dict(axis_name=axis_name),
+                          source_info_util.current())
+  out_tracer.recipe = eqn
+
+  return out_tracer
+
+def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
+  assert not vals and not mapped
+  idx = axis_index(axis_name)  # type: ignore
+  return idx * chunk_size + np.arange(chunk_size), True
+
+axis_index_p = core.Primitive('axis_index')
+xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
+pxla.soft_pmap_rules[axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
+axis_index_p.def_custom_bind(_axis_index_bind)
+axis_index_p.def_abstract_eval(
+    lambda *args, **params: ShapedArray((), np.int32))
+pxla.multi_host_supported_collectives.add(axis_index_p)
+
+
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
   # tracing time.
@@ -538,3 +704,24 @@ def omnistaging_enabler() -> None:
       return tuple(size * x for x in args)
     return core.Primitive.bind(
         psum_p, *args, axis_name=axis_name, axis_index_groups=axis_index_groups)
+
+  if psum_p in pxla.parallel_pure_rules:
+    del pxla.parallel_pure_rules[psum_p]
+
+  # Axis index doesn't get any arguments, so that the default bind would have no
+  # way to call into a data-dependency based trace such as vmap. Each trace that
+  # wants to bind an axis name has to additionally implement `process_axis_index`
+  # and put its main trace on the axis env stack.
+  def _axis_index_bind(*, axis_name):
+    frame = core.axis_frame(axis_name)
+    if frame.main_trace is not None:
+      trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
+      return trace.process_axis_index(frame)
+    return core.Primitive.bind(axis_index_p, axis_name=axis_name)
+
+  axis_index_p.def_custom_bind(_axis_index_bind)
+
+  def process_axis_index(self, frame):
+    return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
+
+  batching.BatchTrace.process_axis_index = process_axis_index

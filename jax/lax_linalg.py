@@ -58,8 +58,8 @@ def eigh(x, lower=True, symmetrize_input=True):
   return v, w
 
 def lu(x):
-  lu, pivots = lu_p.bind(x)
-  return lu, pivots
+  lu, pivots, permutation = lu_p.bind(x)
+  return lu, pivots, permutation
 
 def qr(x, full_matrices=True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
@@ -534,13 +534,15 @@ def _lu_blocked(a, block_size=128):
   m, n = a.shape
   r = min(m, n)
   pivot = jnp.zeros((r,), dtype=jnp.int32)
+  perm = jnp.arange(m, dtype=jnp.int32)
   for k in range(0, r, block_size):
     b = min(r - k, block_size)
-    block_pivot, perm, lu_block = _lu_unblocked(a[k:, k:k+b])
+    block_pivot, block_perm, lu_block = _lu_unblocked(a[k:, k:k+b])
 
-    a = ops.index_update(a, ops.index[k:, :], a[perm + k, :])
-    a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
     pivot = ops.index_update(pivot, ops.index[k:k+b], block_pivot + k)
+    perm = ops.index_update(perm, ops.index[k:], perm[block_perm + k])
+    a = ops.index_update(a, ops.index[k:, :], a[block_perm + k, :])
+    a = ops.index_update(a, ops.index[k:, k:k+b], lu_block)
 
     if k + b < n:
       a = ops.index_update(
@@ -551,7 +553,7 @@ def _lu_blocked(a, block_size=128):
         a, ops.index[k+b:, k+b:],
         -lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
                  precision=lax.Precision.HIGHEST))
-  return pivot, a
+  return a, pivot, perm
 
 def _lu_python(x):
   """Default LU decomposition in Python, where no better version exists."""
@@ -559,16 +561,17 @@ def _lu_python(x):
   batch_dims = x.shape[:-2]
   if len(batch_dims) > 0:
     batch_size = np.prod(batch_dims, dtype=np.int64)
-    pivot, lu = api.vmap(_lu_blocked)(lax.reshape(x, (batch_size, m, n)))
-    pivot = lax.reshape(pivot, batch_dims + (min(m, n),))
+    lu, pivot, perm = api.vmap(_lu_blocked)(lax.reshape(x, (batch_size, m, n)))
     lu = lax.reshape(lu, batch_dims + (m, n))
+    pivot = lax.reshape(pivot, batch_dims + (min(m, n),))
+    perm = lax.reshape(perm, batch_dims + (m,))
   else:
-    pivot, lu = _lu_blocked(x)
-  return lu, pivot
+    lu, pivot, perm = _lu_blocked(x)
+  return lu, pivot, perm
 
 def _lu_impl(operand):
-  lu, pivot = xla.apply_primitive(lu_p, operand)
-  return lu, pivot
+  lu, pivot, perm = xla.apply_primitive(lu_p, operand)
+  return lu, pivot, perm
 
 def _lu_abstract_eval(operand):
   if isinstance(operand, ShapedArray):
@@ -579,21 +582,22 @@ def _lu_abstract_eval(operand):
     m = operand.shape[-2]
     n = operand.shape[-1]
     pivot = ShapedArray(batch_dims + (min(m, n),), jnp.int32)
+    perm = ShapedArray(batch_dims + (m,), jnp.int32)
   else:
     pivot = operand
-  return operand, pivot
+    perm = operand
+  return operand, pivot, perm
 
 def _lu_jvp_rule(primals, tangents):
   a, = primals
   a_dot, = tangents
-  lu, pivots = lu_p.bind(a)
+  lu, pivots, permutation = lu_p.bind(a)
 
   a_shape = jnp.shape(a)
   m, n = a_shape[-2:]
   dtype = lax.dtype(a)
   k = min(m, n)
 
-  permutation = lu_pivots_to_permutation(pivots, m)
   batch_dims = a_shape[:-2]
   iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in batch_dims + (1,)))
   x = a_dot[iotas[:-1] + (permutation, slice(None))]
@@ -628,25 +632,29 @@ def _lu_jvp_rule(primals, tangents):
   l_dot = jnp.matmul(l, jnp.tril(lau, -1))
   u_dot = jnp.matmul(jnp.triu(lau), u)
   lu_dot = l_dot + u_dot
-  return (lu, pivots), (lu_dot, ad_util.Zero.from_value(pivots))
+  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_value(pivots),
+                                     ad_util.Zero.from_value(permutation))
 
 
 def _lu_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return lu_p.bind(x), (0, 0)
+  return lu_p.bind(x), (0, 0, 0)
 
 def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   shape = c.get_shape(operand)
   batch_dims = shape.dimensions()[:-2]
+  m = shape.dimensions()[-2]
   lu, pivot, info = getrf_impl(c, operand)
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = xops.Sub(pivot, xops.ConstantLiteral(c, np.array(1, np.int32)))
   ok = xops.Ge(info, xops.ConstantLiteral(c, np.array(0, np.int32)))
   lu = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), lu,
                             _nan_like(c, lu))
-  return xops.Tuple(c, [lu, pivot])
+  perm = xla.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
+                       multiple_results=False)(c, pivot)
+  return xops.Tuple(c, [lu, pivot, perm])
 
 
 lu_p = Primitive('lu')
@@ -695,15 +703,16 @@ def lu_pivots_to_permutation(swaps, m):
 
   permutation = lax.broadcasted_iota(jnp.int32, batch_dims + (m,),
                                      len(batch_dims))
+  if m == 0:
+    return permutation
   result, _ = lax.fori_loop(np.array(0, np.int32), np.array(k, np.int32),
                             _lu_pivots_body_fn, (permutation, swaps))
   return result
 
 
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
-def _lu_solve_core(lu, pivots, b, trans):
+def _lu_solve_core(lu, permutation, b, trans):
   m = lu.shape[0]
-  permutation = lu_pivots_to_permutation(pivots, m)
   x = jnp.reshape(b, (m, -1))
   if trans == 0:
     x = x[permutation, :]
@@ -722,7 +731,7 @@ def _lu_solve_core(lu, pivots, b, trans):
 
 
 @partial(api.jit, static_argnums=(3,))
-def _lu_solve(lu, pivots, b, trans):
+def _lu_solve(lu, permutation, b, trans):
   if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
     raise ValueError("last two dimensions of LU decomposition must be equal, "
                      "got shape {}".format(lu.shape))
@@ -747,13 +756,13 @@ def _lu_solve(lu, pivots, b, trans):
                        "matrix (shape {}) and second to last axis of b array "
                        "(shape {}) must match"
                        .format(lu.shape, b.shape))
-  x = _lu_solve_core(lu, pivots, b, trans)
+  x = _lu_solve_core(lu, permutation, b, trans)
   return x[..., 0] if rhs_vector else x
 
 
-def lu_solve(lu, pivots, b, trans=0):
+def lu_solve(lu, permutation, b, trans=0):
   """LU solve with broadcasting."""
-  return _lu_solve(lu, pivots, b, trans)
+  return _lu_solve(lu, permutation, b, trans)
 
 
 # QR decomposition

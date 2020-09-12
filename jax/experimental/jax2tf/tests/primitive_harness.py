@@ -20,8 +20,12 @@ NumPy (lax_reference) or TensorFlow.
 import operator
 from typing import Any, Callable, Dict, Iterable, Optional, NamedTuple, Sequence, Tuple, Union
 
+from functools import partial
+
 from absl import testing
+import jax
 from jax import config
+from jax import dtypes
 from jax import test_util as jtu
 from jax import lax
 from jax import lax_linalg
@@ -206,6 +210,72 @@ lax_population_count = tuple(
   ]
 )
 
+def _get_max_identity(dtype):
+  if dtypes.issubdtype(dtype, np.inexact):
+    return np.array(-np.inf, dtype)
+  elif dtypes.issubdtype(dtype, np.integer):
+    return np.array(dtypes.iinfo(dtype).min, dtype)
+  elif dtypes.issubdtype(dtype, np.bool_):
+    return np.array(False, np.bool_)
+
+def _get_min_identity(dtype):
+  if dtypes.issubdtype(dtype, np.inexact):
+    return np.array(np.inf, dtype)
+  elif dtypes.issubdtype(dtype, np.integer):
+    return np.array(dtypes.iinfo(dtype).max, dtype)
+  elif dtypes.issubdtype(dtype, np.bool_):
+    return np.array(True, np.bool_)
+
+lax_add_mul = tuple(
+  Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
+          f_jax,
+          [lhs, rhs],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.add, lax.mul]
+  for dtype in filter(lambda t: t != np.bool_, jtu.dtypes.all)
+  for lhs, rhs in [
+    (np.array([1, 2], dtype=dtype), np.array([3, 4], dtype=dtype))
+  ]
+) + tuple(
+  Harness(f"fun={f_jax.__name__}_bounds_{jtu.dtype_str(dtype)}",
+          f_jax,
+          [StaticArg(lhs), StaticArg(rhs)],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.add, lax.mul]
+  for dtype in filter(lambda t: t != np.bool_, jtu.dtypes.all)
+  for lhs, rhs in [
+    (np.array([3, 3], dtype=dtype),
+     np.array([_get_max_identity(dtype), _get_min_identity(dtype)], dtype=dtype))
+  ]
+)
+
+lax_min_max = tuple(
+  Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
+          f_jax,
+          [lhs, rhs],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.min, lax.max]
+  for dtype in jtu.dtypes.all
+  for lhs, rhs in [
+    (np.array([1, 2], dtype=dtype), np.array([3, 4], dtype=dtype))
+  ]
+) + tuple(
+  Harness(f"fun={f_jax.__name__}_inf_nan_{jtu.dtype_str(dtype)}_{lhs[0]}_{rhs[0]}",
+          f_jax,
+          [StaticArg(lhs), StaticArg(rhs)],
+          f_jax=f_jax,
+          dtype=dtype)
+  for f_jax in [lax.min, lax.max]
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
+  for lhs, rhs in [
+    (np.array([np.inf], dtype=dtype), np.array([np.nan], dtype=dtype)),
+    (np.array([-np.inf], dtype=dtype), np.array([np.nan], dtype=dtype))
+  ]
+)
+
 _LAX_BINARY_ELEMENTWISE = (
   lax.add, lax.atan2, lax.div, lax.igamma, lax.igammac, lax.max, lax.min,
   lax.nextafter, lax.rem, lax.sub)
@@ -314,6 +384,54 @@ lax_gather = tuple(
   ]
 )
 
+lax_scatter = tuple(
+  # Directly from lax.scatter in tests/lax_test.py
+  Harness(
+    f"fun={f_lax.__name__}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}".replace(' ', ''),
+    partial(f_lax, indices_are_sorted=indices_are_sorted,
+            unique_indices=unique_indices),
+    [RandArg(shape, dtype), StaticArg(scatter_indices),
+     RandArg(update_shape, dtype), StaticArg(dimension_numbers)],
+    f_lax=f_lax,
+    shape=shape,
+    dtype=dtype,
+    scatter_indices=scatter_indices,
+    update_shape=update_shape,
+    dimension_numbers=dimension_numbers,
+    indices_are_sorted=indices_are_sorted,
+    unique_indices=unique_indices)
+  # We explicitly decide against testing lax.scatter, as its reduction function
+  # is lambda x, y: y, which is not commutative and thus makes results
+  # non-deterministic when an index into the operand is updated several times.
+  for f_lax in [lax.scatter_min, lax.scatter_max, lax.scatter_mul,
+                lax.scatter_add]
+  for dtype in { lax.scatter_min: jtu.dtypes.all
+               , lax.scatter_max: jtu.dtypes.all
+                 # lax.scatter_mul and lax.scatter_add are not compatible with
+                 # np.bool_ operands.
+               , lax.scatter_mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
+               , lax.scatter_add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
+               }[f_lax]
+  for shape, scatter_indices, update_shape, dimension_numbers in [
+      ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
+        update_window_dims=(), inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,))),
+      ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
+        update_window_dims=(1,), inserted_window_dims=(),
+        scatter_dims_to_operand_dims=(0,))),
+      ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
+        update_window_dims=(1,), inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,))),
+  ]
+  for indices_are_sorted in [False, True]
+  # `unique_indices` does not affect correctness, only performance, and thus
+  # does not need to be tested here. If/when it will make sense to add a test
+  # with `unique_indices` = True, particular care will have to be taken with
+  # regards to the choice of parameters, as the results are only predictable
+  # when all the indices to be updated are pairwise non-overlapping. Identifying
+  # such cases is non-trivial.
+  for unique_indices in [False]
+)
 
 lax_pad = tuple(
   Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_pads={pads}",
@@ -322,7 +440,7 @@ lax_pad = tuple(
           rng_factory=jtu.rand_small,
           arg_shape=arg_shape, dtype=dtype, pads=pads)
   for arg_shape in [(2, 3)]
-  for dtype in jtu.dtypes.all_floating + jtu.dtypes.all_integer
+  for dtype in jtu.dtypes.all
   for pads in [
     [(0, 0, 0), (0, 0, 0)],  # no padding
     [(1, 1, 0), (2, 2, 0)],  # only positive edge padding
@@ -392,8 +510,8 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
       [np.array([+np.inf, np.nan, -np.nan, -np.inf, 2, 4, 189], dtype=np.float32), -1]
   ]
   for is_stable in [False, True]
-) + tuple( # several arrays, random data, all axes, all dtypes
-  Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
+) + tuple( # 2 arrays, random data, all axes, all dtypes
+  Harness(f"two_arrays_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
           lambda *args: lax.sort_p.bind(*args[:-2], dimension=args[-2], is_stable=args[-1], num_keys=1),
           [RandArg(shape, dtype), RandArg(shape, dtype), StaticArg(dimension), StaticArg(is_stable)],
           shape=shape,
@@ -403,6 +521,19 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
   for dtype in jtu.dtypes.all
   for shape in [(5,), (5, 7)]
   for dimension in range(len(shape))
+  for is_stable in [False, True]
+) + tuple( # 3 arrays, random data, all axes, all dtypes
+  Harness(f"three_arrays_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={dimension}_isstable={is_stable}",
+          lambda *args: lax.sort_p.bind(*args[:-2], dimension=args[-2], is_stable=args[-1], num_keys=1),
+          [RandArg(shape, dtype), RandArg(shape, dtype), RandArg(shape, dtype),
+           StaticArg(dimension), StaticArg(is_stable)],
+          shape=shape,
+          dimension=dimension,
+          dtype=dtype,
+          is_stable=is_stable)
+  for dtype in jtu.dtypes.all
+  for shape in [(5,)]
+  for dimension in (0,)
   for is_stable in [False, True]
 )
 
@@ -641,4 +772,107 @@ lax_select_and_gather_add = tuple(
                            [((0, 1), (1, 0), (2, 3), (0, 2))]))
   for base_dilation in [(1, 1, 1, 1)]
   for window_dilation in [(1, 1, 1, 1)]
+)
+
+lax_reduce_window = tuple(
+  # Tests with 2d shapes (see tests.lax_test.testReduceWindow)
+  Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
+          lax.reduce_window,
+          [RandArg(shape, dtype), StaticArg(init_value), StaticArg(computation),
+           StaticArg(window_dimensions), StaticArg(window_strides),
+           StaticArg(padding), StaticArg(base_dilation), StaticArg(window_dilation)],
+          shape=shape,
+          dtype=dtype,
+          init_value=init_value,
+          computation=computation,
+          window_dimensions=window_dimensions,
+          window_strides=window_strides,
+          padding=padding,
+          base_dilation=base_dilation,
+          window_dilation=window_dilation)
+  for computation in [lax.add, lax.max, lax.min, lax.mul]
+  for dtype in { lax.add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
+               , lax.mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
+               , lax.max: jtu.dtypes.all
+               , lax.min: jtu.dtypes.all
+               }[computation]
+  for init_value in map(
+      dtype,
+      (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
+          { lax.add: ([0, 1], [0, 1])
+          , lax.mul: ([1], [1])
+          , lax.max: ([1], [-np.inf, 1])
+          , lax.min: ([0], [np.inf, 0])
+          }[computation]
+      )
+  )
+  for shape in [(4, 6)]
+  for window_dimensions in [(1, 2)]
+  for window_strides in [(2, 1)]
+  for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
+                                                      window_strides, p))
+                            for p in ['VALID', 'SAME']] +
+                           [((0, 3), (1, 2))]))
+  for base_dilation in [(2, 3)]
+  for window_dilation in [(1, 2)]
+) + tuple(
+  # Tests with 4d shapes (see tests.lax_test.testReduceWindow)
+  Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
+          lax.reduce_window,
+          [RandArg(shape, dtype), StaticArg(init_value), StaticArg(computation),
+           StaticArg(window_dimensions), StaticArg(window_strides),
+           StaticArg(padding), StaticArg(base_dilation), StaticArg(window_dilation)],
+          shape=shape,
+          dtype=dtype,
+          init_value=init_value,
+          computation=computation,
+          window_dimensions=window_dimensions,
+          window_strides=window_strides,
+          padding=padding,
+          base_dilation=base_dilation,
+          window_dilation=window_dilation)
+  for computation in [lax.add, lax.max, lax.min, lax.mul]
+  for dtype in { lax.add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
+               , lax.mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
+               , lax.max: jtu.dtypes.all
+               , lax.min: jtu.dtypes.all
+               }[computation]
+  for init_value in map(
+      dtype,
+      (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
+          { lax.add: ([0, 1], [0, 1])
+          , lax.mul: ([1], [1])
+          , lax.max: ([1], [-np.inf, 1])
+          , lax.min: ([0], [np.inf, 0])
+          }[computation]
+      )
+  )
+  for shape in [(3, 2, 4, 6)]
+  for window_dimensions in [(1, 1, 2, 1)]
+  for window_strides in [(1, 2, 2, 1)]
+  for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
+                                                      window_strides, p))
+                            for p in ['VALID', 'SAME']] +
+                           [((0, 1), (1, 0), (2, 3), (0, 2))]))
+  for base_dilation in [(2, 1, 3, 2)]
+  for window_dilation in [(1, 2, 2, 1)]
+)
+
+random_gamma = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          jax.jit(jax.random.gamma),
+          [np.array([42, 43], dtype=np.uint32), RandArg(shape, dtype)])
+  for shape in ((), (3,))
+  for dtype in (np.float32, np.float64)
+)
+
+random_split = tuple(
+  Harness(f"_i={key_i}",
+          jax.jit(lambda key: jax.random.split(key, 2)),
+          [key])
+  for key_i, key in enumerate([np.array([0, 0], dtype=np.uint32),
+                               np.array([42, 43], dtype=np.uint32),
+                               np.array([0xFFFFFFFF, 0], dtype=np.uint32),
+                               np.array([0, 0xFFFFFFFF], dtype=np.uint32),
+                               np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )

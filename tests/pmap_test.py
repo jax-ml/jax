@@ -494,6 +494,53 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testGatherReplicaGroups(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest("Test expected an even number of devices greater than 1.")
+
+    axis_index_groups = np.arange(replicas).reshape(
+        2, replicas // 2).tolist()
+
+    f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = f(x)
+
+    expected_1 = np.broadcast_to(
+        x[:replicas // 2], (replicas // 2, replicas // 2, x.shape[1]))
+    expected_2 = np.broadcast_to(
+        x[replicas // 2:], (replicas // 2, replicas // 2, x.shape[1]))
+    expected = np.concatenate([expected_1, expected_2], 0)
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherReplicaGroupsInterleaved(self):
+    replicas = xla_bridge.device_count()
+    if replicas % 2 != 0:
+      raise SkipTest("Test expected an even number of devices greater than 1.")
+
+    indexes = np.arange(replicas)
+    indexes = np.concatenate([indexes[::2], indexes[1::2]])
+    axis_index_groups = indexes.reshape(2, replicas // 2).tolist()
+
+    f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
+    f = pmap(f, 'i')
+
+    shape = (replicas, 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+
+    ans = f(x)
+
+    expected = np.zeros((replicas, replicas // 2, x.shape[1]))
+    expected[::2] = x[::2]
+    expected[1::2] = x[1::2]
+
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testNestedPmapReplicaGroups(self):
     replicas = xla_bridge.device_count()
     if replicas % 4 != 0:
@@ -911,6 +958,17 @@ class PmapTest(jtu.JaxTestCase):
     expected = 1 + np.arange(device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testAxisIndexInInitialStyle(self):
+    @partial(pmap, axis_name='i')
+    def f(x):
+      def body(carry, i):
+        return carry + i + lax.axis_index('i'), None
+      return lax.scan(body, 0, x)[0]
+    device_count = xla_bridge.device_count()
+    shape = (device_count, 10)
+    self.assertAllClose(f(jnp.ones(shape, dtype=np.int32)),
+                        (np.arange(device_count) + 1) * 10)
+
   def testVmapOfPmap(self):
     device_count = xla_bridge.device_count()
     f0 = lambda x: x
@@ -1025,7 +1083,7 @@ class PmapTest(jtu.JaxTestCase):
     # Manually construct a ShardedDeviceArray with the wrong sharding for the
     # subsequent pmap
     shard_shape = (3,2)
-    shard = jnp.arange(jnp.prod(jnp.array(shard_shape))).reshape(shard_shape)
+    shard = jnp.arange(prod(shard_shape)).reshape(shard_shape)
     bufs = [xla.device_put(shard, d) for d in xla_bridge.devices()[:4]]
     aval = ShapedArray((6,4), shard.dtype)
     sharding_spec = pxla.ShardingSpec(
@@ -1423,6 +1481,15 @@ class PmapTest(jtu.JaxTestCase):
     u = np.ones((device_count, 100))
     multi_step_pmap(u)  # doesn't crash
 
+  @jtu.skip_on_devices("cpu")
+  def test_replicate_backend(self):
+    # https://github.com/google/jax/issues/4223
+    def fn(indices):
+      return jnp.equal(indices, jnp.arange(3)).astype(jnp.float32)
+    mapped_fn = jax.pmap(fn, axis_name='i', backend='cpu')
+    mapped_fn = jax.pmap(mapped_fn, axis_name='j', backend='cpu')
+    indices = np.array([[[2], [1]], [[0], [0]]])
+    mapped_fn(indices)  # doesn't crash
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):
@@ -1620,7 +1687,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     if jax.device_count() < shape[0]:
       raise SkipTest(f"requires {shape[0]} devices")
 
-    x = jnp.arange(jnp.prod(jnp.array(shape))).reshape(shape)
+    x = jnp.arange(prod(shape)).reshape(shape)
     sharded_x = pmap(lambda x: x)(x)
 
     num_threads = 10
@@ -1816,7 +1883,7 @@ class ShardArgsTest(jtu.JaxTestCase):
     nshards = len(indices)
     if jax.device_count() < nshards:
       raise SkipTest
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(prod(shape)).reshape(shape)
     arg = make_arg(x)
     bufs = pxla.shard_args(jax.devices()[:nshards],
                            [indices], [arg])

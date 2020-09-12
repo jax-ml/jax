@@ -2386,6 +2386,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     result = lax.associative_scan(operator.add, data)
     self.assertAllClose(result, expected, check_dtypes=False)
 
+  def testAssociativeScanUnstructured1000Reverse(self):
+    data = np.arange(1000)
+    expected = np.cumsum(data[::-1])[::-1]
+    result = lax.associative_scan(operator.add, data, reverse=True)
+    self.assertAllClose(result, expected, check_dtypes=False)
+
   def testAssociativeScanStructured3(self):
     pair = collections.namedtuple('pair', ('first', 'second'))
     data = pair(first=np.array([0., 1., 2.]),

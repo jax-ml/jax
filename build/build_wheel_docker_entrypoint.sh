@@ -34,7 +34,7 @@ fi
 # Builds and activates a specific Python version.
 pyenv local "$PY_VERSION"
 
-PY_TAG=$(python -c "import wheel; import wheel.pep425tags as t; print(t.get_abbr_impl() + t.get_impl_ver())")
+PY_TAG=$(python -c "import packaging.tags as t; print(t.interpreter_name() + t.interpreter_version())")
 
 echo "Python tag: $PY_TAG"
 

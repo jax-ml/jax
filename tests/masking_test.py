@@ -106,6 +106,10 @@ class PolyTest(jtu.JaxTestCase):
     assert 0 < poly
     assert constant_poly(3) >= 1
     assert constant_poly(3) > 1
+    assert poly >= poly
+    assert poly >= poly - 1
+    assert poly < poly + 1
+
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
 

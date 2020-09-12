@@ -232,6 +232,23 @@ class ODETest(jtu.JaxTestCase):
 
     jax.grad(f)(jnp.ones(2))  # doesn't crash
 
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_complex_odeint(self):
+    # https://github.com/google/jax/issues/3986
+
+    def dy_dt(y, t, alpha):
+      return alpha * y
+
+    def f(y0, ts, alpha):
+      return odeint(dy_dt, y0, ts, alpha).real
+
+    alpha = 3 + 4j
+    y0 = 1 + 2j
+    ts = jnp.linspace(0., 1., 11)
+    tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
+
+    jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

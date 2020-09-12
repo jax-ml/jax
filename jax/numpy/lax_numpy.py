@@ -36,6 +36,7 @@ import warnings
 import numpy as np
 import opt_einsum
 
+import jax
 from jax import jit, custom_jvp
 from .vectorize import vectorize
 from ._util import _wraps
@@ -49,7 +50,7 @@ from .. import lax
 from ..lax.lax import _device_put_raw
 from .. import ops
 from ..util import (partial, unzip2, prod as _prod,
-                    subvals, safe_zip)
+                    subvals, safe_zip, canonicalize_axis as _canonicalize_axis)
 from ..tree_util import tree_leaves, tree_flatten
 
 FLAGS = flags.FLAGS
@@ -203,8 +204,6 @@ load = np.load
 
 ### utility functions
 
-_canonicalize_axis = lax._canonicalize_axis
-
 _DEFAULT_TYPEMAP = {
   np.bool_: bool_,
   np.int_: int_,
@@ -273,7 +272,6 @@ def _promote_dtypes_inexact(*args):
   Promotes arguments to an inexact type."""
   to_dtype = _to_inexact_dtype(result_type(*args))
   return [lax.convert_element_type(x, to_dtype) for x in args]
-
 
 def _to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
@@ -465,7 +463,8 @@ def right_shift(x1, x2):
 
 @_wraps(np.absolute)
 def absolute(x):
-  return x if issubdtype(_dtype(x), unsignedinteger) else lax.abs(x)
+  dt = _dtype(x)
+  return x if dt == bool_ or issubdtype(dt, unsignedinteger) else lax.abs(x)
 abs = _wraps(np.abs)(absolute)
 
 
@@ -493,7 +492,7 @@ def sign(x):
 def copysign(x1, x2):
   if issubdtype(_dtype(x1), complexfloating) or issubdtype(_dtype(x2), complexfloating):
     raise TypeError("copysign does not support complex-valued inputs")
-  x1, x2 = _promote_shapes("copysign", x1, x2)
+  x1, x2 = _promote_args_inexact("copysign", x1, x2)
   return where(signbit(x2), -lax.abs(x1), lax.abs(x1))
 
 
@@ -1487,26 +1486,33 @@ def broadcast_to(arr, shape):
     kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
     return lax.broadcast_in_dim(squeeze(arr, tuple(diff)), shape, kept_dims)
 
-
-@_wraps(np.split)
-def split(ary, indices_or_sections, axis=0):
-  axis = core.concrete_or_error(int, axis, "in jax.numpy.split argument `axis`")
+def _split(op, ary, indices_or_sections, axis=0):
+  axis = core.concrete_or_error(int, axis, f"in jax.numpy.{op} argument `axis`")
   size = ary.shape[axis]
   if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
-    indices_or_sections = [core.concrete_or_error(int, i_s, "in jax.numpy.split argument 1")
+    indices_or_sections = [core.concrete_or_error(int, i_s, f"in jax.numpy.{op} argument 1")
                            for i_s in indices_or_sections]
     split_indices = np.concatenate([[0], indices_or_sections, [size]])
   else:
     indices_or_sections = core.concrete_or_error(int, indices_or_sections,
-                                                 "in jax.numpy.split argument 1")
+                                                 f"in jax.numpy.{op} argument 1")
     part_size, r = _divmod(size, indices_or_sections)
-    if r != 0:
+    if r == 0:
+      split_indices = np.arange(indices_or_sections + 1) * part_size
+    elif op == "array_split":
+      split_indices = np.concatenate([np.arange(r + 1) * (part_size + 1),
+                                      np.arange(indices_or_sections - r) * part_size
+                                      + ((r + 1) * (part_size + 1) - 1)])
+    else:
       raise ValueError("array split does not result in an equal division")
-    split_indices = np.arange(indices_or_sections + 1) * part_size
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
+
+@_wraps(np.split)
+def split(ary, indices_or_sections, axis=0):
+  return _split("split", ary, indices_or_sections, axis=axis)
 
 def _split_on_axis(np_fun, axis):
   @_wraps(np_fun, update_doc=False)
@@ -1518,6 +1524,9 @@ vsplit = _split_on_axis(np.vsplit, axis=0)
 hsplit = _split_on_axis(np.hsplit, axis=1)
 dsplit = _split_on_axis(np.dsplit, axis=2)
 
+@_wraps(np.array_split)
+def array_split(ary, indices_or_sections, axis=0):
+  return _split("array_split", ary, indices_or_sections, axis=axis)
 
 @_wraps(np.clip)
 def clip(a, a_min=None, a_max=None):
@@ -1648,7 +1657,7 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 ### Reducers
 
 
-def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
+def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
                     upcast_f16_for_computation=False):
   """Creates reduction function given a binary operation and monoid identity."""
 
@@ -1658,11 +1667,8 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
+    _check_arraylike(name, a)
 
-    if isinstance(a, (list, tuple)):
-      msg = ("jax.numpy reductions won't accept lists and tuples in future "
-             "versions, only scalars and ndarrays")
-      warnings.warn(msg, category=FutureWarning)
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
@@ -1705,14 +1711,14 @@ def _reduction_init_val(a, init_val):
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
-sum = _make_reduction(np.sum, lax.add, 0, upcast_f16_for_computation=True,
+sum = _make_reduction("sum", np.sum, lax.add, 0, upcast_f16_for_computation=True,
                       bool_op=lax.bitwise_or)
-product = prod = _make_reduction(np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
+product = prod = _make_reduction("prod", np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
                                  upcast_f16_for_computation=True)
-amax = max = _make_reduction(np.max, lax.max, -np.inf)
-amin = min = _make_reduction(np.min, lax.min, np.inf)
-all = alltrue = _make_reduction(np.all, lax.bitwise_and, True, _cast_to_bool)
-any = sometrue = _make_reduction(np.any, lax.bitwise_or, False, _cast_to_bool)
+amax = max = _make_reduction("max", np.max, lax.max, -np.inf)
+amin = min = _make_reduction("min", np.min, lax.min, np.inf)
+all = alltrue = _make_reduction("all", np.all, lax.bitwise_and, True, _cast_to_bool)
+any = sometrue = _make_reduction("any", np.any, lax.bitwise_or, False, _cast_to_bool)
 
 
 @_wraps(np.mean)
@@ -1958,13 +1964,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
 
     a_shape = list(shape(a))
     num_dims = len(a_shape)
-
-    if axis < 0:
-      axis = axis + num_dims
-    if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
+    axis = _canonicalize_axis(axis, num_dims)
 
     if fill_nan:
       a = where(isnan(a), _constant_like(a, fill_value), a)
@@ -2149,14 +2149,11 @@ def stack(arrays, axis=0):
 def tile(A, reps):
   if isinstance(reps, int):
     reps = (reps,)
-  A = reshape(A, (1,) * (len(reps) - ndim(A)) + shape(A))
-  reps = (1,) * (ndim(A) - len(reps)) + tuple(reps)
-  for i, rep in enumerate(reps):
-    if rep == 0:
-      A = A[tuple(slice(0 if j == i else None) for j in range(A.ndim))]
-    elif rep != 1:
-      A = concatenate([A] * int(rep), axis=i)
-  return A
+  A_shape = (1,) * (len(reps) - ndim(A)) + shape(A)
+  reps = (1,) * (len(A_shape) - len(reps)) + tuple(reps)
+  result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),
+                        [k for pair in zip(reps, A_shape) for k in pair])
+  return reshape(result, tuple(np.multiply(A_shape, reps)))
 
 @_wraps(np.concatenate)
 def concatenate(arrays, axis=0):
@@ -2859,11 +2856,14 @@ def polyder(p, m=1):
   coeff = (arange(len(p), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
   return p[:-m] * coeff
 
-def _trim_zeros(a):
-  for i, v in enumerate(a):
-    if v != 0:
-      return a[i:]
-  return a[:0]
+@_wraps(np.trim_zeros)
+def trim_zeros(filt, trim='fb'):
+  nz = asarray(filt) == 0
+  if all(nz):
+    return empty(0, _dtype(filt))
+  start = argmin(nz) if 'f' in trim.lower() else 0
+  end = argmin(nz[::-1]) if 'b' in trim.lower() else 0
+  return filt[start:len(filt) - end]
 
 _LEADING_ZEROS_DOC="""\
 Setting trim_leading_zeros=True makes the output match that of numpy.
@@ -2877,7 +2877,7 @@ def polymul(a1, a2, *, trim_leading_zeros=False):
   if isinstance(a2, np.poly1d):
     a2 = asarray(a2)
   if trim_leading_zeros and (len(a1) > 1 or len(a2) > 1):
-    a1, a2 = _trim_zeros(a1), _trim_zeros(a2)
+    a1, a2 = trim_zeros(a1, trim='f'), trim_zeros(a2, trim='f')
   if len(a1) == 0:
     a1 = asarray([0.])
   if len(a2) == 0:
@@ -2896,6 +2896,18 @@ def append(arr, values, axis=None):
     return concatenate([ravel(arr), ravel(values)], 0)
   else:
     return concatenate([arr, values], axis=axis)
+
+
+@_wraps(np.apply_along_axis)
+def apply_along_axis(func1d, axis, arr, *args, **kwargs):
+  num_dims = ndim(arr)
+  axis = _canonicalize_axis(axis, num_dims)
+  func = lambda arr: func1d(arr, *args, **kwargs)
+  for i in range(1, num_dims - axis):
+    func = jax.vmap(func, in_axes=i, out_axes=-1)
+  for i in range(axis):
+    func = jax.vmap(func, in_axes=0, out_axes=0)
+  return func(arr)
 
 
 ### Tensor contraction operations
@@ -3385,14 +3397,11 @@ def roll(a, shift, axis=None):
 @_wraps(np.rollaxis)
 def rollaxis(a, axis, start=0):
   a_ndim = ndim(a)
-  if not (-a_ndim <= axis < a_ndim):
-    raise ValueError(f"axis={axis} is out of bounds for array of dimension {a_ndim}")
+  axis = _canonicalize_axis(axis, a_ndim)
   if not (-a_ndim <= start <= a_ndim):
     raise ValueError(f"start={start} must satisfy {-a_ndim}<=start<={a_ndim}")
   if start < 0:
     start += a_ndim
-  if axis < 0:
-    axis += a_ndim
   if start > axis:
     start -= 1
   return moveaxis(a, axis, start)
@@ -4572,6 +4581,21 @@ setattr(DeviceArray, "imag", property(imag))
 setattr(DeviceArray, "astype", _astype)
 setattr(DeviceArray, "view", _view)
 setattr(DeviceArray, "nbytes", property(_nbytes))
+
+
+# Experimental support for NumPy's module dispatch with NEP-37.
+# Currently requires https://github.com/seberg/numpy-dispatch
+_JAX_ARRAY_TYPES = (DeviceArray, core.Tracer)
+_HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
+
+def __array_module__(self, types):
+  if builtins.all(issubclass(t, _HANDLED_ARRAY_TYPES) for t in types):
+    return jax.numpy
+  else:
+    return NotImplemented
+
+setattr(ShapedArray, "_array_module", staticmethod(__array_module__))
+setattr(DeviceArray, "__array_module__", __array_module__)
 
 
 # Extra methods that are handy

@@ -39,7 +39,7 @@ from ..interpreters import ad
 from ..interpreters import invertible_ad as iad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..util import cache, safe_zip, partial, prod, safe_map
+from ..util import cache, safe_zip, partial, prod, safe_map, canonicalize_axis
 from ..tree_util import tree_map
 from ..lib import pytree
 from ..lib import xla_bridge
@@ -60,12 +60,13 @@ DType = Any
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
-  # Replace 1 with 0 to avoid inconclusive comparisons for polymorphic dims:
-  out_shape = np.max(np.where(shapes == 1, 0, shapes), axis=0)
-  out_shape = np.where(np.all(shapes == 1, axis=0), 1, out_shape)
-  if not np.all((shapes == out_shape) | (shapes == 1)):
-    return None
-  return canonicalize_shape(out_shape)
+  for sizes in zip(*shapes):
+    sizes = [d for d in sizes if d != 1]
+    if sizes[:-1] != sizes[1:]:
+      break
+  else:
+    return tuple(next((d for d in sizes if d != 1), 1)
+                  for sizes in zip(*shapes))
 
 @cache()
 def broadcast_shapes(*shapes):
@@ -73,7 +74,7 @@ def broadcast_shapes(*shapes):
   if len(shapes) == 1:
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
-  shapes = np.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
+  shapes = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
   result_shape = _try_broadcast_shapes(shapes)
   if result_shape is None:
     raise ValueError("Incompatible shapes for broadcasting: {}"
@@ -868,8 +869,9 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -902,8 +904,9 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -936,8 +939,9 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -970,8 +974,9 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -1010,8 +1015,9 @@ def scatter(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -1143,7 +1149,9 @@ def reduce_window(operand: Array, init_value: Array, computation: Callable,
   operator.
   """
   if isinstance(padding, str):
-    padding = tuple(padtype_to_pads(operand.shape, window_dimensions,
+    dilated_window_dims = (window_dimensions if window_dilation is None else
+                           _dilate_shape(window_dimensions, window_dilation))
+    padding = tuple(padtype_to_pads(operand.shape, dilated_window_dims,
                                     window_strides, padding))
   else:
     padding = tuple(padding)
@@ -1340,20 +1348,20 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
       raise TypeError("Sort requires at least one operand")
     if not (1 <= num_keys <= len(operand)):
       raise ValueError(f"num_keys={num_keys} must be between 1 and len(operand)={len(operand)}")
-    dimension = _canonicalize_axis(dimension, len(operand[0].shape))
+    dimension = canonicalize_axis(dimension, len(operand[0].shape))
     return tuple(sort_p.bind(*operand, dimension=dimension,
                              is_stable=is_stable,
                              num_keys=num_keys))
   else:
     if num_keys != 1:
       raise ValueError(f"num_keys={num_keys} must equal 1 for a single operand.")
-    dimension = _canonicalize_axis(dimension, len(operand.shape))
+    dimension = canonicalize_axis(dimension, len(operand.shape))
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, num_keys=1)[0]
 
 def sort_key_val(keys: Array, values: Array, dimension: int = -1,
                  is_stable: bool = True) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
-  dimension = _canonicalize_axis(dimension, len(keys.shape))
+  dimension = canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
@@ -1404,12 +1412,12 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
+  fill_value = convert_element_type(fill_value, dtype)
   if config.omnistaging_enabled:
-    fill_value = convert_element_type(fill_value, dtype)
     if not isinstance(fill_value, (xla.DeviceArray, core.Tracer)):
       fill_value = _device_put_raw(fill_value)
   else:
-    fill_value = xla.device_put_p.bind(convert_element_type(fill_value, dtype))
+    fill_value = xla.device_put_p.bind(fill_value)
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x):
@@ -3198,11 +3206,16 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
   return _input_dtype(operand, padding_value)
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
-  lo, hi, interior = zip(*padding_config)
-  out_shape = np.add(
-    np.add(np.add(lo, hi), operand.shape),
-    np.maximum(0, np.multiply(interior, np.subtract(operand.shape, 1))))
-  return tuple(out_shape)
+  del padding_value
+  if not len(padding_config) == np.ndim(operand):
+    raise ValueError("length of padding_config must equal the number of axes "
+                     f"of operand, got padding_config {padding_config} "
+                     f"for operand shape {np.shape(operand)}")
+  if not all(i >= 0 for _, _, i in padding_config):
+    raise ValueError("interior padding in padding_config must be nonnegative, "
+                     f"got padding_config {padding_config}")
+  return tuple(l + h + d + (_max(0, d - 1) * i if i > 0 else 0)
+               for (l, h, i), d in zip(padding_config, np.shape(operand)))
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
@@ -3269,7 +3282,7 @@ masking.masking_rules[pad_p] = _pad_masking_rule
 def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Squeeze any number of size 1 dimensions from an array."""
   ndim = np.ndim(array)
-  dimensions = tuple(sorted(_canonicalize_axis(i, ndim) for i in dimensions))
+  dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
   if not dimensions:
     return array
   return squeeze_p.bind(array, dimensions=dimensions)
@@ -3316,7 +3329,7 @@ batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Insert any number of size 1 dimensions into an array."""
   ndim_out = np.ndim(array) + len(dimensions)
-  dims_set = frozenset(_canonicalize_axis(i, ndim_out) for i in dimensions)
+  dims_set = frozenset(canonicalize_axis(i, ndim_out) for i in dimensions)
   result_shape = list(np.shape(array))
   for i in sorted(dims_set):
     result_shape.insert(i, 1)
@@ -3822,17 +3835,140 @@ def _gather_dtype_rule(operand, start_indices, **kwargs):
     raise ValueError("start_indices must have an integer type")
   return dtypes.canonicalize_dtype(operand.dtype)
 
+_rank = lambda arr: len(arr.shape)
+
+def _is_sorted(dims, op_name, name):
+  for i in range(1, len(dims)):
+    if dims[i] < dims[i - 1]:
+      raise TypeError(f"{name} in {op_name} op must be sorted; got {dims}")
+
+def _sorted_dims_in_range(dims, rank, op_name, name):
+  if len(dims) == 0:
+    return
+  invalid_dim = None
+  if dims[0] < 0:
+    invalid_dim = dims[0]
+  elif dims[-1] >= rank:
+    invalid_dim = dims[-1]
+  if invalid_dim:
+    raise TypeError(f"Invalid {name} set in {op_name} op; valid range is "
+                    f"[0, {rank}); got: {invalid_dim}.")
+
+def _no_duplicate_dims(dims, op_name, name):
+  if len(set(dims)) != len(dims):
+    raise TypeError(f"{name} in {op_name} op must not repeat; got: {dims}.")
+
 def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
                        slice_sizes):
-  if len(operand.shape) != len(slice_sizes):
-    msg = ("slice_sizes must have rank equal to the gather operand; "
-          "operand.shape={}, slice_sizes={}".format(operand.shape, slice_sizes))
-    raise ValueError(msg)
-  result_rank = len(dimension_numbers.offset_dims) + start_indices.ndim - 1
-  start_indices_shape = iter(start_indices.shape[:-1])
-  slice_sizes = iter(np.delete(slice_sizes, dimension_numbers.collapsed_slice_dims))
-  return tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
-               else next(start_indices_shape) for i in range(result_rank))
+  """Validates the well-formedness of the arguments to Gather.
+
+  The code implements the checks based on the detailed operation semantics of
+  XLA's `Gather <https://www.tensorflow.org/xla/operation_semantics#gather>`_
+  operator and following the outline of the implementation of
+  ShapeInference::InferGatherShape in TensorFlow.
+  """
+
+  offset_dims = dimension_numbers.offset_dims
+  collapsed_slice_dims = dimension_numbers.collapsed_slice_dims
+  start_index_map = dimension_numbers.start_index_map
+
+  # Note: in JAX, index_vector_dim is always computed as below, cf. the
+  # documentation of the GatherDimensionNumbers class.
+  index_vector_dim = _rank(start_indices) - 1
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if _rank(start_indices) < index_vector_dim or index_vector_dim < 0:
+    raise TypeError(f"Gather index leaf dimension must be within [0, rank("
+                    f"start_indices) + 1). rank(start_indices) is "
+                    f"{_rank(start_indices)} and gather index leaf dimension "
+                    f"is {index_vector_dim}.")
+
+  expanded_start_indices_shape = list(start_indices.shape)
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if len(expanded_start_indices_shape) == index_vector_dim:
+    expanded_start_indices_shape.append(1)
+
+  # Start ValidateGatherDimensions
+  # In the error messages output by XLA, "offset_dims" is called "Output window
+  # dimensions" in error messages. For consistency's sake, our error messages
+  # stick to "offset_dims".
+  _is_sorted(offset_dims, "gather", "offset_dims")
+  _no_duplicate_dims(offset_dims, "gather", "offset_dims")
+
+  output_offset_dim_count = len(offset_dims)
+  output_shape_rank = len(offset_dims) + _rank(start_indices) - 1
+
+  for i in range(output_offset_dim_count):
+    offset_dim = offset_dims[i]
+    if offset_dim < 0 or offset_dim >= output_shape_rank:
+      raise TypeError(f"Offset dimension {i} in gather op is out of bounds; "
+                      f"got {offset_dim}, but should have been in "
+                      f"[0, {output_shape_rank})")
+
+  if len(start_index_map) != start_indices.shape[index_vector_dim]:
+    raise TypeError(f"Gather op has {len(start_index_map)} elements in "
+                    f"start_index_map and the bound of dimension "
+                    f"index_vector_dim={index_vector_dim} of start_indices is "
+                    f"{start_indices.shape[index_vector_dim]}. These two "
+                    f"numbers must be equal.")
+
+  for i in range(len(start_index_map)):
+    operand_dim_for_start_index_i = start_index_map[i]
+    if (operand_dim_for_start_index_i < 0 or
+        operand_dim_for_start_index_i >= _rank(operand)):
+      raise TypeError(f"Invalid start_index_map; domain is "
+                      f"[0, {_rank(operand)}), got: "
+                      f"{i}->{operand_dim_for_start_index_i}.")
+
+  _no_duplicate_dims(start_index_map, "gather", "start_index_map")
+
+  # _is_sorted and _sorted_dims_in_range are checked in the opposite order
+  # compared to the XLA implementation. In cases when the input is not sorted
+  # AND there are problematic collapsed_slice_dims, the error message will thus
+  # be different.
+  _is_sorted(collapsed_slice_dims, "gather", "collapsed_slice_dims")
+  _sorted_dims_in_range(collapsed_slice_dims, _rank(operand), "gather",
+                        "collapsed_slice_dims")
+  _no_duplicate_dims(collapsed_slice_dims, "gather", "collapsed_slice_dims")
+  # End ValidateGatherDimensions
+
+  if _rank(operand) != len(slice_sizes):
+    raise TypeError(f"Gather op must have one slice size for every input "
+                    f"dimension; got: len(slice_sizes)={len(slice_sizes)}, "
+                    f"input_shape.rank={_rank(operand)}")
+
+  if len(slice_sizes) != len(offset_dims) + len(collapsed_slice_dims):
+    raise TypeError(f"All components of the offset index in a gather op must "
+                    f"either be a offset dimension or explicitly collapsed; "
+                    f"got len(slice_sizes)={len(slice_sizes)}, "
+                    f"output_slice_sizes={offset_dims}, collapsed_slice_dims="
+                    f"{collapsed_slice_dims}.")
+
+  for i in range(len(slice_sizes)):
+    slice_size = slice_sizes[i]
+    corresponding_input_size = operand.shape[i]
+
+    if slice_size < 0 or slice_size > corresponding_input_size:
+      raise TypeError(f"Slice size at index {i} in gather op is out of range, "
+                      f"must be within [0, {corresponding_input_size + 1}), "
+                      f"got {slice_size}.")
+
+  for i in range(len(collapsed_slice_dims)):
+    bound = slice_sizes[collapsed_slice_dims[i]]
+    if bound > 1:
+      raise TypeError(f"Gather op can only collapse slice dims with bound 1 "
+                      f"or 0, but bound is {bound} for index "
+                      f"{collapsed_slice_dims[i]} at position {i}.")
+
+  expanded_start_indices_shape.pop(index_vector_dim)
+  start_indices_shape = iter(expanded_start_indices_shape)
+
+  slice_sizes = iter(np.delete(slice_sizes, collapsed_slice_dims))
+  return tuple(next(slice_sizes) if i in offset_dims
+               else next(start_indices_shape) for i in range(output_shape_rank))
 
 def _gather_translation_rule(c, operand, start_indices, *, dimension_numbers,
                              slice_sizes):
@@ -3945,7 +4081,110 @@ def _scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
   _check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
   return dtypes.canonicalize_dtype(operand.dtype)
 
-def _scatter_shape_rule(operand, scatter_indices, updates, **kwargs):
+def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
+                        update_consts, dimension_numbers, indices_are_sorted,
+                        unique_indices):
+  """Validates the well-formedness of the ``dimension_numbers`` argument to
+  Scatter.
+
+  The code implements the checks based on the detailed operation semantics of
+  XLA's `Scatter <https://www.tensorflow.org/xla/operation_semantics#scatter>`_
+  operator and following the outline of the implementation of
+  ShapeInference::InferScatterShape in TensorFlow.
+  """
+
+  update_window_dims = dimension_numbers.update_window_dims
+  inserted_window_dims = dimension_numbers.inserted_window_dims
+  scatter_dims_to_operand_dims = dimension_numbers.scatter_dims_to_operand_dims
+  # Note: in JAX, index_vector_dim is always computed as below, cf. the
+  # documentation of the ScatterDimensionNumbers class.
+  index_vector_dim = _rank(scatter_indices) - 1
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if _rank(scatter_indices) < index_vector_dim or index_vector_dim < 0:
+    raise TypeError(f"Scatter index leaf dimension must be within [0, "
+                    f"rank(scatter_indices) + 1). rank(scatter_indices) is "
+                    f"{_rank(scatter_indices)} and scatter index leaf "
+                    f"dimension is {index_vector_dim}.")
+
+  expanded_scatter_indices_shape = list(scatter_indices.shape)
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if len(expanded_scatter_indices_shape) == index_vector_dim:
+    expanded_scatter_indices_shape.append(1)
+
+  expected_updates_rank = (len(expanded_scatter_indices_shape) - 1 +
+                           len(update_window_dims))
+
+  if _rank(updates) != expected_updates_rank:
+    raise TypeError(f"Updates tensor must be of rank {expected_updates_rank}; "
+                    f"got {_rank(updates)}.")
+
+  # Validate update_window_dims
+  _is_sorted(update_window_dims, "scatter", "update_window_dims")
+  _no_duplicate_dims(update_window_dims, "scatter", "update_window_dims")
+  _sorted_dims_in_range(update_window_dims, _rank(updates), "scatter",
+                        "update_window_dims")
+
+  # Validate inserted_window_dims
+  _is_sorted(inserted_window_dims, "scatter", "inserted_window_dims")
+  _no_duplicate_dims(inserted_window_dims, "scatter", "inserted_window_dims")
+  _sorted_dims_in_range(inserted_window_dims, _rank(operand), "scatter",
+                        "inserted_window_dims")
+
+  # Validate window_size
+  window_size = len(update_window_dims) + len(inserted_window_dims)
+  if _rank(operand) != window_size:
+    raise TypeError(f"Scatter op has window of size {window_size}; doesn't "
+                    f"match operand of rank {_rank(operand)}.")
+
+  # Validate scatter_dims_to_operand_dims
+  if (len(scatter_dims_to_operand_dims) !=
+      scatter_indices.shape[index_vector_dim]):
+    raise TypeError(f"Scatter op has {len(scatter_dims_to_operand_dims)} "
+                    f"elements in scatter_dims_to_operand_dims and the bound "
+                    f"of dimension index_vector_dim={index_vector_dim} of "
+                    f"scatter_indices is "
+                    f"{scatter_indices.shape[index_vector_dim]}. These two "
+                    f"numbers must be equal")
+
+  for i in range(len(scatter_dims_to_operand_dims)):
+    dim = scatter_dims_to_operand_dims[i]
+    if dim < 0 or dim >= _rank(operand):
+      raise TypeError(f"Invalid scatter_dims_to_operand_dims mapping; domain "
+                      f"is [0, {_rank(operand)}), got: {i}->{dim}.")
+
+  _no_duplicate_dims(scatter_dims_to_operand_dims, "scatter",
+                     "scatter_dims_to_operand_dims")
+
+  max_update_slice_sizes = [operand.shape[i] for i in range(len(operand.shape))
+                            if not i in set(inserted_window_dims)]
+
+  for i in range(len(update_window_dims)):
+    update_window_dim = update_window_dims[i]
+    if updates.shape[update_window_dim] > max_update_slice_sizes[i]:
+      raise TypeError(f"Bounds of the window dimensions of updates must not "
+                      f"exceed the bounds of the corresponding dimensions of "
+                      f"operand. For dimension {update_window_dim}, updates "
+                      f"bound is {updates.shape[update_window_dim]}, operand "
+                      f"bound is {max_update_slice_sizes[i]}.")
+
+  update_scatter_dims = [dim for dim in range(_rank(updates)) if dim not in
+                         set(update_window_dims)]
+
+  scatter_dims_seen = 0
+  for i in update_scatter_dims:
+    if scatter_dims_seen == index_vector_dim:
+      scatter_dims_seen += 1
+    if updates.shape[i] != expanded_scatter_indices_shape[scatter_dims_seen]:
+      raise TypeError(f"Bounds of the scatter dimensions of updates must be "
+                      f"the same as the bounds of the corresponding dimensions "
+                      f"of scatter indices. For scatter dimension {i}, updates "
+                      f"bound is {updates.shape[i]}, scatter_indices bound is "
+                      f"{expanded_scatter_indices_shape[scatter_dims_seen]}.")
+    scatter_dims_seen += 1
+
   return operand.shape
 
 def _scatter_translation_rule(c, operand, scatter_indices, updates, *,
@@ -4741,8 +4980,10 @@ def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
 def _common_reduce_window_shape_rule(operand, window_dimensions,
                                      window_strides, padding, base_dilation,
                                      window_dilation):
-  _check_shapelike("reduce_window", "window_dimensions", window_dimensions)
-  _check_shapelike("reduce_window", "window_strides", window_strides)
+  _check_shapelike("reduce_window", "window_dimensions", window_dimensions,
+                   non_zero_shape=True)
+  _check_shapelike("reduce_window", "window_strides", window_strides,
+                   non_zero_shape=True)
   _check_shapelike("reduce_window", "base_dilation", base_dilation)
   _check_shapelike("reduce_window", "window_dilation", window_dilation)
   if operand.ndim != len(window_dimensions):
@@ -5723,7 +5964,7 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   return tuple(np.take(out_trans, np.argsort(out_perm)))
 
 
-def _check_shapelike(fun_name, arg_name, obj):
+def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
   if not isinstance(obj, (tuple, list, np.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
@@ -5740,9 +5981,11 @@ def _check_shapelike(fun_name, arg_name, obj):
   except TypeError:
     msg = "{} {} must have every element be an integer type, got {}."
     raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
-  if not (obj_arr >= 0).all():
-    msg = "{} {} must have every element be nonnegative, got {}."
-    raise TypeError(msg.format(fun_name, arg_name, obj))
+  lower_bound, bound_error = (
+      (1, "strictly positive") if non_zero_shape else (0, "nonnegative"))
+  if not (obj_arr >= lower_bound).all():
+    msg = "{} {} must have every element be {}, got {}."
+    raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 
 
 def _dynamic_slice_indices(operand, start_indices):
@@ -5955,19 +6198,7 @@ def _check_user_dtype_supported(dtype, fun_name=None):
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype))
 
 
-def _canonicalize_axis(axis, num_dims):
-  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
-  axis = operator.index(axis)
-  if not -num_dims <= axis < num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
-  if axis < 0:
-    axis = axis + num_dims
-  return axis
-
-
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global _tie_in_transpose_rule, _tie_in_batch_rule, _tie_in_impl, tie_in_p
   del _tie_in_transpose_rule, _tie_in_batch_rule, _tie_in_impl, tie_in_p

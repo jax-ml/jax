@@ -490,7 +490,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   if config.omnistaging_enabled:
     partial_eval_jaxpr = pe.partial_eval_jaxpr
   else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.master.trace_type)
+    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
 
   cond_consts_uk, body_consts_uk, carry_init_uk = split_list(unknowns, [cond_nconsts, body_nconsts])
   # Fixpoint computation of unknown carry. Each iteration promotes
@@ -844,7 +844,7 @@ def _cond_partial_eval(trace, *tracers, branches, linear):
   if config.omnistaging_enabled:
     partial_eval_jaxpr = pe.partial_eval_jaxpr
   else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.master.trace_type)
+    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
 
   if index_uk:
     # When the branch index is unknown, we stage out the whole cond.
@@ -1517,7 +1517,7 @@ def _prune_zeros(ts):
 
 def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                        jaxpr, linear, unroll):
-  if not config.omnistaging_enabled and trace.master.trace_type is pe.StagingJaxprTrace:
+  if not config.omnistaging_enabled and trace.main.trace_type is pe.StagingJaxprTrace:
     params = dict(reverse=reverse, length=length, num_consts=num_consts,
                   num_carry=num_carry, jaxpr=jaxpr, linear=linear,
                   unroll=unroll)
@@ -1531,7 +1531,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   if config.omnistaging_enabled:
     partial_eval_jaxpr = pe.partial_eval_jaxpr
   else:
-    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.master.trace_type)
+    partial_eval_jaxpr = partial(pe.partial_eval_jaxpr, trace_type=trace.main.trace_type)
 
   # Fixpoint computation of which carry are unknown (not a constant): either
   # unknown from init, or the carry out is unknown. Each iteration promotes
@@ -2324,40 +2324,51 @@ def _interleave(a, b):
     return jnp.reshape(jnp.stack([a, b], axis=1),
                        (2 * half_num_elems,) + a.shape[1:])
 
-def associative_scan(fn, elems):
+def associative_scan(fn, elems, reverse=False):
   """Perform a scan with an associative binary operation, in parallel.
 
   Args:
     fn: Python callable implementing an associative binary operation with
-      signature `r = fn(a, b)`. This must satisfy associativity:
-      `fn(a, fn(b, c)) == fn(fn(a, b), c)`. The inputs and result are
-      (possibly nested structures of) `Tensor`(s), matching `elems`. Each
-      `Tensor` has a leading batch dimension in place of `num_elems`; the `fn`
-      is expected to map over this dimension. The result `r` has the same shape
-      (and structure) as the two inputs `a` and `b`.
-    elems: A (possibly nested structure of) `Tensor`(s), each with leading
-      dimension `num_elems`, which must be known statically.
+
+      signature ``r = fn(a, b)``. This must satisfy associativity:
+      ``fn(a, fn(b, c)) == fn(fn(a, b), c)``. The inputs and result are
+      (possibly nested structures of) array(s) matching ``elems``. Each
+      array has a leading dimension in place of ``num_elems``; the `fn`
+      is expected to be scanned over this dimension. The result `r` has the same
+      shape (and structure) as the two inputs ``a`` and ``b``.
+    elems: A (possibly nested structure of) array(s), each with leading
+      dimension ``num_elems``.
+    reverse: A boolean stating if the scan should be reversed with respect to
+      the leading dimension.
+
   Returns:
-    result: A (possibly nested structure of) `Tensor`(s) of the same shape
-      and structure as `elems`, in which the `k`th element is the result of
-      recursively applying `fn` to combine the first `k` elements of
-      `elems`. For example, given `elems = [a, b, c, ...]`, the result
-      would be `[a, fn(a, b), fn(fn(a, b), c), ...]`.
+    result: A (possibly nested structure of) array(s) of the same shape
+      and structure as ``elems``, in which the ``k``th element is the result of
+      recursively applying ``fn`` to combine the first ``k`` elements of
+      ``elems``. For example, given ``elems = [a, b, c, ...]``, the result
+      would be ``[a, fn(a, b), fn(fn(a, b), c), ...]``.
 
-  #### Examples
+  Example 1: partial sums of an array of numbers:
 
-  ```python
-  # Example 1: Partials sums of numbers.
+  >>> lax.associative_scan(jnp.add, jnp.arange(0, 4))
+  [ 0, 1, 3, 6]
 
-  np.associative_scan(operator.add, np.arange(0, 4))
-  # ==> [ 0, 1, 3, 6]
+  Example 2: partial products of an array of matrices
 
-  # Example 2: Partial products of random matrices.
+  >>> mats = random.uniform(random.PRNGKey(0), (4, 2, 2))
+  >>> partial_prods = lax.associative_scan(jnp.matmul, mats)
+  >>> partial_prods.shape
+  (4, 2, 2)
 
-  np.associative_scan(np.matmul, matrices)
-  ```
+  Example 3: reversed partial sums of an array of numbers
+
+  >>> lax.associative_scan(jnp.add, jnp.arange(0, 4), reverse=True)
+  [ 6, 6, 5, 3]
   """
   elems_flat, tree = tree_flatten(elems)
+
+  if reverse:
+    elems_flat = [lax.rev(elem, [0]) for elem in elems_flat]
 
   def lowered_fn(a_flat, b_flat):
     # Lower `fn` to operate on flattened sequences of elems.
@@ -2433,11 +2444,14 @@ def associative_scan(fn, elems):
 
   scans = _scan(elems_flat)
 
+  if reverse:
+    scans = [lax.rev(scanned, [0]) for scanned in scans]
+
   return tree_unflatten(tree, scans)
 
 
 # TODO(mattjj): remove when omnistaging fully lands
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 def omnistaging_enabler() -> None:
   global _initial_style_untyped_jaxpr, _initial_style_jaxpr, \
       _initial_style_jaxprs_with_common_consts

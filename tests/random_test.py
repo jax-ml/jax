@@ -228,11 +228,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       for shape in [(), (5,), (4, 5)]
       for replace in [True, False]
       for weighted in [True, False]
-      for array_input in [True, False]))
+      for array_input in [False, 'jnp', 'np']))
   def testChoice(self, dtype, shape, replace, weighted, array_input):
     N = 100
     key = random.PRNGKey(0)
-    x = N if not array_input else jnp.arange(N, dtype=dtype)
+    x = (N if not array_input else
+         jnp.arange(N, dtype=dtype) if array_input == 'jnp' else
+         np.arange(N, dtype=dtype))
     p = None if not weighted else jnp.arange(N)
     rand = lambda key: random.choice(key, x, shape, p=p, replace=replace)
     crand = api.jit(rand)
@@ -241,7 +243,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     sample2 = crand(key)
 
     self.assertEqual(shape, sample1.shape)
-    if array_input:
+    if array_input == 'jnp':
       self.assertEqual(x.dtype, sample1.dtype)
     if not replace:
       assert len(np.unique(sample1)) == len(np.ravel(sample1))
@@ -742,6 +744,118 @@ class LaxRandomTest(jtu.JaxTestCase):
     assert x.shape == shape
     x = random.randint(key, shape, jnp.array([0, 1]), jnp.array([1, 2]))
     assert x.shape == shape
+
+  def testMaxwellSample(self):
+    num_samples = 10**5
+    rng = random.PRNGKey(0)
+
+    rand = lambda x: random.maxwell(x, (num_samples, ))
+    crand = api.jit(rand)
+
+    loc = scipy.stats.maxwell.mean()
+    std = scipy.stats.maxwell.std()
+
+    uncompiled_samples = rand(rng)
+    compiled_samples = crand(rng)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      # Check first and second moments.
+      self.assertEqual((num_samples,), samples.shape)
+      self.assertAllClose(np.mean(samples), loc, atol=0., rtol=0.1)
+      self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.maxwell().cdf)
+
+  @parameterized.named_parameters(
+      ('test1', 4.0, 1.0),
+      ('test2', 2.0, 3.0))
+  def testWeibullSample(self, concentration, scale):
+    num_samples = 10**5
+    rng = random.PRNGKey(0)
+
+    rand = lambda x: random.weibull_min(x, scale, concentration, (num_samples,))
+    crand = api.jit(rand)
+
+    loc = scipy.stats.weibull_min.mean(c=concentration, scale=scale)
+    std = scipy.stats.weibull_min.std(c=concentration, scale=scale)
+
+    uncompiled_samples = rand(rng)
+    compiled_samples = crand(rng)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      # Check first and second moments.
+      self.assertEqual((num_samples,), samples.shape)
+      self.assertAllClose(np.mean(samples), loc, atol=0., rtol=0.1)
+      self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.weibull_min(
+          c=concentration, scale=scale).cdf)
+
+  @parameterized.named_parameters(
+      ('test1', 4.0, 1.0),
+      ('test2', 2.0, 3.0))
+  def testDoublesidedMaxwellSample(self, loc, scale):
+    num_samples = 10**5
+    rng = random.PRNGKey(0)
+
+    rand = lambda key: random.double_sided_maxwell(
+        rng, loc, scale, (num_samples,))
+    crand = api.jit(rand)
+
+    mean = loc
+    std = np.sqrt(3.) * scale
+
+    uncompiled_samples = rand(rng)
+    compiled_samples = crand(rng)
+
+    # Compute the double sided maxwell CDF through the one sided maxwell cdf.
+    # This is done as follows:
+    # P(DSM <= x) = P (loc + scale * radamacher_sample * one_sided_sample <=x) =
+    # P (radamacher_sample * one_sided_sample <= (x - loc) / scale) =
+    # 1/2 P(one_sided_sample <= (x - loc) / scale)
+    #    + 1/2 P( - one_sided_sample <= (x - loc) / scale) =
+    #  1/2 P(one_sided_sample <= (x - loc) / scale)
+    #    + 1/2 P(one_sided_sample >= - (x - loc) / scale) =
+    # 1/2 CDF_one_maxwell((x - loc) / scale))
+    #   + 1/2 (1 - CDF_one_maxwell(- (x - loc) / scale)))
+    def double_sided_maxwell_cdf(x, loc, scale):
+      pos = scipy.stats.maxwell().cdf((x - loc)/ scale)
+      neg = (1 - scipy.stats.maxwell().cdf((-x + loc)/ scale))
+      return (pos + neg) / 2
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      # Check first and second moments.
+      self.assertEqual((num_samples,), samples.shape)
+      self.assertAllClose(np.mean(samples), mean, atol=0., rtol=0.1)
+      self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
+
+      self._CheckKolmogorovSmirnovCDF(
+          samples, lambda x: double_sided_maxwell_cdf(x, loc, scale))
+
+  def testRadamacher(self):
+    rng = random.PRNGKey(0)
+    num_samples = 10**5
+
+    rand = lambda x: random.rademacher(x, (num_samples,))
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(rng)
+    compiled_samples = crand(rng)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      unique_values, counts = np.unique(samples, return_counts=True)
+      assert len(unique_values) == 2
+      assert len(counts) == 2
+
+      self.assertAllClose(
+          counts[0]/ num_samples, 0.5, rtol=1e-02, atol=1e-02)
+      self.assertAllClose(
+          counts[1]/ num_samples, 0.5, rtol=1e-02, atol=1e-02)
+
+  def testChoiceShapeIsNotSequenceError(self):
+    key = random.PRNGKey(0)
+    with self.assertRaises(TypeError):
+      random.choice(key, 5, 2, replace=False)
+    with self.assertRaises(TypeError):
+      random.choice(key, 5, 2, replace=True)
 
 
 if __name__ == "__main__":

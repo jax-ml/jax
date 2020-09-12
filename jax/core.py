@@ -116,8 +116,6 @@ class TypedJaxpr:
     assert len(literals) == len(jaxpr.constvars)
     assert len(in_avals) == len(jaxpr.invars)
 
-    assert not any(isinstance(l, Tracer) for l in literals), literals
-
     if not skip_checks:
       in_avals_raised = [raise_to_shaped(v) for v in in_avals]
       out_avals_raised = [raise_to_shaped(v) for v in out_avals]
@@ -358,15 +356,15 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
 
 
 class Trace:
-  __slots__ = ['master', 'level', 'sublevel']
+  __slots__ = ['main', 'level', 'sublevel']
 
-  master: 'MasterTrace'
+  main: 'MainTrace'
   level: int
   sublevel: 'Sublevel'
 
-  def __init__(self, master: 'MasterTrace', sublevel: 'Sublevel') -> None:
-    self.master = master
-    self.level = master.level
+  def __init__(self, main: 'MainTrace', sublevel: 'Sublevel') -> None:
+    self.main = main
+    self.level = main.level
     self.sublevel = sublevel
 
   def full_raise(self, val) -> 'Tracer':
@@ -374,7 +372,7 @@ class Trace:
       return self.pure(val)
     level = self.level
     sublevel = self.sublevel
-    if val._trace.master is self.master:
+    if val._trace.main is self.main:
       if val._trace.sublevel == sublevel:
         return val
       elif val._trace.sublevel < sublevel:
@@ -469,6 +467,9 @@ class Tracer:
   def aval(self):
     raise NotImplementedError("must override")
 
+  # Python looks up special methods only on classes, not instances. This means
+  # these methods needs to be defined explicitly rather than relying on
+  # __getattr__.
   def __neg__(self): return self.aval._neg(self)
   def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
@@ -528,6 +529,9 @@ class Tracer:
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
 
+  # NumPy also only looks up special methods on classes.
+  def __array_module__(self, types): return self.aval._array_module(self, types)
+
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
     assert skip_checks or name != "aval"
@@ -585,7 +589,7 @@ class EvalTrace(Trace):
   process_map = process_call
 
 
-class MasterTrace:
+class MainTrace:
   level: int
   trace_type: Type[Trace]
 
@@ -594,18 +598,18 @@ class MasterTrace:
     self.trace_type = trace_type
 
   def __repr__(self) -> str:
-    return "MasterTrace({},{})".format(self.level, self.trace_type.__name__)
+    return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
 
   def __hash__(self) -> int:
     return hash((self.level, self.trace_type))
 
   def __eq__(self, other: object) -> bool:
-    return (isinstance(other, MasterTrace) and
+    return (isinstance(other, MainTrace) and
             self.level == other.level and self.trace_type == other.trace_type)
 
 class TraceStack:
-  upward: List[MasterTrace]
-  downward: List[MasterTrace]
+  upward: List[MainTrace]
+  downward: List[MainTrace]
 
   def __init__(self):
     self.upward = []
@@ -617,11 +621,11 @@ class TraceStack:
     else:
       return len(self.upward)
 
-  def push(self, master_trace: MasterTrace, bottom: bool) -> None:
+  def push(self, main_trace: MainTrace, bottom: bool) -> None:
     if bottom:
-      self.downward.append(master_trace)
+      self.downward.append(main_trace)
     else:
-      self.upward.append(master_trace)
+      self.upward.append(main_trace)
 
   def pop(self, bottom: bool) -> None:
     if bottom:
@@ -641,7 +645,7 @@ class TraceStack:
     return new
 
 class Sublevel(int): pass
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'tag'])
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
 
 
 class TraceState:
@@ -683,19 +687,19 @@ def cur_sublevel() -> Sublevel:
   return thread_local_state.trace_state.substack[-1]
 
 @contextmanager
-def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MasterTrace, None, None]:
+def new_main(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
   level = thread_local_state.trace_state.trace_stack.next_level(bottom)
-  master = MasterTrace(level, trace_type)
-  thread_local_state.trace_state.trace_stack.push(master, bottom)
+  main = MainTrace(level, trace_type)
+  thread_local_state.trace_state.trace_stack.push(main, bottom)
 
   try:
-    yield master
+    yield main
   finally:
     thread_local_state.trace_state.trace_stack.pop(bottom)
 
   if check_leaks:
-    t = ref(master)
-    del master
+    t = ref(main)
+    del main
     if t() is not None:
       print(thread_local_state.trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
@@ -724,7 +728,7 @@ def full_lower(val):
 def find_top_trace(xs) -> Optional[Trace]:
   top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
                   key=attrgetter('level'), default=None)
-  return top_trace and type(top_trace)(top_trace.master, cur_sublevel())
+  return top_trace and type(top_trace)(top_trace.main, cur_sublevel())
 
 @contextmanager
 def initial_style_staging():
@@ -1112,7 +1116,7 @@ def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
       ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans._trace)(ans._trace.master, cur_sublevel())
+    trace = type(ans._trace)(ans._trace.main, cur_sublevel())
     outs = map(trace.full_raise, outs)
     outs, cur_todo = primitive.post_process(trace, outs, params)
     todo.append(cur_todo)
@@ -1427,29 +1431,29 @@ def pp_kv_pairs(kv_pairs):
 axis_frame = None
 
 # TODO(mattjj): remove when omnistaging fully lands
-@config.omnistaging_enablers.append
+@config.register_omnistaging_enabler
 @no_type_check
 def omnistaging_enabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
-      new_master, reset_trace_state, extend_axis_env, axis_frame, \
-      axis_index, axis_index_p, new_base_master, eval_context, \
+      new_main, reset_trace_state, extend_axis_env, axis_frame, \
+      new_base_main, eval_context, \
       TraceStack, TraceState
   del initial_style_staging
 
   class TraceStack:
-    stack: List[MasterTrace]
-    dynamic: MasterTrace
+    stack: List[MainTrace]
+    dynamic: MainTrace
 
     def __init__(self):
-      eval_trace = MasterTrace(0, EvalTrace)
+      eval_trace = MainTrace(0, EvalTrace)
       self.stack = [eval_trace]
       self.dynamic = eval_trace
 
     def next_level(self) -> int:
       return len(self.stack)
 
-    def push(self, master_trace: MasterTrace) -> None:
-      self.stack.append(master_trace)
+    def push(self, main_trace: MainTrace) -> None:
+      self.stack.append(main_trace)
 
     def pop(self) -> None:
       self.stack.pop()
@@ -1487,8 +1491,8 @@ def omnistaging_enabler() -> None:
     "Reset the global trace state and return True if it was already clean."
     if (thread_local_state.trace_state.substack != [Sublevel(0)] or
         thread_local_state.trace_state.axis_env != [] or
-        thread_local_state.trace_state.trace_stack.stack != [MasterTrace(0, EvalTrace)] or
-        thread_local_state.trace_state.trace_stack.dynamic != MasterTrace(0, EvalTrace)):
+        thread_local_state.trace_state.trace_stack.stack != [MainTrace(0, EvalTrace)] or
+        thread_local_state.trace_state.trace_stack.dynamic != MainTrace(0, EvalTrace)):
       thread_local_state.trace_state.__init__()  # type: ignore
       return False
     else:
@@ -1508,55 +1512,55 @@ def omnistaging_enabler() -> None:
   def maybe_new_sublevel(trace):
     # dynamic traces run the WrappedFun, so we raise the sublevel for them
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    return new_sublevel() if trace.master is dynamic else suppress()
+    return new_sublevel() if trace.main is dynamic else suppress()
 
   def find_top_trace(xs) -> Trace:
-    top_master = max((x._trace.master for x in xs if isinstance(x, Tracer)),
+    top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
                      default=None, key=attrgetter('level'))
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    top_master = (dynamic if top_master is None or dynamic.level > top_master.level
-                  else top_master)
-    return top_master and top_master.trace_type(top_master, cur_sublevel())  # type: ignore
+    top_main = (dynamic if top_main is None or dynamic.level > top_main.level
+                  else top_main)
+    return top_main and top_main.trace_type(top_main, cur_sublevel())  # type: ignore
 
   @contextmanager
-  def new_master(trace_type: Type[Trace], dynamic: bool = False,
-                 ) -> Generator[MasterTrace, None, None]:
+  def new_main(trace_type: Type[Trace], dynamic: bool = False,
+                 ) -> Generator[MainTrace, None, None]:
     stack = thread_local_state.trace_state.trace_stack
     level = stack.next_level()
-    master = MasterTrace(level, trace_type)
-    stack.push(master)
+    main = MainTrace(level, trace_type)
+    stack.push(main)
     if dynamic:
-      prev_dynamic, stack.dynamic = stack.dynamic, master
+      prev_dynamic, stack.dynamic = stack.dynamic, main
 
     try:
-      yield master
+      yield main
     finally:
       thread_local_state.trace_state.trace_stack.pop()
       if dynamic:
         stack.dynamic = prev_dynamic
 
     if check_leaks:
-      t = ref(master)
-      del master
+      t = ref(main)
+      del main
       if t() is not None:
         print(thread_local_state.trace_state.trace_stack)
         raise Exception('Leaked trace {}'.format(t()))
 
   @contextmanager
-  def new_base_master(trace_type: Type[Trace]) -> Generator[MasterTrace, None, None]:
+  def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
     stack = thread_local_state.trace_state.trace_stack
-    master = MasterTrace(0, trace_type)
-    prev_dynamic, stack.dynamic = stack.dynamic, master
-    prev_base, stack.stack[0] = stack.stack[0], master
+    main = MainTrace(0, trace_type)
+    prev_dynamic, stack.dynamic = stack.dynamic, main
+    prev_base, stack.stack[0] = stack.stack[0], main
     try:
-      yield master
+      yield main
     finally:
       stack.dynamic = prev_dynamic
       stack.stack[0] = prev_base
 
   @contextmanager
   def eval_context():
-    with new_base_master(EvalTrace):
+    with new_base_main(EvalTrace):
       yield
 
   def bind(self, *args, **params):
@@ -1569,14 +1573,14 @@ def omnistaging_enabler() -> None:
   Primitive.bind = bind
 
   @contextmanager
-  def extend_axis_env(axis_name, size: int, tag: Any):
-    frame = AxisEnvFrame(axis_name, size, tag)
+  def extend_axis_env(axis_name, size: int, main_trace: Optional[MainTrace]):
+    frame = AxisEnvFrame(axis_name, size, main_trace)
     thread_local_state.trace_state.axis_env.append(frame)
     try:
       yield
     finally:
       frame_ = thread_local_state.trace_state.axis_env.pop()
-      assert frame is frame_
+    assert frame is frame_  # Only runs if there was was no exception
 
   def axis_frame(axis_name):
     frames = thread_local_state.trace_state.axis_env
@@ -1584,46 +1588,5 @@ def omnistaging_enabler() -> None:
       if frame.name == axis_name:
         return frame
     else:
-      raise NameError("unbound axis name: {}".format(axis_name))
-
-  def axis_index(axis_name):
-    """Return the index along the mapped axis ``axis_name``.
-
-    Args:
-      axis_name: hashable Python object used to name the mapped axis.
-
-    Returns:
-      An integer representing the index.
-
-    For example, with 8 XLA devices available:
-
-    >>> from functools import partial
-    >>> @partial(jax.pmap, axis_name='i')
-    ... def f(_):
-    ...   return lax.axis_index('i')
-    ...
-    >>> f(np.zeros(4))
-    ShardedDeviceArray([0, 1, 2, 3], dtype=int32)
-    >>> f(np.zeros(8))
-    ShardedDeviceArray([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-    >>> @partial(jax.pmap, axis_name='i')
-    ... @partial(jax.pmap, axis_name='j')
-    ... def f(_):
-    ...   return lax.axis_index('i'), lax.axis_index('j')
-    ...
-    >>> x, y = f(np.zeros((4, 2)))
-    >>> print(x)
-    [[0 0]
-    [1 1]
-    [2 2]
-    [3 3]]
-    >>> print(y)
-    [[0 1]
-    [0 1]
-    [0 1]
-    [0 1]]
-    """
-    return axis_index_p.bind(axis_name=axis_name)
-
-  axis_index_p = Primitive('axis_index')
-  axis_index_p.def_abstract_eval(lambda *, axis_name: ShapedArray((), np.int32))
+      raise NameError(f"Unbound axis name: {axis_name}.\n"
+                      f"The currently bound axes are: {','.join(f.name for f in frames)}")
