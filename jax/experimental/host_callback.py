@@ -180,7 +180,7 @@ def id_tap(tap_func: _TapFunc, arg: T) -> T:
 def id_tap(tap_func: _TapFunc, arg: T, *, result: U) -> U:
   ...
 
-def id_tap(tap_func, arg, *, result=None):
+def id_tap(tap_func, arg, *, result=None, **kwargs):
   """Host-callback tap primitive, like identity function with a call to ``tap_func``.
 
   **Experimental: please give feedback, and expect changes!**
@@ -190,18 +190,20 @@ def id_tap(tap_func, arg, *, result=None):
   values of the argument.
 
   Args:
-    * tap_func: tap function to call like ``tap_func(arg, transforms)``, with
+    tap_func: tap function to call like ``tap_func(arg, transforms)``, with
       ``arg`` as described below and where ``transforms`` is sequence of applied
       JAX transformations in the form ``(name, params)``.
-    * arg: the argument passed to the tap function, can be a pytree of JAX
+    arg: the argument passed to the tap function, can be a pytree of JAX
       types.
-    * result: if given, specifies the return value of ``id_tap``. This value is
+    result: if given, specifies the return value of ``id_tap``. This value is
       not passed to the tap function, and in fact is not sent from the device to
       the host. If the ``result`` parameter is not specified then the return
       value of ``id_tap`` is ``arg``.
+    **kwargs: Deprecated option for passing additional keyword arguments to
+      ``tap_func``.
 
   Returns:
-    * ``arg``, or ``result`` if given.
+    ``arg``, or ``result`` if given.
 
   The order of execution is by data dependency: after all the arguments and
   the value of ``result`` if present, are computed and before the returned
@@ -222,6 +224,14 @@ def id_tap(tap_func, arg, *, result=None):
   `module documentation
   <https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html>`_.
   """
+  if kwargs:
+    warnings.warn(
+        "Support for **kwargs in ``id_tap`` is deprecated and will be removed "
+        "in the future. Instead, pre-apply keyword arguments, either by using "
+        "a closure or by passing ``functools.partial(tap_func, **kwargs)`` "
+        "instead",
+        FutureWarning, stacklevel=2)
+    tap_func = functools.partial(tap_func, **kwargs)
   _initialize_outfeed_receiver()  # Lazy initialization
   api._check_callable(tap_func)
   flat_args, arg_treedef = pytree.flatten(arg)

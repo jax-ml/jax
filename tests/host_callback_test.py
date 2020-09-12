@@ -1117,6 +1117,13 @@ class HostCallbackTest(jtu.JaxTestCase):
           comp, token, 123,
           [xla_bridge.constant(comp, np.zeros((2,), dtype=np.float32))])
 
+  def test_id_tap_deprecated_kwargs(self):
+    def func(x, transforms, y):
+      pass
+    with self.assertWarnsRegex(
+        FutureWarning, r"Support for \*\*kwargs in ``id_tap``"):
+      hcb.id_tap(func, 1, y=2)
+
   def test_odeint(self):
     # TODO: find a smaller repro for bug #4015
     # Seems to be xla_call(scan(xla_call)), all under grad.
@@ -1132,6 +1139,7 @@ class HostCallbackTest(jtu.JaxTestCase):
       return xs[-1]
 
     api.grad(loss)(1.0)  # should not fail
+
 
 class OutfeedRewriterTest(jtu.JaxTestCase):
 
