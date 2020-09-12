@@ -1481,6 +1481,15 @@ class PmapTest(jtu.JaxTestCase):
     u = np.ones((device_count, 100))
     multi_step_pmap(u)  # doesn't crash
 
+  @jtu.skip_on_devices("cpu")
+  def test_replicate_backend(self):
+    # https://github.com/google/jax/issues/4223
+    def fn(indices):
+      return jnp.equal(indices, jnp.arange(3)).astype(jnp.float32)
+    mapped_fn = jax.pmap(fn, axis_name='i', backend='cpu')
+    mapped_fn = jax.pmap(mapped_fn, axis_name='j', backend='cpu')
+    indices = np.array([[[2], [1]], [[0], [0]]])
+    mapped_fn(indices)  # doesn't crash
 
 
 class VmapOfPmapTest(jtu.JaxTestCase):
