@@ -925,7 +925,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
     A ShardedDeviceArray of length `axis_size` where each shard is equal to
     ``val``.
   """
-  device_count = (len(devices) if devices else xb.local_device_count())
+  device_count = (len(devices) if devices else xb.local_device_count(backend))
   if nrep > device_count:
     msg = ("Cannot replicate across %d replicas because only %d local devices "
            "are available." % (nrep, device_count))
