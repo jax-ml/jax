@@ -513,7 +513,7 @@ class APITest(jtu.JaxTestCase):
 
       self.assertRaisesRegex(
           TypeError,
-          f"Try using `x.astype\\({castfun.__name__}\\)` instead.",
+          f"[Tt]ry using `x.astype\\({castfun.__name__}\\)`",
           lambda: jit(f)(1.0))
 
   def test_switch_value_jit(self):
@@ -549,7 +549,7 @@ class APITest(jtu.JaxTestCase):
       self.assertRaisesRegex(
           TypeError,
           "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
-          "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
+          "|Abstract tracer value encountered where concrete value is expected.*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')

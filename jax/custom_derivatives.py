@@ -69,11 +69,7 @@ def _memoize(thunk):
   return memoized
 
 def _initial_style_jaxpr(fun, in_avals):
-  in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
-                                               bottom=True, stage_out=False)
-  assert not any(isinstance(c, core.Tracer) for c in consts)
-  out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
+  jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
   return typed_jaxpr
 
@@ -276,12 +272,8 @@ class CustomJVPCallPrimitive(core.CallPrimitive):
         fun, self, top_trace and top_trace.level, ())
     jvp, env_trace_todo2 = core.process_env_traces(
         jvp, self, top_trace and top_trace.level, ())
-    if top_trace is None:
-      with core.new_sublevel():
-        outs = self.impl(fun, jvp, *args)
-    else:
-      tracers = map(top_trace.full_raise, args)
-      outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)
+    tracers = map(top_trace.full_raise, args)  # type: ignore
+    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if env_trace_todo:
       raise core.UnexpectedTracerError
@@ -602,13 +594,16 @@ xla.initial_style_translations[custom_vjp_call_jaxpr_p] = \
 batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
 
 
-# TODO(mattjj): remove when omnistaging fully lands
-@config.register_omnistaging_enabler
-def omnistaging_enabler() -> None:
-  global _initial_style_jaxpr
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
+  global _initial_style_jaxpr, custom_jvp_call
 
   def _initial_style_jaxpr(fun, in_avals):
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
+                                                bottom=True, stage_out=False)  # type: ignore
+    assert not any(isinstance(c, core.Tracer) for c in consts)
+    out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
     typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
     return typed_jaxpr
 
@@ -619,10 +614,15 @@ def omnistaging_enabler() -> None:
         fun, self, top_trace and top_trace.level, ())
     jvp, env_trace_todo2 = core.process_env_traces(
         jvp, self, top_trace and top_trace.level, ())
-    tracers = map(top_trace.full_raise, args)  # type: ignore
-    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
+    if top_trace is None:
+      with core.new_sublevel():
+        outs = self.impl(fun, jvp, *args)
+    else:
+      tracers = map(top_trace.full_raise, args)
+      outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if env_trace_todo:
       raise core.UnexpectedTracerError
     return map(core.full_lower, outs)
   CustomJVPCallPrimitive.bind = bind  # type: ignore
+  custom_jvp_call = custom_jvp_call_p.bind
