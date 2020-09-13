@@ -883,6 +883,11 @@ def _outfeed_receiver_callback(device, consumer_id, arrays):
     arg = api.tree_unflatten(consumer.arg_treedef, arrays)
     consumer.func(arg, consumer.unpack_transforms())  # type: ignore[attribute-error]
   except Exception as e:
+    if isinstance(e, TypeError):
+      logging.error("The signature host_callback.id_tap uses to calls wrapped "
+                    "functions has changed: ``transforms`` was previously "
+                    "passed as a keyword argument, but is now passed by "
+                    "position.")
     logging.error("Postponing exception raised in tap function: %s\n%s", str(e),
                   traceback.format_exc())
     _outfeed_receiver.num_tap_exceptions += 1
