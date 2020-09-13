@@ -229,7 +229,7 @@ def id_tap(tap_func, arg, *, result=None, **kwargs):
         "Support for **kwargs in ``id_tap`` is deprecated and will be removed "
         "in the future. Instead, pre-apply keyword arguments, either by using "
         "a closure or by passing ``functools.partial(tap_func, **kwargs)`` "
-        "instead",
+        "instead.",
         FutureWarning, stacklevel=2)
     tap_func = functools.partial(tap_func, **kwargs)
   _initialize_outfeed_receiver()  # Lazy initialization
