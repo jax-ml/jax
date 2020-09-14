@@ -106,13 +106,24 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       tf_unimpl(np_dtype, devs=["TPU"])
     elif np_dtype in [np.complex64, np.complex128]:
       # TODO: on CPU and GPU "No registered 'Svd' OpKernel for XLA_CPU_JIT
-      # devices". Works on JAX because JAX uses a custom implementation
+      # devices". Works on JAX because JAX uses a custom implementation.
+      # There exists a XlaSvd operation that could replace tf.linalg.svd in
+      # these cases but complex numbers support is not implemented in XLA yet,
+      # and the API of XlaSvd is different than the one in JAX/TF, which also
+      # limits its useability (e.g. no full_matrices argument, …).
       additional_msg = ("this works on JAX because JAX uses a custom "
                         "implementation")
       tf_unimpl(np_dtype, additional_msg=additional_msg, devs=["CPU", "GPU"])
 
   if prim is lax.select_and_gather_add_p:
     np_dtype = _to_np_dtype(args[0].dtype)
+    # TODO: the conversion is only supported for float16/float32 on CPU/GPU,
+    # and float16 on TPU. This is because we do not implement a precision
+    # reduction in the case where packing 2 n-bit values together results in
+    # more than the maximum number of bits allowed on the platform (64 on
+    # CPU/GPU, 32 on TPU). This could be fixed by implementing a variadic
+    # reduce_window in tfxla, or we can require the user to reduce the
+    # precision of their arrays manually based on the platform they run on.
     devices_and_max_bits = [ (["CPU", "GPU"], 64)
                            , (["TPU"], 32)
                            ]
