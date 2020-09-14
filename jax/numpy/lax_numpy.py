@@ -3198,7 +3198,7 @@ def outer(a, b, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to outer is not supported.")
   a, b = _promote_dtypes(a, b)
-  return ravel(a)[:, None] * ravel(b)
+  return ravel(a)[:, None] * ravel(b)[None, :]
 
 @partial(jit, static_argnums=(2, 3, 4))
 def _cross(a, b, axisa, axisb, axisc):
