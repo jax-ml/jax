@@ -173,7 +173,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
 
   if prim is lax.population_count_p:
     np_dtype = _to_np_dtype(args[0].dtype)
-    if np_dtype == np.uint32:
+    if np_dtype in [np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
 
   if prim in [lax.acosh_p, lax.asinh_p, lax.atanh_p, lax.bessel_i0e_p,
@@ -191,6 +191,17 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # operations.
       tf_unimpl(np_dtype)
 
+  if prim is lax.lax_fft.fft_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.float64, np.complex128]:
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"))
+
+  if prim is lax.top_k_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.float64, np.int64, np.uint64]:
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"))
   return limitations
 
 def prettify(limitations: Sequence[Limitation]) -> str:
