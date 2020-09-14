@@ -145,7 +145,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
 
   if prim in [lax.add_p, lax.reduce_window_sum_p]:
     np_dtype = _to_np_dtype(args[0].dtype)
-    if np_dtype in [np.uint16, np.uint32, np.uint64]:
+    if np_dtype in [np.uint16, np.uint64]:
       # TODO(bchetioui): tf.math.add is not defined for the above types.
       tf_unimpl(np_dtype)
 

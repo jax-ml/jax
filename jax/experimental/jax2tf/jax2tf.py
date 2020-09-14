@@ -441,7 +441,14 @@ except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
-tf_impl[ad_util.add_jaxvals_p] = wrap_binary_op(tf.math.add)
+
+def _add(*operands: TfVal) -> TfVal:
+  """Add unsigned integer support for add."""
+  x, y = promote_types(*operands)
+  # Only AddV2 supports uint8 and uint32 addition.
+  return tf.raw_ops.AddV2(x=x, y=y)
+
+tf_impl[ad_util.add_jaxvals_p] = _add
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
 tf_impl[lax.neg_p] = tf.math.negative
@@ -494,7 +501,7 @@ tf_impl[lax.conj_p] = tf.math.conj
 tf_impl[lax.real_p] = tf.math.real
 tf_impl[lax.imag_p] = tf.math.imag
 
-tf_impl[lax.add_p] = wrap_binary_op(tf.math.add)
+tf_impl[lax.add_p] = _add
 tf_impl[lax.sub_p] = wrap_binary_op(tf.math.subtract)
 tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
 
@@ -811,7 +818,7 @@ tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
 tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
 
 
-_add_fn = tf.function(tf.math.add)
+_add_fn = tf.function(_add)
 _ge_fn = tf.function(tf.math.greater_equal)
 
 tf_impl[lax.cumsum_p] = tf.math.cumsum
@@ -1016,7 +1023,7 @@ def _get_min_identity(tf_dtype):
 
 # pylint: disable=protected-access
 tf_impl[lax.reduce_window_sum_p] = (
-    functools.partial(_specialized_reduce_window, tf.math.add, lambda x: 0))
+    functools.partial(_specialized_reduce_window, _add, lambda x: 0))
 tf_impl[lax.reduce_window_min_p] = (
     functools.partial(_specialized_reduce_window, tf.math.minimum,
                       _get_min_identity))
@@ -1047,15 +1054,12 @@ def _select_and_scatter_add(
 tf_impl[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 def _threefry2x32_jax_impl(*args: TfValOrUnit):
-  # We use the random._threefry2x32_lowering, but since add is not implemented
-  # for uint32, we cast to int32 and back.
-  args = tuple([tf.cast(a, tf.int32) for a in args])
-  res = _convert_jax_impl(
+  # We use the random._threefry2x32_lowering
+  return _convert_jax_impl(
     functools.partial(random._threefry2x32_lowering,
                       use_rolled_loops=False),
     multiple_results=True)(*args)
-  res = tuple([tf.cast(r, tf.uint32) for r in res])
-  return res
+
 tf_impl[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 
 
