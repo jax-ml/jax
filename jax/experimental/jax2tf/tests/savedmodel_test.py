@@ -17,6 +17,7 @@ import os
 from absl.testing import absltest
 
 import jax
+from jax import dtypes
 from jax import lax
 import jax.numpy as jnp
 import numpy as np
@@ -41,10 +42,11 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
   def test_eval(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
+    signature_type = tf.float64 if config.FLAGS.jax_enable_x64 else tf.float32
     model = tf.Module()
     model.f = tf.function(jax2tf.convert(f_jax),
                           autograph=False,
-                          input_signature=[tf.TensorSpec([], tf.float32)])
+                          input_signature=[tf.TensorSpec([], signature_type)])
     x = np.array(0.7)
     self.assertAllClose(model.f(x), f_jax(x))
     restored_model = self.save_and_load_model(model)
@@ -52,14 +54,16 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
   def test_gradient_disabled(self):
     f_jax = lambda x: x * x
+    signature_type = tf.float64 if config.FLAGS.jax_enable_x64 else tf.float32
+
     model = tf.Module()
     model.f = tf.function(jax2tf.convert(f_jax, with_gradient=False),
                           autograph=False,
-                          input_signature=[tf.TensorSpec([], tf.float32)])
+                          input_signature=[tf.TensorSpec([], signature_type)])
     x = np.array(0.7)
     self.assertAllClose(model.f(x), f_jax(x))
     restored_model = self.save_and_load_model(model)
-    xv = tf.Variable(0.7)
+    xv = tf.Variable(0.7, dtype=dtypes.canonicalize_dtype(jnp.float_))
     self.assertAllClose(restored_model.f(x), f_jax(x))
 
     with self.assertRaisesRegex(LookupError,
@@ -82,14 +86,15 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
       tangent_out = 3. * x * x_dot
       return primal_out, tangent_out
 
+    signature_type = tf.float64 if config.FLAGS.jax_enable_x64 else tf.float32
     model = tf.Module()
     model.f = tf.function(jax2tf.convert(f_jax, with_gradient=True),
                           autograph=False,
-                          input_signature=[tf.TensorSpec([], tf.float32)])
+                          input_signature=[tf.TensorSpec([], signature_type)])
     x = np.array(0.7)
     self.assertAllClose(model.f(x), f_jax(x))
     restored_model = self.save_and_load_model(model)
-    xv = tf.Variable(0.7)
+    xv = tf.Variable(0.7, dtype=dtypes.canonicalize_dtype(jnp.float_))
     self.assertAllClose(restored_model.f(x), f_jax(x))
     with tf.GradientTape() as tape:
       y = restored_model.f(xv)
