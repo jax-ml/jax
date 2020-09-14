@@ -501,7 +501,7 @@ tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
 
 def _div(lhs, rhs):
   if lhs.dtype.is_integer:
-    quotient = tf.math.floor_divide(lhs, rhs)
+    quotient = tf.math.floordiv(lhs, rhs)
     select = tf.math.logical_and(tf.math.sign(lhs) != tf.math.sign(rhs),
                                  tf.math.floormod(lhs, rhs) != 0)
     return tf.where(select, quotient + 1, quotient)
