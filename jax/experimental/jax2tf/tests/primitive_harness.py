@@ -875,3 +875,11 @@ random_split = tuple(
                                np.array([0, 0xFFFFFFFF], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )
+
+type_promotion = tuple(
+  Harness(f"_{f_jax.__name__}", f_jax, [], f_jax=f_jax)
+  for f_jax in [jnp.add, jnp.subtract, jnp.multiply, jnp.divide,
+                jnp.less, jnp.less_equal, jnp.equal, jnp.greater,
+                jnp.greater_equal, jnp.not_equal, jnp.maximum,
+                jnp.minimum]
+)

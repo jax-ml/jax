@@ -81,14 +81,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       else:
         self.assertIn(p, tf_impl)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{f_jax.__name__}",
-         f_jax=f_jax)
-    for f_jax in [jnp.add, jnp.subtract, jnp.multiply, jnp.divide,
-                  jnp.less, jnp.less_equal, jnp.equal, jnp.greater,
-                  jnp.greater_equal, jnp.not_equal, jnp.maximum,
-                  jnp.minimum]))
-  def test_type_promotion(self, f_jax=jnp.add):
+  @primitive_harness.parameterized(primitive_harness.type_promotion)
+  def test_type_promotion(self, harness: primitive_harness.Harness):
+    f_jax = harness.params["f_jax"]
     # We only test a few types here, as tensorflow does not support many
     # types like uint* or bool in binary ops.
     types = [dtypes.bfloat16, np.int32, np.int64, np.float32]
