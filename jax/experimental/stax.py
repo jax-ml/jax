@@ -19,7 +19,6 @@ For an example of its use, see examples/resnet50.py.
 
 
 import functools
-import itertools
 import operator as op
 
 from jax import lax
