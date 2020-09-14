@@ -186,7 +186,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   # real-valued positive-definite linear operators are symmetric
   def real_valued(x):
-    return not issubclass(x.dtype.dtype, np.complexfloating)
+    return not issubclass(x.dtype.type, np.complexfloating)
   symmetric = all(map(real_valued, tree_leaves(b)))
   x = lax.custom_linear_solve(
       A, b, solve=cg_solve, transpose_solve=cg_solve, symmetric=symmetric)
