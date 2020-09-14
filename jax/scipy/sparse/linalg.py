@@ -18,7 +18,7 @@ import operator
 import numpy as np
 import jax.numpy as jnp
 from jax import scipy as jsp
-from jax import lax, device_put, jit
+from jax import lax, device_put
 from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
                            tree_reduce, Partial)
 from jax.util import safe_map as map
@@ -194,7 +194,25 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
+def _project_on_columns(A, v):
+  """
+  Returns the summed projections of v onto each column of A.conj().
+  """
+  v_proj = tree_multimap(
+    lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
+    A,
+    v,
+  )
+  return tree_reduce(operator.add, v_proj)
+
+
 def _safe_normalize(x, return_norm=False, thresh=None):
+  """
+  Returns the L2-normalized vector (which can be a pytree) x, and optionally
+  the computed norm. If the computed norm is less than the threshold `thresh`,
+  which by default is the machine precision of x's dtype, it will be
+  taken to be 0, and the normalized x to be the zero vector.
+  """
   norm = jnp.sqrt(_vdot_tree(x, x, assume_real=False))
   if thresh is None:
     thresh = jnp.finfo(x.dtype).eps
@@ -203,13 +221,31 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   normalized_x, norm = lax.cond(
     norm > thresh,
     lambda y: (_div(y, norm), norm),
-    lambda y: (_mul(0.*y, thresh), thresh),  # To get the dtype right
+    lambda y: (tree_map(jnp.zeros_like, y),
+               (thresh*0.).astype(norm.dtype)),  # To get the dtype right
     x,
   )
   if return_norm:
     return normalized_x, norm
   else:
     return normalized_x
+
+
+def _iterative_classical_gram_schmidt(Q, x, iterations=2):
+  """Orthogonalize x against the columns of Q."""
+  # "twice is enough"
+  # http://slepc.upv.es/documentation/reports/str1.pdf
+
+  # This assumes that Q's leaves all have the same dimension in the last
+  # axis.
+  r = jnp.zeros((tree_leaves(Q)[0].shape[-1]))
+  q = x
+
+  for _ in range(iterations):
+    h = _project_on_columns(Q, q)
+    q = _sub(q, tree_map(lambda X: jnp.dot(X, h), Q))
+    r = _add(r, h)
+  return q, r
 
 
 def kth_arnoldi_iteration(k, A, M, V, H, tol):
@@ -224,12 +260,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = A(M(v))
-
-  def gram_schmidt_step(r, v_i):
-    h_i = _vdot_tree(r, v_i)
-    r_i = _sub(r, _mul(h_i, v_i))
-    return r_i, h_i
-  v, h = lax.scan(gram_schmidt_step, v, xs=V.T)
+  v, h = _iterative_classical_gram_schmidt(V, v, iterations=1)
   unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
   h = h.at[k + 1].set(v_norm)
@@ -270,10 +301,10 @@ def apply_givens_rotations(H_row, givens, k):
   return R_row, givens
 
 
-def _gmres(A, b, x0, tol, n_kry, M):
+def _gmres(A, b, x0, tol, restart, M):
   """
-  Implements a single restart of GMRES. The n_kry-dimensional Krylov subspace
-  K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^n_kry @ x0) is built, and the
+  Implements a single restart of GMRES. The restart-dimensional Krylov subspace
+  K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
   projection of the true solution into this subspace is returned.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
@@ -283,22 +314,22 @@ def _gmres(A, b, x0, tol, n_kry, M):
   b_norm = jnp.sqrt(_vdot_tree(b, b, assume_real=False))
 
   V = tree_map(
-    lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, n_kry),)),
+    lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
     unit_residual,
   )
-  R = jnp.zeros((n_kry, n_kry + 1), jnp.result_type(*tree_leaves(b)))
+  R = jnp.zeros((restart, restart + 1), jnp.result_type(*tree_leaves(b)))
 
-  givens = jnp.zeros((n_kry, 2), dtype=x0.dtype)
-  beta_vec = jnp.zeros((n_kry + 1), dtype=x0.dtype)
+  givens = jnp.zeros((restart, 2), dtype=x0.dtype)
+  beta_vec = jnp.zeros((restart + 1), dtype=x0.dtype)
   beta_vec = beta_vec.at[0].set(beta)
 
   def loop_cond(carry):
     k, err, _, _, _, _ = carry
-    return lax.cond(k < n_kry,
+    return lax.cond(k < restart,
                     lambda x: x[0]**2 > x[1],
                     lambda x: False,
                     (err, tol))
-    #return k < n_kry and err**2 > tol
+    # return k < restart and err**2 > tol
 
   def arnoldi_qr_step(carry):
     k, err, V, R, beta_vec, givens = carry
@@ -314,10 +345,10 @@ def _gmres(A, b, x0, tol, n_kry, M):
   carry = (0, beta, V, R, beta_vec, givens)
   carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
   k, err, V, R, beta_vec, _ = carry
-  converged = k < n_kry - 1
+  converged = k < restart - 1
 
   y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
-  dx = M(tree_map(lambda X: jnp.dot(X[..., :-1], y), V))
+  dx = M(tree_map(lambda X: _dot(X[..., :-1], y), V))
   x = _add(x0, dx)
   return x, converged
 
@@ -343,7 +374,7 @@ def _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M):
     return x, k + 1, converged
   x_final, k, converged = lax.while_loop(cond_fun, body_fun, (x0, 0, False))
   # info = lax.cond(converged, lambda y: 0, lambda y: k, 0)
-  return x_final  #, info
+  return x_final  # , info
 
 
 def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
