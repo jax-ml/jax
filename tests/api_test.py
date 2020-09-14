@@ -596,6 +596,18 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], np.ndarray)
     assert np.all(y2[1][1] == 3 * x)
 
+  def test_device_get_scalar(self):
+    x = np.arange(12.).reshape((3, 4)).astype("float32")
+    x = api.device_put(x)
+    self.assertIsInstance(x, xla.DeviceArray)
+    y = [x, 2]
+    y2 = api.device_get(y)
+    self.assertIsInstance(y2, list)
+    self.assertIsInstance(y2[0], np.ndarray)
+    assert np.all(y2[0] == x)
+    self.assertIsInstance(y2[1], int)
+    self.assertEqual(y2[1], 2)
+
   @parameterized.parameters([(3,)], [(2, 0)])
   def test_device_put_across_devices(self, shape):
     if len(api.local_devices()) < 2:
