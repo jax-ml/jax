@@ -2418,6 +2418,20 @@ def array_equal(a1, a2, equal_nan=False):
   return all(eq)
 
 
+@_wraps(np.array_equiv)
+def array_equiv(a1, a2):
+  try:
+    a1, a2 = asarray(a1), asarray(a2)
+  except Exception:
+    return False
+  try:
+    lax.broadcast_shapes(shape(a1), shape(a2))
+  except ValueError:
+    return False
+  eq = asarray(a1 == a2)
+  return all(eq)
+
+
 # We can't create uninitialized arrays in XLA; use zeros for empty.
 empty_like = zeros_like
 empty = zeros

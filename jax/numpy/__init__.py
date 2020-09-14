@@ -23,7 +23,7 @@ from .lax_numpy import (
     alltrue, amax, amin, angle, any, append,
     apply_along_axis, apply_over_axes, arange, arccos, arccosh, arcsin,
     arcsinh, arctan, arctan2, arctanh, argmax, argmin, argsort, argwhere, around,
-    array, array_equal, array_repr, array_split, array_str, asarray, atleast_1d, atleast_2d,
+    array, array_equal, array_equiv, array_repr, array_split, array_str, asarray, atleast_1d, atleast_2d,
     atleast_3d, average, bartlett, bfloat16, bincount, bitwise_and, bitwise_not,
     bitwise_or, bitwise_xor, blackman, block, bool_, broadcast_arrays,
     broadcast_to, can_cast, cbrt, cdouble, ceil, character, clip, column_stack,
