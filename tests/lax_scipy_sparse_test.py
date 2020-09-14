@@ -178,6 +178,32 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
     self.assertAllClose(expected, actual.value)
 
+  # GMRES
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype}
+      for shape in [(2, 2)]
+      for dtype in float_types + complex_types))
+  def test_gmres_on_small_fixed_problem(self, shape, dtype):
+
+    A = jnp.array(([[1, 1], [3, -4]]), dtype=dtype)
+    b = jnp.array([3, 2], dtype=dtype)
+    x0 = jnp.ones(2, dtype=dtype)
+    restart = 2
+    maxiter = 1
+
+    @jax.tree_util.Partial
+    def A_mv(x):
+      return A @ x
+    tol = A.size * jnp.finfo(dtype).eps
+    x, _ = jax.scipy.sparse.linalg.gmres(A_mv, b, x0=x0, tol=tol, atol=tol,
+                                         restart=restart, maxiter=maxiter)
+    solution = jnp.array([2., 1.], dtype=dtype)
+    self.assertAllClose(solution, x)
+
+
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
