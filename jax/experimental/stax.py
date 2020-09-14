@@ -19,6 +19,7 @@ For an example of its use, see examples/resnet50.py.
 
 
 import functools
+import itertools
 import operator as op
 
 from jax import lax
@@ -49,8 +50,7 @@ def Dense(out_dim, W_init=glorot_normal(), b_init=normal()):
   def init_fun(rng, input_shape):
     output_shape = input_shape[:-1] + (out_dim,)
     k1, k2 = random.split(rng)
-    b_shape = (1,) * (len(output_shape) - 1) + (out_dim,)
-    W, b = W_init(k1, (input_shape[-1], out_dim)), b_init(k2, b_shape)
+    W, b = W_init(k1, (input_shape[-1], out_dim)), b_init(k2, (out_dim,))
     return output_shape, (W, b)
   def apply_fun(params, inputs, **kwargs):
     W, b = params
@@ -74,6 +74,7 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
     output_shape = lax.conv_general_shape_tuple(
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
+    bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
     k1, k2 = random.split(rng)
     W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)
@@ -101,6 +102,7 @@ def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
     output_shape = lax.conv_transpose_shape_tuple(
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
+    bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
     k1, k2 = random.split(rng)
     W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)
