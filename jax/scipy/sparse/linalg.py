@@ -194,16 +194,6 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
-def _project_on_columns(A, v):
-  """
-  Returns the summed projections of v onto each column of A.conj().
-  """
-  v_proj = tree_multimap(
-    lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
-    A,
-    v,
-  )
-  return tree_reduce(operator.add, v_proj)
 
 
 def _safe_normalize(x, return_norm=False, thresh=None):
@@ -231,6 +221,18 @@ def _safe_normalize(x, return_norm=False, thresh=None):
     return normalized_x
 
 
+def _project_on_columns(A, v):
+  """
+  Returns A.T.conj() @ v.
+  """
+  v_proj = tree_multimap(
+    lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
+    A,
+    v,
+  )
+  return tree_reduce(operator.add, v_proj)
+
+
 def _iterative_classical_gram_schmidt(Q, x, iterations=2):
   """Orthogonalize x against the columns of Q."""
   # "twice is enough"
@@ -243,7 +245,9 @@ def _iterative_classical_gram_schmidt(Q, x, iterations=2):
 
   for _ in range(iterations):
     h = _project_on_columns(Q, q)
-    q = _sub(q, tree_map(lambda X: jnp.dot(X, h), Q))
+    Qh = _dot_tree(Q, h)
+    q = _sub(q, Qh)
+    #q = _sub(q, tree_map(lambda X: _dot_tree(X, h), Q))
     r = _add(r, h)
   return q, r
 
@@ -261,6 +265,11 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = A(M(v))
   v, h = _iterative_classical_gram_schmidt(V, v, iterations=1)
+  #  def gram_schmidt_step(r, v_i):
+  #    h_i = _vdot_tree(r, v_i)
+  #    r_i = _sub(r, _mul(h_i, v_i))
+  #    return r_i, h_i
+  #  v, h = lax.scan(gram_schmidt_step, v, xs=V.T)
   unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
   h = h.at[k + 1].set(v_norm)
@@ -326,10 +335,10 @@ def _gmres(A, b, x0, tol, restart, M):
   def loop_cond(carry):
     k, err, _, _, _, _ = carry
     return lax.cond(k < restart,
-                    lambda x: x[0]**2 > x[1],
+                    lambda x: x[0] > x[1],
                     lambda x: False,
                     (err, tol))
-    # return k < restart and err**2 > tol
+    # return k < restart and err > tol
 
   def arnoldi_qr_step(carry):
     k, err, V, R, beta_vec, givens = carry
@@ -345,7 +354,7 @@ def _gmres(A, b, x0, tol, restart, M):
   carry = (0, beta, V, R, beta_vec, givens)
   carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
   k, err, V, R, beta_vec, _ = carry
-  converged = k < restart - 1
+  converged = k < restart
 
   y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
   dx = M(tree_map(lambda X: _dot(X[..., :-1], y), V))
@@ -362,11 +371,14 @@ def _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M):
   dips beneath max(tol^2 * (b@b), atol^2).
   """
   bs = _vdot_tree(b, b, assume_real=False)
-  true_tol = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
+  true_tol = jnp.maximum(tol * bs, atol)
 
   def cond_fun(value):
-    x, k, converged = value
-    return ~converged & (k < maxiter)
+    _, k, converged = value
+    return lax.cond(converged,
+                    lambda x: False,
+                    lambda x: x[0] < x[1],
+                    (k, maxiter))
 
   def body_fun(value):
     x, k, _ = value
@@ -463,5 +475,6 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
     return _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M)
 
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
-  info = None
+  failed = jnp.isnan(jnp.sum(x))
+  info = lax.cond(failed, lambda x: -1, lambda x: 0, 0)
   return x, info
