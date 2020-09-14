@@ -28,6 +28,7 @@ import jax.scipy.sparse.linalg
 
 from jax.config import config
 config.parse_flags_with_absl()
+config.update('jax_enable_x64', True)
 
 float_types = [np.float32, np.float64]
 complex_types = [np.complex64, np.complex128]
@@ -60,7 +61,34 @@ def rand_sym_pos_def(rng, shape, dtype):
   return matrix @ matrix.T.conj()
 
 
+
+
+
+
 class LaxBackedScipyTests(jtu.JaxTestCase):
+  def _fetch_preconditioner(self, preconditioner, A, rng=None,
+                            return_function=False):
+    """
+    Returns one of various preconditioning matrices depending on the identifier
+    `preconditioner' and the input matrix A whose inverse it supposedly
+    approximates.
+    """
+    if preconditioner == 'identity':
+      M = np.eye(A.shape[0], dtype=A.dtype)
+    elif preconditioner == 'random':
+      if rng is None:
+        rng = jtu.rand_default(self.rng())
+      M = np.linalg.inv(rand_sym_pos_def(rng, A.shape, A.dtype))
+    elif preconditioner == 'exact':
+      M = np.linalg.inv(A)
+    else:
+      M = None
+
+    if M is None or not return_function:
+      return M
+    else:
+      return lambda x: jnp.dot(M, x, precision=lax.Precision.HIGHEST)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}_preconditioner={}".format(
@@ -76,15 +104,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     A = rand_sym_pos_def(rng, shape, dtype)
     b = rng(shape[:1], dtype)
-
-    if preconditioner == 'identity':
-      M = np.eye(shape[0], dtype=dtype)
-    elif preconditioner == 'random':
-      M = np.linalg.inv(rand_sym_pos_def(rng, shape, dtype))
-    elif preconditioner == 'exact':
-      M = np.linalg.inv(A)
-    else:
-      M = None
+    M = self._fetch_preconditioner(preconditioner, A, rng=rng)
 
     def args_maker():
       return A, b
@@ -186,7 +206,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       for shape in [(2, 2)]
       for dtype in float_types + complex_types))
   def test_gmres_on_small_fixed_problem(self, shape, dtype):
-
+    """
+    GMRES gives the right answer for a small fixed system.
+    """
     A = jnp.array(([[1, 1], [3, -4]]), dtype=dtype)
     b = jnp.array([3, 2], dtype=dtype)
     x0 = jnp.ones(2, dtype=dtype)
@@ -195,12 +217,53 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     @jax.tree_util.Partial
     def A_mv(x):
-      return A @ x
+      return matmul_high_precision(A, x)
     tol = A.size * jnp.finfo(dtype).eps
     x, _ = jax.scipy.sparse.linalg.gmres(A_mv, b, x0=x0, tol=tol, atol=tol,
                                          restart=restart, maxiter=maxiter)
     solution = jnp.array([2., 1.], dtype=dtype)
     self.assertAllClose(solution, x)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_preconditioner={}".format(
+         jtu.format_shape_dtype_string(shape, dtype),
+         preconditioner),
+      "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
+      for shape in [(2, 2), (7, 7), (32, 32)]
+      for dtype in float_types + complex_types
+      for preconditioner in [None, 'identity']))
+  def test_gmres_arnoldi_step(self, shape, dtype, preconditioner):
+    """
+    The Arnoldi decomposition within GMRES is correct.
+    """
+    rng = jtu.rand_default(self.rng())
+    A = rng(shape, dtype)
+    if preconditioner is None:
+      M = lambda x: x
+    else:
+      M = self._fetch_preconditioner(preconditioner, A, rng=rng,
+                                     return_function=True)
+
+    n = shape[0]
+    x0 = rng(shape[:1], dtype)
+    Q = np.zeros((n, n + 1), dtype=dtype)
+    Q[:, 0] = x0/jax.numpy.linalg.norm(x0)
+    Q = jnp.array(Q)
+    H = jax.numpy.zeros((n, n + 1), dtype=dtype)
+    tol = A.size*A.size*jax.numpy.finfo(dtype).eps
+
+    @jax.tree_util.Partial
+    def A_mv(x):
+      return matmul_high_precision(A, x)
+    for k in range(n):
+      Q, H = jax.scipy.sparse.linalg.kth_arnoldi_iteration(k, A_mv, M, Q, H,
+                                                           tol)
+    QAQ = matmul_high_precision(Q[:, :n].conj().T, A)
+    QAQ = matmul_high_precision(QAQ, Q[:, :n])
+    self.assertAllClose(QAQ, H.T[:n, :], rtol=tol, atol=tol)
+
 
 
 
