@@ -190,8 +190,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_linalg_svd)
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_svd(self, harness: primitive_harness.Harness):
-    if jtu.device_under_test() == "tpu":
-      raise unittest.SkipTest("TODO: test crashes the XLA compiler for some TPU variants")
     if harness.params["dtype"] in [np.float16, dtypes.bfloat16]:
       if jtu.device_under_test() != "tpu":
         # Does not work in JAX
