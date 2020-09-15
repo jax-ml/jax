@@ -4451,8 +4451,12 @@ def _view(arr, dtype=None, type=None):
 
 ### track unimplemented functions
 
+_NOT_IMPLEMENTED_DESC = """
+*** This function is not yet implemented by jax.numpy, and will raise NotImplementedError ***
+"""
+
 def _not_implemented(fun):
-  @_wraps(fun)
+  @_wraps(fun, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
   def wrapped(*args, **kwargs):
     msg = "Numpy function {} not yet implemented"
     raise NotImplementedError(msg.format(fun))
