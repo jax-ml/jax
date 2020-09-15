@@ -637,6 +637,24 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.device_buffer.device(), cpu_device)
 
+  def test_device_put_sharded(self):
+    devices = api.local_devices()
+    n_devices = len(devices)
+    x = [np.arange(i, i + 4) for i in range(n_devices)]
+    y = api.device_put_sharded(x, devices)
+    self.assertEqual(len(y.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
+    self.assertAllClose(y, jnp.stack(x))
+
+  def test_device_put_replicated(self):
+    devices = api.local_devices()
+    n_devices = len(devices)
+    x = np.arange(4)
+    y = api.device_put_replicated(x, devices)
+    self.assertEqual(len(y.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
+    self.assertAllClose(y, jnp.stack(n_devices * [x]))
+
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
     R = np.random.RandomState(0).randn

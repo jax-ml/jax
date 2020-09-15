@@ -1967,6 +1967,40 @@ def device_put(x, device: Optional[xc.Device] = None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 
+def device_put_sharded(x, devices: Sequence[xc.Device]):
+  """Shards the input to specified devices, returning ShardedDeviceArrays.
+
+  Args:
+    x: A sequence of arrays, scalars, or (nested) standard Python containers thereof
+    devices: A sequence of devices()
+
+  Returns:
+    A ShardedDeviceArray or (nested) Python container thereof containing a copy
+    of x sharded across the specified devices.
+  """
+  # TODO(jakevdp): provide a default for devices that considers both local devices and pods
+  assert len(x) == len(devices), f"len(x) = {len(x)} must equal len(devices) = {len(devices)}."
+  def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
+    aval = ShapedArray((len(xs),) + np.shape(xs[0]), dtypes.result_type(xs[0]))
+    buffers = [xla.device_put(x, d) for x, d in zip(xs, devices)]
+    return pxla.ShardedDeviceArray(aval, buffers)
+  return tree_multimap(_device_put_sharded, *x)
+
+
+def device_put_replicated(x, devices: Sequence[xc.Device]):
+  """Replicates the input across specified devices, returning ShardedDeviceArrays.
+
+  Args:
+    x: An array, scalar, or (nested) standard Python container thereof
+    devices: A sequence of devices()
+
+  Returns:
+    A ShardedDeviceArray or (nested) Python container thereof containing a copy
+    of x replicated across the specified devices.
+  """
+  return device_put_sharded(len(devices) * [x], devices)
+
+
 # TODO(mattjj): consider revising
 def _device_get(x):
   if isinstance(x, core.Tracer):
