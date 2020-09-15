@@ -203,7 +203,7 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   which by default is the machine precision of x's dtype, it will be
   taken to be 0, and the normalized x to be the zero vector.
   """
-  norm = jnp.sqrt(_vdot_tree(x, x, assume_real=False))
+  norm = jnp.sqrt(jnp.abs(_vdot_tree(x, x, assume_real=False)))
   if thresh is None:
     thresh = jnp.finfo(x.dtype).eps
   thresh = thresh.astype(norm.dtype)
@@ -264,7 +264,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = A(M(v))
-  v, h = _iterative_classical_gram_schmidt(V, v, iterations=1)
+  v, h = _iterative_classical_gram_schmidt(V, v, iterations=2)
   #  def gram_schmidt_step(r, v_i):
   #    h_i = _vdot_tree(r, v_i)
   #    r_i = _sub(r, _mul(h_i, v_i))
@@ -310,7 +310,7 @@ def apply_givens_rotations(H_row, givens, k):
   return R_row, givens
 
 
-def _gmres(A, b, x0, tol, restart, M):
+def _gmres(A, b, x0, inner_tol, restart, M):
   """
   Implements a single restart of GMRES. The restart-dimensional Krylov subspace
   K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
@@ -320,13 +320,14 @@ def _gmres(A, b, x0, tol, restart, M):
   converged = False
   residual = _sub(b, A(x0))
   unit_residual, beta = _safe_normalize(residual, return_norm=True)
-  b_norm = jnp.sqrt(_vdot_tree(b, b, assume_real=False))
 
   V = tree_map(
     lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
     unit_residual,
   )
-  R = jnp.zeros((restart, restart + 1), jnp.result_type(*tree_leaves(b)))
+  #R = jnp.zeros((restart, restart + 1), jnp.result_type(*tree_leaves(b)))
+  R = jnp.eye(restart, restart + 1, dtype=jnp.result_type(*tree_leaves(b)))
+  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b, assume_real=False)))
 
   givens = jnp.zeros((restart, 2), dtype=x0.dtype)
   beta_vec = jnp.zeros((restart + 1), dtype=x0.dtype)
@@ -337,12 +338,12 @@ def _gmres(A, b, x0, tol, restart, M):
     return lax.cond(k < restart,
                     lambda x: x[0] > x[1],
                     lambda x: False,
-                    (err, tol))
+                    (err, inner_tol))
     # return k < restart and err > tol
 
   def arnoldi_qr_step(carry):
     k, err, V, R, beta_vec, givens = carry
-    V, H = kth_arnoldi_iteration(k, A, M, V, R, tol)
+    V, H = kth_arnoldi_iteration(k, A, M, V, R, inner_tol)
     R_row, givens = apply_givens_rotations(H[k, :], givens, k)
     R = R.at[k, :].set(R_row[:])
     cs, sn = givens[k, :] * beta_vec[k]
@@ -354,37 +355,37 @@ def _gmres(A, b, x0, tol, restart, M):
   carry = (0, beta, V, R, beta_vec, givens)
   carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
   k, err, V, R, beta_vec, _ = carry
-  converged = k < restart
 
   y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
-  dx = M(tree_map(lambda X: _dot(X[..., :-1], y), V))
+  Vy = tree_map(lambda X: _dot(X[..., :-1], y), V)
+  dx = M(Vy)
   x = _add(x0, dx)
-  return x, converged
+  return x, err
 
 
-def _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M):
+def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M):
   """
   The main function call wrapped by custom_linear_solve. Repeatedly calls GMRES
   to find the projected solution within the order-``restart``
   Krylov space K(A, x0, restart), using the result of the previous projection
-  in place of x0 each time, terminating early if the magitude of the residual
-  dips beneath max(tol^2 * (b@b), atol^2).
+  in place of x0 each time.
   """
-  bs = _vdot_tree(b, b, assume_real=False)
-  true_tol = jnp.maximum(tol * bs, atol)
+  residual = _sub(b, A(x0))
+  _, beta = _safe_normalize(residual, return_norm=True)
 
   def cond_fun(value):
-    _, k, converged = value
-    return lax.cond(converged,
+    _, k, err = value
+    return lax.cond(k < maxiter,
+                    lambda x: x[0] > x[1],
                     lambda x: False,
-                    lambda x: x[0] < x[1],
-                    (k, maxiter))
+                    (err, outer_tol))
 
   def body_fun(value):
     x, k, _ = value
-    x, converged = _gmres(A, b, x, true_tol, restart, M)
-    return x, k + 1, converged
-  x_final, k, converged = lax.while_loop(cond_fun, body_fun, (x0, 0, False))
+    x, err = _gmres(A, b, x, inner_tol, restart, M)
+    return x, k + 1, err
+
+  x_final, k, err = lax.while_loop(cond_fun, body_fun, (x0, 0, beta))
   # info = lax.cond(converged, lambda y: 0, lambda y: k, 0)
   return x_final  # , info
 
@@ -461,8 +462,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   size = sum(bi.size for bi in tree_leaves(b))
   if maxiter is None:
     maxiter = 10 * size  # copied from scipy
-  if restart > size:
-    restart = size
+  restart = min(restart, size)
 
   if tree_structure(x0) != tree_structure(b):
     raise ValueError(
@@ -470,9 +470,17 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       f'{tree_structure(x0)} vs {tree_structure(b)}')
 
   b, x0 = device_put((b, x0))
+  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b, assume_real=False)))
+  if b_norm == 0:
+    return b, 0
+  outer_tol = jnp.maximum(tol * b_norm, atol)
+
+  Mb = M(b)
+  Mb_norm = jnp.sqrt(jnp.abs(_vdot_tree(Mb, Mb, assume_real=False)))
+  inner_tol = Mb_norm * min(1.0, outer_tol / b_norm)
 
   def _solve(A, b):
-    return _gmres_solve(A, b, x0, tol, atol, restart, maxiter, M)
+    return _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M)
 
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
   failed = jnp.isnan(jnp.sum(x))

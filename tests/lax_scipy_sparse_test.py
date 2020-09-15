@@ -231,12 +231,47 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
          jtu.format_shape_dtype_string(shape, dtype),
          preconditioner),
       "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
-      for shape in [(2, 2), (7, 7), (32, 32), (64, 64)]
+      for shape in [(2, 2), (7, 7), (32, 32)]
       for dtype in float_types + complex_types
-      for preconditioner in ['identity', None]))
+      for preconditioner in [None, 'identity', 'exact']))
+  def test_gmres_on_identity_system(self, shape, dtype, preconditioner):
+    A = jnp.eye(shape[1], dtype=dtype)
+
+    solution = jnp.ones(shape[1], dtype=dtype)
+    @jax.tree_util.Partial
+    def A_mv(x):
+      return matmul_high_precision(A, x)
+    rng = jtu.rand_default(self.rng())
+    M = self._fetch_preconditioner(preconditioner, A, rng=rng,
+                                   return_function=True)
+    b = A_mv(solution)
+    restart = shape[-1]
+    tol = shape[0] * jnp.finfo(dtype).eps
+    x, info = jax.scipy.sparse.linalg.gmres(A_mv, b, tol=tol, atol=tol,
+                                            restart=restart,
+                                            M=M)
+    err = jnp.linalg.norm(solution - x) / jnp.linalg.norm(b)
+    rtol = tol*jnp.linalg.norm(b)
+    true_tol = max(rtol, tol)
+    try:
+      assert(err < true_tol)
+    except AssertionError:
+      print("Test failed, err = ", err, "tol = ", true_tol)
+      raise
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+       "_shape={}_preconditioner={}".format(
+         jtu.format_shape_dtype_string(shape, dtype),
+         preconditioner),
+      "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
+      for shape in [(2, 2), (7, 7), (32, 32)]
+      for dtype in float_types + complex_types
+      for preconditioner in [None, 'identity', 'exact']))
   def test_gmres_on_random_system(self, shape, dtype, preconditioner):
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
+
     solution = rng(shape[1:], dtype)
     @jax.tree_util.Partial
     def A_mv(x):
@@ -245,22 +280,15 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                                    return_function=True)
     b = A_mv(solution)
     restart = shape[-1]
-    tol = jnp.finfo(dtype).eps
+    tol = shape[0] * jnp.finfo(dtype).eps
     x, info = jax.scipy.sparse.linalg.gmres(A_mv, b, tol=tol, atol=tol,
                                             restart=restart,
-                                            maxiter=1,
                                             M=M)
-    #  Mnp = self._fetch_preconditioner(preconditioner, A, rng=rng)
-    #  if Mnp is not None:
-    #    Mnp = np.array(Mnp)
-    #  xnp, infonp = scipy.sparse.linalg.gmres(np.array(A), np.array(b), atol=tol, tol=tol,
-    #                                          restart=restart, maxiter=1, M=Mnp)
-    err = jnp.linalg.norm(solution - x)
-    #  nperr = jnp.linalg.norm(solution - xnp)
-    rtol = tol*jnp.linalg.norm(b)*A.size
+    err = jnp.linalg.norm(solution - x) / jnp.linalg.norm(b)
+    rtol = tol*jnp.linalg.norm(b)
     true_tol = max(rtol, tol)
     try:
-      assert(err < true_tol)
+      assert(err <= true_tol)
     except AssertionError:
       print("Test failed, err = ", err, "tol = ", true_tol)
       raise
@@ -304,9 +332,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     QAQ = matmul_high_precision(Q[:, :n].conj().T, A)
     QAQ = matmul_high_precision(QAQ, Q[:, :n])
     self.assertAllClose(QAQ, H.T[:n, :], rtol=tol, atol=tol)
-
-
-
 
 
 if __name__ == "__main__":
