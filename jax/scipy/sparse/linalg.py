@@ -204,15 +204,16 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   taken to be 0, and the normalized x to be the zero vector.
   """
   norm = jnp.sqrt(jnp.abs(_vdot_tree(x, x, assume_real=False)))
+  dtype = jnp.result_type(*tree_leaves(x))
   if thresh is None:
-    thresh = jnp.finfo(x.dtype).eps
-  thresh = thresh.astype(norm.dtype)
+    thresh = jnp.finfo(norm.dtype).eps
+  thresh = thresh.astype(dtype).real
 
   normalized_x, norm = lax.cond(
     norm > thresh,
     lambda y: (_div(y, norm), norm),
     lambda y: (tree_map(jnp.zeros_like, y),
-               (thresh*0.).astype(norm.dtype)),  # To get the dtype right
+               (thresh*0.).astype(dtype).real),  # To get the dtype right
     x,
   )
   if return_norm:
@@ -245,9 +246,8 @@ def _iterative_classical_gram_schmidt(Q, x, iterations=2):
 
   for _ in range(iterations):
     h = _project_on_columns(Q, q)
-    Qh = _dot_tree(Q, h)
+    Qh = tree_map(lambda X: _dot_tree(X, h), Q)
     q = _sub(q, Qh)
-    #q = _sub(q, tree_map(lambda X: _dot_tree(X, h), Q))
     r = _add(r, h)
   return q, r
 
@@ -264,12 +264,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = A(M(v))
-  v, h = _iterative_classical_gram_schmidt(V, v, iterations=2)
-  #  def gram_schmidt_step(r, v_i):
-  #    h_i = _vdot_tree(r, v_i)
-  #    r_i = _sub(r, _mul(h_i, v_i))
-  #    return r_i, h_i
-  #  v, h = lax.scan(gram_schmidt_step, v, xs=V.T)
+  v, h = _iterative_classical_gram_schmidt(V, v, iterations=1)
   unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
   h = h.at[k + 1].set(v_norm)
@@ -325,12 +320,14 @@ def _gmres(A, b, x0, inner_tol, restart, M):
     lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
     unit_residual,
   )
-  #R = jnp.zeros((restart, restart + 1), jnp.result_type(*tree_leaves(b)))
-  R = jnp.eye(restart, restart + 1, dtype=jnp.result_type(*tree_leaves(b)))
+  dtype = jnp.result_type(*tree_leaves(b))
+  R = jnp.eye(restart, restart + 1, dtype=dtype) # eye to avoid constructing
+                                                 # a singular matrix in case
+                                                 # of early termination.
   b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b, assume_real=False)))
 
-  givens = jnp.zeros((restart, 2), dtype=x0.dtype)
-  beta_vec = jnp.zeros((restart + 1), dtype=x0.dtype)
+  givens = jnp.zeros((restart, 2), dtype=dtype)
+  beta_vec = jnp.zeros((restart + 1), dtype=dtype)
   beta_vec = beta_vec.at[0].set(beta)
 
   def loop_cond(carry):
@@ -459,7 +456,11 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   if M is None:
     M = _identity
 
-  size = sum(bi.size for bi in tree_leaves(b))
+  try:
+    size = sum(bi.size for bi in tree_leaves(b))
+  except AttributeError:
+    size = len(tree_leaves(b))
+
   if maxiter is None:
     maxiter = 10 * size  # copied from scipy
   restart = min(restart, size)
@@ -483,6 +484,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
     return _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M)
 
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
-  failed = jnp.isnan(jnp.sum(x))
+
+  failed = jnp.isnan(_vdot_tree(x, x, assume_real=False))
   info = lax.cond(failed, lambda x: -1, lambda x: 0, 0)
   return x, info

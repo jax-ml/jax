@@ -294,6 +294,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       raise
 
 
+  def test_gmres_pytree(self):
+    A = lambda x: {"a": x["a"] + 0.5 * x["b"], "b": 0.5 * x["a"] + x["b"]}
+    b = {"a": 1.0, "b": -4.0}
+    expected = {"a": 4.0, "b": -6.0}
+    actual, _ = jax.scipy.sparse.linalg.gmres(A, b)
+    self.assertEqual(expected.keys(), actual.keys())
+    self.assertAlmostEqual(expected["a"], actual["a"], places=6)
+    self.assertAlmostEqual(expected["b"], actual["b"], places=6)
+
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
        "_shape={}_preconditioner={}".format(
