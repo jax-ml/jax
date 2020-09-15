@@ -684,6 +684,15 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
   return xops.Tuple(c, [lu, pivot, perm])
 
 
+def _lu_tpu_translation_rule(c, operand):
+  shape = c.get_shape(operand)
+  if hasattr(xops, "LU") and shape.numpy_dtype() == np.float32:
+    lu, pivot, perm = xops.LU(operand)
+    return xops.Tuple(c, [lu, pivot, perm])
+  else:
+    return xla.lower_fun(_lu_python, multiple_results=True)(c, operand)
+
+
 lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
@@ -697,6 +706,8 @@ xla.backend_specific_translations['cpu'][lu_p] = partial(
 
 xla.backend_specific_translations['gpu'][lu_p] = partial(
   _lu_cpu_gpu_translation_rule, cusolver.getrf)
+
+xla.backend_specific_translations['tpu'][lu_p] = _lu_tpu_translation_rule
 
 
 # Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
