@@ -1999,7 +1999,7 @@ def device_put_sharded(x, devices: Sequence[xc.Device]):
     >>> type(y)
     <class 'tuple'>
     >>> y0 = api.device_put_sharded([a for a, b in x], devices)
-    >>> y2 = api.device_put_sharded([b fr a, b in x], devices)
+    >>> y1 = api.device_put_sharded([b for a, b in x], devices)
     >>> np.allclose(y[0], y0)
     True
     >>> np.allclose(y[1], y1)
