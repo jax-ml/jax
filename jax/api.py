@@ -1967,12 +1967,11 @@ def device_put(x, device: Optional[xc.Device] = None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 
-def device_put_sharded(x, devices: Sequence[xc.Device]):
+def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]) -> pxla.ShardedDeviceArray:
   """Shards the input to specified devices, returning ShardedDeviceArrays.
 
   Args:
-    x: An array of leading dimension n_devices, or a sequence of length n_devices
-      containing arrays, scalars, or (nested) standard Python containers thereof.
+    x: A sequence of arrays, scalars, or (nested) standard Python containers thereof.
     devices: A sequence of devices()
 
   Returns:
@@ -1980,14 +1979,14 @@ def device_put_sharded(x, devices: Sequence[xc.Device]):
     of x sharded across the specified devices.
 
   Examples:
-    Sharding a single array results in a sharded copy of that array. Note that the
-    array's leading dimension must equal the number of devices:
+    Passing a list of arrays results in a sharded array containing a stacked version
+    of the inputs. Note that the array's leading dimension must equal the number of devices:
 
     >>> from jax import api, numpy as jnp
     >>> devices = api.local_devices()
-    >>> x = jnp.ones((len(devices), 5))
+    >>> x = [jnp.ones(5) for device in devices]
     >>> y = api.device_put_sharded(x, devices)
-    >>> np.allclose(x, y)
+    >>> np.allclose(y, jnp.stack(x))
     True
 
     Sharding a list of nested objects is equivalent to sharding the list
@@ -2009,6 +2008,8 @@ def device_put_sharded(x, devices: Sequence[xc.Device]):
   - device_put
   - device_put_replicated
   """
+  if not isinstance(x, Sequence):
+    raise ValueError(f"x must be a sequence; got {type(x)}")
   # TODO(jakevdp): provide a default for devices that considers both local devices and pods
   assert len(x) == len(devices), f"len(x) = {len(x)} must equal len(devices) = {len(devices)}."
   def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
@@ -2021,7 +2022,7 @@ def device_put_sharded(x, devices: Sequence[xc.Device]):
   return tree_multimap(_device_put_sharded, *x)
 
 
-def device_put_replicated(x, devices: Sequence[xc.Device]):
+def device_put_replicated(x: Any, devices: Sequence[xc.Device]) -> pxla.ShardedDeviceArray:
   """Replicates the input across specified devices, returning ShardedDeviceArrays.
 
   Args:
