@@ -1968,15 +1968,15 @@ def device_put(x, device: Optional[xc.Device] = None):
 
 
 def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]) -> pxla.ShardedDeviceArray:
-  """Shards the input to specified devices, returning ShardedDeviceArrays.
+  """Transfers pre-sharded input to the specified devices, returning ShardedDeviceArrays.
 
   Args:
     x: A sequence of arrays, scalars, or (nested) standard Python containers thereof.
     devices: A sequence of devices()
 
   Returns:
-    A ShardedDeviceArray or (nested) Python container thereof containing a copy
-    of x sharded across the specified devices.
+    A ShardedDeviceArray or (nested) Python container thereof containing a stacked
+    version of x sharded across the specified devices.
 
   Examples:
     Passing a list of arrays results in a sharded array containing a stacked version
