@@ -1967,6 +1967,61 @@ def device_put(x, device: Optional[xc.Device] = None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 
+def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]) -> pxla.ShardedDeviceArray:
+  """Transfers pre-sharded input to the specified devices, returning ShardedDeviceArrays.
+
+  Args:
+    x: A sequence of arrays, scalars, or (nested) standard Python containers thereof.
+    devices: A sequence of devices()
+
+  Returns:
+    A ShardedDeviceArray or (nested) Python container thereof containing a stacked
+    version of x sharded across the specified devices.
+
+  Examples:
+    Passing a list of arrays results in a sharded array containing a stacked version
+    of the inputs. Note that the array's leading dimension must equal the number of devices:
+
+    >>> from jax import api, numpy as jnp
+    >>> devices = api.local_devices()
+    >>> x = [jnp.ones(5) for device in devices]
+    >>> y = api.device_put_sharded(x, devices)
+    >>> np.allclose(y, jnp.stack(x))
+    True
+
+    Sharding a list of nested objects is equivalent to sharding the list
+    of each entry and repackaging the results to match the nesting. This
+    requires all entries in the list to have the same structure:
+
+    >>> x = [(i, jnp.arange(i, i + 4)) for i in range(len(devices))]
+    >>> y = api.device_put_sharded(x, devices)
+    >>> type(y)
+    <class 'tuple'>
+    >>> y0 = api.device_put_sharded([a for a, b in x], devices)
+    >>> y1 = api.device_put_sharded([b for a, b in x], devices)
+    >>> np.allclose(y[0], y0)
+    True
+    >>> np.allclose(y[1], y1)
+    True
+
+  See also:
+  - device_put
+  - device_put_replicated
+  """
+  if not isinstance(x, Sequence):
+    raise ValueError(f"x must be a sequence; got {type(x)}")
+  # TODO(jakevdp): provide a default for devices that considers both local devices and pods
+  assert len(x) == len(devices), f"len(x) = {len(x)} must equal len(devices) = {len(devices)}."
+  def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
+    avals = [core.get_aval(x) for x in xs]
+    assert all(aval == avals[0] for aval in avals), f"abstract values must all match; got {avals}"
+    x_aval = core.raise_to_shaped(avals[0])
+    aval = ShapedArray((len(devices),) + x_aval.shape, x_aval.dtype)
+    buffers = [xla.device_put(x, d) for x, d in zip(xs, devices)]
+    return pxla.ShardedDeviceArray(aval, buffers)
+  return tree_multimap(_device_put_sharded, *x)
+
+
 # TODO(mattjj): consider revising
 def _device_get(x):
   if isinstance(x, core.Tracer):
