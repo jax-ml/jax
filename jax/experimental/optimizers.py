@@ -73,7 +73,7 @@ Example Usage:
   opt_state = opt.init(params)
 
   def step(step, opt_state):
-    value, grads = jax.value_and_grad(loss_fn)(opt.get_params(state))
+    value, grads = jax.value_and_grad(loss_fn)(opt.get_params(opt_state))
     opt_state = opt.update(step, grads, opt_state)
     return value, opt_state
 
