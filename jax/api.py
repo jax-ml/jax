@@ -1997,7 +1997,7 @@ def device_put_sharded(x, devices: Sequence[xc.Device]):
     >>> x = [(i, jnp.arange(i, i + 4)) for i in range(len(devices))]
     >>> y = api.device_put_sharded(x, devices)
     >>> type(y)
-    tuple
+    <class 'tuple'>
     >>> y0 = api.device_put_sharded([a for a, b in x], devices)
     >>> y2 = api.device_put_sharded([b fr a, b in x], devices)
     >>> np.allclose(y[0], y0)
@@ -2051,7 +2051,7 @@ def device_put_replicated(x, devices: Sequence[xc.Device]):
     >>> x = (1, jnp.arange(4), jnp.ones((2, 2)))
     >>> y = api.device_put_replicated(x, devices)
     >>> type(y)
-    tuple
+    <class 'tuple'>
     >>> len(y) == len(x)
     True
     >>> y[2].shape == (len(devices), 2, 2)
