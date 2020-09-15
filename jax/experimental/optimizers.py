@@ -66,6 +66,9 @@ the JAX transforms defined in api.py) and it has to be consumable by update_fun
 and get_params.
 
 Example Usage:
+
+.. code-block:: python
+
   opt = optimizers.sgd(learning_rate)
   opt_state = opt.init(params)
 
