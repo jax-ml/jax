@@ -21,6 +21,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+from jax import dtypes
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -36,7 +37,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
-    _, res_tf = self.ConvertAndCompare(f_jax, 0.7)
+    _, res_tf = self.ConvertAndCompare(f_jax, jnp.float_(0.7))
     self.assertIsInstance(res_tf, tf.Tensor)
 
   def test_pytrees(self):
@@ -45,19 +46,19 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       x_a, x_dict = x
       return x_a * 2., {k : v * 3. for k, v in x_dict.items()}
 
-    x = (.7, {"a": .8, "b": .9})
+    x = (jnp.float_(.7), {"a": jnp.float_(.8), "b": jnp.float_(.9)})
     self.ConvertAndCompare(f_jax, x)
 
   def test_variable_input(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
     f_tf = jax2tf.convert(f_jax)
-    v = tf.Variable(0.7)
+    v = tf.Variable(0.7, dtype=dtypes.canonicalize_dtype(jnp.float_))
     self.assertIsInstance(f_tf(v), tf.Tensor)
     self.assertAllClose(f_jax(0.7), f_tf(v))
 
   def test_jit(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
-    self.ConvertAndCompare(f_jax, 0.7)
+    self.ConvertAndCompare(f_jax, jnp.float_(0.7))
 
   def test_nested_jit(self):
     f_jax = jax.jit(lambda x: jnp.sin(jax.jit(jnp.cos)(x)))
@@ -113,7 +114,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_function(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
-    self.ConvertAndCompare(f_jax, 0.7)
+    self.ConvertAndCompare(f_jax, jnp.float_(0.7))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     dict(testcase_name=f"function={with_function}",
@@ -144,8 +145,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    x = tf.Variable(4.)
-    y = tf.Variable(5.)
+    default_float_type = dtypes.canonicalize_dtype(jnp.float_)
+    x = tf.Variable(4., dtype=default_float_type)
+    y = tf.Variable(5., dtype=default_float_type)
     with tf.GradientTape(persistent=True) as tape:
       u, v = f_tf(x, y)
 
@@ -166,8 +168,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    x = tf.Variable(4.)
-    y = tf.Variable(5.)
+    default_float_dtype = dtypes.canonicalize_dtype(jnp.float_)
+    x = tf.Variable(4., dtype=default_float_dtype)
+    y = tf.Variable(5., dtype=default_float_dtype)
     with tf.GradientTape(persistent=True) as tape:
       uv = f_tf((x, y))
 
@@ -201,8 +204,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    self.assertAllClose(4. * 4., f_tf(4.))
-    x = tf.Variable(4.)
+    self.assertAllClose(4. * 4., f_tf(jnp.float_(4.)))
+    x = tf.Variable(4., dtype=dtypes.canonicalize_dtype(jnp.float_))
     with tf.GradientTape() as tape:
       tape.watch(x)
       y = f_tf(x)
@@ -235,8 +238,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f, with_gradient=True)
     if with_function:
       f_tf = tf.function(f_tf, autograph=False)
-    self.assertAllClose(4. * 4., f_tf(4.))
-    x = tf.Variable(4.)
+    self.assertAllClose(4. * 4., f_tf(jnp.float_(4.)))
+    x = tf.Variable(4., dtype=dtypes.canonicalize_dtype(jnp.float_))
     with tf.GradientTape() as tape:
       tape.watch(x)
       y = f_tf(x)
@@ -283,7 +286,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       tangent_out = 3. * x * x_dot
       return primal_out, tangent_out
 
-    arg = 0.7
+    arg = jnp.float_(0.7)
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "jvp")
     self.TransformConvertAndCompare(f, arg, "vmap")
@@ -305,7 +308,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return residual * ct_b,
 
     f.defvjp(f_fwd, f_bwd)
-    arg = 0.7
+    arg = jnp.float_(0.7)
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "vmap")
     self.TransformConvertAndCompare(f, arg, "grad")
@@ -335,7 +338,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         return y
 
       return g()
-    arg = 3.
+    arg = jnp.float_(3.)
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "grad")
 
