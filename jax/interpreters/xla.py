@@ -456,7 +456,7 @@ def axis_read(axis_env, axis_name):
   try:
     return max(i for i, name in enumerate(axis_env.names) if name == axis_name)
   except ValueError:
-    raise NameError("unbound axis name: {}".format(axis_name))
+    raise NameError("unbound axis name: {}".format(axis_name)) from None
 
 def axis_groups(axis_env, name):
   if isinstance(name, (list, tuple)):
