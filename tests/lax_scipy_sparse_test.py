@@ -253,11 +253,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     err = jnp.linalg.norm(solution - x) / jnp.linalg.norm(b)
     rtol = tol*jnp.linalg.norm(b)
     true_tol = max(rtol, tol)
-    try:
-      assert(err < true_tol)
-    except AssertionError:
-      print("Test failed, err = ", err, "tol = ", true_tol)
-      raise
+    self.assertLessEqual(err, true_tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -287,11 +283,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     err = jnp.linalg.norm(solution - x) / jnp.linalg.norm(b)
     rtol = tol*jnp.linalg.norm(b)
     true_tol = max(rtol, tol)
-    try:
-      assert(err <= true_tol)
-    except AssertionError:
-      print("Test failed, err = ", err, "tol = ", true_tol)
-      raise
+    self.assertLessEqual(err, true_tol)
 
 
   def test_gmres_pytree(self):

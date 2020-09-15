@@ -27,8 +27,30 @@ from jax.util import safe_map as map
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 _vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
 
+# aliases for working with pytreedef _vdot_real_part(x, y):
 
-# aliases for working with pytrees
+def _vdot_real_part(x, y):
+  """Vector dot-product guaranteed to have a real valued result despite
+     possibly complex input. Thus neglects the real-imaginary cross-terms.
+     The result is a real float.
+  """
+  # all our uses of vdot() in CG are for computing an operator of the form
+  #  z^T M z
+  #  where M is positive definite and Hermitian, so the result is
+  # real valued:
+  # https://en.wikipedia.org/wiki/Definiteness_of_a_matrix#Definitions_for_complex_matrices
+  vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
+  result = vdot(x.real, y.real)
+  if jnp.iscomplexobj(x) or jnp.iscomplexobj(y):
+    result += vdot(x.imag, y.imag)
+  return result.real
+
+def _vdot_real_tree(x, y):
+  return sum(tree_leaves(tree_multimap(_vdot_real_part, x, y)))
+
+def _norm_tree(x):
+  return jnp.sqrt(_vdot_real_tree(x, x))
+
 def _vdot_tree(x, y):
   return sum(tree_leaves(tree_multimap(_vdot, x, y)))
 
@@ -54,31 +76,31 @@ def _identity(x):
 def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   # tolerance handling uses the "non-legacy" behavior of scipy.sparse.linalg.cg
-  bs = _vdot_tree(b, b)
+  bs = _vdot_real_tree(b, b)
   atol2 = jnp.maximum(jnp.square(tol) * bs, jnp.square(atol))
 
   # https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_preconditioned_conjugate_gradient_method
 
   def cond_fun(value):
     x, r, gamma, p, k = value
-    rs = gamma if M is _identity else _vdot_tree(r, r)
+    rs = gamma if M is _identity else _vdot_real_tree(r, r)
     return (rs > atol2) & (k < maxiter)
 
   def body_fun(value):
     x, r, gamma, p, k = value
     Ap = A(p)
-    alpha = gamma / _vdot_tree(p, Ap)
+    alpha = gamma / _vdot_real_tree(p, Ap)
     x_ = _add(x, _mul(alpha, p))
     r_ = _sub(r, _mul(alpha, Ap))
     z_ = M(r_)
-    gamma_ = _vdot_tree(r_, z_)
+    gamma_ = _vdot_real_tree(r_, z_)
     beta_ = gamma_ / gamma
     p_ = _add(z_, _mul(beta_, p))
     return x_, r_, gamma_, p_, k + 1
 
   r0 = _sub(b, A(x0))
   p0 = z0 = M(r0)
-  gamma0 = _vdot_tree(r0, z0)
+  gamma0 = _vdot_real_tree(r0, z0)
   initial_value = (x0, r0, gamma0, p0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -178,6 +200,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
+
 def _safe_normalize(x, return_norm=False, thresh=None):
   """
   Returns the L2-normalized vector (which can be a pytree) x, and optionally
@@ -185,7 +208,7 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   which by default is the machine precision of x's dtype, it will be
   taken to be 0, and the normalized x to be the zero vector.
   """
-  norm = jnp.sqrt(jnp.abs(_vdot_tree(x, x)))
+  norm = _norm_tree(x)
   dtype = jnp.result_type(*tree_leaves(x))
   if thresh is None:
     thresh = jnp.finfo(norm.dtype).eps
@@ -304,7 +327,7 @@ def _gmres(A, b, x0, inner_tol, restart, M):
   R = jnp.eye(restart, restart + 1, dtype=dtype) # eye to avoid constructing
                                                  # a singular matrix in case
                                                  # of early termination.
-  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b)))
+  b_norm = _norm_tree(b)
 
   givens = jnp.zeros((restart, 2), dtype=dtype)
   beta_vec = jnp.zeros((restart + 1), dtype=dtype)
@@ -451,13 +474,13 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       f'{tree_structure(x0)} vs {tree_structure(b)}')
 
   b, x0 = device_put((b, x0))
-  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b)))
+  b_norm = _norm_tree(b)
   if b_norm == 0:
     return b, 0
   outer_tol = jnp.maximum(tol * b_norm, atol)
 
   Mb = M(b)
-  Mb_norm = jnp.sqrt(jnp.abs(_vdot_tree(Mb, Mb)))
+  Mb_norm = _norm_tree(Mb)
   inner_tol = Mb_norm * min(1.0, outer_tol / b_norm)
 
   def _solve(A, b):
@@ -465,6 +488,6 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
 
-  failed = jnp.isnan(_vdot_tree(x, x))
+  failed = jnp.isnan(_norm_tree(x))
   info = lax.cond(failed, lambda x: -1, lambda x: 0, 0)
   return x, info
