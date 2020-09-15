@@ -164,34 +164,15 @@ before (with two input vars, one for each element of the input tuple)
 
 
 Constant Vars
---------------
+-------------
 
-ConstVars arise when the computation contains array constants, either
-from the Python program, or from constant-folding. For example, the function
-``func6`` below
+Some values in jaxprs are constants, in that their value does not depend on the
+jaxpr's arguments. When these values are scalars they are represented directly
+in the jaxpr equations; non-scalar array constants are instead hoisted out to
+the top-level jaxpr, where they correspond to constant variables ("constvars").
+These constvars differ from the other jaxpr parameters ("invars") only as a
+bookkeeping convention.
 
->>> def func5(first, second):
-...   temp = first + jnp.sin(second) * 3. - jnp.ones(8)
-...   return temp
-...
->>> def func6(first):
-...   return func5(first, jnp.ones(8))
-...
-
-JAX produces the following jaxpr
-
->>> print(make_jaxpr(func6)(jnp.ones(8)))
-{ lambda b d ; a.
-  let c = add a b
-      e = sub c d
-  in (e,) }
-
-When tracing ``func6``, the function ``func5`` is invoked with a constant value
-(``np.ones(8)``) for the second argument. As a result, the sub-expression
-``jnp.sin(second) * 3.`` is constant-folded.
-There are two ConstVars, ``b`` (standing for ``jnp.sin(second) * 3.``) and ``d``
-(standing for ``jnp.ones(8)``). Unfortunately, it is not easy to tell from the
-jaxpr notation what constants the constant variables stand for.
 
 Higher-order primitives
 -----------------------
@@ -293,44 +274,25 @@ contains a constant ``jnp.ones(1)`` that is hoisted as a `constvar`
 >>> def func8(arg1, arg2):  # arg2 is a pair
 ...   return lax.cond(arg1 >= 0.,
 ...                   lambda xtrue: xtrue[0],
-...                   lambda xfalse: jnp.ones(1) + xfalse[1],
+...                   lambda xfalse: jnp.array([1]) + xfalse[1],
 ...                   arg2)
 ...
 >>> print(make_jaxpr(func8)(5., (jnp.zeros(1), 2.)))
-{ lambda f ; a b c.
-  let d = ge a 0.0
-      e = convert_element_type[ new_dtype=int32
-                                old_dtype=bool ] d
-      g = cond[ branches=( { lambda  ; c a b.
-                             let d = add c b
-                             in (d,) }
-                           { lambda  ; e_ a b.
-                             let 
+{ lambda a ; b c d.
+  let e = ge b 0.0
+      f = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] e
+      g = cond[ branches=( { lambda  ; a b c.
+                             let d = convert_element_type[ new_dtype=float32
+                                                           old_dtype=int32 ] a
+                                 e = add d c
+                             in (e,) }
+                           { lambda  ; f_ a b.
+                             let
                              in (a,) } )
-                linear=(False, False, False) ] e f b c
+                linear=(False, False, False) ] f a c d
   in (g,) }
 
-The top-level jaxpr has one `constvar` ``f`` (corresponding to
-``jnp.ones(1)`` from the body of the first (false) branch) and three
-input variables ``a b c`` (corresponding to ``arg1`` and the two
-elements of ``arg2``; note that ``arg2`` has been flattened).  The
-``false_jaxpr`` has three input variables (``c`` corresponding to the
-constant for ``jnp.ones(1)``, and ``a b`` for the two elements of
-``arg2`` that are passed to ``false_jaxpr``).  The ``true_jaxpr`` has
-three input variables. The first (``e_``) is an unused argument
-matching the constant first argument ``c`` of ``false_jaxpr``
-(required for the jaxpr signatures to match). The subsequent two
-correspond to the two elements of ``arg2`` that is passed to
-``true_jaxpr``.
-
-The actual operands to the cond primitive are: ``e f b c``, which
-correspond in order to:
-
-  * one operand for the predicate,
-  * one constant (only used by ``false_jaxpr``, but passed to both),
-    i.e., ``f``, which is a constvar for the top-level jaxpr
-  * two operands passed to both jaxprs, i.e., ``b`` and ``c``, which are
-    input vars, corresponding to ``arg2`` for the top-level jaxpr.
 
 While
 ^^^^^
@@ -357,32 +319,22 @@ For example, here is an example fori loop
 ...                        arg + ones)
 ...
 >>> print(make_jaxpr(func10)(np.ones(16), 5))
-{ lambda c d ; a b.
-  let e = add a d
-      _ _ f = while[ body_jaxpr={ lambda  ; e g a b c.
-                                  let d = add a 1
-                                      f = add c e
-                                      h = add f g
-                                  in (d, b, h) }
+{ lambda  ; a b.
+  let c = broadcast_in_dim[ broadcast_dimensions=(  )
+                            shape=(16,) ] 1.0
+      d = add a c
+      _ _ e = while[ body_jaxpr={ lambda  ; a b c d e.
+                                  let f = add c 1
+                                      g = mul a 3.0
+                                      h = add e g
+                                      i = add h b
+                                  in (f, d, i) }
                      body_nconsts=2
                      cond_jaxpr={ lambda  ; a b c.
                                   let d = lt a b
                                   in (d,) }
-                     cond_nconsts=0 ] c a 0 b e
-  in (f,) }
-
-The top-level jaxpr has two constvars: ``c`` (corresponding to ``ones * 3.`` from the body
-of the loop) and ``d`` (corresponding to the use of ``ones`` in the initial carry).
-There are also two input variables (``a`` corresponding to ``arg`` and ``b`` corresponding
-to ``n``).
-The loop carry consists of three values, as seen in the body of ``cond_jaxpr``
-(corresponding to the iteration index, iteration end, and the accumulated value carry).
-Note that ``body_jaxpr`` takes 5 input variables. The first two are actually
-constvars: ``e`` corresponding to ``ones * 3`` and ``g`` corresponding to the
-captures use of ``arg`` in the loop body.
-The parameter ``body_nconsts = 2`` specifies that there are 2 constants for the
-``body_jaxpr``.
-The other 3 input variables for ``body_jaxpr`` correspond to the flattened carry values.
+                     cond_nconsts=0 ] c a 0 b d
+  in (e,) }
 
 The while primitive takes 5 arguments: ``c a 0 b e``, as follows:
 
@@ -395,13 +347,13 @@ Scan
 
 JAX supports a special form of loop over the elements of an array (with
 statically known shape). The fact that there are a fixed number of iterations
-makes this form of looping easily reverse-differentiable. Such loops are constructed
-with the :py:func:`jax.lax.scan` operator::
+makes this form of looping easily reverse-differentiable. Such loops are
+constructed with the :py:func:`jax.lax.scan` function::
 
   lax.scan(body_fun: (C -> A -> (C, B)), init_carry: C, in_arr: Array[A]) -> (C, Array[B])
 
-Here ``C`` is the type of the scan carry, ``A`` is the element type of the input array(s),
-and ``B`` is the element type of the output array(s).
+Here ``C`` is the type of the scan carry, ``A`` is the element type of the
+input array(s), and ``B`` is the element type of the output array(s).
 
 For the example consider the function ``func11`` below
 
@@ -415,12 +367,14 @@ For the example consider the function ``func11`` below
 ...   return lax.scan(body, 0., (arr, ones))
 ...
 >>> print(make_jaxpr(func11)(np.ones(16), 5.))
-{ lambda c ; a b.
-  let d e = scan[ jaxpr={ lambda  ; f a b c.
-                          let d = mul b c
-                              e = add a d
-                              g = add e f
-                          in (g, a) }
+{ lambda  ; a b.
+  let c = broadcast_in_dim[ broadcast_dimensions=(  )
+                            shape=(16,) ] 1.0
+      d e = scan[ jaxpr={ lambda  ; a b c d.
+                          let e = mul c d
+                              f = add b e
+                              g = add f a
+                          in (g, b) }
                   length=16
                   linear=(False, False, False, False)
                   num_carry=1
@@ -428,17 +382,6 @@ For the example consider the function ``func11`` below
                   reverse=False
                   unroll=1 ] b 0.0 a c
   in (d, e) }
-
-The top-level jaxpr has one constvar ``c`` corresponding to the ``ones`` constant,
-and two input variables corresponding to the arguments ``arr`` and ``extra``.
-The body of the scan has 4 input variables, of which:
-
-  * one (``f``) is a constant (since ``num_consts = 1``), and stands for the
-    captured variable ``extra`` used in the loop body,
-  * one (``a``) is the value of the carry (since ``num_carry = 1``)
-  * The remaining 2 are the input values. ``b`` is the array element from the
-    first array passed to lax.scan (``arr``) and ``c`` is the second array
-    (``ones``).
 
 The ``linear`` parameter describes for each of the input variables whether they
 are guaranteed to be used linearly in the body. Once the scan goes through
@@ -466,37 +409,27 @@ computation should run. For example
 ...   return arg + inner(arg - 2.)
 ...
 >>> print(make_jaxpr(func12)(1.))
-{ lambda b ; a.
-  let c = sub a 2.0
-      d = xla_call[ backend=None
-                    call_jaxpr={ lambda  ; c b a.
-                                 let d = mul b c
-                                     e = add a d
+{ lambda  ; a.
+  let b = sub a 2.0
+      c = xla_call[ backend=None
+                    call_jaxpr={ lambda  ; a b.
+                                 let c = broadcast_in_dim[ broadcast_dimensions=(  )
+                                                           shape=(1,) ] 1.0
+                                     d = mul a c
+                                     e = add b d
                                  in (e,) }
                     device=None
-                    donated_invars=(False, False, False)
-                    name=inner ] b a c
-      e = add a d
-  in (e,) }
+                    donated_invars=(False, False)
+                    name=inner ] a b
+      d = add a c
+  in (d,) }
 
-The top-level constvar ``b`` refers to the ``jnp.ones(1)`` constant, and
-the top-level input variable `a` refers to the ``arg`` parameter of ``func12``.
-The ``xla_call`` primitive stands for a call to the jitted ``inner`` function.
-The primitive has the function body in the ``call_jaxpr`` parameter, a jaxpr
-with 3 input parameters:
-
-  * ``c`` is a constvar and stands for the ``ones`` constant,
-  * ``b`` corresponds to the free variable ``arg`` captured in the ``inner`` function,
-  * ``a`` corresponds to the ``inner`` parameter ``x``.
-
-The primitive takes three arguments ``b a c``.
 
 XLA_pmap
 ^^^^^^^^
 
-If you use the :py:func:`jax.pmap` transformation, the function to be
-mapped is captured using the ``xla_pmap`` primitive. Consider this
-example
+If you use the :py:func:`jax.pmap` transformation, the function to be mapped is
+captured using the ``xla_pmap`` primitive. Consider this example
 
 >>> from jax import pmap
 >>>
@@ -507,33 +440,29 @@ example
 ...   return pmap(inner, axis_name='rows')(arr)
 ...
 >>> print(make_jaxpr(func13)(jnp.ones((1, 3)), 5.))
-{ lambda c ; a b.
-  let d = xla_pmap[ axis_name=rows
+{ lambda  ; a b.
+  let c = xla_pmap[ axis_name=rows
                     axis_size=1
                     backend=None
-                    call_jaxpr={ lambda  ; d b a.
-                                 let c = add a b
+                    call_jaxpr={ lambda  ; a b.
+                                 let c = add b a
+                                     d = broadcast_in_dim[ broadcast_dimensions=(  )
+                                                           shape=(1,) ] 1.0
                                      e = add c d
                                      f = psum[ axis_index_groups=None
-                                               axis_name=rows ] a
+                                               axis_name=rows ] b
                                      g = div e f
                                  in (g,) }
                     devices=None
-                    donated_invars=(False, False, False)
+                    donated_invars=(False, False)
                     global_axis_size=None
-                    mapped_invars=(True, False, True)
-                    name=inner ] c b a
-  in (d,) }
+                    mapped_invars=(False, True)
+                    name=inner ] b a
+  in (c,) }
 
-The top-level constvar ``c`` refers to the ``jnp.ones(1)`` constant.
 The ``xla_pmap`` primitive specifies the name of the axis (parameter ``rows``)
-and the body of the function to be mapped as the ``call_jaxpr`` parameter. The
+and the body of the function to be mapped as the ``call_jaxpr`` parameter.
 value of this parameter is a Jaxpr with 3 input variables:
-
-  * ``d`` stands for the constant ``jnp.ones(1)``,
-  * ``b`` stands for the free variable ``extra``,
-  * ``a`` stands for the parameter ``x`` of ``inner``.
-
 
 The parameter ``mapped_invars`` specify which of the input variables should be
 mapped and which should be broadcast. In our example, the value of ``extra``

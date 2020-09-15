@@ -458,12 +458,10 @@ def _psum_transpose_rule(cts, axis_name, axis_index_groups):
 
 psum_p = core.Primitive('psum')
 psum_p.multiple_results = True
-psum_p.def_impl(partial(pxla.apply_parallel_primitive, psum_p))
 psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
 pxla.soft_pmap_rules[psum_p] = \
     partial(_allreduce_soft_pmap_rule, psum_p, lax._reduce_sum)
 xla.parallel_translations[psum_p] = _psum_translation_rule
-pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)
 ad.deflinear(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 batching.split_axis_rules[psum_p] = partial(_split_axis_comm_assoc, psum_p)
@@ -473,6 +471,21 @@ batching.collective_rules[psum_p] = \
           psum_p,
           lambda v, d: v.sum(d),
           lambda v, axis_size: axis_size * v)
+
+# We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
+# tracing time.
+@psum_p.def_custom_bind
+def psum_bind(*args, axis_name, axis_index_groups):
+  if all(not isinstance(x, core.Tracer) for x in args):
+    if axis_index_groups is not None:
+      size = len(axis_index_groups[0])
+    elif type(axis_name) is tuple:
+      size = prod([core.axis_frame(name).size for name in axis_name])  # type: ignore
+    else:
+      size = core.axis_frame(axis_name).size  # type: ignore
+    return tuple(size * x for x in args)
+  return core.Primitive.bind(
+      psum_p, *args, axis_name=axis_name, axis_index_groups=axis_index_groups)
 
 
 pmax_p = core.Primitive('pmax')
@@ -660,20 +673,6 @@ def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
-def _axis_index_bind(*, axis_name):
-  dynamic_axis_env = pxla._thread_local_state.dynamic_axis_env
-  frame = dynamic_axis_env[axis_name]
-  trace = frame.pmap_trace
-
-  out_aval = ShapedArray((), np.int32)
-  out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
-  eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
-                          dict(axis_name=axis_name),
-                          source_info_util.current())
-  out_tracer.recipe = eqn
-
-  return out_tracer
-
 def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
   assert not vals and not mapped
   idx = axis_index(axis_name)  # type: ignore
@@ -682,46 +681,58 @@ def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
 axis_index_p = core.Primitive('axis_index')
 xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
 pxla.soft_pmap_rules[axis_index_p] = _axis_index_soft_pmap_rule  # type: ignore
-axis_index_p.def_custom_bind(_axis_index_bind)
 axis_index_p.def_abstract_eval(
     lambda *args, **params: ShapedArray((), np.int32))
 pxla.multi_host_supported_collectives.add(axis_index_p)
 
+# Axis index doesn't get any arguments, so that the default bind would have no
+# way to call into a data-dependency based trace such as vmap. Each trace that
+# wants to bind an axis name has to additionally implement `process_axis_index`
+# and put its main trace on the axis env stack.
+def _axis_index_bind(*, axis_name):
+  frame = core.axis_frame(axis_name)
+  if frame.main_trace is not None:
+    trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
+    return trace.process_axis_index(frame)
+  return core.Primitive.bind(axis_index_p, axis_name=axis_name)
+axis_index_p.def_custom_bind(_axis_index_bind)
 
-@config.register_omnistaging_enabler
-def omnistaging_enabler() -> None:
-  # We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
-  # tracing time.
-  @psum_p.def_custom_bind
-  def psum_bind(*args, axis_name, axis_index_groups):
-    if all(not isinstance(x, core.Tracer) for x in args):
-      if axis_index_groups is not None:
-        size = len(axis_index_groups[0])
-      elif type(axis_name) is tuple:
-        size = prod([core.axis_frame(name).size for name in axis_name])  # type: ignore
-      else:
-        size = core.axis_frame(axis_name).size  # type: ignore
-      return tuple(size * x for x in args)
-    return core.Primitive.bind(
-        psum_p, *args, axis_name=axis_name, axis_index_groups=axis_index_groups)
+def _process_axis_index(self, frame):
+  return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
+batching.BatchTrace.process_axis_index = _process_axis_index
 
-  if psum_p in pxla.parallel_pure_rules:
-    del pxla.parallel_pure_rules[psum_p]
 
-  # Axis index doesn't get any arguments, so that the default bind would have no
-  # way to call into a data-dependency based trace such as vmap. Each trace that
-  # wants to bind an axis name has to additionally implement `process_axis_index`
-  # and put its main trace on the axis env stack.
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
+  global axis_index
+
+  psum_p.bind = partial(core.Primitive.bind, psum_p)
+  psum_p.def_impl(partial(pxla.apply_parallel_primitive, psum_p))  # type: ignore
+  pxla.parallel_pure_rules[psum_p] = lambda *args, shape: (x * prod(shape) for x in args)  # type: ignore
+
   def _axis_index_bind(*, axis_name):
-    frame = core.axis_frame(axis_name)
-    if frame.main_trace is not None:
-      trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
-      return trace.process_axis_index(frame)
-    return core.Primitive.bind(axis_index_p, axis_name=axis_name)
+    dynamic_axis_env = pxla._thread_local_state.dynamic_axis_env
+    frame = dynamic_axis_env[axis_name]
+    sizes = dynamic_axis_env.sizes[:dynamic_axis_env.index(frame)+1]
+    nreps = dynamic_axis_env.nreps
+    trace = frame.pmap_trace
+
+    out_aval = ShapedArray((), np.int32)
+    out_tracer = pe.JaxprTracer(trace, pe.PartialVal.unknown(out_aval), None)
+    eqn = pe.new_eqn_recipe([], [out_tracer], axis_index_p,
+                            dict(nreps=nreps, sizes=sizes, axis_name=axis_name),
+                            source_info_util.current())
+    out_tracer.recipe = eqn
+
+    return out_tracer
+
+  def _axis_index_translation_rule(c, nreps, sizes, axis_name):
+    div = xb.constant(c, np.array(nreps // prod(sizes), dtype=np.uint32))
+    mod = xb.constant(c, np.array(sizes[-1], dtype=np.uint32))
+    unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
+    return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
   axis_index_p.def_custom_bind(_axis_index_bind)
-
-  def process_axis_index(self, frame):
-    return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
-
-  batching.BatchTrace.process_axis_index = process_axis_index
+  axis_index_p.def_abstract_eval(
+      lambda *args, **params: ShapedArray((), np.int32))
+  xla.translations[axis_index_p] = _axis_index_translation_rule

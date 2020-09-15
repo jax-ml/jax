@@ -393,7 +393,7 @@ def disable_jit():
   ...   return y + 3
   ...
   >>> print(f(jax.numpy.array([1, 2, 3])))
-  Value of y is Traced<ShapedArray(int32[3]):JaxprTrace(level=-1/1)>
+  Value of y is Traced<ShapedArray(int32[3])>with<DynamicJaxprTrace(level=0/1)>
   [5 7 9]
 
   Here ``y`` has been abstracted by :py:func:`jit` to a :py:class:`ShapedArray`,
@@ -651,7 +651,7 @@ def _xla_computation(
     else:
       pvals = [pe.PartialVal.unknown(aval) for aval in avals]
       jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-          jaxtree_fun, pvals, instantiate=True, stage_out=True)
+          jaxtree_fun, pvals, instantiate=True, stage_out=True)  # type: ignore
       out_avals = [raise_to_shaped(pval.get_aval()) for pval in out_pvals]
     jaxpr = xla.apply_outfeed_rewriter(jaxpr)
     axis_env_ = make_axis_env(xla.jaxpr_replicas(jaxpr))
@@ -1910,11 +1910,12 @@ def make_jaxpr(fun: Callable,
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
   { lambda  ; a.
     let b = cos a
-        c = cos b
-        d = mul 1.0 c
-        e = neg d
-        f = sin a
-        g = mul e f
+        c = sin a
+        _ = sin b
+        d = cos b
+        e = mul 1.0 d
+        f = neg e
+        g = mul f c
     in (g,) }
   """
   _check_callable(fun)
@@ -1936,7 +1937,7 @@ def make_jaxpr(fun: Callable,
     else:
       in_pvals = [pe.PartialVal.unknown(a) for a in in_avals]
       jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-          jaxtree_fun, in_pvals, instantiate=True, stage_out=True)
+          jaxtree_fun, in_pvals, instantiate=True, stage_out=True)  # type: ignore
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
     typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
     return typed_jaxpr
@@ -2214,7 +2215,7 @@ class CustomTransformsFunction(object):
     if config.omnistaging_enabled:
       jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
     else:
-      with core.initial_style_staging():
+      with core.initial_style_staging():  # type: ignore
         jaxpr, _, consts = pe.trace_to_jaxpr(flat_fun, in_pvals, instantiate=True)
     outs = self.prim.bind(*it.chain(consts, args_flat), jaxpr=jaxpr,
                           in_tree=in_tree, out_tree=out_tree(),

@@ -1137,6 +1137,16 @@ def reshape(a, newshape, order="C"):
 def _compute_newshape(a, newshape):
   """Fixes a -1 value in newshape, if present."""
   # other errors, like having more than one -1, are caught downstream
+  try: iter(newshape)
+  except: iterable = False
+  else: iterable = True
+  if iterable:
+    newshape = [core.concrete_or_error(int, d,
+                                       "The error arose in jax.numpy.reshape.")
+                for d in newshape]
+  else:
+    newshape = core.concrete_or_error(int, newshape,
+                                      "The error arose in jax.numpy.reshape.")
   newsize = _prod(newshape)
   if newsize < 0:
     fix = a.size // -newsize
@@ -2417,7 +2427,7 @@ def identity(n, dtype=None):
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, _np_asarray)
-  msg = "in jax.numpy.arange argument `{}`".format
+  msg = "It arose in jax.numpy.arange argument `{}`.".format
   if stop is None and step is None:
     start = require(start, msg("stop"))
     dtype = dtype or _dtype(start)
@@ -2622,7 +2632,7 @@ def repeat(a, repeats, axis=None, *, total_repeat_length=None):
 
   # If total_repeat_length is not given, can't compile, use a default.
   if total_repeat_length is None:
-    repeats = core.concrete_or_error(np.array, repeats, "jax.numpy.repeat")
+    repeats = core.concrete_or_error(np.array, repeats, "It arose in jax.numpy.repeat.")
     repeats = np.ravel(repeats)
     if ndim(a) != 0:
       repeats = np.broadcast_to(repeats, [a.shape[axis]])

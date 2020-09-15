@@ -53,27 +53,27 @@ jobs:
           - python-version: 3.6
             os: ubuntu-latest
             enable-x64: 0
-            enable-omnistaging: 0
+            enable-omnistaging: 1
             package-overrides: "none"
             num_generated_cases: 25
           - python-version: 3.7
             os: ubuntu-latest
             enable-x64: 1
-            enable-omnistaging: 0
+            enable-omnistaging: 1
             # Test experimental NumPy dispatch
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 25
           - python-version: 3.6
             os: ubuntu-latest
             enable-x64: 1
-            enable-omnistaging: 0
+            enable-omnistaging: 1
             # Test with numpy version that matches Google-internal version
             package-overrides: "numpy==1.16.4"
             num_generated_cases: 10
           - python-version: 3.7
             os: ubuntu-latest
             enable-x64: 0
-            enable-omnistaging: 1
+            enable-omnistaging: 0
             package-overrides: "none"
             num_generated_cases: 8
     steps:
