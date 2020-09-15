@@ -656,26 +656,6 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(y2, jnp.vstack([b for _, b in x]))
     self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
 
-  def test_device_put_replicated(self):
-    devices = api.local_devices()
-    n_devices = len(devices)
-    x = np.arange(4)
-    y = api.device_put_replicated(x, devices)
-    self.assertEqual(len(y.device_buffers), len(devices))
-    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
-    self.assertAllClose(y, jnp.stack(n_devices * [x]))
-
-  def test_device_put_replicated_pytree(self):
-    devices = api.local_devices()
-    n_devices = len(devices)
-    x = (1, np.arange(4))
-    y1, y2 = api.device_put_replicated(x, devices)
-    self.assertAllClose(y1, jnp.array([x[0] for d in devices]))
-    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
-    self.assertAllClose(y2, jnp.vstack(n_devices * [x[1]]))
-    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
-
-
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
     R = np.random.RandomState(0).randn
