@@ -293,7 +293,6 @@ def _gmres(A, b, x0, inner_tol, restart, M):
   projection of the true solution into this subspace is returned.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
-  converged = False
   residual = _sub(b, A(x0))
   unit_residual, beta = _safe_normalize(residual, return_norm=True)
 
