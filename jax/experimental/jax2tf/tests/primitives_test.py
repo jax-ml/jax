@@ -455,9 +455,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_squeeze(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
-  @primitive_harness.parameterized(jtu.cases_from_list(
-      primitive_harness.lax_conv_general_dilated_general
-    ) + list(primitive_harness.lax_conv_general_dilated_known_limitations))
+  @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
     tol = None
     # TODO(bchetioui): significant discrepancies in some float16 cases.
