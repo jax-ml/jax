@@ -1971,17 +1971,50 @@ def device_put_sharded(x, devices: Sequence[xc.Device]):
   """Shards the input to specified devices, returning ShardedDeviceArrays.
 
   Args:
-    x: A sequence of arrays, scalars, or (nested) standard Python containers thereof
+    x: An array of leading dimension n_devices, or a sequence of length n_devices
+      containing arrays, scalars, or (nested) standard Python containers thereof.
     devices: A sequence of devices()
 
   Returns:
     A ShardedDeviceArray or (nested) Python container thereof containing a copy
     of x sharded across the specified devices.
+
+  Examples:
+    Sharding a single array results in a sharded copy of that array. Note that the
+    array's leading dimension must equal the number of devices:
+
+    >>> from jax import api, numpy as jnp
+    >>> devices = api.local_devices()
+    >>> x = jnp.ones((len(devices), 5))
+    >>> y = api.device_put_sharded(x, devices)
+    >>> np.allclose(x, y)
+    True
+
+    Sharding a list of equivalent nested objects is equivalent to sharding the list
+    of each entry and repackaging the results to mach
+
+    >>> x = [(i, jnp.arange(i, i + 4)) for i in range(len(devices))]
+    >>> y = api.device_put_sharded(x, devices)
+    >>> type(y)
+    tuple
+    >>> y0 = api.device_put_sharded([a for a, b in x], devices)
+    >>> y2 = api.device_put_sharded([b fr a, b in x], devices)
+    >>> np.allclose(y[0], y0)
+    True
+    >>> np.allclose(y[1], y1)
+    True
+
+  See also:
+  - device_put
+  - device_put_replicated
   """
   # TODO(jakevdp): provide a default for devices that considers both local devices and pods
   assert len(x) == len(devices), f"len(x) = {len(x)} must equal len(devices) = {len(devices)}."
   def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
-    aval = ShapedArray((len(xs),) + np.shape(xs[0]), dtypes.result_type(xs[0]))
+    avals = [core.get_aval(x) for x in xs]
+    assert all(aval == avals[0] for aval in avals), f"abstract values must all match; got {avals}"
+    x_aval = core.raise_to_shaped(avals[0])
+    aval = ShapedArray((len(devices),) + x_aval.shape, x_aval.dtype)
     buffers = [xla.device_put(x, d) for x, d in zip(xs, devices)]
     return pxla.ShardedDeviceArray(aval, buffers)
   return tree_multimap(_device_put_sharded, *x)
@@ -1996,9 +2029,41 @@ def device_put_replicated(x, devices: Sequence[xc.Device]):
 
   Returns:
     A ShardedDeviceArray or (nested) Python container thereof containing a copy
-    of x replicated across the specified devices.
+    of x replicated across the specified devices: i.e. broadcasted over a new
+    leading axis.
+
+  Examples:
+    Replicating an array across all devices adds a broadcasted leading dimension:
+
+    >>> from jax import api, numpy as jnp
+    >>> devices = api.local_devices()
+    >>> x = jnp.arange(5)
+    >>> y = api.device_put_replicated(x, devices)
+    >>> np.allclose(y[0], x)
+    True
+    >>> y.shape == (len(devices),) + x.shape
+    True
+
+    Replicating a nested structure across all devices is equivalent to replicating each
+    entry, and then repackaging the result according to the input structure:
+
+    >>> x = (1, jnp.arange(4), jnp.ones((2, 2)))
+    >>> y = api.device_put_replicated(x, devices)
+    >>> type(y)
+    tuple
+    >>> y[2].shape == (len(devices), 2, 2)
+    True
+
+  See Also:
+  - device_put
+  - device_put_sharded
   """
-  return device_put_sharded(len(devices) * [x], devices)
+  def _device_put_replicated(x) -> pxla.ShardedDeviceArray:
+    x_aval = core.raise_to_shaped(core.get_aval(x))
+    aval = ShapedArray((len(devices),) + x_aval.shape, x_aval.dtype)
+    buffers = [xla.device_put(x, d) for d in devices]
+    return pxla.ShardedDeviceArray(aval, buffers)
+  return tree_map(_device_put_replicated, x)
 
 
 # TODO(mattjj): consider revising

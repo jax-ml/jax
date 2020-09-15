@@ -637,7 +637,7 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.device_buffer.device(), cpu_device)
 
-  def test_device_put_sharded(self):
+  def test_device_put_sharded_array(self):
     devices = api.local_devices()
     n_devices = len(devices)
     x = [np.arange(i, i + 4) for i in range(n_devices)]
@@ -645,6 +645,16 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(len(y.device_buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
     self.assertAllClose(y, jnp.stack(x))
+
+  def test_device_put_sharded_pytree(self):
+    devices = api.local_devices()
+    n_devices = len(devices)
+    x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
+    y1, y2 = api.device_put_sharded(x, devices)
+    self.assertAllClose(y1, jnp.array([a for a, _ in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
+    self.assertAllClose(y2, jnp.vstack([b for _, b in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
 
   def test_device_put_replicated(self):
     devices = api.local_devices()
@@ -654,6 +664,17 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(len(y.device_buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
     self.assertAllClose(y, jnp.stack(n_devices * [x]))
+
+  def test_device_put_replicated_pytree(self):
+    devices = api.local_devices()
+    n_devices = len(devices)
+    x = (1, np.arange(4))
+    y1, y2 = api.device_put_replicated(x, devices)
+    self.assertAllClose(y1, jnp.array([x[0] for d in devices]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
+    self.assertAllClose(y2, jnp.vstack(n_devices * [x[1]]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
+
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):
