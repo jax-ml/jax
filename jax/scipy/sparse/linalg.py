@@ -28,25 +28,9 @@ _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 _vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
 
 
-def _vdot_real_part(x, y):
-  """Vector dot-product guaranteed to have a real valued result."""
-  # all our uses of vdot() in CG are for computing an operator of the form
-  # `z^T M z` where `M` is positive definite and Hermitian, so the result is
-  # real valued:
-  # https://en.wikipedia.org/wiki/Definiteness_of_a_matrix#Definitions_for_complex_matrices
-  result = _vdot(x.real, y.real)
-  if jnp.iscomplexobj(x) or jnp.iscomplexobj(y):
-    result += _vdot(x.imag, y.imag)
-  return result
-
-
 # aliases for working with pytrees
-
-def _vdot_tree(x, y, assume_real=True):
-  if assume_real:
-    return sum(tree_leaves(tree_multimap(_vdot_real_part, x, y)))
-  else:
-    return sum(tree_leaves(tree_multimap(_vdot, x, y)))
+def _vdot_tree(x, y):
+  return sum(tree_leaves(tree_multimap(_vdot, x, y)))
 
 
 def _mul(scalar, tree):
@@ -194,8 +178,6 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
-
-
 def _safe_normalize(x, return_norm=False, thresh=None):
   """
   Returns the L2-normalized vector (which can be a pytree) x, and optionally
@@ -203,7 +185,7 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   which by default is the machine precision of x's dtype, it will be
   taken to be 0, and the normalized x to be the zero vector.
   """
-  norm = jnp.sqrt(jnp.abs(_vdot_tree(x, x, assume_real=False)))
+  norm = jnp.sqrt(jnp.abs(_vdot_tree(x, x)))
   dtype = jnp.result_type(*tree_leaves(x))
   if thresh is None:
     thresh = jnp.finfo(norm.dtype).eps
@@ -212,8 +194,7 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   normalized_x, norm = lax.cond(
     norm > thresh,
     lambda y: (_div(y, norm), norm),
-    lambda y: (tree_map(jnp.zeros_like, y),
-               (thresh*0.).astype(dtype).real),  # To get the dtype right
+    lambda y: (tree_map(jnp.zeros_like, y), jnp.zeros((), dtype=thresh.dtype)),
     x,
   )
   if return_norm:
@@ -312,6 +293,7 @@ def _gmres(A, b, x0, inner_tol, restart, M):
   projection of the true solution into this subspace is returned.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
+  converged = False
   residual = _sub(b, A(x0))
   unit_residual, beta = _safe_normalize(residual, return_norm=True)
 
@@ -323,7 +305,7 @@ def _gmres(A, b, x0, inner_tol, restart, M):
   R = jnp.eye(restart, restart + 1, dtype=dtype) # eye to avoid constructing
                                                  # a singular matrix in case
                                                  # of early termination.
-  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b, assume_real=False)))
+  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b)))
 
   givens = jnp.zeros((restart, 2), dtype=dtype)
   beta_vec = jnp.zeros((restart + 1), dtype=dtype)
@@ -470,13 +452,13 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       f'{tree_structure(x0)} vs {tree_structure(b)}')
 
   b, x0 = device_put((b, x0))
-  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b, assume_real=False)))
+  b_norm = jnp.sqrt(jnp.abs(_vdot_tree(b, b)))
   if b_norm == 0:
     return b, 0
   outer_tol = jnp.maximum(tol * b_norm, atol)
 
   Mb = M(b)
-  Mb_norm = jnp.sqrt(jnp.abs(_vdot_tree(Mb, Mb, assume_real=False)))
+  Mb_norm = jnp.sqrt(jnp.abs(_vdot_tree(Mb, Mb)))
   inner_tol = Mb_norm * min(1.0, outer_tol / b_norm)
 
   def _solve(A, b):
@@ -484,6 +466,6 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
 
-  failed = jnp.isnan(_vdot_tree(x, x, assume_real=False))
+  failed = jnp.isnan(_vdot_tree(x, x))
   info = lax.cond(failed, lambda x: -1, lambda x: 0, 0)
   return x, info
