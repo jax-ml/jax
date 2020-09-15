@@ -10,7 +10,7 @@ Change Log
 These are the release notes for JAX.
 
 
-jax (unreleased)
+jax (0.1.77) (September 15 2020)
 ----------------
 
 * Breaking changes:
