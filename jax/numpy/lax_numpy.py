@@ -501,17 +501,7 @@ def true_divide(x1, x2):
   x1, x2 = _promote_args_inexact("true_divide", x1, x2)
   return lax.div(x1, x2)
 
-
-@_wraps(np.divide)
-def divide(x1, x2):
-  # decide whether to perform integer division based on Numpy result dtype, as a
-  # way to check whether Python 3 style division is active in Numpy
-  result_dtype = _result_dtype(np.divide, x1, x2)
-  if issubdtype(result_dtype, integer):
-    return floor_divide(x1, x2)
-  else:
-    return true_divide(x1, x2)
-
+divide = true_divide
 
 @_wraps(np.floor_divide)
 def floor_divide(x1, x2):
