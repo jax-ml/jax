@@ -1990,8 +1990,9 @@ def device_put_sharded(x, devices: Sequence[xc.Device]):
     >>> np.allclose(x, y)
     True
 
-    Sharding a list of equivalent nested objects is equivalent to sharding the list
-    of each entry and repackaging the results to mach
+    Sharding a list of nested objects is equivalent to sharding the list
+    of each entry and repackaging the results to match the nesting. This
+    requires all entries in the list to have the same structure:
 
     >>> x = [(i, jnp.arange(i, i + 4)) for i in range(len(devices))]
     >>> y = api.device_put_sharded(x, devices)
@@ -2044,13 +2045,15 @@ def device_put_replicated(x, devices: Sequence[xc.Device]):
     >>> y.shape == (len(devices),) + x.shape
     True
 
-    Replicating a nested structure across all devices is equivalent to replicating each
-    entry, and then repackaging the result according to the input structure:
+    Replicating a nested structure is equivalent to replicating each entry in the
+    structure individually:
 
     >>> x = (1, jnp.arange(4), jnp.ones((2, 2)))
     >>> y = api.device_put_replicated(x, devices)
     >>> type(y)
     tuple
+    >>> len(y) == len(x)
+    True
     >>> y[2].shape == (len(devices), 2, 2)
     True
 
