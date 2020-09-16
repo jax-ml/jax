@@ -670,7 +670,7 @@ def _conv_general_precision_config_proto(precision):
     return None
 
   proto = xla_data_pb2.PrecisionConfig()
-  proto.operand_precision.append(precision)
+  proto.operand_precision.append(int(precision))
   return proto
 
 def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
