@@ -830,12 +830,10 @@ class DynamicJaxprTracer(core.Tracer):
                 f"{self._trace.main.source_info}.")
     return origin
 
-  @property
-  def _live(self):
-    if not self._trace.main.jaxpr_stack:
+  def _assert_live(self) -> None:
+    if not self._trace.main.jaxpr_stack:  # type: ignore
       msg = f"tracer created on line {source_info_util.summarize(self.line_info)}"
       raise core.escaped_tracer_error(msg)
-    return True
 
 class JaxprStackFrame:
   __slots__ = ['newvar', 'tracer_to_var', 'constid_to_var', 'constvar_to_val',
