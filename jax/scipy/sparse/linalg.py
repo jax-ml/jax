@@ -272,7 +272,24 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
   h = h.at[k + 1].set(v_norm)
-  H = H.at[k, :].set(h)
+
+  def set_column_to_identity(args):
+    H, k, _ = args
+    col = jnp.zeros(H.shape[1], dtype=H.dtype)
+    col = col.at[k].set(1.)
+    H = H.at[k, :].set(col)
+    return H
+
+  def set_column_to_vector(args):
+    H, k, h = args
+    H = H.at[k, :].set(h)
+    return H
+
+  H = lax.cond(v_norm == 0.,
+               set_column_to_identity,
+               set_column_to_vector,
+               (H, k, h))
+  #H = H.at[k, :].set(h)
   return V, H
 
 
@@ -309,15 +326,15 @@ def apply_givens_rotations(H_row, givens, k):
   return R_row, givens
 
 
-def _gmres(A, b, x0, inner_tol, restart, M):
+def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   """
   Implements a single restart of GMRES. The restart-dimensional Krylov subspace
   K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
   projection of the true solution into this subspace is returned.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
-  residual = _sub(b, A(x0))
-  unit_residual, beta = _safe_normalize(residual, return_norm=True)
+  #  residual = _sub(b, A(x0))
+  #  unit_residual, beta = _safe_normalize(residual, return_norm=True)
 
   V = tree_map(
     lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
@@ -331,7 +348,7 @@ def _gmres(A, b, x0, inner_tol, restart, M):
 
   givens = jnp.zeros((restart, 2), dtype=dtype)
   beta_vec = jnp.zeros((restart + 1), dtype=dtype)
-  beta_vec = beta_vec.at[0].set(beta)
+  beta_vec = beta_vec.at[0].set(residual_norm)
 
   def loop_cond(carry):
     k, err, _, _, _, _ = carry
@@ -342,7 +359,7 @@ def _gmres(A, b, x0, inner_tol, restart, M):
     # return k < restart and err > tol
 
   def arnoldi_qr_step(carry):
-    k, err, V, R, beta_vec, givens = carry
+    k, residual_norm, V, R, beta_vec, givens = carry
     V, H = kth_arnoldi_iteration(k, A, M, V, R, inner_tol)
     R_row, givens = apply_givens_rotations(H[k, :], givens, k)
     R = R.at[k, :].set(R_row[:])
@@ -352,18 +369,53 @@ def _gmres(A, b, x0, inner_tol, restart, M):
     err = jnp.abs(sn) / b_norm
     return k + 1, err, V, R, beta_vec, givens
 
-  carry = (0, beta, V, R, beta_vec, givens)
+  carry = (0, residual_norm, V, R, beta_vec, givens)
   carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
-  k, err, V, R, beta_vec, _ = carry
+  k, residual_norm, V, R, beta_vec, _ = carry
 
   y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
   Vy = tree_map(lambda X: _dot(X[..., :-1], y), V)
   dx = M(Vy)
+
   x = _add(x0, dx)
-  return x, err
+  residual = _sub(b, A(x))
+  unit_residual, residual_norm = _safe_normalize(residual, return_norm=True)
+  return x, unit_residual, residual_norm
 
 
-def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M):
+def _gmres_fixed(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
+  """
+  Implements a single restart of GMRES. The restart-dimensional Krylov subspace
+  K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
+  projection of the true solution into this subspace is returned.
+  """
+  # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
+  V = tree_map(
+    lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
+    unit_residual,
+  )
+  dtype = jnp.result_type(*tree_leaves(b))
+  H = jnp.eye(restart, restart + 1, dtype=dtype)
+  def arnoldi_for_scan(carry, k):
+    V, H = carry
+    V, H = kth_arnoldi_iteration(k, A, M, V, H, inner_tol)
+    return (V, H), None
+  (V, H), _ = lax.scan(arnoldi_for_scan, (V, H), jnp.arange(restart))
+
+  beta_vec = jnp.zeros((restart,), dtype=dtype)
+  beta_vec = beta_vec.at[0].set(residual_norm) # it really is the original value
+  y = jsp.linalg.solve(H[:, :-1].T, beta_vec)
+  Vy = tree_map(lambda X: _dot(X[..., :-1], y), V)
+  dx = M(Vy)
+  x = _add(x0, dx)
+
+  residual = _sub(b, A(x))
+  unit_residual, residual_norm = _safe_normalize(residual, return_norm=True)
+  return x, unit_residual, residual_norm
+
+
+def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
+                 gmres_func):
   """
   The main function call wrapped by custom_linear_solve. Repeatedly calls GMRES
   to find the projected solution within the order-``restart``
@@ -371,27 +423,30 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M):
   in place of x0 each time.
   """
   residual = _sub(b, A(x0))
-  _, beta = _safe_normalize(residual, return_norm=True)
+  unit_residual, residual_norm = _safe_normalize(residual, return_norm=True)
 
   def cond_fun(value):
-    _, k, err = value
+    _, k, _, residual_norm = value
     return lax.cond(k < maxiter,
                     lambda x: x[0] > x[1],
                     lambda x: False,
-                    (err, outer_tol))
+                    (residual_norm, outer_tol))
 
   def body_fun(value):
-    x, k, _ = value
-    x, err = _gmres(A, b, x, inner_tol, restart, M)
-    return x, k + 1, err
+    x, k, unit_residual, residual_norm = value
+    x, unit_residual, residual_norm = gmres_func(A, b, x, unit_residual,
+                                                 residual_norm, inner_tol,
+                                                 restart, M)
+    return x, k + 1, unit_residual, residual_norm
 
-  x_final, k, err = lax.while_loop(cond_fun, body_fun, (x0, 0, beta))
+  initialization = (x0, 0, unit_residual, residual_norm)
+  x_final, k, _, err = lax.while_loop(cond_fun, body_fun, initialization)
   # info = lax.cond(converged, lambda y: 0, lambda y: k, 0)
   return x_final  # , info
 
 
 def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
-          M=None):
+          M=None, fixed_iterations=False):
   """
   GMRES solves the linear system A x = b for x, given A and b. A is specified
   as a function performing A(vi) -> vf = A @ vi, and in principle need not have
@@ -431,7 +486,8 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       projection into a Krylov space of this dimension - this parameter
       therefore bounds the maximum accuracy achievable from any guess
       solution. Larger values increase both number of iterations and iteration
-      cost, but may be necessary for convergence. The algorithm terminates
+      cost, but may be necessary for convergence. If fixed_iterations is
+      True, the algorithm terminates
       early if convergence is achieved before the full subspace is built.
       Default is 20.
   maxiter : integer
@@ -447,6 +503,13 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
       to reach a given error tolerance.
+  fixed_iterations : bool
+      If True, the algorithm builds an internal Krylov subspace using a QR
+      based algorithm, permitting early termination of the inner `restart` loop
+      if  convergence is reached. Apart from permitting early termination, this
+      reduces overhead and may improve stability. However, it may degrade
+      performance significantly on GPUs or TPUs, in which case this flag should
+      be set False.
 
   See also
   --------
@@ -483,8 +546,14 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   Mb_norm = _norm_tree(Mb)
   inner_tol = Mb_norm * min(1.0, outer_tol / b_norm)
 
-  def _solve(A, b):
-    return _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M)
+  if fixed_iterations:
+    def _solve(A, b):
+      return _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
+                          _gmres_fixed)
+  else:
+    def _solve(A, b):
+      return _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
+                          _gmres_qr)
 
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
 

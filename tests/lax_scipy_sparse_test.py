@@ -229,12 +229,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       {"testcase_name":
        "_shape={}_preconditioner={}".format(
          jtu.format_shape_dtype_string(shape, dtype),
-         preconditioner),
-      "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
+         preconditioner,
+         fixed_iterations),
+      "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
+      "fixed_iterations": fixed_iterations}
       for shape in [(2, 2), (7, 7), (32, 32)]
       for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity', 'exact']))
-  def test_gmres_on_identity_system(self, shape, dtype, preconditioner):
+      for preconditioner in [None, 'identity', 'exact']
+      for fixed_iterations in [True, False]
+      ))
+
+  def test_gmres_on_identity_system(self, shape, dtype, preconditioner,
+                                    fixed_iterations):
     A = jnp.eye(shape[1], dtype=dtype)
 
     solution = jnp.ones(shape[1], dtype=dtype)
@@ -249,7 +255,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     tol = shape[0] * jnp.finfo(dtype).eps
     x, info = jax.scipy.sparse.linalg.gmres(A_mv, b, tol=tol, atol=tol,
                                             restart=restart,
-                                            M=M)
+                                            M=M,
+                                            fixed_iterations=fixed_iterations)
     err = jnp.linalg.norm(solution - x) / jnp.linalg.norm(b)
     rtol = tol*jnp.linalg.norm(b)
     true_tol = max(rtol, tol)
@@ -257,14 +264,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}_preconditioner={}".format(
+       "_shape={}_preconditioner={}_fixediterations={}".format(
          jtu.format_shape_dtype_string(shape, dtype),
-         preconditioner),
-      "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
+         preconditioner,
+         str(fixed_iterations)),
+      "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
+      "fixed_iterations": fixed_iterations}
       for shape in [(2, 2), (7, 7), (32, 32)]
       for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity', 'exact']))
-  def test_gmres_on_random_system(self, shape, dtype, preconditioner):
+      for preconditioner in [None, 'identity', 'exact']
+      for fixed_iterations in [True, False]
+      ))
+  def test_gmres_on_random_system(self, shape, dtype, preconditioner,
+                                  fixed_iterations):
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
 
@@ -279,7 +291,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     tol = shape[0] * jnp.finfo(dtype).eps
     x, info = jax.scipy.sparse.linalg.gmres(A_mv, b, tol=tol, atol=tol,
                                             restart=restart,
-                                            M=M)
+                                            M=M,
+                                            fixed_iterations=fixed_iterations)
     err = jnp.linalg.norm(solution - x) / jnp.linalg.norm(b)
     rtol = tol*jnp.linalg.norm(b)
     true_tol = max(rtol, tol)
