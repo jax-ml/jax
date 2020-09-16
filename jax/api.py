@@ -2013,8 +2013,10 @@ def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]) -> pxla.S
   # TODO(jakevdp): provide a default for devices that considers both local devices and pods
   assert len(x) == len(devices), f"len(x) = {len(x)} must equal len(devices) = {len(devices)}."
   def _device_put_sharded(*xs) -> pxla.ShardedDeviceArray:
-    avals = [core.get_aval(x) for x in xs]
-    assert all(aval == avals[0] for aval in avals), f"abstract values must all match; got {avals}"
+    avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs]
+    # We cannot check aval equality directly, because it may fail for ConcreteArray.
+    assert all(aval.shape == avals[0].shape and aval.dtype == avals[0].dtype for aval in avals),\
+      f"abstract values not compatible: {avals}"
     x_aval = core.raise_to_shaped(avals[0])
     aval = ShapedArray((len(devices),) + x_aval.shape, x_aval.dtype)
     buffers = [xla.device_put(x, d) for x, d in zip(xs, devices)]
