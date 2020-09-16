@@ -65,12 +65,14 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   def tf_unimpl(np_dtype: Optional[NpDType] = None,
                 additional_msg: Optional[str] = None,
                 devs: Sequence[str] = all_devices) -> None:
+
+    missing_tf_support = "Missing TF support"
     msg = "Primitive is unimplemented"
     if np_dtype is not None:
       msg += f" for dtype {np_dtype}"
     if additional_msg:
       msg += '; ' + additional_msg
-    _report_failure("Missing TF support", msg, devs=devs)
+    _report_failure(missing_tf_support, msg, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
     try:
@@ -175,6 +177,15 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
+
+  if prim is lax.conv_general_dilated_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    batch_group_count = kwargs['batch_group_count']
+    if batch_group_count != 1:
+      tf_unimpl(additional_msg="batch_group_count != 1 unsupported")
+    if np_dtype in [np.complex64, np.complex128]:
+      tf_unimpl(np_dtype, additional_msg="likely bug in the HLO -> LLVM IR "
+                                         "lowering of XlaConv")
 
   if prim in [lax.acosh_p, lax.asinh_p, lax.atanh_p, lax.bessel_i0e_p,
               lax.bessel_i1e_p, lax.digamma_p, lax.erf_p, lax.erf_inv_p,

@@ -875,3 +875,77 @@ random_split = tuple(
                                np.array([0, 0xFFFFFFFF], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )
+
+def _make_conv_harness(name, *, lhs_shape=(2, 3, 9, 10), rhs_shape=(3, 3, 4, 5),
+                       dtype=np.float32, window_strides=(1, 1), precision=None,
+                       padding=((0, 0), (0, 0)), lhs_dilation=(1, 1),
+                       rhs_dilation=(1, 1), feature_group_count=1,
+                       dimension_numbers=("NCHW", "OIHW", "NCHW"),
+                       batch_group_count=1):
+  return Harness(f"_{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_windowstrides={window_strides}_padding={padding}_lhsdilation={lhs_dilation}_rhsdilation={rhs_dilation}_dimensionnumbers={dimension_numbers}_featuregroupcount={feature_group_count}_batchgroupcount={batch_group_count}_precision={precision}".replace(' ', ''),
+                 lax.conv_general_dilated,
+                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype),
+                  StaticArg(window_strides), StaticArg(padding),
+                  StaticArg(lhs_dilation), StaticArg(rhs_dilation),
+                  StaticArg(dimension_numbers), StaticArg(feature_group_count),
+                  StaticArg(batch_group_count), StaticArg(precision)],
+                 lhs_shape=lhs_shape,
+                 rhs_shape=rhs_shape,
+                 dtype=dtype,
+                 window_strides=window_strides,
+                 padding=padding,
+                 lhs_dilation=lhs_dilation,
+                 rhs_dilation=rhs_dilation,
+                 dimension_numbers=dimension_numbers,
+                 feature_group_count=feature_group_count,
+                 batch_group_count=batch_group_count,
+                 precision=precision)
+
+lax_conv_general_dilated = tuple( # Validate dtypes and precision
+  # This first harness runs the tests for all dtypes and precisions using
+  # default values for all the other parameters. Variations of other parameters
+  # can thus safely skip testing their corresponding default value.
+  _make_conv_harness("dtype_precision", dtype=dtype, precision=precision)
+  for dtype in jtu.dtypes.all_inexact
+  for precision in [None, lax.Precision.DEFAULT, lax.Precision.HIGH,
+                    lax.Precision.HIGHEST]
+) + tuple( # Validate variations of feature_group_count and batch_group_count
+  _make_conv_harness("group_counts", lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+                     feature_group_count=feature_group_count,
+                     batch_group_count=batch_group_count)
+  for batch_group_count, feature_group_count in [
+      (1, 2), # feature_group_count != 1
+      (2, 1), # batch_group_count != 1
+  ]
+  for lhs_shape, rhs_shape in [
+      ((2 * batch_group_count, 3 * feature_group_count, 9, 10),
+       (3 * feature_group_count * batch_group_count, 3, 4, 5))
+  ]
+) + tuple( # Validate variations of window_strides
+  _make_conv_harness("window_strides", window_strides=window_strides)
+  for window_strides in [
+      (2, 3)  # custom window
+  ]
+) + tuple( # Validate variations of padding
+  _make_conv_harness("padding", padding=padding)
+  for padding in [
+      ((1, 2), (0, 0)), # padding only one spatial axis
+      ((1, 2), (2, 1))  # padding on both spatial axes
+  ]
+) + tuple( # Validate variations of dilations
+  _make_conv_harness("dilations", lhs_dilation=lhs_dilation,
+                     rhs_dilation=rhs_dilation)
+  for lhs_dilation, rhs_dilation in [
+      ((2, 2), (1, 1)), # dilation only on LHS (transposed)
+      ((1, 1), (2, 3)), # dilation only on RHS (atrous)
+      ((2, 3), (3, 2))  # dilation on both LHS and RHS (transposed & atrous)
+  ]
+) + tuple(
+  _make_conv_harness("dimension_numbers", lhs_shape=lhs_shape,
+                     rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
+  # Dimension numbers and corresponding permutation
+  for dimension_numbers, lhs_shape, rhs_shape in [
+      (("NHWC", "HWIO", "NHWC"), (2, 9, 10, 3), (4, 5, 3, 3)), # TF default
+      (("NCHW", "HWIO", "NHWC"), (2, 3, 9, 10), (4, 5, 3, 3)), # custom
+  ]
+)
