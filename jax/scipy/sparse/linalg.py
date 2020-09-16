@@ -271,25 +271,13 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   v, h = _iterative_classical_gram_schmidt(V, v, iterations=1)
   unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
+
   h = h.at[k + 1].set(v_norm)
-
-  def set_column_to_identity(args):
-    H, k, _ = args
-    col = jnp.zeros(H.shape[1], dtype=H.dtype)
-    col = col.at[k].set(1.)
-    H = H.at[k, :].set(col)
-    return H
-
-  def set_column_to_vector(args):
-    H, k, h = args
-    H = H.at[k, :].set(h)
-    return H
-
-  H = lax.cond(v_norm == 0.,
-               set_column_to_identity,
-               set_column_to_vector,
-               (H, k, h))
-  #H = H.at[k, :].set(h)
+  h = lax.cond(v_norm == 0.,
+               lambda x: h.at[k].set(1.),
+               lambda x: h,
+               0.)
+  H = H.at[k, :].set(h)
   return V, H
 
 
