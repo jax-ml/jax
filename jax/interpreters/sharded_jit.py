@@ -41,10 +41,11 @@ def _map(f, *xs):
 class ResultToPopulate: pass
 result_to_populate = ResultToPopulate()
 
-def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
-  nouts = len(out_pvals)
-  handlers = [_pval_to_result_handler(npart, parts, out_pval)
-              for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
+
+def _avals_to_results_handler(nrep, npart, partitions, out_avals):
+  nouts = len(out_avals)
+  handlers = [_aval_to_result_handler(npart, parts, out_aval)
+              for parts, out_aval in safe_zip(partitions, out_avals)]
 
   def handler(out_bufs):
     assert nrep * npart == len(out_bufs)
@@ -53,23 +54,18 @@ def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
       for i, buf in enumerate(tuple_buf):
         buffers[i][r] = buf
     assert not any(buf is result_to_populate for bufs in buffers
-                   for buf in bufs)
+                  for buf in bufs)
     return [h(bufs) for h, bufs in zip(handlers, buffers)]
 
   return handler
 
-
-def _pval_to_result_handler(npart, parts, pval):
-  pv, const = pval
-  if pv is None:
-    raise NotImplementedError  # TODO(skye): handle constant outputs
+def _aval_to_result_handler(npart, parts, aval):
+  if aval is not core.abstract_unit:
+    spec = pxla.partitioned_sharding_spec(npart, parts, aval)
+    indices = pxla.spec_to_indices(aval.shape, spec)
   else:
-    if pv is not core.abstract_unit:
-      spec = pxla.partitioned_sharding_spec(npart, parts, pv)
-      indices = pxla.spec_to_indices(pv.shape, spec)
-    else:
-      spec = indices = None
-    return pxla.aval_to_result_handler(spec, indices, pv)
+    spec = indices = None
+  return pxla.aval_to_result_handler(spec, indices, aval)
 
 
 @lu.cache
@@ -84,7 +80,8 @@ def _sharded_callable(
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args)
   else:
     in_pvals = [pe.PartialVal.unknown(aval) for aval in abstract_args]
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=False, bottom=True)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals,  # type: ignore
+                                                 instantiate=False, bottom=True)  # type: ignore
 
     # TODO(skye): add tests for equationless jaxpr cases
     if not jaxpr.eqns and all(outvar.aval is core.abstract_unit
@@ -138,7 +135,7 @@ def _sharded_callable(
     handle_outs = _avals_to_results_handler(nrep, num_partitions, out_parts,  # type: ignore
                                             out_avals)
   else:
-    handle_outs = _pvals_to_results_handler(nrep, num_partitions, out_parts,
+    handle_outs = _pvals_to_results_handler(nrep, num_partitions, out_parts,  # type: ignore
                                             out_pvals)
   return partial(_execute_spatially_partitioned, compiled, handle_args,
                  handle_outs)
@@ -354,16 +351,14 @@ def with_sharding_constraint(x, partitions: Optional[PartitionSpec]):
   return sharding_constraint_p.bind(x, partitions=partitions)
 
 
-@config.register_omnistaging_enabler
-def omnistaging_enabler() -> None:
-  global _avals_to_results_handler, _aval_to_result_handler, \
-      _pvals_to_results_handler, _pval_to_result_handler
-  del _pvals_to_results_handler, _pval_to_result_handler
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
+  global _pvals_to_results_handler, _pval_to_result_handler
 
-  def _avals_to_results_handler(nrep, npart, partitions, out_avals):
-    nouts = len(out_avals)
-    handlers = [_aval_to_result_handler(npart, parts, out_aval)
-                for parts, out_aval in safe_zip(partitions, out_avals)]
+  def _pvals_to_results_handler(nrep, npart, partitions, out_pvals):
+    nouts = len(out_pvals)
+    handlers = [_pval_to_result_handler(npart, parts, out_pval)
+                for parts, out_pval in safe_zip(partitions, out_pvals)]  # type: ignore
 
     def handler(out_bufs):
       assert nrep * npart == len(out_bufs)
@@ -377,11 +372,14 @@ def omnistaging_enabler() -> None:
 
     return handler
 
-
-  def _aval_to_result_handler(npart, parts, aval):
-    if aval is not core.abstract_unit:
-      spec = pxla.partitioned_sharding_spec(npart, parts, aval)
-      indices = pxla.spec_to_indices(aval.shape, spec)
+  def _pval_to_result_handler(npart, parts, pval):
+    pv, const = pval
+    if pv is None:
+      raise NotImplementedError  # TODO(skye): handle constant outputs
     else:
-      spec = indices = None
-    return pxla.aval_to_result_handler(spec, indices, aval)
+      if pv is not core.abstract_unit:
+        spec = pxla.partitioned_sharding_spec(npart, parts, pv)
+        indices = pxla.spec_to_indices(pv.shape, spec)
+      else:
+        spec = indices = None
+      return pxla.aval_to_result_handler(spec, indices, pv)

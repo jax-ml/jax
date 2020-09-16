@@ -237,10 +237,6 @@ deflinear(lax.reduce_window_sum_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
-# TODO(mattjj): remove when omnistaging fully lands
-try: deflinear(lax.tie_in_p)
-except AttributeError: pass
-
 def _cumulative_jet_rule(primals_in, series_in, *, axis: int,
                          prefix_scan: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
@@ -523,8 +519,8 @@ def _gen_reduce_choose_taylor_rule(chooser_fun):
     series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
     return primal_out, series_out
   return chooser_taylor_rule
-jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax.reduce_max_p.bind)
-jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax.reduce_min_p.bind)
+jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax._reduce_max)
+jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax._reduce_min)
 
 def _abs_taylor_rule(x, series_in, **params):
   x, = x
@@ -584,3 +580,6 @@ def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
   del jvp_jaxpr_thunk
   return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
 jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
+
+
+deflinear(lax.tie_in_p)

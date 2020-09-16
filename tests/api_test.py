@@ -239,16 +239,6 @@ class CPPJitTest(jtu.JaxTestCase):
     self.assertDeleted(c)
     self.assertDeleted(d)
 
-  def test_jit_nested_donate_ignored(self):
-    jit_fun = self.jit(lambda x: self.jit(lambda y: y**2, donate_argnums=0)(x))
-    a = jax.device_put(jnp.array(1))
-
-    # NOTE(mattjj): stopped raising error here and instead just ignored
-    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
-    #   jit_fun(a)
-
-    jit_fun(a)  # doesn't crash
-
   def test_jnp_array_copy(self):
     # https://github.com/google/jax/issues/3412
 
@@ -397,6 +387,16 @@ class PythonJitTest(CPPJitTest):
       x = device_put(data, device=device)
       np.testing.assert_array_equal(-data, f(x))
 
+  def test_jit_nested_donate_ignored(self):
+    jit_fun = self.jit(lambda x: self.jit(lambda y: y**2, donate_argnums=0)(x))
+    a = jax.device_put(jnp.array(1))
+
+    # NOTE(mattjj): stopped raising error here and instead just ignored
+    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+    #   jit_fun(a)
+
+    jit_fun(a)  # doesn't crash
+
 
 class APITest(jtu.JaxTestCase):
 
@@ -514,7 +514,7 @@ class APITest(jtu.JaxTestCase):
 
       self.assertRaisesRegex(
           TypeError,
-          f"Try using `x.astype\\({castfun.__name__}\\)` instead.",
+          f"[Tt]ry using `x.astype\\({castfun.__name__}\\)`",
           lambda: jit(f)(1.0))
 
   def test_switch_value_jit(self):
@@ -550,7 +550,7 @@ class APITest(jtu.JaxTestCase):
       self.assertRaisesRegex(
           TypeError,
           "('(?:JaxprTracer|DynamicJaxprTracer)' object cannot be interpreted as an integer"
-          "|Abstract tracer value encountered where concrete value is expected .*)", lambda: jit(f)(0))
+          "|Abstract tracer value encountered where concrete value is expected.*)", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
     foo_p = Primitive('foo')
@@ -597,6 +597,18 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], np.ndarray)
     assert np.all(y2[1][1] == 3 * x)
 
+  def test_device_get_scalar(self):
+    x = np.arange(12.).reshape((3, 4)).astype("float32")
+    x = api.device_put(x)
+    self.assertIsInstance(x, xla.DeviceArray)
+    y = [x, 2]
+    y2 = api.device_get(y)
+    self.assertIsInstance(y2, list)
+    self.assertIsInstance(y2[0], np.ndarray)
+    assert np.all(y2[0] == x)
+    self.assertIsInstance(y2[1], int)
+    self.assertEqual(y2[1], 2)
+
   @parameterized.parameters([(3,)], [(2, 0)])
   def test_device_put_across_devices(self, shape):
     if len(api.local_devices()) < 2:
@@ -625,6 +637,25 @@ class APITest(jtu.JaxTestCase):
     for val in [np_arr, device_arr, scalar]:
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.device_buffer.device(), cpu_device)
+
+  def test_device_put_sharded_array(self):
+    devices = api.local_devices()
+    n_devices = len(devices)
+    x = [np.arange(i, i + 4) for i in range(n_devices)]
+    y = api.device_put_sharded(x, devices)
+    self.assertEqual(len(y.device_buffers), len(devices))
+    self.assertTrue(all(b.device() == d for b, d in zip(y.device_buffers, devices)))
+    self.assertAllClose(y, jnp.stack(x))
+
+  def test_device_put_sharded_pytree(self):
+    devices = api.local_devices()
+    n_devices = len(devices)
+    x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
+    y1, y2 = api.device_put_sharded(x, devices)
+    self.assertAllClose(y1, jnp.array([a for a, _ in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y1.device_buffers, devices)))
+    self.assertAllClose(y2, jnp.vstack([b for _, b in x]))
+    self.assertTrue(all(b.device() == d for b, d in zip(y2.device_buffers, devices)))
 
   @jtu.skip_on_devices("tpu")
   def test_jacobian(self):

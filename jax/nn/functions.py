@@ -266,8 +266,9 @@ def one_hot(x, num_classes, *, dtype=jnp.float64):
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
   """
-  num_classes = core.concrete_or_error(int, num_classes,
-                                       "in jax.nn.one_hot argument `num_classes`")
+  num_classes = core.concrete_or_error(
+      int, num_classes,
+      "The error arose in jax.nn.one_hot argument `num_classes`.")
   dtype = dtypes.canonicalize_dtype(dtype)
   x = jnp.asarray(x)
   lhs = x[..., jnp.newaxis]

@@ -15,13 +15,17 @@
 import datetime
 import functools
 import numpy as np
-from typing import Any, Callable, List, NamedTuple, Optional, Tuple, Sequence
+from typing import Any, Callable, Collection, List, NamedTuple, Optional, \
+                   Tuple, Sequence, Set
 
 from jax import core
 from jax import dtypes
 from jax import lax
 from jax import lax_linalg
-from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl
+from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import pxla
+from jax.interpreters import xla
 
 def to_jax_dtype(tf_dtype):
   if tf_dtype.name == 'bfloat16':
@@ -61,12 +65,14 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   def tf_unimpl(np_dtype: Optional[NpDType] = None,
                 additional_msg: Optional[str] = None,
                 devs: Sequence[str] = all_devices) -> None:
+
+    missing_tf_support = "Missing TF support"
     msg = "Primitive is unimplemented"
     if np_dtype is not None:
       msg += f" for dtype {np_dtype}"
     if additional_msg:
       msg += '; ' + additional_msg
-    _report_failure("Missing TF support", msg, devs=devs)
+    _report_failure(missing_tf_support, msg, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
     try:
@@ -101,18 +107,29 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
 
   if prim is lax_linalg.svd_p:
     np_dtype = _to_np_dtype(args[0].dtype)
-    if np_dtype in [np.float16, dtypes.bfloat16]:
+    if np_dtype in [dtypes.bfloat16]:
       # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
       tf_unimpl(np_dtype, devs=["TPU"])
     elif np_dtype in [np.complex64, np.complex128]:
       # TODO: on CPU and GPU "No registered 'Svd' OpKernel for XLA_CPU_JIT
-      # devices". Works on JAX because JAX uses a custom implementation
+      # devices". Works on JAX because JAX uses a custom implementation.
+      # There exists a XlaSvd operation that could replace tf.linalg.svd in
+      # these cases but complex numbers support is not implemented in XLA yet,
+      # and the API of XlaSvd is different than the one in JAX/TF, which also
+      # limits its useability (e.g. no full_matrices argument, …).
       additional_msg = ("this works on JAX because JAX uses a custom "
                         "implementation")
       tf_unimpl(np_dtype, additional_msg=additional_msg, devs=["CPU", "GPU"])
 
   if prim is lax.select_and_gather_add_p:
     np_dtype = _to_np_dtype(args[0].dtype)
+    # TODO: the conversion is only supported for float16/float32 on CPU/GPU,
+    # and float16 on TPU. This is because we do not implement a precision
+    # reduction in the case where packing 2 n-bit values together results in
+    # more than the maximum number of bits allowed on the platform (64 on
+    # CPU/GPU, 32 on TPU). This could be fixed by implementing a variadic
+    # reduce_window in tfxla, or we can require the user to reduce the
+    # precision of their arrays manually based on the platform they run on.
     devices_and_max_bits = [ (["CPU", "GPU"], 64)
                            , (["TPU"], 32)
                            ]
@@ -150,15 +167,25 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if kwargs["is_stable"]:
       tf_unimpl(additional_msg="stable sort not implemented for XlaSort")
     if kwargs["dimension"] != len(np.shape(args[0])) - 1:
-      tf_unimpl(additional_msg="only sorting on last dimension is supported for XlaSort")
+      tf_unimpl(additional_msg="only sorting on last dimension is supported "
+                               "for XlaSort")
     if len(args) > 2:
       tf_unimpl(additional_msg=(
         "sorting more than 2 arrays is not supported for XlaSort"))
 
   if prim is lax.population_count_p:
     np_dtype = _to_np_dtype(args[0].dtype)
-    if np_dtype == np.uint32:
+    if np_dtype in [np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
+
+  if prim is lax.conv_general_dilated_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    batch_group_count = kwargs['batch_group_count']
+    if batch_group_count != 1:
+      tf_unimpl(additional_msg="batch_group_count != 1 unsupported")
+    if np_dtype in [np.complex64, np.complex128]:
+      tf_unimpl(np_dtype, additional_msg="likely bug in the HLO -> LLVM IR "
+                                         "lowering of XlaConv")
 
   if prim in [lax.acosh_p, lax.asinh_p, lax.atanh_p, lax.bessel_i0e_p,
               lax.bessel_i1e_p, lax.digamma_p, lax.erf_p, lax.erf_inv_p,
@@ -175,6 +202,17 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # operations.
       tf_unimpl(np_dtype)
 
+  if prim is lax.lax_fft.fft_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.float64, np.complex128]:
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"))
+
+  if prim is lax.top_k_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.float64, np.int64, np.uint64]:
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"))
   return limitations
 
 def prettify(limitations: Sequence[Limitation]) -> str:
@@ -200,19 +238,34 @@ def prettify(limitations: Sequence[Limitation]) -> str:
 
   return '\n'.join(line for line in map(_pipewrap, table))
 
-def prettify_not_yet_implemented() -> str:
-  """Constructs a summary markdown list of the unimplemented primitives."""
-  ordered_unimpl: List[str]
-  ordered_unimpl = sorted(list(map(lambda prim: prim.name, tf_not_yet_impl)))
+def prettify_as_ordered_list(collec: Collection[core.Primitive]) -> str:
+  """Builds an ordered summary markdown list of a collection of primitives."""
+  ordered_list: List[str] = sorted(list(map(lambda prim: prim.name, collec)))
 
   backtick_wrap = lambda prim_name: f'`{prim_name}`'
-  return ', '.join(list(map(backtick_wrap, ordered_unimpl)))
+  return ', '.join(list(map(backtick_wrap, ordered_list)))
 
-def pprint_limitations(limitations: Sequence[Limitation], output_file: str,
-                       template_file: str) -> None:
+prettify_not_yet_implemented = lambda: prettify_as_ordered_list(tf_not_yet_impl)
+
+def prettify_not_yet_covered(covered_set: Set[core.Primitive]) -> str:
+  """
+  Builds an ordered summary markdown list of all the primitives that are
+  implemented but not in the set passed as an argument.
+  """
+  ignore = set([xla.xla_call_p, pxla.xla_pmap_p, pe.remat_call_p, core.call_p])
+  not_yet_covered = (
+    set(filter(lambda prim: not prim in ignore, set(tf_impl) - covered_set)))
+
+  return prettify_as_ordered_list(not_yet_covered)
+
+def pprint_limitations(limitations: Sequence[Limitation],
+                       covered_primitives: Set[core.Primitive],
+                       output_file: str, template_file: str) -> None:
 
   limited_support_table = prettify(limitations)
-  not_yet_impl_primitives_list = prettify_not_yet_implemented()
+  not_yet_impl_primitives = prettify_not_yet_implemented()
+  not_yet_covered_primitives = prettify_not_yet_covered(covered_primitives)
+
   generation_date = str(datetime.date.today())
 
   with open(template_file, 'r') as f:
@@ -221,20 +274,25 @@ def pprint_limitations(limitations: Sequence[Limitation], output_file: str,
   output = (output
     .replace('{{limited-support-table}}', limited_support_table)
     .replace('{{generation-date}}', generation_date)
-    .replace('{{not-yet-impl-primitives-list}}', not_yet_impl_primitives_list))
+    .replace('{{not-yet-impl-primitives}}', not_yet_impl_primitives)
+    .replace('{{not-yet-covered-primitives}}', not_yet_covered_primitives))
 
   with open(output_file, 'w') as f:
     f.write(output)
 
 all_limitations: Sequence[Limitation] = []
-pprint_all_limitations = functools.partial(pprint_limitations, all_limitations)
+covered_primitives: Set[core.Primitive] = set()
+
+pprint_all_limitations = functools.partial(pprint_limitations, all_limitations,
+                                           covered_primitives)
 
 def collect_limitations(prim: core.Primitive, func: Callable) -> Callable:
   """
   Wraps a primitive and its corresponding TF implementation with `categorize`.
   """
   def wrapper(*args, **kwargs):
-    global all_limitations
+    global all_limitations, covered_primitives
+    covered_primitives.add(prim)
     all_limitations += categorize(prim, *args, **kwargs)
     return func(*args, **kwargs)
   return wrapper

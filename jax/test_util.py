@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from contextlib import contextmanager
 import functools
 import re
 import os
+import textwrap
 from typing import Dict, Sequence, Union
 import unittest
 import warnings
@@ -818,7 +818,9 @@ class JaxTestCase(parameterized.TestCase):
       raise TypeError((type(x), type(y)))
 
   def assertMultiLineStrippedEqual(self, expected, what):
-    """Asserts two strings are equal, after stripping each line."""
+    """Asserts two strings are equal, after dedenting and stripping each line."""
+    expected = textwrap.dedent(expected)
+    what = textwrap.dedent(what)
     ignore_space_re = re.compile(r'\s*\n\s*')
     expected_clean = re.sub(ignore_space_re, '\n', expected.strip())
     what_clean = re.sub(ignore_space_re, '\n', what.strip())

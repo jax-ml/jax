@@ -9,6 +9,14 @@ Change Log
 
 These are the release notes for JAX.
 
+
+jax (0.1.77) (September 15 2020)
+----------------
+
+* Breaking changes:
+
+  * New simplified interface for :py:func:`jax.experimental.host_callback.id_tap` (#4101)
+
 jaxlib 0.1.55 (September 8, 2020)
 ------------------------------
 * Update XLA:

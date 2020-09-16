@@ -501,17 +501,7 @@ def true_divide(x1, x2):
   x1, x2 = _promote_args_inexact("true_divide", x1, x2)
   return lax.div(x1, x2)
 
-
-@_wraps(np.divide)
-def divide(x1, x2):
-  # decide whether to perform integer division based on Numpy result dtype, as a
-  # way to check whether Python 3 style division is active in Numpy
-  result_dtype = _result_dtype(np.divide, x1, x2)
-  if issubdtype(result_dtype, integer):
-    return floor_divide(x1, x2)
-  else:
-    return true_divide(x1, x2)
-
+divide = true_divide
 
 @_wraps(np.floor_divide)
 def floor_divide(x1, x2):
@@ -1137,6 +1127,16 @@ def reshape(a, newshape, order="C"):
 def _compute_newshape(a, newshape):
   """Fixes a -1 value in newshape, if present."""
   # other errors, like having more than one -1, are caught downstream
+  try: iter(newshape)
+  except: iterable = False
+  else: iterable = True
+  if iterable:
+    newshape = [core.concrete_or_error(int, d,
+                                       "The error arose in jax.numpy.reshape.")
+                for d in newshape]
+  else:
+    newshape = core.concrete_or_error(int, newshape,
+                                      "The error arose in jax.numpy.reshape.")
   newsize = _prod(newshape)
   if newsize < 0:
     fix = a.size // -newsize
@@ -1657,7 +1657,7 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 ### Reducers
 
 
-def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
+def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
                     upcast_f16_for_computation=False):
   """Creates reduction function given a binary operation and monoid identity."""
 
@@ -1667,11 +1667,8 @@ def _make_reduction(np_fun, op, init_val, preproc=None, bool_op=None,
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
+    _check_arraylike(name, a)
 
-    if isinstance(a, (list, tuple)):
-      msg = ("jax.numpy reductions won't accept lists and tuples in future "
-             "versions, only scalars and ndarrays")
-      warnings.warn(msg, category=FutureWarning)
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
     dims = _reduction_dims(a, axis)
@@ -1714,14 +1711,14 @@ def _reduction_init_val(a, init_val):
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
-sum = _make_reduction(np.sum, lax.add, 0, upcast_f16_for_computation=True,
+sum = _make_reduction("sum", np.sum, lax.add, 0, upcast_f16_for_computation=True,
                       bool_op=lax.bitwise_or)
-product = prod = _make_reduction(np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
+product = prod = _make_reduction("prod", np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
                                  upcast_f16_for_computation=True)
-amax = max = _make_reduction(np.max, lax.max, -np.inf)
-amin = min = _make_reduction(np.min, lax.min, np.inf)
-all = alltrue = _make_reduction(np.all, lax.bitwise_and, True, _cast_to_bool)
-any = sometrue = _make_reduction(np.any, lax.bitwise_or, False, _cast_to_bool)
+amax = max = _make_reduction("max", np.max, lax.max, -np.inf)
+amin = min = _make_reduction("min", np.min, lax.min, np.inf)
+all = alltrue = _make_reduction("all", np.all, lax.bitwise_and, True, _cast_to_bool)
+any = sometrue = _make_reduction("any", np.any, lax.bitwise_or, False, _cast_to_bool)
 
 
 @_wraps(np.mean)
@@ -1967,13 +1964,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
 
     a_shape = list(shape(a))
     num_dims = len(a_shape)
-
-    if axis < 0:
-      axis = axis + num_dims
-    if axis < 0 or axis >= num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
+    axis = _canonicalize_axis(axis, num_dims)
 
     if fill_nan:
       a = where(isnan(a), _constant_like(a, fill_value), a)
@@ -2426,7 +2417,7 @@ def identity(n, dtype=None):
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, _np_asarray)
-  msg = "in jax.numpy.arange argument `{}`".format
+  msg = "It arose in jax.numpy.arange argument `{}`.".format
   if stop is None and step is None:
     start = require(start, msg("stop"))
     dtype = dtype or _dtype(start)
@@ -2631,7 +2622,7 @@ def repeat(a, repeats, axis=None, *, total_repeat_length=None):
 
   # If total_repeat_length is not given, can't compile, use a default.
   if total_repeat_length is None:
-    repeats = core.concrete_or_error(np.array, repeats, "jax.numpy.repeat")
+    repeats = core.concrete_or_error(np.array, repeats, "It arose in jax.numpy.repeat.")
     repeats = np.ravel(repeats)
     if ndim(a) != 0:
       repeats = np.broadcast_to(repeats, [a.shape[axis]])
@@ -2905,6 +2896,31 @@ def append(arr, values, axis=None):
     return concatenate([ravel(arr), ravel(values)], 0)
   else:
     return concatenate([arr, values], axis=axis)
+
+
+@_wraps(np.apply_along_axis)
+def apply_along_axis(func1d, axis, arr, *args, **kwargs):
+  num_dims = ndim(arr)
+  axis = _canonicalize_axis(axis, num_dims)
+  func = lambda arr: func1d(arr, *args, **kwargs)
+  for i in range(1, num_dims - axis):
+    func = jax.vmap(func, in_axes=i, out_axes=-1)
+  for i in range(axis):
+    func = jax.vmap(func, in_axes=0, out_axes=0)
+  return func(arr)
+
+
+@_wraps(np.apply_over_axes)
+def apply_over_axes(func, a, axes):
+  for axis in axes:
+    b = func(a, axis=axis)
+    if b.ndim == a.ndim:
+      a = b
+    elif b.ndim == a.ndim - 1:
+      a = expand_dims(b, axis)
+    else:
+      raise ValueError("function is not returning an array of the correct shape")
+  return a
 
 
 ### Tensor contraction operations
@@ -3195,7 +3211,7 @@ def outer(a, b, out=None):
   if out:
     raise NotImplementedError("The 'out' argument to outer is not supported.")
   a, b = _promote_dtypes(a, b)
-  return ravel(a)[:, None] * ravel(b)
+  return ravel(a)[:, None] * ravel(b)[None, :]
 
 @partial(jit, static_argnums=(2, 3, 4))
 def _cross(a, b, axisa, axisb, axisc):
@@ -3394,14 +3410,11 @@ def roll(a, shift, axis=None):
 @_wraps(np.rollaxis)
 def rollaxis(a, axis, start=0):
   a_ndim = ndim(a)
-  if not (-a_ndim <= axis < a_ndim):
-    raise ValueError(f"axis={axis} is out of bounds for array of dimension {a_ndim}")
+  axis = _canonicalize_axis(axis, a_ndim)
   if not (-a_ndim <= start <= a_ndim):
     raise ValueError(f"start={start} must satisfy {-a_ndim}<=start<={a_ndim}")
   if start < 0:
     start += a_ndim
-  if axis < 0:
-    axis += a_ndim
   if start > axis:
     start -= 1
   return moveaxis(a, axis, start)
@@ -4451,8 +4464,12 @@ def _view(arr, dtype=None, type=None):
 
 ### track unimplemented functions
 
+_NOT_IMPLEMENTED_DESC = """
+*** This function is not yet implemented by jax.numpy, and will raise NotImplementedError ***
+"""
+
 def _not_implemented(fun):
-  @_wraps(fun)
+  @_wraps(fun, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
   def wrapped(*args, **kwargs):
     msg = "Numpy function {} not yet implemented"
     raise NotImplementedError(msg.format(fun))
