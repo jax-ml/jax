@@ -292,6 +292,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     rad2deg
     radians
     ravel
+    ravel_multi_index
     real
     reciprocal
     remainder
