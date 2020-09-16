@@ -52,6 +52,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     any
     append
     apply_along_axis
+    apply_over_axes
     arange
     arccos
     arccosh

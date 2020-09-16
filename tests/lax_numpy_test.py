@@ -1471,6 +1471,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_func={}_keepdims={}_axes={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          func, keepdims, axes),
+        "shape": shape, "dtype": dtype, "func": func, "keepdims": keepdims, "axes": axes}
+      for shape in nonempty_shapes
+      for func in ["sum"]
+      for keepdims in [True, False]
+      for axes in itertools.combinations(range(len(shape)), 2)
+      # Avoid low-precision types in sum()
+      for dtype in default_dtypes if dtype not in [np.float16, jnp.bfloat16]))
+  def testApplyOverAxes(self, shape, dtype, func, keepdims, axes):
+    f = lambda x, axis: getattr(x, func)(axis=axis, keepdims=keepdims)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    np_fun = lambda a: np.apply_over_axes(f, a, axes)
+    jnp_fun = lambda a: jnp.apply_over_axes(f, a, axes)
+    self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape=[{}]_axis={}_repeats={}_fixed_size={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
           axis, repeats, fixed_size),
