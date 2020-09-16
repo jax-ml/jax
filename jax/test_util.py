@@ -140,7 +140,7 @@ def _normalize_tolerance(tol):
   if isinstance(tol, dict):
     return {np.dtype(k): v for k, v in tol.items()}
   else:
-    return {k: tol for k in _default_tolerance.keys()}
+    return {k: tol for k in _default_tolerance}
 
 def join_tolerance(tol1, tol2):
   tol1 = _normalize_tolerance(tol1)

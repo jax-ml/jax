@@ -176,12 +176,12 @@ def irfft2(a, s=None, axes=(-2,-1), norm=None):
 
 @_wraps(np.fft.fftfreq)
 def fftfreq(n, d=1.0):
-  if isinstance(n, list) or isinstance(n, tuple):
+  if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.fftfreq only takes an int. "
           "Got n = %s." % list(n))
 
-  elif isinstance(d, list) or isinstance(d, tuple):
+  elif isinstance(d, (list, tuple)):
     raise ValueError(
           "The d argument of jax.numpy.fft.fftfreq only takes a single value. "
           "Got d = %s." % list(d))
@@ -208,12 +208,12 @@ def fftfreq(n, d=1.0):
 
 @_wraps(np.fft.rfftfreq)
 def rfftfreq(n, d=1.0):
-  if isinstance(n, list) or isinstance(n, tuple):
+  if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.rfftfreq only takes an int. "
           "Got n = %s." % list(n))
 
-  elif isinstance(d, list) or isinstance(d, tuple):
+  elif isinstance(d, (list, tuple)):
     raise ValueError(
           "The d argument of jax.numpy.fft.rfftfreq only takes a single value. "
           "Got d = %s." % list(d))

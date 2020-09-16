@@ -167,7 +167,7 @@ def _validate_axis_index_groups(axis_index_groups):
   if any(len(g) != len_0 for g in axis_index_groups):
     raise ValueError("axis_index_groups must all be the same size")
   axis_space = range(len_0 * len(axis_index_groups))
-  if set(i for g in axis_index_groups for i in g) != set(axis_space):
+  if {i for g in axis_index_groups for i in g} != set(axis_space):
     raise ValueError("axis_index_groups must cover all indices exactly once")
 
 def ppermute(x, axis_name, perm):

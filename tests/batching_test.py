@@ -329,7 +329,7 @@ class BatchingTest(jtu.JaxTestCase):
     # test modeling the code in https://github.com/google/jax/issues/54
 
     def func(xs):
-      return jnp.array([x for x in xs])
+      return jnp.array(list(xs))
 
     xs = jnp.ones((5, 1))
     jacrev(func)(xs)  # don't crash

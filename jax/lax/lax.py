@@ -3125,7 +3125,7 @@ def _concatenate_shape_rule(*operands, **kwargs):
     msg = "All objects to concatenate must be arrays, got {}."
     op = next(op for op in operands if not isinstance(op, UnshapedArray))
     raise TypeError(msg.format(type(op)))
-  if len(set(operand.ndim for operand in operands)) != 1:
+  if len({operand.ndim for operand in operands}) != 1:
     msg = "Cannot concatenate arrays with different ranks, got {}."
     raise TypeError(msg.format(", ".join(str(o.ndim) for o in operands)))
   shapes = np.array([operand.shape for operand in operands])
