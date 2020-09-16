@@ -1690,7 +1690,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_escaped_tracer_omnistaging(self):
     if not config.omnistaging_enabled:
-      raise SkipTest("test is omnistaging-specific")
+      raise unittest.SkipTest("test is omnistaging-specific")
 
     count = 1
 
