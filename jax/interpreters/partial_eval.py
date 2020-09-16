@@ -830,6 +830,11 @@ class DynamicJaxprTracer(core.Tracer):
                 f"{self._trace.main.source_info}.")
     return origin
 
+  def _assert_live(self) -> None:
+    if not self._trace.main.jaxpr_stack:  # type: ignore
+      msg = f"tracer created on line {source_info_util.summarize(self.line_info)}"
+      raise core.escaped_tracer_error(msg)
+
 class JaxprStackFrame:
   __slots__ = ['newvar', 'tracer_to_var', 'constid_to_var', 'constvar_to_val',
                'tracers', 'eqns']
@@ -896,16 +901,18 @@ class DynamicJaxprTrace(core.Trace):
   __slots__ = []  # type: ignore
 
   @property
-  def frame(self): return self.main.jaxpr_stack[-1]  # pytype: disable=attribute-error
+  def frame(self):
+    return self.main.jaxpr_stack[-1]  # pytype: disable=attribute-error
 
   def new_arg(self, aval):
-    tracer = DynamicJaxprTracer(self, aval)
+    tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
     self.frame.tracers.append(tracer)
     self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(aval)
     return tracer
 
   def new_const(self, val):
-    tracer = DynamicJaxprTracer(self, raise_to_shaped(get_aval(val), weak_type=dtypes.is_python_scalar(val)))
+    aval = raise_to_shaped(get_aval(val), weak_type=dtypes.is_python_scalar(val))
+    tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
     self.frame.tracers.append(tracer)
     var = self.frame.tracer_to_var[id(tracer)] = self.getconstvar(val)
     self.frame.constvar_to_val[var] = val
@@ -937,11 +944,11 @@ class DynamicJaxprTrace(core.Trace):
     avals = [t.aval for t in tracers]
     out_avals = primitive.abstract_eval(*avals, **params)
     out_avals = [out_avals] if not primitive.multiple_results else out_avals
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    source_info = source_info_util.current()
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
     outvars = map(self.getvar, out_tracers)
-    eqn = new_jaxpr_eqn(invars, outvars, primitive, params,
-                        source_info_util.current())
+    eqn = new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
     self.frame.eqns.append(eqn)
     return out_tracers if primitive.multiple_results else out_tracers.pop()
 
@@ -950,7 +957,8 @@ class DynamicJaxprTrace(core.Trace):
     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(f, self.main, in_avals)
     if not jaxpr.eqns:
       return core.eval_jaxpr(jaxpr, consts, *tracers)
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    source_info = source_info_util.current()
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
     outvars = map(self.getvar, out_tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
@@ -958,8 +966,8 @@ class DynamicJaxprTrace(core.Trace):
     update_params = call_param_updaters.get(call_primitive)
     if update_params:
       new_params = update_params(new_params, [True] * len(tracers))
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, call_primitive, new_params,
-                        source_info_util.current())
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, call_primitive,
+                        new_params, source_info)
     self.frame.eqns.append(eqn)
     return out_tracers
 
@@ -975,7 +983,8 @@ class DynamicJaxprTrace(core.Trace):
       jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
           f, self.main, reduced_in_avals)
     out_avals = [core.unmapped_aval(params['axis_size'], a) for a in reduced_out_avals]
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    source_info = source_info_util.current()
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
     outvars = map(self.getvar, out_tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
@@ -985,7 +994,8 @@ class DynamicJaxprTrace(core.Trace):
     update_params = call_param_updaters.get(map_primitive)
     if update_params:
       new_params = update_params(new_params, [True] * len(tracers))
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive, new_params)
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
+                        new_params, source_info)
     self.frame.eqns.append(eqn)
     return out_tracers
 

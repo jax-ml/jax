@@ -422,12 +422,14 @@ class Trace:
     del primitive, fwd, bwd, out_trees  # Unused.
     return fun.call_wrapped(*tracers)
 
-def escaped_tracer_error(detail):
+def escaped_tracer_error(detail=None):
   msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
          "through global state from a previously traced function.\n"
          "The functions being transformed should not save traced values to "
-         "global state.\nDetails: {}.")
-  return UnexpectedTracerError(msg.format(detail))
+         "global state.")
+  if detail:
+    msg += " Detail: {}.".format(detail)
+  return UnexpectedTracerError(msg)
 
 class UnexpectedTracerError(Exception): pass
 
@@ -461,6 +463,9 @@ class Tracer:
   @property
   def aval(self):
     raise NotImplementedError("must override")
+
+  def _assert_live(self) -> None:
+    pass  # Override for liveness checking
 
   # Python looks up special methods only on classes, not instances. This means
   # these methods needs to be defined explicitly rather than relying on
@@ -737,8 +742,8 @@ def full_lower(val):
     return val
 
 def find_top_trace(xs) -> Trace:
-  top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
-                    default=None, key=attrgetter('level'))
+  traces = [x._assert_live() or x._trace.main for x in xs if isinstance(x, Tracer)]  # type: ignore
+  top_main = max(traces, default=None, key=attrgetter('level'))
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
                 else top_main)

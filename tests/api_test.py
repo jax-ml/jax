@@ -1641,7 +1641,7 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         core.UnexpectedTracerError,
         re.compile(
-          "Encountered an unexpected tracer.*Can't lift sublevels 1 to 0",
+          "Encountered an unexpected tracer",
           re.DOTALL)):
       api.jit(lambda x: x)(self._saved_tracer)
 
@@ -1687,6 +1687,30 @@ class APITest(jtu.JaxTestCase):
           "Encountered an unexpected tracer.*Tracer not among input tracers",
           re.DOTALL)):
       api.jit(func1)(2.)
+
+  def test_escaped_tracer_omnistaging(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
+    count = 1
+
+    @jit
+    def f():
+      nonlocal count
+      count = jnp.add(count, 1)
+    f()  # leaked a tracer! but currently undetected
+
+    def f(x, c):
+      jnp.add(count, 1)
+      return None, None
+
+    @jit
+    def g():
+      lax.scan(f, None, None, length=2)
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError,
+                                "tracer created on line"):
+      g()
 
   def test_pmap_static_kwarg_error_message(self):
     # https://github.com/google/jax/issues/3007
