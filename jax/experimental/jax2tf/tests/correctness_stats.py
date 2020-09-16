@@ -105,7 +105,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
 
   if prim is lax_linalg.svd_p:
     np_dtype = _to_np_dtype(args[0].dtype)
-    if np_dtype in [np.float16, dtypes.bfloat16]:
+    if np_dtype in [dtypes.bfloat16]:
       # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
       tf_unimpl(np_dtype, devs=["TPU"])
     elif np_dtype in [np.complex64, np.complex128]:
