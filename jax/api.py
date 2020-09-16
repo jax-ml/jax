@@ -1903,10 +1903,10 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
   >>> import types
   >>>
   >>> f = lambda x, y: 0.5 * x - 0.5 * y
-  >>> scalar = types.SimpleNamespace(shape=(), dtype=float)
+  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.float32)
   >>> f_transpose = jax.linear_transpose(f, scalar, scalar)
   >>> f_transpose(1.0)
-  (DeviceArray(0.5, dtype=float64), DeviceArray(-0.5, dtype=float64))
+  (DeviceArray(0.5, dtype=float32), DeviceArray(-0.5, dtype=float32))
   """
   def abstractify(x):
     return core.ShapedArray(np.shape(x), dtypes.result_type(x))
