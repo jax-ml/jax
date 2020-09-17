@@ -1176,6 +1176,41 @@ def ravel(a, order="C"):
   return reshape(a, (size(a),), order)
 
 
+@_wraps(np.ravel_multi_index)
+def ravel_multi_index(multi_index, dims, mode='raise', order='C'):
+  assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
+  dims = tuple(core.concrete_or_error(int, d, "in `dims` argument of ravel_multi_index().") for d in dims)
+  for index in multi_index:
+    _check_arraylike("ravel_multi_index", index)
+    if mode == 'raise':
+      core.concrete_or_error(array, index,
+        "The error occurred because ravel_multi_index was jit-compiled"
+        " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
+    if not issubdtype(_dtype(index), integer):
+      raise TypeError("only int indices permitted")
+  if mode == "raise":
+    if _any(any((i < 0) | (i >= d)) for i, d in zip(multi_index, dims)):
+      raise ValueError("invalid entry in coordinates array")
+  elif mode == "clip":
+    multi_index = [clip(i, 0, d - 1) for i, d in zip(multi_index, dims)]
+  elif mode == "wrap":
+    multi_index = [i % d for i, d in zip(multi_index, dims)]
+  else:
+    raise ValueError(f"invalid mode={mode!r}. Expected 'raise', 'wrap', or 'clip'")
+
+  if order == "F":
+    strides = np.cumprod((1,) + dims[:-1])
+  elif order == "C":
+    strides = np.cumprod((1,) + dims[1:][::-1])[::-1]
+  else:
+    raise ValueError(f"invalid order={order!r}. Expected 'C' or 'F'")
+
+  result = 0
+  for i, s in zip(multi_index, strides):
+    result = result + i * s
+  return result
+
+
 _UNRAVEL_INDEX_DOC = """\
 Unlike numpy's implementation of unravel_index, negative indices are accepted
 and out-of-bounds indices are clipped.

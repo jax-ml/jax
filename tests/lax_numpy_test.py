@@ -2754,6 +2754,49 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
     self._CompileAndCheck(lambda x: x.ravel(), args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_order={}_mode={}".format(
+          shape, order, mode),
+        "shape": shape, "order": order, "mode": mode}
+      for shape in nonempty_nonscalar_array_shapes
+      for order in ['C', 'F']
+      for mode in ['wrap', 'clip', 'raise']))
+  def testRavelMultiIndex(self, shape, order, mode):
+    # generate indices in each dimension with a few out of bounds.
+    rngs = [jtu.rand_int(self.rng(), low=-1, high=dim + 1)
+            for dim in shape]
+    # generate multi_indices of different dimensions that broadcast.
+    args_maker = lambda: [tuple(rng(ndim * (3,), jnp.int_)
+                                for ndim, rng in enumerate(rngs))]
+    def np_fun(x):
+      try:
+        return np.ravel_multi_index(x, shape, order=order, mode=mode)
+      except ValueError as err:
+        if str(err).startswith('invalid entry'):
+          # sentinel indicating expected error.
+          return -999
+        else:
+          raise
+
+    def jnp_fun(x):
+      try:
+        return jnp.ravel_multi_index(x, shape, order=order, mode=mode)
+      except ValueError as err:
+        if str(err).startswith('invalid entry'):
+          # sentinel indicating expected error.
+          return -999
+        else:
+          raise
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    if mode == 'raise':
+      msg = ("The error occurred because ravel_multi_index was jit-compiled "
+             "with mode='raise'. Use mode='wrap' or mode='clip' instead.")
+      with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg):
+        jax.jit(jnp_fun)(*args_maker())
+    else:
+      self._CompileAndCheck(jnp_fun, args_maker)
+
+
   @parameterized.parameters(
     (0, (2, 1, 3)),
     (5, (2, 1, 3)),
