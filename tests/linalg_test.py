@@ -231,6 +231,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       for shape in [(0, 0), (4, 4), (5, 5), (50, 50), (2, 6, 6)]
       for dtype in float_types + complex_types
       for compute_left_eigenvectors, compute_right_eigenvectors in [
+          (False, False),
           (True, False),
           (False, True),
           (True, True)
