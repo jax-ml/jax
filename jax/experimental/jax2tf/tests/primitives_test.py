@@ -455,6 +455,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
+    if jtu.device_under_test() == "gpu" and harness.params["dtype"] in [np.complex64, np.complex128]:
+      raise unittest.SkipTest("TODO: crash on GPU in TF")
+
     tol = None
     if jtu.device_under_test() == "gpu":
       tol = 1e-4
