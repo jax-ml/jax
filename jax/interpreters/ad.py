@@ -494,8 +494,6 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   # backward_pass can only transpose linear computations, but the call_jaxpr embedded in
   # remat contains primal (non-linear) equations too. Hence, we have to eliminate those
   # (in this case via partial_eval) before we call into backward_pass again.
-  in_avals = [raise_to_shaped(p.aval if is_undefined_primal(p) else get_aval(p))
-              for p in primals_in]
   typed_call_jaxpr = core.ClosedJaxpr(call_jaxpr, [])
   unknowns = map(is_undefined_primal, primals_in)
   if config.omnistaging_enabled:

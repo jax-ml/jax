@@ -70,7 +70,6 @@ def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
 @cache()
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
   jaxpr, out_avals, consts, out_tree = _initial_style_open_jaxpr(fun, in_tree, in_avals)
-  const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
   closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
   return closed_jaxpr, consts, out_tree
 
@@ -100,7 +99,6 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                       outvars=jaxpr.outvars, eqns=jaxpr.eqns)
 
   consts = util.concatenate(all_consts)
-  const_avals = util.concatenate(all_const_avals)
   jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
   closed_jaxprs = [core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
                   for jaxpr, out_avals in zip(jaxprs, all_out_avals)]
@@ -971,7 +969,6 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
     num_res = len(res_indices)
     res_vars = jaxpr.jaxpr.invars[:num_res]
     non_res_vars = jaxpr.jaxpr.invars[num_res:]
-    non_res_avals = jaxpr.in_avals[num_res:]
 
     aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))
     aug_invars = aug_res_vars + non_res_vars
@@ -1539,9 +1536,6 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   jaxpr_1_opt, out_pvals_1, consts_1 = pe.trace_to_jaxpr(
       lu.wrap_init(core.jaxpr_as_fun(jaxpr_1)), in_pvals_1,
       instantiate=[True] * (num_carry + num_ys) + [False] * num_res)
-  const_avals_1 = [raise_to_shaped(core.get_aval(c)) for c in consts_1]
-  in_avals_1 = [core.abstract_unit] * num_consts + jaxpr_1.in_avals[num_consts:]
-  out_avals_1 = [core.abstract_unit if pv is None else pv for pv, c in out_pvals_1]
 
   # TODO(cjfj): Explain the need for the code below.
   for var in jaxpr_1_opt.invars[:num_consts]:
@@ -2433,8 +2427,6 @@ def omnistaging_disabler() -> None:
   def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
     jaxpr, out_pvals, consts, out_tree = _initial_style_open_jaxpr(
         fun, in_tree, in_avals)
-    out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
-    const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
     closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     return closed_jaxpr, consts, out_tree()
 
@@ -2465,10 +2457,7 @@ def omnistaging_disabler() -> None:
       return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
                         outvars=jaxpr.outvars, eqns=jaxpr.eqns)
 
-    const_avals = tuple(util.concatenate(all_const_avals))
-
     def type_and_const_convert_jaxpr(jaxpr, out_pvals):
-      out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
       return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
     jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]

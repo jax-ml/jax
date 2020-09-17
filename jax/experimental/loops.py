@@ -117,7 +117,7 @@ from jax.lax import lax_control_flow
 from jax import tree_util
 from jax import numpy as jnp
 from jax.interpreters import partial_eval as pe
-from jax.util import unzip2, safe_map
+from jax.util import safe_map
 from jax.config import config
 
 
@@ -435,18 +435,7 @@ class _BodyTracer(object):
     out_tracers = safe_map(partial(pe.instantiate_const_at, trace),
                            instantiate, out_tracers)
     jaxpr, consts, env = pe.tracers_to_jaxpr(in_tracers, out_tracers)
-    out_pvals = [t.pval for t in out_tracers]
-    # TODO: this is from partial_eval.trace_to_jaxpr. Share.
-    assert not env
-
-    # TODO: this is from the final part of lax_control_flow._initial_style_jaxpr
-    out_avals = safe_map(abstract_arrays.raise_to_shaped, unzip2(out_pvals)[0])
-    const_avals = tuple(abstract_arrays.raise_to_shaped(core.get_aval(c))
-                        for c in consts)
-
-    in_pvals = [t.pval for t in in_tracers]
-    in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
-
+    assert not env  # TODO: this is from partial_eval.trace_to_jaxpr. Share.
     closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     return closed_jaxpr, consts
 

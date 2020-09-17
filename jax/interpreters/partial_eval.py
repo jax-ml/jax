@@ -670,13 +670,6 @@ def _remat_partial_eval(trace, _, f, tracers, params):
 
   # Since we traced with everything marked as unknown, but we need to know which
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
-  in_avals = ([raise_to_shaped(t.pval.get_aval()) for t in const_tracers] +
-              [raise_to_shaped(t.pval.get_aval()) for t in env_tracers] +
-              [raise_to_shaped(pval.get_aval()) for pval in in_pvals])
-  out_avals = [raise_to_shaped(abstract_unit if var is unitvar
-                               else get_aval(var.val) if type(var) is Literal
-                               else pval.get_aval())
-               for var, pval in zip(jaxpr.outvars, eval_out_pvals)]
   closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
   in_unknowns = ([False] * len(consts) +
                  [not t.is_known() for t in it.chain(env_tracers, tracers)])
@@ -736,11 +729,6 @@ def _zip_knowns(known_list, unknown_list, which_unknown: Sequence[bool]):
 
 
 def _dce_jaxpr(closed_jaxpr: ClosedJaxpr, outputs: Sequence[bool], drop_outputs=False) -> ClosedJaxpr:
-  if drop_outputs:
-    new_out_avals = [aval for aval, output in zip(closed_jaxpr.out_avals, outputs) if output]
-  else:
-    new_out_avals = [aval if output else core.abstract_unit
-                     for aval, output in zip(closed_jaxpr.out_avals, outputs)]
   new_jaxpr = _dce_open_jaxpr(closed_jaxpr.jaxpr, tuple(outputs), drop_outputs)
   return core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
 
@@ -789,7 +777,6 @@ def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]) ->
   new_invars = _move_to_front(closed_jaxpr.jaxpr.invars, to_move)
   new_jaxpr = core.Jaxpr((), new_invars, closed_jaxpr.jaxpr.outvars,
                          closed_jaxpr.jaxpr.eqns)
-  new_in_avals = _move_to_front(closed_jaxpr.in_avals, to_move)
   new_closed_jaxpr = core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
   return new_closed_jaxpr
 
