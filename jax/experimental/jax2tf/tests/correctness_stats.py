@@ -63,9 +63,8 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   def _report_failure(error_type: str, msg: str,
                       affected_dtype: Optional[NpDType] = None,
                       devs: Sequence[str] = all_devices) -> None:
-    affected_dtypes: Tuple[NpDType,...] = tuple()
-    if affected_dtype is not None:
-      affected_dtypes = tuple([affected_dtype])
+    affected_dtypes = (
+      tuple([affected_dtype]) if affected_dtype is not None else tuple())
     limitations.append(Limitation(prim.name, error_type, msg,
                                   affected_dtypes, tuple(devs)))
 
@@ -255,7 +254,8 @@ def prettify(limitations: Sequence[Limitation]) -> str:
     table.append([ lim.primitive_name
                  , lim.error_type
                  , lim.error_string
-                 , ', '.join(sorted(list(map(str, lim.affected_dtypes))))
+                 , ('ALL' if len(lim.affected_dtypes) == 0 else
+                    ', '.join(sorted(list(map(str, lim.affected_dtypes)))))
                  , ', '.join(lim.devices)
                  ])
 

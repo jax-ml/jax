@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-09-16*
+*Last generated on (YYYY-MM-DD): 2020-09-17*
 
 ## Updating the documentation
 
@@ -20,8 +20,8 @@ conversion to Tensorflow.
 
 | Affected primitive | Type of limitation | Description | Affected dtypes | Affected devices |
 | --- | --- | --- | --- | --- |
-| acosh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | acosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| acosh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | add | Missing TF support | Primitive is unimplemented | uint16, uint32, uint64 | CPU, GPU, TPU |
 | asinh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | asinh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
@@ -31,12 +31,12 @@ conversion to Tensorflow.
 | bessel_i0e | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | bessel_i1e | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | conv_general_dilated | Missing TF support | Primitive is unimplemented; likely bug in the HLO -> LLVM IR lowering of XlaConv | complex64, complex128 | CPU, GPU, TPU |
-| conv_general_dilated | Missing TF support | Primitive is unimplemented; batch_group_count != 1 unsupported |  | CPU, GPU, TPU |
+| conv_general_dilated | Missing TF support | Primitive is unimplemented; batch_group_count != 1 unsupported | ALL | CPU, GPU, TPU |
 | cosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | digamma | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | erf | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
-| erf_inv | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | erf_inv | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| erf_inv | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | erfc | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | fft | Missing TF support | Primitive is unimplemented; this is a problem only in compiled mode (experimental_compile=True)) | complex128, float64 | CPU, GPU, TPU |
 | lgamma | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
@@ -56,10 +56,10 @@ conversion to Tensorflow.
 | select_and_gather_add | Missing TF support | Primitive is unimplemented | float64 | CPU, GPU |
 | sinh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented | complex128, complex64 | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented; only sorting on last dimension is supported for XlaSort |  | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented; only sorting on last dimension is supported for XlaSort | ALL | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented; sorting 2 arrays where the first one is an array of booleans is not supported for XlaSort | bool | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented; sorting more than 2 arrays is not supported for XlaSort |  | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented; stable sort not implemented for XlaSort |  | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented; sorting more than 2 arrays is not supported for XlaSort | ALL | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented; stable sort not implemented for XlaSort | ALL | CPU, GPU, TPU |
 | svd | Missing TF support | Primitive is unimplemented; this works on JAX because JAX uses a custom implementation | complex128, complex64 | CPU, GPU |
 | top_k | Missing TF support | Primitive is unimplemented; this is a problem only in compiled mode (experimental_compile=True)) | float64, int64, uint64 | CPU, GPU, TPU |
 
