@@ -455,15 +455,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
-    if jtu.device_under_test() == "gpu":
-      raise unittest.SkipTest("TODO: test failures on GPU")
     tol = None
+    if jtu.device_under_test() == "gpu":
+      tol = 1e-4
+    elif jtu.device_under_test() == "tpu":
+      tol = 1e-3
     # TODO(bchetioui): significant discrepancies in some float16 cases.
-    if harness.params["dtype"] is np.float16:
+    if harness.params["dtype"] == np.float16:
       tol = 1.
     # TODO(bchetioui): slight occasional discrepancy in float32 cases.
-    elif harness.params["dtype"] is np.float32:
-      tol = 1e-5
+    elif harness.params["dtype"] == np.float32:
+      tol = 0.5 if jtu.device_under_test() == "tpu" else 1e-4
+    elif harness.params["dtype"] == np.complex64 and jtu.device_under_test() == "tpu":
+      tol = 0.1
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol)
 
