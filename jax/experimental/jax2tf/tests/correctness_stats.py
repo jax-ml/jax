@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import defaultdict
 import datetime
 import functools
 import numpy as np
-from typing import Any, Callable, Collection, List, NamedTuple, Optional, \
+from typing import Any, Callable, Collection, Dict, List, NamedTuple, Optional,\
                    Tuple, Sequence, Set
 
 from jax import core
@@ -32,13 +33,14 @@ def to_jax_dtype(tf_dtype):
     return dtypes.bfloat16
   return tf_dtype.as_numpy_dtype
 
+NpDType = Any
+
 Limitation = NamedTuple("Limitation", [ ("primitive_name", str)
                                       , ("error_type", str)
                                       , ("error_string", str)
+                                      , ("affected_dtypes", Tuple[NpDType,...])
                                       , ("devices", Tuple[str,...])
                                       ])
-
-NpDType = Any
 
 def categorize(prim: core.Primitive, *args, **kwargs) \
     -> List[Limitation]:
@@ -59,8 +61,12 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   all_devices = ["CPU", "GPU", "TPU"]
 
   def _report_failure(error_type: str, msg: str,
+                      affected_dtype: Optional[NpDType] = None,
                       devs: Sequence[str] = all_devices) -> None:
-    limitations.append(Limitation(prim.name, error_type, msg, tuple(devs)))
+    affected_dtypes = (
+      tuple([affected_dtype]) if affected_dtype is not None else tuple())
+    limitations.append(Limitation(prim.name, error_type, msg,
+                                  affected_dtypes, tuple(devs)))
 
   def tf_unimpl(np_dtype: Optional[NpDType] = None,
                 additional_msg: Optional[str] = None,
@@ -68,11 +74,9 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
 
     missing_tf_support = "Missing TF support"
     msg = "Primitive is unimplemented"
-    if np_dtype is not None:
-      msg += f" for dtype {np_dtype}"
     if additional_msg:
       msg += '; ' + additional_msg
-    _report_failure(missing_tf_support, msg, devs=devs)
+    _report_failure(missing_tf_support, msg, np_dtype, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
     try:
@@ -215,6 +219,22 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
                                           "mode (experimental_compile=True))"))
   return limitations
 
+def merge_similar_limitations(limitations: Sequence[Limitation]) \
+    -> Sequence[Limitation]:
+  """Merges similar limitations together."""
+  merged_limitations: Dict[Limitation, Set[NpDType]] = defaultdict(set)
+
+  for lim in limitations:
+    key = Limitation(lim.primitive_name, lim.error_type, lim.error_string,
+                     tuple(), lim.devices)
+    value = lim.affected_dtypes
+    merged_limitations[key].update(value)
+
+  def _perform_merge(key: Limitation, values: Set[NpDType]) -> Limitation:
+    return key._replace(affected_dtypes=tuple(values))
+
+  return list(map(lambda kvp: _perform_merge(*kvp), merged_limitations.items()))
+
 def prettify(limitations: Sequence[Limitation]) -> str:
   """Constructs a summary markdown table based on a list of limitations."""
   limitations = sorted(list(set(limitations)))
@@ -225,7 +245,8 @@ def prettify(limitations: Sequence[Limitation]) -> str:
   column_names = [ 'Affected primitive'
                  , 'Type of limitation'
                  , 'Description'
-                 , 'Devices affected' ]
+                 , 'Affected dtypes'
+                 , 'Affected devices' ]
 
   table = [column_names, ['---'] * len(column_names)]
 
@@ -233,6 +254,8 @@ def prettify(limitations: Sequence[Limitation]) -> str:
     table.append([ lim.primitive_name
                  , lim.error_type
                  , lim.error_string
+                 , ('ALL' if len(lim.affected_dtypes) == 0 else
+                    ', '.join(sorted(list(map(str, lim.affected_dtypes)))))
                  , ', '.join(lim.devices)
                  ])
 
@@ -262,6 +285,7 @@ def pprint_limitations(limitations: Sequence[Limitation],
                        covered_primitives: Set[core.Primitive],
                        output_file: str, template_file: str) -> None:
 
+  limitations = merge_similar_limitations(limitations)
   limited_support_table = prettify(limitations)
   not_yet_impl_primitives = prettify_not_yet_implemented()
   not_yet_covered_primitives = prettify_not_yet_covered(covered_primitives)

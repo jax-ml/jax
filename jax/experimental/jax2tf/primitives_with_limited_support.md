@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-09-14*
+*Last generated on (YYYY-MM-DD): 2020-09-17*
 
 ## Updating the documentation
 
@@ -18,79 +18,50 @@ cases even for JAX, e.g., sort does not work for complex numbers on TPUs.
 This table includes only those cases that **work** in JAX but **fail** after
 conversion to Tensorflow.
 
-| Affected primitive | Type of limitation | Description | Devices affected |
-| --- | --- | --- | --- |
-| acosh | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| acosh | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| add | Missing TF support | Primitive is unimplemented for dtype uint16 | CPU, GPU, TPU |
-| add | Missing TF support | Primitive is unimplemented for dtype uint32 | CPU, GPU, TPU |
-| add | Missing TF support | Primitive is unimplemented for dtype uint64 | CPU, GPU, TPU |
-| asinh | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| asinh | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| atan2 | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU, TPU |
-| atan2 | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| atanh | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| atanh | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| bessel_i0e | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| bessel_i1e | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| conv_general_dilated | Missing TF support | Primitive is unimplemented for dtype complex128; likely bug in the HLO -> LLVM IR lowering of XlaConv | CPU, GPU, TPU |
-| conv_general_dilated | Missing TF support | Primitive is unimplemented for dtype complex64; likely bug in the HLO -> LLVM IR lowering of XlaConv | CPU, GPU, TPU |
-| conv_general_dilated | Missing TF support | Primitive is unimplemented; batch_group_count != 1 unsupported | CPU, GPU, TPU |
-| cosh | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| digamma | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| erf | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| erf_inv | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| erf_inv | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| erfc | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| fft | Missing TF support | Primitive is unimplemented for dtype complex128; this is a problem only in compiled mode (experimental_compile=True)) | CPU, GPU, TPU |
-| fft | Missing TF support | Primitive is unimplemented for dtype float64; this is a problem only in compiled mode (experimental_compile=True)) | CPU, GPU, TPU |
-| lgamma | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| max | Missing TF support | Primitive is unimplemented for dtype bool | CPU, GPU, TPU |
-| max | Missing TF support | Primitive is unimplemented for dtype complex128 | CPU, GPU, TPU |
-| max | Missing TF support | Primitive is unimplemented for dtype complex64 | CPU, GPU, TPU |
-| max | Missing TF support | Primitive is unimplemented for dtype int8 | CPU, GPU, TPU |
-| max | Missing TF support | Primitive is unimplemented for dtype uint16 | CPU, GPU, TPU |
-| max | Missing TF support | Primitive is unimplemented for dtype uint32 | CPU, GPU, TPU |
-| max | Missing TF support | Primitive is unimplemented for dtype uint64 | CPU, GPU, TPU |
-| min | Missing TF support | Primitive is unimplemented for dtype bool | CPU, GPU, TPU |
-| min | Missing TF support | Primitive is unimplemented for dtype complex128 | CPU, GPU, TPU |
-| min | Missing TF support | Primitive is unimplemented for dtype complex64 | CPU, GPU, TPU |
-| min | Missing TF support | Primitive is unimplemented for dtype int8 | CPU, GPU, TPU |
-| min | Missing TF support | Primitive is unimplemented for dtype uint16 | CPU, GPU, TPU |
-| min | Missing TF support | Primitive is unimplemented for dtype uint32 | CPU, GPU, TPU |
-| min | Missing TF support | Primitive is unimplemented for dtype uint64 | CPU, GPU, TPU |
-| mul | Missing TF support | Primitive is unimplemented for dtype uint32 | CPU, GPU, TPU |
-| mul | Missing TF support | Primitive is unimplemented for dtype uint64 | CPU, GPU, TPU |
-| nextafter | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU, TPU |
-| nextafter | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| population_count | Missing TF support | Primitive is unimplemented for dtype uint32 | CPU, GPU, TPU |
-| population_count | Missing TF support | Primitive is unimplemented for dtype uint64 | CPU, GPU, TPU |
-| qr | Missing TF support | Primitive is unimplemented for dtype complex128 | CPU, GPU, TPU |
-| qr | Missing TF support | Primitive is unimplemented for dtype complex64 | CPU, GPU, TPU |
-| reduce_window_sum | Missing TF support | Primitive is unimplemented for dtype uint16 | CPU, GPU, TPU |
-| reduce_window_sum | Missing TF support | Primitive is unimplemented for dtype uint32 | CPU, GPU, TPU |
-| reduce_window_sum | Missing TF support | Primitive is unimplemented for dtype uint64 | CPU, GPU, TPU |
-| rem | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU, TPU |
-| rem | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| round | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| rsqrt | Missing TF support | Primitive is unimplemented for dtype bfloat16 | CPU, GPU |
-| scatter-add | Missing TF support | Primitive is unimplemented for dtype complex64 | TPU |
-| scatter-mul | Missing TF support | Primitive is unimplemented for dtype complex64 | TPU |
-| select_and_gather_add | Missing TF support | Primitive is unimplemented for dtype float32 | TPU |
-| select_and_gather_add | Missing TF support | Primitive is unimplemented for dtype float64 | CPU, GPU |
-| select_and_gather_add | Missing TF support | Primitive is unimplemented for dtype float64 | TPU |
-| sinh | Missing TF support | Primitive is unimplemented for dtype float16 | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented for dtype bool; sorting 2 arrays where the first one is an array of booleans is not supported for XlaSort | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented for dtype complex128 | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented for dtype complex64 | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented; only sorting on last dimension is supported for XlaSort | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented; sorting more than 2 arrays is not supported for XlaSort | CPU, GPU, TPU |
-| sort | Missing TF support | Primitive is unimplemented; stable sort not implemented for XlaSort | CPU, GPU, TPU |
-| svd | Missing TF support | Primitive is unimplemented for dtype complex128; this works on JAX because JAX uses a custom implementation | CPU, GPU |
-| svd | Missing TF support | Primitive is unimplemented for dtype complex64; this works on JAX because JAX uses a custom implementation | CPU, GPU |
-| top_k | Missing TF support | Primitive is unimplemented for dtype float64; this is a problem only in compiled mode (experimental_compile=True)) | CPU, GPU, TPU |
-| top_k | Missing TF support | Primitive is unimplemented for dtype int64; this is a problem only in compiled mode (experimental_compile=True)) | CPU, GPU, TPU |
-| top_k | Missing TF support | Primitive is unimplemented for dtype uint64; this is a problem only in compiled mode (experimental_compile=True)) | CPU, GPU, TPU |
+| Affected primitive | Type of limitation | Description | Affected dtypes | Affected devices |
+| --- | --- | --- | --- | --- |
+| acosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| acosh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| add | Missing TF support | Primitive is unimplemented | uint16, uint32, uint64 | CPU, GPU, TPU |
+| asinh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| asinh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| atan2 | Missing TF support | Primitive is unimplemented | bfloat16, float16 | CPU, GPU, TPU |
+| atanh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| atanh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| bessel_i0e | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| bessel_i1e | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| conv_general_dilated | Missing TF support | Primitive is unimplemented; likely bug in the HLO -> LLVM IR lowering of XlaConv | complex64, complex128 | CPU, GPU, TPU |
+| conv_general_dilated | Missing TF support | Primitive is unimplemented; batch_group_count != 1 unsupported | ALL | CPU, GPU, TPU |
+| cosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| digamma | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| erf | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| erf_inv | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| erf_inv | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| erfc | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| fft | Missing TF support | Primitive is unimplemented; this is a problem only in compiled mode (experimental_compile=True)) | complex128, float64 | CPU, GPU, TPU |
+| lgamma | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| max | Missing TF support | Primitive is unimplemented | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
+| min | Missing TF support | Primitive is unimplemented | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
+| mul | Missing TF support | Primitive is unimplemented | uint32, uint64 | CPU, GPU, TPU |
+| nextafter | Missing TF support | Primitive is unimplemented | bfloat16, float16 | CPU, GPU, TPU |
+| population_count | Missing TF support | Primitive is unimplemented | uint32, uint64 | CPU, GPU, TPU |
+| qr | Missing TF support | Primitive is unimplemented | complex128, complex64 | CPU, GPU, TPU |
+| reduce_window_sum | Missing TF support | Primitive is unimplemented | uint16, uint32, uint64 | CPU, GPU, TPU |
+| rem | Missing TF support | Primitive is unimplemented | bfloat16, float16 | CPU, GPU, TPU |
+| round | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| rsqrt | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| scatter-add | Missing TF support | Primitive is unimplemented | complex64 | TPU |
+| scatter-mul | Missing TF support | Primitive is unimplemented | complex64 | TPU |
+| select_and_gather_add | Missing TF support | Primitive is unimplemented | float32, float64 | TPU |
+| select_and_gather_add | Missing TF support | Primitive is unimplemented | float64 | CPU, GPU |
+| sinh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented | complex128, complex64 | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented; only sorting on last dimension is supported for XlaSort | ALL | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented; sorting 2 arrays where the first one is an array of booleans is not supported for XlaSort | bool | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented; sorting more than 2 arrays is not supported for XlaSort | ALL | CPU, GPU, TPU |
+| sort | Missing TF support | Primitive is unimplemented; stable sort not implemented for XlaSort | ALL | CPU, GPU, TPU |
+| svd | Missing TF support | Primitive is unimplemented; this works on JAX because JAX uses a custom implementation | complex128, complex64 | CPU, GPU |
+| top_k | Missing TF support | Primitive is unimplemented; this is a problem only in compiled mode (experimental_compile=True)) | float64, int64, uint64 | CPU, GPU, TPU |
 
 ## Not yet implemented primitive conversions
 
@@ -103,4 +74,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `dot_general`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`
+`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `device_put`, `dot_general`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `tie_in`
