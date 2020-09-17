@@ -196,8 +196,9 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
   output = [w]
   if compute_left_eigenvectors:
     output.append(vl)
-  elif compute_right_eigenvectors:
+  if compute_right_eigenvectors:
     output.append(vr)
+
   return tuple(output)
 
 _cpu_geev = lapack.geev
