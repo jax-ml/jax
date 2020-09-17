@@ -2011,6 +2011,26 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       lax.population_count(True)
 
+  def test_conv_general_dilated_different_input_ranks_error(self):
+    # https://github.com/google/jax/issues/4316
+    msg = ("conv_general_dilated lhs and rhs must have the same number of "
+           "dimensions")
+    dimension_numbers = lax.ConvDimensionNumbers(lhs_spec=(0, 1, 2),
+                                                 rhs_spec=(0, 1, 2),
+                                                 out_spec=(0, 1, 2))
+    kwargs = { 'window_strides': (1,)
+             , 'padding': ((0, 0),)
+             , 'lhs_dilation': (1,)
+             , 'rhs_dilation': (1,)
+             , 'dimension_numbers': dimension_numbers
+             , 'feature_group_count': 1
+             , 'batch_group_count': 1
+             , 'precision': None
+             }
+    lhs, rhs = np.ones((1, 1, 1)), np.ones((1, 1, 1, 1))
+    with self.assertRaisesRegex(ValueError, msg):
+      lax.conv_general_dilated(lhs, rhs, **kwargs)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
