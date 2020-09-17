@@ -200,7 +200,6 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
-
 def _safe_normalize(x, return_norm=False, thresh=None):
   """
   Returns the L2-normalized vector (which can be a pytree) x, and optionally
@@ -273,12 +272,14 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
   h = h.at[k + 1].set(v_norm)
-  h = lax.cond(v_norm == 0.,
+  breakdown = v_norm == 0.
+  h = lax.cond(breakdown,
                lambda x: h.at[k].set(1.),
                lambda x: h,
                0.)
+
   H = H.at[k, :].set(h)
-  return V, H
+  return V, H, breakdown
 
 
 def apply_givens_rotations(H_row, givens, k):
@@ -348,7 +349,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
 
   def arnoldi_qr_step(carry):
     k, residual_norm, V, R, beta_vec, givens = carry
-    V, H = kth_arnoldi_iteration(k, A, M, V, R, inner_tol)
+    V, H, _ = kth_arnoldi_iteration(k, A, M, V, R, inner_tol)
     R_row, givens = apply_givens_rotations(H[k, :], givens, k)
     R = R.at[k, :].set(R_row[:])
     cs, sn = givens[k, :] * beta_vec[k]
@@ -371,7 +372,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   return x, unit_residual, residual_norm
 
 
-def _gmres_fixed(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
+def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   """
   Implements a single restart of GMRES. The restart-dimensional Krylov subspace
   K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
@@ -384,11 +385,21 @@ def _gmres_fixed(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   )
   dtype = jnp.result_type(*tree_leaves(b))
   H = jnp.eye(restart, restart + 1, dtype=dtype)
-  def arnoldi_for_scan(carry, k):
-    V, H = carry
-    V, H = kth_arnoldi_iteration(k, A, M, V, H, inner_tol)
-    return (V, H), None
-  (V, H), _ = lax.scan(arnoldi_for_scan, (V, H), jnp.arange(restart))
+
+  def loop_cond(carry):
+    V, H, breakdown, k = carry
+    return lax.cond(k < restart,
+                    lambda x: ~x,
+                    lambda x: False,
+                    breakdown)
+
+  def arnoldi_process(carry):
+    V, H, _, k = carry
+    V, H, breakdown = kth_arnoldi_iteration(k, A, M, V, H, inner_tol)
+    return V, H, breakdown, k + 1
+
+  carry = (V, H, False, 0)
+  V, H, _, _ = lax.while_loop(loop_cond, arnoldi_process, carry)
 
   beta_vec = jnp.zeros((restart,), dtype=dtype)
   beta_vec = beta_vec.at[0].set(residual_norm) # it really is the original value
@@ -434,7 +445,7 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
 
 
 def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
-          M=None, fixed_iterations=False):
+          M=None, qr_mode=False):
   """
   GMRES solves the linear system A x = b for x, given A and b. A is specified
   as a function performing A(vi) -> vf = A @ vi, and in principle need not have
@@ -474,7 +485,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       projection into a Krylov space of this dimension - this parameter
       therefore bounds the maximum accuracy achievable from any guess
       solution. Larger values increase both number of iterations and iteration
-      cost, but may be necessary for convergence. If fixed_iterations is
+      cost, but may be necessary for convergence. If qr_mode is
       True, the algorithm terminates
       early if convergence is achieved before the full subspace is built.
       Default is 20.
@@ -491,13 +502,11 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
       to reach a given error tolerance.
-  fixed_iterations : bool
+  qr_mode : bool
       If True, the algorithm builds an internal Krylov subspace using a QR
-      based algorithm, permitting early termination of the inner `restart` loop
-      if  convergence is reached. Apart from permitting early termination, this
-      reduces overhead and may improve stability. However, it may degrade
-      performance significantly on GPUs or TPUs, in which case this flag should
-      be set False.
+      based algorithm, which reduces overhead and improved stability. However,
+      it may degrade performance significantly on GPUs or TPUs, in which case
+      this flag should be set False.
 
   See also
   --------
@@ -534,10 +543,10 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   Mb_norm = _norm_tree(Mb)
   inner_tol = Mb_norm * min(1.0, outer_tol / b_norm)
 
-  if fixed_iterations:
+  if qr_mode:
     def _solve(A, b):
       return _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
-                          _gmres_fixed)
+                          _gmres_plain)
   else:
     def _solve(A, b):
       return _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
