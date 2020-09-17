@@ -635,14 +635,12 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
         new_jaxpr_invars[0:nr_const_and_carry] + [new_jaxpr_invars[-1]] +
         new_jaxpr_invars[nr_const_and_carry:-1])
     new_jaxpr.jaxpr.invars = new_jaxpr_invars
-    new_jaxpr.in_avals = [v.aval for v in new_jaxpr_invars]
 
     new_jaxpr_outvars = new_jaxpr.jaxpr.outvars
     new_jaxpr_outvars = (
         new_jaxpr_outvars[0:num_carry] + [new_jaxpr_outvars[-1]] +
         new_jaxpr_outvars[num_carry:-1])
     new_jaxpr.jaxpr.outvars = new_jaxpr_outvars
-    new_jaxpr.out_avals = [v.aval for v in new_jaxpr_outvars]
     eqns.append(
         core.new_jaxpr_eqn(
             new_invars,
@@ -775,6 +773,8 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
               name="cond_body",
               donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals)),
           eqn.source_info)
+  ]
+  new_body_jaxpr = core.ClosedJaxpr(
       core.Jaxpr([], (new_body_invars_cond_constvars +
                       new_body_invars_body_constvars + [new_body_invars_pred] +
                       new_body_invars_carry + [new_body_invars_token]),

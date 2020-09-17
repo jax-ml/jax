@@ -323,7 +323,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_check_jaxpr_cond_invalid(self):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].in_avals = ()
     cond.params['branches'][0].jaxpr.invars = ()
     self.assertRaisesRegex(
         core.JaxprTypeError,
@@ -358,7 +357,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.).jaxpr
 
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].in_avals = ()
     cond.params['branches'][0].jaxpr.invars = ()
     msg = ''
     try:
