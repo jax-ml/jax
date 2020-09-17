@@ -1179,14 +1179,16 @@ def ravel(a, order="C"):
 @_wraps(np.ravel_multi_index)
 def ravel_multi_index(multi_index, dims, mode='raise', order='C'):
   assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
+  dims = tuple(core.concrete_or_error(int, d, "in `dims` argument of ravel_multi_index().") for d in dims)
   for index in multi_index:
     _check_arraylike("ravel_multi_index", index)
+    if mode == 'raise':
+      core.concrete_or_error(array, index,
+        "The error occurred because ravel_multi_index was jit-compiled"
+        " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
     if not issubdtype(_dtype(index), integer):
       raise TypeError("only int indices permitted")
   if mode == "raise":
-    if _any(isinstance(i, core.Tracer) for i in multi_index):
-      raise ValueError("ravel_multi_index: mode='raise' is not compatible with jit. "
-        "Use mode='wrap' or mode='clip'")
     if _any(any((i < 0) | (i >= d)) for i, d in zip(multi_index, dims)):
       raise ValueError("invalid entry in coordinates array")
   elif mode == "clip":

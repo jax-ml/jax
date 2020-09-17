@@ -2789,9 +2789,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           raise
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     if mode == 'raise':
-      self.assertRaisesRegex(
-        ValueError, "ravel_multi_index: mode='raise' is not compatible with jit",
-        jax.jit(jnp_fun), *args_maker())
+      msg = ("The error occurred because ravel_multi_index was jit-compiled "
+             "with mode='raise'. Use mode='wrap' or mode='clip' instead.")
+      with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg):
+        jax.jit(jnp_fun)(*args_maker())
     else:
       self._CompileAndCheck(jnp_fun, args_maker)
 
