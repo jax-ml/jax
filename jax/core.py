@@ -365,6 +365,7 @@ class Trace:
   def full_raise(self, val) -> 'Tracer':
     if not isinstance(val, Tracer):
       return self.pure(val)
+    val._assert_live()
     level = self.level
     sublevel = self.sublevel
     if val._trace.main is self.main:
@@ -742,8 +743,8 @@ def full_lower(val):
     return val
 
 def find_top_trace(xs) -> Trace:
-  traces = [x._assert_live() or x._trace.main for x in xs if isinstance(x, Tracer)]  # type: ignore
-  top_main = max(traces, default=None, key=attrgetter('level'))
+  top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
+                 default=None, key=attrgetter('level'))
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
                 else top_main)

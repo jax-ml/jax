@@ -1662,13 +1662,10 @@ class APITest(jtu.JaxTestCase):
     self._saved_tracer = x
     return x
 
-  def test_escaped_tracers_diffent_top_level_traces(self):
+  def test_escaped_tracers_different_top_level_traces(self):
     api.jit(self.helper_save_tracer)(0.)
     with self.assertRaisesRegex(
-        core.UnexpectedTracerError,
-        re.compile(
-          "Encountered an unexpected tracer.*Different traces at same level",
-          re.DOTALL)):
+        core.UnexpectedTracerError, "Encountered an unexpected tracer"):
       api.jit(lambda x: self._saved_tracer)(0.)
 
   def test_escaped_tracers_cant_lift_sublevels(self):
