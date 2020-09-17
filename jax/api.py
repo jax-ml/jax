@@ -1941,7 +1941,7 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
 
 def make_jaxpr(fun: Callable,
                static_argnums: Union[int, Iterable[int]] = ()
-               ) -> Callable[..., core.TypedJaxpr]:
+               ) -> Callable[..., core.ClosedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
@@ -1952,7 +1952,7 @@ def make_jaxpr(fun: Callable,
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
-      a ``TypedJaxpr`` representation of ``fun`` on those arguments.
+      a ``ClosedJaxpr`` representation of ``fun`` on those arguments.
 
   A ``jaxpr`` is JAX's intermediate representation for program traces. The
   ``jaxpr`` language is based on the simply-typed first-order lambda calculus
@@ -2006,8 +2006,7 @@ def make_jaxpr(fun: Callable,
       jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
           jaxtree_fun, in_pvals, instantiate=True, stage_out=True)  # type: ignore
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
-    typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
-    return typed_jaxpr
+    return core.ClosedJaxpr(jaxpr, consts)
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
   return jaxpr_maker

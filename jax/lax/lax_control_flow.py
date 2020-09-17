@@ -72,8 +72,7 @@ def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
   jaxpr, out_avals, consts, out_tree = \
       _initial_style_untyped_jaxpr(fun, in_tree, in_avals)
   const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
-  typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
-                                (), const_avals + in_avals, out_avals)
+  typed_jaxpr = core.CosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
   return typed_jaxpr, consts, out_tree
 
 def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
