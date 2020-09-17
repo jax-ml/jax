@@ -2733,6 +2733,8 @@ def atleast_3d(*arys):
 def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
+
+  # check if the given dtype is compatible with JAX
   lax._check_user_dtype_supported(dtype, "array")
 
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
@@ -2740,9 +2742,12 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
   if _can_call_numpy_array(object):
     object = _np_array(object, dtype=dtype, ndmin=ndmin, copy=False)
+
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
+    _inferred_dtype = object.dtype and dtypes.canonicalize_dtype(object.dtype)
+    lax._check_user_dtype_supported(_inferred_dtype, "array")
     out = _device_put_raw(object, weak_type=weak_type)
     if dtype: assert _dtype(out) == dtype
   elif isinstance(object, (DeviceArray, core.Tracer)):
