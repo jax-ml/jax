@@ -1801,8 +1801,9 @@ def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
   return tree_unflatten(out_tree, ans)
 
 
-def vjp(fun: Callable, *primals, **kwargs
-        ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
+def vjp(
+    fun: Callable, *primals, has_aux: bool = False,
+) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
   :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
@@ -1842,12 +1843,10 @@ def vjp(fun: Callable, *primals, **kwargs
   -0.2524413
   """
   _check_callable(fun)
-  return _vjp(lu.wrap_init(fun), *primals, **kwargs)
+  return _vjp(lu.wrap_init(fun), *primals, has_aux=has_aux)
 
-def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
+def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
-  has_aux = kwargs.pop('has_aux', False)
-  assert not kwargs
   primals_flat, in_tree = tree_flatten(primals)
   for arg in primals_flat: _check_arg(arg)
   tree_map(_check_inexact_input_vjp, primals)
@@ -1870,6 +1869,74 @@ def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
     return out_primal_py, vjp_py
   else:
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
+
+
+def linear_transpose(fun: Callable, *primals) -> Callable:
+  """Transpose a function that is promised to be linear.
+
+  For linear functions, this transformation is equivalent to ``vjp``, but
+  avoids the overhead of computing the forward pass.
+
+  The outputs of the transposed function will always have the exact same dtypes
+  as ``primals``, even if some values are truncated (e.g., from complex to
+  float, or from float64 to float32). To avoid truncation, use dtypes in
+  ``primals`` that match the full range of desired outputs from the transposed
+  function. Integer dtypes are not supported.
+
+  Args:
+    fun: the linear function to be transposed.
+    *primals: a positional argument tuple of arrays, scalars, or (nested)
+      standard Python containers (tuples, lists, dicts, namedtuples, i.e.,
+      pytrees) of those types used for evaluating the shape/dtype of
+      ``fun(*primals)``. These arguments may be real scalars/ndarrays, but that
+      is not required: only the ``shape`` and ``dtype`` attributes are accessed.
+      See below for an example. (Note that the duck-typed objects cannot be
+      namedtuples because those are treated as standard Python containers.)
+
+  Returns:
+    A callable that calculates the transpose of ``fun``. Valid input into this
+    function must have the same shape/dtypes/structure as the result of
+    ``fun(*primals)``. Output will be a tuple, with the same
+    shape/dtypes/structure as ``primals``.
+
+  >>> import jax
+  >>> import types
+  >>>
+  >>> f = lambda x, y: 0.5 * x - 0.5 * y
+  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.float32)
+  >>> f_transpose = jax.linear_transpose(f, scalar, scalar)
+  >>> f_transpose(1.0)
+  (DeviceArray(0.5, dtype=float32), DeviceArray(-0.5, dtype=float32))
+  """
+  def abstractify(x):
+    return core.ShapedArray(np.shape(x), dtypes.result_type(x))
+  primals_flat, in_tree = tree_flatten(primals)
+  flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  in_avals = map(abstractify, primals_flat)
+  in_dtypes = map(dtypes.dtype, in_avals)
+  if any(not np.issubdtype(dtype, np.inexact) for dtype in in_dtypes):
+    raise TypeError("linear_transpose only supports float and complex inputs, "
+                    f"but got {in_dtypes}")
+
+  in_pvals = map(pe.PartialVal.unknown, in_avals)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr(flat_fun, in_pvals,
+                                               instantiate=True)
+  out_avals, _ = unzip2(out_pvals)
+
+  def transposed_fun(out_cotangent):
+    out_cotangents, out_tree2 = tree_flatten(out_cotangent)
+    if out_tree() != out_tree2:
+      msg = ("cotangent tree does not match function output, "
+             f"expected {out_tree()} but got {out_tree2}")
+      raise TypeError(msg)
+    if not all(map(core.typecheck, out_avals, out_cotangents)):
+      raise TypeError("cotangent type does not match function output, "
+                      f"expected {out_avals} but got {out_cotangents}")
+    dummies = [ad.UndefinedPrimal(a) for a in in_avals]
+    in_cotangents = ad.backward_pass(jaxpr, consts, dummies, out_cotangents)
+    return tree_unflatten(in_tree, in_cotangents)
+
+  return transposed_fun
 
 
 def make_jaxpr(fun: Callable,
@@ -2059,7 +2126,7 @@ def _valid_jaxtype(arg):
     return True
 
 
-class ShapeDtypeStruct(object):
+class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype"]
   def __init__(self, shape, dtype):
     self.shape = shape
@@ -2102,7 +2169,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
     def shape_dtype_struct(x):
       return ShapeDtypeStruct(x.shape, x.dtype)
 
-    class ShapeDtypeStruct(object):
+    class ShapeDtypeStruct:
       __slots__ = ["shape", "dtype"]
       def __init__(self, shape, dtype):
         self.shape = shape

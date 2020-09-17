@@ -19,6 +19,7 @@ import copy
 from functools import partial
 import re
 import unittest
+import types
 import warnings
 import weakref
 import functools
@@ -869,6 +870,40 @@ class APITest(jtu.JaxTestCase):
 
     self.assertAllClose((45., 9.), api.jvp(func, (5.,), (1.,)))
 
+  def test_linear_transpose_abstract(self):
+    x = types.SimpleNamespace(shape=(3,), dtype=np.float32)
+    y = jnp.arange(3, dtype=np.float32)
+    transpose_fun = api.linear_transpose(lambda x: 2 * x, x)
+    z, = transpose_fun(y)
+    self.assertArraysEqual(2 * y, z, check_dtypes=True)
+
+  def test_linear_transpose_error(self):
+    with self.assertRaisesRegex(
+        TypeError, "linear_transpose only supports float and complex inputs"):
+      api.linear_transpose(lambda x: x, 1)
+
+    transpose_fun = api.linear_transpose(lambda x: [x, x], 1.0)
+    with self.assertRaisesRegex(TypeError, "cotangent tree does not match"):
+      transpose_fun(1.0)
+
+    transpose_fun = api.linear_transpose(lambda x: jnp.stack([x, x]), 1.0)
+    with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
+      transpose_fun(1.0)
+
+    transpose_fun = api.linear_transpose(lambda x: 1j * x, 1.0)
+    with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
+      transpose_fun(1.0)
+
+    transpose_fun = api.linear_transpose(lambda x: x, 1.0)
+    with self.assertRaisesRegex(TypeError, "cotangent type does not match"):
+      transpose_fun(1j)
+
+  def test_linear_transpose_complex(self):
+    f = lambda x: (1 + 2j) * x
+    transpose = api.linear_transpose(f, 1j)
+    actual, = transpose(3 + 4j)
+    expected = -5 + 10j
+    self.assertEqual(actual, expected)
 
   def test_complex_grad_raises_error(self):
     self.assertRaises(TypeError, lambda: grad(lambda x: jnp.sin(x))(1 + 2j))
