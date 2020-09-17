@@ -1130,14 +1130,11 @@ def _compute_newshape(a, newshape):
   try: iter(newshape)
   except: iterable = False
   else: iterable = True
-  if iterable:
-    newshape = [core.concrete_or_error(int, d,
-                                       "The error arose in jax.numpy.reshape.")
-                for d in newshape]
-  else:
-    newshape = core.concrete_or_error(int, newshape,
-                                      "The error arose in jax.numpy.reshape.")
-  newsize = _prod(newshape)
+  def check(size):
+    return size if type(size) is Poly else core.concrete_or_error(
+      int, size, "The error arose in jax.numpy.reshape.")
+  newshape = [check(size) for size in newshape] if iterable else check(newshape)
+  newsize = _prod((newshape,) if type(newshape) is Poly else newshape)
   if newsize < 0:
     fix = a.size // -newsize
     return [d if d != -1 else fix for d in newshape]
@@ -1166,7 +1163,8 @@ def _reshape_method(a, *newshape, **kwargs):
     invalid_kwargs = "'{}'".format("'".join(kwargs))
     msg = "{} are invalid keyword arguments for this function"
     raise TypeError(msg.format(invalid_kwargs))  # different from NumPy error
-  if len(newshape) == 1 and not isinstance(newshape[0], int):
+  if (len(newshape) == 1 and not isinstance(newshape[0], int) and
+          type(newshape[0]) is not Poly):
     newshape = newshape[0]
   return _reshape(a, newshape, order=order)
 

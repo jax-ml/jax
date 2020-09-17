@@ -597,7 +597,47 @@ class MaskingTest(jtu.JaxTestCase):
     # TODO: self.check(lambda x: lax.slice(x, (x.shape[0] // 2,), (x.shape[0],)), ['2*n'], dict(n=jnp.array([2, 3])), 'n')
 
   def test_reshape(self):
-    raise SkipTest
+    self.check(lambda x: jnp.reshape(x, (x.shape[1], 2, 4, 1)),
+               ['1, n, 4, 2'], 'n, 2, 4, 1', dict(n=2), [(1, 3, 4, 2)],
+               ['float_'], jtu.rand_default(self.rng()))
+
+    self.check(lambda x: jnp.reshape(x, (x.shape[0] * 2,)),
+               ['n, 2'], '2 * n', dict(n=2), [(3, 2)],
+               ['float_'], jtu.rand_default(self.rng()))
+
+    self.check(lambda x: jnp.reshape(x, (x.shape[0] // 2, 2)),
+               ['2 * n'], 'n, 2', dict(n=2), [(6,)],
+               ['float_'], jtu.rand_default(self.rng()))
+
+    self.check(lambda x: jnp.reshape(x, (x.shape[0] * 4, 2)),
+               ['n, 2, 4'], '4 * n, 2', dict(n=2), [(3, 2, 4)],
+               ['float_'], jtu.rand_default(self.rng()))
+
+    self.check(lambda x: jnp.reshape(x, ((x.shape[0] - 1) // 4 + 1, 2, 4)),
+               ['4 * n + 4, 2'], 'n + 1, 2, 4', dict(n=2), [(12, 2)],
+               ['float_'], jtu.rand_default(self.rng()))
+
+    msg = "Reshape on padded dimensions causing fragmentation is not supported."
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      self.check(lambda x: jnp.reshape(x, np.prod(x.shape)),
+                 ['a, b'], 'a*b', dict(a=2, b=3), [(3, 4)],
+                 ['float_'], jtu.rand_default(self.rng()))
+
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      self.check(lambda x: jnp.reshape(x, (x.shape[1], x.shape[0])),
+                 ['a, b'], 'b, a', dict(a=2, b=3), [(3, 4)],
+                 ['float_'], jtu.rand_default(self.rng()))
+
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      self.check(lambda x: jnp.reshape(x, (x.shape[1] * 2,)),
+                 ['2, n'], '2 * n', dict(n=2), [(2, 3)],
+                 ['float_'], jtu.rand_default(self.rng()))
+
+    if False:
+      # TODO fix lax._compute_newshape on polymorphic shapes:
+      self.check(lambda x: jnp.reshape(x, (x.shape[0], -1)),
+                 ['n, 3, 1, 2'], 'n, 6', dict(n=1), [(2, 3, 1, 2)],
+                 ['float_'], jtu.rand_default(self.rng()))
 
   def test_transpose(self):
     self.check(lambda x: lax.transpose(x, (1, 0, 2)),

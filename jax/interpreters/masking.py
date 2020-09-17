@@ -403,6 +403,8 @@ class MaskTrace(Trace):
     out_aval = primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals, polymorphic_shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
     logical_shapes = map(shape_as_value, polymorphic_shapes)
+    # TODO(mattjj): generalize mask rule signature
+    if primitive.name == 'reshape': params['polymorphic_shapes'] = polymorphic_shapes
     out = masking_rule(vals, logical_shapes, **params)
     if primitive.multiple_results:
       return map(partial(MaskTracer, self), out, (o.shape for o in out_aval))
