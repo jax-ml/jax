@@ -19,7 +19,6 @@ import scipy.linalg
 import textwrap
 
 from jax import jit, vmap
-from .. import api
 from .. import lax
 from .. import lax_linalg
 from ..numpy._util import _wraps
@@ -238,18 +237,36 @@ def triu(m, k=0):
 _expm_description = textwrap.dedent("""
 In addition to the original NumPy argument(s) listed below,
 also supports the optional boolean argument ``upper_triangular``
-to specify whether the ``A`` matrix is upper triangular.
+to specify whether the ``A`` matrix is upper triangular, and the optional
+argument ``max_squarings`` to specify the max number of squarings allowed
+in the scaling-and-squaring approximation method. Return nan if the actual
+number of squarings required is more than ``max_squarings``.
+
+The number of required squarings = max(0, ceil(log2(norm(A)) - c)
+where norm() denotes the L1 norm, and
+  c=2.42 for float64 or complex128,
+  c=1.97 for float32 or complex64
 """)
 
 @_wraps(scipy.linalg.expm, lax_description=_expm_description)
-def expm(A, *, upper_triangular=False):
-  return _expm(A, upper_triangular)
+def expm(A, *, upper_triangular=False, max_squarings=16):
+  return _expm(A, upper_triangular, max_squarings)
 
-@partial(api.custom_jvp, nondiff_argnums=(1,))
-def _expm(A, upper_triangular):
+@partial(jit, static_argnums=(1, 2))
+def _expm(A, upper_triangular, max_squarings):
   P, Q, n_squarings = _calc_P_Q(A)
-  R = _solve_P_Q(P, Q, upper_triangular)
-  R = _squaring(R, n_squarings)
+
+  def _nan(args):
+    A, *_ = args
+    return jnp.full_like(A, jnp.nan)
+
+  def _compute(args):
+    A, P, Q = args
+    R = _solve_P_Q(P, Q, upper_triangular)
+    R = _squaring(R, n_squarings)
+    return R
+
+  R = lax.cond(n_squarings > max_squarings, _nan, _compute, (A, P, Q))
   return R
 
 @jit
@@ -270,8 +287,8 @@ def _calc_P_Q(A):
    U13, V13 = _pade13(A)
    conds=jnp.array([1.495585217958292e-002, 2.539398330063230e-001,
                     9.504178996162932e-001, 2.097847961257068e+000])
-   U = jnp.select((maxnorm<conds), (U3, U5, U7, U9), U13)
-   V = jnp.select((maxnorm<conds), (V3, V5, V7, V9), V13)
+   U = jnp.select((A_L1<conds), (U3, U5, U7, U9), U13)
+   V = jnp.select((A_L1<conds), (V3, V5, V7, V9), V13)
   elif A.dtype == 'float32' or A.dtype == 'complex64':
     U3,V3 = _pade3(A)
     U5,V5 = _pade5(A)
@@ -280,8 +297,8 @@ def _calc_P_Q(A):
     A = A / 2**n_squarings
     U7,V7 = _pade7(A)
     conds=jnp.array([4.258730016922831e-001, 1.880152677804762e+000])
-    U = jnp.select((maxnorm<conds), (U3, U5), U7)
-    V = jnp.select((maxnorm<conds), (V3, V5), V7)
+    U = jnp.select((A_L1<conds), (U3, U5), U7)
+    V = jnp.select((A_L1<conds), (V3, V5), V7)
   else:
     raise TypeError("A.dtype={} is not supported.".format(A.dtype))
   P = U + V  # p_m(A) : numerator
@@ -300,11 +317,17 @@ def _precise_dot(A, B):
 @jit
 def _squaring(R, n_squarings):
   # squaring step to undo scaling
-  def my_body_fun(i,R):
-    return _precise_dot(R, R)
-  lower = jnp.zeros(1, dtype=n_squarings.dtype)
-  R = lax.fori_loop(lower[0], n_squarings, my_body_fun, R)
-  return R
+  def _squaring_precise(x):
+    return _precise_dot(x, x)
+
+  def _identity(x):
+    return x
+
+  def _scan_f(c, i):
+    return lax.cond(i < n_squarings, _squaring_precise, _identity, c), None
+  res, _ = lax.scan(_scan_f, R, jnp.arange(16))
+
+  return res
 
 def _pade3(A):
   b = (120., 60., 12., 1.)
@@ -564,12 +587,6 @@ def _diff_pade13(args):
   Lu = _precise_dot(A, Lw) + _precise_dot(E, W)
   Lv = _precise_dot(A6, Lz1) + _precise_dot(M6, Z1) + Lz2
   return U, V, Lu, Lv, s
-
-@_expm.defjvp
-def _expm_jvp(upper_triangular, primals, tangents):
-  matrix, = primals
-  g, = tangents
-  return expm_frechet(matrix, g, compute_expm=True)
 
 
 @_wraps(scipy.linalg.block_diag)
