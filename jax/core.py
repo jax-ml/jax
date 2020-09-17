@@ -1493,7 +1493,8 @@ def pp_kv_pairs(kv_pairs):
 @config.register_omnistaging_disabler
 def omnistaging_disabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
-      new_main, reset_trace_state, TraceStack, TraceState, extend_axis_env
+      new_main, reset_trace_state, TraceStack, TraceState, extend_axis_env, \
+      eval_context
 
   class TraceStack:
     upward: List[MainTrace]
