@@ -1184,6 +1184,9 @@ def ravel_multi_index(multi_index, dims, mode='raise', order='C'):
     if not issubdtype(_dtype(index), integer):
       raise TypeError("only int indices permitted")
   if mode == "raise":
+    if _any(isinstance(i, core.Tracer) for i in multi_index):
+      raise ValueError("ravel_multi_index: mode='raise' is not compatible with jit. "
+        "Use mode='wrap' or mode='clip'")
     if _any(any((i < 0) | (i >= d)) for i, d in zip(multi_index, dims)):
       raise ValueError("invalid entry in coordinates array")
   elif mode == "clip":

@@ -2788,7 +2788,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         else:
           raise
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
-    if mode != 'raise':
+    if mode == 'raise':
+      self.assertRaisesRegex(
+        ValueError, "ravel_multi_index: mode='raise' is not compatible with jit",
+        jax.jit(jnp_fun), *args_maker())
+    else:
       self._CompileAndCheck(jnp_fun, args_maker)
 
 
