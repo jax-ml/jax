@@ -1784,6 +1784,14 @@ class APITest(jtu.JaxTestCase):
       jaxpr = api.make_jaxpr(lambda: jnp.add(1, 1))()
       self.assertLen(jaxpr.jaxpr.eqns, 0)
 
+  def test_eval_context(self):
+    @jit
+    def f():
+      with core.eval_context():
+        assert jnp.add(1, 1) == 2
+
+    f()  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
