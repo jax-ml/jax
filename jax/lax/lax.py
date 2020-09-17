@@ -2471,6 +2471,10 @@ def _conv_general_dilated_shape_rule(
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
     batch_group_count, **unused_kwargs) -> Tuple[int, ...]:
   assert type(dimension_numbers) is ConvDimensionNumbers
+  if len(lhs.shape) != len(rhs.shape):
+    msg = ("conv_general_dilated lhs and rhs must have the same number of "
+           "dimensions, but got {} and {}.")
+    raise ValueError(msg.format(lhs.shape, rhs.shape))
   if not feature_group_count > 0:
     msg = ("conv_general_dilated feature_group_count "
            "must be a positive integer, got {}.")
