@@ -2011,7 +2011,7 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       lax.population_count(True)
 
-  def test_conv_general_dilated_different_shapes_error(self):
+  def test_conv_general_dilated_different_input_ranks_error(self):
     # https://github.com/google/jax/issues/4316
     msg = ("conv_general_dilated lhs and rhs must have the same number of "
            "dimensions")
