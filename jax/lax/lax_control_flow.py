@@ -2413,8 +2413,7 @@ def associative_scan(fn, elems, reverse=False):
       results = lowered_fn([odd_elem[:-1] for odd_elem in odd_elems],
                            [elem[2::2] for elem in elems])
     else:
-      results = lowered_fn([odd_elem for odd_elem in odd_elems],
-                           [elem[2::2] for elem in elems])
+      results = lowered_fn(list(odd_elems), [elem[2::2] for elem in elems])
 
     # The first element of a scan is the same as the first element
     # of the original `elems`.

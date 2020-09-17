@@ -278,7 +278,7 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
     ValueError if input devices are inconsistent.
   """
   try:
-    device, = set(d for d in devices if d is not None) or (None,)
+    device, = {d for d in devices if d is not None} or (None,)
     return device
   except ValueError as err:
     msg = "primitive arguments must be colocated on the same device, got {}"

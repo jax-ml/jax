@@ -1197,8 +1197,8 @@ def axis_frame(axis_name):
   for frame in reversed(frames):
     if frame.name == axis_name:
       return frame
-  else:
-    raise NameError("unbound axis name: {}".format(axis_name))
+
+  raise NameError("unbound axis name: {}".format(axis_name))
 
 def axis_index(axis_name):
   """Return the index along the mapped axis ``axis_name``.

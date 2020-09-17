@@ -112,9 +112,9 @@ def download_and_verify_bazel():
     sys.stdout.write("\n")
 
     # Verify that the downloaded Bazel binary has the expected SHA256.
-    downloaded_file = open(tmp_path, "rb")
-    contents = downloaded_file.read()
-    downloaded_file.close()
+    with open(tmp_path, "rb") as downloaded_file:
+      contents = downloaded_file.read()
+
     digest = hashlib.sha256(contents).hexdigest()
     if digest != package.sha256:
       print(
@@ -123,9 +123,8 @@ def download_and_verify_bazel():
       sys.exit(-1)
 
     # Write the file as the bazel file name.
-    out_file = open(package.file, "wb")
-    out_file.write(contents)
-    out_file.close()
+    with open(package.file, "wb") as out_file:
+      out_file.write(contents)
 
     # Mark the file as executable.
     st = os.stat(package.file)
@@ -223,15 +222,14 @@ build:short_logs --output_filter=DONT_MATCH_ANYTHING
 
 
 def write_bazelrc(cuda_toolkit_path=None, cudnn_install_path=None, **kwargs):
-  f = open("../.bazelrc", "w")
-  f.write(BAZELRC_TEMPLATE.format(**kwargs))
-  if cuda_toolkit_path:
-    f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
-            .format(cuda_toolkit_path=cuda_toolkit_path))
-  if cudnn_install_path:
-    f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n"
-            .format(cudnn_install_path=cudnn_install_path))
-  f.close()
+  with open("../.bazelrc", "w") as f:
+    f.write(BAZELRC_TEMPLATE.format(**kwargs))
+    if cuda_toolkit_path:
+      f.write("build --action_env CUDA_TOOLKIT_PATH=\"{cuda_toolkit_path}\"\n"
+              .format(cuda_toolkit_path=cuda_toolkit_path))
+    if cudnn_install_path:
+      f.write("build --action_env CUDNN_INSTALL_PATH=\"{cudnn_install_path}\"\n"
+              .format(cudnn_install_path=cudnn_install_path))
 
 
 BANNER = r"""

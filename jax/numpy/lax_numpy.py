@@ -3346,7 +3346,7 @@ def lexsort(keys, axis=-1):
   keys = tuple(keys)
   if len(keys) == 0:
     raise TypeError("need sequence of keys with len > 0 in lexsort")
-  if len(set(shape(key) for key in keys)) > 1:
+  if len({shape(key) for key in keys}) > 1:
     raise ValueError("all keys need to be the same shape")
   if ndim(keys[0]) == 0:
     return np.int64(0)
@@ -3769,7 +3769,7 @@ def _index_to_gather(x_shape, idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if (isinstance(e, Sequence) or isinstance(e, ndarray)))
+      if isinstance(e, (Sequence, ndarray)))
     advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
@@ -3838,8 +3838,7 @@ def _index_to_gather(x_shape, idx):
     except TypeError:
       abstract_i = None
     # Handle basic int indexes.
-    if (isinstance(abstract_i, ConcreteArray) or
-        isinstance(abstract_i, ShapedArray)) and _int(abstract_i):
+    if isinstance(abstract_i, (ConcreteArray,ShapedArray)) and _int(abstract_i):
       if x_shape[x_axis] == 0:
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
@@ -3939,8 +3938,8 @@ def _index_to_gather(x_shape, idx):
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
   return (isinstance(x, ndarray) and np.ndim(x) != 0
-          or isinstance(x, Sequence)
-          or isinstance(x, slice) or x is Ellipsis or x is None)
+          or isinstance(x, (Sequence, slice))
+          or x is Ellipsis or x is None)
 
 def _eliminate_deprecated_list_indexing(idx):
   # "Basic slicing is initiated if the selection object is a non-array,

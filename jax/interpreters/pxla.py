@@ -785,7 +785,7 @@ def get_num_partitions(*partitions):
   if len(partition_specs) == 0:
     # Everything is specified as replicated (all Nones).
     return None
-  num_partitions_set = set(np.prod(spec) for spec in partition_specs)
+  num_partitions_set = {np.prod(spec) for spec in partition_specs}
   if len(num_partitions_set) > 1:
     raise ValueError(
         f"All partition specs must use the same number of total partitions, "
@@ -1291,8 +1291,8 @@ class DynamicAxisEnv(list):
     for frame in reversed(self):
       if frame.name == axis_name:
         return frame
-    else:
-      assert False
+
+    raise AssertionError
 
   @property
   def sizes(self):
