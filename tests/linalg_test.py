@@ -1292,20 +1292,37 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testExpmFrechet(self, n, dtype, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    args_maker = lambda: [rng((n, n), dtype), rng((n, n), dtype),]
+    if dtype == np.float64 or dtype == np.complex128:
+      target_norms = [1.0e-2, 2.0e-1, 9.0e-01, 2.0, 3.0]
+      # TODO(zhangqiaorjc): Reduce tol to default 1e-15.
+      tol = {
+        np.dtype(np.float64): 1e-14,
+        np.dtype(np.complex128): 1e-14,
+      }
+    elif dtype == np.float32 or dtype == np.complex64:
+      target_norms = [4.0e-1, 1.0, 3.0]
+      tol = None
+    else:
+      raise TypeError("dtype={} is not supported.".format(dtype))
+    for norm in target_norms:
+      def args_maker():
+        a = rng((n, n), dtype)
+        a = a / np.linalg.norm(a, 1) * norm
+        e = rng((n, n), dtype)
+        return [a, e, ]
 
-    #compute_expm is True
-    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=True)
-    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=True)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=False)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
-    #compute_expm is False
-    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=False)
-    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=False)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=False)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+      #compute_expm is True
+      osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=True)
+      jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=True)
+      self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                              check_dtypes=False, tol=tol)
+      self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+      #compute_expm is False
+      osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=False)
+      jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=False)
+      self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                              check_dtypes=False, tol=tol)
+      self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name":
@@ -1315,12 +1332,30 @@ class ScipyLinalgTest(jtu.JaxTestCase):
      for dtype in float_types + complex_types
      for rng_factory in [jtu.rand_small]))
   def testExpmGrad(self, n, dtype, rng_factory):
-     rng = rng_factory(self.rng())
-     jtu.skip_if_unsupported_type(dtype)
-     a = rng((n, n), dtype)
-     def expm(x):
-       return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
-     jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=2)
+    rng = rng_factory(self.rng())
+    jtu.skip_if_unsupported_type(dtype)
+    a = rng((n, n), dtype)
+    if dtype == np.float64 or dtype == np.complex128:
+      target_norms = [1.0e-2, 2.0e-1, 9.0e-01, 2.0, 3.0]
+    elif dtype == np.float32 or dtype == np.complex64:
+      target_norms = [4.0e-1, 1.0, 3.0]
+    else:
+      raise TypeError("dtype={} is not supported.".format(dtype))
+    for i, norm in enumerate(target_norms):
+      a = a / np.linalg.norm(a, 1) * norm
+      A_L1 = np.linalg.norm(a, 1)
+      def expm(x):
+        return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
+      tol = None
+      if i == len(target_norms) - 1:
+        # TODO(zhangqiaorjc): Reduce tol to default 1e-5 for norm = 3.0.
+        tol = {
+          np.dtype(np.complex64): 0.02,
+          np.dtype(np.float64): 1e-4,
+          np.dtype(np.complex128): 1e-4,
+        }
+      jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=2, atol=tol,
+                      rtol=tol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
