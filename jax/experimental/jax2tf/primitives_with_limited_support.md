@@ -24,9 +24,9 @@ conversion to Tensorflow.
 
 | Affected primitive | Type of limitation | Description | Affected dtypes | Affected devices |
 | --- | --- | --- | --- | --- |
-| acosh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | acosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
-| add | Missing TF support | Primitive is unimplemented | uint16, uint64 | CPU, GPU, TPU |
+| acosh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| add | Missing TF support | Primitive is unimplemented | uint16, uint32, uint64 | CPU, GPU, TPU |
 | asinh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | asinh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | atan2 | Missing TF support | Primitive is unimplemented | bfloat16, float16 | CPU, GPU, TPU |
@@ -34,8 +34,8 @@ conversion to Tensorflow.
 | atanh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | bessel_i0e | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | bessel_i1e | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| conv_general_dilated | Missing TF support | Primitive is unimplemented; likely bug in the HLO -> LLVM IR lowering of XlaConv | complex64, complex128 | CPU, GPU, TPU |
 | conv_general_dilated | Missing TF support | Primitive is unimplemented; batch_group_count != 1 unsupported | ALL | CPU, GPU, TPU |
-| conv_general_dilated | Missing TF support | Primitive is unimplemented; likely bug in the HLO -> LLVM IR lowering of XlaConv | complex128, complex64 | CPU, GPU, TPU |
 | cosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | digamma | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | erf | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
@@ -50,14 +50,14 @@ conversion to Tensorflow.
 | nextafter | Missing TF support | Primitive is unimplemented | bfloat16, float16 | CPU, GPU, TPU |
 | population_count | Missing TF support | Primitive is unimplemented | uint32, uint64 | CPU, GPU, TPU |
 | qr | Missing TF support | Primitive is unimplemented | complex128, complex64 | CPU, GPU, TPU |
-| reduce_window_sum | Missing TF support | Primitive is unimplemented | uint16, uint64 | CPU, GPU, TPU |
+| reduce_window_sum | Missing TF support | Primitive is unimplemented | uint16, uint32, uint64 | CPU, GPU, TPU |
 | rem | Missing TF support | Primitive is unimplemented | bfloat16, float16 | CPU, GPU, TPU |
 | round | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | rsqrt | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | scatter-add | Missing TF support | Primitive is unimplemented | complex64 | TPU |
 | scatter-mul | Missing TF support | Primitive is unimplemented | complex64 | TPU |
-| select_and_gather_add | Missing TF support | Primitive is unimplemented | float64 | CPU, GPU |
 | select_and_gather_add | Missing TF support | Primitive is unimplemented | float32, float64 | TPU |
+| select_and_gather_add | Missing TF support | Primitive is unimplemented | float64 | CPU, GPU |
 | sinh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented | complex128, complex64 | CPU, GPU, TPU |
 | sort | Missing TF support | Primitive is unimplemented; only sorting on last dimension is supported for XlaSort | ALL | CPU, GPU, TPU |
@@ -78,4 +78,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmax`, `argmin`, `bitcast_convert_type`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `device_put`, `dot_general`, `imag`, `integer_pow`, `pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `tie_in`
+`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `device_put`, `dot_general`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `tie_in`
