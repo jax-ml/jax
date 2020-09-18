@@ -312,11 +312,6 @@ def LR_sort(p, evals):
 
 @partial(jit, static_argnums=(3, 4))
 def shifted_QR(Vm, Hm, fm, numeig, sort_fun):
-  ######################################################
-  #######  NEW SORTING FUCTIONS INSERTED HERE  #########
-  ######################################################
-  ######################################################
-  ######################################################
   evals, _ = jnp.linalg.eig(Hm)
   shifts, _ = sort_fun(evals)
   # compress arnoldi factorization
@@ -425,6 +420,12 @@ def eigs(matvec, x0,
       matvec, x0, Vm, Hm, 0, restart, tol, precision)
   fm = residual * norm
 
+  ######################################################
+  #######  NEW SORTING FUCTIONS INSERTED HERE  #########
+  ######################################################
+  ######################################################
+  ######################################################
+  
   # sort_fun returns `num_expand` least relevant eigenvalues
   # (those to be projected out)
   if which == 'LR':
