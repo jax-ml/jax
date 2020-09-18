@@ -20,7 +20,7 @@ import operator as op
 from . import core
 from . import linear_util as lu
 from .tree_util import tree_flatten, tree_unflatten, tree_map, tree_multimap
-from .util import safe_zip, safe_map, unzip2, split_list
+from .util import safe_zip, safe_map, split_list
 from .api_util import flatten_fun_nokwargs, argnums_partial, wrap_hashably
 from .abstract_arrays import raise_to_shaped
 from .ad_util import Zero, stop_gradient_p
@@ -69,9 +69,8 @@ def _memoize(thunk):
   return memoized
 
 def _initial_style_jaxpr(fun, in_avals):
-  jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
-  typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
-  return typed_jaxpr
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  return core.ClosedJaxpr(jaxpr, consts)
 
 def _initial_style_staging() -> bool:
   if config.omnistaging_enabled:
@@ -347,7 +346,7 @@ xla.initial_style_translations[custom_jvp_call_jaxpr_p] = \
 # already been linearized, we can drop the jvp rule.
 def _custom_jvp_call_jaxpr_transpose(cts, *args, fun_jaxpr, jvp_jaxpr_thunk):
   del jvp_jaxpr_thunk
-  return ad.backward_pass(fun_jaxpr.jaxpr, fun_jaxpr.literals, args, cts)
+  return ad.backward_pass(fun_jaxpr.jaxpr, fun_jaxpr.consts, args, cts)
 ad.primitive_transposes[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_transpose
 
 
@@ -600,12 +599,10 @@ def omnistaging_disabler() -> None:
 
   def _initial_style_jaxpr(fun, in_avals):
     in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
-                                                bottom=True, stage_out=False)  # type: ignore
+    jaxpr, _, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
+                                         bottom=True, stage_out=False)  # type: ignore
     assert not any(isinstance(c, core.Tracer) for c in consts)
-    out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
-    typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
-    return typed_jaxpr
+    return core.ClosedJaxpr(jaxpr, consts)
 
   def bind(self, fun, jvp, *args):
     args = map(core.full_lower, args)

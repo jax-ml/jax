@@ -3,46 +3,40 @@ Understanding Jaxprs
 
 Updated: May 3, 2020 (for commit f1a46fe).
 
-Conceptually, one can think of JAX transformations as first tracing the Python
-function to be transformed into a small and well-behaved intermediate form,
-the jaxpr, that is then transformed accordingly, and ultimately compiled and executed.
-One of the reasons JAX can pack so much power into such a small software package
-is that it starts with a familiar and flexible programming interface (Python with NumPy)
-and it uses the actual Python interpreter to do most of the heavy lifting to distill the
-essence of the computation into a simple statically-typed expression language
-with limited higher-order features: the jaxpr language.
+Conceptually, one can think of JAX transformations as first trace-specializing
+the Python function to be transformed into a small and well-behaved
+intermediate form that is then interpreted with transformation-specific
+interpretation rules. One of the reasons JAX can pack so much power into such a
+small software package is that it starts with a familiar and flexible
+programming interface (Python with NumPy) and it uses the actual Python
+interpreter to do most of the heavy lifting to distill the essence of the
+computation into a simple statically-typed expression language with limited
+higher-order features. That language is the jaxpr language.
 
 Not all Python programs can be processed this way, but it turns out that many
-scientific computing and machine learning programs do have this property.
+scientific computing and machine learning programs can.
 
-Before we proceed, it is important to point out that not all JAX transformations
-materialize a jaxpr as described above; some, e.g., differentiation,
-will apply transformations incrementally during tracing.
-Nevertheless, if one wants to understand how JAX works internally, or to
-make use of the result of JAX tracing, it is useful to understand jaxpr.
+Before we proceed, it is important to point out that not all JAX
+transformations literally materialize a jaxpr as described above; some, e.g.,
+differentiation or batching, will apply transformations incrementally during
+tracing. Nevertheless, if one wants to understand how JAX works internally, or
+to make use of the result of JAX tracing, it is useful to understand jaxprs.
 
-A jaxpr instance represents a function with one or more typed parameters (input variables)
-and one or more typed results. The results depend only on the input
-variables; there are no free variables captured from enclosing scopes.
-The inputs and outputs have types, which in JAX are represented as abstract
-values. There are two related representations in the code for jaxprs. The main
-one is :py:class:`jax.core.TypedJaxpr` and is what you obtain when you
-use :py:func:`jax.make_jaxpr` to inspect jaxprs. It has the following
-fields:
+A jaxpr instance represents a function with one or more typed parameters (input
+variables) and one or more typed results. The results depend only on the input
+variables; there are no free variables captured from enclosing scopes. The
+inputs and outputs have types, which in JAX are represented as abstract values.
+There are two related representations in the code for jaxprs,
+:py:class:`jax.core.Jaxpr` and :py:class:`jax.core.ClosedJaxpr`. A
+:py:class:`jax.core.ClosedJaxpr` represents a partially-applied
+:py:class:`jax.core.Jaxpr`, and is what you obtain when you use
+:py:func:`jax.make_jaxpr` to inspect jaxprs. It has the following fields:
 
-  * ``jaxpr``: is the actual computation content of the actual function (described below).
-  * ``literals`` is a list of constants. For various reasons, during tracing JAX
-    will collect the non-scalar constants that arise and will replace them with
-    variables, e.g., constants that appear in the Python program, or the result of
-    constant folding such constants. The variables that stand for these constants
-    are mentioned separately in the enclosed ``jaxpr``.
-    When applying a ``TypedJaxpr`` to some actual
-    arguments, one must pass first the ``literals`` followed by the actual arguments.
-  * ``in_avals`` and ``out_avals`` are the types of the input variables
-    (excluding the ones that correspond to the ``literals``), and of the output values.
-    These types are called in JAX abstract values, e.g., ``ShapedArray(float32[10,10])``.
+  * ``jaxpr``: is a :py:class:`jax.core.Jaxpr` representing the actual
+    computation content of the function (described below).
+  * ``consts`` is a list of constants.
 
-The most interesting part of the TypedJaxpr is the actual execution content,
+The most interesting part of the ClosedJaxpr is the actual execution content,
 represented as a :py:class:`jax.core.Jaxpr` as printed using the following
 grammar::
 
@@ -51,15 +45,18 @@ grammar::
                in  [Expr+] }
 
 where:
-  * The parameter of the jaxpr are shown as two lists of variables separated by
+  * The parameters of the jaxpr are shown as two lists of variables separated by
     ``;``. The first set of variables are the ones that have been introduced
     to stand for constants that have been hoisted out. These are called the
-    `constvars`. The second list of variables are the real input variables.
+    ``constvars``, and in a :py:class:`jax.core.ClosedJaxpr` the ``consts``
+    field holds corresponding values. The second list of variables, called
+    ``invars``, correspond to the inputs of the traced Python function.
   * ``Eqn*`` is a list of equations, defining intermediate variables referring to
     intermediate expressions. Each equation defines one or more variables as the
     result of applying a primitive on some atomic expressions. Each equation uses only
     input variables and intermediate variables defined by previous equations.
-  * ``Expr+``: is a list of output atomic expressions for the jaxpr.
+  * ``Expr+``: is a list of output atomic expressions (literals or variables)
+    for the jaxpr.
 
 Equations are printed as follows::
 
@@ -69,9 +66,10 @@ where:
   * ``Var+`` are one or more intermediate variables to be defined as the
     output of a primitive invocation (some primitives can return multiple values)
   * ``Expr+`` are one or more atomic expressions, each either a variable or a
-    literal constant. A special form of an atomic expression is the `unit`
-    expression, printed as ``*`` and standing for a value that is not needed
-    in the rest of the computation and has been elided.
+    literal constant. A special variable ``unitvar`` or literal ``unit``,
+    printed as ``*``, represents a value that is not needed
+    in the rest of the computation and has been elided. That is, units are just
+    placeholders.
   * ``Param*`` are zero or more named parameters to the primitive, printed in
     square brackets. Each parameter is shown as ``Name = Value``.
 

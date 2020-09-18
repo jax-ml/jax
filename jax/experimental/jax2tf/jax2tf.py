@@ -252,7 +252,7 @@ def _interpret_subtrace(main: core.MainTrace, *in_vals: TfValOrUnit):
   yield out_vals
 
 
-def _interpret_jaxpr(jaxpr: core.TypedJaxpr, *args: TfValOrUnit) -> Sequence[TfVal]:
+def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfValOrUnit) -> Sequence[TfVal]:
   """Evaluates a Jaxpr with tf.Tensor arguments.
 
   It is safe to call this function with arguments TfVal or TfValOrUnit, they
@@ -954,8 +954,8 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
   assert len(consts) == 0, "Reduction computation cannot have constants"
 
   def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
-    typed_jaxpr = _mk_typed_jaxpr(jaxpr, consts)
-    res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2)
     return res
 
   return _common_reduce_window(
@@ -1134,11 +1134,6 @@ def _scatter_shape(operand, scatter_indices, updates, dimension_numbers):
       dimension_numbers=dimension_numbers)
   return out.shape
 
-def _mk_typed_jaxpr(jaxpr: core.Jaxpr, literals: Sequence) -> core.TypedJaxpr:
-  return core.TypedJaxpr(jaxpr, literals,
-                         tuple(map(lambda v: v.aval, jaxpr.invars)),
-                         tuple(map(lambda v: v.aval, jaxpr.outvars)))
-
 @functools.partial(bool_to_int8, argnums=(0, 2))
 def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
              dimension_numbers, indices_are_sorted, unique_indices):
@@ -1150,8 +1145,8 @@ def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
 
   def update_computation(arg1: TfVal, arg2: TfVal) -> TfVal:
-    typed_jaxpr = _mk_typed_jaxpr(update_jaxpr, update_consts)
-    res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
+    closed_jaxpr = core.ClosedJaxpr(update_jaxpr, update_consts)
+    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2)
     return res
 
   o_spec = tf.TensorSpec((), dtype=operand.dtype)
@@ -1177,7 +1172,7 @@ tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 
 def _cond(index: TfVal, *operands: TfValOrUnit,
-          branches: Sequence[core.TypedJaxpr],
+          branches: Sequence[core.ClosedJaxpr],
           linear: Sequence[bool]) -> Sequence[TfValOrUnit]:
   del linear
   # tf.cond needs lambdas with no arguments.
@@ -1189,8 +1184,8 @@ def _cond(index: TfVal, *operands: TfValOrUnit,
 tf_impl[lax.cond_p] = _cond
 
 
-def _while(*args: TfValOrUnit, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
-           body_nconsts: int, body_jaxpr: core.TypedJaxpr) -> Sequence[TfValOrUnit]:
+def _while(*args: TfValOrUnit, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
+           body_nconsts: int, body_jaxpr: core.ClosedJaxpr) -> Sequence[TfValOrUnit]:
   cond_consts, body_consts, init_carry = util.split_list(args, [cond_nconsts,
                                                                 body_nconsts])
   if cond_jaxpr.out_avals[0].shape:  # type: ignore[attr-defined]
@@ -1209,8 +1204,8 @@ def _while(*args: TfValOrUnit, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
 
 
 def _batched_cond_while(*args: TfValOrUnit,
-                        cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
-                        body_nconsts: int, body_jaxpr: core.TypedJaxpr
+                        cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
+                        body_nconsts: int, body_jaxpr: core.ClosedJaxpr
                         ) -> Sequence[TfValOrUnit]:
   """Interprets a while_loop with a batched condition.
 
@@ -1333,7 +1328,7 @@ def _svd(operand, full_matrices, compute_uv):
 tf_impl[lax_linalg.svd_p] = _svd
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
-                           fun_jaxpr: core.TypedJaxpr,
+                           fun_jaxpr: core.ClosedJaxpr,
                            jvp_jaxpr_thunk: Callable) -> Sequence[TfValOrUnit]:
   # TODO(necula): ensure that there is no AD transformation in scope
   res = _interpret_jaxpr(fun_jaxpr, *args)
@@ -1343,7 +1338,7 @@ tf_impl[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr
 
 
 def _custom_vjp_call_jaxpr(*args: TfValOrUnit,
-                           fun_jaxpr: core.TypedJaxpr,
+                           fun_jaxpr: core.ClosedJaxpr,
                            **_) -> Sequence[TfValOrUnit]:
   # TODO(necula): ensure that there is no AD transformation in scope
   res = _interpret_jaxpr(fun_jaxpr, *args)
