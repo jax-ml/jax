@@ -403,10 +403,8 @@ def eigs(matvec, x0,
     int: Number of inner krylov iterations of the last arnoldi 
       factorization.
   """
-  shape = x0.shape
   dtype = x0.dtype
-
-  dim = np.prod(shape).astype(np.int32)
+  dim = x0.shape[0]
   num_expand = restart - numeig
 
   if (num_expand <= 1) and (restart < dim):
@@ -419,7 +417,7 @@ def eigs(matvec, x0,
                      f"dim = {dim}")
 
   # initialize arrays
-  Vm = jnp.zeros((restart, x0.shape[0]),
+  Vm = jnp.zeros((restart, dim),
                  dtype=dtype)
   Hm = jnp.zeros((restart, restart), dtype=dtype)
   # perform initial arnoldi factorization
