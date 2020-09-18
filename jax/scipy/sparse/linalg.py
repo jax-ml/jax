@@ -303,9 +303,6 @@ def LR_sort(p, evals):
   inds = jnp.argsort(jnp.real(evals), kind='stable')[::-1]
   shifts = evals[inds][-p:]
   return shifts, inds
-
-
-# #######################################################
 # #######################################################
 # #######################################################
 
@@ -423,15 +420,14 @@ def eigs(matvec, x0,
   ######################################################
   #######  NEW SORTING FUCTIONS INSERTED HERE  #########
   ######################################################
-  ######################################################
-  ######################################################
-  
   # sort_fun returns `num_expand` least relevant eigenvalues
   # (those to be projected out)
   if which == 'LR':
     sort_fun = Partial(LR_sort, num_expand)
   else:
     raise ValueError(f"which = {which} not implemented")
+  ######################################################
+  ######################################################
 
   it = 1  # we already did one arnoldi factorization
   if maxiter > 1:
