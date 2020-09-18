@@ -36,7 +36,7 @@ There are two related representations in the code for jaxprs,
     computation content of the function (described below).
   * ``consts`` is a list of constants.
 
-The most interesting part of the ClosdJaxpr is the actual execution content,
+The most interesting part of the ClosedJaxpr is the actual execution content,
 represented as a :py:class:`jax.core.Jaxpr` as printed using the following
 grammar::
 
