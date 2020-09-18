@@ -2751,6 +2751,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(jnp.unravel_index(-2, (2, 1, 3,)), (1, 0, 1))
     self.assertEqual(jnp.unravel_index(-3, (2,)), (0,))
 
+  @parameterized.parameters(
+    ([[3, 6, 6], [4, 5, 1]], (7, 6)),
+    ([[3, 6, 6], [4, 5, 1],[3, 2, 2]], (7, 8, 5)),
+    ((3, 1, 4, 1), (6, 7, 8, 9)))
+  def testRavelMultiIndex(self, multi_index, dims):
+    args_maker = lambda: (multi_index, dims)
+    self._CheckAgainstNumpy(np.ravel_multi_index, jnp.ravel_multi_index,
+                            args_maker)
+    self._CompileAndCheck(jnp.ravel_multi_index, args_maker)
+
+  def testRavelMultiIndexOOB(self):
+    self.assertEqual(tuple(jnp.ravel_multi_index([[3, 6, 6], [4, 5, 1]], (5, 6))), (22, 29, 25))
+    # self.assertEqual(jnp.ravel_multi_index(-2, (2, 1, 3,)), (1, 0, 1))
+    # self.assertEqual(jnp.ravel_multi_index(-3, (2,)), (0,))
+
   def testAstype(self):
     rng = np.random.RandomState(0)
     args_maker = lambda: [rng.randn(3, 4).astype("float32")]
