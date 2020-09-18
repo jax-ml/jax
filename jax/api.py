@@ -437,7 +437,8 @@ def xla_computation(fun: Callable,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
                     instantiate_const_outputs: Optional[bool] = None,
-                    return_shape: bool = False) -> Callable:
+                    return_shape: bool = False,
+                    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -551,7 +552,8 @@ def xla_computation(fun: Callable,
       out_parts=out_parts,
       backend=backend,
       tuple_args=tuple_args,
-      instantiate_const_outputs=instantiate_const_outputs)
+      instantiate_const_outputs=instantiate_const_outputs,
+      donate_argnums=donate_argnums)
 
   def computation_maker(*args, **kwargs):
     xla_return = internal_computation_maker(*args, **kwargs)
@@ -582,8 +584,7 @@ def _xla_computation(
     backend: Optional[str] = None,
     tuple_args: Optional[bool] = None,
     instantiate_const_outputs: Optional[bool] = True,
-    donate_argnums: Union[int, Iterable[int]] = ()
-) -> Callable:
+    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """An internal implementation for `xla_computation` and `_cpp_jit`.
 
   See `xla_computation` for the full documentation.
@@ -675,14 +676,11 @@ def _xla_computation(
       out_tuple = build_out_tuple()
 
     if any(donated_invars):
-      # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-      backend_ = xb.get_backend(backend)
-      if backend_.platform in ("gpu", "tpu"):
-        donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
-                                    tuple_args)
-      if any(donated_invars):
-        shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
-        warn("Some donated buffers were not usable: {}".format(", ".join(shapes)))
+      donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
+                                          tuple_args)
+    if any(donated_invars):
+      shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
+      warn("Some donated buffers were not usable: {}".format(", ".join(shapes)))
     built = c.build(out_tuple)
     out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)

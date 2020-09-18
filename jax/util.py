@@ -248,9 +248,9 @@ def canonicalize_axis(axis, num_dims):
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
   if not -num_dims <= axis < num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
+    raise ValueError(
+        "axis {} is out of bounds for array of dimension {}".format(
+            axis, num_dims))
   if axis < 0:
     axis = axis + num_dims
   return axis
