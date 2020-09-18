@@ -221,7 +221,7 @@ def arnoldi_fact(matvec, v0, Vm, Hm, start, num_krylov_vecs,
     jax.ShapedArray: Upper Hessenberg matrix of shape
       `(num_krylov_vecs, num_krylov_vecs`) of the Arnoldi processs.
     jax.ShapedArray: The unnormalized residual of the Arnoldi process.
-    int: The norm of the residual.
+    float: The norm of the residual.
     int: The number of performed iterations.
     bool: if `True`: iteration hit an invariant subspace.
           if `False`: iteration terminated without encountering
