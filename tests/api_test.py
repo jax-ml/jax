@@ -1792,6 +1792,27 @@ class APITest(jtu.JaxTestCase):
 
     f()  # doesn't crash
 
+  def test_concrete_error_because_arg(self):
+    @jax.jit
+    def f(x, y):
+      if x > y:
+        return x
+      else:
+        return y
+
+    msg = "at positions \[0, 1\]"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2)
+
+  def test_concrete_error_because_const(self):
+    @jax.jit
+    def f():
+      assert jnp.add(1, 1) > 0
+
+    msg = "on these lines"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f()
+
 
 class RematTest(jtu.JaxTestCase):
 

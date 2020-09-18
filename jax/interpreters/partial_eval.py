@@ -829,12 +829,12 @@ class DynamicJaxprTracer(core.Tracer):
                 "for `jit` to avoid tracing particular arguments of transformed "
                 "functions, though at the cost of more recompiles.")
     elif progenitor_eqns:
-      const_msgs = [f"  operation {core.pp_eqn(eqn, print_shapes=True)}\n"
-                    f"    from line {source_info_util.summarize(eqn.source_info)}"
-                    for eqn in progenitor_eqns]
+      msts = [f"  operation {core.pp_eqn(eqn, print_shapes=True)}\n"
+              f"    from line {source_info_util.summarize(eqn.source_info)}"
+              for eqn in progenitor_eqns]
       origin = (f"While tracing the function {self._trace.main.source_info}, "
                 "this value became a tracer due to JAX operations on these lines:"
-                "\n\n" + "\n\n".join(msgs))
+                "\n\n" + "\n\n".join(msts))
     else:
       origin = ("The error occured while tracing the function "
                 f"{self._trace.main.source_info}.")
