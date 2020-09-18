@@ -315,59 +315,21 @@ def _cpp_jit(
                              python_jitted_f, FLAGS.jax_enable_x64,
                              config.read("jax_disable_jit"), static_argnums)
 
-  # The following exists for the ony purpose of supporting the following usage:
-  # class A:
-  #   @functools.partial(jax.jit, static_argnums=0)
-  #   def _compute_log_data(self, ...)
-  #     ...
-  # We discourage this practice as it's not a pure stateless functions, but
-  # the C++ codepath supports this for backward compatibility.
-  # Note that the JAX team is thinking of requiring the static arguments to be
-  # hashable, so maybe such usage will be forbidden in the future.
-  # Prefer for example an attribute or property access:
-  # class A:
-  #   def __init__(self):
-  #     self.jitted_f = jax.jit(self.f)
+  # We need such function to wrap the result for many reasons. It is not just
+  # cosmetic, everything will blow up without this because:
+  # 1. JAX heavily relies on setting function attributes to `DeviceArray`. e.g.
+  #   setattr(DeviceArray, "_multi_slice", _multi_slice), so we need the
+  #   returned object to be understood as a function to be bound (i.e. self
+  #   added to the arguments).
+  # 2. We cannot use a lambda and need the @wraps(fun) because parameterized
+  #    test depend on the name of the returned function.
 
-  # We try to do this more expensive path only when it's needed and assume
-  # users respect the `self` convention.
-  # See `_IsMethodDecorator`
-  # Note that @classmethod and @staticmethod are *not* supported, both in
-  # _python_jit and _cpp_jit as they won't be callable.
-  if 0 in static_argnums and inspect.getfullargspec(fun).args[0] == "self":
-    return _IsMethodDecorator(cpp_jitted_f)
-  else:
-    return cpp_jitted_f
+  @wraps(fun)
+  @api_boundary
+  def f_jitted(*args, **kwargs):
+    return cpp_jitted_f(*args, **kwargs)
 
-
-class _IsMethodDecorator:
-  """Detects whether `fun` is a method and resolves the instance.
-
-  A function is decorated *before* it is bound, so we cannot directly
-  determine whether it is a 'method' or 'function'. We can rely on the
-  Descriptor protocol (see below) to detect, at *call time* whether it was a
-  method and retrieve the associated object.
-
-  We prefer to do this only when we think it's needed as the goal is to remove
-  all overheads.
-
-  https://docs.python.org/3/howto/descriptor.html#functions-and-methods
-  """
-
-  def __init__(self, func):
-    self.func = func
-    self.is_method = False
-
-  def __get__(self, instance, owner):
-    self.is_method = True
-    self.instance = instance
-    return self
-
-  def __call__(self, *args, **kwargs):
-    if self.is_method:
-      return self.func(self.instance, *args, **kwargs)
-    else:
-      return self.func(*args, **kwargs)
+  return f_jitted
 
 
 @contextmanager
