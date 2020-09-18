@@ -5688,7 +5688,7 @@ def create_token(x):
        value of `x` is ignored.
   """
   # x is a dummy argument used to tie the operator into a trace.
-  return create_token_p.bind(x)
+  return create_token_p.bind(stop_gradient(x))
 
 create_token_p = Primitive("create_token")
 create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
