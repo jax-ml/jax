@@ -1318,7 +1318,9 @@ class ScipyLinalgTest(jtu.JaxTestCase):
      rng = rng_factory(self.rng())
      jtu.skip_if_unsupported_type(dtype)
      a = rng((n, n), dtype)
-     jtu.check_grads(jsp.linalg.expm, (a,), modes=["fwd"], order=1)
+     def expm(x):
+       return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
+     jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=2)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
