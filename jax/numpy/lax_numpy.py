@@ -1196,6 +1196,24 @@ def unravel_index(indices, shape):
   idx = clipped_indices % cumulative_sizes[:-1] // cumulative_sizes[1:]
   return tuple(idx)
 
+@_wraps(np.ravel_multi_index)
+def ravel_multi_index(multi_index, dims):
+  multi_index = asarray(multi_index)
+  index_dims = ndim(multi_index)
+
+  if index_dims == 1:
+    N = shape(multi_index)[0]
+  elif index_dims == 2:
+    N, _ = shape(multi_index)
+  else:
+    raise ValueError("multi_index must be tuple of arrays.")
+
+  clipped_indices = [clip(multi_index[i], -dims[i], dims[i] - 1) for i in range(N)]
+  clipped_indices = asarray(clipped_indices)
+  sizes = pad(dims[1:], (0, 1), constant_values=1)
+  cumulative_sizes = cumprod(sizes[::-1])[::-1]
+  idx = dot(cumulative_sizes, clipped_indices)
+  return idx
 
 @_wraps(np.squeeze)
 def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
