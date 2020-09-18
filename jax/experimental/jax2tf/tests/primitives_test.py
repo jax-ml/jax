@@ -180,8 +180,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     def custom_assert(result_jax, result_tf):
       # cholesky_p returns garbage in the strictly upper triangular part of the
       # result, so we can safely ignore that part.
-      result_jax = jnp.tril(result_jax)
-      self.assertAllClose(result_jax, result_tf, atol=tol)
+      self.assertAllClose(jnp.tril(result_jax), result_tf, atol=tol)
 
     self.ConvertAndCompare(harness.dyn_fun, operand,
                            custom_assert=custom_assert,
