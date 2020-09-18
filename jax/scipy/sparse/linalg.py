@@ -274,8 +274,8 @@ def arnoldi_fact(matvec, v0, Vm, Hm, start, num_krylov_vecs,
     Vm, Hm = lax.cond(
         i < num_krylov_vecs - 1,
         lambda x: (Vm.at[i + 1, :].set(Av), Hm.at[i + 1, i].set(norm)),  #pylint: disable=line-too-long
-        lambda x: (x[0], x[1]),
-        (Vm, Hm, Av, i, norm))
+        lambda x: (Vm, Hm),
+        None)
 
     return [Vm, Hm, Av, norm, i + 1]
 
