@@ -1793,6 +1793,9 @@ class APITest(jtu.JaxTestCase):
     f()  # doesn't crash
 
   def test_concrete_error_because_arg(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
     @jax.jit
     def f(x, y):
       if x > y:
@@ -1805,6 +1808,9 @@ class APITest(jtu.JaxTestCase):
       f(1, 2)
 
   def test_concrete_error_because_const(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
     @jax.jit
     def f():
       assert jnp.add(1, 1) > 0
