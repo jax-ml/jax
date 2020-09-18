@@ -1344,9 +1344,7 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
   elif compute_right_eigenvectors:
     return tuple(tf.linalg.eig(operand))
   else: # compute_left_eigenvectors == True
-    rank = len(operand.shape)
-    permutation = list(range(rank - 2)) + [rank - 1, rank - 2]
-    wH, vl = tf.linalg.eig(tf.math.conj(tf.transpose(operand, permutation)))
+    wH, vl = tf.linalg.eig(tf.linalg.adjoint(operand))
     wHH = tf.math.conj(wH)
     return tuple([wHH, vl])
 
