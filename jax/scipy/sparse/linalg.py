@@ -367,6 +367,7 @@ def check_eigvals_convergence_iram(beta_m, Hm, tol, numeig):
   return jnp.all(beta_m * vals < thresh)
 
 
+#@partial(jit, static_argnums=(2, 3, 4, 5, 6, 7))
 def eigs(matvec, x0,
          restart=20, numeig=4, which="LR", tol=1E-8,
          maxiter=1000, precision=lax.Precision.HIGHEST):
