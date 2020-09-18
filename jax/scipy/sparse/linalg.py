@@ -389,7 +389,6 @@ def eigs(matvec, x0,
   Args:
     matvec: A callable representing the linear operator.
     x0: An starting vector for the iteration.
-    dim: The matrix dimension of the linear operator `matvec`.
     restart: Number of krylov vectors of the arnoldi factorization.
       numeig: The number of desired eigenvector-eigenvalue pairs.
     which: Which eigenvalues to target. 
