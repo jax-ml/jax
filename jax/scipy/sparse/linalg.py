@@ -272,13 +272,8 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
   h = h.at[k + 1].set(v_norm)
-  breakdown = v_norm == 0.
-  h = lax.cond(breakdown,
-               lambda x: h.at[k].set(1.),
-               lambda x: h,
-               0.)
-
   H = H.at[k, :].set(h)
+  breakdown = v_norm == 0.
   return V, H, breakdown
 
 

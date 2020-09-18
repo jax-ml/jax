@@ -332,15 +332,15 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     Q = np.zeros((n, n + 1), dtype=dtype)
     Q[:, 0] = x0/jax.numpy.linalg.norm(x0)
     Q = jnp.array(Q)
-    H = jax.numpy.zeros((n, n + 1), dtype=dtype)
+    H = jax.numpy.eye(n, n + 1, dtype=dtype)
     tol = A.size*A.size*jax.numpy.finfo(dtype).eps
 
     @jax.tree_util.Partial
     def A_mv(x):
       return matmul_high_precision(A, x)
     for k in range(n):
-      Q, H = jax.scipy.sparse.linalg.kth_arnoldi_iteration(k, A_mv, M, Q, H,
-                                                           tol)
+      Q, H, _ = jax.scipy.sparse.linalg.kth_arnoldi_iteration(k, A_mv, M, Q, H,
+                                                              tol)
     QAQ = matmul_high_precision(Q[:, :n].conj().T, A)
     QAQ = matmul_high_precision(QAQ, Q[:, :n])
     self.assertAllClose(QAQ, H.T[:n, :], rtol=tol, atol=tol)
