@@ -184,16 +184,16 @@ def arnoldi_fact(matvec, v0, Vm, Hm, start, num_krylov_vecs,
   Compute an m-step arnoldi factorization of `matvec`, with
   m <= `num_krylov_vecs`. The factorization will
   do at most `num_krylov_vecs` steps, and stop early if
-  an invariant subspace is encountered. Krylov vectors, 
-  overlaps between krylov vectors and norms are written to 
-  `Vm` and `Hm`, respectively. Upon termination, 
+  an invariant subspace is encountered. Krylov vectors,
+  overlaps between krylov vectors and norms are written to
+  `Vm` and `Hm`, respectively. Upon termination,
   `Vm` and `Hm` will satisfy the Arnoldi recurrence relation
   ```
   matrix @ Vm.T - Vm.T @ Hm - fm * em = 0
   ```
   with `matrix` the matrix representation of `matvec`,
-  `fm = residual * norm` (`residual` and `norm` returned 
-  by `arnoldi_fact`), and `em` a cartesian basis vector of 
+  `fm = residual * norm` (`residual` and `norm` returned
+  by `arnoldi_fact`), and `em` a cartesian basis vector of
   shape `(1, kv.shape[1])` with `em[0, -1] == 1` and 0 elsewhere.
   NOTE: Krylov vectors are currently stored in row-major
   format in `Vm`, i.e. each row of `Vm` is a krylov vector.
@@ -216,9 +216,9 @@ def arnoldi_fact(matvec, v0, Vm, Hm, start, num_krylov_vecs,
     tol: Convergence parameter. Iteration is terminated if the norm of a
       krylov-vector falls below `tol`.
   Returns:
-    jax.ShapedArray: An array of shape 
+    jax.ShapedArray: An array of shape
       `(num_krylov_vecs, np.prod(initial_state.shape))` of krylov vectors.
-    jax.ShapedArray: Upper Hessenberg matrix of shape 
+    jax.ShapedArray: Upper Hessenberg matrix of shape
       `(num_krylov_vecs, num_krylov_vecs`) of the Arnoldi processs.
     jax.ShapedArray: The unnormalized residual of the Arnoldi process.
     int: The norm of the residual.
@@ -273,8 +273,7 @@ def arnoldi_fact(matvec, v0, Vm, Hm, start, num_krylov_vecs,
     Av = lax.cond(norm > tol, lambda x: Av / norm, lambda x: Av * 0.0, None)
     Vm, Hm = lax.cond(
         i < num_krylov_vecs - 1,
-        lambda x:
-        (Vm.at[i + 1, :].set(Av), Hm.at[i + 1, i].set(norm)),  #pylint: disable=line-too-long
+        lambda x: (Vm.at[i + 1, :].set(Av), Hm.at[i + 1, i].set(norm)),  #pylint: disable=line-too-long
         lambda x: (x[0], x[1]),
         (Vm, Hm, Av, i, norm))
 
@@ -373,7 +372,7 @@ def eigs(matvec, x0,
   of `matvec` matches the dtype of the initial state. Otherwise jax
   will raise a TypeError.
 
-  NOTE: Under certain circumstances, the routine can return spurious 
+  NOTE: Under certain circumstances, the routine can return spurious
   eigenvalues 0.0: if the Arnoldi iteration terminated early
   (after numits < restart iterations)
   and numeig > numits, then spurious 0.0 eigenvalues will be returned.
@@ -383,7 +382,7 @@ def eigs(matvec, x0,
     x0: An starting vector for the iteration.
     restart: Number of krylov vectors of the arnoldi factorization.
       numeig: The number of desired eigenvector-eigenvalue pairs.
-    which: Which eigenvalues to target. 
+    which: Which eigenvalues to target.
       Currently supported: `which = 'LR'` (largest real part).
     tol: Convergence flag. If the norm of a krylov vector drops below `tol`
       the iteration is terminated.
@@ -392,7 +391,7 @@ def eigs(matvec, x0,
   Returns:
     jax.ShapedArray: Eigenvalues
     List: Eigenvectors
-    int: Number of inner krylov iterations of the last arnoldi 
+    int: Number of inner krylov iterations of the last arnoldi
       factorization.
   """
   dtype = x0.dtype
