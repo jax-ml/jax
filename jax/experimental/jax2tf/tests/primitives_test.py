@@ -161,6 +161,31 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                              *harness.dyn_args_maker(self.rng()),
                              atol=tol, rtol=tol)
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_cholesky)
+  def test_cholesky(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    if dtype in [dtypes.bfloat16, np.float16]:
+      raise unittest.SkipTest("Cholesky decomposition not supported for "
+                              "(b)float16 in JAX.")
+    operand = harness.dyn_args_maker(self.rng())[0]
+    operand = np.matmul(operand, jnp.conj(np.swapaxes(operand, -1, -2)))
+    tol = None
+    # TODO(bchetioui): very high discrepancy in the float32/complex64 case
+    if dtype in [np.float32, np.complex64]:
+      tol = 1e-2
+    # TODO(bchetioui): also high discrepancy in the float64/complex128 case
+    elif dtype in [np.float64, np.complex128]:
+      tol = 1e-11
+
+    def custom_assert(result_jax, result_tf):
+      # cholesky_p returns garbage in the strictly upper triangular part of the
+      # result, so we can safely ignore that part.
+      self.assertAllClose(jnp.tril(result_jax), result_tf, atol=tol)
+
+    self.ConvertAndCompare(harness.dyn_fun, operand,
+                           custom_assert=custom_assert,
+                           always_custom_assert=True)
+
   @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
   def test_qr(self, harness: primitive_harness.Harness):
     # See jax.lib.lapack.geqrf for the list of compatible types

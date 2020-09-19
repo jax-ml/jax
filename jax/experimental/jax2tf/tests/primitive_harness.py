@@ -536,6 +536,16 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
   for is_stable in [False, True]
 )
 
+lax_linalg_cholesky = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          lambda *args: lax_linalg.cholesky_p.bind(*args),
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
+)
+
 lax_linalg_qr = tuple(
   Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
           lax_linalg.qr,
