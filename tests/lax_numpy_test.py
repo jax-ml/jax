@@ -2763,8 +2763,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testRavelMultiIndexOOB(self):
     self.assertEqual(tuple(jnp.ravel_multi_index([[3, 6, 6], [4, 5, 1]], (5, 6))), (22, 29, 25))
-    # self.assertEqual(jnp.ravel_multi_index(-2, (2, 1, 3,)), (1, 0, 1))
-    # self.assertEqual(jnp.ravel_multi_index(-3, (2,)), (0,))
+    self.assertEqual(tuple(jnp.ravel_multi_index([[-3, 6, 6], [4, 5, 4]], (5, 6))), (-14, 29, 28))
+    self.assertEqual(jnp.ravel_multi_index((3, 1, -4, 1), (6, 7, 8, 9)), 1549)
 
   def testAstype(self):
     rng = np.random.RandomState(0)

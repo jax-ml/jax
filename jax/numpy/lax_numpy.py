@@ -1202,7 +1202,7 @@ def ravel_multi_index(multi_index, dims):
   index_dims = ndim(multi_index)
 
   if index_dims == 1:
-    N = shape(multi_index)[0]
+    N = multi_index.size
   elif index_dims == 2:
     N, _ = shape(multi_index)
   else:
