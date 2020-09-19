@@ -437,7 +437,8 @@ def xla_computation(fun: Callable,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
                     instantiate_const_outputs: Optional[bool] = None,
-                    return_shape: bool = False) -> Callable:
+                    return_shape: bool = False,
+                    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -551,7 +552,8 @@ def xla_computation(fun: Callable,
       out_parts=out_parts,
       backend=backend,
       tuple_args=tuple_args,
-      instantiate_const_outputs=instantiate_const_outputs)
+      instantiate_const_outputs=instantiate_const_outputs,
+      donate_argnums=donate_argnums)
 
   def computation_maker(*args, **kwargs):
     xla_return = internal_computation_maker(*args, **kwargs)
@@ -582,8 +584,7 @@ def _xla_computation(
     backend: Optional[str] = None,
     tuple_args: Optional[bool] = None,
     instantiate_const_outputs: Optional[bool] = True,
-    donate_argnums: Union[int, Iterable[int]] = ()
-) -> Callable:
+    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """An internal implementation for `xla_computation` and `_cpp_jit`.
 
   See `xla_computation` for the full documentation.
