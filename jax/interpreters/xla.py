@@ -656,6 +656,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
                         for a, d in zip(xla_args, donated_invars) if d]
     warn("Some donated buffers were not usable: {}".format(", ".join(unused_donations)))
   built = c.build(out_tuple)
+  print(built.as_hlo_text())
 
   options = xb.get_compile_options(
       num_replicas=nreps,

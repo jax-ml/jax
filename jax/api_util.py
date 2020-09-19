@@ -81,6 +81,15 @@ def argnums_partial(f, dyn_argnums, args):
     dyn_argnums = tuple(dyn_argnums)
   fixed_args = tuple([unit if i in dyn_argnums else wrap_hashably(arg)
                       for i, arg in enumerate(args)])
+
+@lu.transformation
+def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
+  args = [None if arg is unit else arg.val for arg in fixed_args]
+  for i, arg in zip(dyn_argnums, dyn_args):
+    args[i] = arg
+  ans = yield args, kwargs
+  yield ans
+
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
 
@@ -134,14 +143,6 @@ def wrap_hashably(arg):
     return WrapHashably(arg)  # e.g. ndarrays, DeviceArrays
   else:
     return Hashable(arg)
-
-@lu.transformation
-def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
-  args = [None if arg is unit else arg.val for arg in fixed_args]
-  for i, arg in zip(dyn_argnums, dyn_args):
-    args[i] = arg
-  ans = yield args, kwargs
-  yield ans
 
 def flatten_axes(name, treedef, axis_tree):
   # given an axis spec tree axis_tree (a pytree with integers and Nones at the
