@@ -1212,8 +1212,7 @@ def ravel_multi_index(multi_index, dims):
   clipped_indices = asarray(clipped_indices)
   sizes = pad(dims[1:], (0, 1), constant_values=1)
   cumulative_sizes = cumprod(sizes[::-1])[::-1]
-  idx = dot(cumulative_sizes, clipped_indices)
-  return idx
+  return dot(cumulative_sizes, clipped_indices)
 
 @_wraps(np.squeeze)
 def squeeze(a, axis: Union[int, Tuple[int, ...]] = None):
