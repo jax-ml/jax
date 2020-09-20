@@ -676,12 +676,9 @@ def _xla_computation(
       out_tuple = build_out_tuple()
 
     if any(donated_invars):
-      # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-      backend_ = xb.get_backend(backend)
-      if backend_.platform in ("gpu", "tpu"):
-        donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
-                                    tuple_args)
-      if any(donated_invars):
+      donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
+                                          tuple_args)
+      if backend in ("gpu", "tpu") and any(donated_invars):
         shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
         warn("Some donated buffers were not usable: {}".format(", ".join(shapes)))
     built = c.build(out_tuple)
