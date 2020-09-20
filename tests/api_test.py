@@ -239,6 +239,7 @@ class CPPJitTest(jtu.JaxTestCase):
     self.assertDeleted(c)
     self.assertDeleted(d)
 
+  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jnp_array_copy(self):
     # https://github.com/google/jax/issues/3412
 
