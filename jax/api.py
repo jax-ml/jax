@@ -675,7 +675,7 @@ def _xla_computation(
     else:
       out_tuple = build_out_tuple()
 
-    if any(donated_invars) and backend in ("gpu", "tpu"):
+    if any(donated_invars):
       donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
                                           tuple_args)
     if any(donated_invars):
