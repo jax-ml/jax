@@ -102,12 +102,21 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype in [np.float16, dtypes.bfloat16]:
       tf_unimpl(np_dtype)
 
+  if prim is lax_linalg.cholesky_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.complex64, np.complex128]:
+      # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
+      # experimental_compile=True breaks for complex types.
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"))
+
   if prim is lax_linalg.qr_p:
     np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
-      tf_unimpl(np_dtype)
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"))
 
   if prim is lax_linalg.svd_p:
     np_dtype = _to_np_dtype(args[0].dtype)

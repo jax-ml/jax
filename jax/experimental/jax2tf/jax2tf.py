@@ -420,7 +420,7 @@ tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
   lax.linear_solve_p,
-  lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
+  lax_linalg.eig_p, lax_linalg.eigh_p,
   lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
@@ -603,6 +603,7 @@ tf_impl[lax.gt_p] = wrap_binary_op(tf.math.greater)
 tf_impl[lax.le_p] = wrap_binary_op(tf.math.less_equal)
 tf_impl[lax.lt_p] = wrap_binary_op(tf.math.less)
 
+tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
 def _convert_element_type(operand, new_dtype, old_dtype):
   del old_dtype
