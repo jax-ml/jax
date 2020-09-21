@@ -68,6 +68,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     around
     array
     array_equal
+    array_equiv
     array_repr
     array_split
     array_str
