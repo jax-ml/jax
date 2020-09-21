@@ -1352,79 +1352,65 @@ def _vjp(fun: lu.WrappedFun, *primals, **kwargs):
     return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
 
 
-def make_jaxpr(fun: Callable,
-               static_argnums: Union[int, Iterable[int]] = (),
-               return_out_tree: bool = False,
-               ) -> Callable[..., core.ClosedJaxpr]:
+def make_jaxpr(fun: Callable) -> Callable[..., core.TypedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
-    fun: The function whose ``jaxpr`` is to be computed. Its positional
-      arguments and return value should be arrays, scalars, or standard Python
-      containers (tuple/list/dict) thereof.
-    static_argnums: See the :py:func:`jax.jit` docstring.
-    return_out_tree: Whether to also return the output tree of the function.
+    fun: The function whose `jaxpr` is to be computed. Its positional arguments
+      and return value should be arrays, scalars, or standard Python containers
+      (tuple/list/dict) thereof.
 
   Returns:
-    A wrapped version of ``fun`` that when applied to example arguments returns
-      a ``ClosedJaxpr`` representation of ``fun`` on those arguments.
+    A wrapped version of `fun` that when applied to example arguments returns a
+    TypedJaxpr representation of `fun` on those arguments.
 
-  A ``jaxpr`` is JAX's intermediate representation for program traces. The
-  ``jaxpr`` language is based on the simply-typed first-order lambda calculus
-  with let-bindings. :py:func:`make_jaxpr` adapts a function to return its
-  ``jaxpr``, which we can inspect to understand what JAX is doing internally.
-  The ``jaxpr`` returned is a trace of ``fun`` abstracted to
-  :py:class:`ShapedArray` level. Other levels of abstraction exist internally.
+  A `jaxpr` is JAX's intermediate representation for program traces. The `jaxpr`
+  language is based on the simply-typed first-order lambda calculus with
+  let-bindings. `make_jaxpr` adapts a function to return its `jaxpr`, which we
+  can inspect to understand what JAX is doing internally.
 
-  We do not describe the semantics of the ``jaxpr`` language in detail here, but
+  The `jaxpr` returned is a trace of `fun` abstracted to `ShapedArray` level.
+  Other levels of abstraction exist internally.
+
+  We do not describe the semantics of the `jaxpr` language in detail here, but
   instead give a few examples.
 
-  >>> import jax
-  >>>
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
   >>> print(f(3.0))
-  -0.83602
+  -0.83602184
   >>> jax.make_jaxpr(f)(3.0)
-  { lambda  ; a.
+  { lambda  ;  ; a.
     let b = cos a
         c = sin b
-    in (c,) }
+    in [c] }
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
-  { lambda  ; a.
+  { lambda  ;  ; a.
     let b = cos a
-        c = sin a
-        _ = sin b
-        d = cos b
-        e = mul 1.0 d
-        f = neg e
-        g = mul f c
-    in (g,) }
+        c = cos b
+        d = mul 1.0 c
+        e = neg d
+        f = sin a
+        g = mul e f
+    in [g] }
   """
   _check_callable(fun)
-  if isinstance(static_argnums, int):
-    static_argnums = (static_argnums,)
+
+  def pv_like(x):
+    aval = xla.abstractify(x)
+    return pe.PartialVal((aval, core.unit))
 
   @wraps(fun)
-  @api_boundary
   def jaxpr_maker(*args, **kwargs):
     wrapped = lu.wrap_init(fun)
-    if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
-    in_avals = [raise_to_shaped(core.get_aval(x)) for x in jax_args]
-    if config.omnistaging_enabled:
-      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, in_avals)
-    else:
-      in_pvals = [pe.PartialVal.unknown(a) for a in in_avals]
-      jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-          jaxtree_fun, in_pvals, instantiate=True, stage_out=True)  # type: ignore
-      out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
-    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-    if return_out_tree:
-      return closed_jaxpr, out_tree()
-    return closed_jaxpr
+    in_pvals = map(pv_like, jax_args)
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
+        jaxtree_fun, in_pvals, instantiate=True, stage_out_calls=True)
+    out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
+    in_avals = tuple(raise_to_shaped(in_aval) for in_aval, _ in in_pvals)
+    typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
+    return typed_jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
   return jaxpr_maker
