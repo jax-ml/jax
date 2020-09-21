@@ -254,3 +254,6 @@ def canonicalize_axis(axis, num_dims):
   if axis < 0:
     axis = axis + num_dims
   return axis
+
+def ceil_of_ratio(x, y):
+  return -(-x // y)
