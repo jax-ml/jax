@@ -461,19 +461,24 @@ def eigs(matvec, x0,
     converged = check_eigvals_convergence_iram(beta_k, Hk, tol, numeig)
 
     def do_arnoldi(vals):
-      Vk, Hk, fk = vals
+      Vk, Hk, fk, _, _, _, _ = vals
       # restart
       Vm, Hm, residual, norm, numits, ar_converged = arnoldi_fact(
-          matvec, fk, Vk, Hk, numeig, restart,
-          tol, precision)
-      fm = residual * norm
-      return Vm, Hm, fm, norm, numits, ar_converged
+          matvec, fk, Vk, Hk, numeig,
+          restart, tol, precision)
+      fm = residual.ravel() * norm
+      return [Vm, Hm, fm, norm, numits, ar_converged, False]
 
-    res = lax.cond(converged, lambda x:
-                   (Vk, Hk, fk, jnp.linalg.norm(fk), numeig, False),
-                   lambda x: do_arnoldi((Vk, Hk, fk)), None)
+    def cond_arnoldi(vals):
+      return vals[6]
 
-    Vm, Hm, fm, norm, numits, ar_converged = res
+    res = lax.while_loop(cond_arnoldi, do_arnoldi, [
+        Vk, Hk, fk,
+        jnp.linalg.norm(fk), numeig, False,
+        jnp.logical_not(converged)
+    ])
+    
+    Vm, Hm, fm, norm, numits, ar_converged = res[0:6]
     out_vars = [Hm, Vm, fm, it + 1, numits, ar_converged, converged, norm]
     return out_vars
 
