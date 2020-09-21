@@ -1368,6 +1368,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       if i == len(target_norms) - 1:
         # TODO(zhangqiaorjc): Reduce tol to default 1e-5 for norm = 3.0.
         tol = {
+          # Note that due to inner_product, float and complex tol are coupled.
+          np.dtype(np.float32): 0.02,
           np.dtype(np.complex64): 0.02,
           np.dtype(np.float64): 1e-4,
           np.dtype(np.complex128): 1e-4,
