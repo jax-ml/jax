@@ -307,7 +307,7 @@ def segment_sum(data,
                 num_segments=None,
                 indices_are_sorted=False,
                 unique_indices=False,
-                bucket_size=1024):
+                bucket_size=None):
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's segment_sum:
@@ -329,6 +329,7 @@ def segment_sum(data,
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. segment_sum is performed
       on each bucket separately to improve numerical stability of addition.
+      Default `None` means no bucketing.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -341,7 +342,8 @@ def segment_sum(data,
   out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
   segment_ids = jnp.mod(segment_ids, num_segments)
 
-  num_buckets = -(-segment_ids.size // bucket_size)  # ceil_division
+  num_buckets = 1 if bucket_size is None \
+                  else -(-segment_ids.size // bucket_size)  # ceil_division
   if num_buckets == 1:
     return index_add(out, segment_ids, data, indices_are_sorted, unique_indices)
 
