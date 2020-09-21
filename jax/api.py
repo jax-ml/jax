@@ -2031,7 +2031,7 @@ def device_put(x, device: Optional[xc.Device] = None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 
-def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]) -> pxla.ShardedDeviceArray:
+def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]):
   """Transfers pre-sharded input to the specified devices, returning ShardedDeviceArrays.
 
   Args:
