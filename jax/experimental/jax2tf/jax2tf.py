@@ -420,7 +420,7 @@ tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
   lax.linear_solve_p,
-  lax_linalg.eigh_p,
+  lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
   lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
@@ -603,7 +603,6 @@ tf_impl[lax.gt_p] = wrap_binary_op(tf.math.greater)
 tf_impl[lax.le_p] = wrap_binary_op(tf.math.less_equal)
 tf_impl[lax.lt_p] = wrap_binary_op(tf.math.less)
 
-tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
 def _convert_element_type(operand, new_dtype, old_dtype):
   del old_dtype
@@ -1327,28 +1326,6 @@ def _svd(operand, full_matrices, compute_uv):
   return s, u, tf.linalg.adjoint(v)
 
 tf_impl[lax_linalg.svd_p] = _svd
-
-def _eig(operand: TfVal, compute_left_eigenvectors: bool,
-         compute_right_eigenvectors: bool):
-  if compute_left_eigenvectors and compute_right_eigenvectors:
-    # TODO(bchetioui): didn't find a 100% reliable, easy and satisfying way to
-    # sort the left eigenvectors in the right order. The jax.numpy.linalg API
-    # suggests to me that left eigenvectors are anyway seldom used, so I
-    # think it is acceptable to leave as unimplemented for now.
-    msg = ("Conversion of eig is not implemented when both "
-           "compute_left_eigenvectors and compute_right_eigenvectors are set "
-           "to True.")
-    raise NotImplementedError(msg)
-  elif not (compute_left_eigenvectors or compute_right_eigenvectors):
-    return tuple([tf.linalg.eigvals(operand)])
-  elif compute_right_eigenvectors:
-    return tuple(tf.linalg.eig(operand))
-  else: # compute_left_eigenvectors == True
-    wH, vl = tf.linalg.eig(tf.linalg.adjoint(operand))
-    wHH = tf.math.conj(wH)
-    return tuple([wHH, vl])
-
-tf_impl[lax_linalg.eig_p] = _eig
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
                            fun_jaxpr: core.ClosedJaxpr,

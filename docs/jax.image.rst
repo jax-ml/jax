@@ -13,5 +13,4 @@ Image manipulation functions
   :toctree: _autosummary
 
     resize
-    scale_and_translate
 

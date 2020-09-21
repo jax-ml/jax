@@ -63,9 +63,8 @@ class CPPJitTest(jtu.JaxTestCase):
     # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
     # This is in the future, because we are making a breaking change to
     # Tensorflow.
-    if version < (0, 1, 56):
-      raise unittest.SkipTest("Disabled because it depends on some future "
-                              "release of jax_jit.cc within jaxlib.")
+    if version < (0, 1, 54):
+      return jax.api._python_jit
     else:
       return jax.api._cpp_jit
 
@@ -240,7 +239,6 @@ class CPPJitTest(jtu.JaxTestCase):
     self.assertDeleted(c)
     self.assertDeleted(d)
 
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jnp_array_copy(self):
     # https://github.com/google/jax/issues/3412
 
@@ -1329,10 +1327,6 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("test requires omnistaging")
     f = lambda: jax.lax.psum(1, "i")
     api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
-
-  @jtu.skip_on_devices("cpu", "gpu")
-  def test_xla_computation_donate_argnums(self):
-    api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
