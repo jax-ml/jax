@@ -1938,7 +1938,8 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
 
 
 def make_jaxpr(fun: Callable,
-               static_argnums: Union[int, Iterable[int]] = ()
+               static_argnums: Union[int, Iterable[int]] = (),
+               return_shape: bool = False,
                ) -> Callable[..., core.ClosedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
@@ -1947,6 +1948,12 @@ def make_jaxpr(fun: Callable,
       arguments and return value should be arrays, scalars, or standard Python
       containers (tuple/list/dict) thereof.
     static_argnums: See the :py:func:`jax.jit` docstring.
+    return_shape: Optional boolean, defaults to ``False``. If ``True``, the
+      wrapped function returns a pair where the first element is the ``jaxpr``
+      and the second element is a pytree with the same structure as
+      the output of ``fun`` and where the leaves are objects with ``shape`` and
+      ``dtype`` attributes representing the corresponding types of the output
+      leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
@@ -2004,7 +2011,10 @@ def make_jaxpr(fun: Callable,
       jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
           jaxtree_fun, in_pvals, instantiate=True, stage_out=True)  # type: ignore
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
-    return core.ClosedJaxpr(jaxpr, consts)
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    if return_shape:
+      return closed_jaxpr, tree_unflatten(out_tree(), out_avals)
+    return closed_jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
   return jaxpr_maker
