@@ -17,6 +17,7 @@
 
 from .. import lax
 from ..numpy import lax_numpy as jnp
+from .. import util
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
@@ -307,7 +308,7 @@ def segment_sum(data,
                 num_segments=None,
                 indices_are_sorted=False,
                 unique_indices=False,
-                bucket_size=None):
+                bucket_size=None): # TODO(zhangqiaorjc): use non-None default.
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's segment_sum:
@@ -343,7 +344,7 @@ def segment_sum(data,
   segment_ids = jnp.mod(segment_ids, num_segments)
 
   num_buckets = 1 if bucket_size is None \
-                  else -(-segment_ids.size // bucket_size)  # ceil_division
+                  else util.ceil_of_ratio(segment_ids.size, bucket_size)
   if num_buckets == 1:
     return index_add(out, segment_ids, data, indices_are_sorted, unique_indices)
 
