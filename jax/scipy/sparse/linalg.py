@@ -507,7 +507,7 @@ def eigs(matvec, x0,
   Hm = (numits > jnp.arange(restart))[:, None] * Hm * (
       numits > jnp.arange(restart))[None, :]
   eigvals, U = jnp.linalg.eig(Hm)
-  inds = jnp.argsort(jnp.real(eigvals[0:numeig]), kind='stable')[::-1]
+  inds = sort_fun(eigvals)[1][:numeig]
   vectors = get_vectors(Vm, U, inds, numeig)
   return eigvals[inds], [
       vectors[n, :] for n in range(numeig)
