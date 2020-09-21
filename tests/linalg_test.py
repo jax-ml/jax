@@ -1359,21 +1359,19 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       target_norms = [4.0e-1, 1.0, 3.0]
     else:
       raise TypeError("dtype={} is not supported.".format(dtype))
-    for i, norm in enumerate(target_norms):
+    # TODO(zhangqiaorjc): Reduce tol to default 1e-5.
+    # Lower tolerance is due to 2nd order derivative.
+    tol = {
+      # Note that due to inner_product, float and complex tol are coupled.
+      np.dtype(np.float32): 0.02,
+      np.dtype(np.complex64): 0.02,
+      np.dtype(np.float64): 1e-4,
+      np.dtype(np.complex128): 1e-4,
+    }
+    for norm in target_norms:
       a = a / np.linalg.norm(a, 1) * norm
-      A_L1 = np.linalg.norm(a, 1)
       def expm(x):
         return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
-      tol = None
-      if i == len(target_norms) - 1:
-        # TODO(zhangqiaorjc): Reduce tol to default 1e-5 for norm = 3.0.
-        tol = {
-          # Note that due to inner_product, float and complex tol are coupled.
-          np.dtype(np.float32): 0.02,
-          np.dtype(np.complex64): 0.02,
-          np.dtype(np.float64): 1e-4,
-          np.dtype(np.complex128): 1e-4,
-        }
       jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=2, atol=tol,
                       rtol=tol)
 
