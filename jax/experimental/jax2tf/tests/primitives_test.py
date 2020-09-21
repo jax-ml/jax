@@ -19,6 +19,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from functools import partial
+import itertools
 
 import jax
 from jax import dtypes
@@ -276,6 +277,65 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       )
 
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_eig)
+  def test_eig(self, harness: primitive_harness.Harness):
+    operand = harness.dyn_args_maker(self.rng())[0]
+    compute_left_eigenvectors = harness.params["compute_left_eigenvectors"]
+    compute_right_eigenvectors = harness.params["compute_right_eigenvectors"]
+    dtype = harness.params["dtype"]
+
+    if jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("eig only supported on CPU in JAX")
+
+    if dtype in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest("eig unsupported with (b)float16 in JAX")
+
+    def custom_assert(result_jax, result_tf):
+      result_tf = tuple(map(lambda e: e.numpy(), result_tf))
+      inner_dimension = operand.shape[-1]
+      # Test ported from tests.lax_test.testEig
+      # Norm, adjusted for dimension and type.
+      def norm(x):
+        norm = np.linalg.norm(x, axis=(-2, -1))
+        return norm / ((inner_dimension + 1) * jnp.finfo(dtype).eps)
+
+      def check_right_eigenvectors(a, w, vr):
+        self.assertTrue(
+          np.all(norm(np.matmul(a, vr) - w[..., None, :] * vr) < 100))
+
+      def check_left_eigenvectors(a, w, vl):
+        rank = len(a.shape)
+        aH = jnp.conj(a.transpose(list(range(rank - 2)) + [rank - 1, rank - 2]))
+        wC = jnp.conj(w)
+        check_right_eigenvectors(aH, wC, vl)
+
+      def check_eigenvalue_is_in_array(eigenvalue, eigenvalues_array):
+        tol = None
+        # TODO(bchetioui): numerical discrepancies
+        if dtype in [np.float32, np.complex64]:
+          tol = 1e-4
+        elif dtype in [np.float64, np.complex128]:
+          tol = 1e-13
+        closest_diff = min(abs(eigenvalues_array - eigenvalue))
+        self.assertAllClose(closest_diff, np.array(0., closest_diff.dtype),
+                            atol=tol)
+
+      all_w_jax, all_w_tf = result_jax[0], result_tf[0]
+      for idx in itertools.product(*map(range, operand.shape[:-2])):
+        w_jax, w_tf = all_w_jax[idx], all_w_tf[idx]
+        for i in range(inner_dimension):
+          check_eigenvalue_is_in_array(w_jax[i], w_tf)
+          check_eigenvalue_is_in_array(w_tf[i], w_jax)
+
+      if compute_left_eigenvectors:
+        check_left_eigenvectors(operand, all_w_tf, result_tf[1])
+      if compute_right_eigenvectors:
+        check_right_eigenvectors(operand, all_w_tf,
+                                 result_tf[1 + compute_left_eigenvectors])
+
+    self.ConvertAndCompare(harness.dyn_fun, operand,
+                           custom_assert=custom_assert)
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):

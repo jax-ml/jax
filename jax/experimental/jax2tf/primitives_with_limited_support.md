@@ -23,8 +23,8 @@ conversion to Tensorflow.
 | acosh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | acosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | add | Missing TF support | Primitive is unimplemented | uint16, uint32, uint64 | CPU, GPU, TPU |
-| asinh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | asinh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
+| asinh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | atan2 | Missing TF support | Primitive is unimplemented | bfloat16, float16 | CPU, GPU, TPU |
 | atanh | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | atanh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
@@ -35,6 +35,8 @@ conversion to Tensorflow.
 | conv_general_dilated | Missing TF support | Primitive is unimplemented; likely bug in the HLO -> LLVM IR lowering of XlaConv | complex128, complex64 | CPU, GPU, TPU |
 | cosh | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
 | digamma | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
+| eig | Missing TF support | Primitive is unimplemented; it is not possible to request both left and right eigenvectors for now | ALL | CPU, GPU, TPU |
+| eig | Missing TF support | Primitive is unimplemented; this is a problem only in compiled mode (experimental_compile=True)) | ALL | CPU, GPU, TPU |
 | erf | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | erf_inv | Missing TF support | Primitive is unimplemented | bfloat16 | CPU, GPU |
 | erf_inv | Missing TF support | Primitive is unimplemented | float16 | CPU, GPU, TPU |
@@ -68,7 +70,7 @@ conversion to Tensorflow.
 
 The conversion of the following JAX primitives is not yet implemented:
 
-`after_all`, `all_to_all`, `axis_index`, `create_token`, `cummax`, `cummin`, `custom_linear_solve`, `eig`, `eigh`, `igamma_grad_a`, `infeed`, `lu`, `outfeed`, `pmax`, `pmin`, `ppermute`, `psum`, `random_gamma_grad`, `reduce`, `rng_uniform`, `triangular_solve`, `xla_pmap`
+`after_all`, `all_to_all`, `axis_index`, `create_token`, `cummax`, `cummin`, `custom_linear_solve`, `eigh`, `igamma_grad_a`, `infeed`, `lu`, `outfeed`, `pmax`, `pmin`, `ppermute`, `psum`, `random_gamma_grad`, `reduce`, `rng_uniform`, `triangular_solve`, `xla_pmap`
 
 ## Primitive conversions with missing tests
 
