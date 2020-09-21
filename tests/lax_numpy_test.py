@@ -291,7 +291,7 @@ JAX_COMPOUND_OP_RECORDS = [
               check_dtypes=False),
     op_record("true_divide", 2, all_dtypes, all_shapes, jtu.rand_nonzero,
               ["rev"], inexact=True),
-    op_record("diff", 1, number_dtypes, nonzerodim_shapes, jtu.rand_default, ["rev"]),
+    op_record("diff", 1, number_dtypes + bool_dtypes, nonzerodim_shapes, jtu.rand_default, ["rev"]),
     op_record("ediff1d", 3, [np.int32], all_shapes, jtu.rand_default, []),
     op_record("unwrap", 1, float_dtypes, nonempty_nonscalar_array_shapes,
               jtu.rand_default, ["rev"],

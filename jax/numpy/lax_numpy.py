@@ -1012,14 +1012,14 @@ def angle(z):
 
 
 @_wraps(np.diff)
-def diff(a, n=1, axis=-1,):
-  if not isinstance(a, ndarray) or a.ndim == 0:
-    return a
+def diff(a, n=1, axis=-1):
+  _check_arraylike("diff", a)
   if n == 0:
     return a
   if n < 0:
-    raise ValueError(
-      "order must be non-negative but got " + repr(n))
+    raise ValueError(f"order must be non-negative but got {n}")
+  if ndim(a) == 0:
+    raise ValueError(f"diff requires input that is at least one dimensional; got {a}")
 
   nd = a.ndim
 
