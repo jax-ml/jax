@@ -1540,6 +1540,23 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
 
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPPermuteWithVmap(self):
+    perm = [(0, 1), (1, 0)]
+
+    def f(map2):
+      @partial(jax.pmap, axis_name='i')
+      @partial(map2)
+      def f(x, y):
+        return x + jax.lax.ppermute(x.dot(y), 'i', perm)
+      return f
+
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 64, 64))
+    self.assertAllClose(f(jax.pmap)(x, x), f(jax.vmap)(x, x))
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
