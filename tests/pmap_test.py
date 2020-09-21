@@ -1522,14 +1522,18 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
     self.assertAllClose(ans, expected)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
+       "collective": collective}
+      for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
-  def testCollectivesWithVmap(self):
+  def testCollectivesWithVmap(self, collective):
     def f(map1, map2):
       @partial(map1, axis_name='i')
       @partial(map2, axis_name='j')
       def f(x, y):
-        return x + jax.lax.psum(x.dot(y), ('i', 'j'))
+        return x + collective(x.dot(y), ('i', 'j'))
       return f
 
     if xla_bridge.device_count() < 4:
