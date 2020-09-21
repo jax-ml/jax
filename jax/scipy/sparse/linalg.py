@@ -294,16 +294,11 @@ def arnoldi_fact(matvec, v0, Vm, Hm, start, num_krylov_vecs,
   return krylov_vectors, H, residual, norm, it, norm < tol
 
 
-# ######################################################
-# #######  NEW SORTING FUCTIONS INSERTED HERE  #########
-# ######################################################
 @partial(jit, static_argnums=(0,))
 def LR_sort(p, evals):
   inds = jnp.argsort(jnp.real(evals), kind='stable')[::-1]
   shifts = evals[inds][-p:]
   return shifts, inds
-# #######################################################
-# #######################################################
 
 
 @partial(jit, static_argnums=(3, 4))
