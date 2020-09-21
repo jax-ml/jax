@@ -620,6 +620,20 @@ lax_linalg_eig = tuple(
   for compute_right_eigenvectors in [False, True]
 )
 
+lax_linalg_eigh = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_lower={lower}",
+          lax_linalg.eigh,
+          [RandArg(shape, dtype), StaticArg(lower), StaticArg(False)],
+          shape=shape,
+          dtype=dtype,
+          lower=lower)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [(0, 0), (50, 50), (2, 20, 20)]
+  for lower in [False, True]
+  # Filter out cases where implementation is missing in JAX
+  if dtype != np.float16
+)
+
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
           lax.slice,
