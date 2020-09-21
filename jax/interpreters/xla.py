@@ -194,7 +194,7 @@ def _param_uses_outfeed(param):
   if type(param) is core.Jaxpr:
     if jaxpr_uses_outfeed(param):
       return True
-  elif type(param) is core.TypedJaxpr:
+  elif type(param) is core.ClosedJaxpr:
     if jaxpr_uses_outfeed(param.jaxpr):
       return True
   return False
@@ -497,7 +497,7 @@ def eqn_replicas(eqn):
 def initial_style_primitive_replicas(params):
   nums = (jaxpr_replicas(param if type(param) is core.Jaxpr else param.jaxpr)
           for param in params.values()
-          if type(param) in (core.Jaxpr, core.TypedJaxpr))
+          if type(param) in (core.Jaxpr, core.ClosedJaxpr))
   return max(it.chain([1], nums))
 
 # TODO(mattjj,skyewm): the functions here are utilities for checking if

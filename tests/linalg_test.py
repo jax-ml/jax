@@ -66,10 +66,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = rng(factor_shape, dtype)
       return [np.matmul(a, jnp.conj(T(a)))]
 
-    if (jnp.issubdtype(dtype, jnp.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      self.skipTest("Unimplemented case for complex Cholesky decomposition.")
-
     self._CheckAgainstNumpy(np.linalg.cholesky, jnp.linalg.cholesky, args_maker,
                             tol=1e-3)
     self._CompileAndCheck(jnp.linalg.cholesky, args_maker)
@@ -222,16 +218,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                               tol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(
-           jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      {"testcase_name": "_shape={}_leftvectors={}_rightvectors={}".format(
+           jtu.format_shape_dtype_string(shape, dtype),
+           compute_left_eigenvectors, compute_right_eigenvectors),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory,
+       "compute_left_eigenvectors": compute_left_eigenvectors,
+       "compute_right_eigenvectors": compute_right_eigenvectors}
       for shape in [(0, 0), (4, 4), (5, 5), (50, 50), (2, 6, 6)]
       for dtype in float_types + complex_types
+      for compute_left_eigenvectors, compute_right_eigenvectors in [
+          (False, False),
+          (True, False),
+          (False, True),
+          (True, True)
+      ]
       for rng_factory in [jtu.rand_default]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
-  def testEig(self, shape, dtype, rng_factory):
+  def testEig(self, shape, dtype, compute_left_eigenvectors,
+              compute_right_eigenvectors, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
     n = shape[-1]
@@ -242,9 +248,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       norm = np.linalg.norm(x, axis=(-2, -1))
       return norm / ((n + 1) * jnp.finfo(dtype).eps)
 
+    def check_right_eigenvectors(a, w, vr):
+      self.assertTrue(
+        np.all(norm(np.matmul(a, vr) - w[..., None, :] * vr) < 100))
+
+    def check_left_eigenvectors(a, w, vl):
+      rank = len(a.shape)
+      aH = jnp.conj(a.transpose(list(range(rank - 2)) + [rank - 1, rank - 2]))
+      wC = jnp.conj(w)
+      check_right_eigenvectors(aH, wC, vl)
+
     a, = args_maker()
-    w, v = jnp.linalg.eig(a)
-    self.assertTrue(np.all(norm(np.matmul(a, v) - w[..., None, :] * v) < 100))
+    results = lax_linalg.eig(a, compute_left_eigenvectors,
+                             compute_right_eigenvectors)
+    w = results[0]
+
+    if compute_left_eigenvectors:
+      check_left_eigenvectors(a, w, results[1])
+    if compute_right_eigenvectors:
+      check_right_eigenvectors(a, w, results[1 + compute_left_eigenvectors])
 
     self._CompileAndCheck(partial(jnp.linalg.eig), args_maker,
                           rtol=1e-3)
@@ -1070,10 +1092,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if (sym_pos and jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest(
-        "Complex Cholesky decomposition not implemented on TPU")
     osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
     jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
 

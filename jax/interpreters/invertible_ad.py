@@ -24,7 +24,7 @@ from . import partial_eval as pe
 from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, register_pytree_node
-from ..util import safe_map, safe_zip, unzip2, split_list
+from ..util import safe_map, safe_zip, split_list
 from .. import custom_derivatives
 from ..config import config
 
@@ -221,8 +221,7 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
           complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals),
           instantiate=True, stage_out=False)  # type: ignore
       assert not ivjp_jaxpr.constvars  # That might happen some time, but don't bother until then
-      out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
-      ivjp_jaxpr = core.TypedJaxpr(ivjp_jaxpr, [], in_avals, out_avals)
+      ivjp_jaxpr = core.ClosedJaxpr(ivjp_jaxpr, [])
 
     # Once we know what the ivjp can do exactly, we have to isolate the part we are
     # actually able to compute with the values we have at hand.
@@ -243,7 +242,6 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
     assert not any(unknown_cotangents)
     # Remove residual outputs -- we won't be computing the unknown jaxpr anyway.
     num_outputs = len(jaxpr_unknown.jaxpr.outvars)
-    jaxpr_known.out_avals = jaxpr_known.out_avals[:num_outputs]
     jaxpr_known.jaxpr.outvars = jaxpr_known.jaxpr.outvars[:num_outputs]
     # TODO: We could drop the outputs that correspond to primals that we already know.
     #       This only matters in eager mode, so leaving it out for now...

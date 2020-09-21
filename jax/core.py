@@ -67,15 +67,14 @@ class Jaxpr:
   def __init__(self, constvars: Sequence['Var'], invars: Sequence['Var'],
                outvars: Sequence['Atom'], eqns: Sequence['JaxprEqn']):
     """
-    Params:
-      constvars: list of variables introduced for constants (either literals
-        in the Python program, or the result of constant folding during the
-        generation of the Jaxpr). Array constants are replaced with such variables
-        while scalar constants are kept inline.
+    Args:
+      constvars: list of variables introduced for constants. Array constants are
+        replaced with such variables while scalar constants are kept inline.
       invars: list of input variables. Together, `constvars` and `invars` are
         the inputs to the Jaxpr.
       outvars: list of output variables.
-      eqns: list of equations."""
+      eqns: list of equations.
+    """
     self.constvars = list(constvars)
     self.invars = list(invars)
     self.outvars = list(outvars)
@@ -92,54 +91,46 @@ def jaxprs_in_params(params) -> Iterator[Jaxpr]:
     for v in vals:
       if isinstance(v, Jaxpr):
         yield v
-      elif isinstance(v, TypedJaxpr):
+      elif isinstance(v, ClosedJaxpr):
         yield v.jaxpr
 
 
 def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   """Generator for all subjaxprs found in the params of jaxpr.eqns.
+
   Does not descend recursively into the found subjaxprs.
   """
   for eqn in jaxpr.eqns:
     yield from jaxprs_in_params(eqn.params)
 
 
-class TypedJaxpr:
+class ClosedJaxpr:
   jaxpr: Jaxpr
-  literals: List['Any']
-  in_avals: List['AbstractValue']
-  out_avals: List['AbstractValue']
+  consts: List['Any']
 
-  def __init__(self, jaxpr: Jaxpr, literals: Sequence,
-               in_avals: Sequence['AbstractValue'],
-               out_avals: Sequence['AbstractValue']):
-    assert len(literals) == len(jaxpr.constvars)
-    assert len(in_avals) == len(jaxpr.invars)
-
-    if not skip_checks:
-      in_avals_raised = [raise_to_shaped(v) for v in in_avals]
-      out_avals_raised = [raise_to_shaped(v) for v in out_avals]
-      exp_in_avals = [v.aval for v in jaxpr.invars]
-      exp_out_avals = [v.aval for v in jaxpr.outvars]
-      assert in_avals_raised == exp_in_avals, "expected: {}, got: {}".format(exp_in_avals, in_avals_raised)
-      assert out_avals_raised == exp_out_avals, "expected: {}, got: {}".format(exp_out_avals, out_avals_raised)
-
+  def __init__(self, jaxpr: Jaxpr, consts: Sequence):
+    assert len(consts) == len(jaxpr.constvars)
     self.jaxpr = jaxpr
-    self.literals = list(literals)
-    self.in_avals = list(in_avals)
-    self.out_avals = list(out_avals)
+    self.consts = list(consts)
 
-  def __iter__(self):
-    return iter((self.jaxpr, self.literals, self.in_avals, self.out_avals))
+  @property
+  def in_avals(self):
+    return [v.aval for v in self.jaxpr.invars]
 
-  def __str__(self):
-    # TODO(mattjj): improve this with type annotations?
-    return str(pp_jaxpr(self.jaxpr))
-  __repr__ = __str__
+  @property
+  def out_avals(self):
+    return [v.aval for v in self.jaxpr.outvars]
+
+  @property
+  def literals(self):
+    return self.consts  # backwards compatible alias
+
+  def __str__(self): return str(self.jaxpr)
+  def __repr__(self): return repr(self.jaxpr)
 
 @curry
-def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
-  return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
+def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
+  return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
 class JaxprEqn(NamedTuple):
@@ -1421,7 +1412,7 @@ def pp_vars(vs: Sequence[Any], print_shapes: bool = False) -> str:
 def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
   filtered_params = {k: v for k, v in params.items()
                      if (k != 'branches' and
-                         not isinstance(v, (Jaxpr, TypedJaxpr)))}
+                         not isinstance(v, (Jaxpr, ClosedJaxpr)))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
 def pp_eqn(eqn: JaxprEqn, print_shapes: bool = False) -> PrettyPrint:
@@ -1474,11 +1465,11 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
            + pp('in {} }}'.format(str_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
-  jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]
+  jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp('( ') >> vcat(map(pp_jaxpr, jaxprs)) >> pp(' )')
 
 def pp_kv_pair(k, v):
-  if type(v) is tuple and all(isinstance(j, (Jaxpr, TypedJaxpr)) for j in v):
+  if type(v) is tuple and all(isinstance(j, (Jaxpr, ClosedJaxpr)) for j in v):
     pp_v = pp_jaxprs(v)
   else:
     pp_v = pp(v)

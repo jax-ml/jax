@@ -547,7 +547,6 @@ ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
-batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, pmin_p)
 batching.collective_rules[ppermute_p] = _ppermute_batcher
 
 

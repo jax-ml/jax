@@ -536,6 +536,16 @@ lax_sort = tuple( # one array, random data, all axes, all dtypes
   for is_stable in [False, True]
 )
 
+lax_linalg_cholesky = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          lambda *args: lax_linalg.cholesky_p.bind(*args),
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
+)
+
 lax_linalg_qr = tuple(
   Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
           lax_linalg.qr,
@@ -593,6 +603,21 @@ lax_linalg_svd = tuple(
   for shape in [(2, 2), (2, 7), (29, 29), (2, 3, 53), (2, 3, 29, 7)]
   for full_matrices in [False, True]
   for compute_uv in [False, True]
+)
+
+lax_linalg_eig = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_computelefteigenvectors={compute_left_eigenvectors}_computerighteigenvectors={compute_right_eigenvectors}",
+          lax_linalg.eig,
+          [RandArg(shape, dtype), StaticArg(compute_left_eigenvectors),
+           StaticArg(compute_right_eigenvectors)],
+          shape=shape,
+          dtype=dtype,
+          compute_left_eigenvectors=compute_left_eigenvectors,
+          compute_right_eigenvectors=compute_right_eigenvectors)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [(0, 0), (5, 5), (2, 6, 6)]
+  for compute_left_eigenvectors in [False, True]
+  for compute_right_eigenvectors in [False, True]
 )
 
 lax_slice = tuple(

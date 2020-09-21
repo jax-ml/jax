@@ -30,7 +30,7 @@ from ..ad_util import Zero
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
                     cache)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
-                    unit, unitvar, abstract_unit, TypedJaxpr, new_jaxpr_eqn,
+                    unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                     dropvar)
 from .. import source_info_util
 from ..config import config
@@ -200,7 +200,7 @@ class JaxprTrace(Trace):
     in_knowns = tuple(t.pval.is_known() for t in it.chain(env_tracers, tracers))
     out_unknowns = tuple(not pval.is_known() for pval in out_pvals)
     jaxpr = _drop_invars(jaxpr, in_knowns)
-    jaxpr = _dce_untyped_jaxpr(jaxpr, out_unknowns, drop_outputs=True)
+    jaxpr = _dce_open_jaxpr(jaxpr, out_unknowns, drop_outputs=True)
 
     # Known tracers get propagated as if they were constants
     known_tracers_out = [self.new_const(pval.get_known()) for pval in out_pvals
@@ -353,7 +353,7 @@ class JaxprTracer(Tracer):
   def is_known(self):
       return self.pval.is_known()
 
-# TODO(necula): this should return a TypedJaxpr
+# TODO(necula): this could return a ClosedJaxpr with out_pvals
 def trace_to_jaxpr(fun: lu.WrappedFun, pvals: Sequence[PartialVal],
                    instantiate: Union[bool, Sequence[bool]] = False,
                    ) -> Tuple[Jaxpr, Tuple[PartialVal, ...], Tuple[core.Value, ...]]:
@@ -554,9 +554,9 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr):
 def _split_aval(unknown: bool, aval: AbstractValue) -> Tuple[AbstractValue, AbstractValue]:
   return (abstract_unit, aval) if unknown else (aval, abstract_unit)
 
-def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
+def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
                        instantiate: Union[bool, Sequence[bool]],
-                       ) -> Tuple[TypedJaxpr, TypedJaxpr, Sequence[bool]]:
+                       ) -> Tuple[ClosedJaxpr, ClosedJaxpr, Sequence[bool]]:
   """Specializes a Jaxpr given an indication of which inputs are known.
 
   Returns: (jaxpr_known, jaxpr_unknown, out_unknowns).
@@ -630,9 +630,7 @@ def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
   out_avals_1 = [*out_avals_1, *res_avals]
   in_avals_2 = [*in_avals_2, *res_avals]
 
-  typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, out_avals_1)
-  typed_jaxpr_2 = TypedJaxpr(jaxpr_2, (), in_avals_2, out_avals_2)
-  return typed_jaxpr_1, typed_jaxpr_2, uk_out
+  return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
 
 
 remat_call_p = core.CallPrimitive('remat_call')
@@ -672,22 +670,15 @@ def _remat_partial_eval(trace, _, f, tracers, params):
 
   # Since we traced with everything marked as unknown, but we need to know which
   # outputs are known/unknown, we use partial_eval_jaxpr to get out_unknowns.
-  in_avals = ([raise_to_shaped(t.pval.get_aval()) for t in const_tracers] +
-              [raise_to_shaped(t.pval.get_aval()) for t in env_tracers] +
-              [raise_to_shaped(pval.get_aval()) for pval in in_pvals])
-  out_avals = [raise_to_shaped(abstract_unit if var is unitvar
-                               else get_aval(var.val) if type(var) is Literal
-                               else pval.get_aval())
-               for var, pval in zip(jaxpr.outvars, eval_out_pvals)]
-  typed_jaxpr = core.TypedJaxpr(jaxpr, (), in_avals, out_avals)
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, ())
   in_unknowns = ([False] * len(consts) +
                  [not t.is_known() for t in it.chain(env_tracers, tracers)])
   if config.omnistaging_enabled:
     jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
-        typed_jaxpr, in_unknowns, instantiate=False)  # type: ignore
+        closed_jaxpr, in_unknowns, instantiate=False)  # type: ignore
   else:
     jaxpr_known, jaxpr_unknown, out_unknowns = partial_eval_jaxpr(
-        typed_jaxpr, in_unknowns, instantiate=False, trace_type=trace.main.trace_type)  # type: ignore
+        closed_jaxpr, in_unknowns, instantiate=False, trace_type=trace.main.trace_type)  # type: ignore
   out_knowns = [not b for b in out_unknowns]
   out_known_pvals, out_unknown_pvals = _partition_knowns(eval_out_pvals, out_unknowns)
 
@@ -717,7 +708,7 @@ def _remat_partial_eval(trace, _, f, tracers, params):
                             for out_pval in out_unknown_pvals]
 
   # dce jaxpr outputs
-  new_jaxpr = _dce_jaxpr(typed_jaxpr, out_unknowns, drop_outputs=True).jaxpr
+  new_jaxpr = _dce_jaxpr(closed_jaxpr, out_unknowns, drop_outputs=True).jaxpr
   new_params = dict(params, call_jaxpr=new_jaxpr)
 
   # set up eqn for unknown outputs
@@ -737,18 +728,12 @@ def _zip_knowns(known_list, unknown_list, which_unknown: Sequence[bool]):
   return [next(unknown_iter) if uk else next(known_iter) for uk in which_unknown]
 
 
-def _dce_jaxpr(typed_jaxpr: TypedJaxpr, outputs: Sequence[bool], drop_outputs=False) -> TypedJaxpr:
-  if drop_outputs:
-    new_out_avals = [aval for aval, output in zip(typed_jaxpr.out_avals, outputs) if output]
-  else:
-    new_out_avals = [aval if output else core.abstract_unit
-                     for aval, output in zip(typed_jaxpr.out_avals, outputs)]
-  new_jaxpr = _dce_untyped_jaxpr(typed_jaxpr.jaxpr, tuple(outputs), drop_outputs)
-  return core.TypedJaxpr(new_jaxpr, typed_jaxpr.literals, typed_jaxpr.in_avals,
-                         new_out_avals)
+def _dce_jaxpr(closed_jaxpr: ClosedJaxpr, outputs: Sequence[bool], drop_outputs=False) -> ClosedJaxpr:
+  new_jaxpr = _dce_open_jaxpr(closed_jaxpr.jaxpr, tuple(outputs), drop_outputs)
+  return core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
 
 @cache()
-def _dce_untyped_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False) -> Jaxpr:
+def _dce_open_jaxpr(jaxpr: Jaxpr, outputs: Tuple[bool, ...], drop_outputs=False) -> Jaxpr:
   # This dead-code elimination is pretty rudimentary, and in particular doesn't
   # nontrivially DCE through scan, call, or other higher-order primitives.
   # TODO(mattjj): better DCE
@@ -785,17 +770,15 @@ def _reconstruct_pval(pval1: PartialVal, const2: core.Value):
       return PartialVal.known(const2)
 
 
-def move_binders_to_front(typed_jaxpr: TypedJaxpr, to_move: Sequence[bool]) -> TypedJaxpr:
+def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]) -> ClosedJaxpr:
   """Reorder the `invars` to move to front the ones for which `to_move` is True."""
-  assert not typed_jaxpr.jaxpr.constvars
-  assert len(typed_jaxpr.in_avals) == len(to_move)
-  new_invars = _move_to_front(typed_jaxpr.jaxpr.invars, to_move)
-  new_jaxpr = core.Jaxpr((), new_invars, typed_jaxpr.jaxpr.outvars,
-                         typed_jaxpr.jaxpr.eqns)
-  new_in_avals = _move_to_front(typed_jaxpr.in_avals, to_move)
-  new_typed_jaxpr = core.TypedJaxpr(new_jaxpr, typed_jaxpr.literals,
-                                    new_in_avals, typed_jaxpr.out_avals)
-  return new_typed_jaxpr
+  assert not closed_jaxpr.jaxpr.constvars
+  assert len(closed_jaxpr.in_avals) == len(to_move)
+  new_invars = _move_to_front(closed_jaxpr.jaxpr.invars, to_move)
+  new_jaxpr = core.Jaxpr((), new_invars, closed_jaxpr.jaxpr.outvars,
+                         closed_jaxpr.jaxpr.eqns)
+  new_closed_jaxpr = core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
+  return new_closed_jaxpr
 
 def _move_to_front(lst: Sequence, to_move: Sequence[bool]) -> Sequence:
   return ([elt for elt, move in zip(lst, to_move) if move] +
@@ -1122,10 +1105,10 @@ def omnistaging_disabler() -> None:
 
     return jaxpr, out_pvals, consts
 
-  def partial_eval_jaxpr(jaxpr: TypedJaxpr, unknowns: Sequence[bool],
+  def partial_eval_jaxpr(jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
                         instantiate: Union[bool, Sequence[bool]],
                         trace_type: Optional[Type[core.Trace]]
-                        ) -> Tuple[TypedJaxpr, TypedJaxpr, Sequence[bool]]:
+                        ) -> Tuple[ClosedJaxpr, ClosedJaxpr, Sequence[bool]]:
     f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
 
     cell = []
@@ -1159,18 +1142,7 @@ def omnistaging_disabler() -> None:
 
     uk_out = [pv is not None for pv in out_pvs_2]
 
-    in_avals_1, in_avals_2 = unzip2(map(_split_aval, unknowns, jaxpr.in_avals))
-    out_avals_1, out_avals_2 = unzip2(map(_split_aval, uk_out, jaxpr.out_avals))
-    # out_avals_1 and in_avals_2 need the residuals added
-    out_pvs, _ = unzip2(out_pvals)
-    res_avals = out_pvs[len(jaxpr.out_avals):]
-    assert len(res_avals) == num_res
-    out_avals_1 = out_avals_1 + res_avals
-    in_avals_2 = in_avals_2 + res_avals
-
-    typed_jaxpr_1 = TypedJaxpr(jaxpr_1, consts_1, in_avals_1, out_avals_1)
-    typed_jaxpr_2 = TypedJaxpr(jaxpr_2, (), in_avals_2, out_avals_2)
-    return typed_jaxpr_1, typed_jaxpr_2, uk_out
+    return ClosedJaxpr(jaxpr_1, consts_1), ClosedJaxpr(jaxpr_2, ()), uk_out
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):
     # See comment at top of `JaxprTrace`. This method should be reachable
