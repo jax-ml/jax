@@ -285,8 +285,11 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     compute_right_eigenvectors = harness.params["compute_right_eigenvectors"]
     dtype = harness.params["dtype"]
 
+    if jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("eig only supported on CPU in JAX")
+
     if dtype in [np.float16, dtypes.bfloat16]:
-        raise unittest.SkipTest("eig unsupported with (b)float16 in JAX")
+      raise unittest.SkipTest("eig unsupported with (b)float16 in JAX")
 
     def custom_assert(result_jax, result_tf):
       result_tf = tuple(map(lambda e: e.numpy(), result_tf))
