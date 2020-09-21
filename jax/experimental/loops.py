@@ -117,7 +117,7 @@ from jax.lax import lax_control_flow
 from jax import tree_util
 from jax import numpy as jnp
 from jax.interpreters import partial_eval as pe
-from jax.util import unzip2, safe_map
+from jax.util import safe_map
 from jax.config import config
 
 
@@ -397,7 +397,7 @@ class _BodyTracer(object):
       # (e.g., cond_range and while_range), then in_tracers will not contain
       # the tracer for the index_var, and trace_to_jaxpr_finalize will throw
       # an assertion error.
-      body_typed_jaxpr, body_const_vals = _BodyTracer.trace_to_jaxpr_finalize(
+      body_closed_jaxpr, body_const_vals = _BodyTracer.trace_to_jaxpr_finalize(
         in_tracers=in_tracers,
         out_tracers=body_out_tracers,
         trace=self.trace)
@@ -415,7 +415,7 @@ class _BodyTracer(object):
 
     carried_out_vals = self.loop_builder.build_output_vals(
       self.scope, self.carried_state_names, carried_tree,
-      carried_init_vals, body_typed_jaxpr, body_const_vals)
+      carried_init_vals, body_closed_jaxpr, body_const_vals)
     carried_mutable_state_unflattened = tree_util.tree_unflatten(carried_tree,
                                                                  carried_out_vals)
 
@@ -435,21 +435,9 @@ class _BodyTracer(object):
     out_tracers = safe_map(partial(pe.instantiate_const_at, trace),
                            instantiate, out_tracers)
     jaxpr, consts, env = pe.tracers_to_jaxpr(in_tracers, out_tracers)
-    out_pvals = [t.pval for t in out_tracers]
-    # TODO: this is from partial_eval.trace_to_jaxpr. Share.
-    assert not env
-
-    # TODO: this is from the final part of lax_control_flow._initial_style_jaxpr
-    out_avals = safe_map(abstract_arrays.raise_to_shaped, unzip2(out_pvals)[0])
-    const_avals = tuple(abstract_arrays.raise_to_shaped(core.get_aval(c))
-                        for c in consts)
-
-    in_pvals = [t.pval for t in in_tracers]
-    in_avals = tuple(safe_map(abstract_arrays.raise_to_shaped, unzip2(in_pvals)[0]))
-
-    typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
-                                  (), const_avals + in_avals, out_avals)
-    return typed_jaxpr, consts
+    assert not env  # TODO: this is from partial_eval.trace_to_jaxpr. Share.
+    closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    return closed_jaxpr, consts
 
 
 class _LoopBuilder(object):
@@ -460,7 +448,7 @@ class _LoopBuilder(object):
     raise NotImplementedError
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     """Builds the output values for the loop carried state.
 
     Params:
@@ -469,7 +457,7 @@ class _LoopBuilder(object):
         carried through the body.
       carried_tree: the PyTreeDef for the tuple of carried_state_names.
       init_vals: the initial values on body entry corresponding to the init_tree.
-      body_typed_jaxpr: the Jaxpr for the body returning the new values of
+      body_closed_jaxpr: the Jaxpr for the body returning the new values of
         carried_state_names.
       body_const_vals: the constant values for the body.
 
@@ -495,12 +483,12 @@ class _BoundedLoopBuilder(_LoopBuilder):
     return True
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     arange_val = jnp.arange(self.start, stop=self.stop, step=self.step)
     return lax_control_flow.scan_p.bind(*itertools.chain(body_const_vals,
                                                          init_vals, [arange_val]),
                                         reverse=False, length=arange_val.shape[0],
-                                        jaxpr=body_typed_jaxpr,
+                                        jaxpr=body_closed_jaxpr,
                                         num_consts=len(body_const_vals),
                                         num_carry=len(init_vals),
                                         linear=(False,) * (len(body_const_vals) +
@@ -518,12 +506,12 @@ class _CondBuilder(_LoopBuilder):
     return False
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     # Simulate a pass-through false branch
     in_vals, in_tree = tree_util.tree_flatten(
         (body_const_vals, tree_util.tree_unflatten(carried_tree, init_vals)))
     in_avals = safe_map(_BodyTracer.abstractify, in_vals)
-    pass_through_typed_jaxpr, pass_through_const_vals, _ = (
+    pass_through_closed_jaxpr, pass_through_const_vals, _ = (
       lax_control_flow._initial_style_jaxpr(
           lambda *args: args[1],
           in_tree,
@@ -532,7 +520,7 @@ class _CondBuilder(_LoopBuilder):
     args = list(itertools.chain(body_const_vals, init_vals))
     return lax_control_flow.cond_p.bind(
         self.index, *args,
-        branches=(pass_through_typed_jaxpr, body_typed_jaxpr),
+        branches=(pass_through_closed_jaxpr, body_closed_jaxpr),
         linear=(False,) * len(args))
 
 
@@ -546,7 +534,7 @@ class _WhileBuilder(_LoopBuilder):
     return False
 
   def build_output_vals(self, scope, carried_state_names, carried_tree,
-                        init_vals, body_typed_jaxpr, body_const_vals):
+                        init_vals, body_closed_jaxpr, body_const_vals):
     # Trace the conditional function. cond_func takes 0 arguments, but
     # for lax.while we need a conditional function that takes the
     # carried_state_names. _initial_style_jaxpr will start its own trace and
@@ -584,4 +572,4 @@ class _WhileBuilder(_LoopBuilder):
                                          cond_nconsts=len(cond_consts),
                                          cond_jaxpr=cond_jaxpr,
                                          body_nconsts=len(body_const_vals),
-                                         body_jaxpr=body_typed_jaxpr)
+                                         body_jaxpr=body_closed_jaxpr)

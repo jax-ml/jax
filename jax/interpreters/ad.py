@@ -494,9 +494,7 @@ def remat_transpose(params, call_jaxpr, primals_in, cotangents_in, cotangent_in_
   # backward_pass can only transpose linear computations, but the call_jaxpr embedded in
   # remat contains primal (non-linear) equations too. Hence, we have to eliminate those
   # (in this case via partial_eval) before we call into backward_pass again.
-  in_avals = [raise_to_shaped(p.aval if is_undefined_primal(p) else get_aval(p))
-              for p in primals_in]
-  typed_call_jaxpr = core.TypedJaxpr(call_jaxpr, [], in_avals, cotangent_in_avals)
+  typed_call_jaxpr = core.ClosedJaxpr(call_jaxpr, [])
   unknowns = map(is_undefined_primal, primals_in)
   if config.omnistaging_enabled:
     primal_jaxpr, tangent_jaxpr, out_unknowns = \
@@ -556,8 +554,7 @@ def jvp_jaxpr(jaxpr, nonzeros, instantiate):
   tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
   jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f_jvp, avals_in)
-  jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
-  return jaxpr_out, out_nonzeros()
+  return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
 
 @lu.transformation_with_aux
 def f_jvp_traceable(nonzeros, *primals_and_nztangents):
@@ -571,16 +568,12 @@ def f_jvp_traceable(nonzeros, *primals_and_nztangents):
   nonzero_tangents_out = [t for t in tangents_out if type(t) is not Zero]
   yield list(primals_out) + nonzero_tangents_out, out_nonzeros
 
-def rearrange_binders(jaxpr: core.TypedJaxpr, primals_in, tangents_in, primals_out, tangents_out):
+def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_out, tangents_out):
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
   new_outvars = _perm(primals_out, tangents_out, jaxpr.jaxpr.outvars)
   new_jaxpr = core.Jaxpr(jaxpr.jaxpr.constvars,
                          new_invars, new_outvars, jaxpr.jaxpr.eqns)
-  new_in_avals = _perm(primals_in, tangents_in, jaxpr.in_avals)
-  new_out_avals = _perm(primals_out, tangents_out, jaxpr.out_avals)
-  new_typed_jaxpr = core.TypedJaxpr(new_jaxpr, jaxpr.literals, new_in_avals,
-                                    new_out_avals)
-  return new_typed_jaxpr
+  return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _perm(primal_counts, tangent_counts, lst):
   n = sum(primal_counts)
@@ -689,7 +682,5 @@ def omnistaging_disabler() -> None:
     tangent_avals = [aval for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
     avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
     pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
-    jaxpr_out, pvals_out, literals_out = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
-    avals_out, _ = unzip2(pvals_out)
-    jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
-    return jaxpr_out, out_nonzeros()
+    jaxpr_out, _, consts = pe.trace_to_jaxpr(f_jvp, pvals, instantiate=True)
+    return core.ClosedJaxpr(jaxpr_out, consts), out_nonzeros()

@@ -531,19 +531,12 @@ xla.translations[id_tap_p] = _id_tap_translation_rule
 ####
 
 
-# TODO: we should really get rid of TypedJaxpr
-def _mk_typed_jaxpr(jaxpr: core.Jaxpr, literals: Sequence) -> core.TypedJaxpr:
-  return core.TypedJaxpr(jaxpr, literals,
-                         tuple(map(lambda v: v.aval, jaxpr.invars)),
-                         tuple(map(lambda v: v.aval, jaxpr.outvars)))
-
-
-def _rewrite_typed_jaxpr(
-    tjaxpr: core.TypedJaxpr, has_input_token: bool,
-    has_output_token: bool) -> core.TypedJaxpr:
-  """Rewrites a TypedJaxpr to thread the token, if needed."""
-  new_jaxpr = _rewrite_jaxpr(tjaxpr.jaxpr, has_input_token, has_output_token)
-  return _mk_typed_jaxpr(new_jaxpr, tjaxpr.literals)
+def _rewrite_closed_jaxpr(
+    cjaxpr: core.ClosedJaxpr, has_input_token: bool,
+    has_output_token: bool) -> core.ClosedJaxpr:
+  """Rewrites a ClosedJaxpr to thread the token, if needed."""
+  new_jaxpr = _rewrite_jaxpr(cjaxpr.jaxpr, has_input_token, has_output_token)
+  return core.ClosedJaxpr(new_jaxpr, cjaxpr.consts)
 
 
 def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
@@ -609,8 +602,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             eqn.primitive,
             dict(
                 eqn.params,
-                body_jaxpr=_rewrite_typed_jaxpr(body_jaxpr, True, True),
-                cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True,
+                body_jaxpr=_rewrite_closed_jaxpr(body_jaxpr, True, True),
+                cond_jaxpr=_rewrite_closed_jaxpr(cond_jaxpr, True,
                                                 False)), eqn.source_info))
   elif eqn.primitive is lax.cond_p:
     branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
@@ -622,7 +615,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             dict(
                 eqn.params,
                 branches=tuple(
-                    _rewrite_typed_jaxpr(jaxpr, True, True)
+                    _rewrite_closed_jaxpr(jaxpr, True, True)
                     for jaxpr in branches),
                 linear=(*linear, False)), eqn.source_info))
   elif eqn.primitive is lax.scan_p:
@@ -635,21 +628,19 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
     new_invars = eqn.invars[0:nr_const_and_carry] + [
         input_token_var
     ] + eqn.invars[nr_const_and_carry:]
-    new_jaxpr = _rewrite_typed_jaxpr(carry_jaxpr, True, True)
+    new_jaxpr = _rewrite_closed_jaxpr(carry_jaxpr, True, True)
     # The rewrite has put the token at end, it has to be at end of carry
     new_jaxpr_invars = new_jaxpr.jaxpr.invars
     new_jaxpr_invars = (
         new_jaxpr_invars[0:nr_const_and_carry] + [new_jaxpr_invars[-1]] +
         new_jaxpr_invars[nr_const_and_carry:-1])
     new_jaxpr.jaxpr.invars = new_jaxpr_invars
-    new_jaxpr.in_avals = [v.aval for v in new_jaxpr_invars]
 
     new_jaxpr_outvars = new_jaxpr.jaxpr.outvars
     new_jaxpr_outvars = (
         new_jaxpr_outvars[0:num_carry] + [new_jaxpr_outvars[-1]] +
         new_jaxpr_outvars[num_carry:-1])
     new_jaxpr.jaxpr.outvars = new_jaxpr_outvars
-    new_jaxpr.out_avals = [v.aval for v in new_jaxpr_outvars]
     eqns.append(
         core.new_jaxpr_eqn(
             new_invars,
@@ -686,7 +677,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             new_invars, eqn.outvars + [output_token_var], eqn.primitive,
             dict(
                 eqn.params,
-                fun_jaxpr=_rewrite_typed_jaxpr(fun_jaxpr, True, True),
+                fun_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
                 jvp_jaxpr_thunk=unreachable_thunk
             ),
             eqn.source_info))
@@ -700,7 +691,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             new_invars, eqn.outvars + [output_token_var], eqn.primitive,
             dict(
                 eqn.params,
-                fun_jaxpr=_rewrite_typed_jaxpr(fun_jaxpr, True, True),
+                fun_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
                 fwd_jaxpr_thunk=unreachable_thunk,
                 # The following are illegal values for the parameters, they
                 # should not be needed because this rewrite is just before
@@ -720,7 +711,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
   """Rewrite a while whose cond has outfeed"""
   cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
       eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
-  transformed_cond_jaxpr = _rewrite_typed_jaxpr(cond_jaxpr, True, True)
+  transformed_cond_jaxpr = _rewrite_closed_jaxpr(cond_jaxpr, True, True)
   carry_invars = eqn.invars[cond_nconsts + body_nconsts:]
   # pred1, token1 = rewrite(COND)(cond_consts, carry_invars, input_token)
   pred1_and_token1 = [
@@ -740,14 +731,14 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
   new_cond_invars = ([new_cond_pred_invar] +
                      [mk_new_var(cv.aval) for cv in carry_invars] +
                      [mk_new_var(core.abstract_token)])
-  new_cond_jaxpr = _mk_typed_jaxpr(
+  new_cond_jaxpr = core.ClosedJaxpr(
       core.Jaxpr([], new_cond_invars, [new_cond_pred_invar], []), [])
   # Make a new body:
   #   "lambda cond_constvars, body_constvars, pred, carry, token:
   #        carry2, token2 = rewrite(BODY)(body_constvars, carry, token)
   #        pred2, token3 = rewrite(COND)(cond_constvars, carry2, token2)
   #        (pred2, carry2, token3)
-  transformed_body_jaxpr = _rewrite_typed_jaxpr(body_jaxpr, True, True)
+  transformed_body_jaxpr = _rewrite_closed_jaxpr(body_jaxpr, True, True)
   new_body_invars_cond_constvars = [
       mk_new_var(v.aval) for v in eqn.invars[0:cond_nconsts]
   ]
@@ -783,7 +774,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
               donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals)),
           eqn.source_info)
   ]
-  new_body_jaxpr = _mk_typed_jaxpr(
+  new_body_jaxpr = core.ClosedJaxpr(
       core.Jaxpr([], (new_body_invars_cond_constvars +
                       new_body_invars_body_constvars + [new_body_invars_pred] +
                       new_body_invars_carry + [new_body_invars_token]),

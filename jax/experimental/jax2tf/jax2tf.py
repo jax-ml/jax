@@ -252,7 +252,7 @@ def _interpret_subtrace(main: core.MainTrace, *in_vals: TfValOrUnit):
   yield out_vals
 
 
-def _interpret_jaxpr(jaxpr: core.TypedJaxpr, *args: TfValOrUnit) -> Sequence[TfVal]:
+def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args: TfValOrUnit) -> Sequence[TfVal]:
   """Evaluates a Jaxpr with tf.Tensor arguments.
 
   It is safe to call this function with arguments TfVal or TfValOrUnit, they
@@ -420,7 +420,7 @@ tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
   lax.linear_solve_p,
-  lax_linalg.cholesky_p, lax_linalg.eig_p, lax_linalg.eigh_p,
+  lax_linalg.eigh_p,
   lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
@@ -441,14 +441,7 @@ except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
-
-def _add(*operands: TfVal) -> TfVal:
-  """Add unsigned integer support for add."""
-  x, y = promote_types(*operands)
-  # Only AddV2 supports uint8 and uint32 addition.
-  return tf.raw_ops.AddV2(x=x, y=y)
-
-tf_impl[ad_util.add_jaxvals_p] = _add
+tf_impl[ad_util.add_jaxvals_p] = wrap_binary_op(tf.math.add)
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
 tf_impl[lax.neg_p] = tf.math.negative
@@ -501,7 +494,7 @@ tf_impl[lax.conj_p] = tf.math.conj
 tf_impl[lax.real_p] = tf.math.real
 tf_impl[lax.imag_p] = tf.math.imag
 
-tf_impl[lax.add_p] = _add
+tf_impl[lax.add_p] = wrap_binary_op(tf.math.add)
 tf_impl[lax.sub_p] = wrap_binary_op(tf.math.subtract)
 tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
 
@@ -610,6 +603,7 @@ tf_impl[lax.gt_p] = wrap_binary_op(tf.math.greater)
 tf_impl[lax.le_p] = wrap_binary_op(tf.math.less_equal)
 tf_impl[lax.lt_p] = wrap_binary_op(tf.math.less)
 
+tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
 def _convert_element_type(operand, new_dtype, old_dtype):
   del old_dtype
@@ -818,7 +812,7 @@ tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
 tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
 
 
-_add_fn = tf.function(_add)
+_add_fn = tf.function(tf.math.add)
 _ge_fn = tf.function(tf.math.greater_equal)
 
 tf_impl[lax.cumsum_p] = tf.math.cumsum
@@ -961,8 +955,8 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
   assert len(consts) == 0, "Reduction computation cannot have constants"
 
   def reducer(arg1: TfVal, arg2: TfVal) -> TfVal:
-    typed_jaxpr = _mk_typed_jaxpr(jaxpr, consts)
-    res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2)
     return res
 
   return _common_reduce_window(
@@ -1023,7 +1017,7 @@ def _get_min_identity(tf_dtype):
 
 # pylint: disable=protected-access
 tf_impl[lax.reduce_window_sum_p] = (
-    functools.partial(_specialized_reduce_window, _add, lambda x: 0))
+    functools.partial(_specialized_reduce_window, tf.math.add, lambda x: 0))
 tf_impl[lax.reduce_window_min_p] = (
     functools.partial(_specialized_reduce_window, tf.math.minimum,
                       _get_min_identity))
@@ -1054,12 +1048,15 @@ def _select_and_scatter_add(
 tf_impl[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 def _threefry2x32_jax_impl(*args: TfValOrUnit):
-  # We use the random._threefry2x32_lowering
-  return _convert_jax_impl(
+  # We use the random._threefry2x32_lowering, but since add is not implemented
+  # for uint32, we cast to int32 and back.
+  args = tuple([tf.cast(a, tf.int32) for a in args])
+  res = _convert_jax_impl(
     functools.partial(random._threefry2x32_lowering,
                       use_rolled_loops=False),
     multiple_results=True)(*args)
-
+  res = tuple([tf.cast(r, tf.uint32) for r in res])
+  return res
 tf_impl[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 
 
@@ -1138,11 +1135,6 @@ def _scatter_shape(operand, scatter_indices, updates, dimension_numbers):
       dimension_numbers=dimension_numbers)
   return out.shape
 
-def _mk_typed_jaxpr(jaxpr: core.Jaxpr, literals: Sequence) -> core.TypedJaxpr:
-  return core.TypedJaxpr(jaxpr, literals,
-                         tuple(map(lambda v: v.aval, jaxpr.invars)),
-                         tuple(map(lambda v: v.aval, jaxpr.outvars)))
-
 @functools.partial(bool_to_int8, argnums=(0, 2))
 def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
              dimension_numbers, indices_are_sorted, unique_indices):
@@ -1154,8 +1146,8 @@ def _scatter(operand, scatter_indices, updates, update_jaxpr, update_consts,
   proto = _scatter_dimensions_proto(scatter_indices.shape, dimension_numbers)
 
   def update_computation(arg1: TfVal, arg2: TfVal) -> TfVal:
-    typed_jaxpr = _mk_typed_jaxpr(update_jaxpr, update_consts)
-    res, = _interpret_jaxpr(typed_jaxpr, arg1, arg2)
+    closed_jaxpr = core.ClosedJaxpr(update_jaxpr, update_consts)
+    res, = _interpret_jaxpr(closed_jaxpr, arg1, arg2)
     return res
 
   o_spec = tf.TensorSpec((), dtype=operand.dtype)
@@ -1181,7 +1173,7 @@ tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 
 def _cond(index: TfVal, *operands: TfValOrUnit,
-          branches: Sequence[core.TypedJaxpr],
+          branches: Sequence[core.ClosedJaxpr],
           linear: Sequence[bool]) -> Sequence[TfValOrUnit]:
   del linear
   # tf.cond needs lambdas with no arguments.
@@ -1193,8 +1185,8 @@ def _cond(index: TfVal, *operands: TfValOrUnit,
 tf_impl[lax.cond_p] = _cond
 
 
-def _while(*args: TfValOrUnit, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
-           body_nconsts: int, body_jaxpr: core.TypedJaxpr) -> Sequence[TfValOrUnit]:
+def _while(*args: TfValOrUnit, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
+           body_nconsts: int, body_jaxpr: core.ClosedJaxpr) -> Sequence[TfValOrUnit]:
   cond_consts, body_consts, init_carry = util.split_list(args, [cond_nconsts,
                                                                 body_nconsts])
   if cond_jaxpr.out_avals[0].shape:  # type: ignore[attr-defined]
@@ -1213,8 +1205,8 @@ def _while(*args: TfValOrUnit, cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
 
 
 def _batched_cond_while(*args: TfValOrUnit,
-                        cond_nconsts: int, cond_jaxpr: core.TypedJaxpr,
-                        body_nconsts: int, body_jaxpr: core.TypedJaxpr
+                        cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
+                        body_nconsts: int, body_jaxpr: core.ClosedJaxpr
                         ) -> Sequence[TfValOrUnit]:
   """Interprets a while_loop with a batched condition.
 
@@ -1336,8 +1328,30 @@ def _svd(operand, full_matrices, compute_uv):
 
 tf_impl[lax_linalg.svd_p] = _svd
 
+def _eig(operand: TfVal, compute_left_eigenvectors: bool,
+         compute_right_eigenvectors: bool):
+  if compute_left_eigenvectors and compute_right_eigenvectors:
+    # TODO(bchetioui): didn't find a 100% reliable, easy and satisfying way to
+    # sort the left eigenvectors in the right order. The jax.numpy.linalg API
+    # suggests to me that left eigenvectors are anyway seldom used, so I
+    # think it is acceptable to leave as unimplemented for now.
+    msg = ("Conversion of eig is not implemented when both "
+           "compute_left_eigenvectors and compute_right_eigenvectors are set "
+           "to True.")
+    raise NotImplementedError(msg)
+  elif not (compute_left_eigenvectors or compute_right_eigenvectors):
+    return tuple([tf.linalg.eigvals(operand)])
+  elif compute_right_eigenvectors:
+    return tuple(tf.linalg.eig(operand))
+  else: # compute_left_eigenvectors == True
+    wH, vl = tf.linalg.eig(tf.linalg.adjoint(operand))
+    wHH = tf.math.conj(wH)
+    return tuple([wHH, vl])
+
+tf_impl[lax_linalg.eig_p] = _eig
+
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
-                           fun_jaxpr: core.TypedJaxpr,
+                           fun_jaxpr: core.ClosedJaxpr,
                            jvp_jaxpr_thunk: Callable) -> Sequence[TfValOrUnit]:
   # TODO(necula): ensure that there is no AD transformation in scope
   res = _interpret_jaxpr(fun_jaxpr, *args)
@@ -1347,7 +1361,7 @@ tf_impl[custom_derivatives.custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr
 
 
 def _custom_vjp_call_jaxpr(*args: TfValOrUnit,
-                           fun_jaxpr: core.TypedJaxpr,
+                           fun_jaxpr: core.ClosedJaxpr,
                            **_) -> Sequence[TfValOrUnit]:
   # TODO(necula): ensure that there is no AD transformation in scope
   res = _interpret_jaxpr(fun_jaxpr, *args)

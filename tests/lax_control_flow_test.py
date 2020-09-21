@@ -240,7 +240,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
     if config.omnistaging_enabled:
       expected = ("body_fun output and input must have identical types, got\n"
-                  "ShapedArray(bool[], weak_type=True)\n"
+                  "ShapedArray(bool[])\n"
                   "and\n"
                   "ShapedArray(float32[]).")
     else:
@@ -1727,7 +1727,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     # To get a cache hit on the second line we'd need to form a jaxpr and
     # compare them for equality (including the literals on identity). We could
     # implement that by adding a __hash__/__eq__ to core.Jaxpr and
-    # core.TypedJaxpr (see #1221).
+    # core.ClosedJaxpr (see #1221).
     raise SkipTest("not implemented")
 
     def cond(x):
@@ -2450,7 +2450,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         core.JaxprTypeError,
         re.escape('invalid cond param branches of type tuple, '
-                  'tuple of TypedJaxpr required: (4, 2)'),
+                  'tuple of ClosedJaxpr required: (4, 2)'),
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr, eqn = new_jaxpr()

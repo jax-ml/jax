@@ -62,19 +62,16 @@ T = TypeVar('T')
 
 
 @cache()
-def _initial_style_untyped_jaxpr(fun: Callable, in_tree, in_avals):
+def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   return jaxpr, out_avals, consts, out_tree()
 
 @cache()
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-  jaxpr, out_avals, consts, out_tree = \
-      _initial_style_untyped_jaxpr(fun, in_tree, in_avals)
-  const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
-  typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
-                                (), const_avals + in_avals, out_avals)
-  return typed_jaxpr, consts, out_tree
+  jaxpr, out_avals, consts, out_tree = _initial_style_open_jaxpr(fun, in_tree, in_avals)
+  closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+  return closed_jaxpr, consts, out_tree
 
 def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                                             in_tree, in_avals):
@@ -86,7 +83,7 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
   # those that it needs (dropping the rest).
 
   jaxprs, all_out_avals, all_consts, all_out_trees = unzip4(
-      _initial_style_untyped_jaxpr(fun, in_tree, in_avals) for fun in funs)
+      _initial_style_open_jaxpr(fun, in_tree, in_avals) for fun in funs)
 
   newvar = core.gensym(jaxprs, suffix='_')
   all_const_avals = [[raise_to_shaped(core.get_aval(c)) for c in consts]
@@ -102,12 +99,10 @@ def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                       outvars=jaxpr.outvars, eqns=jaxpr.eqns)
 
   consts = util.concatenate(all_consts)
-  const_avals = util.concatenate(all_const_avals)
   jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
-  typed_jaxprs = [core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
-                                  (), [*const_avals, *in_avals], out_avals)
+  closed_jaxprs = [core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
                   for jaxpr, out_avals in zip(jaxprs, all_out_avals)]
-  return typed_jaxprs, consts, all_out_trees
+  return closed_jaxprs, consts, all_out_trees
 
 def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
@@ -312,8 +307,7 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   cond_carry_elts = [xops.GetTupleElement(cond_carry, i) for i in range(len(args))]
   x, _, z = split_list(cond_carry_elts, [cond_nconsts, body_nconsts])
   pred, = xla.jaxpr_subcomp(cond_c, cond_jaxpr.jaxpr, backend, axis_env,
-                            _map(partial(xb.constant, cond_c),
-                                 cond_jaxpr.literals),
+                            _map(partial(xb.constant, cond_c), cond_jaxpr.consts),
                             extend_name_stack(name_stack, 'cond'), *(x + z))
   if batched:
     scalar = ShapedArray((), np.bool_)
@@ -326,11 +320,11 @@ def _while_loop_translation_rule(c, axis_env, name_stack, avals, backend, *args,
   body_carry_elts = [xops.GetTupleElement(body_carry, i) for i in range(len(args))]
   x, y, z = split_list(body_carry_elts, [cond_nconsts, body_nconsts])
   new_z = xla.jaxpr_subcomp(body_c, body_jaxpr.jaxpr, backend, axis_env,
-                            _map(partial(xb.constant, body_c), body_jaxpr.literals),
+                            _map(partial(xb.constant, body_c), body_jaxpr.consts),
                             extend_name_stack(name_stack, 'body'), *(y + z))
   if batched:
     body_pred, = xla.jaxpr_subcomp(body_c, cond_jaxpr.jaxpr, backend, axis_env,
-                                   _map(partial(xb.constant, body_c), cond_jaxpr.literals),
+                                   _map(partial(xb.constant, body_c), cond_jaxpr.consts),
                                    extend_name_stack(name_stack, 'body_pred'), *(x + z))
     new_z = _map(partial(_pred_bcast_select, body_c, body_pred), new_z, z, body_jaxpr.out_avals)
     assert _map(body_c.get_shape, new_z) == _map(body_c.get_shape, z) # no broadcast
@@ -435,12 +429,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
                                     cond_jaxpr.jaxpr.eqns)
-  in_avals_aug = (cond_jaxpr.in_avals[:cond_nconsts] +
-                  body_jvp_rearranged.in_avals[body_nconsts + len(bconst_dot):])
-  cond_jaxpr_augmented = core.TypedJaxpr(cond_jaxpr_augmented,
-                                         cond_jaxpr.literals,
-                                         in_avals_aug,
-                                         cond_jaxpr.out_avals)
+  cond_jaxpr_augmented = core.ClosedJaxpr(cond_jaxpr_augmented, cond_jaxpr.consts)
 
   out = while_p.bind(
       *(cconst + bconst + bconst_dot + init + init_dot),
@@ -456,8 +445,8 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   return out_carry, out_tangents
 
 def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts: int,
-                        cond_jaxpr: pe.TypedJaxpr, body_nconsts: int,
-                        body_jaxpr: pe.TypedJaxpr) -> Sequence[pe.Tracer]:
+                        cond_jaxpr: pe.ClosedJaxpr, body_nconsts: int,
+                        body_jaxpr: pe.ClosedJaxpr) -> Sequence[pe.Tracer]:
   """An implementation of partial evaluation for while.
   As long as some carry (and hence output) are known and the output
   of `cond_jaxpr` is known, we use a portion of the loop body to compute the known
@@ -514,7 +503,6 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   # the type of outputs; residuals are at the end
   if len(body_jaxpr_known.out_avals) > len(body_jaxpr.out_avals):
     # TODO(necula): this is not quite enough; we should drop the residual computations also
-    body_jaxpr_known.out_avals = body_jaxpr_known.out_avals[:len(body_jaxpr.out_avals)]
     body_jaxpr_known.jaxpr.outvars = body_jaxpr_known.jaxpr.outvars[:len(body_jaxpr.out_avals)]
   out_known = while_p.bind(
     *in_consts,
@@ -738,7 +726,7 @@ def _cond_translation_rule(c, axis_env, name_stack, avals, backend,
     op = xb.parameter(c, 0, op_shape)
     ops = [xops.GetTupleElement(op, i) for i in range(len(jaxpr.in_avals))]
     outs = xla.jaxpr_subcomp(c, jaxpr.jaxpr, backend, axis_env,
-                             _map(partial(xb.constant, c), jaxpr.literals),
+                             _map(partial(xb.constant, c), jaxpr.consts),
                              extend_name_stack(name_stack, name + '_fun'), *ops)
     return c.build(xops.Tuple(c, outs))
 
@@ -965,7 +953,7 @@ def _join_cond_outputs(jaxprs, all_res_avals, res_aval_indices_per_jaxpr,
       aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))
       return outs + list(aug_residuals)
 
-    return _make_typed_jaxpr(f_aug, jaxpr.in_avals)
+    return _make_closed_jaxpr(f_aug, jaxpr.in_avals)
 
   return tuple(_map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
 
@@ -981,15 +969,12 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
     num_res = len(res_indices)
     res_vars = jaxpr.jaxpr.invars[:num_res]
     non_res_vars = jaxpr.jaxpr.invars[num_res:]
-    non_res_avals = jaxpr.in_avals[num_res:]
 
     aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))
     aug_invars = aug_res_vars + non_res_vars
-    aug_avals = all_res_avals + non_res_avals
     jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
                            jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
-    jaxpr_aug = core.TypedJaxpr(jaxpr_aug, jaxpr.literals, aug_avals,
-                                jaxpr.out_avals)
+    jaxpr_aug = core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
     return jaxpr_aug
 
   return tuple(_map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
@@ -1007,11 +992,11 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
-        jaxpr.jaxpr, jaxpr.literals, primals, cts_out)
+        jaxpr.jaxpr, jaxpr.consts, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
     return _map(ad.instantiate_zeros_aval, primal_avals, cts_in)
 
-  return _make_typed_jaxpr(transposed, res_avals + jaxpr.out_avals)
+  return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
 def _cond_transpose(cts, *args, branches, linear):
   index, *ops = args
@@ -1043,9 +1028,9 @@ def _avals_short(avals):
 
 def _cond_typecheck(*avals, branches, linear):
   tc = partial(_typecheck_param, 'cond')
-  tc(branches, 'branches', 'tuple of TypedJaxpr',
+  tc(branches, 'branches', 'tuple of ClosedJaxpr',
      type(branches) is tuple and
-     all(type(x) is core.TypedJaxpr for x in branches))
+     all(type(x) is core.ClosedJaxpr for x in branches))
   tc(linear, 'linear', 'tuple of bool',
      type(linear) is tuple and all(type(x) is bool for x in linear))
 
@@ -1548,19 +1533,15 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                      for uk, t in zip(unknowns[:num_consts], tracers[:num_consts])]
   other_pvals = [pe.PartialVal.unknown(a) for a in jaxpr_1.in_avals[num_consts:]]
   in_pvals_1 = invariant_pvals + other_pvals
-  untyped_jaxpr_1, out_pvals_1, consts_1 = pe.trace_to_jaxpr(
+  jaxpr_1_opt, out_pvals_1, consts_1 = pe.trace_to_jaxpr(
       lu.wrap_init(core.jaxpr_as_fun(jaxpr_1)), in_pvals_1,
       instantiate=[True] * (num_carry + num_ys) + [False] * num_res)
-  const_avals_1 = [raise_to_shaped(core.get_aval(c)) for c in consts_1]
-  in_avals_1 = [core.abstract_unit] * num_consts + jaxpr_1.in_avals[num_consts:]
-  out_avals_1 = [core.abstract_unit if pv is None else pv for pv, c in out_pvals_1]
 
   # TODO(cjfj): Explain the need for the code below.
-  for var in untyped_jaxpr_1.invars[:num_consts]:
+  for var in jaxpr_1_opt.invars[:num_consts]:
     var.aval = core.abstract_unit
 
-  jaxpr_1_opt = pe.TypedJaxpr(pe.convert_constvars_jaxpr(untyped_jaxpr_1),
-                              (), const_avals_1 + in_avals_1, out_avals_1)
+  jaxpr_1_opt = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr_1_opt), ())
   num_consts_1 = num_consts + len(consts_1)
   # any now-known residuals are intensive, so we want to revise jaxpr_2 to take
   # those inputs as constants rather than as extensive inputs
@@ -1671,23 +1652,22 @@ def _transpose_scan_jaxpr(num_res1, num_c, num_res2, jaxpr):
         res1_cbar_bbar_res2, [num_res1, num_c, num_b])
     primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
                [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
-    cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.literals, primals,
-                                    b_bar)
+    cbar_abar = ad.backward_pass(jaxpr.jaxpr, jaxpr.consts, primals, b_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
     a_bar = _map(ad.instantiate_zeros_aval, a_avals, a_bar)
     c_bar = _map(ad.instantiate_zeros_aval, c_avals,
                 _map(ad.add_tangents, c_bar, new_c_bar))
     return c_bar + a_bar
-  return _make_typed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
+  return _make_closed_jaxpr(transposed, res1_avals + c_avals + b_avals + res2_avals)
 
-def _make_typed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
+def _make_closed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
   if config.omnistaging_enabled:
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
   else:
     pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
     jaxpr, pvals_out, consts = pe.trace_to_jaxpr(traceable, pvals, instantiate=True)
     out_avals, _ = unzip2(pvals_out)
-  return core.TypedJaxpr(jaxpr, consts, in_avals, _map(raise_to_shaped, out_avals))
+  return core.ClosedJaxpr(jaxpr, consts)
 
 
 def _scan_batching_rule(args, dims, reverse, length, jaxpr, num_consts,
@@ -1764,7 +1744,7 @@ def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
 
   aval = ShapedArray((), dtypes.int_)
   const_avals, carry_avals, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
-  return _make_typed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
+  return _make_closed_jaxpr(masked, [aval] + const_avals + [aval] + carry_avals + x_avals)
 
 def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
                     jaxpr, linear, unroll):
@@ -1774,7 +1754,7 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
      type(num_consts) is int and num_consts >= 0)
   tc(num_carry, 'num_carry', 'non-negative int',
      type(num_carry) is int and num_carry >= 0)
-  tc(jaxpr, 'jaxpr', 'TypedJaxpr', type(jaxpr) is core.TypedJaxpr)
+  tc(jaxpr, 'jaxpr', 'ClosedJaxpr', type(jaxpr) is core.ClosedJaxpr)
   tc(linear, 'linear', 'tuple of bool',
      type(linear) is tuple and all(type(x) is bool for x in linear))
   tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
@@ -2431,11 +2411,11 @@ def associative_scan(fn, elems, reverse=False):
 
 @config.register_omnistaging_disabler
 def omnistaging_disabler() -> None:
-  global _initial_style_untyped_jaxpr, _initial_style_jaxpr, \
+  global _initial_style_open_jaxpr, _initial_style_jaxpr, \
       _initial_style_jaxprs_with_common_consts
 
   @cache()
-  def _initial_style_untyped_jaxpr(fun: Callable, in_tree, in_avals):
+  def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
     in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
     wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
     with core.initial_style_staging():  # type: ignore
@@ -2445,13 +2425,10 @@ def omnistaging_disabler() -> None:
 
   @cache()
   def _initial_style_jaxpr(fun: Callable, in_tree, in_avals):
-    jaxpr, out_pvals, consts, out_tree = _initial_style_untyped_jaxpr(
+    jaxpr, out_pvals, consts, out_tree = _initial_style_open_jaxpr(
         fun, in_tree, in_avals)
-    out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
-    const_avals = tuple(raise_to_shaped(core.get_aval(c)) for c in consts)
-    typed_jaxpr = core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
-                                  (), const_avals + in_avals, out_avals)
-    return typed_jaxpr, consts, out_tree()
+    closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    return closed_jaxpr, consts, out_tree()
 
   def _initial_style_jaxprs_with_common_consts(funs: Sequence[Callable],
                                               in_tree, in_avals):
@@ -2463,7 +2440,7 @@ def omnistaging_disabler() -> None:
     # those that it needs (dropping the rest).
 
     jaxprs, all_out_pvals, all_consts, all_out_trees = unzip4([
-        _initial_style_untyped_jaxpr(fun, in_tree, in_avals) for fun in funs])
+        _initial_style_open_jaxpr(fun, in_tree, in_avals) for fun in funs])
 
     newvar = core.gensym(jaxprs, suffix='_')
     all_const_avals = tuple(
@@ -2480,16 +2457,12 @@ def omnistaging_disabler() -> None:
       return core.Jaxpr(constvars=constvars, invars=jaxpr.invars,
                         outvars=jaxpr.outvars, eqns=jaxpr.eqns)
 
-    const_avals = tuple(util.concatenate(all_const_avals))
-
     def type_and_const_convert_jaxpr(jaxpr, out_pvals):
-      out_avals = _map(raise_to_shaped, unzip2(out_pvals)[0])
-      return core.TypedJaxpr(pe.convert_constvars_jaxpr(jaxpr),
-                            (), const_avals + in_avals, out_avals)
+      return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
     jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
-    typed_jaxprs = _map(type_and_const_convert_jaxpr, jaxprs, all_out_pvals)
+    closed_jaxprs = _map(type_and_const_convert_jaxpr, jaxprs, all_out_pvals)
 
-    return (tuple(typed_jaxprs),
+    return (tuple(closed_jaxprs),
             tuple(util.concatenate(all_consts)),
             tuple(out_tree() for out_tree in all_out_trees))

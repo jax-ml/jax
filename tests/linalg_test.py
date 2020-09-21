@@ -66,10 +66,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = rng(factor_shape, dtype)
       return [np.matmul(a, jnp.conj(T(a)))]
 
-    if (jnp.issubdtype(dtype, jnp.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      self.skipTest("Unimplemented case for complex Cholesky decomposition.")
-
     self._CheckAgainstNumpy(np.linalg.cholesky, jnp.linalg.cholesky, args_maker,
                             tol=1e-3)
     self._CompileAndCheck(jnp.linalg.cholesky, args_maker)
@@ -1096,10 +1092,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if (sym_pos and jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest(
-        "Complex Cholesky decomposition not implemented on TPU")
     osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
     jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
 
@@ -1346,7 +1338,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
      a = rng((n, n), dtype)
      def expm(x):
        return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
-     jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=2)
+     if jtu.device_under_test() != "tpu":
+       # TODO(b/168865439): Fails with internal error on TPUs
+       jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=2,
+                       atol=1e-1, rtol=1e-1)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
