@@ -63,8 +63,7 @@ class CPPJitTest(jtu.JaxTestCase):
     # TODO(jblespiau,phawkins): Remove this when jaxlib has been released.
     # This is in the future, because we are making a breaking change to
     # Tensorflow.
-    if version < (0, 1, 54):
-      raise unittest.SkipTest("Disabled because it depends on some future "
+    if version < (0, 1, 555555     raise unittest.SkipTest("Disabled because it depends on some future "
                               "release of jax_jit.cc within jaxlib.")
     else:
       return jax.api._cpp_jit
