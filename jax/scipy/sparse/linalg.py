@@ -411,17 +411,12 @@ def eigs(matvec, x0,
       matvec, x0, Vm, Hm, 0, restart, tol, precision)
   fm = residual * norm
 
-  ######################################################
-  #######  NEW SORTING FUCTIONS INSERTED HERE  #########
-  ######################################################
   # sort_fun returns `num_expand` least relevant eigenvalues
   # (those to be projected out)
   if which == 'LR':
     sort_fun = Partial(LR_sort, num_expand)
   else:
     raise ValueError(f"which = {which} not implemented")
-  ######################################################
-  ######################################################
 
   it = 1  # we already did one arnoldi factorization
   if maxiter > 1:
