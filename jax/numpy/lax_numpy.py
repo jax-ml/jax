@@ -342,11 +342,9 @@ def result_type(*args):
 
 def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
   if promote_to_inexact:
-    def fn(x):
-      x = lax.convert_element_type(x, _to_inexact_dtype(_dtype(x)))
-      return lax_fn(x)
+    fn = lambda x: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x))
   else:
-    fn = lambda x: lax_fn(x)
+    fn = lambda x: lax_fn(*_promote_args(numpy_fn.__name__, x))
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
     return _wraps(numpy_fn, lax_description=doc)(fn)
