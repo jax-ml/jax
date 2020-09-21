@@ -142,6 +142,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
               all_shapes, jtu.rand_default, ["rev"], inexact=True, tolerance=0),
     op_record("not_equal", 2, all_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("array_equal", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
+    op_record("array_equiv", 2, number_dtypes, all_shapes, jtu.rand_some_equal, ["rev"]),
     op_record("reciprocal", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
     op_record("subtract", 2, number_dtypes, all_shapes, jtu.rand_default, ["rev"]),
     op_record("signbit", 1, default_dtypes + bool_dtypes, all_shapes,
@@ -592,6 +593,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         op(other, arg)
       with self.assertRaises(TypeError):
         op(arg, other)
+
+  def testArrayEqualExamples(self):
+    # examples from the array_equal() docstring.
+    self.assertTrue(jnp.array_equal([1, 2], [1, 2]))
+    self.assertTrue(jnp.array_equal(np.array([1, 2]), np.array([1, 2])))
+    self.assertFalse(jnp.array_equal([1, 2], [1, 2, 3]))
+    self.assertFalse(jnp.array_equal([1, 2], [1, 4]))
+
+    a = np.array([1, np.nan])
+    self.assertFalse(jnp.array_equal(a, a))
+    self.assertTrue(jnp.array_equal(a, a, equal_nan=True))
+
+    a = np.array([1 + 1j])
+    b = a.copy()
+    a.real = np.nan
+    b.imag = np.nan
+    self.assertTrue(jnp.array_equal(a, b, equal_nan=True))
+
+  def testArrayEquivExamples(self):
+    # examples from the array_equiv() docstring.
+    self.assertTrue(jnp.array_equiv([1, 2], [1, 2]))
+    self.assertFalse(jnp.array_equiv([1, 2], [1, 3]))
+    self.assertTrue(jnp.array_equiv([1, 2], [[1, 2], [1, 2]]))
+    self.assertFalse(jnp.array_equiv([1, 2], [[1, 2, 1, 2], [1, 2, 1, 2]]))
+    self.assertFalse(jnp.array_equiv([1, 2], [[1, 2], [1, 3]]))
 
   def testArrayModule(self):
     if numpy_dispatch is None:
