@@ -17,5 +17,6 @@
 # flake8: noqa: F401
 from .scale import (
   resize,
-  ResizeMethod
+  ResizeMethod,
+  scale_and_translate,
 )

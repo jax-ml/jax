@@ -173,12 +173,114 @@ class ImageTest(jtu.JaxTestCase):
        for method in ["bilinear", "lanczos3", "lanczos5", "bicubic"]
        for antialias in [False, True]))
   def testResizeGradients(self, dtype, image_shape, target_shape, method,
-                          antialias):
+                           antialias):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(image_shape, dtype),)
     jax_fn = partial(image.resize, shape=target_shape, method=method,
                      antialias=antialias)
     jtu.check_grads(jax_fn, args_maker(), order=2, rtol=1e-2, eps=1.)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":"_shape={}_target={}_method={}".format(
+         jtu.format_shape_dtype_string(image_shape, dtype),
+         jtu.format_shape_dtype_string(target_shape, dtype), method),
+       "dtype": dtype, "image_shape": image_shape,
+       "target_shape": target_shape,
+       "scale": scale, "translation": translation, "method": method}
+      for dtype in inexact_dtypes
+      for image_shape, target_shape, scale, translation in [
+        ([3, 1, 2], [6, 1, 4], [2.0, 1.0, 2.0], [1.0, 0.0, -1.0]),
+        ([1, 3, 2, 1], [1, 6, 4, 1], [1.0, 2.0, 2.0, 1.0], [0.0, 1.0, -1.0, 0.0])]
+      for method in ["linear", "lanczos3", "lanczos5", "cubic"]))
+  def testScaleAndTranslateUp(self, dtype, image_shape, target_shape, scale,
+                              translation, method):
+    data = [64, 32, 32, 64, 50, 100]
+    # Note zeros occur in the output because the sampling location is outside
+    # the boundaries of the input image.
+    expected_data = {}
+    expected_data["linear"] = [
+        0.0, 0.0, 0.0, 0.0, 56.0, 40.0, 32.0, 0.0, 52.0, 44.0, 40.0, 0.0, 44.0,
+        52.0, 56.0, 0.0, 45.625, 63.875, 73.0, 0.0, 56.875, 79.625, 91.0, 0.0
+    ]
+    expected_data["lanczos3"] = [
+        0.0, 0.0, 0.0, 0.0, 59.6281, 38.4313, 22.23, 0.0, 52.0037, 40.6454,
+        31.964, 0.0, 41.0779, 47.9383, 53.1818, 0.0, 43.0769, 67.1244, 85.5045,
+        0.0, 56.4713, 83.5243, 104.2017, 0.0
+    ]
+    expected_data["lanczos5"] = [
+        0.0, 0.0, 0.0, 0.0, 60.0223, 40.6694, 23.1219, 0.0, 51.2369, 39.5593,
+        28.9709, 0.0, 40.8875, 46.5604, 51.7041, 0.0, 43.5299, 67.7223, 89.658,
+        0.0, 56.784, 83.984, 108.6467, 0.0
+    ]
+    expected_data["cubic"] = [
+        0.0, 0.0, 0.0, 0.0, 59.0252, 36.9748, 25.8547, 0.0, 53.3386, 41.4789,
+        35.4981, 0.0, 41.285, 51.0051, 55.9071, 0.0, 42.151, 65.8032, 77.731,
+        0.0, 55.823, 83.9288, 98.1026, 0.0
+    ]
+    x = np.array(data, dtype=dtype).reshape(image_shape)
+    # Should we test different float types here?
+    scale_a = jnp.array(scale, dtype=jnp.float32)
+    translation_a = jnp.array(translation, dtype=jnp.float32)
+    output = image.scale_and_translate(x, target_shape, scale_a, translation_a,
+                                       method)
+
+    expected = np.array(
+        expected_data[method], dtype=dtype).reshape(target_shape)
+    self.assertAllClose(output, expected, atol=2e-03)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}_method={}_antialias={}".format(
+         jtu.dtype_str(dtype), method, antialias),
+       "dtype":dtype, "method":method, "antialias": antialias}
+      for dtype in inexact_dtypes
+      for method in ["linear", "lanczos3", "lanczos5", "cubic"]
+      for antialias in [True, False]))
+  def testScaleAndTranslateDown(self, dtype, method, antialias):
+    image_shape = [1, 6, 7, 1]
+    target_shape = [1, 3, 3, 1]
+
+    data = [
+        51, 38, 32, 89, 41, 21, 97, 51, 33, 87, 89, 34, 21, 97, 43, 25, 25, 92,
+        41, 11, 84, 11, 55, 111, 23, 99, 50, 83, 13, 92, 52, 43, 90, 43, 14, 89,
+        71, 32, 23, 23, 35, 93
+    ]
+    if antialias:
+      expected_data = {}
+      expected_data["linear"] = [
+          43.5372, 59.3694, 53.6907, 49.3221, 56.8168, 55.4849, 0, 0, 0
+      ]
+      expected_data["lanczos3"] = [
+          43.2884, 57.9091, 54.6439, 48.5856, 58.2427, 53.7551, 0, 0, 0
+      ]
+      expected_data["lanczos5"] = [
+          43.9209, 57.6360, 54.9575, 48.9272, 58.1865, 53.1948, 0, 0, 0
+      ]
+      expected_data["cubic"] = [
+          42.9935, 59.1687, 54.2138, 48.2640, 58.2678, 54.4088, 0, 0, 0
+      ]
+    else:
+      expected_data = {}
+      expected_data["linear"] = [
+          43.6071, 89, 59, 37.1785, 27.2857, 58.3571, 0, 0, 0
+      ]
+      expected_data["lanczos3"] = [
+          44.1390, 87.8786, 63.3111, 25.1161, 20.8795, 53.6165, 0, 0, 0
+      ]
+      expected_data["lanczos5"] = [
+          44.8835, 85.5896, 66.7231, 16.9983, 19.8891, 47.1446, 0, 0, 0
+      ]
+      expected_data["cubic"] = [
+          43.6426, 88.8854, 60.6638, 31.4685, 22.1204, 58.3457, 0, 0, 0
+      ]
+    x = np.array(data, dtype=dtype).reshape(image_shape)
+
+    scale_a = jnp.array([1.0, 0.35, 0.4, 1.0], dtype=jnp.float32)
+    translation_a = jnp.array([0.0, 0.2, 0.1, 0.0], dtype=jnp.float32)
+    output = image.scale_and_translate(
+        x, target_shape, scale_a, translation_a, method, antialias=antialias)
+    expected = np.array(
+        expected_data[method], dtype=dtype).reshape(target_shape)
+    self.assertAllClose(output, expected, atol=2e-03)
 
 
 if __name__ == "__main__":
