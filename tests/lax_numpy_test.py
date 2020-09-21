@@ -2277,7 +2277,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     }
     for shape in [(5,), (5, 5)]
     for dtype in default_dtypes
-    # We only test explicit integer-valued bin edges beause in other cases
+    # We only test explicit integer-valued bin edges because in other cases
     # rounding errors lead to flaky tests.
     for bins in [np.arange(-5, 6), [-5, 0, 3]]
     for density in [True, False]
@@ -2296,6 +2296,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # "TypeError: invalid type promotion with custom data type"
     if dtype != jnp.bfloat16:
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                              tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_bins={}_weights={}_density={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), bins, weights, density),
+      "shape": shape,
+      "dtype": dtype,
+      "bins": bins,
+      "weights": weights,
+      "density": density
+    }
+    for shape in [(5, 3), (10, 3)]
+    for dtype in int_dtypes
+    # We only test explicit integer-valued bin edges because in other cases
+    # rounding errors lead to flaky tests.
+    for bins in [(2, 2, 2), [[-5, 0, 4], [-4, -1, 2], [-6, -1, 4]]]
+    for weights in [False, True]
+    for density in [False, True]
+  ))
+  def testHistogramdd(self, shape, dtype, bins, weights, density):
+    rng = jtu.rand_default(self.rng())
+    _weights = lambda w: abs(w) if weights else None
+    np_fun = lambda a, w: np.histogramdd(a, bins=bins, weights=_weights(w), density=density)
+    jnp_fun = lambda a, w: jnp.histogramdd(a, bins=bins, weights=_weights(w), density=density)
+    args_maker = lambda: [rng(shape, dtype), rng((shape[0],), dtype)]
+    tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1}
+    # np.searchsorted errors on bfloat16 with
+    # "TypeError: invalid type promotion with custom data type"
+    if dtype != jnp.bfloat16:
+        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
                               tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4331,6 +4362,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'full_like': ['shape', 'subok', 'order'],
       'gradient': ['varargs', 'axis', 'edge_order'],
       'histogram': ['normed'],
+      'histogramdd': ['normed'],
       'isneginf': ['out'],
       'isposinf': ['out'],
       'max': ['initial', 'where'],
