@@ -54,7 +54,6 @@ def _norm_tree(x):
 def _vdot_tree(x, y):
   return sum(tree_leaves(tree_multimap(_vdot, x, y)))
 
-
 def _mul(scalar, tree):
   return tree_map(partial(operator.mul, scalar), tree)
 
