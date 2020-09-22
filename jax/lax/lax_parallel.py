@@ -678,7 +678,7 @@ def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
 def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
   assert not vals and not mapped
   idx = axis_index(axis_name)  # type: ignore
-  return idx * chunk_size + np.arange(chunk_size), True
+  return idx * chunk_size + np.arange(chunk_size, dtype=np.int32), True
 
 axis_index_p = core.Primitive('axis_index')
 xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
