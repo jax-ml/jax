@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import numpy as np
 
 from jax.numpy import lax_numpy as jnp
@@ -686,8 +685,7 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
 
 
 def _lu_tpu_translation_rule(c, operand):
-  shape = c.get_shape(operand)
-  if hasattr(xops, "LU") and shape.numpy_dtype() == np.float32:
+  if hasattr(xops, "LU"):
     lu, pivot, perm = xops.LU(operand)
     return xops.Tuple(c, [lu, pivot, perm])
   else:
