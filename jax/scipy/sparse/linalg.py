@@ -375,8 +375,8 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
   projection of the true solution into this subspace is returned.
 
-  This implementation does the QR factorization explicitly after forming
-  the Krylov space, rather than step by step during the Arnoldi process.
+  This implementation solves a dense linear problem instead of building
+  a QR factorization during the Arnoldi process.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
   V = tree_map(
@@ -402,13 +402,10 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   V, H, _, _ = lax.while_loop(loop_cond, arnoldi_process, carry)
 
   # The following is equivalent to:
-  #  beta_vec = jnp.zeros((restart,), dtype=dtype)
-  #  beta_vec = beta_vec.at[0].set(residual_norm) # it really is the original value
-  #  y = jsp.linalg.solve(H[:, :-1].T, beta_vec)
-  Q, Rtilde = jnp.linalg.qr(H, mode="complete")
-  g_vec = residual_norm * Q[0, :-1].ravel()
-  R = Rtilde[:, :-1]
-  y = jax.scipy.linalg.solve_triangular(R, g_vec)
+  beta_vec = jnp.zeros((restart,), dtype=dtype)
+  beta_vec = beta_vec.at[0].set(residual_norm) # it really is the original value
+  y = jsp.linalg.solve(H[:, :-1].T, beta_vec)
+  Vy = tree_map(lambda X: _dot(X[..., :-1], y), V)
 
   dx = M(Vy)
   x = _add(x0, dx)
