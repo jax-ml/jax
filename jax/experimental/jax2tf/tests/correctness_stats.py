@@ -262,7 +262,7 @@ def merge_similar_limitations(limitations: Sequence[Limitation]) \
 
 def prettify(limitations: Sequence[Limitation]) -> str:
   """Constructs a summary markdown table based on a list of limitations."""
-  limitations = sorted(list(set(limitations)))
+  limitations = list(set(limitations))
 
   def _pipewrap(columns):
     return '| ' + ' | '.join(columns) + ' |'
@@ -273,7 +273,8 @@ def prettify(limitations: Sequence[Limitation]) -> str:
                  , 'Affected dtypes'
                  , 'Affected devices' ]
 
-  table = [column_names, ['---'] * len(column_names)]
+  header = [column_names, ['---'] * len(column_names)]
+  table = []
 
   for lim in limitations:
     table.append([ lim.primitive_name
@@ -284,7 +285,7 @@ def prettify(limitations: Sequence[Limitation]) -> str:
                  , ', '.join(lim.devices)
                  ])
 
-  return '\n'.join(line for line in map(_pipewrap, table))
+  return '\n'.join(line for line in map(_pipewrap, header + sorted(table)))
 
 def prettify_as_ordered_list(collec: Collection[core.Primitive]) -> str:
   """Builds an ordered summary markdown list of a collection of primitives."""

@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-09-21*
+*Last generated on (YYYY-MM-DD): 2020-09-22*
 
 ## Updating the documentation
 
