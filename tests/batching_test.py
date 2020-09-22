@@ -1044,6 +1044,34 @@ class BatchingTest(jtu.JaxTestCase):
     exp_shape = shape_fun(x, out_d)
     self.assertEqual(y.shape, exp_shape)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(2), range(2), range(3)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllToAllSplitAxis(self, vmap_axis, split_axis, concat_axis):
+    shape = (4, 4, 4)
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(vmap, in_axes=vmap_axis, axis_name='i')
+    @partial(vmap, in_axes=vmap_axis, axis_name='j')
+    def f(x):
+      return lax.all_to_all(x, ('i', 'j'), split_axis, concat_axis)
+
+    unroll_shape = (2, 2, *shape[1:])
+    unroll_shape = list(shape)
+    unroll_shape[vmap_axis:vmap_axis+1] = (2, 2)
+    x_unroll = x.reshape(unroll_shape)
+    y_unrolled = f(x_unroll)
+    y = y_unrolled.reshape(shape)
+
+    if vmap_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (vmap_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
+
   def testNegativeAxes(self):
     x = np.arange(3*4*5).reshape(3, 4, 5)
     self.assertAllClose(jax.vmap(jnp.sum, in_axes=-3)(x),
