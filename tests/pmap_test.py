@@ -958,6 +958,26 @@ class PmapTest(jtu.JaxTestCase):
     expected = 1 + np.arange(device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testAxisIndexNestedPmap(self):
+    device_count = xla_bridge.device_count()
+    if device_count < 4:
+      raise SkipTest("test requires at least four devices")
+    f = lambda axis: pmap(pmap(lambda x: x + lax.axis_index(axis), 'j'), 'i')
+    x = jnp.ones((2, 2))
+    expected_j = np.broadcast_to(1 + np.arange(2), (2, 2))
+    self.assertAllClose(f('j')(x), expected_j, check_dtypes=False)
+    self.assertAllClose(f('i')(x), expected_j.T, check_dtypes=False)
+
+  def testAxisIndexNd(self):
+    device_count = xla_bridge.device_count()
+    if device_count < 4:
+      raise SkipTest("test requires at least four devices")
+    f = lambda axes: pmap(pmap(lambda x: x + lax.axis_index(axes), 'j'), 'i')
+    x = jnp.ones((2, 2))
+    expected = 1 + np.arange(4).reshape((2, 2))
+    self.assertAllClose(f(('i', 'j'))(x), expected, check_dtypes=False)
+    self.assertAllClose(f(('j', 'i'))(x), expected.T, check_dtypes=False)
+
   def testAxisIndexInInitialStyle(self):
     @partial(pmap, axis_name='i')
     def f(x):

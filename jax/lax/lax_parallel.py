@@ -667,9 +667,11 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
 
 
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
-  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
+  axis_pos = list(axis_env.names).index(axis_name)
+  nreplicas = axis_env.nreps // prod(axis_env.sizes)
+  div = xb.constant(c, np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
                                 dtype=np.uint32))
-  mod = xb.constant(c, np.array(axis_env.sizes[-1], dtype=np.uint32))
+  mod = xb.constant(c, np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
@@ -690,11 +692,20 @@ pxla.multi_host_supported_collectives.add(axis_index_p)
 # wants to bind an axis name has to additionally implement `process_axis_index`
 # and put its main trace on the axis env stack.
 def _axis_index_bind(*, axis_name):
-  frame = core.axis_frame(axis_name)
-  if frame.main_trace is not None:
-    trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
-    return trace.process_axis_index(frame)
-  return core.Primitive.bind(axis_index_p, axis_name=axis_name)
+  if not isinstance(axis_name, tuple):
+    axis_name = (axis_name,)
+  inner_size = 1
+  index = 0
+  for name in reversed(axis_name):
+    frame = core.axis_frame(name)
+    if frame.main_trace is not None:
+      trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
+      name_idx = trace.process_axis_index(frame)
+    else:
+      name_idx = core.Primitive.bind(axis_index_p, axis_name=name)
+    index += name_idx * inner_size
+    inner_size *= psum(1, name)
+  return index
 axis_index_p.def_custom_bind(_axis_index_bind)
 
 def _process_axis_index(self, frame):
