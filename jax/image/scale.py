@@ -52,7 +52,7 @@ def compute_weight_mat(input_size: int, output_size: int, scale,
   # When downsampling the kernel should be scaled since we want to low pass
   # filter and interpolate, but when upsampling it should not be since we only
   # want to interpolate.
-  kernel_scale = max(inv_scale, 1.) if antialias else 1.
+  kernel_scale = jnp.maximum(inv_scale, 1.) if antialias else 1.
 
   sample_f = ((np.arange(output_size) + 0.5) * inv_scale -
               translation * inv_scale - 0.5)
@@ -75,18 +75,12 @@ def compute_weight_mat(input_size: int, output_size: int, scale,
                       sample_f <= input_size - 0.5)[jnp.newaxis, :], weights, 0)
 
 
-def _scale_and_translate(x, output_shape, scale, translation, kernel,
-                         antialias, precision):
+def _scale_and_translate(x, output_shape, spatial_dims, scale, translation,
+                         kernel, antialias, precision):
   input_shape = x.shape
   assert len(input_shape) == len(output_shape)
-  assert len(input_shape) == len(scale)
-  assert len(input_shape) == len(translation)
-  # Skip dimensions that have scale=1 and translation=0, this is only possible
-  # since all of the current resize methods (kernels) are interpolating, so the
-  # output = input under an identity warp.
-  spatial_dims, = np.nonzero(np.not_equal(input_shape, output_shape) |
-                             np.not_equal(scale, 1) |
-                             np.not_equal(translation, 0))
+  assert len(spatial_dims) == len(scale)
+  assert len(spatial_dims) == len(translation)
   if len(spatial_dims) == 0:
     return x
   contractions = []
@@ -95,7 +89,7 @@ def _scale_and_translate(x, output_shape, scale, translation, kernel,
   for i, d in enumerate(spatial_dims):
     m = input_shape[d]
     n = output_shape[d]
-    w = compute_weight_mat(m, n, scale[d], translation[d],
+    w = compute_weight_mat(m, n, scale[i], translation[i],
                            kernel, antialias).astype(x.dtype)
     contractions.append(w)
     contractions.append([d, len(output_shape) + i])
@@ -110,10 +104,10 @@ class ResizeMethod(enum.Enum):
   LANCZOS3 = 2
   LANCZOS5 = 3
   CUBIC = 4
-  # Caution: The current implementation assumes that the resize kernels are
-  # interpolating, i.e. for the identity warp the output equals the input. This
-  # is not true for, e.g. a Gaussian kernel, so if such kernels are added the
-  # implementation will need to be changed.
+  # Caution: The current resize implementation assumes that the resize kernels
+  # are interpolating, i.e. for the identity warp the output equals the input.
+  # This is not true for, e.g. a Gaussian kernel, so if such kernels are added
+  # the implementation will need to be changed.
 
   @staticmethod
   def from_string(s: str):
@@ -141,6 +135,7 @@ _kernels = {
 # scale and translation here are scalar elements of an np.array, what is the
 # correct type annotation?
 def scale_and_translate(image, shape: Sequence[int],
+                        spatial_dims: Sequence[int],
                         scale, translation,
                         method: Union[str, ResizeMethod],
                         antialias: bool = True,
@@ -154,7 +149,7 @@ def scale_and_translate(image, shape: Sequence[int],
     (x * scale[1] + translation[1], y * scale[0] + translation[0])
   (Note the _inverse_ warp is used to generate the sample locations.)
   Assumes half-centered pixels, i.e the pixel at integer location row,col has
-  coordinates y, x = row+0.5, col+0.5.
+  coordinates y, x = row + 0.5, col + 0.5.
   Similarly for other input image dimensions.
 
   If an output location(pixel) maps to an input sample location that is outside
@@ -163,9 +158,9 @@ def scale_and_translate(image, shape: Sequence[int],
 
   The ``method`` argument expects one of the following resize methods:
 
-  ``ResizeMethod.LINEAR``, ``"linear"``, ``"bilinear"``, ``"trilinear"``, ``"triangle"``
-    `Linear interpolation`_. If ``antialias`` is ``True``, uses a triangular
-    filter when downsampling.
+  ``ResizeMethod.LINEAR``, ``"linear"``, ``"bilinear"``, ``"trilinear"``,
+    ``"triangle"`` `Linear interpolation`_. If ``antialias`` is ``True``, uses a
+    triangular filter when downsampling.
 
   ``ResizeMethod.CUBIC``, ``"cubic"``, ``"bicubic"``, ``"tricubic"``
     `Cubic interpolation`_, using the Keys cubic kernel.
@@ -184,6 +179,8 @@ def scale_and_translate(image, shape: Sequence[int],
     image: a JAX array.
     shape: the output shape, as a sequence of integers with length equal to the
       number of dimensions of `image`.
+    spatial_dims: A length K tuple specifying the spatial dimensions that the
+      passed scale and translation should be applied to.
     scale: A [K] array with the same number of dimensions as image, containing
       the scale to apply in each dimension.
     translation: A [K] array with the same number of dimensions as image,
@@ -217,8 +214,8 @@ def scale_and_translate(image, shape: Sequence[int],
   if not jnp.issubdtype(translation.dtype, jnp.inexact):
     translation = lax.convert_element_type(
         translation, jnp.result_type(translation, jnp.float32))
-  return _scale_and_translate(image, shape, scale, translation, kernel,
-                              antialias, precision)
+  return _scale_and_translate(image, shape, spatial_dims, scale, translation,
+                              kernel, antialias, precision)
 
 
 def _resize_nearest(x, output_shape):
@@ -249,10 +246,15 @@ def _resize(image, shape: Sequence[int], method: Union[str, ResizeMethod],
   assert isinstance(method, ResizeMethod)
   kernel = _kernels[method]
 
-  scale = [float(o) / i for o, i in zip(shape, image.shape)]
   if not jnp.issubdtype(image.dtype, jnp.inexact):
     image = lax.convert_element_type(image, jnp.result_type(image, jnp.float32))
-  return _scale_and_translate(image, shape, scale, [0.] * image.ndim, kernel,
+  # Skip dimensions that have scale=1 and translation=0, this is only possible
+  # since all of the current resize methods (kernels) are interpolating, so the
+  # output = input under an identity warp.
+  spatial_dims = tuple(np.nonzero(np.not_equal(image.shape, shape))[0])
+  scale = [float(shape[d]) / image.shape[d] for d in spatial_dims]
+  return _scale_and_translate(image, shape, spatial_dims,
+                              scale, [0.] * len(spatial_dims), kernel,
                               antialias, precision)
 
 
