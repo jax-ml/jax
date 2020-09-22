@@ -1277,15 +1277,6 @@ def _call_translation_rule(c, axis_env, in_nodes, name_stack,
 call_translations[core.call_p] = _call_translation_rule
 
 
-def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
-  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
-                                dtype=np.uint32))
-  mod = xb.constant(c, np.array(axis_env.sizes[-1], dtype=np.uint32))
-  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
-  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
-parallel_translations[core.axis_index_p] = _axis_index_translation_rule  # type: ignore
-
-
 @config.register_omnistaging_disabler
 def omnistaging_disabler() -> None:
   global _pval_to_result_handler
