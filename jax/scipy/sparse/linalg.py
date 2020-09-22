@@ -260,7 +260,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   adds a new orthonormalized Krylov vector A(M(V[:, k])) to V[:, k+1],
   and that vectors overlaps with the existing Krylov vectors to
   H[k, :]. The tolerance 'tol' sets the threshold at which an invariant
-  subspace is declared to have been found, in which case the new
+  subspace is declared to have been found, in which case in which case the new
   vector is taken to be the zero vector.
   """
 
@@ -314,6 +314,8 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   Implements a single restart of GMRES. The restart-dimensional Krylov subspace
   K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
   projection of the true solution into this subspace is returned.
+
+  This implementation builds the QR factorization during the Arnoldi process.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
   #  residual = _sub(b, A(x0))
@@ -368,9 +370,13 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
 
 def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   """
-  Implements a single restart of GMRES. The restart-dimensional Krylov subspace
+  Implements a single restart of GMRES. The ``restart``-dimensional Krylov
+  subspace
   K(A, x0) = span(A(x0), A@x0, A@A@x0, ..., A^restart @ x0) is built, and the
   projection of the true solution into this subspace is returned.
+
+  This implementation does the QR factorization explicitly after forming
+  the Krylov space, rather than step by step during the Arnoldi process.
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
   V = tree_map(
@@ -395,10 +401,15 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   carry = (V, H, False, 0)
   V, H, _, _ = lax.while_loop(loop_cond, arnoldi_process, carry)
 
-  beta_vec = jnp.zeros((restart,), dtype=dtype)
-  beta_vec = beta_vec.at[0].set(residual_norm) # it really is the original value
-  y = jsp.linalg.solve(H[:, :-1].T, beta_vec)
-  Vy = tree_map(lambda X: _dot(X[..., :-1], y), V)
+  # The following is equivalent to:
+  #  beta_vec = jnp.zeros((restart,), dtype=dtype)
+  #  beta_vec = beta_vec.at[0].set(residual_norm) # it really is the original value
+  #  y = jsp.linalg.solve(H[:, :-1].T, beta_vec)
+  Q, Rtilde = jnp.linalg.qr(H, mode="complete")
+  g_vec = residual_norm * Q[0, :-1].ravel()
+  R = Rtilde[:, :-1]
+  y = jax.scipy.linalg.solve_triangular(R, g_vec)
+
   dx = M(Vy)
   x = _add(x0, dx)
 
@@ -413,7 +424,13 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
   The main function call wrapped by custom_linear_solve. Repeatedly calls GMRES
   to find the projected solution within the order-``restart``
   Krylov space K(A, x0, restart), using the result of the previous projection
-  in place of x0 each time.
+  in place of x0 each time. Parameters are the same as in ``gmres`` except:
+
+  outer_tol: Tolerance to be used between restarts.
+  inner_tol: Tolerance used within a restart.
+  gmres_func: A function performing a single GMRES restart.
+
+  Returns: The solution.
   """
   residual = _sub(b, A(x0))
   unit_residual, residual_norm = _safe_normalize(residual, return_norm=True)
@@ -441,15 +458,16 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
 def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
           M=None, qr_mode=False):
   """
-  GMRES solves the linear system A x = b for x, given A and b. A is specified
-  as a function performing A(vi) -> vf = A @ vi, and in principle need not have
-  any particular special properties, such as symmetry. However, convergence
-  is often slow for nearly symmetric operators.
+  GMRES solves the linear system A x = b for x, given A and b.
+
+  A is specified as a function performing A(vi) -> vf = A @ vi, and in principle
+  need not have any particular special properties, such as symmetry. However,
+  convergence is often slow for nearly symmetric operators.
 
   Parameters
   ----------
   A: function
-     Function that calculates the linear map (e.g. matrix-vector product)
+     Function that calculates the linear map (matrix-vector product)
      ``Ax`` when called like ``A(x)``. ``A`` must return array(s) with the same
      structure and shape as its argument.
   b : array or tree of arrays
@@ -468,29 +486,25 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   ----------------
   x0 : array, optional
        Starting guess for the solution. Must have the same structure as ``b``.
-       If this is unspecified, a (logical) vector of zeroes is used.
+       If this is unspecified, zeroes are used.
   tol, atol : float, optional
       Tolerances for convergence, ``norm(residual) <= max(tol*norm(b), atol)``.
       We do not implement SciPy's "legacy" behavior, so JAX's tolerance will
       differ from SciPy unless you explicitly pass ``atol`` to SciPy's ``gmres``.
   restart : integer, optional
-      Size of the Krylov subspace (``number of iterations") built between
+      Size of the Krylov subspace ("number of iterations") built between
       restarts. GMRES works by approximating the true solution x as its
       projection into a Krylov space of this dimension - this parameter
       therefore bounds the maximum accuracy achievable from any guess
       solution. Larger values increase both number of iterations and iteration
-      cost, but may be necessary for convergence. If qr_mode is
-      True, the algorithm terminates
+      cost, but may be necessary for convergence. The algorithm terminates
       early if convergence is achieved before the full subspace is built.
       Default is 20.
   maxiter : integer
-      Maximum number of iterations.  If convergence has not been achieved
-      after projecting into the size-``restart`` Krylov space, GMRES will
-      try again, using the previous result as the new guess, up to this
-      many times. If the optimal solution within a Krylov space of the
-      given dimension is not converged up to the requested tolerance, these
-      restarts will not improve the accuracy, so care should be taken when
-      increasing this parameter.
+      Maximum number of times to rebuild the size-``restart`` Krylov space
+      starting from the solution found at the last iteration. If GMRES
+      halts or is very slow, decreasing this parameter may help.
+      Default is infinite.
   M : function
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
