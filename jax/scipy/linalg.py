@@ -19,6 +19,7 @@ import scipy.linalg
 import textwrap
 
 from jax import jit, vmap
+from .. import api
 from .. import lax
 from .. import lax_linalg
 from ..numpy._util import _wraps
@@ -403,190 +404,14 @@ def _expm_frechet(A, E, method=None, compute_expm=True):
   if method is None:
     method = 'SPS'
   if method == 'SPS':
-    expm_A, expm_frechet_AE = expm_frechet_algo_64(A, E)
+    bound_fun = partial(expm, upper_triangular=False, max_squarings=16)
+    expm_A, expm_frechet_AE = api.jvp(bound_fun, (A,), (E,))
   else:
     raise ValueError('only method=\'SPS\' is supported')
   if compute_expm:
     return expm_A, expm_frechet_AE
   else:
     return expm_frechet_AE
-
-"""
-Maximal values ell_m of ||2**-s A|| such that the backward error bound
-does not exceed 2**-53.
-"""
-ell_table_61 = (
-  None,
-  # 1
-  2.11e-8,
-  3.56e-4,
-  1.08e-2,
-  6.49e-2,
-  2.00e-1,
-  4.37e-1,
-  7.83e-1,
-  1.23e0,
-  1.78e0,
-  2.42e0,
-  # 11
-  3.13e0,
-  3.90e0,
-  4.74e0,
-  5.63e0,
-  6.56e0,
-  7.52e0,
-  8.53e0,
-  9.56e0,
-  1.06e1,
-  1.17e1,
-)
-
-@jit
-def expm_frechet_algo_64(A, E):
-  ident = jnp.eye(*A.shape, dtype=A.dtype)
-  A_norm_1 = np_linalg.norm(A, 1)
-  """
-  Subset of the Maximal values ell_m of ||2**-s A||
-  such that the backward error bound does not exceed 2**-53.
-  """
-  args = (A, E, ident, A_norm_1)
-  U3579, V3579, Lu3579, Lv3579, s3579 = lax.cond(A_norm_1 <= ell_table_61[3],
-     args, lambda args: _diff_pade3(args),
-     args, lambda args: lax.cond(A_norm_1 <= ell_table_61[5],
-         args, lambda args: _diff_pade5(args),
-         args, lambda args: lax.cond(A_norm_1 <= ell_table_61[7],
-              args, lambda args: _diff_pade7(args),
-              args, lambda args: _diff_pade9(args))))
-  U13, V13, Lu13, Lv13, s13 = _diff_pade13(args)
-
-  # Must be of minimum length 2 for np.select to be used
-  ell_table_61_local99 = jnp.array([ell_table_61[9], ell_table_61[9]])
-  U = jnp.select((A_norm_1<=ell_table_61_local99), (U3579, U3579), U13)
-  V = jnp.select((A_norm_1<=ell_table_61_local99), (V3579, V3579), V13)
-  Lu = jnp.select((A_norm_1<=ell_table_61_local99), (Lu3579, Lu3579), Lu13)
-  Lv = jnp.select((A_norm_1<=ell_table_61_local99), (Lv3579, Lv3579), Lv13)
-  s = jnp.select((A_norm_1<=ell_table_61_local99), (s3579, s3579), s13)
-
-  lu, _, permutation = lax_linalg.lu(-U + V)
-  R = lax_linalg.lu_solve(lu, permutation, U + V, trans=False)
-  L = lax_linalg.lu_solve(lu, permutation, Lu + Lv + _precise_dot((Lu - Lv), R),
-                          trans=False)
-  # squaring
-  def my_body_fun(i,my_arg):
-    R, L = my_arg
-    L = _precise_dot(R, L) + _precise_dot(L, R)
-    R = _precise_dot(R, R)
-    return R, L
-  lower = jnp.zeros(1, dtype=s.dtype)
-  R, L = lax.fori_loop(lower[0], s, my_body_fun, (R, L))
-  return R, L
-
-"""
-# The b vectors and U and V are those from
-# scipy.sparse.linalg.matfuncs.py.
-# M, Lu, Lv follow (6.11), (6.12), (6.13), (3.3)
-"""
-@jit
-def _diff_pade3(args):
-  A,E,ident,_ = args
-  s = 0
-  b = (120., 60., 12., 1.)
-  A2 = A.dot(A)
-  M2 = _precise_dot(A, E) + _precise_dot(E, A)
-  U = _precise_dot(A, b[3]*A2 + b[1]*ident)
-  V = b[2]*A2 + b[0]*ident
-  Lu = _precise_dot(A, b[3]*M2) + _precise_dot(E, b[3]*A2 + b[1]*ident)
-  Lv = b[2]*M2
-  return U, V, Lu, Lv, s
-
-@jit
-def _diff_pade5(args):
-  A,E,ident,_ = args
-  s = 0
-  b = (30240., 15120., 3360., 420., 30., 1.)
-  A2 = _precise_dot(A, A)
-  M2 = _precise_dot(A, E) + _precise_dot(E, A)
-  A4 = _precise_dot(A2, A2)
-  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
-  U = _precise_dot(A, b[5]*A4 + b[3]*A2 + b[1]*ident)
-  V = b[4]*A4 + b[2]*A2 + b[0]*ident
-  Lu = (_precise_dot(A, b[5]*M4 + b[3]*M2) +
-          _precise_dot(E, b[5]*A4 + b[3]*A2 + b[1]*ident))
-  Lv = b[4]*M4 + b[2]*M2
-  return U, V, Lu, Lv, s
-
-@jit
-def _diff_pade7(args):
-  A, E, ident, _ = args
-  s = 0
-  b = (17297280., 8648640., 1995840., 277200., 25200., 1512., 56., 1.)
-  A2 = _precise_dot(A, A)
-  M2 = _precise_dot(A, E) + _precise_dot(E, A)
-  A4 = _precise_dot(A2, A2)
-  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
-  A6 = _precise_dot(A2, A4)
-  M6 = _precise_dot(A4, M2) + _precise_dot(M4, A2)
-  U = _precise_dot(A, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
-  V = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
-  Lu = (_precise_dot(A, b[7]*M6 + b[5]*M4 + b[3]*M2) +
-          _precise_dot(E, b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident))
-  Lv = b[6]*M6 + b[4]*M4 + b[2]*M2
-  return U, V, Lu, Lv, s
-
-@jit
-def _diff_pade9(args):
-  A,E,ident,_ = args
-  s = 0
-  b = (17643225600., 8821612800., 2075673600., 302702400., 30270240., 2162160.,
-       110880., 3960., 90., 1.)
-  A2 = _precise_dot(A, A)
-  M2 = _precise_dot(A, E) + _precise_dot(E, A)
-  A4 = _precise_dot(A2, A2)
-  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
-  A6 = _precise_dot(A2, A4)
-  M6 = _precise_dot(A4, M2) + _precise_dot(M4, A2)
-  A8 = _precise_dot(A4, A4)
-  M8 = _precise_dot(A4, M4) + _precise_dot(M4, A4)
-  U = _precise_dot(A, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident)
-  V = b[8]*A8 + b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
-  Lu = (_precise_dot(A, b[9]*M8 + b[7]*M6 + b[5]*M4 + b[3]*M2) +
-          _precise_dot(E, b[9]*A8 + b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident))
-  Lv = b[8]*M8 + b[6]*M6 + b[4]*M4 + b[2]*M2
-  return U, V, Lu, Lv, s
-
-@jit
-def _diff_pade13(args):
-  A,E,ident,A_norm_1 = args
-  s = jnp.maximum(0, jnp.floor_divide(lax.ceil(jnp.log2(A_norm_1 / ell_table_61[13])), 1))
-  two = jnp.array([2.0],A.dtype)
-  A = A * two[0]**-s
-  E = E * two[0]**-s
-  # pade order 13
-  A2 = _precise_dot(A, A)
-  M2 = _precise_dot(A, E) + _precise_dot(E, A)
-  A4 = _precise_dot(A2, A2)
-  M4 = _precise_dot(A2, M2) + _precise_dot(M2, A2)
-  A6 = _precise_dot(A2, A4)
-  M6 = _precise_dot(A4, M2) + _precise_dot(M4, A2)
-  b = (64764752532480000., 32382376266240000., 7771770303897600.,
-       1187353796428800., 129060195264000., 10559470521600.,
-       670442572800., 33522128640., 1323241920., 40840800., 960960.,
-       16380., 182., 1.)
-  W1 = b[13]*A6 + b[11]*A4 + b[9]*A2
-  W2 = b[7]*A6 + b[5]*A4 + b[3]*A2 + b[1]*ident
-  Z1 = b[12]*A6 + b[10]*A4 + b[8]*A2
-  Z2 = b[6]*A6 + b[4]*A4 + b[2]*A2 + b[0]*ident
-  W = _precise_dot(A6, W1) + W2
-  U = _precise_dot(A, W)
-  V = _precise_dot(A6, Z1) + Z2
-  Lw1 = b[13]*M6 + b[11]*M4 + b[9]*M2
-  Lw2 = b[7]*M6 + b[5]*M4 + b[3]*M2
-  Lz1 = b[12]*M6 + b[10]*M4 + b[8]*M2
-  Lz2 = b[6]*M6 + b[4]*M4 + b[2]*M2
-  Lw = _precise_dot(A6, Lw1) + _precise_dot(M6, W1) + Lw2
-  Lu = _precise_dot(A, Lw) + _precise_dot(E, W)
-  Lv = _precise_dot(A6, Lz1) + _precise_dot(M6, Z1) + Lz2
-  return U, V, Lu, Lv, s
 
 
 @_wraps(scipy.linalg.block_diag)
