@@ -143,4 +143,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `device_put`, `integer_pow`, `rev`, `select_and_scatter`, `tie_in`
+`add_any`, `argmax`, `argmin`, `bitcast_convert_type`, `broadcast`, `broadcast_in_dim`, `clamp`, `complex`, `concatenate`, `conj`, `convert_element_type`, `cumprod`, `cumsum`, `custom_jvp_call_jaxpr`, `custom_lin`, `custom_vjp_call_jaxpr`, `device_put`, `div`, `eq`, `ge`, `gt`, `imag`, `integer_pow`, `iota`, `le`, `lt`, `ne`, `pow`, `real`, `reduce_and`, `reduce_or`, `reshape`, `rev`, `select`, `shape_as_value`, `stop_gradient`, `sub`, `tie_in`, `transpose`, `zeros_like`

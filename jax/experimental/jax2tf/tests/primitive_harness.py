@@ -25,11 +25,14 @@ from functools import partial
 from absl import testing
 import jax
 from jax import config
+from jax import core
 from jax import dtypes
 from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import linalg as lax_linalg
+from jax.interpreters import xla
 
 from jaxlib import xla_client
 
@@ -158,12 +161,42 @@ def parameterized(harness_group: Iterable[Harness],
 
 ### Harness definitions ###
 ###
+
+# Associates each primitive with a tuple of harnesses. This is to reliably
+# ensure all the primitive conversions have dedicated test harnesses. If a
+# primitive does not have test harnesses for a justifiable reason, we associate
+# it with a descriptive string instead.
+tf_conversion_test: Dict[core.Primitive, Union[str, Tuple[Harness, ...]]] = {}
+
+# Control flow operations do not have harnesses but they are tested in
+# control_flow_ops_test.py.
+_control_flow_ops_test = "Tests implemented in control_flow_ops_test"
+tf_conversion_test[lax.cond_p] = _control_flow_ops_test
+tf_conversion_test[lax.scan_p] = _control_flow_ops_test
+tf_conversion_test[lax.while_p] = _control_flow_ops_test
+
+# These operations are inlined and not seen by the converter; their lack of
+# conversion tests can thus be safely ignored.
+_not_really_converted = "This operation is not really converted by jax2tf"
+for unexpected in xla.call_translations:
+  tf_conversion_test[unexpected] = _not_really_converted
+
+# select_and_scatter is left as non-implemented by design
+tf_conversion_test[lax.select_and_scatter_p] = "left as non-implemented"
+
 _LAX_UNARY_ELEMENTWISE = (
   lax.abs, lax.acosh, lax.asinh, lax.atanh, lax.bessel_i0e, lax.bessel_i1e,
   lax.ceil, lax.cos, lax.cosh, lax.digamma, lax.erf, lax.erf_inv, lax.erfc,
   lax.exp, lax.expm1, lax.floor, lax.is_finite, lax.lgamma, lax.log,
   lax.log1p, lax.neg, lax.round, lax.rsqrt, lax.sign, lax.sin, lax.sinh,
   lax.sqrt, lax.tan, lax.tanh)
+
+_LAX_UNARY_ELEMENTWISE_P = (
+  lax.abs_p, lax.acosh_p, lax.asinh_p, lax.atanh_p, lax.bessel_i0e_p,
+  lax.bessel_i1e_p, lax.ceil_p, lax.cos_p, lax.cosh_p, lax.digamma_p, lax.erf_p,
+  lax.erf_inv_p, lax.erfc_p, lax.exp_p, lax.expm1_p, lax.floor_p, lax.tanh_p,
+  lax.is_finite_p, lax.lgamma_p, lax.log_p, lax.log1p_p, lax.neg_p, lax.round_p,
+  lax.rsqrt_p, lax.sign_p, lax.sin_p, lax.sinh_p, lax.sqrt_p)
 
 lax_unary_elementwise = tuple(
   Harness(f"{f_lax.__name__}_{jtu.dtype_str(dtype)}",
@@ -177,6 +210,8 @@ lax_unary_elementwise = tuple(
     np.array([-1.6, -1.4, -1.0, 0.0, 0.1, 0.2, 1., 1.4, 1.6], dtype=dtype)
   ]
 )
+for prim in _LAX_UNARY_ELEMENTWISE_P:
+  tf_conversion_test[prim] = lax_unary_elementwise
 
 lax_bitwise_not = tuple(
   [Harness(f"{jtu.dtype_str(dtype)}",
@@ -198,6 +233,7 @@ lax_bitwise_not = tuple(
     np.array([True, False])
   ]]
 )
+tf_conversion_test[lax.not_p] = lax_bitwise_not
 
 lax_population_count = tuple(
   Harness(f"{jtu.dtype_str(dtype)}",
@@ -209,6 +245,7 @@ lax_population_count = tuple(
     np.array([-1, -2, 0, 1], dtype=dtype)
   ]
 )
+tf_conversion_test[lax.population_count_p] = lax_population_count
 
 def _get_max_identity(dtype):
   if dtypes.issubdtype(dtype, np.inexact):
@@ -250,6 +287,8 @@ lax_add_mul = tuple(
      np.array([_get_max_identity(dtype), _get_min_identity(dtype)], dtype=dtype))
   ]
 )
+tf_conversion_test[lax.add_p] = lax_add_mul
+tf_conversion_test[lax.mul_p] = lax_add_mul
 
 lax_min_max = tuple(
   Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
@@ -277,6 +316,8 @@ lax_min_max = tuple(
      np.array([np.nan, np.nan], dtype=dtype))
   ]
 )
+tf_conversion_test[lax.min_p] = lax_min_max
+tf_conversion_test[lax.max_p] = lax_min_max
 
 _LAX_BINARY_ELEMENTWISE = (
   lax.add, lax.atan2, lax.div, lax.igamma, lax.igammac, lax.max, lax.min,
@@ -296,6 +337,9 @@ lax_binary_elementwise = tuple(
      np.array([-1.6, 1.4, 1.0, 0.0, 0.1, 0.2, 1., 1.4, -1.6], dtype=dtype))
   ]
 )
+for prim in [lax.atan2_p, lax.igamma_p, lax.igammac_p, lax.nextafter_p,
+             lax.rem_p]:
+  tf_conversion_test[prim] = lax_binary_elementwise
 
 _LAX_BINARY_ELEMENTWISE_LOGICAL = (
     lax.bitwise_and, lax.bitwise_or, lax.bitwise_xor, lax.shift_left,
@@ -327,7 +371,8 @@ lax_binary_elementwise_logical = tuple(
    ]
    ]
 )
-
+for prim in [lax.and_p, lax.or_p, lax.xor_p, lax.shift_left_p]:
+  tf_conversion_test[prim] = lax_binary_elementwise_logical
 
 lax_betainc = tuple(
   Harness(f"_{jtu.dtype_str(dtype)}",
@@ -341,7 +386,7 @@ lax_betainc = tuple(
       np.array([1.0, -1.0, 2.0, 1.0, 0.3, 0.3, -1.0, 2.4, 1.6], dtype=dtype))
   ]
 )
-
+tf_conversion_test[lax.regularized_incomplete_beta_p] = lax_betainc
 
 _gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
 lax_gather = tuple(
@@ -384,6 +429,7 @@ lax_gather = tuple(
     ]
   ]
 )
+tf_conversion_test[lax.gather_p] = lax_gather
 
 def _make_scatter_harness(name, *, shape=(5,), f_lax=lax.scatter_min,
                           indices_are_sorted=False, unique_indices=False,
@@ -440,6 +486,11 @@ lax_scatter = tuple( # Validate dtypes
   # such cases is non-trivial.
   for unique_indices in [False]
 )
+tf_conversion_test[lax.scatter_p] = lax_scatter
+tf_conversion_test[lax.scatter_min_p] = lax_scatter
+tf_conversion_test[lax.scatter_max_p] = lax_scatter
+tf_conversion_test[lax.scatter_mul_p] = lax_scatter
+tf_conversion_test[lax.scatter_add_p] = lax_scatter
 
 disable_xla = tuple(
   Harness("_pad",
@@ -472,6 +523,7 @@ lax_pad = tuple(
     [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
   ]
 )
+tf_conversion_test[lax.pad_p] = lax_pad
 
 def _make_cumreduce_harness(name, *, f_jax=lax_control_flow.cummin,
                             shape=(8, 9), dtype=np.float32,
@@ -508,6 +560,8 @@ lax_control_flow_cumreduce = tuple( # Validate dtypes for each function
   ]
   for reverse in [True]
 )
+for cumreducer in [lax_control_flow.cummin_p, lax_control_flow.cummax_p]:
+  tf_conversion_test[cumreducer] = lax_control_flow_cumreduce
 
 def _make_top_k_harness(name, *, operand=None, shape=(5, 3), dtype=np.float32,
                         k=2):
@@ -534,6 +588,7 @@ lax_top_k = tuple( # Validate dtypes
                                 dtype=np.float32), 5)
   ]
 )
+tf_conversion_test[lax.top_k_p] = lax_top_k
 
 def _make_sort_harness(name, *, operands=None, shape=(5, 7), dtype=np.float32,
                        dimension=0, is_stable=False, nb_arrays=1):
@@ -569,6 +624,7 @@ lax_sort = tuple( # Validate dtypes
     (3, np.float32), # unsupported
   ]
 )
+tf_conversion_test[lax.sort_p] = lax_sort
 
 lax_linalg_cholesky = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
@@ -579,6 +635,7 @@ lax_linalg_cholesky = tuple(
   for dtype in jtu.dtypes.all_inexact
   for shape in [(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)]
 )
+tf_conversion_test[lax_linalg.cholesky_p] = lax_linalg_cholesky
 
 lax_linalg_qr = tuple(
   Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
@@ -591,6 +648,7 @@ lax_linalg_qr = tuple(
   for shape in [(1, 1), (3, 3), (3, 4), (2, 10, 5), (2, 200, 100)]
   for full_matrices in [False, True]
 )
+tf_conversion_test[lax_linalg.qr_p] = lax_linalg_qr
 
 def _make_fft_harness(name, *, shape=(14, 15, 16, 17), dtype=np.float32,
                       fft_type=xla_client.FftType.FFT, fft_lengths=(17,)):
@@ -639,6 +697,7 @@ lax_fft = tuple( # Validate dtypes per FFT type
     shape[-dims:-1] + ((shape[-1] - 1) * 2,)
   ]
 )
+tf_conversion_test[lax.fft_p] = lax_fft
 
 lax_linalg_svd = tuple(
   Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
@@ -654,6 +713,7 @@ lax_linalg_svd = tuple(
   for full_matrices in [False, True]
   for compute_uv in [False, True]
 )
+tf_conversion_test[lax_linalg.svd_p] = lax_linalg_svd
 
 lax_linalg_eig = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_computelefteigenvectors={compute_left_eigenvectors}_computerighteigenvectors={compute_right_eigenvectors}",
@@ -669,6 +729,7 @@ lax_linalg_eig = tuple(
   for compute_left_eigenvectors in [False, True]
   for compute_right_eigenvectors in [False, True]
 )
+tf_conversion_test[lax_linalg.eig_p] = lax_linalg_eig
 
 lax_linalg_eigh = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_lower={lower}",
@@ -683,6 +744,7 @@ lax_linalg_eigh = tuple(
   # Filter out cases where implementation is missing in JAX
   if dtype != np.float16
 )
+tf_conversion_test[lax_linalg.eigh_p] = lax_linalg_eigh
 
 lax_linalg_lu = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
@@ -697,6 +759,7 @@ lax_linalg_lu = tuple(
     (3, 5),    # non-square
   ]
 )
+tf_conversion_test[lax_linalg.lu_p] = lax_linalg_lu
 
 def _make_triangular_solve_harness(name, *, left_side=True, lower=False,
                                    ab_shapes=((4, 4), (4, 1)), dtype=np.float32,
@@ -750,6 +813,7 @@ lax_linalg_triangular_solve = tuple( # Validate dtypes
   for transpose_a in [False, True]
   # conjugate_a is irrelevant for real dtypes, and is thus omitted
 )
+tf_conversion_test[lax_linalg.triangular_solve_p] = lax_linalg_triangular_solve
 
 def _make_linear_solve_harnesses():
   def linear_solve(a, b, solve, transpose_solve=None, symmetric=False):
@@ -785,6 +849,7 @@ def _make_linear_solve_harnesses():
   )
 
 lax_linear_solve = _make_linear_solve_harnesses()
+tf_conversion_test[lax.linear_solve_p] = lax_linear_solve
 
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
@@ -821,9 +886,10 @@ lax_slice = tuple(
   ]
   for dtype in [np.float32]
 )
+tf_conversion_test[lax.slice_p] = lax_slice
 
 # Use lax_slice, but (a) make the start_indices dynamic arg, and (b) no strides.
-lax_dynamic_slice = [
+lax_dynamic_slice = tuple(
   Harness(harness.name,
           lax.dynamic_slice,
           [harness.arg_descriptors[0],
@@ -833,7 +899,8 @@ lax_dynamic_slice = [
   for harness in lax_slice
   for start_indices in [harness.params["start_indices"]]
   for limit_indices in [harness.params["limit_indices"]]
-]
+)
+tf_conversion_test[lax.dynamic_slice_p] = lax_dynamic_slice
 
 lax_dynamic_update_slice = tuple(
   Harness((f"_operand={jtu.format_shape_dtype_string(shape, dtype)}"  # type: ignore
@@ -859,6 +926,7 @@ lax_dynamic_update_slice = tuple(
     (np.float32, np.float32),
     (np.float64, np.float64)
   ])
+tf_conversion_test[lax.dynamic_update_slice_p] = lax_dynamic_update_slice
 
 lax_squeeze = tuple(
   Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_dimensions={dimensions}",  # type: ignore
@@ -877,6 +945,7 @@ lax_squeeze = tuple(
   ]
   for dtype in [np.float32]
 )
+tf_conversion_test[lax.squeeze_p] = lax_squeeze
 
 shift_inputs = [
   (arg, dtype, shift_amount)
@@ -893,6 +962,7 @@ lax_shift_left = tuple(
           [arg, StaticArg(np.array([shift_amount], dtype=dtype))])
   for arg, dtype, shift_amount in shift_inputs
 )
+tf_conversion_test[lax.shift_left_p] = lax_shift_left
 
 lax_shift_right_logical = tuple(
   Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
@@ -901,6 +971,7 @@ lax_shift_right_logical = tuple(
           dtype=dtype)
   for arg, dtype, shift_amount in shift_inputs
 )
+tf_conversion_test[lax.shift_right_logical_p] = lax_shift_right_logical
 
 lax_shift_right_arithmetic = tuple(
   Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
@@ -909,6 +980,7 @@ lax_shift_right_arithmetic = tuple(
           dtype=dtype)
   for arg, dtype, shift_amount in shift_inputs
 )
+tf_conversion_test[lax.shift_right_arithmetic_p] = lax_shift_right_arithmetic
 
 def _make_select_and_scatter_add_harness(
     name, *, shape=(2, 4, 6), dtype=np.float32, select_prim=lax.ge_p,
@@ -971,6 +1043,7 @@ lax_select_and_scatter_add = tuple( # Validate dtypes
     ((1, 2, 1), (1, 3, 1), 2)
   ]
 )
+tf_conversion_test[lax.select_and_scatter_add_p] = lax_select_and_scatter_add
 
 def _make_select_and_gather_add_harness(
     name, *, shape=(4, 6), dtype=np.float32, select_prim=lax.le_p,
@@ -1018,6 +1091,7 @@ lax_select_and_gather_add = tuple( # Validate dtypes
     ((2, 3), (3, 2))  # base dilation, window dilation
   ]
 )
+tf_conversion_test[lax.select_and_gather_add_p] = lax_select_and_gather_add
 
 def _make_reduce_window_harness(name, *, shape=(4, 6), base_dilation=(1, 1),
                                 computation=lax.add, window_dimensions=(2, 2),
@@ -1091,6 +1165,16 @@ lax_reduce_window = tuple( # Validate dtypes across all execution paths
     ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1)) # 3 spatial dimensions, no squeeze
   ]
 )
+tf_conversion_test[lax.reduce_window_p] = lax_reduce_window
+tf_conversion_test[lax.reduce_window_min_p] = lax_reduce_window
+tf_conversion_test[lax.reduce_window_max_p] = lax_reduce_window
+tf_conversion_test[lax.reduce_window_sum_p] = lax_reduce_window
+# The following variants of reduce_p are implicitly tested through reduce_window
+tf_conversion_test[lax.reduce_p] = lax_reduce_window
+tf_conversion_test[lax.reduce_min_p] = lax_reduce_window
+tf_conversion_test[lax.reduce_max_p] = lax_reduce_window
+tf_conversion_test[lax.reduce_sum_p] = lax_reduce_window
+tf_conversion_test[lax.reduce_prod_p] = lax_reduce_window
 
 random_gamma = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
@@ -1099,6 +1183,7 @@ random_gamma = tuple(
   for shape in ((), (3,))
   for dtype in (np.float32, np.float64)
 )
+tf_conversion_test[jax.random.random_gamma_p] = random_gamma
 
 random_split = tuple(
   Harness(f"_i={key_i}",
@@ -1110,6 +1195,7 @@ random_split = tuple(
                                np.array([0, 0xFFFFFFFF], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )
+tf_conversion_test[jax.random.threefry2x32_p] = random_split
 
 def _make_dot_general_harness(
     name, *, lhs_shape=(3, 4), rhs_shape=(4, 2), dtype=np.float32,
@@ -1161,6 +1247,7 @@ lax_dot_general = tuple( # Validate dtypes and precision
     ((4,), (4,), (((0,), (0,)), ((), ()))),   # (1, 1) -> ()
   ]
 )
+tf_conversion_test[lax.dot_general_p] = lax_dot_general
 
 def _make_conv_harness(name, *, lhs_shape=(2, 3, 9, 10), rhs_shape=(3, 3, 4, 5),
                        dtype=np.float32, window_strides=(1, 1), precision=None,
@@ -1232,7 +1319,7 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
   _make_conv_harness("dimension_numbers", lhs_shape=lhs_shape,
                      rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
   # Dimension numbers and corresponding permutation
-  for dimension_numbers, lhs_shape, rhs_shape in [
+for dimension_numbers, lhs_shape, rhs_shape in [
       (("NHWC", "HWIO", "NHWC"), (2, 9, 10, 3), (4, 5, 3, 3)), # TF default
       (("NCHW", "HWIO", "NHWC"), (2, 3, 9, 10), (4, 5, 3, 3)), # custom
   ]
@@ -1298,3 +1385,4 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
   ]
   for enable_xla in [False, True]
 )
+tf_conversion_test[lax.conv_general_dilated_p] = lax_conv_general_dilated

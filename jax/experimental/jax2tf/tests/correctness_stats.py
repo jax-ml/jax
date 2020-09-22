@@ -22,10 +22,9 @@ from typing import Any, Callable, Collection, Dict, List, NamedTuple, Optional,\
 from jax import core
 from jax import dtypes
 from jax import lax
-from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
-from jax.interpreters import xla
+from jax.experimental.jax2tf.jax2tf import tf_impl, tf_impl_with_avals,\
+                                           tf_not_yet_impl
+from jax.experimental.jax2tf.tests.primitive_harness import tf_conversion_test
 
 def to_jax_dtype(tf_dtype):
   if tf_dtype.name == 'bfloat16':
@@ -322,25 +321,22 @@ def prettify_as_ordered_list(collec: Collection[core.Primitive]) -> str:
 
 prettify_not_yet_implemented = lambda: prettify_as_ordered_list(tf_not_yet_impl)
 
-def prettify_not_yet_covered(covered_set: Set[core.Primitive]) -> str:
+def prettify_not_yet_covered() -> str:
   """
   Builds an ordered summary markdown list of all the primitives that are
-  implemented but not in the set passed as an argument.
+  implemented but do not have dedicated tests.
   """
-  ignore = set([xla.xla_call_p, pxla.xla_pmap_p, pe.remat_call_p, core.call_p])
-  not_yet_covered = (
-    set(filter(lambda prim: not prim in ignore, set(tf_impl) - covered_set)))
-
-  return prettify_as_ordered_list(not_yet_covered)
+  return prettify_as_ordered_list(
+      set(tf_impl.keys()).union(set(tf_impl_with_avals.keys())) -
+      set(tf_conversion_test.keys()))
 
 def pprint_limitations(limitations: Sequence[Limitation],
-                       covered_primitives: Set[core.Primitive],
                        output_file: str, template_file: str) -> None:
 
   limitations = merge_similar_limitations(limitations)
   limited_support_table = prettify(limitations)
   not_yet_impl_primitives = prettify_not_yet_implemented()
-  not_yet_covered_primitives = prettify_not_yet_covered(covered_primitives)
+  not_yet_covered_primitives = prettify_not_yet_covered()
 
   generation_date = str(datetime.date.today())
 
@@ -357,18 +353,15 @@ def pprint_limitations(limitations: Sequence[Limitation],
     f.write(output)
 
 all_limitations: Sequence[Limitation] = []
-covered_primitives: Set[core.Primitive] = set()
 
-pprint_all_limitations = functools.partial(pprint_limitations, all_limitations,
-                                           covered_primitives)
+pprint_all_limitations = functools.partial(pprint_limitations, all_limitations)
 
 def collect_limitations(prim: core.Primitive, func: Callable) -> Callable:
   """
   Wraps a primitive and its corresponding TF implementation with `categorize`.
   """
   def wrapper(*args, **kwargs):
-    global all_limitations, covered_primitives
-    covered_primitives.add(prim)
+    global all_limitations
     all_limitations += categorize(prim, *args, **kwargs)
     return func(*args, **kwargs)
   return wrapper
