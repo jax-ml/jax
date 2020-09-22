@@ -1547,7 +1547,6 @@ class APITest(jtu.JaxTestCase):
         foo, in_axes=((0, collections.OrderedDict([('a', 1), ('b', 2)])),))
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
-
   def test_pmap_global_cache(self):
     def f(x):
       assert python_should_be_executing
@@ -1797,6 +1796,19 @@ class APITest(jtu.JaxTestCase):
         assert jnp.add(1, 1) == 2
 
     f()  # doesn't crash
+
+  def test_xla_computation_zeros_doesnt_device_put(self):
+    count = 0
+    def device_put_and_count(*args, **kwargs):
+      nonlocal count
+      count += 1
+      return orig_device_put(*args, **kwargs)
+    orig_device_put, xla.device_put = xla.device_put, device_put_and_count
+    try:
+      api.xla_computation(lambda: jnp.zeros(3))()
+    finally:
+      xla.device_put = orig_device_put
+    self.assertEqual(count, 0)
 
 
 class RematTest(jtu.JaxTestCase):
@@ -3435,7 +3447,6 @@ class InvertibleADTest(jtu.JaxTestCase):
     self.assertAllClose(jax.value_and_grad(lambda x: np.sum(f(x, o)[0]))(o),
                         jax.value_and_grad(lambda x: np.sum(finv(x, o)[0]))(o),
                         check_dtypes=True)
-
 
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
