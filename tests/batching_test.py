@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import itertools as it
 import numpy as np
 from unittest import skipIf
 from absl.testing import absltest
@@ -20,6 +21,7 @@ from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
+from jax.interpreters import batching
 from jax import test_util as jtu
 from jax import lax
 from jax import lax_linalg
@@ -1017,6 +1019,30 @@ class BatchingTest(jtu.JaxTestCase):
       self.assertAllClose(
         vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs), axis_name='i')(x),
         x - x[perm])
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllToAll(self, vmap_axis, split_axis, concat_axis):
+    d = vmap_axis
+
+    def shape_fun(x, out_d):
+      shape = list(x.shape)
+      vmap_dim_id = shape.pop(d)
+      split_dim_id = shape.pop(split_axis)
+      shape.insert(concat_axis, vmap_dim_id)
+      shape.insert(out_d, split_dim_id)
+      return tuple(shape)
+
+    shape = (2, 3, 4, 5)
+    x = np.arange(np.prod(shape)).reshape(shape)
+    rule = batching.collective_rules[lax.all_to_all_p]
+    (y,), (out_d,) = rule((x,), (d,), None, None, split_axis, concat_axis)
+    exp_shape = shape_fun(x, out_d)
+    self.assertEqual(y.shape, exp_shape)
 
   def testNegativeAxes(self):
     x = np.arange(3*4*5).reshape(3, 4, 5)

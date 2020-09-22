@@ -612,6 +612,17 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis)
   result = all_to_all_p.bind(x, axis_name=axis_name, split_axis=split_axis, concat_axis=concat_axis)
   return result, d
 
+def _all_to_all_batched_collective(vals_in, dims_in, axis_size, axis_name, split_axis, concat_axis):
+  x, = vals_in
+  d, = dims_in
+  split_axis_adj = split_axis + (1 if d <= split_axis else 0)
+  concat_axis_adj = concat_axis + (1 if split_axis_adj <= concat_axis else 0)
+  if d < split_axis_adj < concat_axis_adj:
+    split_axis_adj -= 1
+  elif concat_axis_adj < split_axis_adj < d:
+    split_axis_adj += 1
+  return [_moveaxis(d, concat_axis_adj, x)], [split_axis_adj]
+
 def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis):
   input_aval = raise_to_shaped(x)
   shape = list(input_aval.shape)
@@ -625,6 +636,7 @@ xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
+batching.collective_rules[all_to_all_p] = _all_to_all_batched_collective
 
 
 def _expand(dim, size, index, x):

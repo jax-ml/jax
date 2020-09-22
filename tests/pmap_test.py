@@ -1704,6 +1704,22 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(pmap(vmap(f, in_axes=vmap_axis), axis_name='i')(x),
                         reference(x, split_axis, concat_axis, vmap_axis))
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(3), range(3)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  @ignore_slow_all_to_all_warning()
+  def testAllToAllVsVmap(self, split_axis, concat_axis):
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
+
+    shape = (jax.device_count(),) * 4
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    self.assertAllClose(pmap(f, axis_name='i')(x),
+                        vmap(f, axis_name='i')(x))
+
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
