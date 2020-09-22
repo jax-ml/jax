@@ -420,7 +420,6 @@ tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
   lax.linear_solve_p,
-  lax_linalg.eigh_p,
   lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
@@ -1349,6 +1348,20 @@ def _eig(operand: TfVal, compute_left_eigenvectors: bool,
     return tuple([wHH, vl])
 
 tf_impl[lax_linalg.eig_p] = _eig
+
+def _eigh(operand: TfVal, lower: bool):
+  if operand.shape[-1] == 0:
+    return tuple([operand, tf.reshape(operand, operand.shape[:-1])])
+  if not lower:
+    operand = tf.linalg.adjoint(operand)
+  w, v = tf.linalg.eigh(operand)
+  cast_type = { tf.complex64: tf.float32
+              , tf.complex128: tf.float64 }.get(operand.dtype)
+  if cast_type is not None:
+    w = tf.cast(w, cast_type)
+  return v, w
+
+tf_impl[lax_linalg.eigh_p] = _eigh
 
 def _custom_jvp_call_jaxpr(*args: TfValOrUnit,
                            fun_jaxpr: core.ClosedJaxpr,

@@ -337,6 +337,72 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, operand,
                            custom_assert=custom_assert)
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_eigh)
+  def test_eigh(self, harness: primitive_harness.Harness):
+    operand = harness.dyn_args_maker(self.rng())[0]
+    lower = harness.params["lower"]
+    # Make operand self-adjoint
+    operand = (operand + np.conj(np.swapaxes(operand, -1, -2))) / 2
+    # Make operand lower/upper triangular
+    triangular_operand = np.tril(operand) if lower else np.triu(operand)
+    dtype = harness.params["dtype"]
+
+    if (dtype in [np.complex64, np.complex128] and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("TODO: complex eigh not supported on TPU in JAX")
+
+    def custom_assert(result_jax, result_tf):
+      result_tf = tuple(map(lambda e: e.numpy(), result_tf))
+      inner_dimension = operand.shape[-1]
+
+      def check_right_eigenvectors(a, w, vr):
+        tol = 1e-16
+        # TODO(bchetioui): tolerance needs to be very high in compiled mode,
+        # specifically for eigenvectors.
+        if dtype == np.float64:
+          tol = 1e-6
+        elif dtype in [dtypes.bfloat16, np.float32, np.complex64]:
+          if dtype == np.float32 and jtu.device_under_test() in ["gpu", "tpu"]:
+            tol = 1e-2
+          else:
+            tol = 1e-3
+        elif dtype == np.complex128:
+          tol = 1e-13
+        self.assertAllClose(np.matmul(a, vr) - w[..., None, :] * vr,
+                            np.zeros(a.shape, dtype=vr.dtype),
+                            atol=tol)
+
+      def check_eigenvalue_is_in_array(eigenvalue, eigenvalues_array):
+        tol = None
+        if dtype in [dtypes.bfloat16, np.float32, np.complex64]:
+          tol = 1e-3
+        elif dtype in [np.float64, np.complex128]:
+          tol = 1e-11
+        closest_diff = min(abs(eigenvalues_array - eigenvalue))
+        self.assertAllClose(closest_diff, np.array(0., closest_diff.dtype),
+                            atol=tol)
+
+      _, all_w_jax = result_jax
+      all_vr_tf, all_w_tf = result_tf
+
+      for idx in itertools.product(*map(range, operand.shape[:-2])):
+        w_jax, w_tf = all_w_jax[idx], all_w_tf[idx]
+        for i in range(inner_dimension):
+          check_eigenvalue_is_in_array(w_jax[i], w_tf)
+          check_eigenvalue_is_in_array(w_tf[i], w_jax)
+
+      check_right_eigenvectors(operand, all_w_tf, all_vr_tf)
+
+    # On CPU and GPU, JAX makes custom calls
+    always_custom_assert = True
+    # On TPU, JAX calls xops.Eigh
+    if jtu.device_under_test == "tpu":
+      always_custom_assert = False
+
+    self.ConvertAndCompare(harness.dyn_fun, triangular_operand,
+                           custom_assert=custom_assert,
+                           always_custom_assert=always_custom_assert)
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
