@@ -595,6 +595,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, abstract_args)
     if any(isinstance(c, core.Tracer) for c in consts):
       raise core.UnexpectedTracerError("Encountered an unexpected tracer.")
+    _print_partial_eval_stats(fun.f, jaxpr, consts)
   else:
     pvals: Sequence[pe.PartialVal] = [pe.PartialVal.unknown(aval) for aval in abstract_args]
     jaxpr, pvals, consts = pe.trace_to_jaxpr(  # type: ignore
@@ -667,6 +668,23 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
     return partial(_execute_compiled, compiled, result_handlers)
   else:
     return partial(_execute_replicated, compiled, result_handlers)
+
+def _print_partial_eval_stats(fun, jaxpr, consts):
+  in_unknowns = [True] * len(jaxpr.invars)
+  jaxpr_1, _, _ = pe.partial_eval_jaxpr(core.ClosedJaxpr(jaxpr, consts),
+                                        in_unknowns, False)
+  jaxpr_1 = jaxpr_1.jaxpr
+  jaxpr_1.invars = [core.dropvar] * len(jaxpr_1.invars)
+  if jaxpr_1.eqns:
+    try:
+      filename = fun.__code__.co_filename
+      lineno = fun.__code__.co_firstlineno
+      fun_info = f"{fun.__name__} at {filename}:{lineno}"
+    except AttributeError:
+      fun_info = "<unknown>"
+    print(f"from tracing {fun_info}, this was not constant folded:\n\n"
+          f"{jaxpr_1}\n\n")
+
 
 def set_up_aliases(c, xla_args, out_tuple, donated_args, tuple_args):
   """Configures input/output "must" aliasing based on `donated_args`."""
