@@ -165,7 +165,7 @@ def jit(fun: Callable[..., T],
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
-  if _EXPERIMENTAL_CPP_JIT:
+  if _EXPERIMENTAL_CPP_JIT and config.omnistaging_enabled:
     return _cpp_jit(fun, static_argnums, device, backend, donate_argnums)
   else:
     return _python_jit(fun, static_argnums, device, backend, donate_argnums)
@@ -253,6 +253,11 @@ def _cache_for_cpp_jit(call):
   return memoized_fun
 
 
+class _BackendAndDeviceInfo(NamedTuple):
+  default_device: xc.Device
+  committed_to_device: bool
+
+
 @_cache_for_cpp_jit
 def _cpp_jit(
     fun: Callable,
@@ -271,103 +276,111 @@ def _cpp_jit(
   """
   # `_check_callable(fun)` and the normalization of the argnums are in
   # `_cache_for_cpp_jit`.
+  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
 
-  # We compute this here and not within `jax_jit.jit` because we need to pass
-  # untampered arguments (and the backend/devices are resolved just after).
-  python_jitted_f = _python_jit(fun, static_argnums, device, backend,
-                                donate_argnums)
-
-  def cache_miss(*args, **kw):
-    backend_ = device.platform if device else backend
-    backend_ = xb.get_backend(backend_)
-
-    device_ = device
-    if device_ is None:
-      device_ = xb.get_backend(backend).get_default_device_assignment(1)[0]
-
-    xla_result = _xla_computation(
-        fun,
-        backend=backend,
-        static_argnums=static_argnums,
-        donate_argnums=donate_argnums)(*args, **kw)
-
-    options = xb.get_compile_options(
-        num_replicas=1,
-        num_partitions=1,
-        device_assignment=(device_.id,) if device_ else None)
-    if xla_result.parameter_is_tupled_arguments:
-      options.parameter_is_tupled_arguments = True
-
-    return (
-        # We call xla.backend_compile to ensure the XLA computation appears
-        # separately in Python profiling results.
-        xla.backend_compile(backend_, xla_result.xla_computation, options),
-        xla_result.out_pytree_def,
-        xla_result.shaped_arrays,
-        xla_result.lazy_expressions)
-
-  # Delay the import, because it requires a new version of jaxlib.
-  cpp_jitted_f = jax_jit.jit(fun, cache_miss,
-                             python_jitted_f, FLAGS.jax_enable_x64,
-                             config.read("jax_disable_jit"), static_argnums)
-
-  # The following exists for the ony purpose of supporting the following usage:
-  # class A:
-  #   @functools.partial(jax.jit, static_argnums=0)
-  #   def _compute_log_data(self, ...)
-  #     ...
-  # We discourage this practice as it's not a pure stateless functions, but
-  # the C++ codepath supports this for backward compatibility.
-  # Note that the JAX team is thinking of requiring the static arguments to be
-  # hashable, so maybe such usage will be forbidden in the future.
-  # Prefer for example an attribute or property access:
-  # class A:
-  #   def __init__(self):
-  #     self.jitted_f = jax.jit(self.f)
-
-  # We try to do this more expensive path only when it's needed and assume
-  # users respect the `self` convention.
-  # See `_IsMethodDecorator`
-  # Note that @classmethod and @staticmethod are *not* supported, both in
-  # _python_jit and _cpp_jit as they won't be callable.
-  if 0 in static_argnums and inspect.getfullargspec(fun).args[0] == "self":
-    return _IsMethodDecorator(cpp_jitted_f)
-  else:
-    return cpp_jitted_f
-
-
-class _IsMethodDecorator:
-  """Detects whether `fun` is a method and resolves the instance.
-
-  A function is decorated *before* it is bound, so we cannot directly
-  determine whether it is a 'method' or 'function'. We can rely on the
-  Descriptor protocol (see below) to detect, at *call time* whether it was a
-  method and retrieve the associated object.
-
-  We prefer to do this only when we think it's needed as the goal is to remove
-  all overheads.
-
-  https://docs.python.org/3/howto/descriptor.html#functions-and-methods
-  """
-
-  def __init__(self, func):
-    self.func = func
-    self.is_method = False
-
-  def __get__(self, instance, owner):
-    self.is_method = True
-    self.instance = instance
-    return self
-
-  def __call__(self, *args, **kwargs):
-    if self.is_method:
-      return self.func(self.instance, *args, **kwargs)
+  def cache_miss(*args, **kwargs):
+    ### This first part is basically the same code as in _python_jit.
+    # An alternative would be for cache_miss to accept from C++ the arguments
+    # (dyn_args, donated_invars, args_flat, in_tree), since otherwise we have
+    # work/code that is redundant between C++ and Python. We can try that later.
+    f = lu.wrap_init(fun)
+    if static_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      f, dyn_args = argnums_partial(f, dyn_argnums, args)
     else:
-      return self.func(*args, **kwargs)
+      dyn_args = args
+    args_flat, in_tree = tree_flatten((dyn_args, kwargs))
+    if donate_argnums:
+      donated_invars = donation_vector(donate_argnums, dyn_args, kwargs)
+    else:
+      donated_invars = (False,) * len(args_flat)
+
+    for arg in args_flat:
+      _check_arg(arg)
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+    out_flat = xla.xla_call(
+        flat_fun,
+        *args_flat,
+        device=device,
+        backend=backend,
+        name=flat_fun.__name__,
+        donated_invars=donated_invars)
+    out_pytree_def = out_tree()
+    out = tree_unflatten(out_pytree_def, out_flat)
+
+    ### Decide whether we can support the C++ fast path
+    # High level note: The Python tracing mechanism is complex; in particular
+    # to know whether `jax.jit(f)(x)` will execute or trace, it's not enough to
+    # inspect the argument x, we actually do need to execute it and look at the
+    # outputs that could be tracers (if f is capturing `Tracer` by closure).
+    execute: Optional[functools.partial] = (
+        xla._xla_callable.most_recent_entry())
+    use_fastpath = (
+        # This is if we have already executed this code-path (most-recent entry
+        # has been reset to None). Thus, we do not support the fast-path.
+        execute is not None and
+        execute.func is xla._execute_compiled and  # not trivial, not pmap
+        # Not supported: ShardedDeviceArray, DeviceConstant.
+        all(type(x) is xla.DeviceArray for x in out_flat) and
+        # TODO(mattjj): Add support for lazy-expression.
+        all(
+            type(x) is xla.DeviceArray and xla.lazy.is_trivial(x._lazy_expr)
+            for x in args_flat))
+
+    ### If we can use the fastpath, we return required info to the caller.
+    if use_fastpath:
+      xla_executable, _, result_handlers = execute.args
+      fastpath_data = (xla_executable, result_handlers, out_pytree_def)
+    else:
+      fastpath_data = None
+
+    return out, fastpath_data
+
+  def get_device_info():
+    """Backends do not exist before __main__ is being executed."""
+    committed_to_device = device is not None or backend is not None
+
+    if device is not None:
+      default_device = device
+    else:
+      backend_ = xb.get_backend(backend)
+      default_device = backend_.get_default_device_assignment(1)[0]
+
+    return _BackendAndDeviceInfo(default_device, committed_to_device)
+
+  def get_jax_enable_x64():
+    """Returns the value of the flag after GoogleInit.
+
+    We must wait until flags have been parsed (in particular for top-level
+    functions decorated with jax.jit), so we delay inspecting the value
+    of the jax_enable_x64 flag until JIT time.
+    """
+    return FLAGS.jax_enable_x64
+
+  def get_jax_disable_jit_flag():
+    """Returns the value of the `jax_disable_jit` flag.
+
+    Both a flag and the `disable_jit` context manager can disable jit. We access
+    the flag only once, when jitting the function, and the context manager
+    modifies a C++ thread-local value.
+    """
+    return config.read("jax_disable_jit")
+
+  cpp_jitted_f = jax_jit.jit(fun, cache_miss, get_device_info,
+                             get_jax_enable_x64, get_jax_disable_jit_flag,
+                             static_argnums)
+
+  # TODO(mattjj): make cpp callable follow descriptor protocol for bound methods
+  @wraps(fun)
+  @api_boundary
+  def f_jitted(*args, **kwargs):
+    return cpp_jitted_f(*args, **kwargs)
+
+  return f_jitted
 
 
 @contextmanager
