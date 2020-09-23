@@ -361,11 +361,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         # specifically for eigenvectors.
         if dtype == np.float64:
           tol = 1e-6
-        elif dtype in [dtypes.bfloat16, np.float32, np.complex64]:
-          if dtype == np.float32 and jtu.device_under_test() in ["gpu", "tpu"]:
-            tol = 1e-2
-          else:
-            tol = 1e-3
+        elif dtype == np.float32:
+          tol = 1e-2
+        elif dtype in [dtypes.bfloat16, np.complex64]:
+          tol = 1e-3
         elif dtype == np.complex128:
           tol = 1e-13
         self.assertAllClose(np.matmul(a, vr) - w[..., None, :] * vr,
