@@ -692,7 +692,7 @@ pxla.multi_host_supported_collectives.add(axis_index_p)
 # wants to bind an axis name has to additionally implement `process_axis_index`
 # and put its main trace on the axis env stack.
 def _axis_index_bind(*, axis_name):
-  if not isinstance(axis_name, tuple):
+  if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   inner_size = 1
   index = 0
