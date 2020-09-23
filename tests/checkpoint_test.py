@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 from absl.testing import absltest
+from unittest import skipIf
 
 import jax
 from jax import core
@@ -26,12 +28,13 @@ config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
 
 class CheckpointTest(jtu.JaxTestCase):
+  @skipIf(not jax.config.omnistaging_enabled, "need omnistaging")
   def testSimpleChain(self):
     def f(x):
       for i in range(8):
         x = jnp.exp(x)
       return x
-    x = jnp.ones((4,))
+    x = np.ones((4,))
     jaxpr = jax.make_jaxpr(C.checkpoint_recursive(f))(x).jaxpr
     def verify(jaxpr, lvl):
       if lvl < 0: return
