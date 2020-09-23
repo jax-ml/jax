@@ -636,6 +636,59 @@ lax_linalg_eigh = tuple(
   if dtype != np.float16
 )
 
+def _make_triangular_solve_harness(name, *, left_side=True, lower=False,
+                                   ab_shapes=((4, 4), (4, 1)), dtype=np.float32,
+                                   transpose_a=False, conjugate_a=False,
+                                   unit_diagonal=False):
+  a_shape, b_shape = ab_shapes
+  f_lax = lambda a, b: (lax_linalg.triangular_solve_p.bind(
+      a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
+      conjugate_a=conjugate_a, unit_diagonal=unit_diagonal))
+
+  return Harness(f"_{name}_a={jtu.format_shape_dtype_string(a_shape, dtype)}_b={jtu.format_shape_dtype_string(b_shape, dtype)}_leftside={left_side}_lower={lower}_transposea={transpose_a}_conjugatea={conjugate_a}_unitdiagonal={unit_diagonal}",
+                 f_lax,
+                 [RandArg(a_shape, dtype), RandArg(b_shape, dtype)],
+                 dtype=dtype,
+                 a_shape=a_shape,
+                 b_shape=b_shape,
+                 left_side=left_side,
+                 lower=lower,
+                 tranpose_a=transpose_a,
+                 conjugate_a=conjugate_a,
+                 unit_diagonal=unit_diagonal)
+
+lax_linalg_triangular_solve = tuple( # Validate dtypes
+  # This first harness runs the tests for all dtypes using default values for
+  # all the other parameters, except unit_diagonal (to ensure that
+  # tf.linalg.set_diag works reliably for all dtypes). Variations of other
+  # parameters can thus safely skip testing their corresponding default value.
+  # Note that this validates solving on the left.
+  _make_triangular_solve_harness("dtypes", dtype=dtype,
+                                 unit_diagonal=unit_diagonal)
+  for dtype in jtu.dtypes.all_inexact
+  for unit_diagonal in [False, True]
+) + tuple( # Validate shapes when solving on the right
+  _make_triangular_solve_harness("shapes_right", ab_shapes=ab_shapes,
+                                 left_side=False)
+  for ab_shapes in [
+    ((4, 4), (1, 4)),        # standard
+    ((2, 8, 8), (2, 10, 8)), # batched
+  ]
+) + tuple( # Validate transformations of a complex matrix
+  _make_triangular_solve_harness("complex_transformations", dtype=np.complex64,
+                                 lower=lower, transpose_a=transpose_a,
+                                 conjugate_a=conjugate_a)
+  for lower in [False, True]
+  for transpose_a in [False, True]
+  for conjugate_a in [False, True]
+) + tuple( # Validate transformations of a real matrix
+  _make_triangular_solve_harness("real_transformations", dtype=np.float32,
+                                 lower=lower, transpose_a=transpose_a)
+  for lower in [False, True]
+  for transpose_a in [False, True]
+  # conjugate_a is irrelevant for real dtypes, and is thus omitted
+)
+
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
           lax.slice,

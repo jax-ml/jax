@@ -402,6 +402,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            custom_assert=custom_assert,
                            always_custom_assert=always_custom_assert)
 
+  @primitive_harness.parameterized(
+      primitive_harness.lax_linalg_triangular_solve)
+  def test_triangular_solve(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    if dtype == np.float16 and jtu.device_under_test() == "gpu":
+      raise unittest.SkipTest(
+        f"Triangular solve is not implemented in JAX for dtype {dtype}")
+    atol = rtol = None
+    if dtype == np.float32:
+      atol = rtol = 1e-5
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=atol, rtol=rtol)
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
