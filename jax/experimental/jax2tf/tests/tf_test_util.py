@@ -24,6 +24,7 @@ from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import correctness_stats
+from jax.experimental.jax2tf.tests import tfjs_test_util
 from jax import test_util as jtu
 from jax import numpy as jnp
 
@@ -37,6 +38,12 @@ if os.getenv('JAX2TF_OUTPUT_LIMITATIONS') is not None:
                                '../primitives_with_limited_support.md.template')
   atexit.register(correctness_stats.pprint_all_limitations,
                   output_file, template_file)
+
+_do_tfjs_conversion = os.getenv('JAX2TFJS_OUTPUT_LIMITATIONS') is not None
+if _do_tfjs_conversion:
+  output_file = os.path.join(os.path.dirname(__file__),
+                             '../tfjs_conversion_summary.md')
+  atexit.register(tfjs_test_util.pprint_conversion_summary, output_file)
 
 class JaxToTfTestCase(jtu.JaxTestCase):
   def setUp(self):
@@ -127,6 +134,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       return v
 
     tf_args = tuple(map(convert_if_bfloat16, args))
+
+    if _do_tfjs_conversion:
+      # Save model and attempt to convert it to TFJS
+      tfjs_test_util.save_and_convert_model(func_jax, *tf_args)
 
     def run_tf(mode):
       if mode == "eager":

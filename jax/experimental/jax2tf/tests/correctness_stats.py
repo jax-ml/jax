@@ -15,16 +15,16 @@
 from collections import defaultdict
 import datetime
 import functools
-import numpy as np
+import numpy as np # type: ignore
 from typing import Any, Callable, Collection, Dict, List, NamedTuple, Optional,\
                    Tuple, Sequence, Set
 
-from jax import core
+from jax import core # type: ignore
 from jax import dtypes
 from jax import lax
 from jax import lax_linalg
-from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl
-from jax.interpreters import partial_eval as pe
+from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl # type: ignore
+from jax.interpreters import partial_eval as pe # type: ignore
 from jax.interpreters import pxla
 from jax.interpreters import xla
 
