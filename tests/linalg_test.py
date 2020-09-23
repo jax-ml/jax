@@ -575,9 +575,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testQr(self, shape, dtype, full_matrices, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if (jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest("No complex QR implementation")
     m, n = shape[-2:]
 
     if full_matrices:
