@@ -557,13 +557,25 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
   replica_groups = _replica_groups(axis_env, axis_name, None)
   if len(replica_groups[0]) == 1:
     return x
-  else:
+  elif platform == 'tpu':
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
     replica_groups_protos = xc.make_replica_groups(replica_groups)
-    return xops.AllToAll(x, split_axis, concat_axis, split_count,
-                         replica_groups_protos)
+    if concat_axis == split_axis:
+      return xops.AllToAll(x, split_axis, concat_axis, split_count,
+                           replica_groups_protos)
+    else:
+      if concat_axis < split_axis:
+        split_axis += 1
+      elif split_axis < concat_axis:
+        concat_axis += 1
+      x = xla.lower_fun(partial(lax.expand_dims, dimensions=(concat_axis,)), multiple_results=False)(c, x)
+      x = xops.AllToAll(x, split_axis, concat_axis, split_count, replica_groups_protos)
+      x = xla.lower_fun(partial(lax.squeeze, dimensions=(split_axis,)), multiple_results=False)(c, x)
+      return x
+  else:
+    raise NotImplementedError("all_to_all and pswapaxes only supported on TPU")
 
 def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
                                 axis_name):
@@ -585,8 +597,15 @@ def _moveaxis(src, dst, x):
   perm.insert(dst, src)
   return lax.transpose(x, perm)
 
+def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis):
+  input_aval = raise_to_shaped(x)
+  shape = list(input_aval.shape)
+  size = shape.pop(split_axis)
+  shape.insert(concat_axis, size)
+  return ShapedArray(tuple(shape), input_aval.dtype, weak_type=False)
+
 all_to_all_p = core.Primitive('all_to_all')
-all_to_all_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
+all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
