@@ -197,6 +197,55 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+      "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(2), range(2)))
+  def testAllToAll(self, split_axis, concat_axis):
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest("all_to_all not implemented on non-TPU platforms")
+    pmap_in_axis = 0
+    shape = (xla_bridge.device_count(),) * 3
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis, concat_axis)
+    y = f(x)
+    if pmap_in_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(2), range(2)))
+  def testAllToAllSplitAxis(self, split_axis, concat_axis):
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest("all_to_all not implemented on non-TPU platforms")
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    pmap_in_axis = 0
+    shape = (4, 4, 4)
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(pmap, axis_name='i')
+    @partial(pmap, axis_name='j')
+    def f(x):
+      return lax.all_to_all(x, ('i', 'j'), split_axis, concat_axis)
+
+    unroll_shape = (2, 2, *shape[1:])
+    x_unroll = x.reshape(unroll_shape)
+    y_unroll = f(x_unroll)
+    y = y_unroll.reshape(shape)
+
+    if pmap_in_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
 
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
