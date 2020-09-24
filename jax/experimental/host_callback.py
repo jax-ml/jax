@@ -41,12 +41,14 @@ on the host), the optional kwarg ``result``, and possibly additional kwargs
 that are also printed along with the automatic kwarg ``transforms``.
 
 The order of execution of the tap functions is constrained by data dependency:
-the arguments are sent after all the arguments are computed and before the
-result of the call is used. **At least one of the returned values must be
-used in the rest of the computation, or else this operation has no effect.**
+the arguments are tapped after all the arguments are computed and before the
+result of the call is used. As of September 2020, it is not necessary anymore
+for the results of the tap to be used in the rest of the computation. The tap
+function will execute based on program order.
 The host tap functions will be executed for each device in the order in which
 the send operations were performed on the device.
 
+The host tap functions for multiple devices may be interleaved.
 The data from the devices is received by separate threads managed by the JAX
 runtime (one thread per device). The runtime maintains a buffer of
 configurable size. When the buffer is full, all the receiving threads are paused
@@ -559,8 +561,9 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
     invars = jaxpr.invars + [last_token_var]
   else:
     invars = jaxpr.invars
+    # We need tokens but none is given in input; make one depending on all invars
     eqns.append(
-        core.new_jaxpr_eqn([jaxpr.invars[0]], [last_token_var],
+        core.new_jaxpr_eqn(jaxpr.invars, [last_token_var],
                            lax.create_token_p, {}, source_info_util.current()))
 
   for eqn in jaxpr.eqns:
