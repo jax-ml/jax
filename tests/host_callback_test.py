@@ -294,6 +294,8 @@ class HostCallbackTest(jtu.JaxTestCase):
 
   def test_jit_result_unused(self):
     """We can id_print even if we don't use the result."""
+    if not config.omnistaging_enabled:
+      raise SkipTest("Test requires omnistaging")
     def func(x):
       hcb.id_print(x, where="1", output_stream=testing_stream)
       hcb.id_print(x + 1, where="2", output_stream=testing_stream)
@@ -742,6 +744,8 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_grad_primal_unused(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("Test requires omnistaging")
     # The output of id_print is not needed for backwards pass
     def func(x):
       return 2. * hcb.id_print(x * 3., what="x * 3",
@@ -803,7 +807,8 @@ class HostCallbackTest(jtu.JaxTestCase):
     testing_stream.reset()
 
   def test_grad_double(self):
-
+    if not config.omnistaging_enabled:
+      raise SkipTest("Test requires omnistaging")
     def func(x):
       y = hcb.id_print(x * 2., what="x * 2", output_stream=testing_stream)
       return x * (y * 3.)
@@ -1228,7 +1233,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
   def test_simple_outfeed_without_input_token_nor_invars(self):
     self.assertRewrite("""
         { lambda  ; .
-          let b = create_token 
+          let b = create_token
               a c = id_tap[ arg_treedef_=*
                             has_token_=True
                             nr_tapped_args_=1
@@ -1350,7 +1355,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                     in (w, t, u, x) }
                        body_nconsts=2
                        cond_jaxpr={ lambda  ; j k l m.
-                                    let 
+                                    let
                                     in (j,) }
                        cond_nconsts=0 ] a b h c 1 i
           in (d, e, g) }""", func, [ct_body])
@@ -1445,7 +1450,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                   f h = id_tap[ arg_treedef_=*
                                                 has_token_=True
                                                 nr_tapped_args_=1
-                                                tap_func_=_print  
+                                                tap_func_=_print
                                                 transforms=(('transpose',),) ] e g
                               in (*, b, h, *, f) }
                       length=5
@@ -1482,7 +1487,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
     self.assertRewrite("""
         { lambda  ; a c.
           let b d _ = scan[ jaxpr={ lambda  ; a e b.
-                                    let c f = custom_vjp_call_jaxpr[ 
+                                    let c f = custom_vjp_call_jaxpr[
                                                                      fun_jaxpr={ lambda  ; a d.
                                                                                  let b e = id_tap[ arg_treedef_=*
                                                                                                    has_token_=True
@@ -1504,7 +1509,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
         { lambda  ; a d.
           let _ _ e _ b =
                 scan[ jaxpr={ lambda  ; a b h c d.
-                              let e i = custom_vjp_call_jaxpr[ 
+                              let e i = custom_vjp_call_jaxpr[
                                                                fun_jaxpr={ lambda  ; a d.
                                                                            let b e = id_tap[ arg_treedef_=*
                                                                                              has_token_=True
