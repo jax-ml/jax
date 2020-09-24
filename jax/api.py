@@ -1957,7 +1957,11 @@ def make_jaxpr(fun: Callable,
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
-      a ``ClosedJaxpr`` representation of ``fun`` on those arguments.
+      a ``ClosedJaxpr`` representation of ``fun`` on those arguments. If the
+      argument ``return_shape`` is ``True``, then the returned function instead
+      returns a pair where the first element is the ``ClosedJaxpr``
+      representation of ``fun`` and the second element is a pytree representing
+      the structure, shape, and dtypes of the output of ``fun``.
 
   A ``jaxpr`` is JAX's intermediate representation for program traces. The
   ``jaxpr`` language is based on the simply-typed first-order lambda calculus
@@ -2013,7 +2017,8 @@ def make_jaxpr(fun: Callable,
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     if return_shape:
-      return closed_jaxpr, tree_unflatten(out_tree(), out_avals)
+      out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
+      return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
     return closed_jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)

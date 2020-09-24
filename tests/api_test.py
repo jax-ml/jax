@@ -2259,6 +2259,13 @@ class JaxprTest(jtu.JaxTestCase):
     jaxpr = api.make_jaxpr(f, static_argnums=(1,))(2, 3)
     self.assertIn('3', str(jaxpr))
 
+  def test_make_jaxpr_return_shape(self):
+    _, shape_tree = api.make_jaxpr(lambda x: (x + 1, jnp.zeros(2, jnp.float32)),
+                                   return_shape=True)(np.int32(1))
+    expected = (api.ShapeDtypeStruct(shape=(), dtype=jnp.int32),
+                api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
+    self.assertEqual(shape_tree, expected)
+
 
 class LazyTest(jtu.JaxTestCase):
 
