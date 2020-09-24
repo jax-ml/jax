@@ -857,7 +857,7 @@ def _tuple_output(*args, **kwargs):
   ans = yield args, kwargs
   yield (ans,)
 
-def lower_fun(fun, multiple_results):
+def lower_fun(fun, multiple_results, parallel=False):
   # This function can only be used to lower functions that take JAX array types
   # as arguments (and e.g. don't accept unit values), because it assumes it can
   # map from XLA types to JAX types. In general that mapping is not possible (as
@@ -868,10 +868,14 @@ def lower_fun(fun, multiple_results):
   def f(c, *xla_args, **params):
     # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
+    if parallel:
+      axis_env = params.pop('axis_env')
+      del params['platform']
+    else:
+      axis_env = AxisEnv(1, (), (), None)
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
-    axis_env = AxisEnv(1, (), (), None)
     if config.omnistaging_enabled:
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
       outs = jaxpr_subcomp(c, jaxpr, None, axis_env, _xla_consts(c, consts), '',
