@@ -858,9 +858,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.choice(key, 5, 2, replace=True)
 
   def test_eval_shape_big_random_array(self):
-    def f():
-      return random.normal(random.PRNGKey(0), (int(1e10),))
-    api.eval_shape(f)  # doesn't error
+    def f(x):
+      return random.normal(random.PRNGKey(x), (int(1e10),))
+    api.eval_shape(f, 0)  # doesn't error
 
 
 if __name__ == "__main__":
