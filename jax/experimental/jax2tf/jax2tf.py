@@ -387,6 +387,8 @@ class TensorFlowTrace(core.Trace):
 def to_tf_dtype(jax_dtype):
   if jax_dtype == jnp.bfloat16:
     return tf.bfloat16
+  elif jax_dtype == dtypes.float0:
+    return tf.float32
   else:
     return tf.dtypes.as_dtype(jax_dtype)
 

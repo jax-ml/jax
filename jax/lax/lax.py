@@ -1944,11 +1944,21 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
-      msg = ('{} does not accept dtype {} at position {}. '
-             'Accepted dtypes at position {} are subtypes of {}.')
-      typename = str(np.dtype(aval_dtype).name)
-      typenames = ', '.join(t.__name__ for t in types)
-      raise TypeError(msg.format(name, typename, i, i, typenames))
+      if aval_dtype is dtypes.float0:
+        raise TypeError(
+            f"Called {name} with a float0 at position {i}. "
+            "float0s do not support any operations by design, because they "
+            "are not compatible with non-trivial vector spaces. No implicit dtype "
+            "conversion is done. You can use np.zeros_like(arr, dtype=np.float) "
+            "to cast a float0 array to a regular zeros array. \n"
+            "If you didn't expect to get a float0 you might have accidentally "
+            "taken a gradient with respect to an integer argument.")
+      else:
+        msg = ('{} does not accept dtype {} at position {}. '
+               'Accepted dtypes at position {} are subtypes of {}.')
+        typename = str(np.dtype(aval_dtype).name)
+        typenames = ', '.join(t.__name__ for t in types)
+        raise TypeError(msg.format(name, typename, i, i, typenames))
   _check_same_dtypes(name, False, *aval_dtypes)
   return result_dtype(*avals)
 
@@ -2433,15 +2443,27 @@ def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
   new_etype = xla_client.dtype_to_etype(new_dtype)
   return xops.ConvertElementType(operand, new_element_type=new_etype)
 
-def _convert_element_type_transpose_rule(t, *, new_dtype, old_dtype):
-  assert t.dtype == new_dtype, (t.dtype, new_dtype)
-  return [convert_element_type_p.bind(t, new_dtype=old_dtype,
-                                      old_dtype=new_dtype)]
+def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, old_dtype):
+  if type(ct) is ad_util.Zero:
+    return [ad_util.Zero(operand.aval)]
+  elif core.primal_dtype_to_tangent_dtype(old_dtype) is dtypes.float0:
+    return [ad_util.Zero(ShapedArray(operand.aval.shape, dtype=dtypes.float0))]
+  else:
+    return [convert_element_type_p.bind(ct, new_dtype=old_dtype,
+                                        old_dtype=new_dtype)]
+
+def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, old_dtype):
+  if core.primal_dtype_to_tangent_dtype(new_dtype) is dtypes.float0:
+    return ad_util.Zero(ShapedArray(tangent.shape, dtype=dtypes.float0))
+  else:
+    return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
+                                       old_dtype=old_dtype)
 
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
     'convert_element_type', _convert_element_type_translation_rule)
-ad.deflinear(convert_element_type_p, _convert_element_type_transpose_rule)
+ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
+ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
 
@@ -5663,7 +5685,6 @@ xla.translations[top_k_p] = partial(standard_translate, 'top_k')
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
-
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
@@ -6244,9 +6265,18 @@ def omnistaging_disabler() -> None:
     core.check_valid_jaxtype(y)
     return y
 
+  def _tie_in_jvp(primals, tangents):
+    x, y = primals
+    x_dot, y_dot = tangents
+    if type(y_dot) is ad_util.Zero or core.get_aval(y_dot).dtype is dtypes.float0:
+      return y, y_dot  # skip tying in in this case
+    else:
+      return ad.linear_jvp(tie_in_p, primals, tangents)
+
   tie_in_p.def_impl(_tie_in_impl)
   tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
   xla.translations[tie_in_p] = lambda c, x, y: y
-  ad.deflinear2(tie_in_p, _tie_in_transpose_rule)
+  ad.primitive_jvps[tie_in_p] = _tie_in_jvp
+  ad.primitive_transposes[tie_in_p] = partial(ad.linear_transpose2, _tie_in_transpose_rule)
   batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
   masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]

@@ -87,6 +87,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 
+float0 = dtypes.float0
 
 def _check_callable(fun):
   if not callable(fun):
@@ -696,7 +697,8 @@ def _xla_computation(
   return computation_maker
 
 def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-         has_aux: bool = False, holomorphic: bool = False) -> Callable:
+         has_aux: bool = False, holomorphic: bool = False,
+         allow_int: bool = False) -> Callable:
   """Creates a function which evaluates the gradient of ``fun``.
 
   Args:
@@ -713,6 +715,9 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
       differentiated and the second element is auxiliary data. Default False.
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. If True, inputs and outputs must be complex. Default False.
+   allow_int: Optional, bool. Whether to allow differentiating with
+      respect to integer valued inputs. The gradient of an integer input will
+      have a trivial vector-space dtype (float0). Default False.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the gradient
@@ -731,7 +736,8 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   0.961043
   """
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
-                                    holomorphic=holomorphic)
+                                    holomorphic=holomorphic,
+                                    allow_int=allow_int)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -753,8 +759,8 @@ def grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   return grad_f_aux if has_aux else grad_f
 
 def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-                   has_aux: bool = False, holomorphic: bool = False
-                   ) -> Callable[..., Tuple[Any, Any]]:
+                   has_aux: bool = False, holomorphic: bool = False,
+                   allow_int: bool = False) -> Callable[..., Tuple[Any, Any]]:
   """Create a function which evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
@@ -769,6 +775,9 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
      differentiated and the second element is auxiliary data. Default False.
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. If True, inputs and outputs must be complex. Default False.
+   allow_int: Optional, bool. Whether to allow differentiating with
+      respect to integer valued inputs. The gradient of an integer input will
+      have a trivial vector-space dtype (float0). Default False.
 
   Returns:
     A function with the same arguments as ``fun`` that evaluates both ``fun``
@@ -799,7 +808,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
-    tree_map(partial(_check_input_dtype_grad, holomorphic), dyn_args)
+    tree_map(partial(_check_input_dtype_grad, holomorphic, allow_int), dyn_args)
     if not has_aux:
       ans, vjp_py = _vjp(f_partial, *dyn_args)
     else:
@@ -829,7 +838,7 @@ def _check_scalar(x):
     else:
       raise TypeError(msg("had abstract value {}".format(aval)))
 
-def _check_input_dtype_revderiv(name, holomorphic, x):
+def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
   _check_arg(x)
   aval = core.get_aval(x)
   if holomorphic:
@@ -837,11 +846,12 @@ def _check_input_dtype_revderiv(name, holomorphic, x):
       msg = (f"{name} with holomorphic=True requires inputs with complex dtype, "
              f"but got {aval.dtype.name}.")
       raise TypeError(msg)
-  elif not (dtypes.issubdtype(aval.dtype, np.floating) or
-            dtypes.issubdtype(aval.dtype, np.complexfloating)):
+  elif not allow_int and not (dtypes.issubdtype(aval.dtype, np.floating) or
+                              dtypes.issubdtype(aval.dtype, np.complexfloating)):
     msg = (f"{name} requires real- or complex-valued inputs (input dtype that "
            "is a sub-dtype of np.floating or np.complexfloating), "
-           f"but got {aval.dtype.name}. ")
+           f"but got {aval.dtype.name}. If you want to use integer-valued "
+           "inputs, use vjp or set allow_int to True.")
     raise TypeError(msg)
 _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
@@ -857,7 +867,7 @@ def _check_output_dtype_revderiv(name, holomorphic, x):
            f"a sub-dtype of np.floating), but got {aval.dtype.name}. "
            "For holomorphic differentiation, pass holomorphic=True. "
            "For differentiation of non-holomorphic functions involving complex "
-           "outputs, use jax.vjp directly.")
+           "outputs, or function with integer outputs, use jax.vjp directly.")
     raise TypeError(msg)
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
 
@@ -918,7 +928,7 @@ def _check_input_dtype_jacfwd(holomorphic, x):
            f"a sub-dtype of np.floating), but got {aval.dtype.name}. "
            "For holomorphic differentiation, pass holomorphic=True. "
            "For differentiation of non-holomorphic functions involving complex "
-           "inputs, use jax.jvp directly.")
+           "inputs or integer inputs, use jax.jvp directly.")
     raise TypeError(msg)
 
 def _check_output_dtype_jacfwd(holomorphic, x):
@@ -931,7 +941,7 @@ def _check_output_dtype_jacfwd(holomorphic, x):
 
 
 def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
-           holomorphic: bool = False) -> Callable:
+           holomorphic: bool = False, allow_int: bool = False) -> Callable:
   """Jacobian of ``fun`` evaluated row-by-row using reverse-mode AD.
 
   Args:
@@ -940,6 +950,9 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
       positional argument(s) to differentiate with respect to (default ``0``).
     holomorphic: Optional, bool. Indicates whether ``fun`` is promised to be
       holomorphic. Default False.
+   allow_int: Optional, bool. Whether to allow differentiating with
+      respect to integer valued inputs. The gradient of an integer input will
+      have a trivial vector-space dtype (float0). Default False.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the Jacobian of
@@ -963,7 +976,7 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args)
-    tree_map(partial(_check_input_dtype_jacrev, holomorphic), dyn_args)
+    tree_map(partial(_check_input_dtype_jacrev, holomorphic, allow_int), dyn_args)
     y, pullback = _vjp(f_partial, *dyn_args)
     tree_map(partial(_check_output_dtype_jacrev, holomorphic), y)
     jac = vmap(pullback)(_std_basis(y))
@@ -1673,10 +1686,14 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
            "tree structure {}")
     raise TypeError(msg.format(tree_def, tree_def_2))
   for p, t in safe_zip(ps_flat, ts_flat):
-    if _dtype(p) != _dtype(t):
-      msg = ("primal and tangent arguments to jax.jvp must have equal types; "
-             "type mismatch primal {} vs tangent {}")
-      raise TypeError(msg.format(_dtype(p), _dtype(t)))
+    if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
+      msg = ("primal and tangent arguments to jax.jvp do not match; "
+             "dtypes must be equal, or in case of int/bool primal dtype "
+             "the tangent dtype must be float0."
+             f"Got primal dtype {_dtype(p)} and so expected tangent dtype "
+             f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
+             f"tangent dtype {_dtype(t)} instead.")
+      raise TypeError(msg)
   flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
   out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
   return (tree_unflatten(out_tree(), out_primals),
@@ -1771,13 +1788,6 @@ def _lift_linearized(jaxpr, primal_avals, consts, io_tree, out_pvals, *py_args):
 
   return apply_flat_fun(fun, io_tree, *py_args)
 
-def _check_inexact_input_vjp(x):
-  aval = core.get_aval(x)
-  if not dtypes.issubdtype(aval.dtype, np.inexact):
-    msg = ("Primal inputs to reverse-mode differentiation must be of float "
-           "or complex type, got type {}")
-    raise TypeError(msg.format(aval.dtype.name))
-
 def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
@@ -1785,11 +1795,13 @@ def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
     msg = ("Tree structure of cotangent input {}, does not match structure of "
            "primal output {}")
     raise TypeError(msg.format(in_tree, in_tree_expected))
-  for a, dtype in safe_zip(args, cotangent_dtypes):
-    if _dtype(a) != dtype:
-      msg = ("Type of cotangent input to vjp pullback function ({}) does not "
-             "match type of corresponding primal output ({})")
-      raise TypeError(msg.format(_dtype(a), dtype))
+  for arg, ct_dtype in safe_zip(args, cotangent_dtypes):
+    expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(_dtype(arg))
+    if expected_tangent_dtype != ct_dtype:
+      msg = ("Type of cotangent input to vjp pullback function ({}) is not "
+             "the expected tangent type ({}) of corresponding primal output "
+             "with dtype {}.")
+      raise TypeError(msg.format(ct_dtype, expected_tangent_dtype, _dtype(arg)))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -1842,7 +1854,6 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
   primals_flat, in_tree = tree_flatten(primals)
   for arg in primals_flat: _check_arg(arg)
-  tree_map(_check_inexact_input_vjp, primals)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
     out_primal, out_vjp = ad.vjp(flat_fun, primals_flat)
@@ -1852,10 +1863,11 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
     out_primal, out_vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
+  ct_dtypes = [core.primal_dtype_to_tangent_dtype(_dtype(x)) for x in out_primal]
   # Ensure that vjp_py is a PyTree so that we can pass it from the forward to the
   # backward pass in a custom VJP.
   vjp_py = Partial(partial(_vjp_pullback_wrapper,
-                           [_dtype(x) for x in out_primal],
+                           ct_dtypes,
                            (out_tree, in_tree)),
                    out_vjp)
   if not has_aux:

@@ -25,6 +25,7 @@ from absl.testing import parameterized
 import numpy as np
 
 from jax import api
+from jax import dtypes
 from jax import numpy as jnp
 from jax import ops
 from jax import test_util as jtu
@@ -784,7 +785,8 @@ class IndexingTest(jtu.JaxTestCase):
     x = jnp.ones((3, 4), jnp.float32)
     i = jnp.ones((3,), jnp.int32)
     f = lambda x, i: jnp.sum(x[i])
-    primals, tangents = api.jvp(api.grad(f), (x, i), (x, np.zeros_like(i)))
+    primals, tangents = api.jvp(api.grad(f), (x, i),
+                                (x, np.zeros(i.shape, dtypes.float0)))
     expected = np.broadcast_to(
       np.array([0, 3, 0], dtype=np.float32)[:, None], (3, 4))
     self.assertAllClose(expected, primals)
