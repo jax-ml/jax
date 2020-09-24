@@ -859,8 +859,9 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def test_eval_shape_big_random_array(self):
     def f(x):
-      return random.normal(random.PRNGKey(x), (int(1e10),))
-    api.eval_shape(f, 0)  # doesn't error
+      return random.normal(random.PRNGKey(x), (int(1e12),))
+    with core.skipping_checks():  # check_jaxpr will materialize array
+      api.eval_shape(f, 0)  # doesn't error
 
 
 if __name__ == "__main__":
