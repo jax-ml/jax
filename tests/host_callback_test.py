@@ -114,7 +114,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     if os.getenv("XLA_FLAGS") != self.old_flags:
       os.environ["XLA_FLAGS"] = self.old_flags
       xla_bridge.get_backend.cache_clear()
-    hcb.barrier_wait()
+    hcb.barrier_wait("HostCallbackTest.tearDown")
 
   def helper_set_devices(self, nr_devices):
     flags_str = os.getenv("XLA_FLAGS", "")

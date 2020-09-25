@@ -56,7 +56,8 @@ which eventually pauses the computation on devices. The runtime has one
 additional thread that invokes the Python user functions with the received data.
 If the processing of the callbacks is slow, it may actually lead to the runtime
 buffer filling up, and eventually pausing the computation on the devices
-when they need to send something. For more details on the runtime mechanism see
+when they need to send something. For more details on the outfeed receiver
+runtime mechanism see
 `runtime code
 <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_.
 
@@ -136,6 +137,34 @@ Still to do:
   * Explore an extended API that allows the host function to return
     values to the accelerator computation.
 
+
+Low-level details and debugging
+-------------------------------
+
+The C++ `receiver
+<https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_
+is started automatically on the first call to :func:`id_tap`. In order to stop
+it properly, upon start an ``atexit`` handler is registered to call
+:func:`barrier_wait` with the logging name "at_exit".
+
+
+There are a few environment variables that you can use to turn on logging
+for the C++ outfeed `receiver backend
+<https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_.
+
+  * ``TF_CPP_MIN_LOG_LEVEL=0``: will turn on INFO logging, needed for all below.
+  * ``TF_CPP_MIN_VLOG_LEVEL=3``: will turn make all VLOG logging up to level 3
+    behave like INFO logs. This may be too much, but you will see which
+    modules are logging relevant info, and then you can select which modules
+    to log from:
+  * `TF_CPP_VMODULE=<module_name>=3``
+
+You should also use the ``--verbosity=2`` flag so that you see the logs from Python.
+
+For example:
+```
+TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,cpu_transfer_manager=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackTest.test_jit_simple
+```
 """
 from absl import logging
 import atexit
@@ -833,7 +862,7 @@ def outfeed_receiver():
     yield
   finally:
     # We put a barrier, which will also raise the TapFunctionException
-    barrier_wait()
+    barrier_wait("outfeed_receiver_stop")
 
 
 # For now we keep a single outfeed receiver
@@ -933,13 +962,12 @@ def _initialize_outfeed_receiver(
     def exit_handler():
       # Prevent logging usage during compilation, gives errors under pytest
       xla._on_exit = True
-      logging.vlog(2, "Barrier wait atexit")
-      barrier_wait()
+      barrier_wait("at_exit")
 
     atexit.register(exit_handler)  # We wait as long as we have callbacks
 
 
-def barrier_wait():
+def barrier_wait(logging_name: Optional[str] = None):
   """Blocks the calling thread until all current outfeed is processed.
 
   Waits until all outfeed from computations already running on all devices
@@ -952,10 +980,15 @@ def barrier_wait():
 
   Note: If any of the devices are busy and cannot accept new computations,
   this will deadlock.
+
+  Args:
+    logging_name: an optional string that will be used in the logging statements
+      for this invocation. See `Debugging` in the module documentation.
   """
-  logging.vlog(2, "barrier_wait: start")
+  logging_name = logging_name or ""
+  logging.vlog(2, f"barrier_wait[{logging_name}]: start")
   if not _outfeed_receiver.receiver:
-    logging.vlog(2, "barrier_wait: receiver not started")
+    logging.vlog(2, f"barrier_wait[{logging_name}]: receiver not started")
     return
 
   lock = threading.Lock()
@@ -965,20 +998,21 @@ def barrier_wait():
   def barrier_tap(dev_idx, _):
     nonlocal num_at_large
     logging.vlog(
-        2, f"barrier_wait: thread {threading.current_thread()} for "
-        f"device {_outfeed_receiver.devices[dev_idx]} at barrier_tap")
+        2, f"barrier_wait[{logging_name}]: at barrier_tap for device {_outfeed_receiver.devices[dev_idx]} "
+        f". Thread {threading.current_thread()}")
     with lock:
       num_at_large -= 1
+      logging.vlog(2, f"barrier_wait[{logging_name}]: still waiting for {num_at_large} barrier_tap")
       cv.notify()
 
   for d_idx, d in enumerate(_outfeed_receiver.devices):
-    logging.vlog(2, f"barrier_wait: enqueueing barrier on device {d}")
+    logging.vlog(2, f"barrier_wait[{logging_name}]: enqueueing barrier on device {d}")
     x_on_dev = api.device_put(d_idx, device=d)
     api.jit(lambda x: id_tap(barrier_tap, x), device=d)(x_on_dev)
-  logging.vlog(2, "barrier_wait: waiting for calblacks")
+  logging.vlog(2, f"barrier_wait[{logging_name}]: waiting for callbacks")
   with lock:
     cv.wait_for(lambda: num_at_large == 0)
-  logging.vlog(2, "Done barrier_wait")
+  logging.vlog(2, f"barrier_wait[{logging_name}]: done")
   if _outfeed_receiver.num_tap_exceptions > 0:
     _outfeed_receiver.num_tap_exceptions = 0
     raise TapFunctionException(
