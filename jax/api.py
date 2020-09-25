@@ -49,6 +49,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         treedef_is_leaf, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
                    extend_name_stack, wrap_name, cache)
+from .lib import jax_jit
 from .lib import xla_bridge as xb
 from .lib import xla_client as xc
 # Unused imports to be exported
@@ -308,9 +309,7 @@ def _cpp_jit(
         xla_result.shaped_arrays,
         xla_result.lazy_expressions)
 
-  # TODO(jblespiau): Remove when C++ jit has landed (jaxlib.version >= 0.1.54)
   # Delay the import, because it requires a new version of jaxlib.
-  from .lib import jax_jit  # pylint: disable=g-import-not-at-top
   cpp_jitted_f = jax_jit.jit(fun, cache_miss,
                              python_jitted_f, FLAGS.jax_enable_x64,
                              config.read("jax_disable_jit"), static_argnums)
@@ -414,16 +413,12 @@ def disable_jit():
     prev_val = _thread_local_state.jit_is_disabled
     _thread_local_state.jit_is_disabled = True
 
-    # TODO(jblespiau): Remove when C++ jit has landed (jaxlib.version >= 0.1.54)
-    if hasattr(lib, "jax_jit") and hasattr(lib.jax_jit, "set_disable_jit"):
-      prev_cpp_val = lib.jax_jit.get_disable_jit()
-      lib.jax_jit.set_disable_jit(True)
-
+    prev_cpp_val = lib.jax_jit.get_disable_jit()
+    lib.jax_jit.set_disable_jit(True)
     yield
   finally:
     _thread_local_state.jit_is_disabled = prev_val
-    if hasattr(lib, "jax_jit") and hasattr(lib.jax_jit, "set_disable_jit"):
-      lib.jax_jit.set_disable_jit(prev_cpp_val)
+    lib.jax_jit.set_disable_jit(prev_cpp_val)
 
 
 def _jit_is_disabled():
@@ -437,7 +432,8 @@ def xla_computation(fun: Callable,
                     backend: Optional[str] = None,
                     tuple_args: bool = False,
                     instantiate_const_outputs: Optional[bool] = None,
-                    return_shape: bool = False) -> Callable:
+                    return_shape: bool = False,
+                    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
   Args:
@@ -551,7 +547,8 @@ def xla_computation(fun: Callable,
       out_parts=out_parts,
       backend=backend,
       tuple_args=tuple_args,
-      instantiate_const_outputs=instantiate_const_outputs)
+      instantiate_const_outputs=instantiate_const_outputs,
+      donate_argnums=donate_argnums)
 
   def computation_maker(*args, **kwargs):
     xla_return = internal_computation_maker(*args, **kwargs)
@@ -582,8 +579,7 @@ def _xla_computation(
     backend: Optional[str] = None,
     tuple_args: Optional[bool] = None,
     instantiate_const_outputs: Optional[bool] = True,
-    donate_argnums: Union[int, Iterable[int]] = ()
-) -> Callable:
+    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
   """An internal implementation for `xla_computation` and `_cpp_jit`.
 
   See `xla_computation` for the full documentation.
@@ -675,14 +671,11 @@ def _xla_computation(
       out_tuple = build_out_tuple()
 
     if any(donated_invars):
-      # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-      backend_ = xb.get_backend(backend)
-      if backend_.platform in ("gpu", "tpu"):
-        donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
-                                    tuple_args)
-      if any(donated_invars):
-        shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
-        warn("Some donated buffers were not usable: {}".format(", ".join(shapes)))
+      donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars,
+                                          tuple_args)
+    if any(donated_invars):
+      shapes = [str(c.GetShape(a)) for a, d in zip(xla_args, donated_invars) if d]
+      warn("Some donated buffers were not usable: {}".format(", ".join(shapes)))
     built = c.build(out_tuple)
     out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)
@@ -1940,8 +1933,9 @@ def linear_transpose(fun: Callable, *primals) -> Callable:
 
 
 def make_jaxpr(fun: Callable,
-               static_argnums: Union[int, Iterable[int]] = ()
-               ) -> Callable[..., core.TypedJaxpr]:
+               static_argnums: Union[int, Iterable[int]] = (),
+               return_shape: bool = False,
+               ) -> Callable[..., core.ClosedJaxpr]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
@@ -1949,10 +1943,20 @@ def make_jaxpr(fun: Callable,
       arguments and return value should be arrays, scalars, or standard Python
       containers (tuple/list/dict) thereof.
     static_argnums: See the :py:func:`jax.jit` docstring.
+    return_shape: Optional boolean, defaults to ``False``. If ``True``, the
+      wrapped function returns a pair where the first element is the ``jaxpr``
+      and the second element is a pytree with the same structure as
+      the output of ``fun`` and where the leaves are objects with ``shape`` and
+      ``dtype`` attributes representing the corresponding types of the output
+      leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
-      a ``TypedJaxpr`` representation of ``fun`` on those arguments.
+      a ``ClosedJaxpr`` representation of ``fun`` on those arguments. If the
+      argument ``return_shape`` is ``True``, then the returned function instead
+      returns a pair where the first element is the ``ClosedJaxpr``
+      representation of ``fun`` and the second element is a pytree representing
+      the structure, shape, and dtypes of the output of ``fun``.
 
   A ``jaxpr`` is JAX's intermediate representation for program traces. The
   ``jaxpr`` language is based on the simply-typed first-order lambda calculus
@@ -2006,8 +2010,11 @@ def make_jaxpr(fun: Callable,
       jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
           jaxtree_fun, in_pvals, instantiate=True, stage_out=True)  # type: ignore
       out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
-    typed_jaxpr = core.TypedJaxpr(jaxpr, consts, in_avals, out_avals)
-    return typed_jaxpr
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    if return_shape:
+      out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
+      return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
+    return closed_jaxpr
 
   jaxpr_maker.__name__ = "make_jaxpr({})".format(jaxpr_maker.__name__)
   return jaxpr_maker
@@ -2034,7 +2041,7 @@ def device_put(x, device: Optional[xc.Device] = None):
   return tree_map(lambda y: xla.device_put_p.bind(y, device=device), x)
 
 
-def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]) -> pxla.ShardedDeviceArray:
+def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]):
   """Transfers pre-sharded input to the specified devices, returning ShardedDeviceArrays.
 
   Args:

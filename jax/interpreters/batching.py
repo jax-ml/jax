@@ -375,9 +375,8 @@ def batch_jaxpr(jaxpr, size, batched, instantiate):
   f, batched_out = batched_traceable(f, size, batched, instantiate)
   avals_in = [_promote_aval_rank(size, a) if b else a
               for a, b in zip(jaxpr.in_avals, batched)]
-  jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(f, avals_in)
-  jaxpr_out = core.TypedJaxpr(jaxpr_out, literals_out, avals_in, avals_out)
-  return jaxpr_out, batched_out()
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
+  return core.ClosedJaxpr(jaxpr_out, consts), batched_out()
 
 @lu.transformation_with_aux
 def batched_traceable(size, batched, instantiate, *vals):
@@ -437,8 +436,7 @@ def omnistaging_disabler() -> None:
     in_pvals = [pe.PartialVal.unknown(aval) for aval in avals_in]
     jaxpr_out, pvals_out, consts_out = pe.trace_to_jaxpr(f, in_pvals, instantiate=True)
     avals_out, _ = unzip2(pvals_out)
-    jaxpr_out = core.TypedJaxpr(jaxpr_out, consts_out, avals_in, avals_out)
-    return jaxpr_out, batched_out()
+    return core.ClosedJaxpr(jaxpr_out, consts_out), batched_out()
 
 
 # collective_rules can assume that the collective is only carried out throughout

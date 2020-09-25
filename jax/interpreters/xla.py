@@ -194,7 +194,7 @@ def _param_uses_outfeed(param):
   if type(param) is core.Jaxpr:
     if jaxpr_uses_outfeed(param):
       return True
-  elif type(param) is core.TypedJaxpr:
+  elif type(param) is core.ClosedJaxpr:
     if jaxpr_uses_outfeed(param.jaxpr):
       return True
   return False
@@ -497,7 +497,7 @@ def eqn_replicas(eqn):
 def initial_style_primitive_replicas(params):
   nums = (jaxpr_replicas(param if type(param) is core.Jaxpr else param.jaxpr)
           for param in params.values()
-          if type(param) in (core.Jaxpr, core.TypedJaxpr))
+          if type(param) in (core.Jaxpr, core.ClosedJaxpr))
   return max(it.chain([1], nums))
 
 # TODO(mattjj,skyewm): the functions here are utilities for checking if
@@ -857,7 +857,7 @@ def _tuple_output(*args, **kwargs):
   ans = yield args, kwargs
   yield (ans,)
 
-def lower_fun(fun, multiple_results):
+def lower_fun(fun, multiple_results, parallel=False):
   # This function can only be used to lower functions that take JAX array types
   # as arguments (and e.g. don't accept unit values), because it assumes it can
   # map from XLA types to JAX types. In general that mapping is not possible (as
@@ -868,10 +868,14 @@ def lower_fun(fun, multiple_results):
   def f(c, *xla_args, **params):
     # TODO(mattjj): revise this 'calling convention'
     avals = [_array_aval_from_xla_shape(c.get_shape(x)) for x in xla_args]
+    if parallel:
+      axis_env = params.pop('axis_env')
+      del params['platform']
+    else:
+      axis_env = AxisEnv(1, (), (), None)
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)
-    axis_env = AxisEnv(1, (), (), None)
     if config.omnistaging_enabled:
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
       outs = jaxpr_subcomp(c, jaxpr, None, axis_env, _xla_consts(c, consts), '',
@@ -1275,15 +1279,6 @@ def _call_translation_rule(c, axis_env, in_nodes, name_stack,
   subc = subc.Build(xops.Tuple(subc, out_nodes))
   return xops.Call(c, subc, list(in_nodes))
 call_translations[core.call_p] = _call_translation_rule
-
-
-def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
-  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
-                                dtype=np.uint32))
-  mod = xb.constant(c, np.array(axis_env.sizes[-1], dtype=np.uint32))
-  unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
-  return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
-parallel_translations[core.axis_index_p] = _axis_index_translation_rule  # type: ignore
 
 
 @config.register_omnistaging_disabler

@@ -857,6 +857,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       random.choice(key, 5, 2, replace=True)
 
+  def test_eval_shape_big_random_array(self):
+    def f(x):
+      return random.normal(random.PRNGKey(x), (int(1e12),))
+    with core.skipping_checks():  # check_jaxpr will materialize array
+      api.eval_shape(f, 0)  # doesn't error
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

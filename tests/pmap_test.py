@@ -97,6 +97,8 @@ ignore_soft_pmap_warning = partial(
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
 
+ignore_slow_all_to_all_warning = partial(
+  jtu.ignore_warning, message="all_to_all.*expect significant slowdowns.*")
 
 class PmapTest(jtu.JaxTestCase):
   def _getMeshShape(self, device_mesh_shape):
@@ -143,6 +145,7 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @ignore_slow_all_to_all_warning()
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
@@ -166,9 +169,9 @@ class PmapTest(jtu.JaxTestCase):
     assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
     assert_allclose(jax_f(lax.psum)(x), np_f(np.sum)(x))
     assert_allclose(jax_f(lax.pmean)(x), np_f(np.mean)(x))
+    assert_allclose(jax_f(ptranspose)(x), np_transpose(x))
+    # NOTE: ppermute only supported on TPU.
     if jtu.device_under_test() not in ("cpu", "gpu"):
-      # NOTE: all-to-all and ppermute only supported on TPU.
-      assert_allclose(jax_f(ptranspose)(x), np_transpose(x))
       assert_allclose(jax_f(protate)(x), np_rotate(x))
 
   def testCollectivesWithTreesOfDifferentDtypes(self):
@@ -197,6 +200,55 @@ class PmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+      "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(2), range(2)))
+  def testAllToAll(self, split_axis, concat_axis):
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest("all_to_all not implemented on non-TPU platforms")
+    pmap_in_axis = 0
+    shape = (xla_bridge.device_count(),) * 3
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(pmap, axis_name='i')
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis, concat_axis)
+    y = f(x)
+    if pmap_in_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis}
+      for split_axis, concat_axis in it.product(range(2), range(2)))
+  def testAllToAllSplitAxis(self, split_axis, concat_axis):
+    if jtu.device_under_test() != "tpu":
+      raise SkipTest("all_to_all not implemented on non-TPU platforms")
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    pmap_in_axis = 0
+    shape = (4, 4, 4)
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(pmap, axis_name='i')
+    @partial(pmap, axis_name='j')
+    def f(x):
+      return lax.all_to_all(x, ('i', 'j'), split_axis, concat_axis)
+
+    unroll_shape = (2, 2, *shape[1:])
+    x_unroll = x.reshape(unroll_shape)
+    y_unroll = f(x_unroll)
+    y = y_unroll.reshape(shape)
+
+    if pmap_in_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
 
   def testNestedBasic(self):
     f = lambda x: lax.psum(lax.psum(x, 'i'), 'j')
@@ -958,6 +1010,26 @@ class PmapTest(jtu.JaxTestCase):
     expected = 1 + np.arange(device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testAxisIndexNestedPmap(self):
+    device_count = xla_bridge.device_count()
+    if device_count < 4:
+      raise SkipTest("test requires at least four devices")
+    f = lambda axis: pmap(pmap(lambda x: x + lax.axis_index(axis), 'j'), 'i')
+    x = jnp.ones((2, 2))
+    expected_j = np.broadcast_to(1 + np.arange(2), (2, 2))
+    self.assertAllClose(f('j')(x), expected_j, check_dtypes=False)
+    self.assertAllClose(f('i')(x), expected_j.T, check_dtypes=False)
+
+  def testAxisIndexNd(self):
+    device_count = xla_bridge.device_count()
+    if device_count < 4:
+      raise SkipTest("test requires at least four devices")
+    f = lambda axes: pmap(pmap(lambda x: x + lax.axis_index(axes), 'j'), 'i')
+    x = jnp.ones((2, 2))
+    expected = 1 + np.arange(4).reshape((2, 2))
+    self.assertAllClose(f(('i', 'j'))(x), expected, check_dtypes=False)
+    self.assertAllClose(f(('j', 'i'))(x), expected.T, check_dtypes=False)
+
   def testAxisIndexInInitialStyle(self):
     @partial(pmap, axis_name='i')
     def f(x):
@@ -1522,14 +1594,18 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
     self.assertAllClose(ans, expected)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
+       "collective": collective}
+      for collective in [lax.psum, lax.pmean, lax.pmax, lax.pmin])
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
-  def testCollectivesWithVmap(self):
+  def testCollectivesWithVmap(self, collective):
     def f(map1, map2):
       @partial(map1, axis_name='i')
       @partial(map2, axis_name='j')
       def f(x, y):
-        return x + jax.lax.psum(x.dot(y), ('i', 'j'))
+        return x + collective(x.dot(y), ('i', 'j'))
       return f
 
     if xla_bridge.device_count() < 4:
@@ -1539,6 +1615,94 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(f(jax.vmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.pmap, jax.vmap)(x, x), y)
     self.assertAllClose(f(jax.vmap, jax.pmap)(x, x), y)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPPermuteWithVmap(self):
+    perm = [(0, 1), (1, 0)]
+
+    def f(map2):
+      @partial(jax.pmap, axis_name='i')
+      @partial(map2)
+      def f(x, y):
+        return x + jax.lax.ppermute(x.dot(y), 'i', perm)
+      return f
+
+    if xla_bridge.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    x = jnp.ones((2, 2, 64, 64))
+    self.assertAllClose(f(jax.pmap)(x, x), f(jax.vmap)(x, x))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  @ignore_slow_all_to_all_warning()
+  def testAllToAllInVmap(self, split_axis, concat_axis, vmap_axis):
+    def f(x):
+      return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
+
+    def adj(axis, hidden_axes):
+      for hax in sorted(hidden_axes):
+        if hax <= axis:
+          axis += 1
+      return axis
+
+    def reference(x, split_axis, concat_axis, vmap_axis):
+      pmap_axis = 0
+      vmap_axis = adj(vmap_axis, [pmap_axis])
+      ref = x
+
+      # Step 1.
+      # Adjust the split axis to the real tensor layout and move it to
+      # position 1. Since pmap_axis is always 0 we don't have to adjust it,
+      # but we do have to adjust vmap_axis.
+      split_axis = adj(split_axis, [pmap_axis, vmap_axis])
+      ref = jnp.moveaxis(ref, split_axis, pmap_axis + 1)
+      vmap_axis = vmap_axis + (0 if split_axis < vmap_axis else 1)
+      split_axis = pmap_axis + 1  # split_axes == 1
+
+      # Step 2.
+      # Now, we move pmap_axis to the position indicated by concat_axis.
+      concat_axis = adj(concat_axis, [pmap_axis, split_axis, vmap_axis]) - 1
+      ref = jnp.moveaxis(ref, pmap_axis, concat_axis)
+      pmap_axis = 0
+      vmap_axis = vmap_axis - (1 if concat_axis >= vmap_axis else 0)
+      del split_axis, concat_axis
+
+      # Step 3. vmap_axis always ends in position 1, since out_axes=0.
+      ref = jnp.moveaxis(ref, vmap_axis, 1)
+      return ref
+
+    def verify_ref():
+      # Both the reference and the real implementation of all_to_all batching involve
+      # some pretty complicated axis arithmetic, so it would be good to verify that it's
+      # not the case that the test passes because they're both incorrect. Fortunately, it
+      # is quite easy to write out the shape function for this code, and we know
+      # that it should be equivalent to a bunch of transposes, so the code below verifies
+      # that the reference puts the right dimensions in the right places. Note that we
+      # can't do the same comparison on f, since all_to_all wouldn't allow us to swap axes of
+      # different sizes.
+      start_shape = [2, 3, 4, 5, 6]
+      instance_shape = start_shape.copy()
+      pmap_dim_id = instance_shape.pop(0)
+      vmap_dim_id = instance_shape.pop(vmap_axis)
+      split_axis_id = instance_shape.pop(split_axis)
+      instance_shape.insert(concat_axis, pmap_dim_id)
+      expected_shape = (split_axis_id, vmap_dim_id, *instance_shape)
+
+      x = np.empty(start_shape)
+      self.assertEqual(reference(x, split_axis, concat_axis, vmap_axis).shape,
+                       expected_shape)
+
+    verify_ref()
+
+    shape = (jax.device_count(),) * 5
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    self.assertAllClose(pmap(vmap(f, in_axes=vmap_axis), axis_name='i')(x),
+                        reference(x, split_axis, concat_axis, vmap_axis))
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):

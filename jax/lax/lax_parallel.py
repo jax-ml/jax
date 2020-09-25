@@ -16,6 +16,7 @@ Parallelization primitives.
 """
 
 import collections
+import warnings
 
 import numpy as np
 
@@ -243,9 +244,7 @@ def pswapaxes(x, axis_name, axis):
       ``axis_name``.
 
   Returns:
-    Array(s) with shape ``np.insert(np.delete(x.shape, axis), axis, axis_size)``
-    where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
-    the input ``x``.
+    Array(s) with the same shape as ``x``.
   """
   return all_to_all(x, axis_name, axis, axis)
 
@@ -547,9 +546,20 @@ ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear(ppermute_p, _ppermute_transpose_rule)
 xla.parallel_translations[ppermute_p] = _ppermute_translation_rule
 pxla.multi_host_supported_collectives.add(ppermute_p)
-batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, pmin_p)
+batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
 batching.collective_rules[ppermute_p] = _ppermute_batcher
 
+
+def _moveaxis(src, dst, x):
+  perm = [i for i in range(x.ndim) if i != src]
+  perm.insert(dst, src)
+  return lax.transpose(x, perm)
+
+def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis):
+  global_full = all_gather(x, axis_name)
+  idx = axis_index(axis_name)
+  local_slice = lax.dynamic_index_in_dim(global_full, idx, split_axis + 1, keepdims=False)
+  return _moveaxis(0, concat_axis, local_slice)
 
 def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
                                  axis_env, platform):
@@ -557,39 +567,64 @@ def _all_to_all_translation_rule(c, x, *, split_axis, concat_axis, axis_name,
   replica_groups = _replica_groups(axis_env, axis_name, None)
   if len(replica_groups[0]) == 1:
     return x
+  elif platform != 'tpu':
+    warnings.warn("all_to_all (and pswapaxes) are only implemented properly for TPUs. All other "
+                  "backends emulate it using a very slow and memory intensive algorithm, so expect "
+                  "significant slowdowns.")
+    lowering = xla.lower_fun(_all_to_all_via_all_gather, multiple_results=False, parallel=True)
+    return lowering(c, x,
+                    split_axis=split_axis, concat_axis=concat_axis, axis_name=axis_name,
+                    axis_env=axis_env, platform=platform)
   else:
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
     replica_groups_protos = xc.make_replica_groups(replica_groups)
-    return xops.AllToAll(x, split_axis, concat_axis, split_count,
-                         replica_groups_protos)
-
-def _all_to_all_split_axis_rule(vals, which_mapped, split_axis, concat_axis,
-                                axis_name):
-  assert tuple(which_mapped) == (True,)
-  x, = vals
-  # perform the communication to swap the hardware-mapped axes
-  stacked = all_to_all_p.bind(x, split_axis=split_axis + 1, concat_axis=0,
-                              axis_name=axis_name)
-  # transpose the newly mapped axis to the front, newly unmapped to concat_axis
-  out = _moveaxis(split_axis + 1, 0, stacked)
-  out = _moveaxis(1, concat_axis + 1, out)
-  return out, True
+    if concat_axis == split_axis:
+      return xops.AllToAll(x, split_axis, concat_axis, split_count,
+                           replica_groups_protos)
+    else:
+      if concat_axis < split_axis:
+        split_axis += 1
+      elif split_axis < concat_axis:
+        concat_axis += 1
+      x = xla.lower_fun(partial(lax.expand_dims, dimensions=(concat_axis,)), multiple_results=False)(c, x)
+      x = xops.AllToAll(x, split_axis, concat_axis, split_count, replica_groups_protos)
+      x = xla.lower_fun(partial(lax.squeeze, dimensions=(split_axis,)), multiple_results=False)(c, x)
+      return x
 
 def _all_to_all_transpose_rule(cts, axis_name, split_axis, concat_axis):
   return (all_to_all(cts, axis_name=axis_name, split_axis=concat_axis, concat_axis=split_axis),)
 
-def _moveaxis(src, dst, x):
-  perm = [i for i in range(x.ndim) if i != src]
-  perm.insert(dst, src)
-  return lax.transpose(x, perm)
+def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis):
+  x, = vals_in
+  d, = dims_in
+  if d <= split_axis:
+    split_axis += 1
+  if d <= concat_axis:
+    concat_axis += 1
+  # Note: At this point split_axis and concat_axis are adjusted to the extra
+  #       dimension and we have d != split_axis and d != concat_axis.
+  if split_axis < d < concat_axis:
+    d -= 1
+  elif concat_axis < d < split_axis:
+    d += 1
+  result = all_to_all_p.bind(x, axis_name=axis_name, split_axis=split_axis, concat_axis=concat_axis)
+  return result, d
+
+def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis):
+  input_aval = raise_to_shaped(x)
+  shape = list(input_aval.shape)
+  size = shape.pop(split_axis)
+  shape.insert(concat_axis, size)
+  return ShapedArray(tuple(shape), input_aval.dtype, weak_type=False)
 
 all_to_all_p = core.Primitive('all_to_all')
-all_to_all_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
+all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
 xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
+batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
 
 
 def _expand(dim, size, index, x):
@@ -667,16 +702,18 @@ def all_gather(x, axis_name, *, axis_index_groups=None):
 
 
 def _axis_index_translation_rule(c, *, axis_name, axis_env, platform):
-  div = xb.constant(c, np.array(axis_env.nreps // prod(axis_env.sizes),
+  axis_pos = list(axis_env.names).index(axis_name)
+  nreplicas = axis_env.nreps // prod(axis_env.sizes)
+  div = xb.constant(c, np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
                                 dtype=np.uint32))
-  mod = xb.constant(c, np.array(axis_env.sizes[-1], dtype=np.uint32))
+  mod = xb.constant(c, np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
   unsigned_index = xops.Rem(xops.Div(xops.ReplicaId(c), div), mod)
   return xops.ConvertElementType(unsigned_index, xb.dtype_to_etype(np.int32))
 
 def _axis_index_soft_pmap_rule(vals, mapped, chunk_size, *, axis_name):
   assert not vals and not mapped
   idx = axis_index(axis_name)  # type: ignore
-  return idx * chunk_size + np.arange(chunk_size), True
+  return idx * chunk_size + np.arange(chunk_size, dtype=np.int32), True
 
 axis_index_p = core.Primitive('axis_index')
 xla.parallel_translations[axis_index_p] = _axis_index_translation_rule
@@ -690,11 +727,20 @@ pxla.multi_host_supported_collectives.add(axis_index_p)
 # wants to bind an axis name has to additionally implement `process_axis_index`
 # and put its main trace on the axis env stack.
 def _axis_index_bind(*, axis_name):
-  frame = core.axis_frame(axis_name)
-  if frame.main_trace is not None:
-    trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
-    return trace.process_axis_index(frame)
-  return core.Primitive.bind(axis_index_p, axis_name=axis_name)
+  if not isinstance(axis_name, (tuple, list)):
+    axis_name = (axis_name,)
+  inner_size = 1
+  index = 0
+  for name in reversed(axis_name):
+    frame = core.axis_frame(name)
+    if frame.main_trace is not None:
+      trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
+      name_idx = trace.process_axis_index(frame)
+    else:
+      name_idx = core.Primitive.bind(axis_index_p, axis_name=name)
+    index += name_idx * inner_size
+    inner_size *= psum(1, name)
+  return index
 axis_index_p.def_custom_bind(_axis_index_bind)
 
 def _process_axis_index(self, frame):

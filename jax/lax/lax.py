@@ -657,7 +657,8 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   """
   shape = _broadcast_in_dim_shape_rule(
     operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
-  if np.ndim(operand) == len(shape) and not len(broadcast_dimensions):
+  if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
+      and isinstance(operand, (xla.DeviceArray, core.Tracer))):
     return operand
   return broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
@@ -1392,10 +1393,7 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
     raise TypeError(msg.format(np.shape(fill_value)))
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = convert_element_type(fill_value, dtype)
-  if config.omnistaging_enabled:
-    if not isinstance(fill_value, (xla.DeviceArray, core.Tracer)):
-      fill_value = _device_put_raw(fill_value)
-  else:
+  if not config.omnistaging_enabled:
     fill_value = xla.device_put_p.bind(fill_value)
   return broadcast(fill_value, shape)
 
@@ -3031,6 +3029,8 @@ ad.deflinear(broadcast_p, lambda t, sizes: [_reduce_sum(t, range(len(sizes)))])
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
+  if type(operand) is np.ndarray:
+    operand = _device_put_raw(operand)
   if type(operand) is xla.DeviceArray and np.all(
       np.equal(operand.shape, np.take(shape, broadcast_dimensions))):
     shape = _broadcast_in_dim_shape_rule(
@@ -5688,12 +5688,12 @@ def create_token(x):
        value of `x` is ignored.
   """
   # x is a dummy argument used to tie the operator into a trace.
-  return create_token_p.bind(x)
+  return create_token_p.bind(stop_gradient(x))
 
 create_token_p = Primitive("create_token")
 create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
 create_token_p.def_abstract_eval(lambda _: abstract_token)
-xla.translations[create_token_p] = lambda c, _: xops.CreateToken(c)
+xla.translations[create_token_p] = lambda c, *_: xops.CreateToken(c)
 
 def after_all(*operands):
   """Merges one or more XLA token values. Experimental.

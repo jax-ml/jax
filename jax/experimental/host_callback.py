@@ -17,28 +17,38 @@
 
 This module introduces the host callback functions :func:`id_tap` and
 :func:`id_print`, which behave like the identity function but have the
-side-effect of sending the arguments from the accelerator to the host and
+side-effect of sending the arguments from the device to the host and
 invoking a user-specified Python function (for :func:`id_tap`) or printing the
-arguments on the host (for :func:`id_print`). A few examples::
+arguments on the host (for :func:`id_print`). The Python function passed
+to :func:`id_tap` takes two positional arguments (the value tapped from the
+device computation along with ``transforms`` sequence, described below).
+A few examples::
 
-  # call func(2x) on host and return 2x
+  # calls func(2x, []) on host and returns 2x
   y = id_tap(func, 2 * x)
-  # call func((2x, 3x)) and return (2x, 3x)
+  # calls func((2x, 3x), []) and returns (2x, 3x)
   y, z = id_tap(func, (2 * x, 3 * x))  # The argument can be a pytree
-  # call func(2x) and return y
-  y = id_tap(func, 2 * x, result=y)
-  # call func(2x, what='activation') and return 2x
-  y = id_tap(func, 2 * x, what='activation')
-  # call func(dict(x=x, y=y), what='data') and return dict(x=x, y=y)
-  x, y = id_tap(func, dict(x=x, y=y), what='data')
+  # calls func(2x, []) and returns y
+  y = id_tap(func, 2 * x, result=y)  # override the result of id_tap
+  # calls func(2x, [], what='activation') and returns 2x
+  y = id_tap(functools.partial(func, what='activation'), 2 * x)
+  # calls func(dict(x=x, y=y), what='data') and returns dict(x=x, y=y)
+  x, y = id_tap(lambda tap, transforms: func(tap, what='data'), dict(x=x, y=y))
+
+The above examples can all be adapted to use :func:`id_print` instead, with
+the difference that :func:`id_print` takes one positional argument (to print
+on the host), the optional kwarg ``result``, and possibly additional kwargs
+that are also printed along with the automatic kwarg ``transforms``.
 
 The order of execution of the tap functions is constrained by data dependency:
-the arguments are sent after all the arguments are computed and before the
-result of the call is used. **At least one of the returned values must be
-used in the rest of the computation, or else this operation has no effect.**
+the arguments are tapped after all the arguments are computed and before the
+result of the call is used. As of September 2020, it is not necessary anymore
+for the results of the tap to be used in the rest of the computation. The tap
+function will execute based on program order.
 The host tap functions will be executed for each device in the order in which
 the send operations were performed on the device.
 
+The host tap functions for multiple devices may be interleaved.
 The data from the devices is received by separate threads managed by the JAX
 runtime (one thread per device). The runtime maintains a buffer of
 configurable size. When the buffer is full, all the receiving threads are paused
@@ -46,7 +56,8 @@ which eventually pauses the computation on devices. The runtime has one
 additional thread that invokes the Python user functions with the received data.
 If the processing of the callbacks is slow, it may actually lead to the runtime
 buffer filling up, and eventually pausing the computation on the devices
-when they need to send something. For more details on the runtime mechanism see
+when they need to send something. For more details on the outfeed receiver
+runtime mechanism see
 `runtime code
 <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_.
 
@@ -78,15 +89,15 @@ following function definition::
 
   def power3(x):
      y = x * x
-     _, y = id_print(x, y, what="x,x^2")
+     _, y = id_print((x, y), what="x,x^2")  # Must pack multiple arguments
      return y * x
 
+  power3(3.)
+  # what: x,x^2 : [3., 9.]
+
 During JAX transformations the special parameter ``transforms`` is added to
-contain a list of transformation descriptors. Each descriptor is a dictionary
-containing the key ``name`` holding the name of the transformation and
-additional keys holding transformation parameters, if applicable. This
-parameter is passed to the tap function (or printed), in addition to
-user-defined parameters.
+contain a list of transformation descriptors in the form
+``(transform_name, transform_params)``.
 
 For :func:`jax.vmap` the arguments are batched, and ``transforms`` is extended
 with transformation name ``batch`` and ``batch_dims`` set to the the tuple of
@@ -94,15 +105,15 @@ batched dimensions (one entry per argument, ``None`` denotes an argument that
 was broadcast)::
 
   jax.vmap(power3)(np.arange(3.))
-  # what=x,x^2 transforms=({name=batch, batch_dims=(0, 0)}): ([0, 1, 2], [0, 1,
-  4])
+  # transforms: [('batch', {'batch_dims': (0, 0)})] what: x,x^2 : [[0, 1, 2], [0, 1,
+  4]]
 
 For :func:`jax.jvp` there will be two callbacks, one with the values of
 the primals and one with the tangents::
 
   jax.jvp(power3, (3.,), (0.1,))
-  # what=x,x^2: (3., 9.)
-  # what=x,x^2 transforms={name=jvp}: (0.1, 0.6)
+  # what: x,x^2: [3., 9.]
+  # transforms: ['jvp'] what: x,x^2 : [0.1, 0.6]
 
 For :func:`jax.vjp` or :func:`jax.grad` there will be one callback with the
 values of the adjoints for the arguments. You may also see a callback with
@@ -110,13 +121,11 @@ the values of the primals from the forward pass, if those values are needed for
 the backward pass::
 
   jax.grad(power3)(3.)
-  # what=x,x^2: (3., 9.)  # from forward pass, since y is needed in backward
-  pass
-  # what=x,x^2 transforms=({name=jvp}, {name=transpose}): (0., 3.)  # from
-  backward pass, adjoints of _, y
+  # what=x,x^2: [3., 9.]  # from forward pass, since y is used in backward pass
+  # transforms: ['jvp', 'transpose'] what: x,x^2 : [0., 3.]  # from backward pass, adjoints of _, y
 
 See documentation for :func:`id_tap` and :func:`id_print`.
-For usage example, see tests/host_callback_test.py.
+For more usage example, see tests/host_callback_test.py.
 
 Still to do:
   * Performance tests.
@@ -128,6 +137,34 @@ Still to do:
   * Explore an extended API that allows the host function to return
     values to the accelerator computation.
 
+
+Low-level details and debugging
+-------------------------------
+
+The C++ `receiver
+<https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_
+is started automatically on the first call to :func:`id_tap`. In order to stop
+it properly, upon start an ``atexit`` handler is registered to call
+:func:`barrier_wait` with the logging name "at_exit".
+
+
+There are a few environment variables that you can use to turn on logging
+for the C++ outfeed `receiver backend
+<https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_.
+
+  * ``TF_CPP_MIN_LOG_LEVEL=0``: will turn on INFO logging, needed for all below.
+  * ``TF_CPP_MIN_VLOG_LEVEL=3``: will turn make all VLOG logging up to level 3
+    behave like INFO logs. This may be too much, but you will see which
+    modules are logging relevant info, and then you can select which modules
+    to log from:
+  * `TF_CPP_VMODULE=<module_name>=3``
+
+You should also use the ``--verbosity=2`` flag so that you see the logs from Python.
+
+For example:
+```
+TF_CPP_MIN_LOG_LEVEL=0 TF_CPP_VMODULE=outfeed_receiver=3,host_callback=3,outfeed_receiver_py=3,outfeed_thunk=3,cpu_transfer_manager=3,xfeed_manager=3,pjrt_client=3 python tests/host_callback_test.py --verbosity=2 HostCallbackTest.test_jit_simple
+```
 """
 from absl import logging
 import atexit
@@ -187,20 +224,18 @@ def id_tap(tap_func, arg, *, result=None, **kwargs):
 
   ``id_tap`` behaves semantically like the identity function but has the
   side-effect that a user-defined Python function is called with the runtime
-  values of the argument.
+  value of the argument.
 
   Args:
     tap_func: tap function to call like ``tap_func(arg, transforms)``, with
-      ``arg`` as described below and where ``transforms`` is sequence of applied
-      JAX transformations in the form ``(name, params)``.
+      ``arg`` as described below and where ``transforms`` is the sequence of
+      applied JAX transformations in the form ``(name, params)``.
     arg: the argument passed to the tap function, can be a pytree of JAX
       types.
     result: if given, specifies the return value of ``id_tap``. This value is
       not passed to the tap function, and in fact is not sent from the device to
       the host. If the ``result`` parameter is not specified then the return
       value of ``id_tap`` is ``arg``.
-    **kwargs: Deprecated option for passing additional keyword arguments to
-      ``tap_func``.
 
   Returns:
     ``arg``, or ``result`` if given.
@@ -531,19 +566,12 @@ xla.translations[id_tap_p] = _id_tap_translation_rule
 ####
 
 
-# TODO: we should really get rid of TypedJaxpr
-def _mk_typed_jaxpr(jaxpr: core.Jaxpr, literals: Sequence) -> core.TypedJaxpr:
-  return core.TypedJaxpr(jaxpr, literals,
-                         tuple(map(lambda v: v.aval, jaxpr.invars)),
-                         tuple(map(lambda v: v.aval, jaxpr.outvars)))
-
-
-def _rewrite_typed_jaxpr(
-    tjaxpr: core.TypedJaxpr, has_input_token: bool,
-    has_output_token: bool) -> core.TypedJaxpr:
-  """Rewrites a TypedJaxpr to thread the token, if needed."""
-  new_jaxpr = _rewrite_jaxpr(tjaxpr.jaxpr, has_input_token, has_output_token)
-  return _mk_typed_jaxpr(new_jaxpr, tjaxpr.literals)
+def _rewrite_closed_jaxpr(
+    cjaxpr: core.ClosedJaxpr, has_input_token: bool,
+    has_output_token: bool) -> core.ClosedJaxpr:
+  """Rewrites a ClosedJaxpr to thread the token, if needed."""
+  new_jaxpr = _rewrite_jaxpr(cjaxpr.jaxpr, has_input_token, has_output_token)
+  return core.ClosedJaxpr(new_jaxpr, cjaxpr.consts)
 
 
 def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
@@ -562,8 +590,9 @@ def _rewrite_jaxpr(jaxpr: core.Jaxpr, has_input_token: bool,
     invars = jaxpr.invars + [last_token_var]
   else:
     invars = jaxpr.invars
+    # We need tokens but none is given in input; make one depending on all invars
     eqns.append(
-        core.new_jaxpr_eqn([jaxpr.invars[0]], [last_token_var],
+        core.new_jaxpr_eqn(jaxpr.invars, [last_token_var],
                            lax.create_token_p, {}, source_info_util.current()))
 
   for eqn in jaxpr.eqns:
@@ -609,8 +638,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             eqn.primitive,
             dict(
                 eqn.params,
-                body_jaxpr=_rewrite_typed_jaxpr(body_jaxpr, True, True),
-                cond_jaxpr=_rewrite_typed_jaxpr(cond_jaxpr, True,
+                body_jaxpr=_rewrite_closed_jaxpr(body_jaxpr, True, True),
+                cond_jaxpr=_rewrite_closed_jaxpr(cond_jaxpr, True,
                                                 False)), eqn.source_info))
   elif eqn.primitive is lax.cond_p:
     branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
@@ -622,7 +651,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             dict(
                 eqn.params,
                 branches=tuple(
-                    _rewrite_typed_jaxpr(jaxpr, True, True)
+                    _rewrite_closed_jaxpr(jaxpr, True, True)
                     for jaxpr in branches),
                 linear=(*linear, False)), eqn.source_info))
   elif eqn.primitive is lax.scan_p:
@@ -635,21 +664,19 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
     new_invars = eqn.invars[0:nr_const_and_carry] + [
         input_token_var
     ] + eqn.invars[nr_const_and_carry:]
-    new_jaxpr = _rewrite_typed_jaxpr(carry_jaxpr, True, True)
+    new_jaxpr = _rewrite_closed_jaxpr(carry_jaxpr, True, True)
     # The rewrite has put the token at end, it has to be at end of carry
     new_jaxpr_invars = new_jaxpr.jaxpr.invars
     new_jaxpr_invars = (
         new_jaxpr_invars[0:nr_const_and_carry] + [new_jaxpr_invars[-1]] +
         new_jaxpr_invars[nr_const_and_carry:-1])
     new_jaxpr.jaxpr.invars = new_jaxpr_invars
-    new_jaxpr.in_avals = [v.aval for v in new_jaxpr_invars]
 
     new_jaxpr_outvars = new_jaxpr.jaxpr.outvars
     new_jaxpr_outvars = (
         new_jaxpr_outvars[0:num_carry] + [new_jaxpr_outvars[-1]] +
         new_jaxpr_outvars[num_carry:-1])
     new_jaxpr.jaxpr.outvars = new_jaxpr_outvars
-    new_jaxpr.out_avals = [v.aval for v in new_jaxpr_outvars]
     eqns.append(
         core.new_jaxpr_eqn(
             new_invars,
@@ -686,7 +713,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             new_invars, eqn.outvars + [output_token_var], eqn.primitive,
             dict(
                 eqn.params,
-                fun_jaxpr=_rewrite_typed_jaxpr(fun_jaxpr, True, True),
+                fun_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
                 jvp_jaxpr_thunk=unreachable_thunk
             ),
             eqn.source_info))
@@ -700,7 +727,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             new_invars, eqn.outvars + [output_token_var], eqn.primitive,
             dict(
                 eqn.params,
-                fun_jaxpr=_rewrite_typed_jaxpr(fun_jaxpr, True, True),
+                fun_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
                 fwd_jaxpr_thunk=unreachable_thunk,
                 # The following are illegal values for the parameters, they
                 # should not be needed because this rewrite is just before
@@ -720,7 +747,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
   """Rewrite a while whose cond has outfeed"""
   cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts = util.split_dict(
       eqn.params, ["cond_jaxpr", "cond_nconsts", "body_jaxpr", "body_nconsts"])
-  transformed_cond_jaxpr = _rewrite_typed_jaxpr(cond_jaxpr, True, True)
+  transformed_cond_jaxpr = _rewrite_closed_jaxpr(cond_jaxpr, True, True)
   carry_invars = eqn.invars[cond_nconsts + body_nconsts:]
   # pred1, token1 = rewrite(COND)(cond_consts, carry_invars, input_token)
   pred1_and_token1 = [
@@ -740,14 +767,14 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
   new_cond_invars = ([new_cond_pred_invar] +
                      [mk_new_var(cv.aval) for cv in carry_invars] +
                      [mk_new_var(core.abstract_token)])
-  new_cond_jaxpr = _mk_typed_jaxpr(
+  new_cond_jaxpr = core.ClosedJaxpr(
       core.Jaxpr([], new_cond_invars, [new_cond_pred_invar], []), [])
   # Make a new body:
   #   "lambda cond_constvars, body_constvars, pred, carry, token:
   #        carry2, token2 = rewrite(BODY)(body_constvars, carry, token)
   #        pred2, token3 = rewrite(COND)(cond_constvars, carry2, token2)
   #        (pred2, carry2, token3)
-  transformed_body_jaxpr = _rewrite_typed_jaxpr(body_jaxpr, True, True)
+  transformed_body_jaxpr = _rewrite_closed_jaxpr(body_jaxpr, True, True)
   new_body_invars_cond_constvars = [
       mk_new_var(v.aval) for v in eqn.invars[0:cond_nconsts]
   ]
@@ -783,7 +810,7 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
               donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals)),
           eqn.source_info)
   ]
-  new_body_jaxpr = _mk_typed_jaxpr(
+  new_body_jaxpr = core.ClosedJaxpr(
       core.Jaxpr([], (new_body_invars_cond_constvars +
                       new_body_invars_body_constvars + [new_body_invars_pred] +
                       new_body_invars_carry + [new_body_invars_token]),
@@ -835,7 +862,7 @@ def outfeed_receiver():
     yield
   finally:
     # We put a barrier, which will also raise the TapFunctionException
-    barrier_wait()
+    barrier_wait("outfeed_receiver_stop")
 
 
 # For now we keep a single outfeed receiver
@@ -935,13 +962,12 @@ def _initialize_outfeed_receiver(
     def exit_handler():
       # Prevent logging usage during compilation, gives errors under pytest
       xla._on_exit = True
-      logging.vlog(2, "Barrier wait atexit")
-      barrier_wait()
+      barrier_wait("at_exit")
 
     atexit.register(exit_handler)  # We wait as long as we have callbacks
 
 
-def barrier_wait():
+def barrier_wait(logging_name: Optional[str] = None):
   """Blocks the calling thread until all current outfeed is processed.
 
   Waits until all outfeed from computations already running on all devices
@@ -954,10 +980,15 @@ def barrier_wait():
 
   Note: If any of the devices are busy and cannot accept new computations,
   this will deadlock.
+
+  Args:
+    logging_name: an optional string that will be used in the logging statements
+      for this invocation. See `Debugging` in the module documentation.
   """
-  logging.vlog(2, "barrier_wait: start")
+  logging_name = logging_name or ""
+  logging.vlog(2, f"barrier_wait[{logging_name}]: start")
   if not _outfeed_receiver.receiver:
-    logging.vlog(2, "barrier_wait: receiver not started")
+    logging.vlog(2, f"barrier_wait[{logging_name}]: receiver not started")
     return
 
   lock = threading.Lock()
@@ -967,20 +998,21 @@ def barrier_wait():
   def barrier_tap(dev_idx, _):
     nonlocal num_at_large
     logging.vlog(
-        2, f"barrier_wait: thread {threading.current_thread()} for "
-        f"device {_outfeed_receiver.devices[dev_idx]} at barrier_tap")
+        2, f"barrier_wait[{logging_name}]: at barrier_tap for device {_outfeed_receiver.devices[dev_idx]} "
+        f". Thread {threading.current_thread()}")
     with lock:
       num_at_large -= 1
+      logging.vlog(2, f"barrier_wait[{logging_name}]: still waiting for {num_at_large} barrier_tap")
       cv.notify()
 
   for d_idx, d in enumerate(_outfeed_receiver.devices):
-    logging.vlog(2, f"barrier_wait: enqueueing barrier on device {d}")
+    logging.vlog(2, f"barrier_wait[{logging_name}]: enqueueing barrier on device {d}")
     x_on_dev = api.device_put(d_idx, device=d)
     api.jit(lambda x: id_tap(barrier_tap, x), device=d)(x_on_dev)
-  logging.vlog(2, "barrier_wait: waiting for calblacks")
+  logging.vlog(2, f"barrier_wait[{logging_name}]: waiting for callbacks")
   with lock:
     cv.wait_for(lambda: num_at_large == 0)
-  logging.vlog(2, "Done barrier_wait")
+  logging.vlog(2, f"barrier_wait[{logging_name}]: done")
   if _outfeed_receiver.num_tap_exceptions > 0:
     _outfeed_receiver.num_tap_exceptions = 0
     raise TapFunctionException(

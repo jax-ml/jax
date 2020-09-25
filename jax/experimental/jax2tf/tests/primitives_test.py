@@ -19,6 +19,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 from functools import partial
+import itertools
 
 import jax
 from jax import dtypes
@@ -161,6 +162,31 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                              *harness.dyn_args_maker(self.rng()),
                              atol=tol, rtol=tol)
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_cholesky)
+  def test_cholesky(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    if dtype in [dtypes.bfloat16, np.float16]:
+      raise unittest.SkipTest("Cholesky decomposition not supported for "
+                              "(b)float16 in JAX.")
+    operand = harness.dyn_args_maker(self.rng())[0]
+    operand = np.matmul(operand, jnp.conj(np.swapaxes(operand, -1, -2)))
+    tol = None
+    # TODO(bchetioui): very high discrepancy in the float32/complex64 case
+    if dtype in [np.float32, np.complex64]:
+      tol = 1e-2
+    # TODO(bchetioui): also high discrepancy in the float64/complex128 case
+    elif dtype in [np.float64, np.complex128]:
+      tol = 1e-11
+
+    def custom_assert(result_jax, result_tf):
+      # cholesky_p returns garbage in the strictly upper triangular part of the
+      # result, so we can safely ignore that part.
+      self.assertAllClose(jnp.tril(result_jax), result_tf, atol=tol)
+
+    self.ConvertAndCompare(harness.dyn_fun, operand,
+                           custom_assert=custom_assert,
+                           always_custom_assert=True)
+
   @primitive_harness.parameterized(primitive_harness.lax_linalg_qr)
   def test_qr(self, harness: primitive_harness.Harness):
     # See jax.lib.lapack.geqrf for the list of compatible types
@@ -251,6 +277,130 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       )
 
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_eig)
+  def test_eig(self, harness: primitive_harness.Harness):
+    operand = harness.dyn_args_maker(self.rng())[0]
+    compute_left_eigenvectors = harness.params["compute_left_eigenvectors"]
+    compute_right_eigenvectors = harness.params["compute_right_eigenvectors"]
+    dtype = harness.params["dtype"]
+
+    if jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("eig only supported on CPU in JAX")
+
+    if dtype in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest("eig unsupported with (b)float16 in JAX")
+
+    def custom_assert(result_jax, result_tf):
+      result_tf = tuple(map(lambda e: e.numpy(), result_tf))
+      inner_dimension = operand.shape[-1]
+      # Test ported from tests.lax_test.testEig
+      # Norm, adjusted for dimension and type.
+      def norm(x):
+        norm = np.linalg.norm(x, axis=(-2, -1))
+        return norm / ((inner_dimension + 1) * jnp.finfo(dtype).eps)
+
+      def check_right_eigenvectors(a, w, vr):
+        self.assertTrue(
+          np.all(norm(np.matmul(a, vr) - w[..., None, :] * vr) < 100))
+
+      def check_left_eigenvectors(a, w, vl):
+        rank = len(a.shape)
+        aH = jnp.conj(a.transpose(list(range(rank - 2)) + [rank - 1, rank - 2]))
+        wC = jnp.conj(w)
+        check_right_eigenvectors(aH, wC, vl)
+
+      def check_eigenvalue_is_in_array(eigenvalue, eigenvalues_array):
+        tol = None
+        # TODO(bchetioui): numerical discrepancies
+        if dtype in [np.float32, np.complex64]:
+          tol = 1e-4
+        elif dtype in [np.float64, np.complex128]:
+          tol = 1e-13
+        closest_diff = min(abs(eigenvalues_array - eigenvalue))
+        self.assertAllClose(closest_diff, np.array(0., closest_diff.dtype),
+                            atol=tol)
+
+      all_w_jax, all_w_tf = result_jax[0], result_tf[0]
+      for idx in itertools.product(*map(range, operand.shape[:-2])):
+        w_jax, w_tf = all_w_jax[idx], all_w_tf[idx]
+        for i in range(inner_dimension):
+          check_eigenvalue_is_in_array(w_jax[i], w_tf)
+          check_eigenvalue_is_in_array(w_tf[i], w_jax)
+
+      if compute_left_eigenvectors:
+        check_left_eigenvectors(operand, all_w_tf, result_tf[1])
+      if compute_right_eigenvectors:
+        check_right_eigenvectors(operand, all_w_tf,
+                                 result_tf[1 + compute_left_eigenvectors])
+
+    self.ConvertAndCompare(harness.dyn_fun, operand,
+                           custom_assert=custom_assert)
+
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_eigh)
+  def test_eigh(self, harness: primitive_harness.Harness):
+    operand = harness.dyn_args_maker(self.rng())[0]
+    lower = harness.params["lower"]
+    # Make operand self-adjoint
+    operand = (operand + np.conj(np.swapaxes(operand, -1, -2))) / 2
+    # Make operand lower/upper triangular
+    triangular_operand = np.tril(operand) if lower else np.triu(operand)
+    dtype = harness.params["dtype"]
+
+    if (dtype in [np.complex64, np.complex128] and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("TODO: complex eigh not supported on TPU in JAX")
+
+    def custom_assert(result_jax, result_tf):
+      result_tf = tuple(map(lambda e: e.numpy(), result_tf))
+      inner_dimension = operand.shape[-1]
+
+      def check_right_eigenvectors(a, w, vr):
+        tol = 1e-16
+        # TODO(bchetioui): tolerance needs to be very high in compiled mode,
+        # specifically for eigenvectors.
+        if dtype == np.float64:
+          tol = 1e-6
+        elif dtype == np.float32:
+          tol = 1e-2
+        elif dtype in [dtypes.bfloat16, np.complex64]:
+          tol = 1e-3
+        elif dtype == np.complex128:
+          tol = 1e-13
+        self.assertAllClose(np.matmul(a, vr) - w[..., None, :] * vr,
+                            np.zeros(a.shape, dtype=vr.dtype),
+                            atol=tol)
+
+      def check_eigenvalue_is_in_array(eigenvalue, eigenvalues_array):
+        tol = None
+        if dtype in [dtypes.bfloat16, np.float32, np.complex64]:
+          tol = 1e-3
+        elif dtype in [np.float64, np.complex128]:
+          tol = 1e-11
+        closest_diff = min(abs(eigenvalues_array - eigenvalue))
+        self.assertAllClose(closest_diff, np.array(0., closest_diff.dtype),
+                            atol=tol)
+
+      _, all_w_jax = result_jax
+      all_vr_tf, all_w_tf = result_tf
+
+      for idx in itertools.product(*map(range, operand.shape[:-2])):
+        w_jax, w_tf = all_w_jax[idx], all_w_tf[idx]
+        for i in range(inner_dimension):
+          check_eigenvalue_is_in_array(w_jax[i], w_tf)
+          check_eigenvalue_is_in_array(w_tf[i], w_jax)
+
+      check_right_eigenvectors(operand, all_w_tf, all_vr_tf)
+
+    # On CPU and GPU, JAX makes custom calls
+    always_custom_assert = True
+    # On TPU, JAX calls xops.Eigh
+    if jtu.device_under_test == "tpu":
+      always_custom_assert = False
+
+    self.ConvertAndCompare(harness.dyn_fun, triangular_operand,
+                           custom_assert=custom_assert,
+                           always_custom_assert=always_custom_assert)
 
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
