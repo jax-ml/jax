@@ -1739,6 +1739,7 @@ def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
     _check_arraylike(name, a)
+    axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
     a = a if isinstance(a, ndarray) else asarray(a)
     a = preproc(a) if preproc else a
