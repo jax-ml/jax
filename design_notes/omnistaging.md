@@ -7,8 +7,13 @@ This is more of an upgrade guide than a design doc.
 ### Contents
 
 * [tl;dr](#tldr)
-* [What is "omnistaging" and why is it useful?](what-is-omnistaging-and-why-is-it-useful)
-* [What issues can arise when omnistaging is switched on?](what-issues-can-arise-when-omnistaging-is-switched-on)
+* [What is "omnistaging" and why is it useful?](#what-is-omnistaging-and-why-is-it-useful)
+* [What issues can arise when omnistaging is switched on?](#what-issues-can-arise-when-omnistaging-is-switched-on)
+  * [Using `jax.numpy` for shape computations](#using-jaxnumpy-for-shape-computations)
+  * [Side-effects](#side-effects)
+  * [Small numerical differences based on XLA optimizations](#small-numerical-differences-based-on-xla-optimizations)
+  * [Dependence on JAX internal APIs that changed](#dependence-on-jax-internal-apis-that-changed)
+  * [Triggering XLA compile time bugs](#triggering-xla-compile-time-bugs)
 
 ## tl;dr
 
