@@ -1808,7 +1808,7 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"at positions \[0, 1\]"
+    msg = r"at flattened positions \[0, 1\]"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(1, 2)
 
