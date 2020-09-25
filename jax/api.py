@@ -86,6 +86,10 @@ zip = safe_zip
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
+flags.DEFINE_bool("experimental_cpp_jit", bool_env("JAX_CPP_JIT", False),
+                  "A temporary flag enabling the C++ jax.jit fast path."
+                  "Set this to `False` only if it crashes otherwise and report "
+                  "the error to the jax-team.")
 
 float0 = dtypes.float0
 
@@ -103,9 +107,6 @@ class _ThreadLocalState(threading.local):
 
 
 _thread_local_state = _ThreadLocalState()
-
-# A temporary, internal only constant to control the global behavior of jax.jit
-_EXPERIMENTAL_CPP_JIT = False
 
 
 def jit(fun: Callable[..., T],
@@ -165,7 +166,7 @@ def jit(fun: Callable[..., T],
   [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
    -0.85743 -0.78232  0.76827  0.59566 ]
   """
-  if _EXPERIMENTAL_CPP_JIT and config.omnistaging_enabled:
+  if FLAGS.experimental_cpp_jit and config.omnistaging_enabled:
     return _cpp_jit(fun, static_argnums, device, backend, donate_argnums)
   else:
     return _python_jit(fun, static_argnums, device, backend, donate_argnums)
