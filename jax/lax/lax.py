@@ -5693,7 +5693,7 @@ def create_token(x):
 create_token_p = Primitive("create_token")
 create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
 create_token_p.def_abstract_eval(lambda _: abstract_token)
-xla.translations[create_token_p] = lambda c, _: xops.CreateToken(c)
+xla.translations[create_token_p] = lambda c, *_: xops.CreateToken(c)
 
 def after_all(*operands):
   """Merges one or more XLA token values. Experimental.
