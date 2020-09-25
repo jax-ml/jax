@@ -805,7 +805,7 @@ class DynamicJaxprTracer(core.Tracer):
       origin = (f"While tracing the function {self._trace.main.source_info}, "
                 "this concrete value was not available in Python because it "
                 "depends on the value of the arguments to "
-                f"{self._trace.main.source_info} at positions {invar_pos}, "
+                f"{self._trace.main.source_info} at flattened positions {invar_pos}, "
                 "and the computation of these values is being staged out "
                 "(that is, delayed rather than executed eagerly).\n\n"
                 "You can use transformation parameters such as `static_argnums` "
