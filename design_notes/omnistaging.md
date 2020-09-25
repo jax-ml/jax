@@ -1,4 +1,6 @@
 # Omnistaging
+_mattjj@_
+_Sept 25 2020_
 
 This is more of an upgrade guide than a design doc.
 
@@ -6,7 +8,7 @@ This is more of an upgrade guide than a design doc.
 
 * [tl;dr](#tldr)
 * [What is "omnistaging" and why is it useful?](what-is-omnistaging-and-why-is-it-useful)
-* [What issues can arise when omnistaging is siwtched on?](what-issues-can-arise-when-omnistaging-is-siwtched-on)
+* [What issues can arise when omnistaging is switched on?](what-issues-can-arise-when-omnistaging-is-switched-on)
 
 ## tl;dr
 
