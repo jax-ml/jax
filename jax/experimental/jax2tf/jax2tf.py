@@ -1351,10 +1351,11 @@ tf_impl[lax_linalg.eig_p] = _eig
 
 def _eigh(operand: TfVal, lower: bool):
   if operand.shape[-1] == 0:
-    return tuple([operand, tf.reshape(operand, operand.shape[:-1])])
-  if not lower:
-    operand = tf.linalg.adjoint(operand)
-  w, v = tf.linalg.eigh(operand)
+    v, w = operand, tf.reshape(operand, operand.shape[:-1])
+  else:
+    if not lower:
+      operand = tf.linalg.adjoint(operand)
+    w, v = tf.linalg.eigh(operand)
   cast_type = { tf.complex64: tf.float32
               , tf.complex128: tf.float64 }.get(operand.dtype)
   if cast_type is not None:
