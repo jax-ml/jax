@@ -1797,6 +1797,33 @@ class APITest(jtu.JaxTestCase):
 
     f()  # doesn't crash
 
+  def test_concrete_error_because_arg(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
+    @jax.jit
+    def f(x, y):
+      if x > y:
+        return x
+      else:
+        return y
+
+    msg = r"at flattened positions \[0, 1\]"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(1, 2)
+
+  def test_concrete_error_because_const(self):
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
+    @jax.jit
+    def f():
+      assert jnp.add(1, 1) > 0
+
+    msg = "on these lines"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f()
+
   def test_xla_computation_zeros_doesnt_device_put(self):
     if not config.omnistaging_enabled:
       raise unittest.SkipTest("test is omnistaging-specific")

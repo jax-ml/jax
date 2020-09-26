@@ -800,14 +800,24 @@ class DynamicJaxprTracer(core.Tracer):
     return ()
 
   def _origin_msg(self):
-    progenitor_eqns = self._trace.frame.find_progenitors(self)
-    msgs = [f"  operation {core.pp_eqn(eqn, print_shapes=True)}\n"
-            f"    from line {source_info_util.summarize(eqn.source_info)}"
-            for eqn in progenitor_eqns]
-    if msgs:
+    invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
+    if invar_pos:
+      origin = (f"While tracing the function {self._trace.main.source_info}, "
+                "this concrete value was not available in Python because it "
+                "depends on the value of the arguments to "
+                f"{self._trace.main.source_info} at flattened positions {invar_pos}, "
+                "and the computation of these values is being staged out "
+                "(that is, delayed rather than executed eagerly).\n\n"
+                "You can use transformation parameters such as `static_argnums` "
+                "for `jit` to avoid tracing particular arguments of transformed "
+                "functions, though at the cost of more recompiles.")
+    elif progenitor_eqns:
+      msts = [f"  operation {core.pp_eqn(eqn, print_shapes=True)}\n"
+              f"    from line {source_info_util.summarize(eqn.source_info)}"
+              for eqn in progenitor_eqns]
       origin = (f"While tracing the function {self._trace.main.source_info}, "
                 "this value became a tracer due to JAX operations on these lines:"
-                "\n\n" + "\n\n".join(msgs))
+                "\n\n" + "\n\n".join(msts))
     else:
       origin = ("The error occured while tracing the function "
                 f"{self._trace.main.source_info}.")
@@ -820,7 +830,7 @@ class DynamicJaxprTracer(core.Tracer):
 
 class JaxprStackFrame:
   __slots__ = ['newvar', 'tracer_to_var', 'constid_to_var', 'constvar_to_val',
-               'tracers', 'eqns']
+               'tracers', 'eqns', 'invars']
 
   def __init__(self):
     self.newvar = core.gensym()
@@ -829,6 +839,7 @@ class JaxprStackFrame:
     self.constvar_to_val = {}
     self.tracers = []   # circ refs, frame->tracer->trace->main->frame,
     self.eqns = []      # cleared when we pop frame from main
+    self.invars = []
 
   def to_jaxpr(self, in_tracers, out_tracers):
     invars = [self.tracer_to_var[id(t)] for t in in_tracers]
@@ -850,7 +861,10 @@ class JaxprStackFrame:
       if produced:
         active_vars.difference_update(produced)
         active_vars.update(eqn.invars)
-    return [eqn for eqn in self.eqns if set(eqn.invars) & active_vars]
+    invar_positions = [i for i, v in enumerate(self.invars) if v in active_vars]
+    constvars = active_vars & set(self.constvar_to_val)
+    const_eqns = [eqn for eqn in self.eqns if set(eqn.invars) & constvars]
+    return invar_positions, const_eqns
 
 def _inline_literals(jaxpr, constvals):
   consts = dict(zip(jaxpr.constvars, constvals))
@@ -890,7 +904,8 @@ class DynamicJaxprTrace(core.Trace):
   def new_arg(self, aval):
     tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
     self.frame.tracers.append(tracer)
-    self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(aval)
+    self.frame.tracer_to_var[id(tracer)] = var = self.frame.newvar(aval)
+    self.frame.invars.append(var)
     return tracer
 
   def new_const(self, val):

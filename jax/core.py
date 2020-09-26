@@ -846,8 +846,6 @@ def raise_concretization_error(val: Tracer, context=""):
   msg = ("Abstract tracer value encountered where concrete value is expected.\n\n"
          + context + "\n\n"
          + val._origin_msg() + "\n\n"
-         + "You can use transformation parameters such as `static_argnums` for "
-         "`jit` to avoid tracing particular arguments of transformed functions.\n\n"
          "See https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error for more information.\n\n"
           f"Encountered tracer value: {val}")
   raise ConcretizationTypeError(msg)
