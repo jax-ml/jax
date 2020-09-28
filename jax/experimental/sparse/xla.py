@@ -91,16 +91,6 @@ class COO(SparseArray):
     assert self.coords.ndim == 2
     assert self.coords.shape == (len(shape), self.data.shape[0])
 
-  @classmethod
-  def fromdense(cls, x):
-    x = jnp.asarray(x)
-    nz = (x != 0)
-    return cls(jnp.where(nz), x[nz], x.shape)
-
-  def todense(self):
-    d = jnp.zeros(self.shape, self.dtype)
-    return d.at[tuple(self.coords)].add(self.data)
-
   @property
   def index_dtype(self):
     return self.coords.dtype
@@ -117,14 +107,15 @@ class COO(SparseArray):
   def shape(self):
     return tuple(self._shape)
 
+  @classmethod
+  def fromdense(cls, x):
+    return coo_fromdense(cls, x)
+
+  def todense(self):
+    return coo_todense(self)
+
   def matvec(self, v):
-    v = jnp.asarray(v)
-    assert v.ndim == 1
-    assert self.ndim == 2
-    assert v.shape[0] == self.shape[1]
-    rows, cols = self.coords
-    dv = self.data * v[cols]
-    return jnp.zeros(self.shape[0], dtype=dv.dtype).at[rows].add(dv)
+    return coo_matvec(self, v)
 
   def tocoo(self):
     return self
@@ -167,29 +158,31 @@ class CSR(SparseArray):
     assert shape[0] == len(self.indptr) - 1
     assert shape[1] > self.indices.max()
 
+  @property
+  def index_dtype(self):
+    return self.indices.dtype
+
+  @property
+  def dtype(self):
+    return self.data.dtype
+
+  @property
+  def nnz(self):
+    return self.data.shape[0]
+
+  @property
+  def shape(self):
+    return tuple(self._shape)
+
   @classmethod
   def fromdense(cls, x):
-    x = jnp.asarray(x)
-    nz = (x != 0)
-    data = x[nz]
-    row, col = jnp.where(nz)
-    if len(row) == 0:
-      return cls(row, jnp.zeros(x.shape[0] + 1, row.dtype), data, x.shape)
-    row, col = lax.sort_key_val(row, col)
-    indices = jnp.ravel(col)
-    indptr = jnp.cumsum(jnp.bincount(row))
-    indptr = jnp.concatenate([
-      jnp.zeros(1, indptr.dtype),
-      indptr,
-      jnp.full(x.shape[0] - len(indptr), indptr[-1])
-    ])
-    return cls(indices, indptr, data, x.shape)
+    return csr_fromdense(cls, x)
 
   def todense(self):
-    d = jnp.zeros(self.shape, self.dtype)
-    row = jnp.repeat(jnp.arange(self.shape[0]), jnp.diff(self.indptr))
-    col = self.indices
-    return d.at[row, col].add(self.data)
+    return csr_todense(self)
+
+  def matvec(self, v):
+    return csr_matvec(self, v)
 
   def tocsr(self):
     return self
@@ -215,30 +208,6 @@ class CSR(SparseArray):
     columns = columns.at[row, col].set(self.indices)
     return ELL(rownz, columns, data, self.shape)
 
-  @property
-  def index_dtype(self):
-    return self.indices.dtype
-
-  @property
-  def dtype(self):
-    return self.data.dtype
-
-  @property
-  def nnz(self):
-    return self.data.shape[0]
-
-  @property
-  def shape(self):
-    return tuple(self._shape)
-
-  def matvec(self, v):
-    v = jnp.asarray(v)
-    assert v.ndim == 1
-    assert v.shape[0] == self.shape[1]
-    dv = self.data * v[self.indices]
-    ind = jnp.cumsum(jnp.zeros_like(self.indices).at[self.indptr].add(1))
-    return jnp.zeros(self.shape[0], dv.dtype).at[ind - 1].add(dv)
-
 
 class ELL(SparseArray):
   """JAX-based sparse array stored in ELL format."""
@@ -253,24 +222,31 @@ class ELL(SparseArray):
     assert self.rownz.shape == self.data.shape[:1]
     assert self.data.shape == self.columns.shape
 
+  @property
+  def index_dtype(self):
+    return self.columns.dtype
+
+  @property
+  def dtype(self):
+    return self.data.dtype
+
+  @property
+  def nnz(self):
+    return self.rownz.sum()
+
+  @property
+  def shape(self):
+    return tuple(self._shape)
+
   @classmethod
   def fromdense(cls, x):
-    x = jnp.asarray(x)
-    nz = (x != 0)
-    rownz = nz.sum(1)
-    shape = (x.shape[0], int(rownz.max()))
-
-    col = nz.cumsum(1)[nz] - 1
-    row = jnp.broadcast_to(jnp.arange(nz.shape[0])[:, None], nz.shape)[nz]
-    data = jnp.zeros(shape, dtype=x.dtype).at[row, col].set(x[nz])
-    columns = jnp.zeros(shape, dtype=col.dtype).at[row, col].set(jnp.where(nz)[1])
-
-    return cls(rownz, columns, data, x.shape)
+    return ell_fromdense(cls, x)
 
   def todense(self):
-    valid = jnp.arange(self.columns.shape[1]) < self.rownz[:, None]
-    rows = jnp.broadcast_to(jnp.arange(self.columns.shape[0])[:, None], self.columns.shape)
-    return jnp.zeros(self.shape, self.dtype).at[rows[valid], self.columns[valid]].add(self.data[valid])
+    return ell_todense(self)
+
+  def matvec(self, v):
+    return ell_matvec(self, v)
 
   def toell(self):
     return self
@@ -292,30 +268,6 @@ class ELL(SparseArray):
     row = jnp.where(valid)[0]
     data = self.data[valid]
     return COO(jnp.vstack([row, col]), data, self.shape)
-
-  @property
-  def index_dtype(self):
-    return self.columns.dtype
-
-  @property
-  def dtype(self):
-    return self.data.dtype
-
-  @property
-  def nnz(self):
-    return self.rownz.sum()
-
-  @property
-  def shape(self):
-    return tuple(self._shape)
-
-  def matvec(self, v):
-    v = jnp.asarray(v)
-    assert v.ndim == 1
-    assert v.shape[0] == self.shape[1]
-    invalid = (jnp.arange(self.data.shape[1]) >= self.rownz[:, None])
-    dv = self.data * v[self.columns]
-    return dv.at[invalid].set(0).sum(1, dtype=dv.dtype)
 
 
 class BSR(SparseArray):
@@ -366,37 +318,15 @@ class BSR(SparseArray):
 
   @classmethod
   def fromdense(cls, x, blocksize=None):
-    x = jnp.asarray(x)
     if blocksize is None:
       blocksize = (1, 1)
-    blocksize = tuple(blocksize)
-    assert len(blocksize) == 2
-    assert x.ndim == 2
-    assert all(i % j == 0 for i, j in zip(x.shape, blocksize))
-    blockshape = (x.shape[0] // blocksize[0], x.shape[1] // blocksize[1])
-    data = x.reshape(blockshape[0], blocksize[0], blockshape[1], blocksize[1])
-    data = data.transpose((0, 2, 1, 3))
-
-    nz = (data != 0).any(-1).any(-1)
-    row, col = jnp.where(nz)
-    dataflat = data[nz]
-    if len(row) == 0:
-      return cls(row, jnp.zeros(data.shape[0] + 1, row.dtype), dataflat, x.shape)
-    row, col = lax.sort_key_val(row, col)
-    indices = jnp.ravel(col)
-    indptr = jnp.cumsum(jnp.bincount(row))
-    indptr = jnp.concatenate([
-      jnp.zeros(1, indptr.dtype),
-      indptr,
-      jnp.full(data.shape[0] - len(indptr), indptr[-1])
-    ])
-    return cls(indices, indptr, dataflat, x.shape)
+    return bsr_fromdense(cls, x, blocksize=blocksize)
 
   def todense(self):
-    d = jnp.zeros(self.blockshape + self.blocksize, self.dtype)
-    row = jnp.repeat(jnp.arange(self.blockshape[0]), jnp.diff(self.indptr))
-    col = self.indices
-    return d.at[row, col].add(self.data).transpose((0, 2, 1, 3)).reshape(self.shape)
+    return bsr_todense(self)
+
+  def matvec(self, v):
+    return bsr_matvec(self, v)
 
   def tobsr(self, blocksize=None):
     if blocksize is not None and blocksize != self.blocksize:
@@ -416,11 +346,121 @@ class BSR(SparseArray):
     # TODO(jakevdp): specialize this
     return ELL.fromdense(self.todense())
 
-  def matvec(self, v):
-    v = jnp.asarray(v)
-    assert v.ndim == 1
-    assert v.shape[0] == self.shape[1]
-    v = v.reshape(-1, self.blocksize[1])
-    dv = vmap(jnp.dot)(self.data, v[self.indices])
-    ind = jnp.cumsum(jnp.zeros_like(self.indices).at[self.indptr].add(1))
-    return jnp.zeros((self.blockshape[0], self.blocksize[0]), dv.dtype).at[ind - 1].add(dv).ravel()
+#--------------------------------------------------------------------------
+# Primitives
+
+def coo_fromdense(cls, mat):
+  mat = jnp.asarray(mat)
+  nz = (mat != 0)
+  return cls(jnp.where(nz), mat[nz], mat.shape)
+
+def coo_todense(mat):
+  d = jnp.zeros(mat.shape, mat.dtype)
+  return d.at[tuple(mat.coords)].add(mat.data)
+
+def coo_matvec(mat: COO, v: jnp.ndarray):
+  v = jnp.asarray(v)
+  assert v.ndim == 1
+  assert mat.ndim == 2
+  assert v.shape[0] == mat.shape[1]
+  rows, cols = mat.coords
+  dv = mat.data * v[cols]
+  return jnp.zeros(mat.shape[0], dtype=dv.dtype).at[rows].add(dv)
+
+def csr_fromdense(cls, mat):
+  mat = jnp.asarray(mat)
+  nz = (mat != 0)
+  data = mat[nz]
+  row, col = jnp.where(nz)
+  if len(row) == 0:
+    return cls(row, jnp.zeros(mat.shape[0] + 1, row.dtype), data, mat.shape)
+  row, col = lax.sort_key_val(row, col)
+  indices = jnp.ravel(col)
+  indptr = jnp.cumsum(jnp.bincount(row))
+  indptr = jnp.concatenate([
+    jnp.zeros(1, indptr.dtype),
+    indptr,
+    jnp.full(mat.shape[0] - len(indptr), indptr[-1])
+  ])
+  return cls(indices, indptr, data, mat.shape)
+
+def csr_todense(mat):
+  d = jnp.zeros(mat.shape, mat.dtype)
+  row = jnp.repeat(jnp.arange(mat.shape[0]), jnp.diff(mat.indptr))
+  col = mat.indices
+  return d.at[row, col].add(mat.data)
+
+def csr_matvec(mat: CSR, v: jnp.ndarray):
+  v = jnp.asarray(v)
+  assert v.ndim == 1
+  assert v.shape[0] == mat.shape[1]
+  dv = mat.data * v[mat.indices]
+  ind = jnp.cumsum(jnp.zeros_like(mat.indices).at[mat.indptr].add(1))
+  return jnp.zeros(mat.shape[0], dv.dtype).at[ind - 1].add(dv)
+
+def ell_fromdense(cls, mat):
+  mat = jnp.asarray(mat)
+  nz = (mat != 0)
+  rownz = nz.sum(1)
+  shape = (mat.shape[0], int(rownz.max()))
+
+  col = nz.cumsum(1)[nz] - 1
+  row = jnp.broadcast_to(jnp.arange(nz.shape[0])[:, None], nz.shape)[nz]
+  data = jnp.zeros(shape, dtype=mat.dtype).at[row, col].set(mat[nz])
+  columns = jnp.zeros(shape, dtype=col.dtype).at[row, col].set(jnp.where(nz)[1])
+
+  return cls(rownz, columns, data, mat.shape)
+
+def ell_todense(mat):
+  valid = jnp.arange(mat.columns.shape[1]) < mat.rownz[:, None]
+  rows = jnp.broadcast_to(jnp.arange(mat.columns.shape[0])[:, None], mat.columns.shape)
+  return jnp.zeros(mat.shape, mat.dtype).at[rows[valid], mat.columns[valid]].add(mat.data[valid])
+
+
+def ell_matvec(mat: ELL, v: jnp.ndarray):
+  v = jnp.asarray(v)
+  assert v.ndim == 1
+  assert v.shape[0] == mat.shape[1]
+  invalid = (jnp.arange(mat.data.shape[1]) >= mat.rownz[:, None])
+  dv = mat.data * v[mat.columns]
+  return dv.at[invalid].set(0).sum(1, dtype=dv.dtype)
+
+def bsr_fromdense(cls, mat, blocksize):
+  mat = jnp.asarray(mat)
+  blocksize = tuple(blocksize)
+  assert len(blocksize) == 2
+  assert mat.ndim == 2
+  assert all(i % j == 0 for i, j in zip(mat.shape, blocksize))
+  blockshape = (mat.shape[0] // blocksize[0], mat.shape[1] // blocksize[1])
+  data = mat.reshape(blockshape[0], blocksize[0], blockshape[1], blocksize[1])
+  data = data.transpose((0, 2, 1, 3))
+
+  nz = (data != 0).any(-1).any(-1)
+  row, col = jnp.where(nz)
+  dataflat = data[nz]
+  if len(row) == 0:
+    return cls(row, jnp.zeros(data.shape[0] + 1, row.dtype), dataflat, mat.shape)
+  row, col = lax.sort_key_val(row, col)
+  indices = jnp.ravel(col)
+  indptr = jnp.cumsum(jnp.bincount(row))
+  indptr = jnp.concatenate([
+    jnp.zeros(1, indptr.dtype),
+    indptr,
+    jnp.full(data.shape[0] - len(indptr), indptr[-1])
+  ])
+  return cls(indices, indptr, dataflat, mat.shape)
+
+def bsr_todense(mat):
+  d = jnp.zeros(mat.blockshape + mat.blocksize, mat.dtype)
+  row = jnp.repeat(jnp.arange(mat.blockshape[0]), jnp.diff(mat.indptr))
+  col = mat.indices
+  return d.at[row, col].add(mat.data).transpose((0, 2, 1, 3)).reshape(mat.shape)
+
+def bsr_matvec(mat: BSR, v: jnp.ndarray):
+  v = jnp.asarray(v)
+  assert v.ndim == 1
+  assert v.shape[0] == mat.shape[1]
+  v = v.reshape(-1, mat.blocksize[1])
+  dv = vmap(jnp.dot)(mat.data, v[mat.indices])
+  ind = jnp.cumsum(jnp.zeros_like(mat.indices).at[mat.indptr].add(1))
+  return jnp.zeros((mat.blockshape[0], mat.blocksize[0]), dv.dtype).at[ind - 1].add(dv).ravel()
