@@ -35,7 +35,7 @@ def _vdot_real_part(x, y):
      The result is a real float.
   """
   # all our uses of vdot() in CG are for computing an operator of the form
-  #  z^T M z
+  #  z^H M z
   #  where M is positive definite and Hermitian, so the result is
   # real valued:
   # https://en.wikipedia.org/wiki/Definiteness_of_a_matrix#Definitions_for_complex_matrices
@@ -245,12 +245,27 @@ def _iterative_classical_gram_schmidt(Q, x, iterations=2):
   # axis.
   r = jnp.zeros((tree_leaves(Q)[0].shape[-1]))
   q = x
-
-  for _ in range(iterations):
+  _, xnorm = _safe_normalize(x, return_norm=True)
+  xnorm_scaled = xnorm / jnp.sqrt(2)
+  #k, q, r = carry
+  def body_function(carry):
+    k, q, r = carry
     h = _project_on_columns(Q, q)
     Qh = tree_map(lambda X: _dot_tree(X, h), Q)
     q = _sub(q, Qh)
     r = _add(r, h)
+    return (k + 1, q, r)
+
+  def cond_function(carry):
+    k, _, r = carry
+    _, rnorm = _safe_normalize(r, return_norm=True)
+    return lax.cond(
+        k < (iterations - 1),
+        lambda x: rnorm < xnorm_scaled,
+        lambda x: False,
+        0)
+  k, q, r = body_function((0, q, r))
+  _, q, r = lax.while_loop(cond_function, body_function, (k, q, r))
   return q, r
 
 
@@ -266,7 +281,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = A(M(v))
-  v, h = _iterative_classical_gram_schmidt(V, v, iterations=1)
+  v, h = _iterative_classical_gram_schmidt(V, v, iterations=2)
   unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
