@@ -180,7 +180,7 @@ def _xla_sharded_args(c, avals, in_parts):
   xla_args = []
   for i, (sharding, aval) in enumerate(safe_zip(in_parts, avals)):
     param = xb.with_sharding(c, sharding, xb.parameter, c, i,
-                             xla.aval_to_xla_shape(aval))
+                             *xla.aval_to_xla_shapes(aval))
     xla_args.append(param)
   return xla_args
 

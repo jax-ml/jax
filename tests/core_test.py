@@ -309,6 +309,12 @@ class CoreTest(jtu.JaxTestCase):
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
 
+  def test_device_put_unit(self):
+    def f(x, y):
+      return x, 2 * y
+    args_maker = lambda: (core.unit, 1)
+    self._CompileAndCheck(f, args_maker)
+
 
 class JaxprTypeChecks(jtu.JaxTestCase):
 
