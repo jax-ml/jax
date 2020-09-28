@@ -4256,17 +4256,15 @@ def compress(condition, a, axis=None, out=None):
 @_wraps(np.cov)
 def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
         aweights=None):
-  _check_arraylike("cov", m)
-  msg = ("jax.numpy.cov not implemented for nontrivial {}. "
-         "Open a feature request at https://github.com/google/jax/issues !")
-  if y is not None: raise NotImplementedError(msg.format('y'))
-  # These next two are actually implemented, just not tested.
-  if fweights is not None: raise NotImplementedError(msg.format('fweights'))
-  if aweights is not None: raise NotImplementedError(msg.format('aweights'))
+  if y is not None: raise NotImplementedError(
+    "jax.numpy.cov not implemented for nontrivial y. "
+    "Open a feature request at https://github.com/google/jax/issues !")
+
+  m, = _promote_args_inexact("cov", m)
 
   if m.ndim > 2:
     raise ValueError("m has more than 2 dimensions")  # same as numpy error
-  X = array(m, ndmin=2, dtype=dtypes.canonicalize_dtype(result_type(m, float_)))
+  X = atleast_2d(m)
   if not rowvar and X.shape[0] != 1:
     X = X.T
   if X.shape[0] == 0:
@@ -4276,16 +4274,23 @@ def cov(m, y=None, rowvar=True, bias=False, ddof=None, fweights=None,
 
   w = None
   if fweights is not None:
-    if np.ndim(fweights) > 1:
+    _check_arraylike("cov", fweights)
+    if ndim(fweights) > 1:
       raise RuntimeError("cannot handle multidimensional fweights")
-    if np.shape(fweights)[0] != X.shape[1]:
+    if shape(fweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and fweights")
-    w = asarray(fweights)
+    if not issubdtype(_dtype(fweights), integer):
+      raise TypeError("fweights must be integer.")
+    # Ensure positive fweights; note that numpy raises an error on negative fweights.
+    w = asarray(abs(fweights))
   if aweights is not None:
-    if np.ndim(aweights) > 1:
+    _check_arraylike("cov", aweights)
+    if ndim(aweights) > 1:
       raise RuntimeError("cannot handle multidimensional aweights")
-    if np.shape(aweights)[0] != X.shape[1]:
+    if shape(aweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and aweights")
+    # Ensure positive aweights: note that numpy raises an error for negative aweights.
+    aweights = abs(aweights)
     w = aweights if w is None else w * aweights
 
   avg, w_sum = average(X, axis=1, weights=w, returned=True)
