@@ -54,6 +54,10 @@ class SparseArray(abc.ABC):
     ...
 
   @abc.abstractproperty
+  def aval(self):
+    ...
+
+  @abc.abstractproperty
   def dtype(self):
     ...
 
@@ -93,6 +97,10 @@ class COO(SparseArray):
     assert self.data.ndim == 1
     assert self.coords.ndim == 2
     assert self.coords.shape == (len(shape), self.data.shape[0])
+
+  @property
+  def aval(self):
+    return AbstractCOO(self.shape, self.dtype, self.index_dtype, self.nnz)
 
   @property
   def index_dtype(self):
@@ -165,9 +173,6 @@ class AbstractCOO(core.ShapedArray):
   def coords(self):
     return coo_buffers_p.bind(self)[1]
 
-def abstract_coo(arr):
-  return AbstractCOO(arr.shape, arr.dtype, arr.index_dtype, arr.nnz)
-
 def coo_result_handler(device, aval):
   def build_coo_array(coords_buf, data_buf):
     data = xla.DeviceArray(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
@@ -187,13 +192,48 @@ def coo_device_put_handler(a, device):
     xla.xb.get_device_backend(device).buffer_from_pyval(a.coords, device),
   )
 
-core.pytype_aval_mappings[COO] = abstract_coo
+core.pytype_aval_mappings[COO] = lambda arr: arr.aval
 core.raise_to_shaped_mappings[AbstractCOO] = lambda aval, _: aval
-xla.pytype_aval_mappings[COO] = abstract_coo
+xla.pytype_aval_mappings[COO] = lambda arr: arr.aval
 xla.canonicalize_dtype_handlers[COO] = lambda x: x
 xla.device_put_handlers[COO] = coo_device_put_handler
 xla.xla_result_handlers[AbstractCOO] = coo_result_handler
 xla.xla_shape_handlers[AbstractCOO] = coo_shape_handler
+
+
+coo_buffers_p = core.Primitive('coo_buffers')
+coo_buffers_p.multiple_results = True
+
+@coo_buffers_p.def_impl
+def _coo_buffers_impl(mat):
+  return (mat.data, mat.coords)
+
+@coo_buffers_p.def_abstract_eval
+def _coo_buffers_impl(mat):
+  return (mat.data_aval, mat.coords_aval)
+
+def _coo_buffers_translation_rule(c, data, coords):
+  return xops.Tuple(c, (data, coords))
+
+xla.translations[coo_buffers_p] = _coo_buffers_translation_rule
+
+def coo_fromdense(cls, mat):
+  mat = jnp.asarray(mat)
+  nz = (mat != 0)
+  return cls(jnp.where(nz), mat[nz], mat.shape)
+
+def coo_todense(mat):
+  d = jnp.zeros(mat.shape, mat.dtype)
+  return d.at[tuple(mat.coords)].add(mat.data)
+
+def coo_matvec(mat: COO, v: jnp.ndarray):
+  v = jnp.asarray(v)
+  assert v.ndim == 1
+  assert mat.ndim == 2
+  assert v.shape[0] == mat.shape[1]
+  rows, cols = mat.coords
+  dv = mat.data * v[cols]
+  return jnp.zeros(mat.shape[0], dtype=dv.dtype).at[rows].add(dv)
 
 
 class CSR(SparseArray):
@@ -213,7 +253,7 @@ class CSR(SparseArray):
 
   @property
   def aval(self):
-    return abstract_csr(self)
+    return AbstractCSR(self.shape, self.dtype, self.index_dtype, self.nnz)
 
   @property
   def index_dtype(self):
@@ -290,9 +330,6 @@ class AbstractCSR(core.ShapedArray):
   def indptr(self):
     return csr_buffers_p.bind(self)[2]
 
-def abstract_csr(arr):
-  return AbstractCSR(arr.shape, arr.dtype, arr.index_dtype, arr.nnz)
-
 def csr_result_handler(device, aval):
   def build_csr_array(data_buf, indices_buf, indptr_buf):
     data = xla.DeviceArray(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
@@ -315,9 +352,9 @@ def csr_device_put_handler(a, device):
     xla.xb.get_device_backend(device).buffer_from_pyval(a.indptr, device),
   )
 
-core.pytype_aval_mappings[CSR] = abstract_csr
+core.pytype_aval_mappings[CSR] = lambda arr: arr.aval
 core.raise_to_shaped_mappings[AbstractCSR] = lambda aval, _: aval
-xla.pytype_aval_mappings[CSR] = abstract_csr
+xla.pytype_aval_mappings[CSR] = lambda arr: arr.aval
 xla.canonicalize_dtype_handlers[CSR] = lambda x: x
 xla.device_put_handlers[CSR] = csr_device_put_handler
 xla.xla_result_handlers[AbstractCSR] = csr_result_handler
@@ -336,6 +373,10 @@ class ELL(SparseArray):
     assert self.data.ndim == 2
     assert self.rownz.shape == self.data.shape[:1]
     assert self.data.shape == self.columns.shape
+
+  @property
+  def aval(self):
+    return AbstractELL(self.shape, self.dtype, self.index_dtype, self.nnz, self.data.shape[1])
 
   @property
   def index_dtype(self):
@@ -408,10 +449,7 @@ class AbstractELL(core.ShapedArray):
   @core.aval_property
   def columns(self):
     return ell_buffers_p.bind(self)[2]
-
-def abstract_ell(arr):
-  return AbstractELL(arr.shape, arr.dtype, arr.index_dtype, arr.nnz, arr.data.shape[1])
-
+  
 def ell_result_handler(device, aval):
   def build_ell_array(columns_buf, data_buf):
     data = xla.DeviceArray(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
@@ -433,9 +471,9 @@ def ell_device_put_handler(a, device):
     xla.xb.get_device_backend(device).buffer_from_pyval(a.columns, device),
   )
 
-core.pytype_aval_mappings[ELL] = abstract_ell
+core.pytype_aval_mappings[ELL] = lambda arr: arr.aval
 core.raise_to_shaped_mappings[AbstractELL] = lambda aval, _: aval
-xla.pytype_aval_mappings[ELL] = abstract_ell
+xla.pytype_aval_mappings[ELL] = lambda arr: arr.aval
 xla.canonicalize_dtype_handlers[ELL] = lambda x: x
 xla.device_put_handlers[ELL] = ell_device_put_handler
 xla.xla_result_handlers[AbstractELL] = ell_result_handler
@@ -460,6 +498,10 @@ class BSR(SparseArray):
     assert shape[1] % self.blocksize[1] == 0
     assert shape[0] // self.blocksize[0] == (len(self.indptr) - 1)
     assert shape[1] // self.blocksize[1] > self.indices.max()
+
+  @property
+  def aval(self):
+    return AbstractBSR(self.shape, self.dtype, self.index_dtype, self.nnz, self.blocksize)
 
   @property
   def blocksize(self):
@@ -544,9 +586,6 @@ class AbstractBSR(core.ShapedArray):
   def indptr(self):
     return bsr_buffers_p.bind(self)[2]
 
-def abstract_bsr(arr):
-  return AbstractBSR(arr.shape, arr.dtype, arr.index_dtype, arr.nnz, arr.blocksize)
-
 def bsr_result_handler(device, aval):
   def build_bsr_array(data_buf, indices_buf, indptr_buf):
     data = xla.DeviceArray(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
@@ -569,50 +608,13 @@ def bsr_device_put_handler(a, device):
     xla.xb.get_device_backend(device).buffer_from_pyval(a.indptr, device),
   )
 
-core.pytype_aval_mappings[BSR] = abstract_bsr
+core.pytype_aval_mappings[BSR] = lambda arr: arr.aval
 core.raise_to_shaped_mappings[AbstractBSR] = lambda aval, _: aval
-xla.pytype_aval_mappings[BSR] = abstract_bsr
+xla.pytype_aval_mappings[BSR] = lambda arr: arr.aval
 xla.canonicalize_dtype_handlers[BSR] = lambda x: x
 xla.device_put_handlers[BSR] = bsr_device_put_handler
 xla.xla_result_handlers[AbstractBSR] = bsr_result_handler
 xla.xla_shape_handlers[AbstractBSR] = bsr_shape_handler
-
-#--------------------------------------------------------------------------
-# Primitives
-
-coo_buffers_p = core.Primitive('coo_buffers')
-coo_buffers_p.multiple_results = True
-
-@coo_buffers_p.def_impl
-def _coo_buffers_impl(mat):
-  return (mat.data, mat.coords)
-
-@coo_buffers_p.def_abstract_eval
-def _coo_buffers_impl(mat):
-  return (mat.data_aval, mat.coords_aval)
-
-def _coo_buffers_translation_rule(c, data, coords):
-  return xops.Tuple(c, (data, coords))
-
-xla.translations[coo_buffers_p] = _coo_buffers_translation_rule
-
-def coo_fromdense(cls, mat):
-  mat = jnp.asarray(mat)
-  nz = (mat != 0)
-  return cls(jnp.where(nz), mat[nz], mat.shape)
-
-def coo_todense(mat):
-  d = jnp.zeros(mat.shape, mat.dtype)
-  return d.at[tuple(mat.coords)].add(mat.data)
-
-def coo_matvec(mat: COO, v: jnp.ndarray):
-  v = jnp.asarray(v)
-  assert v.ndim == 1
-  assert mat.ndim == 2
-  assert v.shape[0] == mat.shape[1]
-  rows, cols = mat.coords
-  dv = mat.data * v[cols]
-  return jnp.zeros(mat.shape[0], dtype=dv.dtype).at[rows].add(dv)
 
 csr_buffers_p = core.Primitive('csr_buffers')
 csr_buffers_p.multiple_results = True
