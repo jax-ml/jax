@@ -67,9 +67,10 @@ and 2) whether it is **committed** to the device or not (the data is sometimes
 referred to as being *sticky* to the device).
 
 By default, JAX arrays are placed uncommitted on the default device
-(``jax.devices()[0]``), which is the first GPU by default. The default
-device can be set to "cpu" or "gpu" manually by setting the environment
-variable ``JAX_PLATFORM_NAME`` or the absl flag ``--jax_platform_name``.
+(``jax.devices()[0]``), which is the first GPU by default. If no GPU is 
+present, ``jax.devices()[0]`` is the first CPU. The default device can 
+be set to "cpu" or "gpu" manually by setting the environment variable 
+``JAX_PLATFORM_NAME`` or the absl flag ``--jax_platform_name``.
 
 >>> from jax import numpy as jnp
 >>> print(jnp.ones(3).device_buffer.device())  # doctest: +SKIP
