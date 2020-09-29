@@ -5961,9 +5961,9 @@ def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
     raise TypeError(msg.format(obj_arr.ndim))
   try:
     canonicalize_shape(obj_arr)
-  except TypeError:
+  except TypeError as err:
     msg = "{} {} must have every element be an integer type, got {}."
-    raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
+    raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj)))) from err
   lower_bound, bound_error = (
       (1, "strictly positive") if non_zero_shape else (0, "nonnegative"))
   if not (obj_arr >= lower_bound).all():

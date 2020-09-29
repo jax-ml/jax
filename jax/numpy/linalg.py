@@ -72,8 +72,8 @@ def matrix_power(a, n):
     raise TypeError("Last 2 dimensions of the array must be square")
   try:
     n = operator.index(n)
-  except TypeError:
-    raise TypeError("exponent must be an integer, got {}".format(n))
+  except TypeError as err:
+    raise TypeError("exponent must be an integer, got {}".format(n)) from err
 
   if n == 0:
     return jnp.broadcast_to(jnp.eye(a.shape[-2], dtype=a.dtype), a.shape)

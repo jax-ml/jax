@@ -380,9 +380,9 @@ class TensorFlowTrace(core.Trace):
   def get_primitive_impl(self, p):
     try:
       return tf_impl[p]
-    except KeyError:
+    except KeyError as err:
       msg = "TensorFlow interpretation rule for '{}' not implemented"
-      raise NotImplementedError(msg.format(p))
+      raise NotImplementedError(msg.format(p)) from err
 
 def to_tf_dtype(jax_dtype):
   if jax_dtype == jnp.bfloat16:
