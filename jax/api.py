@@ -2093,7 +2093,7 @@ def device_put_sharded(x: Sequence[Any], devices: Sequence[xc.Device]):
       f"abstract values not compatible: {avals}"
     x_aval = core.raise_to_shaped(avals[0])
     aval = ShapedArray((len(devices),) + x_aval.shape, x_aval.dtype)
-    buffers = list(it.chain.from_iterable(xla.device_put(x, d) for x, d in zip(xs, devices)))
+    buffers = [xla.device_put(x, d) for x, d in zip(xs, devices)]
     return pxla.ShardedDeviceArray(aval, buffers)
   return tree_multimap(_device_put_sharded, *x)
 
