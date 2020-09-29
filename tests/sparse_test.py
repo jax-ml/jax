@@ -18,8 +18,9 @@ from absl.testing import parameterized
 
 import numpy as np
 from jax import test_util as jtu
-from jax import dtypes
+from jax import dtypes, xla
 from jax.experimental import sparse
+import jax.numpy as jnp
 
 from jax.config import config, flags
 config.parse_flags_with_absl()
@@ -53,6 +54,18 @@ test_shapes = {
 
 
 class SparseTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}".format(sparse_type.__name__),
+     "sparse_type": sparse_type}
+    for sparse_type in [sparse.CSR])) #[sparse.COO, sparse.CSR, sparse.ELL, sparse.BSR]))
+  def testAbstractify(self, sparse_type):
+    x_dense = jnp.arange(100).reshape(10, 10) % 2
+    x_sparse = sparse_type.fromdense(x_dense)
+    x_aval = xla.abstractify(x_sparse)
+    self.assertEqual(x_aval.shape, x_sparse.shape)
+    self.assertEqual(x_aval.dtype, x_sparse.dtype)
+    self.assertEqual(x_aval.nnz, x_sparse.nnz)
+
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_{}_nnz={}".format(
         jtu.format_shape_dtype_string(shape, dtype), sparse_type.__name__, nnz),

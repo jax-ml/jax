@@ -20,7 +20,7 @@ This file contains primitive definitions for sparse matrix functionality.
 
 import abc
 
-from jax import lax, vmap
+from jax import core, lax, vmap, xla
 import jax.numpy as jnp
 from jax.numpy.lax_numpy import _promote_args
 
@@ -159,6 +159,10 @@ class CSR(SparseArray):
     assert shape[1] > self.indices.max()
 
   @property
+  def aval(self):
+    return abstract_csr(self)
+
+  @property
   def index_dtype(self):
     return self.indices.dtype
 
@@ -207,6 +211,64 @@ class CSR(SparseArray):
     data = data.at[row, col].set(self.data)
     columns = columns.at[row, col].set(self.indices)
     return ELL(rownz, columns, data, self.shape)
+
+
+class AbstractCSR(core.ShapedArray):
+  __slots__ = ['index_dtype', 'nnz', 'data_aval', 'indices_aval', 'indptr_aval']
+  _num_buffers = 2
+
+  def __init__(self, shape, dtype, index_dtype, nnz):
+    super().__init__(shape, dtype)
+    self.index_dtype = index_dtype
+    self.nnz = nnz
+    self.data_aval = core.ShapedArray((nnz,), dtype)
+    self.indices_aval = core.ShapedArray((nnz,), index_dtype)
+    self.indptr_aval = core.ShapedArray((shape[0] + 1,), index_dtype)
+
+  @core.aval_property
+  def data(self):
+    return csr_buffers_p.bind(self)[0]
+
+  @core.aval_property
+  def indices(self):
+    return csr_buffers_p.bind(self)[1]
+
+  @core.aval_property
+  def indptr(self):
+    return csr_buffers_p.bind(self)[2]
+
+def abstract_csr(arr):
+  return AbstractCSR(arr.shape, arr.dtype, arr.index_dtype, arr.nnz)
+
+def csr_result_handler(device, aval):
+  def build_csr_array(data_buf, indices_buf, indptr_buf):
+    data = xla.DeviceArray(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
+    indices = xla.DeviceArray(aval.indices_aval, device, lazy.array(aval.indices_aval.shape), indices_buf)
+    indptr = xla.DeviceArray(aval.indptr_aval, device, lazy.array(aval.indptr_aval.shape), indices_buf)
+    return CSR(data, indices, indptr)
+  return build_csr_array
+
+def csr_shape_handler(a):
+  return (
+    xla.xc.Shape.array_shape(a.data_aval.dtype, a.data_aval.shape),
+    xla.xc.Shape.array_shape(a.indices_aval.dtype, a.indices_aval.shape),
+    xla.xc.Shape.array_shape(a.indptr_aval.dtype, a.indptr_aval.shape),
+  )
+
+def csr_device_put_handler(a, device):
+  return (
+    xla.xb.get_device_backend(device).buffer_from_pyval(a.data, device),
+    xla.xb.get_device_backend(device).buffer_from_pyval(a.indices, device),
+    xla.xb.get_device_backend(device).buffer_from_pyval(a.indptr, device),
+  )
+
+core.pytype_aval_mappings[CSR] = abstract_csr
+core.raise_to_shaped_mappings[AbstractCSR] = lambda aval, _: aval
+xla.pytype_aval_mappings[CSR] = abstract_csr
+xla.canonicalize_dtype_handlers[CSR] = lambda x: x
+xla.device_put_handlers[CSR] = csr_device_put_handler
+xla.xla_result_handlers[AbstractCSR] = csr_result_handler
+xla.xla_shape_handlers[AbstractCSR] = csr_shape_handler
 
 
 class ELL(SparseArray):
@@ -348,6 +410,21 @@ class BSR(SparseArray):
 
 #--------------------------------------------------------------------------
 # Primitives
+
+csr_buffers_p = core.Primitive('csr_buffers')
+
+@csr_buffers_p.def_impl
+def _csr_buffers_impl(mat):
+  return (mat.data, mat.indices, mat.indptr)
+
+@csr_buffers_p.def_abstract_eval
+def _csr_buffers_impl(mat):
+  return (mat.data_aval, mat.indices_aval, mat.indptr_aval)
+
+def _csr_buffers_translation_rule(c, data, indices, indptr):
+  return (data, indices, indptr)
+
+xla.translations[csr_buffers_p] = _csr_buffers_translation_rule
 
 def coo_fromdense(cls, mat):
   mat = jnp.asarray(mat)
