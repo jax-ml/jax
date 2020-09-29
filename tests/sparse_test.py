@@ -52,12 +52,11 @@ test_shapes = {
   sparse.COO: [(5,), (2, 3), (4, 2, 5)]
 }
 
-
 class SparseTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}".format(sparse_type.__name__),
      "sparse_type": sparse_type}
-    for sparse_type in [sparse.CSR])) #[sparse.COO, sparse.CSR, sparse.ELL, sparse.BSR]))
+    for sparse_type in [sparse.BSR, sparse.COO, sparse.CSR, sparse.ELL]))
   def testAbstractify(self, sparse_type):
     x_dense = jnp.arange(100).reshape(10, 10) % 2
     x_sparse = sparse_type.fromdense(x_dense)
@@ -65,6 +64,17 @@ class SparseTest(jtu.JaxTestCase):
     self.assertEqual(x_aval.shape, x_sparse.shape)
     self.assertEqual(x_aval.dtype, x_sparse.dtype)
     self.assertEqual(x_aval.nnz, x_sparse.nnz)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}".format(sparse_type.__name__),
+     "sparse_type": sparse_type}
+    for sparse_type in [sparse.BSR, sparse.COO, sparse.CSR, sparse.ELL]))
+  def testBufferAccess(self, sparse_type):
+    x_dense = jnp.arange(100).reshape(10, 10) % 2
+    x_sparse = sparse_type.fromdense(x_dense)
+    args_maker = lambda: [x_sparse]
+    get_data = lambda x: x.data
+    self._CompileAndCheck(get_data, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_{}_nnz={}".format(
