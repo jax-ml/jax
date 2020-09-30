@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from functools import wraps
 from typing import Sequence, Union
 
@@ -27,10 +28,17 @@ PRNGKey = _random.PRNGKey
 
 def _sparse_rng(func):
   @wraps(func)
-  def wrapped(key, *args, nnz=0.1, fmt="csr", **kwargs):
+  def wrapped(*args, **kwargs):
+    sig = inspect.signature(func).bind(*args, **kwargs)
+    sig.apply_defaults()
+    arguments = dict(sig.arguments)
+    key = arguments.pop('key')
+    nnz = arguments['nnz']
+    fmt = arguments['fmt']
+
     # TODO(jakevdp): avoid creating dense array.
     key, key2 = _random.split(key)
-    mat = func(key, *args, **kwargs)
+    mat = func(key, **arguments)
     nnz = int(nnz * mat.size if 0 < nnz < 1 else nnz)
 
     if nnz <= 0:
@@ -54,7 +62,6 @@ def uniform(key: jnp.ndarray,
             dtype: np.dtype = dtypes.float_,
             minval: Union[float, jnp.ndarray] = 0.,
             maxval: Union[float, jnp.ndarray] = 1.,
-            *,
             nnz: Union[int, float] = 0.1,
             fmt: str = "csr") -> SparseArray:
   """Sparse Uniform Array"""
