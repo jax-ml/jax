@@ -936,9 +936,9 @@ def _initialize_outfeed_receiver(
   """
   try:
     outfeed_receiver_module = xla_extension.outfeed_receiver
-  except AttributeError:
+  except AttributeError as err:
     raise NotImplementedError(
-        "id_tap works only with jaxlib version 0.1.51 and higher")
+        "id_tap works only with jaxlib version 0.1.51 and higher") from err
 
   with _outfeed_receiver.lock:
     if _outfeed_receiver.receiver is not None:
