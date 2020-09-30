@@ -361,6 +361,54 @@ xla.xla_result_handlers[AbstractCSR] = csr_result_handler
 xla.xla_shape_handlers[AbstractCSR] = csr_shape_handler
 
 
+csr_buffers_p = core.Primitive('csr_buffers')
+csr_buffers_p.multiple_results = True
+
+@csr_buffers_p.def_impl
+def _csr_buffers_impl(mat):
+  return (mat.data, mat.indices, mat.indptr)
+
+@csr_buffers_p.def_abstract_eval
+def _csr_buffers_abstract_eval(mat):
+  return (mat.data_aval, mat.indices_aval, mat.indptr_aval)
+
+def _csr_buffers_translation_rule(c, data, indices, indptr):
+  return xops.Tuple(c, (data, indices, indptr))
+
+xla.translations[csr_buffers_p] = _csr_buffers_translation_rule
+
+def csr_fromdense(cls, mat):
+  mat = jnp.asarray(mat)
+  nz = (mat != 0)
+  data = mat[nz]
+  row, col = jnp.where(nz)
+  if len(row) == 0:
+    return cls(row, jnp.zeros(mat.shape[0] + 1, row.dtype), data, mat.shape)
+  row, col = lax.sort_key_val(row, col)
+  indices = jnp.ravel(col)
+  indptr = jnp.cumsum(jnp.bincount(row))
+  indptr = jnp.concatenate([
+    jnp.zeros(1, indptr.dtype),
+    indptr,
+    jnp.full(mat.shape[0] - len(indptr), indptr[-1])
+  ])
+  return cls(indices, indptr, data, mat.shape)
+
+def csr_todense(mat):
+  d = jnp.zeros(mat.shape, mat.dtype)
+  row = jnp.repeat(jnp.arange(mat.shape[0]), jnp.diff(mat.indptr))
+  col = mat.indices
+  return d.at[row, col].add(mat.data)
+
+def csr_matvec(mat: CSR, v: jnp.ndarray):
+  v = jnp.asarray(v)
+  assert v.ndim == 1
+  assert v.shape[0] == mat.shape[1]
+  dv = mat.data * v[mat.indices]
+  ind = jnp.cumsum(jnp.zeros_like(mat.indices).at[mat.indptr].add(1))
+  return jnp.zeros(mat.shape[0], dv.dtype).at[ind - 1].add(dv)
+
+
 class ELL(SparseArray):
   """JAX-based sparse array stored in ELL format."""
   def __init__(self, rownz, columns, data, shape=None):
@@ -478,6 +526,47 @@ xla.canonicalize_dtype_handlers[ELL] = lambda x: x
 xla.device_put_handlers[ELL] = ell_device_put_handler
 xla.xla_result_handlers[AbstractELL] = ell_result_handler
 xla.xla_shape_handlers[AbstractELL] = ell_shape_handler
+ell_buffers_p = core.Primitive('ell_buffers')
+ell_buffers_p.multiple_results = True
+
+@ell_buffers_p.def_impl
+def _ell_buffers_impl(mat):
+  return (mat.data, mat.rownz, mat.columns)
+
+@ell_buffers_p.def_abstract_eval
+def _ell_buffers_abstract_eval(mat):
+  return (mat.data_aval, mat.rownz_aval, mat.columns_aval)
+
+def _ell_buffers_translation_rule(c, data, rownz, columns):
+  return xops.Tuple(c, (data, rownz, columns))
+
+xla.translations[ell_buffers_p] = _ell_buffers_translation_rule
+
+def ell_fromdense(cls, mat):
+  mat = jnp.asarray(mat)
+  nz = (mat != 0)
+  rownz = nz.sum(1)
+  shape = (mat.shape[0], int(rownz.max()))
+
+  col = nz.cumsum(1)[nz] - 1
+  row = jnp.broadcast_to(jnp.arange(nz.shape[0])[:, None], nz.shape)[nz]
+  data = jnp.zeros(shape, dtype=mat.dtype).at[row, col].set(mat[nz])
+  columns = jnp.zeros(shape, dtype=col.dtype).at[row, col].set(jnp.where(nz)[1])
+
+  return cls(rownz, columns, data, mat.shape)
+
+def ell_todense(mat):
+  valid = jnp.arange(mat.columns.shape[1]) < mat.rownz[:, None]
+  rows = jnp.broadcast_to(jnp.arange(mat.columns.shape[0])[:, None], mat.columns.shape)
+  return jnp.zeros(mat.shape, mat.dtype).at[rows[valid], mat.columns[valid]].add(mat.data[valid])
+
+def ell_matvec(mat: ELL, v: jnp.ndarray):
+  v = jnp.asarray(v)
+  assert v.ndim == 1
+  assert v.shape[0] == mat.shape[1]
+  invalid = (jnp.arange(mat.data.shape[1]) >= mat.rownz[:, None])
+  dv = mat.data * v[mat.columns]
+  return dv.at[invalid].set(0).sum(1, dtype=dv.dtype)
 
 
 class BSR(SparseArray):
@@ -616,95 +705,6 @@ xla.device_put_handlers[BSR] = bsr_device_put_handler
 xla.xla_result_handlers[AbstractBSR] = bsr_result_handler
 xla.xla_shape_handlers[AbstractBSR] = bsr_shape_handler
 
-csr_buffers_p = core.Primitive('csr_buffers')
-csr_buffers_p.multiple_results = True
-
-@csr_buffers_p.def_impl
-def _csr_buffers_impl(mat):
-  return (mat.data, mat.indices, mat.indptr)
-
-@csr_buffers_p.def_abstract_eval
-def _csr_buffers_abstract_eval(mat):
-  return (mat.data_aval, mat.indices_aval, mat.indptr_aval)
-
-def _csr_buffers_translation_rule(c, data, indices, indptr):
-  return xops.Tuple(c, (data, indices, indptr))
-
-xla.translations[csr_buffers_p] = _csr_buffers_translation_rule
-
-def csr_fromdense(cls, mat):
-  mat = jnp.asarray(mat)
-  nz = (mat != 0)
-  data = mat[nz]
-  row, col = jnp.where(nz)
-  if len(row) == 0:
-    return cls(row, jnp.zeros(mat.shape[0] + 1, row.dtype), data, mat.shape)
-  row, col = lax.sort_key_val(row, col)
-  indices = jnp.ravel(col)
-  indptr = jnp.cumsum(jnp.bincount(row))
-  indptr = jnp.concatenate([
-    jnp.zeros(1, indptr.dtype),
-    indptr,
-    jnp.full(mat.shape[0] - len(indptr), indptr[-1])
-  ])
-  return cls(indices, indptr, data, mat.shape)
-
-def csr_todense(mat):
-  d = jnp.zeros(mat.shape, mat.dtype)
-  row = jnp.repeat(jnp.arange(mat.shape[0]), jnp.diff(mat.indptr))
-  col = mat.indices
-  return d.at[row, col].add(mat.data)
-
-def csr_matvec(mat: CSR, v: jnp.ndarray):
-  v = jnp.asarray(v)
-  assert v.ndim == 1
-  assert v.shape[0] == mat.shape[1]
-  dv = mat.data * v[mat.indices]
-  ind = jnp.cumsum(jnp.zeros_like(mat.indices).at[mat.indptr].add(1))
-  return jnp.zeros(mat.shape[0], dv.dtype).at[ind - 1].add(dv)
-
-ell_buffers_p = core.Primitive('ell_buffers')
-ell_buffers_p.multiple_results = True
-
-@ell_buffers_p.def_impl
-def _ell_buffers_impl(mat):
-  return (mat.data, mat.rownz, mat.columns)
-
-@ell_buffers_p.def_abstract_eval
-def _ell_buffers_abstract_eval(mat):
-  return (mat.data_aval, mat.rownz_aval, mat.columns_aval)
-
-def _ell_buffers_translation_rule(c, data, rownz, columns):
-  return xops.Tuple(c, (data, rownz, columns))
-
-xla.translations[ell_buffers_p] = _ell_buffers_translation_rule
-
-def ell_fromdense(cls, mat):
-  mat = jnp.asarray(mat)
-  nz = (mat != 0)
-  rownz = nz.sum(1)
-  shape = (mat.shape[0], int(rownz.max()))
-
-  col = nz.cumsum(1)[nz] - 1
-  row = jnp.broadcast_to(jnp.arange(nz.shape[0])[:, None], nz.shape)[nz]
-  data = jnp.zeros(shape, dtype=mat.dtype).at[row, col].set(mat[nz])
-  columns = jnp.zeros(shape, dtype=col.dtype).at[row, col].set(jnp.where(nz)[1])
-
-  return cls(rownz, columns, data, mat.shape)
-
-def ell_todense(mat):
-  valid = jnp.arange(mat.columns.shape[1]) < mat.rownz[:, None]
-  rows = jnp.broadcast_to(jnp.arange(mat.columns.shape[0])[:, None], mat.columns.shape)
-  return jnp.zeros(mat.shape, mat.dtype).at[rows[valid], mat.columns[valid]].add(mat.data[valid])
-
-
-def ell_matvec(mat: ELL, v: jnp.ndarray):
-  v = jnp.asarray(v)
-  assert v.ndim == 1
-  assert v.shape[0] == mat.shape[1]
-  invalid = (jnp.arange(mat.data.shape[1]) >= mat.rownz[:, None])
-  dv = mat.data * v[mat.columns]
-  return dv.at[invalid].set(0).sum(1, dtype=dv.dtype)
 
 bsr_buffers_p = core.Primitive('bsr_buffers')
 bsr_buffers_p.multiple_results = True
