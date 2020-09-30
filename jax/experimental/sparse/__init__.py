@@ -12,4 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .xla import SparseArray, CSR, BSR, COO, ELL
+__all__ = ['BSR', 'COO', 'CSR', 'ELL', 'SparseArray']
+
+from .xla import BSR, COO, CSR, ELL, SparseArray

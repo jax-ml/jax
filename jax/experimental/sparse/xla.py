@@ -209,7 +209,7 @@ def _coo_buffers_impl(mat):
   return (mat.data, mat.coords)
 
 @coo_buffers_p.def_abstract_eval
-def _coo_buffers_impl(mat):
+def _coo_buffers_abstract_eval(mat):
   return (mat.data_aval, mat.coords_aval)
 
 def _coo_buffers_translation_rule(c, data, coords):
@@ -449,7 +449,7 @@ class AbstractELL(core.ShapedArray):
   @core.aval_property
   def columns(self):
     return ell_buffers_p.bind(self)[2]
-  
+
 def ell_result_handler(device, aval):
   def build_ell_array(columns_buf, data_buf):
     data = xla.DeviceArray(aval.data_aval, device, lazy.array(aval.data_aval.shape), data_buf)
@@ -624,7 +624,7 @@ def _csr_buffers_impl(mat):
   return (mat.data, mat.indices, mat.indptr)
 
 @csr_buffers_p.def_abstract_eval
-def _csr_buffers_impl(mat):
+def _csr_buffers_abstract_eval(mat):
   return (mat.data_aval, mat.indices_aval, mat.indptr_aval)
 
 def _csr_buffers_translation_rule(c, data, indices, indptr):
@@ -671,7 +671,7 @@ def _ell_buffers_impl(mat):
   return (mat.data, mat.rownz, mat.columns)
 
 @ell_buffers_p.def_abstract_eval
-def _ell_buffers_impl(mat):
+def _ell_buffers_abstract_eval(mat):
   return (mat.data_aval, mat.rownz_aval, mat.columns_aval)
 
 def _ell_buffers_translation_rule(c, data, rownz, columns):
@@ -714,7 +714,7 @@ def _bsr_buffers_impl(mat):
   return (mat.data, mat.indices, mat.indptr)
 
 @bsr_buffers_p.def_abstract_eval
-def _bsr_buffers_impl(mat):
+def _bsr_buffers_abstract_eval(mat):
   return (mat.data_aval, mat.indices_aval, mat.indptr_aval)
 
 def _bsr_buffers_translation_rule(c, data, indices, indptr):
