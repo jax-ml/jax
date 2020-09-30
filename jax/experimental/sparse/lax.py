@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Sparse XLA
-----------
-This file contains primitive definitions for sparse matrix functionality.
-"""
-
 import abc
 
 from jax import core, lax, lazy, vmap, xla

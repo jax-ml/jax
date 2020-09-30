@@ -134,5 +134,20 @@ class SparseTest(jtu.JaxTestCase):
     self.assertEqual(expected.nnz, actual.nnz)
     self.assertArraysEqual(expected.todense(), actual.todense())
 
+class SparseRandomTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_fmt={}_nnz={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), fmt, nnz),
+      "dtype": dtype, "shape": shape, "nnz": nnz, "fmt": fmt}
+    for dtype in [np.float16, np.float32]
+    for shape in test_shapes_2d
+    for nnz in [0, 0.1, 20]
+    for fmt in ["bsr", "coo", "csr", "ell"]))
+  def testUniform(self, dtype, shape, nnz, fmt):
+    key = sparse.random.PRNGKey(1701)
+    arr = sparse.random.uniform(key, shape=shape, dtype=dtype, fmt='dense', nnz=nnz)
+    arr_sparse = sparse.random.uniform(key, shape=shape, dtype=dtype, fmt=fmt, nnz=nnz)
+    self.assertArraysEqual(arr, arr_sparse.todense())
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

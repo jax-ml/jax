@@ -14,4 +14,5 @@
 
 __all__ = ['BSR', 'COO', 'CSR', 'ELL', 'SparseArray']
 
+from . import random
 from .lax import BSR, COO, CSR, ELL, SparseArray
