@@ -14,4 +14,4 @@
 
 __all__ = ['BSR', 'COO', 'CSR', 'ELL', 'SparseArray']
 
-from .xla import BSR, COO, CSR, ELL, SparseArray
+from .lax import BSR, COO, CSR, ELL, SparseArray
