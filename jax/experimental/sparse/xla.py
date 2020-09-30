@@ -217,6 +217,7 @@ def _coo_buffers_translation_rule(c, data, coords):
 
 xla.translations[coo_buffers_p] = _coo_buffers_translation_rule
 
+# TODO(jakevdp): construct primitives for these routines:
 def coo_fromdense(cls, mat):
   mat = jnp.asarray(mat)
   nz = (mat != 0)
@@ -377,6 +378,7 @@ def _csr_buffers_translation_rule(c, data, indices, indptr):
 
 xla.translations[csr_buffers_p] = _csr_buffers_translation_rule
 
+# TODO(jakevdp): construct primitives for these routines:
 def csr_fromdense(cls, mat):
   mat = jnp.asarray(mat)
   nz = (mat != 0)
@@ -542,6 +544,7 @@ def _ell_buffers_translation_rule(c, data, rownz, columns):
 
 xla.translations[ell_buffers_p] = _ell_buffers_translation_rule
 
+# TODO(jakevdp): construct primitives for these routines:
 def ell_fromdense(cls, mat):
   mat = jnp.asarray(mat)
   nz = (mat != 0)
@@ -722,6 +725,7 @@ def _bsr_buffers_translation_rule(c, data, indices, indptr):
 
 xla.translations[bsr_buffers_p] = _bsr_buffers_translation_rule
 
+# TODO(jakevdp): construct primitives for these routines:
 def bsr_fromdense(cls, mat, blocksize):
   mat = jnp.asarray(mat)
   blocksize = tuple(blocksize)
