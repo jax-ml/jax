@@ -1402,7 +1402,7 @@ def _device_put_raw(x):
     return x
   else:
     aval = raise_to_shaped(core.get_aval(x))
-    return xla.array_result_handler(None, aval)(xla.device_put(x))
+    return xla.array_result_handler(None, aval)(*xla.device_put(x))
 
 def iota(dtype: DType, size: int) -> Array:
   """Wraps XLA's `Iota
@@ -5745,8 +5745,8 @@ def _infeed_abstract_eval(token, *, shapes, partitions):
 
 
 def _infeed_translation_rule(c, token, *, shapes, partitions):
-  shape = tuple(xla.aval_to_xla_shape(x).with_major_to_minor_layout_if_absent()
-                for x in shapes)
+  shape = tuple(shape.with_major_to_minor_layout_if_absent()
+                for x in shapes for shape in xla.aval_to_xla_shapes(x))
   build_infeed = partial(xops.InfeedWithToken, token,
                          xla_client.Shape.tuple_shape(shape))
   if partitions:

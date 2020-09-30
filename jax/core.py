@@ -747,6 +747,7 @@ def find_top_trace(xs) -> Trace:
 
 class AbstractValue:
   __slots__: List[str] = []
+  _num_buffers: int = 1  # number of buffers used to represent the value.
 
   def at_least_vspace(self):
     assert False
@@ -769,6 +770,8 @@ class Bot(AbstractValue): pass
 bot = Bot()
 
 class AbstractUnit(AbstractValue):
+  # TODO(jakevdp): make it possible to set zero buffers
+  # _num_buffers = 0
   def join(self, other):
     if not skip_checks:
       assert other is abstract_unit, other
