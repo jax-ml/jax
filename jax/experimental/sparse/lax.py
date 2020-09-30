@@ -14,12 +14,19 @@
 
 import abc
 
-from jax import core, lax, lazy, vmap, xla
+from jax import core, dtypes, lax, lazy, vmap, xla
 from jax.lib import xla_client
 import jax.numpy as jnp
 from jax.numpy.lax_numpy import _promote_args
 
 xops = xla_client.ops
+
+# TODO(jakevdp): use math.prod in Python 3.8+
+def _prod(iterable, *, start=1):
+  result = start
+  for value in iterable:
+    result = result * value
+  return result
 
 
 class SparseArray(abc.ABC):
@@ -75,6 +82,14 @@ class SparseArray(abc.ABC):
   def ndim(self):
     return len(self.shape)
 
+  @property
+  def size(self):
+    return _prod(self.shape)
+
+  @property
+  def density(self):
+    return self.nnz / self.size
+
   def __repr__(self):
     return f"{self.__class__.__name__}({self.dtype.name}{list(self.shape)}, nnz={self.nnz})"
 
@@ -120,7 +135,7 @@ class COO(SparseArray):
     return coo_todense(self)
 
   def matvec(self, v):
-    return coo_matvec(self, v)
+    return coo_matvec_p.bind(self, v)
 
   def tocoo(self):
     return self
@@ -166,6 +181,10 @@ class AbstractCOO(core.ShapedArray):
   @core.aval_property
   def coords(self):
     return coo_buffers_p.bind(self)[1]
+
+  @core.aval_method
+  def matvec(self, v):
+    return coo_matvec_p.bind(self, v)
 
 def coo_result_handler(device, aval):
   def build_coo_array(coords_buf, data_buf):
@@ -221,14 +240,25 @@ def coo_todense(mat):
   d = jnp.zeros(mat.shape, mat.dtype)
   return d.at[tuple(mat.coords)].add(mat.data)
 
-def coo_matvec(mat: COO, v: jnp.ndarray):
+coo_matvec_p = core.Primitive('coo_matvec')
+
+@coo_matvec_p.def_impl
+def _coo_matvec_impl(mat, v):
   v = jnp.asarray(v)
-  assert v.ndim == 1
-  assert mat.ndim == 2
-  assert v.shape[0] == mat.shape[1]
   rows, cols = mat.coords
   dv = mat.data * v[cols]
   return jnp.zeros(mat.shape[0], dtype=dv.dtype).at[rows].add(dv)
+
+@coo_matvec_p.def_abstract_eval
+def _coo_matvec_abstract_eval(mat, v):
+  assert isinstance(mat, AbstractCOO)
+  assert v.ndim == 1
+  assert mat.ndim == 2
+  assert mat.shape[1] == v.shape[0]
+  dtype = dtypes.promote_types(mat.dtype, v.dtype)
+  return core.ShapedArray(mat.shape[:1], dtype)
+
+xla.translations[coo_matvec_p] = xla.lower_fun(_coo_matvec_impl, multiple_results=False)
 
 
 class CSR(SparseArray):
@@ -274,7 +304,7 @@ class CSR(SparseArray):
     return csr_todense(self)
 
   def matvec(self, v):
-    return csr_matvec(self, v)
+    return csr_matvec_p.bind(self, v)
 
   def tocsr(self):
     return self
@@ -324,6 +354,10 @@ class AbstractCSR(core.ShapedArray):
   @core.aval_property
   def indptr(self):
     return csr_buffers_p.bind(self)[2]
+
+  @core.aval_method
+  def matvec(self, v):
+    return csr_matvec_p.bind(self, v)
 
 def csr_result_handler(device, aval):
   def build_csr_array(data_buf, indices_buf, indptr_buf):
@@ -396,13 +430,25 @@ def csr_todense(mat):
   col = mat.indices
   return d.at[row, col].add(mat.data)
 
-def csr_matvec(mat: CSR, v: jnp.ndarray):
+csr_matvec_p = core.Primitive('csr_matvec')
+
+@csr_matvec_p.def_impl
+def _csr_matvec_impl(mat: CSR, v: jnp.ndarray):
   v = jnp.asarray(v)
-  assert v.ndim == 1
-  assert v.shape[0] == mat.shape[1]
   dv = mat.data * v[mat.indices]
   ind = jnp.cumsum(jnp.zeros_like(mat.indices).at[mat.indptr].add(1))
   return jnp.zeros(mat.shape[0], dv.dtype).at[ind - 1].add(dv)
+
+@csr_matvec_p.def_abstract_eval
+def _csr_matvec_abstract_eval(mat, v):
+  assert isinstance(mat, AbstractCSR)
+  assert v.ndim == 1
+  assert mat.ndim == 2
+  assert mat.shape[1] == v.shape[0]
+  dtype = dtypes.promote_types(mat.dtype, v.dtype)
+  return core.ShapedArray(mat.shape[:1], dtype)
+
+xla.translations[csr_matvec_p] = xla.lower_fun(_csr_matvec_impl, multiple_results=False)
 
 
 class ELL(SparseArray):
@@ -446,7 +492,7 @@ class ELL(SparseArray):
     return ell_todense(self)
 
   def matvec(self, v):
-    return ell_matvec(self, v)
+    return ell_matvec_p.bind(self, v)
 
   def toell(self):
     return self
@@ -493,6 +539,10 @@ class AbstractELL(core.ShapedArray):
   @core.aval_property
   def columns(self):
     return ell_buffers_p.bind(self)[2]
+
+  @core.aval_method
+  def matvec(self, v):
+    return ell_matvec_p.bind(self, v)
 
 def ell_result_handler(device, aval):
   def build_ell_array(columns_buf, data_buf):
@@ -557,13 +607,25 @@ def ell_todense(mat):
   rows = jnp.broadcast_to(jnp.arange(mat.columns.shape[0])[:, None], mat.columns.shape)
   return jnp.zeros(mat.shape, mat.dtype).at[rows[valid], mat.columns[valid]].add(mat.data[valid])
 
-def ell_matvec(mat: ELL, v: jnp.ndarray):
+ell_matvec_p = core.Primitive('ell_matvec')
+
+@ell_matvec_p.def_impl
+def _ell_matvec_impl(mat: ELL, v: jnp.ndarray):
   v = jnp.asarray(v)
-  assert v.ndim == 1
-  assert v.shape[0] == mat.shape[1]
   invalid = (jnp.arange(mat.data.shape[1]) >= mat.rownz[:, None])
   dv = mat.data * v[mat.columns]
   return dv.at[invalid].set(0).sum(1, dtype=dv.dtype)
+
+@ell_matvec_p.def_abstract_eval
+def _ell_matvec_abstract_eval(mat, v):
+  assert isinstance(mat, AbstractELL)
+  assert v.ndim == 1
+  assert mat.ndim == 2
+  assert mat.shape[1] == v.shape[0]
+  dtype = dtypes.promote_types(mat.dtype, v.dtype)
+  return core.ShapedArray(mat.shape[:1], dtype)
+
+xla.translations[ell_matvec_p] = xla.lower_fun(_ell_matvec_impl, multiple_results=False)
 
 
 class BSR(SparseArray):
@@ -626,7 +688,7 @@ class BSR(SparseArray):
     return bsr_todense(self)
 
   def matvec(self, v):
-    return bsr_matvec(self, v)
+    return bsr_matvec_p.bind(self, v)
 
   def tobsr(self, blocksize=None):
     if blocksize is not None and blocksize != self.blocksize:
@@ -671,6 +733,10 @@ class AbstractBSR(core.ShapedArray):
   @core.aval_property
   def indptr(self):
     return bsr_buffers_p.bind(self)[2]
+
+  @core.aval_method
+  def matvec(self, v):
+    return bsr_matvec_p.bind(self, v)
 
 def bsr_result_handler(device, aval):
   def build_bsr_array(data_buf, indices_buf, indptr_buf):
@@ -751,11 +817,24 @@ def bsr_todense(mat):
   col = mat.indices
   return d.at[row, col].add(mat.data).transpose((0, 2, 1, 3)).reshape(mat.shape)
 
-def bsr_matvec(mat: BSR, v: jnp.ndarray):
+bsr_matvec_p = core.Primitive('bsr_matvec')
+
+@bsr_matvec_p.def_impl
+def _bsr_matvec_impl(mat: BSR, v: jnp.ndarray):
   v = jnp.asarray(v)
-  assert v.ndim == 1
-  assert v.shape[0] == mat.shape[1]
   v = v.reshape(-1, mat.blocksize[1])
   dv = vmap(jnp.dot)(mat.data, v[mat.indices])
   ind = jnp.cumsum(jnp.zeros_like(mat.indices).at[mat.indptr].add(1))
   return jnp.zeros((mat.blockshape[0], mat.blocksize[0]), dv.dtype).at[ind - 1].add(dv).ravel()
+
+
+@bsr_matvec_p.def_abstract_eval
+def _bsr_matvec_abstract_eval(mat, v):
+  assert isinstance(mat, AbstractBSR)
+  assert v.ndim == 1
+  assert mat.ndim == 2
+  assert mat.shape[1] == v.shape[0]
+  dtype = dtypes.promote_types(mat.dtype, v.dtype)
+  return core.ShapedArray(mat.shape[:1], dtype)
+
+xla.translations[bsr_matvec_p] = xla.lower_fun(_bsr_matvec_impl, multiple_results=False)

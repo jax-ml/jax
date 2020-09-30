@@ -18,7 +18,7 @@ from absl.testing import parameterized
 
 import numpy as np
 from jax import test_util as jtu
-from jax import dtypes, xla
+from jax import dtypes, jit, xla
 from jax.experimental import sparse
 import jax.numpy as jnp
 
@@ -109,6 +109,17 @@ class SparseTest(jtu.JaxTestCase):
     np_fun = lambda a, b: np.dot(a, b)
     jnp_fun = lambda a, b: sparse_type.fromdense(a).matvec(b)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol={np.float16: 2E-3})
+
+    # Check sparse compilation.
+    # TODO(jakevdp): enable this test after defining translation rules.
+    # args = args_maker()
+    # args[0] = sparse_type.fromdense(args[0])
+    # jnp_fun = lambda a, b: a.matvec(b)
+    # result1 = jnp_fun(*args)
+    # result2 = jit(jnp_fun)(*args)
+    # self.assertEqual(result1.shape, result2.shape)
+    # self.assertEqual(result1.dtype, result2.dtype)
+    # self.assertAllClose(result1.data, result2.data)
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_{}->{}_nnz={}".format(
