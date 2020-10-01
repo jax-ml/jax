@@ -186,8 +186,9 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
     def g(x):
       return lax.while_loop(lambda carry: carry[0] < 10,
-                            lambda carry: (carry[0] + 1, f(carry[1])),
-                            (0, x))
+                            lambda carry: (carry[0] + 1., f(carry[1])),
+                            (0., x))
+
     arg = jnp.float_(0.7)
     self.TransformConvertAndCompare(g, arg, None)
     self.TransformConvertAndCompare(g, arg, "jvp")

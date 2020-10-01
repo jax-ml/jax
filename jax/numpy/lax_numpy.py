@@ -296,10 +296,22 @@ def _check_arraylike(fun_name, *args):
     msg = "{} requires ndarray or scalar arguments, got {} at position {}."
     raise TypeError(msg.format(fun_name, type(arg), pos))
 
+def _check_no_float0s(fun_name, *args):
+  """Check if none of the args have dtype float0."""
+  if _any(dtypes.dtype(arg) is dtypes.float0 for arg in args):
+    raise TypeError(
+        f"Called {fun_name} with a float0 array. "
+        "float0s do not support any operations by design because they "
+        "are not compatible with non-trivial vector spaces. No implicit dtype "
+        "conversion is done. You can use np.zeros_like(arr, dtype=np.float) "
+        "to cast a float0 array to a regular zeros array. \n"
+        "If you didn't expect to get a float0 you might have accidentally "
+        "taken a gradient with respect to an integer argument.")
 
 def _promote_args(fun_name, *args):
   """Convenience function to apply Numpy argument shape and dtype promotion."""
   _check_arraylike(fun_name, *args)
+  _check_no_float0s(fun_name, *args)
   return _promote_shapes(fun_name, *_promote_dtypes(*args))
 
 def _promote_args_inexact(fun_name, *args):
@@ -307,6 +319,7 @@ def _promote_args_inexact(fun_name, *args):
 
   Promotes non-inexact types to an inexact type."""
   _check_arraylike(fun_name, *args)
+  _check_no_float0s(fun_name, *args)
   return _promote_shapes(fun_name, *_promote_dtypes_inexact(*args))
 
 def _constant_like(x, const):

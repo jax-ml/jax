@@ -2260,7 +2260,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             (2.,), (1.,))
     # A tuple including a concrete tracer -> no error
     api.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), (1, idx)),
-            (2,), (1,))
+            (2.,), (1.,))
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_{}_bins={}_range={}_weights={}".format(

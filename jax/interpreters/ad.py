@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Set, List
 from . import partial_eval as pe
 from ..config import config
 from .. import core
+from ..dtypes import dtype, float0
 from ..core import Trace, Tracer, get_aval, call_p, Primitive, Literal
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
@@ -46,6 +47,8 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
+  tangents = [Zero.from_value(t) if not isinstance(t, Zero)
+              and dtype(t) is float0 else t for t in tangents]
   with core.new_main(JVPTrace) as main:
     out_primals, out_tangents = yield (main, primals, tangents), {}
     del main
@@ -90,7 +93,7 @@ def linearize(traceable, *primals, **kwargs):
     jvpfun, aux = jvp(traceable, has_aux=True)
 
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-            + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
+              + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
                     for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
@@ -238,10 +241,12 @@ def get_primitive_transpose(p):
 class JVPTrace(Trace):
 
   def pure(self, val):
-    return JVPTracer(self, val, Zero.from_value(val))
+    tangent_zero = Zero(get_aval(val).at_least_vspace())
+    return JVPTracer(self, val, tangent_zero)
 
   def lift(self, val):
-    return JVPTracer(self, val, Zero.from_value(val))
+    tangent_zero = Zero(get_aval(val).at_least_vspace())
+    return JVPTracer(self, val, tangent_zero)
 
   def sublift(self, val):
     return JVPTracer(self, val.primal, val.tangent)
@@ -296,6 +301,10 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)
     tangents_in = map(instantiate_zeros, tangents_in)
+    # Cast float0 to regular float zeros because custom jvp rules don't
+    # currently handle float0s
+    tangents_in = [core.zeros_like_float0(tangent) if dtype(tangent) is float0
+                   else tangent for tangent in tangents_in]
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
     return map(partial(JVPTracer, self), primals_out, tangents_out)
@@ -303,6 +312,10 @@ class JVPTrace(Trace):
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     tangents_in = map(instantiate_zeros, tangents_in)
+    # Cast float0 to regular float zeros because custom vjp rules don't
+    # currently handle float0s
+    tangents_in = [core.zeros_like_float0(tangent) if dtype(tangent) is float0
+                   else tangent for tangent in tangents_in]
     res_and_primals_out = fwd.call_wrapped(*map(core.full_lower, primals_in))
     out_tree, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
@@ -349,7 +362,9 @@ def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
     primal_aval = raise_to_shaped(get_aval(primal))
     tangent_aval = raise_to_shaped(get_aval(tangent))
-    assert primal_aval == tangent_aval, (primal_aval, tangent_aval)
+    assert primal_aval.shape == tangent_aval.shape, (primal_aval.shape, tangent_aval.shape)
+    expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
+    assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
 
 call_param_updaters: Dict[core.Primitive, Callable] = {}
 call_transpose_param_updaters: Dict[core.Primitive, Callable] = {}
@@ -453,6 +468,8 @@ deflinear(add_jaxvals_p, lambda t: (t, t))
 
 def instantiate_zeros(tangent):
   if type(tangent) is Zero:
+    if isinstance(tangent.aval, Tracer):
+      return tangent.aval
     return zeros_like_aval(tangent.aval)
   else:
     return tangent

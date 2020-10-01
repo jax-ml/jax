@@ -74,18 +74,21 @@ def identity(x): return x
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 # unit representation
-def _make_unit(c): return xb.constant(c, np.zeros((), dtype=np.dtype('bool')))
-def _make_abstract_unit(_): return (xc.Shape.array_shape(np.dtype('bool'), ()),)
+def _make_unit_constant(c): return xb.constant(c, np.zeros((), dtype=np.dtype('bool')))
+def _make_unit_shape(_): return (xc.Shape.array_shape(np.dtype('bool'), ()),)
 def _device_put_unit(_, device):
   backend = xb.get_device_backend(device)
   return (backend.buffer_from_pyval(np.zeros((), dtype=np.dtype('bool')),
                                     device),)
 def _make_array_shape(a):
-  return (xc.Shape.array_shape(a.dtype, a.shape),)
+  if a.dtype is dtypes.float0:
+    return (xc.Shape.array_shape(np.dtype('bool'), ()),)
+  else:
+    return (xc.Shape.array_shape(a.dtype, a.shape),)
 
 ### handlers
 
-xb.register_constant_handler(core.Unit, lambda c, *_: _make_unit(c))
+xb.register_constant_handler(core.Unit, lambda c, *_: _make_unit_constant(c))
 
 def aval_to_xla_shapes(aval):
   try:
@@ -94,7 +97,7 @@ def aval_to_xla_shapes(aval):
     raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
 
 xla_shape_handlers: Dict[Type[core.AbstractValue], Callable] = {
-    core.AbstractUnit: _make_abstract_unit,
+    core.AbstractUnit: _make_unit_shape,
     ShapedArray: _make_array_shape,
     ConcreteArray: _make_array_shape,
 }
@@ -106,6 +109,8 @@ def aval_to_result_handler(device: Optional[Device], aval: core.AbstractValue) -
     raise TypeError(f"No xla_result_handler for type: {type(aval)}") from err
 
 def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
+  if aval.dtype is dtypes.float0:
+    return lambda _: np.zeros(aval.shape, dtypes.float0)
   return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
@@ -123,6 +128,8 @@ def device_put(x, device: Optional[Device] = None) -> Tuple[Any]:
 
 def _device_put_array(x, device: Optional[Device]):
   backend = xb.get_device_backend(device)
+  if x.dtype is dtypes.float0:
+    x = np.zeros((), dtype=np.dtype(bool))
   return (backend.buffer_from_pyval(x, device),)
 
 def _device_put_scalar(x, device):
@@ -407,7 +414,7 @@ def jaxpr_subcomp(c, jaxpr, backend, axis_env, consts, name_stack, *args):
     env[v] = node
 
   env = {}
-  _partitionmap(write, [core.unitvar], [_make_unit(c)])
+  _partitionmap(write, [core.unitvar], [_make_unit_constant(c)])
   _partitionmap(write, jaxpr.constvars, consts)
   _partitionmap(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
