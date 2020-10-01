@@ -258,6 +258,10 @@ def _coo_matvec_abstract_eval(mat, v):
   dtype = dtypes.promote_types(mat.dtype, v.dtype)
   return core.ShapedArray(mat.shape[:1], dtype)
 
+def _coo_matvec_translation_rule(c, data, coords, v):
+  rows = xops.SliceInDim()
+  dv = xops.Mul(data, coords)
+
 xla.translations[coo_matvec_p] = xla.lower_fun(_coo_matvec_impl, multiple_results=False)
 
 
