@@ -63,6 +63,11 @@ flags.DEFINE_string(
   'Regular expression specifying which tests to run, called via re.match on '
   'the test name. If empty or unspecified, run all tests.'
 )
+flags.DEFINE_string(
+  'exclude_test_targets', '',
+  'Regular expression specifying which tests NOT to run, called via re.match '
+  'on the test name. If empty or unspecified, run all tests.'
+)
 
 EPS = 1e-4
 
@@ -743,6 +748,10 @@ class JaxTestLoader(absltest.TestLoader):
       pattern = re.compile(FLAGS.test_targets)
       names = [name for name in names
                if pattern.search(f"{testCaseClass.__name__}.{name}")]
+    if FLAGS.exclude_test_targets:
+      pattern = re.compile(FLAGS.exclude_test_targets)
+      names = [name for name in names
+               if not pattern.search(f"{testCaseClass.__name__}.{name}")]
     return names
 
 
