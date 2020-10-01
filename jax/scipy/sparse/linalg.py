@@ -81,7 +81,7 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
   # https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_preconditioned_conjugate_gradient_method
 
   def cond_fun(value):
-    x, r, gamma, p, k = value
+    _, r, gamma, _, k = value
     rs = gamma if M is _identity else _vdot_real_tree(r, r)
     return (rs > atol2) & (k < maxiter)
 
@@ -213,10 +213,11 @@ def _safe_normalize(x, return_norm=False, thresh=None):
   thresh = thresh.astype(dtype).real
 
   normalized_x, norm = lax.cond(
-    norm > thresh,
-    lambda y: (_div(y, norm), norm),
-    lambda y: (tree_map(jnp.zeros_like, y), jnp.zeros((), dtype=thresh.dtype)),
-    x,
+      norm > thresh,
+      lambda y: (_div(y, norm), norm),
+      lambda y: (tree_map(jnp.zeros_like, y), jnp.zeros((),
+                                                        dtype=thresh.dtype)),
+      x,
   )
   if return_norm:
     return normalized_x, norm
@@ -229,15 +230,36 @@ def _project_on_columns(A, v):
   Returns A.T.conj() @ v.
   """
   v_proj = tree_multimap(
-    lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
-    A,
-    v,
+      lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
+      A,
+      v,
   )
   return tree_reduce(operator.add, v_proj)
 
 
-def _iterative_classical_gram_schmidt(Q, x, iterations=2):
-  """Orthogonalize x against the columns of Q."""
+def _iterative_classical_gram_schmidt(Q, x, max_iterations=2):
+  """
+  Orthogonalize x against the columns of Q. The process is repeated
+  up to `max_iterations` times, or fewer if the condition
+  ||r|| < (1/sqrt(2)) ||x|| is met earlier (see below for the meaning
+  of r and x).
+
+  Parameters
+  ----------
+  Q : array or tree of arrays
+      A matrix of orthonormal columns.
+  x : array or tree of arrays
+      A vector. It will be replaced with a new vector q which is orthonormal
+      to the columns of Q, such that x in span(col(Q), q).
+
+  Returns
+  -------
+  q : array or tree of arrays
+      A unit vector, orthonormal to each column of Q, such that
+      x in span(col(Q), q).
+  r : array
+      Stores the overlaps of x with each vector in Q.
+  """
   # "twice is enough"
   # http://slepc.upv.es/documentation/reports/str1.pdf
 
@@ -247,25 +269,42 @@ def _iterative_classical_gram_schmidt(Q, x, iterations=2):
   q = x
   _, xnorm = _safe_normalize(x, return_norm=True)
   xnorm_scaled = xnorm / jnp.sqrt(2)
-  #k, q, r = carry
+
   def body_function(carry):
-    k, q, r = carry
+    k, q, r, qnorm_scaled = carry
     h = _project_on_columns(Q, q)
     Qh = tree_map(lambda X: _dot_tree(X, h), Q)
     q = _sub(q, Qh)
     r = _add(r, h)
-    return (k + 1, q, r)
+
+    def qnorm_cond(carry):
+      k, not_done, _, _ = carry
+      return lax.cond(not_done,
+                      lambda x: k < (max_iterations - 1),
+                      lambda x: False,
+                      0)
+
+    def qnorm(carry):
+      k, _, q, qnorm_scaled = carry
+      _, qnorm = _safe_normalize(q, return_norm=True)
+      qnorm_scaled = qnorm / jnp.sqrt(2)
+      return (k, False, q, qnorm_scaled)
+
+    init = (k, True, q, qnorm_scaled)
+    _, _, q, qnorm_scaled = lax.while_loop(qnorm_cond, qnorm, init)
+    return (k + 1, q, r, qnorm_scaled)
 
   def cond_function(carry):
-    k, _, r = carry
+    k, _, r, qnorm_scaled = carry
     _, rnorm = _safe_normalize(r, return_norm=True)
     return lax.cond(
-        k < (iterations - 1),
-        lambda x: rnorm < xnorm_scaled,
+        k < (max_iterations - 1),
+        lambda x: rnorm < qnorm_scaled,
         lambda x: False,
         0)
-  k, q, r = body_function((0, q, r))
-  _, q, r = lax.while_loop(cond_function, body_function, (k, q, r))
+  k, q, r, qnorm_scaled = body_function((0, q, r, xnorm_scaled))
+  k, q, r, _ = lax.while_loop(cond_function, body_function,
+                              (k, q, r, qnorm_scaled))
   return q, r
 
 
@@ -281,7 +320,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = A(M(v))
-  v, h = _iterative_classical_gram_schmidt(V, v, iterations=2)
+  v, h = _iterative_classical_gram_schmidt(V, v, max_iterations=2)
   unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
@@ -337,8 +376,8 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   #  unit_residual, beta = _safe_normalize(residual, return_norm=True)
 
   V = tree_map(
-    lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
-    unit_residual,
+      lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
+      unit_residual,
   )
   dtype = jnp.result_type(*tree_leaves(b))
   R = jnp.eye(restart, restart + 1, dtype=dtype) # eye to avoid constructing
@@ -359,7 +398,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
     # return k < restart and err > tol
 
   def arnoldi_qr_step(carry):
-    k, residual_norm, V, R, beta_vec, givens = carry
+    k, _, V, R, beta_vec, givens = carry
     V, H, _ = kth_arnoldi_iteration(k, A, M, V, R, inner_tol)
     R_row, givens = apply_givens_rotations(H[k, :], givens, k)
     R = R.at[k, :].set(R_row[:])
@@ -372,6 +411,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   carry = (0, residual_norm, V, R, beta_vec, givens)
   carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
   k, residual_norm, V, R, beta_vec, _ = carry
+  _ = k # Until we figure out how to pass this to the user.
 
   y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
   Vy = tree_map(lambda X: _dot(X[..., :-1], y), V)
@@ -395,14 +435,14 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
   V = tree_map(
-    lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
-    unit_residual,
+      lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
+      unit_residual,
   )
   dtype = jnp.result_type(*tree_leaves(b))
   H = jnp.eye(restart, restart + 1, dtype=dtype)
 
   def loop_cond(carry):
-    V, H, breakdown, k = carry
+    _, _, breakdown, k = carry
     return lax.cond(k < restart,
                     lambda x: ~x,
                     lambda x: False,
@@ -463,6 +503,8 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
 
   initialization = (x0, 0, unit_residual, residual_norm)
   x_final, k, _, err = lax.while_loop(cond_fun, body_fun, initialization)
+  _ = k # Until we can pass this out
+  _ = err
   # info = lax.cond(converged, lambda y: 0, lambda y: k, 0)
   return x_final  # , info
 
@@ -550,8 +592,8 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   if tree_structure(x0) != tree_structure(b):
     raise ValueError(
-      'x0 and b must have matching tree structure: '
-      f'{tree_structure(x0)} vs {tree_structure(b)}')
+        'x0 and b must have matching tree structure: '
+        f'{tree_structure(x0)} vs {tree_structure(b)}')
 
   b, x0 = device_put((b, x0))
   b_norm = _norm_tree(b)
