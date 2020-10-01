@@ -82,7 +82,7 @@ def _device_put_unit(_, device):
                                     device),)
 def _make_array_shape(a):
   if a.dtype is dtypes.float0:
-    return (xc.Shape.array_shape(np.dtype('bool'), ()),)
+    return (xc.Shape.array_shape(np.dtype('bool'), a.shape),)
   else:
     return (xc.Shape.array_shape(a.dtype, a.shape),)
 
@@ -129,7 +129,7 @@ def device_put(x, device: Optional[Device] = None) -> Tuple[Any]:
 def _device_put_array(x, device: Optional[Device]):
   backend = xb.get_device_backend(device)
   if x.dtype is dtypes.float0:
-    x = np.zeros((), dtype=np.dtype(bool))
+    x = np.zeros(x.shape, dtype=np.dtype(bool))
   return (backend.buffer_from_pyval(x, device),)
 
 def _device_put_scalar(x, device):
