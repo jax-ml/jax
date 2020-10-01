@@ -303,8 +303,9 @@ class JVPTrace(Trace):
     tangents_in = map(instantiate_zeros, tangents_in)
     # Cast float0 to regular float zeros because custom jvp rules don't
     # currently handle float0s
-    tangents_in = [core.zeros_like_float0(tangent) if dtype(tangent) is float0
-                   else tangent for tangent in tangents_in]
+    tangents_in = [core.zeros_like_float0(tangent, dtype(primal))
+                   if dtype(tangent) is float0 else tangent
+                   for primal, tangent in zip(primals_in, tangents_in)]
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
     return map(partial(JVPTracer, self), primals_out, tangents_out)
@@ -314,8 +315,9 @@ class JVPTrace(Trace):
     tangents_in = map(instantiate_zeros, tangents_in)
     # Cast float0 to regular float zeros because custom vjp rules don't
     # currently handle float0s
-    tangents_in = [core.zeros_like_float0(tangent) if dtype(tangent) is float0
-                   else tangent for tangent in tangents_in]
+    tangents_in = [core.zeros_like_float0(tangent, dtype(primal))
+                   if dtype(tangent) is float0 else tangent
+                   for primal, tangent in zip(primals_in, tangents_in)]
     res_and_primals_out = fwd.call_wrapped(*map(core.full_lower, primals_in))
     out_tree, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])

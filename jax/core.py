@@ -1594,5 +1594,7 @@ def omnistaging_disabler() -> None:
       trace_state.initial_style = prev
 
 # Casting float0 array to a float-valued zero array.
-def zeros_like_float0(array):
-  return np.zeros(array.shape, np.float)
+def zeros_like_float0(array, dtype=None):
+  if not dtype:
+    dtype = np.float
+  return np.zeros(array.shape, dtype)
