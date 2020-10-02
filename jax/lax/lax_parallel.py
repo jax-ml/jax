@@ -612,6 +612,50 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis)
   result = all_to_all_p.bind(x, axis_name=axis_name, split_axis=split_axis, concat_axis=concat_axis)
   return result, d
 
+def _all_to_all_batched_collective(vals_in, dims_in, axis_size, axis_name, split_axis, concat_axis):
+  x, = vals_in
+  d, = dims_in
+  split_axis_adj = split_axis + (1 if d <= split_axis else 0)
+  concat_axis_adj = concat_axis + (1 if split_axis_adj <= concat_axis else 0)
+  if d < split_axis_adj < concat_axis_adj:
+    split_axis_adj -= 1
+  elif concat_axis_adj < split_axis_adj < d:
+    split_axis_adj += 1
+  return [_moveaxis(d, concat_axis_adj, x)], [split_axis_adj]
+
+def _all_to_all_split_axis_rule(split_name, vals, params):
+  concat_axis = params['concat_axis']
+  split_axis = params['split_axis']
+  axis_names = params['axis_name']
+  assert isinstance(axis_names, tuple)
+  x, = vals
+
+  split_pos = list(axis_names).index(split_name)
+  before_axes = axis_names[:split_pos]
+  after_axes = axis_names[split_pos+1:]
+
+  # Flatten the split_dim
+  split_name_size = psum(1, split_name)
+  before_size = psum(1, before_axes)
+  after_size = psum(1, after_axes)
+  unroll_shape = list(x.shape)
+  unroll_shape[split_axis:split_axis+1] = [before_size, split_name_size, after_size]
+  unroll_x = lax.reshape(x, unroll_shape)
+
+  if before_axes:
+    out_before = all_to_all(unroll_x, before_axes, split_axis, concat_axis=0)
+  else:
+    out_before = _moveaxis(split_axis, 0, unroll_x)
+  out_split = all_to_all(out_before, split_name, split_axis + 1, concat_axis=1)
+  if after_axes:
+    out_after = all_to_all(out_split, after_axes, split_axis + 2, concat_axis=2)
+  else:
+    out_after = _moveaxis(split_axis + 2, 2, out_split)
+
+  # Flatten the concat axes and move them to the right position
+  y = out_after.reshape((np.prod(out_after.shape[:3]), *out_after.shape[3:]))
+  return _moveaxis(0, concat_axis, y)
+
 def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis):
   input_aval = raise_to_shaped(x)
   shape = list(input_aval.shape)
@@ -625,6 +669,8 @@ xla.parallel_translations[all_to_all_p] = _all_to_all_translation_rule
 ad.deflinear(all_to_all_p, _all_to_all_transpose_rule)
 pxla.multi_host_supported_collectives.add(all_to_all_p)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
+batching.collective_rules[all_to_all_p] = _all_to_all_batched_collective
+batching.split_axis_rules[all_to_all_p] = _all_to_all_split_axis_rule
 
 
 def _expand(dim, size, index, x):

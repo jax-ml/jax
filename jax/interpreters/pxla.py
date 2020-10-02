@@ -964,9 +964,10 @@ def _pmap_translation_rule(c, axis_env,
     _xla_shard(c, aval, new_env, in_node) if in_node_mapped else in_node
     for aval, in_node, in_node_mapped in zip(in_avals, in_nodes, mapped_invars))
 
-  sharded_outs = xla.jaxpr_subcomp(
-      c, call_jaxpr, backend, new_env, (),
-      extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
+  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+    sharded_outs = xla.jaxpr_subcomp(
+        c, call_jaxpr, backend, new_env, (),
+        extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_xla_unshard(c, aval, new_env, shard, backend=backend)
           for aval, shard in zip(out_avals, sharded_outs)]
