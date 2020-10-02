@@ -605,7 +605,7 @@ def switch(index, branches: Sequence[Callable], operand):
 def cond(*args, **kwargs):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
-  Has equivalent semantics to this Python implementation::
+  ``cond()`` has equivalent semantics to this Python implementation::
 
     def cond(pred, true_fun, false_fun, operand):
       if pred:
@@ -613,17 +613,17 @@ def cond(*args, **kwargs):
       else:
         return false_fun(operand)
 
-  Pred must be a scalar type.
+  ``pred`` must be a scalar type.
 
-  Note that true_fun/false_fun may not need to refer to an ``operand`` to
-  compute their result, but one must still be provided to the ``cond`` call and
-  be accepted by both the branch functions, e.g.:
+  Functions ``true_fun``/``false_fun`` may not need to refer to an ``operand``
+  to compute their result, but one must still be provided to the ``cond`` call
+  and be accepted by both the branch functions, e.g.::
 
-      jax.lax.cond(
-          get_predicate_value(),
-          lambda _: 23,
-          lambda _: 42,
-          operand=None)
+    jax.lax.cond(
+        get_predicate_value(),
+        lambda _: 23,
+        lambda _: 42,
+        operand=None)
 
 
   Arguments:
