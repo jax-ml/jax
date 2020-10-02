@@ -5139,35 +5139,22 @@ def _select_and_scatter_add_transpose(
                                     window_strides, padding, ones, ones)
   return [source_t, None]
 
-def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
+def _select_and_scatter_add_batch_rule(
+    batched_args, batch_dims, *, select_prim, window_dimensions, window_strides,
+    padding):
   source, operand = batched_args
-  s_bdims, o_bdims = batch_dims
+  s_bdim, o_bdim = batch_dims
+  size = next(a.shape[bdim] for a, bdim in zip(batched_args, batch_dims)
+              if bdim is not None)
+  source = batching.bdim_at_front(source, s_bdim, size)
+  operand = batching.bdim_at_front(operand, o_bdim, size)
 
-  if s_bdims is not None and o_bdims is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    source = batching.moveaxis(source, s_bdims, 0)
-    operand = batching.moveaxis(operand, o_bdims, 0)
-    outputs = [
-        _select_and_scatter_add(s, o, **kwargs) for s, o in zip(source, operand)]
-    outputs = [broadcast(out, (1,)) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
-  elif s_bdims is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    source = batching.moveaxis(source, s_bdims, 0)
-    outputs = [
-        _select_and_scatter_add(s, operand, **kwargs) for s in source]
-    outputs = [broadcast(out, (1,)) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
-  elif o_bdims is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    operand = batching.moveaxis(operand, o_bdims, 0)
-    outputs = [
-        _select_and_scatter_add(source, o, **kwargs) for o in operand]
-    outputs = [broadcast(out, (1,)) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
+  window_dimensions = (1,) + window_dimensions
+  window_strides = (1,) + window_strides
+  padding = ((0, 0),) + padding
+  out = _select_and_scatter_add(source, operand, select_prim, window_dimensions,
+                                window_strides, padding)
+  return out, 0
 
 select_and_scatter_add_p = standard_primitive(
     _select_and_scatter_add_shape_rule, _input_dtype, 'select_and_scatter_add',

@@ -595,6 +595,34 @@ class LaxVmapTest(jtu.JaxTestCase):
         self._CheckBatching(fun, 3, bdims, (shape, shape), (dtype, dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_dtype={jtu.format_shape_dtype_string(shape, dtype)}"
+      f"_padding={padding}_dims={dims}_strides={strides}",
+       "dtype": dtype, "padding": padding, "shape": shape,
+       "dims": dims, "strides": strides}
+      for dtype in float_dtypes
+      for padding in ["VALID", "SAME"]
+      for shape in [(3, 2, 4, 6)]
+      for dims in [(1, 1, 2, 1)]
+      for strides in [(1, 2, 2, 1), (1, 1, 1, 1)]))
+  def testSelectAndScatterAdd(self, dtype, padding, shape, dims, strides):
+    rng = jtu.rand_small(self.rng())
+
+    pads = lax.padtype_to_pads(shape, dims, strides, padding)
+
+    def fun(operand, cotangents):
+      return lax._select_and_scatter_add(operand, cotangents, lax.ge_p, dims,
+                                         strides, pads)
+    ones = (1,) * len(shape)
+    cotangent_shape = api.eval_shape(
+      lambda x: lax._select_and_gather_add(x, x, lax.ge_p, dims, strides,
+                                           pads, ones, ones),
+      np.ones(shape, dtype)).shape
+
+    for bdims in all_bdims(cotangent_shape, shape):
+      self._CheckBatching(fun, 3, bdims, (cotangent_shape, shape),
+                          (dtype, dtype), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_bdims={}_fft_ndims={}"
        .format(shape, bdims, fft_ndims),
        "shape": shape, "bdims": bdims, "fft_ndims": fft_ndims, "rng_factory": rng_factory}
