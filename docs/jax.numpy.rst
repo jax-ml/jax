@@ -93,6 +93,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     cdouble
     ceil
     character
+    choose
     clip
     column_stack
     complex_

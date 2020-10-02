@@ -2834,7 +2834,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           return -999
         else:
           raise
-
     def jnp_fun(x):
       try:
         return jnp.ravel_multi_index(x, shape, order=order, mode=mode)
@@ -2853,6 +2852,45 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     else:
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_ashape={}{}_cshapes={}{}_mode={}".format(
+          adtype.__name__, ashape, cdtype.__name__, cshapes, mode),
+        "ashape": ashape, "adtype": adtype, "cshapes": cshapes, "cdtype": cdtype, "mode": mode}
+      for ashape in ((), (4,), (3, 4))
+      for cshapes in [
+        [(), (4,)],
+        [(3, 4), (4,), (3, 1)]
+      ]
+      for adtype in int_dtypes
+      for cdtype in default_dtypes
+      for mode in ['wrap', 'clip', 'raise']))
+  def testChoose(self, ashape, adtype, cshapes, cdtype, mode):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(ashape, adtype), [rng(s, cdtype) for s in cshapes]]
+    def np_fun(a, c):
+      try:
+        return np.choose(a, c, mode=mode)
+      except ValueError as err:
+        if mode == 'raise' and str(err).startswith('invalid entry'):
+          return -999  # sentinel indicating expected error.
+        else:
+          raise
+    def jnp_fun(a, c):
+      try:
+        return jnp.choose(a, c, mode=mode)
+      except ValueError as err:
+        if mode == 'raise' and str(err).startswith('invalid entry'):
+          return -999  # sentinel indicating expected error.
+        else:
+          raise
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    if mode == 'raise':
+      msg = ("The error occurred because jnp.choose was jit-compiled"
+             " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
+      with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg):
+        jax.jit(jnp_fun)(*args_maker())
+    else:
+      self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.parameters(
     (0, (2, 1, 3)),
