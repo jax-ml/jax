@@ -921,6 +921,44 @@ def histogram(a, bins=10, range=None, weights=None, density=None):
     counts = counts / bin_widths / counts.sum()
   return counts, bin_edges
 
+@_wraps(np.histogramdd)
+def histogramdd(sample, bins=10, range=None, weights=None, density=None):
+  _check_arraylike("histogramdd", sample)
+  N, D = shape(sample)
+
+  if weights is not None and weights.shape != (N,):
+    raise ValueError("should have one weight for each sample.")
+
+  bin_idx_by_dim = D*[None]
+  nbins = np.empty(D, int)
+  bin_edges_by_dim = D*[None]
+  dedges = D*[None]
+
+  for i in builtins.range(D):
+    bin_edges = histogram_bin_edges(sample[:, i], bins[i], range, weights)
+    bin_idx = searchsorted(bin_edges, sample[:, i], side='right')
+    bin_idx = where(sample[:, i] == bin_edges[-1], bin_idx - 1, bin_idx)
+    bin_idx_by_dim[i] = bin_idx
+    nbins[i] = len(bin_edges) + 1
+    bin_edges_by_dim[i] = bin_edges
+    dedges[i] = diff(bin_edges_by_dim[i])
+
+  xy = ravel_multi_index(bin_idx_by_dim, nbins, mode='clip')
+  hist = bincount(xy, weights, length=nbins.prod())
+  hist = reshape(hist, nbins)
+  core = D*(slice(1, -1),)
+  hist = hist[core]
+
+  if density:
+    s = sum(hist)
+    for i in builtins.range(D):
+      _shape = np.ones(D, int)
+      _shape[i] = nbins[i] - 2
+      hist = hist / reshape(dedges[i], _shape)
+
+    hist /= s
+
+  return hist, bin_edges_by_dim
 
 @_wraps(np.heaviside)
 def heaviside(x1, x2):
