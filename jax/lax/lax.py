@@ -6188,7 +6188,9 @@ def _abstractify(x):
 
 def _check_user_dtype_supported(dtype, fun_name=None):
   np_dtype = np.dtype(dtype)
-  if np_dtype.kind not in "biufc" and np_dtype.type != dtypes.bfloat16:
+  is_bfloat16 = np_dtype.type is dtypes.bfloat16
+  is_float0 = np_dtype == dtypes.float0
+  if np_dtype.kind not in "biufc" and not (is_bfloat16 or is_float0):
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     raise TypeError(msg)
   if dtype is not None and np_dtype != dtypes.canonicalize_dtype(dtype):
