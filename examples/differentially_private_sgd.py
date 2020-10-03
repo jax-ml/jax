@@ -138,7 +138,7 @@ def clipped_grad(params, l2_norm_clip, single_example_batch):
   nonempty_grads, tree_def = tree_flatten(grads)
   total_grad_norm = jnp.linalg.norm(
       [jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads])
-  divisor = jnp.max((total_grad_norm / l2_norm_clip, 1.))
+  divisor = jnp.max(jnp.array((total_grad_norm / l2_norm_clip, 1.)))
   normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
   return tree_unflatten(tree_def, normalized_nonempty_grads)
 
@@ -167,7 +167,7 @@ def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
   if num_examples * target_delta > 1.:
     warnings.warn('Your delta might be too high.')
   q = FLAGS.batch_size / float(num_examples)
-  orders = list(jnp.linspace(1.1, 10.9, 99)) + range(11, 64)
+  orders = list(jnp.linspace(1.1, 10.9, 99)) + list(range(11, 64))
   rdp_const = compute_rdp(q, FLAGS.noise_multiplier, steps, orders)
   eps, _, _ = get_privacy_spent(orders, rdp_const, target_delta=target_delta)
   return eps
