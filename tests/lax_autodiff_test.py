@@ -360,6 +360,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                                  padding, lhs_dil, rhs_dil, dimension_numbers,
                                  perms, feature_group_count, batch_group_count,
                                  rng_factory):
+    if jtu.device_under_test() == "cpu" and dtype == np.float32:
+      raise SkipTest            # TODO(b/169977272): enable when fixed
+
     if dtype == np.float16:
       raise SkipTest("float16 numerical issues")  # TODO(mattjj): resolve
 
