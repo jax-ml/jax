@@ -1292,9 +1292,9 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(write, jaxpr.invars, in_avals)
 
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
-    in_avals = map(read, eqn.invars)
     prim = eqn.primitive
     try:
+      in_avals = map(read, eqn.invars)
       if prim in custom_typechecks:
         custom_typechecks[prim](*in_avals, **eqn.params)
       if prim.call_primitive:

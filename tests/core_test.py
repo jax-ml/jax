@@ -444,5 +444,15 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     assert jaxpr.eqns[-1].outvars[0] is core.dropvar
     core.check_jaxpr(jaxpr)
 
+  def test_jaxpr_undefined_eqn_invar(self):
+    jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
+    cos = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cos')
+    cos.invars[0] = core.gensym([jaxpr], suffix='_test')(cos.invars[0].aval)
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        r"Variable '.+_test' not defined\n\nin equation:",
+        lambda: core.check_jaxpr(jaxpr))
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
