@@ -1795,6 +1795,7 @@ def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
     if out is not None:
       raise ValueError("reduction does not support the `out` argument.")
     _check_arraylike(name, a)
+    lax._check_user_dtype_supported(dtype, name)
     axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
     a = a if isinstance(a, ndarray) else asarray(a)
@@ -1852,6 +1853,7 @@ any = sometrue = _make_reduction("any", np.any, lax.bitwise_or, False, _cast_to_
 @_wraps(np.mean)
 def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   _check_arraylike("mean", a)
+  lax._check_user_dtype_supported(dtype, "mean")
   if out is not None:
     raise ValueError("mean does not support the `out` argument.")
 
@@ -1921,6 +1923,7 @@ def average(a, axis=None, weights=None, returned=False):
 @_wraps(np.var)
 def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("var", a)
+  lax._check_user_dtype_supported(dtype, "var")
   if out is not None:
     raise ValueError("var does not support the `out` argument.")
 
@@ -1966,6 +1969,7 @@ def _var_promote_types(a_dtype, dtype):
 @_wraps(np.std)
 def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("std", a)
+  lax._check_user_dtype_supported(dtype, "std")
   if out is not None:
     raise ValueError("std does not support the `out` argument.")
   return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
@@ -2038,6 +2042,7 @@ nanprod = _make_nan_reduction(np.nanprod, prod, 1, nan_if_all_nan=False)
 @_wraps(np.nanmean)
 def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   _check_arraylike("nanmean", a)
+  lax._check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
     raise ValueError("nanmean does not support the `out` argument.")
   if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
@@ -2054,6 +2059,7 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
 @_wraps(np.nanvar)
 def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("nanvar", a)
+  lax._check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
     raise ValueError("nanvar does not support the `out` argument.")
 
@@ -2083,6 +2089,7 @@ def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 @_wraps(np.nanstd)
 def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("nanstd", a)
+  lax._check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
     raise ValueError("nanstd does not support the `out` argument.")
   return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
@@ -2116,6 +2123,7 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
   @_wraps(np_reduction)
   def cumulative_reduction(a, axis=None, dtype=None):
     _check_arraylike(np_reduction.__name__, a)
+    lax._check_user_dtype_supported(dtype, np_reduction.__name__)
     # jit doesn't support kwargs as static_args.
     return _cumulative_reduction(a, axis, dtype)
   return cumulative_reduction
@@ -2679,6 +2687,7 @@ def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 @_wraps(np.logspace)
 def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
   """Implementation of logspace differentiable in start and stop args."""
+  lax._check_user_dtype_supported(dtype, "logspace")
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
   computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
   start = asarray(start, dtype=computation_dtype)
@@ -2691,6 +2700,7 @@ def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None, axis=0):
 @_wraps(np.geomspace)
 def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis=0):
   """Implementation of geomspace differentiable in start and stop args."""
+  lax._check_user_dtype_supported(dtype, "geomspace")
   dtype = dtype or result_type(start, stop, dtypes.canonicalize_dtype(float_))
   computation_dtype = promote_types(dtype, dtypes.canonicalize_dtype(float_))
   start = asarray(start, dtype=computation_dtype)
@@ -4647,6 +4657,7 @@ def _nbytes(arr):
 
 
 def _view(arr, dtype=None, type=None):
+  lax._check_user_dtype_supported(dtype, "view")
   if type is not None:
     raise NotImplementedError("`type` argument of array.view()")
   if dtype is None:
