@@ -1,0 +1,8 @@
+const tf = require('@tensorflow/tfjs-node')
+
+{const_tensor_args_decl}
+
+tf.loadGraphModel('file://{path_to_model}').then(model => {
+  let outputs = model.execute({{args_as_dictionary}})
+  tf.print(outputs)
+});
