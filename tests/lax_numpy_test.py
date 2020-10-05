@@ -1683,6 +1683,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testRepeatScalarFastPath(self):
+    a = jnp.array([1,2,3,4])
+    f = lambda a: jnp.repeat(a, repeats=2)
+    jaxpr = api.make_jaxpr(f)(a)
+    self.assertLessEqual(len(jaxpr.jaxpr.eqns), 6)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_ind={}_inv={}_count={}".format(
           jtu.format_shape_dtype_string(shape, dtype),

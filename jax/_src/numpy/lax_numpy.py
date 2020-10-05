@@ -2959,6 +2959,19 @@ def repeat(a, repeats, axis=None, *, total_repeat_length=None):
       "When jit-compiling jnp.repeat, the total number of repeats must be static. "
       "To fix this, either specify a static value for `repeats`, or pass a static "
       "value to `total_repeat_length`.")
+
+    # Fast path for when repeats is a scalar.
+    if np.ndim(repeats) == 0 and ndim(a) != 0:
+      input_shape = a.shape
+      aux_axis = axis if axis < 0 else axis + 1
+      a = expand_dims(a, aux_axis)
+      reps = [1] * len(a.shape)
+      reps[aux_axis] = repeats
+      a = tile(a, reps)
+      result_shape = list(input_shape)
+      result_shape[axis] *= repeats
+      return reshape(a, result_shape)
+
     repeats = np.ravel(repeats)
     if ndim(a) != 0:
       repeats = np.broadcast_to(repeats, [a.shape[axis]])
