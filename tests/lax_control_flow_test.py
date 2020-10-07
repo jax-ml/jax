@@ -1532,7 +1532,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = jnp.arange(5)
     # Body output not a tuple
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
+        re.escape("scan body output must be a pair, got ShapedArray(float32[]) in first pass.")):
       lax.scan(lambda c, x: np.float32(0.), 0, a)
     with  self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "
@@ -2462,6 +2462,15 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         r'invalid cond param linear of type str, '
         r'tuple of bool required:\nmulti\nline',
         lambda: core.check_jaxpr(jaxpr))
+
+  def test_scan_weak_type(self):
+    def func(x, y):
+      return x + y, y
+    init = 0
+    x = jnp.ones(5, dtype='int16')
+    carry, result = lax.scan(func, init, x)
+    self.assertEqual(carry, x.sum())
+    self.assertArraysEqual(result, x)
 
 
 if __name__ == '__main__':

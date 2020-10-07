@@ -1171,9 +1171,7 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
     loop carry value and the second element represents the stacked outputs of
     the second output of ``f`` when scanned over the leading axis of the inputs.
   """
-  init_flat, init_tree = tree_flatten(init)
   xs_flat, xs_tree = tree_flatten(xs)
-  in_flat, in_tree = tree_flatten((init, xs))
 
   try:
     lengths = [x.shape[0] for x in xs_flat]
@@ -1213,21 +1211,46 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
     ys = tree_multimap(stack, *maybe_reversed(ys))
     return carry, ys
 
-  carry_avals = tuple(_map(_abstractify, init_flat))
   x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
   x_dtypes = [x.dtype for x in xs_flat]
   x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
-  jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
-  out_tree_children = out_tree.children()
-  if len(out_tree_children) != 2:
-    msg = "scan body output must be a pair, got {}."
-    raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
-  # TODO(jakevdp): if any of carry_avals are weakly typed, promote them with output
-  # carry avals to get matching types & re-compile the jaxpr.
-  # Question to think about: will there be a fixed point?
+
+  # The carry input and output avals must match exactly. However, we want to account for
+  # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
+  # may not match the output despite being compatible by virtue of their weak type.
+  # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
+  # necessary, a second time with modified init values.
+  for pass_ in ['first', 'second']:
+    init_flat, init_tree = tree_flatten(init)
+    in_flat, in_tree = tree_flatten((init, xs))
+
+    carry_avals = tuple(_map(_abstractify, init_flat))
+    jaxpr, consts, out_tree = _initial_style_jaxpr(f, in_tree, carry_avals + x_avals)
+    out_tree_children = out_tree.children()
+    if len(out_tree_children) != 2:
+      msg = "scan body output must be a pair, got {} in {} pass."
+      raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals), pass_))
+    carry_avals_out = jaxpr.out_avals[:out_tree_children[0].num_leaves]
+
+    # weak type logic run only on the first pass.
+    if pass_ != 'first':
+      break
+    # this error will be caught by the check below.
+    if len(carry_avals) != len(carry_avals_out):
+      break
+    weak_mismatches = [i for i, (a1, a2) in enumerate(zip(carry_avals, carry_avals_out))
+                       if a1.weak_type and not core.typematch(a1, a2)]
+    if not weak_mismatches:
+      break
+
+    for i in weak_mismatches:
+      new_dtype = dtypes.result_type(init_flat[i], carry_avals_out[i])
+      init_flat[i] = lax.convert_element_type(init_flat[i], new_dtype)
+    init = tree_unflatten(init_tree, init_flat)
+
   _check_tree_and_avals("scan carry output and input",
                         # Extract the subtree and avals for the first element of the return tuple
-                        out_tree_children[0], jaxpr.out_avals[:out_tree_children[0].num_leaves],
+                        out_tree_children[0], carry_avals_out,
                         init_tree, carry_avals)
 
   out = scan_p.bind(*itertools.chain(consts, in_flat),
