@@ -247,7 +247,7 @@ def cache(call: Callable):
       thread_local.most_recent_entry = None
       return result
 
-  memoized_fun.most_recent_entry = _most_recent_entry
+  memoized_fun.most_recent_entry = _most_recent_entry  # type: ignore
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
 
   return memoized_fun
