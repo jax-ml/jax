@@ -9,9 +9,9 @@ Change Log
 
 These are the release notes for JAX.
 
-jax 0.2.1 (not yet released)
+jax 0.2.1 (October 6 2020)
 --------------------------
-* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.0...master>`_.
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.0...jax-v0.2.1>`_.
 
 * Improvements:
 
