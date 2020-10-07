@@ -1016,6 +1016,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+
+  def testMatmulTransposed(self):
+    a = np.random.random((3, 2))
+    b = np.random.random((3, 2))
+
+    ab1 = jnp.matmul(jnp.transpose(a), b)
+    ab2 = jnp.matmul(a, b, transpose_a=True)
+    jtu._assert_numpy_allclose(ab1, ab2)
+
+    ab1 = jnp.matmul(a, jnp.transpose(b))
+    ab2 = jnp.matmul(a, b, transpose_b=True)
+    jtu._assert_numpy_allclose(ab1, ab2)
+
+    a = np.random.random((3, 2))
+    b = np.random.random((2, 3))
+
+    ab1 = jnp.matmul(jnp.transpose(a), jnp.transpose(b))
+    ab2 = jnp.matmul(a, b, transpose_a=True, transpose_b=True)
+    jtu._assert_numpy_allclose(ab1, ab2)
+
+
   def testTensordotErrors(self):
     a = np.random.random((3, 2, 2))
     b = np.random.random((2,))

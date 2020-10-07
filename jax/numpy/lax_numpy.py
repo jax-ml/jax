@@ -3154,7 +3154,7 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
 
 
 @_wraps(np.matmul, lax_description=_PRECISION_DOC)
-def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
+def matmul(a, b, *, precision=None, transpose_a=False, transpose_b=False):  # pylint: disable=missing-docstring
   _check_arraylike("matmul", a, b)
   for i, x in enumerate((a, b)):
     if ndim(x) < 1:
@@ -3209,8 +3209,12 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
 
   a = lax.squeeze(a, tuple(a_squeeze))
   b = lax.squeeze(b, tuple(b_squeeze))
+
+  a_contract_dims = ndim(a) - 1 - (a_is_mat and transpose_a)
+  b_contract_dims = ndim(b) - 1 - (b_is_mat and not transpose_b)
+
   out = lax.dot_general(
-    a, b, (((ndim(a) - 1,), (ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
+    a, b, (((a_contract_dims,), (b_contract_dims,)), (a_batch, b_batch)),
     precision=precision)
   return lax.transpose(out, perm)
 
