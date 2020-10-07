@@ -12,7 +12,8 @@ or TensorFlow Hub.
 ### Usage: converting basic functions.
 
 We describe below some simple usage scenarios. More involved examples, including
-Flax models and their use with TensorFlow Hub and Keras.
+Flax models and their use with TensorFlow Hub and Keras, are described in the 
+[getting started Colab](JAX2TF_getting_started.ipynb).
 
 As a rule of thumb, if you can `jax.jit` your function then you should be able
 to use `jax2tf.convert`:
@@ -55,6 +56,9 @@ tf.saved_model.save(my_model, '/some/directory')
 # Restoring (note: the restored model does *not* require JAX to run, just XLA).
 restored_model = tf.saved_model.load('/some/directory')
 ```
+
+More involved examples of using SavedModel are described in the 
+[getting started Colab](JAX2TF_getting_started.ipynb).
 
 ## Differentiaion
 
