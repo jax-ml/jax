@@ -405,7 +405,7 @@ class PythonJitTest(CPPJitTest):
       return jnp.add(x, np.nan)
     f(1)
 
-    msg = "invalid value \(nan\) encountered in add"  # 'add' not 'xla_call'
+    msg = r"invalid value \(nan\) encountered in add"  # 'add' not 'xla_call'
     FLAGS.jax_debug_nans = True
     try:
       with self.assertRaisesRegex(FloatingPointError, msg):
