@@ -1018,6 +1018,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   def testMatmulTransposed(self):
+    # Test Matrix Matrix Behaviour
     a = np.random.random((3, 2))
     b = np.random.random((3, 2))
 
@@ -1034,6 +1035,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     ab1 = jnp.matmul(jnp.transpose(a), jnp.transpose(b))
     ab2 = jnp.matmul(a, b, transpose_a=True, transpose_b=True)
+    jtu._assert_numpy_allclose(ab1, ab2)
+
+    # Test Tensor Tensor Behaviour
+    a = np.random.random((3, 4, 2))
+    b = np.random.random((3, 4, 2))
+
+    ab1 = jnp.matmul(jnp.transpose(a, [0, 2, 1]), b)
+    ab2 = jnp.matmul(a, b, transpose_a=True)
+    jtu._assert_numpy_allclose(ab1, ab2)
+
+    ab1 = jnp.matmul(a, jnp.transpose(b, [0, 2, 1]))
+    ab2 = jnp.matmul(a, b, transpose_b=True)
     jtu._assert_numpy_allclose(ab1, ab2)
 
 
