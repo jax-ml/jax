@@ -211,6 +211,13 @@ def wrap_init(f, params={}) -> WrappedFun:
   return WrappedFun(f, (), (), tuple(sorted(params.items())))
 
 
+class _CacheLocalContext(threading.local):
+
+  def __init__(self):
+    super(_CacheLocalContext, self).__init__()
+    self.most_recent_entry = None
+
+
 def cache(call: Callable):
   """Memoization decorator for functions taking a WrappedFun as first argument.
 
@@ -223,8 +230,7 @@ def cache(call: Callable):
      A memoized version of ``call``.
   """
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
-  thread_local: threading.local = threading.local()
-  thread_local.most_recent_entry = None
+  thread_local: threading.local = _CacheLocalContext()
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
