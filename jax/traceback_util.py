@@ -36,6 +36,8 @@ _jax_message_append = (
 def path_starts_with(path, path_prefix):
   path = os.path.abspath(path)
   path_prefix = os.path.abspath(path_prefix)
+  if not os.path.exists(path_prefix):
+    return False
   common = os.path.commonpath([path, path_prefix])
   return os.path.samefile(common, path_prefix)
 
