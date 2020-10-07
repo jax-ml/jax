@@ -564,6 +564,7 @@ aval_method = namedtuple("aval_method", ["fun"])
 
 
 class EvalTrace(Trace):
+  # See comments in https://github.com/google/jax/pull/3370
   def pure(self, x): return x
   lift = sublift = pure
 
@@ -594,6 +595,7 @@ class MainTrace:
             self.level == other.level and self.trace_type == other.trace_type)
 
 class TraceStack:
+  # See comments in https://github.com/google/jax/pull/3370
   upward: List[MainTrace]
   downward: List[MainTrace]
 
@@ -649,12 +651,16 @@ class ThreadLocalState(threading.local):
     self.trace_state = TraceState()
 thread_local_state = ThreadLocalState()
 
+def trace_state_clean() -> bool:
+  trace_state = thread_local_state.trace_state
+  return (trace_state.substack == [Sublevel(0)] and
+          trace_state.axis_env == [] and
+          trace_state.trace_stack.stack == [MainTrace(0, EvalTrace)] and
+          trace_state.trace_stack.dynamic == MainTrace(0, EvalTrace))
+
 def reset_trace_state() -> bool:
   "Reset the global trace state and return True if it was already clean."
-  if (thread_local_state.trace_state.substack != [Sublevel(0)] or
-      thread_local_state.trace_state.axis_env != [] or
-      thread_local_state.trace_state.trace_stack.stack != [MainTrace(0, EvalTrace)] or
-      thread_local_state.trace_state.trace_stack.dynamic != MainTrace(0, EvalTrace)):
+  if not trace_state_clean():
     thread_local_state.trace_state.__init__()  # type: ignore
     return False
   else:
@@ -666,6 +672,7 @@ def cur_sublevel() -> Sublevel:
 @contextmanager
 def new_main(trace_type: Type[Trace], dynamic: bool = False,
                 ) -> Generator[MainTrace, None, None]:
+  # See comments in https://github.com/google/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   level = stack.next_level()
   main = MainTrace(level, trace_type)
@@ -689,6 +696,7 @@ def new_main(trace_type: Type[Trace], dynamic: bool = False,
 
 @contextmanager
 def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
+  # See comments in https://github.com/google/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   main = MainTrace(0, trace_type)
   prev_dynamic, stack.dynamic = stack.dynamic, main
