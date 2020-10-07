@@ -1065,7 +1065,9 @@ class AbstractToken(AbstractValue):
 abstract_token = AbstractToken()
 
 
-def raise_to_shaped(aval: AbstractValue, weak_type=False):
+def raise_to_shaped(aval: AbstractValue, weak_type=None):
+  if weak_type is None:
+    weak_type = getattr(aval, 'weak_type', False)
   for typ in type(aval).mro():
     handler = raise_to_shaped_mappings.get(typ)
     if handler: return handler(aval, weak_type)
@@ -1235,8 +1237,7 @@ def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
     return False
 
 def typematch(aval1: UnshapedArray, aval2: UnshapedArray) -> bool:
-  return (raise_to_shaped(aval1).strip_weak_type() ==
-          raise_to_shaped(aval2).strip_weak_type())
+  return raise_to_shaped(aval1, weak_type=False) == raise_to_shaped(aval2, weak_type=False)
 
 class JaxprTypeError(TypeError): pass
 

@@ -36,7 +36,6 @@ from jax.lax import lax
 from jax import linear_util as lu
 from jax.abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.api_util import flatten_fun_nokwargs
-from jax.core import get_aval, typecheck, typematch
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -424,7 +423,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
 
   newvar = core.gensym([cond_jaxpr.jaxpr])
   invars_aug = (
-      cond_jaxpr.jaxpr.invars + [newvar(get_aval(x)) for x in init_dot])
+      cond_jaxpr.jaxpr.invars + [newvar(core.get_aval(x)) for x in init_dot])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
@@ -1005,8 +1004,7 @@ def _cond_transpose(cts, *args, branches, linear):
 
   branches_trans = tuple(
       _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
-  lin_in_avals = _map(
-      raise_to_shaped, [a for a, l in zip(in_avals, linear) if l])
+  lin_in_avals = [raise_to_shaped(a, weak_type=False) for a, l in zip(in_avals, linear) if l]
   assert all(jaxpr.out_avals == lin_in_avals for jaxpr in branches_trans)
 
   res = ops[:num_res]
@@ -1015,7 +1013,7 @@ def _cond_transpose(cts, *args, branches, linear):
 
   out = cond_p.bind(
       index, *res, *cts, branches=branches_trans, linear=linear_trans)
-  assert all(_map(typecheck, lin_in_avals, out))
+  assert all(_map(core.typecheck, lin_in_avals, out))
 
   out_iter = iter(out)
   out = [next(out_iter) if l else None for l in linear]
@@ -1224,6 +1222,9 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
   if len(out_tree_children) != 2:
     msg = "scan body output must be a pair, got {}."
     raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
+  # TODO(jakevdp): if any of carry_avals are weakly typed, promote them with output
+  # carry avals to get matching types & re-compile the jaxpr.
+  # Question to think about: will there be a fixed point?
   _check_tree_and_avals("scan carry output and input",
                         # Extract the subtree and avals for the first element of the return tuple
                         out_tree_children[0], jaxpr.out_avals[:out_tree_children[0].num_leaves],
@@ -1871,7 +1872,7 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   if tree1 != tree2:
     msg = ("{} must have same type structure, got {} and {}.")
     raise TypeError(msg.format(what, tree1, tree2))
-  if not all(safe_map(typematch, avals1, avals2)):
+  if not all(safe_map(core.typematch, avals1, avals2)):
     msg = ("{} must have identical types, "
            "got\n{}\nand\n{}.")
     raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),

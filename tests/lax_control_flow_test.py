@@ -240,7 +240,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
     with self.assertRaisesWithLiteralMatch(TypeError,
         ("body_fun output and input must have identical types, got\n"
-         "ShapedArray(bool[])\n"
+         "ShapedArray(bool[], weak_type=True)\n"
          "and\n"
          "ShapedArray(float32[]).")):
       lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))

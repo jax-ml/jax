@@ -453,6 +453,15 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         r"Variable '.+_test' not defined\n\nin equation:",
         lambda: core.check_jaxpr(jaxpr))
 
+  @parameterized.parameters(
+    {'value': 0, 'weak_type': True},
+    {'value': np.int32(0), 'weak_type': False},
+    {'value': np.array([0]), 'weak_type': False}
+  )
+  def test_raise_to_shaped_weak_type(self, value, weak_type):
+    aval = core.raise_to_shaped(core.get_aval(value))
+    self.assertEqual(aval.weak_type, weak_type)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

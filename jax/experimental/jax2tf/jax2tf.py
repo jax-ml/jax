@@ -344,7 +344,7 @@ class TensorFlowTrace(core.Trace):
         *[t.aval for t in tracers], **params)
       if primitive.multiple_results:
         for o, expected_aval in zip(out, expected_out_aval):  # type: ignore
-          assert o.aval == expected_aval, (
+          assert o.aval.strip_weak_type() == expected_aval.strip_weak_type(), (
             f"{primitive}: out.aval = {o.aval}; expected {expected_aval}")
       else:
         assert out.aval == expected_out_aval, (  # type: ignore

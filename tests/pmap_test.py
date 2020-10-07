@@ -1038,7 +1038,7 @@ class PmapTest(jtu.JaxTestCase):
       return lax.scan(body, 0, x)[0]
     device_count = xla_bridge.device_count()
     shape = (device_count, 10)
-    self.assertAllClose(f(jnp.ones(shape, dtype=np.int32)),
+    self.assertAllClose(f(jnp.ones(shape, dtype=int)),
                         (np.arange(device_count) + 1) * 10)
 
   def testVmapOfPmap(self):

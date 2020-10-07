@@ -169,7 +169,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
       if not core.skip_checks:
         ct_aval = core.get_aval(ct_env[v])
-        assert v.aval == core.lattice_join(v.aval, ct_aval), (v.aval, ct_aval)
+        assert v.aval.strip_weak_type() == core.lattice_join(v.aval, ct_aval).strip_weak_type(), (v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.get(v, Zero(v.aval))
@@ -371,8 +371,8 @@ class JVPTracer(Tracer):
 
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
-    primal_aval = raise_to_shaped(get_aval(primal))
-    tangent_aval = raise_to_shaped(get_aval(tangent))
+    primal_aval = raise_to_shaped(get_aval(primal), weak_type=False)
+    tangent_aval = raise_to_shaped(get_aval(tangent), weak_type=False)
     assert primal_aval.shape == tangent_aval.shape, (primal_aval.shape, tangent_aval.shape)
     expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
     assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
