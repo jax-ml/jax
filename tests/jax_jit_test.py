@@ -82,7 +82,7 @@ class JaxJitTest(parameterized.TestCase):
     self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
 
   def test_signature_support(self):
-    if version < (0, 1, 54):
+    if version < (0, 1, 56):
       return
 
     def f(a, b, c):
