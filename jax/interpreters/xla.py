@@ -558,8 +558,18 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_inv
   try:
     return compiled_fun(*args)
   except FloatingPointError:
+    assert FLAGS.jax_debug_nans  # compiled_fun can only raise in this case
     print("Invalid value encountered in the output of a jit function. "
           "Calling the de-optimized version.")
+    # We want to run the wrapped function again (after _xla_callable already ran
+    # it), but linear_util.WrappedFun instances are meant to be run only once.
+    # In addition to re-executing the Python code, which is usually undesirable
+    # but which FLAGS.jax_debug_nans is meant to opt into, we'll be re-executing
+    # any linear_util.py-style side effects, i.e. re-populating Stores created
+    # by any transformation_with(aux's applied to fun. Since this is
+    # intentional here, to avoid "Store occupied" errors we reset the stores to
+    # be empty.
+    for store in fun.stores: store.reset()
     return fun.call_wrapped(*args)  # probably won't return
 
 def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
