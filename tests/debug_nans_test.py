@@ -53,6 +53,15 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = 0. / A
       ans.block_until_ready()
 
+  def testCallDeoptimized(self):
+    @jax.jit
+    def f(x):
+      return jnp.add(x, jnp.nan)
+
+    msg = r"invalid value \(nan\) encountered in add"  # 'add' not 'xla_call'
+    with self.assertRaisesRegex(FloatingPointError, msg):
+      f(1)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
