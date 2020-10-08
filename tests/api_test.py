@@ -399,6 +399,20 @@ class PythonJitTest(CPPJitTest):
 
     jit_fun(a)  # doesn't crash
 
+  def test_debug_nans(self):
+    @self.jit
+    def f(x):
+      return jnp.add(x, np.nan)
+    f(1)
+
+    msg = r"invalid value \(nan\) encountered in add"  # 'add' not 'xla_call'
+    FLAGS.jax_debug_nans = True
+    try:
+      with self.assertRaisesRegex(FloatingPointError, msg):
+        f(1)
+    finally:
+      FLAGS.jax_debug_nans = False
+
 
 class APITest(jtu.JaxTestCase):
 
