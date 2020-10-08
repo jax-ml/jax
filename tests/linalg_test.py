@@ -1369,7 +1369,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       a = a / np.linalg.norm(a, 1) * norm
       def expm(x):
         return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
-      jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=2, atol=tol,
+      jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=1, atol=tol,
                       rtol=tol)
 
 if __name__ == "__main__":
