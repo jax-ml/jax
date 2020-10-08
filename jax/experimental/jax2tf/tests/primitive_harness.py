@@ -271,8 +271,10 @@ lax_min_max = tuple(
   for f_jax in [lax.min, lax.max]
   for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
   for lhs, rhs in [
-    (np.array([np.inf], dtype=dtype), np.array([np.nan], dtype=dtype)),
-    (np.array([-np.inf], dtype=dtype), np.array([np.nan], dtype=dtype))
+    (np.array([np.inf, np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype)),
+    (np.array([-np.inf, -np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype))
   ]
 )
 
