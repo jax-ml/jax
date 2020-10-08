@@ -153,6 +153,11 @@ def convert(fun, with_gradient=True):
   api._check_callable(fun)
 
   def converted_fun(*args: TfVal) -> TfVal:
+    # TODO: is there a better way to check if we are inside a transformation?
+    if not core.trace_state_clean():
+      raise ValueError("convert must be used outside all JAX transformations."
+                       + f"Trace state: {core.thread_local_state.trace_state}")
+
     # This function may take pytrees of TfVals. We can only set
     # tf.custom_gradient on functions that take a flat argument list.
     args_flat, in_tree = tree_util.tree_flatten((args, {}))
@@ -211,7 +216,7 @@ def convert(fun, with_gradient=True):
 
 def _interpret_fun(fun: lu.WrappedFun,
                    in_vals: Sequence[TfValOrUnit]) -> Sequence[TfValOrUnit]:
-  with core.new_main(TensorFlowTrace) as main:
+  with core.new_base_main(TensorFlowTrace) as main:
     fun = _interpret_subtrace(fun, main)
     out_vals: Sequence[TfValOrUnit] = fun.call_wrapped(*in_vals)
     del main
@@ -312,18 +317,37 @@ class TensorFlowTracer(core.Tracer):
 
 
 class TensorFlowTrace(core.Trace):
-  """Trace class that underlies the jax2tf transformation."""
+  """Trace class that underlies the jax2tf transformation.
+
+  We are going to ensure that jax2tf.convert is never nested inside other
+  transformations. This is sufficient for intended use cases (converting
+  fully-transformed JAX code). It also simplifies our job because we do not have
+  to handle situations where we apply primitives on a mix of TF values and
+  JAX tracers from an outer transformation. E.g., for addition both the TF values
+  and the JAX tracers have an override and they get confused if they see values
+  from the other world.
+
+  Hence a TFT trace does not interact with non-TFT traces at lower-level. For
+  higher-order control-flow primitives we invoke recursively
+  _interpret_fun on the body of the conditional, which will create a nested TFT.
+
+  We do want to allow transformations nested inside a TensorFlowTrace (TFT), but
+  those will introduce their own MainTrace, and any operations involving those
+  will be done on those traces, i.e., not a concern for TFT.
+  """
   def pure(self, val: TfValOrUnit):
     """Lifts a non-Tracer into the TensorFlowTrace."""
     return TensorFlowTracer(self, val)
 
   def lift(self, val: core.Tracer):
-    """Lifts a core.Tracer from a lower-level main into the TensorFlowTrace."""
-    # TODO(necula): this should never be needed
-    return TensorFlowTracer(self, val)
+    # This would be called when we need to raise a tracer from a lower-level
+    # main into the TensorFlowTrace. Since the TensorFlowTrace is never nested
+    # inside another transform, there are no lower-level main traces.
+    assert False
 
   def sublift(self, val: TensorFlowTracer):
-    # TODO(necula): this should never be needed
+    # This is called when we need to raise a tracer from the same master,
+    # but a lower sublevel. This could come from a nested jit.
     return TensorFlowTracer(self, val.val)
 
   def process_primitive(self, primitive: core.Primitive,
