@@ -1423,7 +1423,7 @@ def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False, print_shapes: bool = False
   pps = pp_eqns(jaxpr.eqns, source_info, print_shapes)
   str_outvars = str(tuple(jaxpr.outvars))
   return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars, print_shapes),
-                                         pp_vars(jaxpr.invars), print_shapes)) +
+                                         pp_vars(jaxpr.invars, print_shapes))) +
           ((pp('let ') >> vcat(pps))
            + pp('in {} }}'.format(str_outvars))).indent(2))
 
