@@ -1199,22 +1199,6 @@ class APITest(jtu.JaxTestCase):
     tangent, = fn_vjp(out)
     self.assertArraysEqual(tangent, np.zeros(shape=(4, 1), dtype=float0))
 
-  def test_custom_vjp_int(self):
-    @api.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-    def f_fwd(x):
-      return f(x), jnp.cos(x)
-    def f_rev(cos_x, g):
-      return (2 * cos_x * g,)
-    f.defvjp(f_fwd, f_rev)
-
-    x = 3
-    self.assertEqual(api.grad(f, allow_int=True)(x),
-                     np.zeros(shape=(), dtype=float0))
-    self.assertEqual(api.value_and_grad(f, allow_int=True)(x),
-                     (jnp.sin(x), np.zeros(shape=(), dtype=float0)))
-
   def test_jit_vjp_of_int(self):
     primal, fn_vjp = api.vjp(lambda x, y: x+y, 2, 1)
     tangent_x, tangent_i = jax.jit(fn_vjp)(1)
@@ -3126,6 +3110,40 @@ class CustomJVPTest(jtu.JaxTestCase):
     for ans in results:
       self.assertAllClose(ans, expected)
 
+  def test_float0(self):
+    @api.custom_jvp
+    def f(x, y):
+      return x, y
+    def f_jvp(primals, _):
+      # we need a defined (non-float0) tangent to trigger the rule
+      return primals, (2., 1)
+    f.defjvp(f_jvp)
+
+    primals = (2., 3)
+    tangents = (np.ones(()), np.zeros((), float0),)
+    expected_tangents = (2., np.zeros((), float0))
+    self.assertArraysEqual(api.jvp(f, primals, tangents),
+                           (primals, expected_tangents))
+
+  def test_float0_initial_style(self):
+    @api.custom_jvp
+    def f(x, y):
+      return x, y
+    def f_jvp(primals, _):
+      x, y = primals
+      return (x, y), (2., 1)
+    f.defjvp(f_jvp)
+
+    def foo(x, y):
+      out, _ = lax.scan(lambda c, _: (f(*c), None), (x, y), None, length=1)
+      return out
+
+    primals = (2., 3)
+    tangents = (np.ones(()), np.zeros((), float0),)
+    expected_tangents = (2., np.zeros((), float0))
+    self.assertArraysEqual(api.jvp(foo, primals, tangents),
+                           (primals, expected_tangents))
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -3504,6 +3522,42 @@ class CustomVJPTest(jtu.JaxTestCase):
       return g_vjp
     y, = z(1.0)(3.0)
     self.assertAllClose(y, jnp.array(6.0))
+
+  def test_float0(self):
+    @api.custom_vjp
+    def f(x, _):
+      return x
+    def f_fwd(x, _):
+      # we need a defined (non-float0) tangent to trigger the rule
+      return x, (2., 1)
+    def f_rev(*_):
+      return (2., 1)
+    f.defvjp(f_fwd, f_rev)
+
+    x = 2.
+    y = 3
+    self.assertEqual(api.grad(f, allow_int=True, argnums=(0, 1))(x, y),
+                     (2., np.zeros(shape=(), dtype=float0)))
+
+  def test_float0_initial_style(self):
+    @api.custom_vjp
+    def f(x):
+      return x
+    def f_fwd(x):
+      return x, (2., x)
+    def f_rev(*_):
+      return ((2., 1),)
+    f.defvjp(f_fwd, f_rev)
+
+    def foo(x, y):
+      out, _ = lax.scan(lambda c, _: (f(c), None), (x, y), None, length=1)
+      return out[0]
+
+    x = 2.
+    y = 3
+    self.assertEqual(api.grad(foo, allow_int=True, argnums=(0, 1))(x, y),
+                     (2., np.zeros(shape=(), dtype=float0)))
+
 
 class InvertibleADTest(jtu.JaxTestCase):
 

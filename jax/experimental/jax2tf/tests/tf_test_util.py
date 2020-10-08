@@ -16,7 +16,7 @@ import atexit
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 import tensorflow as tf  # type: ignore[import]
 
 import jax
@@ -126,16 +126,28 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                                     jax2tf.jax2tf.to_tf_dtype(v.dtype))
       return v
 
-    tf_args = tuple(map(convert_if_bfloat16, args))
+    tf_args = tf.nest.map_structure(convert_if_bfloat16, args)
+
+    def make_input_signature(*tf_args) -> List[tf.TensorSpec]:
+      # tf_args can be PyTrees
+      def make_one_arg_signature(tf_arg):
+        return tf.TensorSpec(np.shape(tf_arg), tf_arg.dtype)
+      return tf.nest.map_structure(make_one_arg_signature, list(tf_args))
 
     def run_tf(mode):
       if mode == "eager":
         return func_tf(*tf_args)
       elif mode == "graph":
-        return tf.function(func_tf, autograph=False)(*tf_args)
+        return tf.function(
+          func_tf, autograph=False,
+          input_signature=make_input_signature(*tf_args))(*tf_args)
       elif mode == "compiled":
-        return tf.function(func_tf, autograph=False,
-                           experimental_compile=True)(*tf_args)
+        # Adding an explicit input_signature prevents TF from constant-folding
+        # the computation eagerly before compilation
+        return tf.function(
+          func_tf, autograph=False,
+          experimental_compile=True,
+          input_signature=make_input_signature(*tf_args))(*tf_args)
       else:
         assert False
 
