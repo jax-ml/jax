@@ -1567,10 +1567,6 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
       lu.wrap_init(core.jaxpr_as_fun(jaxpr_1)), in_pvals_1,
       instantiate=[True] * (num_carry + num_ys) + [False] * num_res)
 
-  # TODO(cjfj): Explain the need for the code below.
-  for var in jaxpr_1_opt.invars[:num_consts]:
-    var.aval = core.abstract_unit
-
   jaxpr_1_opt = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr_1_opt), ())
   num_consts_1 = num_consts + len(consts_1)
   # any now-known residuals are intensive, so we want to revise jaxpr_2 to take
