@@ -34,20 +34,24 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
   def testSingleResultPrimitiveNoNaN(self):
     A = jnp.array([[1., 2.], [2., 3.]])
-    _ = jnp.tanh(A)
+    ans = jnp.tanh(A)
+    ans.block_until_ready()
 
   def testMultipleResultPrimitiveNoNaN(self):
     A = jnp.array([[1., 2.], [2., 3.]])
-    _, _ = jnp.linalg.eigh(A)
+    ans, _ = jnp.linalg.eigh(A)
+    ans.block_until_ready()
 
   def testJitComputationNoNaN(self):
     A = jnp.array([[1., 2.], [2., 3.]])
-    _ = jax.jit(jnp.tanh)(A)
+    ans = jax.jit(jnp.tanh)(A)
+    ans.block_until_ready()
 
   def testSingleResultPrimitiveNaN(self):
     A = jnp.array(0.)
     with self.assertRaises(FloatingPointError):
-      _ = 0. / A
+      ans = 0. / A
+      ans.block_until_ready()
 
 
 if __name__ == '__main__':
