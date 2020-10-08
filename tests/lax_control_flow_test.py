@@ -230,10 +230,10 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testWhileTypeErrors(self):
     """Test typing error messages for while."""
     with self.assertRaisesRegex(TypeError,
-        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]) in first pass.")):
+        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]).")):
       lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
     with  self.assertRaisesRegex(TypeError,
-        re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])] in first pass.")):
+        re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
       lax.while_loop(lambda c: np.float32(1.), lambda c: c, np.float32(0.))
     with self.assertRaisesRegex(TypeError,
         re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
@@ -1532,7 +1532,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = jnp.arange(5)
     # Body output not a tuple
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan body output must be a pair, got ShapedArray(float32[]) in first pass.")):
+        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
       lax.scan(lambda c, x: np.float32(0.), 0, a)
     with  self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "
