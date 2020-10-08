@@ -146,6 +146,17 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
+def replace_float0s(primals, tangents):
+  return [core.zeros_like_float0(tangent, dtype(primal))
+          if dtype(tangent) is float0 else tangent
+          for primal, tangent in zip(primals, tangents)]
+
+def recast_to_float0(primals, tangents):
+  return [Zero(get_aval(primal).at_least_vspace())
+          if core.primal_dtype_to_tangent_dtype(dtype(primal)) == float0
+          else tangent
+          for primal, tangent in zip(primals, tangents)]
+
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type errors if you will)
 def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   if all(type(ct) is Zero for ct in cotangents_in):
@@ -301,23 +312,20 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)
     tangents_in = map(instantiate_zeros, tangents_in)
-    # Cast float0 to regular float zeros because custom jvp rules don't
+    # Cast float0 to zeros with the primal dtype because custom jvp rules don't
     # currently handle float0s
-    tangents_in = [core.zeros_like_float0(tangent, dtype(primal))
-                   if dtype(tangent) is float0 else tangent
-                   for primal, tangent in zip(primals_in, tangents_in)]
+    tangents_in = replace_float0s(primals_in, tangents_in)
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
+    tangents_out = recast_to_float0(primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     tangents_in = map(instantiate_zeros, tangents_in)
-    # Cast float0 to regular float zeros because custom vjp rules don't
+    # Cast float0 to zeros with the primal dtype because custom vjp rules don't
     # currently handle float0s
-    tangents_in = [core.zeros_like_float0(tangent, dtype(primal))
-                   if dtype(tangent) is float0 else tangent
-                   for primal, tangent in zip(primals_in, tangents_in)]
+    tangents_in = replace_float0s(primals_in, tangents_in)
     res_and_primals_out = fwd.call_wrapped(*map(core.full_lower, primals_in))
     out_tree, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
@@ -325,6 +333,7 @@ class JVPTrace(Trace):
     tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         avals_out=avals_out)
+    tangents_out = recast_to_float0(primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def join(self, xt, yt):
