@@ -240,7 +240,7 @@ lax_add_mul = tuple(
 ) + tuple(
   Harness(f"fun={f_jax.__name__}_bounds_{jtu.dtype_str(dtype)}",
           f_jax,
-          [StaticArg(lhs), StaticArg(rhs)],
+          [lhs, rhs],
           f_jax=f_jax,
           dtype=dtype)
   for f_jax in [lax.add, lax.mul]
@@ -265,14 +265,16 @@ lax_min_max = tuple(
 ) + tuple(
   Harness(f"fun={f_jax.__name__}_inf_nan_{jtu.dtype_str(dtype)}_{lhs[0]}_{rhs[0]}",
           f_jax,
-          [StaticArg(lhs), StaticArg(rhs)],
+          [lhs, rhs],
           f_jax=f_jax,
           dtype=dtype)
   for f_jax in [lax.min, lax.max]
   for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
   for lhs, rhs in [
-    (np.array([np.inf], dtype=dtype), np.array([np.nan], dtype=dtype)),
-    (np.array([-np.inf], dtype=dtype), np.array([np.nan], dtype=dtype))
+    (np.array([np.inf, np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype)),
+    (np.array([-np.inf, -np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype))
   ]
 )
 
