@@ -306,8 +306,14 @@ custom_jvp_call_jaxpr_p.def_abstract_eval(_custom_jvp_call_jaxpr_abstract_eval)
 def _custom_jvp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, jvp_jaxpr_thunk):
   jvp_jaxpr = jvp_jaxpr_thunk()
   tangents = map(ad.instantiate_zeros, tangents)
+  # Cast float0 to zeros with the primal dtype because custom jvp rules don't
+  # currently handle float0s
+  tangents = ad.replace_float0s(primals, tangents)
   outs = core.jaxpr_as_fun(jvp_jaxpr)(*primals, *tangents)
-  return split_list(outs, [len(outs) // 2])
+  primals_out, tangents_out = split_list(outs, [len(outs) // 2])
+  tangents_out = ad.recast_to_float0(primals_out, tangents_out)
+  return primals_out, tangents_out
+
 ad.primitive_jvps[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_jvp
 
 def _custom_jvp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, jvp_jaxpr_thunk):
@@ -545,6 +551,9 @@ custom_vjp_call_jaxpr_p.def_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)
 def _custom_vjp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, fwd_jaxpr_thunk,
                                bwd, out_trees):
   tangents = map(ad.instantiate_zeros, tangents)
+  # Cast float0 to zeros with the primal dtype because custom vjp rules don't
+  # currently handle float0s
+  tangents = ad.replace_float0s(primals, tangents)
   fwd_jaxpr = fwd_jaxpr_thunk()
   out_tree, res_tree = out_trees()
   res_and_primals_out = core.jaxpr_as_fun(fwd_jaxpr)(*primals)
@@ -552,7 +561,9 @@ def _custom_vjp_call_jaxpr_jvp(primals, tangents, *, fun_jaxpr, fwd_jaxpr_thunk,
   avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
   tangents_out = ad.custom_lin_p.bind(
       *res, *tangents, num_res=res_tree.num_leaves, bwd=bwd, avals_out=avals_out)
+  tangents_out = ad.recast_to_float0(primals_out, tangents_out)
   return primals_out, tangents_out
+
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
 def _custom_vjp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, fwd_jaxpr_thunk,
