@@ -230,17 +230,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testWhileTypeErrors(self):
     """Test typing error messages for while."""
     with self.assertRaisesRegex(TypeError,
-        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]).")):
+        re.escape("cond_fun must return a boolean scalar, but got pytree PyTreeDef(tuple, [*,*]) in first pass.")):
       lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
     with  self.assertRaisesRegex(TypeError,
-        re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])].")):
+        re.escape("cond_fun must return a boolean scalar, but got output type(s) [ShapedArray(float32[])] in first pass.")):
       lax.while_loop(lambda c: np.float32(1.), lambda c: c, np.float32(0.))
     with self.assertRaisesRegex(TypeError,
         re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
     with self.assertRaisesWithLiteralMatch(TypeError,
         ("body_fun output and input must have identical types, got\n"
-         "ShapedArray(bool[])\n"
+         "ShapedArray(bool[], weak_type=True)\n"
          "and\n"
          "ShapedArray(float32[]).")):
       lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))
@@ -1532,7 +1532,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = jnp.arange(5)
     # Body output not a tuple
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
+        re.escape("scan body output must be a pair, got ShapedArray(float32[]) in first pass.")):
       lax.scan(lambda c, x: np.float32(0.), 0, a)
     with  self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "
@@ -2462,6 +2462,33 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         r'invalid cond param linear of type str, '
         r'tuple of bool required:\nmulti\nline',
         lambda: core.check_jaxpr(jaxpr))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.all_integer)
+  def test_scan_init_weak_type(self, dtype):
+    def func(carry, x):
+      return carry + x, x
+    init_weak = 0  # Python scalars are weakly-typed.
+    x = jnp.ones(5, dtype=dtype)
+    carry, result = lax.scan(func, init_weak, x)
+    self.assertEqual(carry, x.sum())
+    self.assertArraysEqual(result, x)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.all_integer)
+  def test_while_loop_init_weak_type(self, dtype):
+    # This tests whether lax.while_loop can properly handle weakly-typed
+    # initial values.
+    def cond_fun(val):
+      return val < 2
+    def body_fun(val):
+      return val + increment
+    increment = jnp.array(1, dtype=dtype)
+    init_weak = 0  # Python scalars are weakly-typed.
+    result = lax.while_loop(cond_fun, body_fun, init_weak)
+    self.assertArraysEqual(result, jnp.full_like(increment, 2))
 
 
 if __name__ == '__main__':
