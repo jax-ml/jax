@@ -30,6 +30,9 @@ class PrettyPrint:
     (i, s), *rest = self.lines
     return PrettyPrint([(i, s.ljust(length) + f" [{msg}]")] + list(rest))
 
+  def width(self):
+    return max(i + len(s) for i, s in self.lines)
+
   def __add__(self, rhs):
     return PrettyPrint(self.lines + rhs.lines)
 

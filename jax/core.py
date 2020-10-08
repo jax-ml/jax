@@ -900,7 +900,7 @@ class UnshapedArray(AbstractValue):
     return hash((self.dtype, self.weak_type))
 
   def __repr__(self):
-    return '{}({}{})'.format(self.__class__.__name__, self.str_short(),
+    return '{}({}{})'.format(self.__class__.__name__, self.dtype.name,
                              ", weak_type=True" if self.weak_type else "")
 
   _bool = _nonzero = concretization_function_error(bool)
@@ -924,7 +924,15 @@ class UnshapedArray(AbstractValue):
       raise TypeError(self, other)
 
   def str_short(self) -> str:
-    return self.dtype.name
+    return f"{self.dtype_name()}[?]"
+
+  def dtype_name(self):
+    dtype_name = self.dtype.name
+    if dtype_name.startswith('float'):
+      dtype_name = 'f' + dtype_name[5:]
+    elif dtype_name.startswith('int'):
+      dtype_name = 'i' + dtype_name[4:]
+    return dtype_name
 
   def strip_weak_type(self) -> 'UnshapedArray':
     """Returns a copy of the aval with weak_type=False."""
@@ -981,7 +989,7 @@ class ShapedArray(UnshapedArray):
 
   def str_short(self):
     shapestr = ','.join(map(str, self.shape))
-    return '{}[{}]'.format(self.dtype.name, shapestr)
+    return f'{self.dtype_name()}[{shapestr}]'
 
   def __len__(self):
     try:
@@ -1388,29 +1396,34 @@ def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
 def pp_eqn(eqn: JaxprEqn, print_shapes: bool = False) -> PrettyPrint:
   lhs = pp_vars(eqn.outvars, print_shapes)
   pp_lhs = pp(f'{lhs} =')
-  pp_rhs = (pp(eqn.primitive.name) >>
-            pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
-            pp(pp_vars(eqn.invars, print_shapes)))
-  if len(lhs) <= 6 or print_shapes:
+  pp_params = pp_kv_pairs(sorted(eqn.params.items()))
+  if any(isinstance(v, (Jaxpr, ClosedJaxpr)) for v in eqn.params.values()):
+    pp_rhs = ((pp(eqn.primitive.name) >> pp(' '))
+              + (pp_params >> pp(' ') >> pp(pp_vars(eqn.invars))))
+  else:
+    pp_rhs = (pp(eqn.primitive.name) >>
+              pp_params >> pp(' ') >>
+              pp(pp_vars(eqn.invars)))
+  if len(lhs) <= 6 and not print_shapes:
     return pp_lhs >> pp(' ') >> pp_rhs
   else:
     return pp_lhs + pp_rhs.indent(2)
 
-def pp_eqns(eqns: Sequence[JaxprEqn],
-            source_info: bool = False) -> Sequence[PrettyPrint]:
-  pps = map(pp_eqn, eqns)
+def pp_eqns(eqns: Sequence[JaxprEqn], source_info: bool = False,
+            print_shapes: bool = False) -> Sequence[PrettyPrint]:
+  pps = [pp_eqn(eqn, print_shapes) for eqn in eqns]
   if source_info:
-    l = max((i + len(s) for x in pps for i, s in x.lines), default=None)
+    l = max((pp.width() for pp in pps), default=None)
     if l is not None:
       return [p.annotate(l, source_info_util.summarize(e.source_info))
               for e, p in zip(eqns, pps)]
   return pps
 
-def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False) -> PrettyPrint:
-  pps = pp_eqns(jaxpr.eqns, source_info=source_info)
+def pp_jaxpr(jaxpr: Jaxpr, source_info: bool = False, print_shapes: bool = False) -> PrettyPrint:
+  pps = pp_eqns(jaxpr.eqns, source_info, print_shapes)
   str_outvars = str(tuple(jaxpr.outvars))
-  return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars),
-                                         pp_vars(jaxpr.invars))) +
+  return (pp('{{ lambda {} ; {}.'.format(pp_vars(jaxpr.constvars, print_shapes),
+                                         pp_vars(jaxpr.invars), print_shapes)) +
           ((pp('let ') >> vcat(pps))
            + pp('in {} }}'.format(str_outvars))).indent(2))
 
@@ -1434,16 +1447,15 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
           ((pp('let ') >> vcat(pps))
            + pp('in {} }}'.format(str_outvars))).indent(2))
 
-def pp_jaxprs(jaxprs) -> PrettyPrint:
-  jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
-  return pp('( ') >> vcat(map(pp_jaxpr, jaxprs)) >> pp(' )')
-
 def pp_kv_pair(k, v):
-  if type(v) is tuple and all(isinstance(j, (Jaxpr, ClosedJaxpr)) for j in v):
-    pp_v = pp_jaxprs(v)
+  pp_k = pp(f'{k}=')
+  if isinstance(v, (Jaxpr, ClosedJaxpr)):
+    return pp_k + pp_jaxpr(v if isinstance(v, Jaxpr) else v.jaxpr)
+  elif type(v) is tuple and all(isinstance(j, (Jaxpr, ClosedJaxpr)) for j in v):
+    jaxprs = (j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in v)
+    return pp_k + pp('( ') >> vcat(map(pp_jaxpr, jaxprs)) >> pp(' )')
   else:
-    pp_v = pp(v)
-  return pp(f'{k}=') >> pp_v
+    return pp_k >> pp(v)
 
 def pp_kv_pairs(kv_pairs):
   if kv_pairs:
