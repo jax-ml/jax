@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import inspect
-from unittest import SkipTest
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -31,6 +31,13 @@ FLAGS = flags.FLAGS
 
 
 class JaxJitTest(parameterized.TestCase):
+
+  def test_is_float_0(self):
+    if version <= (0, 1, 56):
+      raise unittest.SkipTest("old jaxlib version")
+
+    self.assertTrue(jaxlib.jax_jit.IsFloat0(np.zeros((5, 5), dtype=jax.float0)))
+    self.assertFalse(jaxlib.jax_jit.IsFloat0(np.zeros((5, 5))))
 
   def test_convert_scalars(self):
     jax_jit = jaxlib.jax_jit
@@ -79,12 +86,9 @@ class JaxJitTest(parameterized.TestCase):
     self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
 
   def test_signature_support(self):
-    # TODO(jblespiau): re-enable when expected to pass
-    raise SkipTest
-
     # TODO(jblespiau): remove after version release
     if version < (0, 1, 56):
-      raise SkipTest("old jaxlib version")
+      raise unittest.SkipTest("old jaxlib version")
 
     def f(a, b, c):
       return a + b + c
