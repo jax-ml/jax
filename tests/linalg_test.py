@@ -185,7 +185,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                     (2, 2, 2), (2, 3, 3), (3, 2, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")
   def testSlogdet(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
@@ -1178,7 +1177,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
           (True, (2, 8, 8), (2, 8, 10)),
       ]
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
   def testTriangularSolveGrad(
       self, lower, transpose_a, conjugate_a, unit_diagonal, left_side, a_shape,
       b_shape, dtype, rng_factory):
