@@ -2643,32 +2643,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertTrue(a2)
     self.assertFalse(a3)
 
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): investigate this failure
-  def testOnesBroadcastingConstantHandler(self):
-    # TODO(mattjj): update this test for jax3
-    self.skipTest("test needs jax3 update")
-
-    def fun(x):
-      ones = jnp.ones((3, 4))
-      assert isinstance(ones, np.ndarray) and ones.strides == (0, 0)
-
-      # To check that the constant handler generates a Broadcast for stride-zero
-      # arrays, we monkey-patch the client instance.
-      # TODO(mattjj): once we have better HLO dumping and inspecting facilities,
-      # we can check the HLO more directly.
-      c = x._node.c
-      Broadcast = c.Broadcast  # pylint: disable=invalid-name
-      was_called = []
-      c.Broadcast = lambda *args: was_called.append(True) or Broadcast(*args)
-      out = x + ones  # the ndarray constant handler should call Broadcast here
-      assert was_called, "Broadcast was not called."
-
-      return out
-
-    fun = api.jit(fun)
-    out_val = fun(jnp.ones(4))
-    self.assertAllClose(out_val, np.full((3, 4), 2.), check_dtypes=False)
-
   def testZeroStridesConstantHandler(self):
     raw_const = np.random.RandomState(0).randn(1, 2, 1, 1, 5, 1)
     const = np.broadcast_to(raw_const, (3, 2, 3, 4, 5, 6))
