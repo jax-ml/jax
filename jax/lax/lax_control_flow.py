@@ -1916,7 +1916,7 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree):
 
 def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
   """Promote weakly-typed in_vals to be compatible with out_avals.
-  
+
   Args:
     in_vals : flattened list of input values.
     in_avals : corresponding list of avals.
