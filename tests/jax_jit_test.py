@@ -33,10 +33,6 @@ FLAGS = flags.FLAGS
 class JaxJitTest(parameterized.TestCase):
 
   def test_convert_scalars(self):
-    # TODO(jblespiau): Remove when the version is out.
-    if jaxlib.version < (0, 1, 53):
-      return
-
     jax_jit = jaxlib.jax_jit
 
     jax_enable_x64 = FLAGS.jax_enable_x64
