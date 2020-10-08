@@ -1761,8 +1761,7 @@ isneginf = _wraps(np.isneginf)(lambda x: _isposneginf(-inf, x))
 @_wraps(np.isnan)
 def isnan(x):
   _check_arraylike("isnan", x)
-  return lax.bitwise_and(lax.bitwise_not(isfinite(x)),
-                         lax.bitwise_not(isinf(x)))
+  return lax.ne(x, x)
 
 @_wraps(np.nan_to_num)
 def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
