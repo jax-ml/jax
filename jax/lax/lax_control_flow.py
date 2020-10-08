@@ -264,16 +264,29 @@ def while_loop(cond_fun: Callable[[T], bool],
       # transformation on it), so we fall back to the primitive version.
       pass
 
-  init_vals, in_tree = tree_flatten((init_val,))
-  init_avals = tuple(_map(_abstractify, init_vals))
-  cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals)
-  body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(body_fun, in_tree, init_avals)
-  if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
-    msg = "cond_fun must return a boolean scalar, but got pytree {}."
-    raise TypeError(msg.format(cond_tree))
-  if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), np.bool_):
-    msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
-    raise TypeError(msg.format(cond_jaxpr.out_avals))
+  # The body input and output avals must match exactly. However, we want to account for
+  # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
+  # may not match the output despite being compatible by virtue of their weak type.
+  # To do this, we compute the jaxpr in two passes: first with the raw inputs, and if
+  # necessary, a second time with modified init values.
+  for pass_ in ["first", "second"]:
+    init_vals, in_tree = tree_flatten((init_val,))
+    init_avals = tuple(_map(_abstractify, init_vals))
+    cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(cond_fun, in_tree, init_avals)
+    body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(body_fun, in_tree, init_avals)
+    if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
+      msg = "cond_fun must return a boolean scalar, but got pytree {} in {} pass."
+      raise TypeError(msg.format(cond_tree, pass_))
+    if cond_jaxpr.out_avals[0].strip_weak_type() != ShapedArray((), np.bool_):
+      msg = "cond_fun must return a boolean scalar, but got output type(s) {} in {} pass."
+      raise TypeError(msg.format(cond_jaxpr.out_avals, pass_))
+
+    if pass_ != "first":
+      break
+    new_init_vals, changed = _promote_weak_typed_inputs(init_vals, init_avals, body_jaxpr.out_avals)
+    if not changed:
+      break
+    init_val, = tree_unflatten(in_tree, new_init_vals)
 
   in_tree_children = in_tree.children()
   assert len(in_tree_children) == 1
@@ -1235,18 +1248,10 @@ def scan(f, init, xs, length=None, reverse=False, unroll=1):
     # weak type logic run only on the first pass.
     if pass_ != 'first':
       break
-    # this error will be caught by the check below.
-    if len(carry_avals) != len(carry_avals_out):
+    new_init_flat, changed = _promote_weak_typed_inputs(init_flat, carry_avals, carry_avals_out)
+    if not changed:
       break
-    weak_mismatches = [i for i, (a1, a2) in enumerate(zip(carry_avals, carry_avals_out))
-                       if a1.weak_type and not core.typematch(a1, a2)]
-    if not weak_mismatches:
-      break
-
-    for i in weak_mismatches:
-      new_dtype = dtypes.result_type(init_flat[i], carry_avals_out[i])
-      init_flat[i] = lax.convert_element_type(init_flat[i], new_dtype)
-    init = tree_unflatten(init_tree, init_flat)
+    init = tree_unflatten(init_tree, new_init_flat)
 
   _check_tree_and_avals("scan carry output and input",
                         # Extract the subtree and avals for the first element of the return tuple
@@ -1908,6 +1913,29 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree):
         f"{func_name}() output pytree structure must match {expected_name}, "
         f"got {actual_tree} and {expected_tree}.")
 
+
+def _promote_weak_typed_inputs(in_vals, in_avals, out_avals):
+  """Promote weakly-typed in_vals to be compatible with out_avals.
+  
+  Args:
+    in_vals : flattened list of input values.
+    in_avals : corresponding list of avals.
+    out_avals : list of target output avals.
+  Returns:
+    in_vals_new : flattened list of modified in_vals with no weak types.
+    changed : bool; true if in_vals required modification.
+  """
+  if len(in_vals) != len(in_avals) or len(in_avals) != len(out_avals):
+    # Calling function is responsible for catching this.
+    return in_vals, False
+  weak_mismatches = [i for i, (a1, a2) in enumerate(zip(in_avals, out_avals))
+                    if getattr(a1, 'weak_type', False) and not core.typematch(a1, a2)]
+  if not weak_mismatches:
+    return in_vals, False
+  for i in weak_mismatches:
+    new_dtype = dtypes.result_type(in_vals[i], out_avals[i])
+    in_vals[i] = lax.convert_element_type(in_vals[i], new_dtype)
+  return in_vals, True
 
 def _stop_gradient_fun(f):
   """Create a version of f() that stops all gradients."""
