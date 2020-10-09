@@ -561,14 +561,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_shift_right_logical)
   def test_shift_right_logical(self, harness):
-    if jtu.device_under_test() == "tpu" and harness.params["dtype"] in [np.int8, np.int16]:
-      raise unittest.SkipTest("TODO: silent error for negative inputs")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_shift_right_arithmetic)
   def test_shift_right_arithmetic(self, harness):
-    if jtu.device_under_test() == "tpu" and harness.params["dtype"] in [np.uint8, np.uint16]:
-      raise unittest.SkipTest("TODO: silent error for negative inputs")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_slice)

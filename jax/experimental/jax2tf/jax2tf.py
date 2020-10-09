@@ -533,7 +533,7 @@ _UNSIGNED_TO_SIGNED_TABLE = {u: s for s, u in _SIGNED_TO_UNSIGNED_TABLE.items()}
 
 # Note: Bitwise operations only yield identical results on unsigned integers!
 # pylint: disable=protected-access
-def _shift_right_arithmetic(x, y):
+def _shift_right_arithmetic_raw(x, y):
   if x.dtype.is_unsigned:
     assert x.dtype == y.dtype
     orig_dtype = x.dtype
@@ -544,9 +544,19 @@ def _shift_right_arithmetic(x, y):
     return tf.cast(res, orig_dtype)
   else:
     return tf.bitwise.right_shift(x, y)
-tf_impl[lax.shift_right_arithmetic_p] = _shift_right_arithmetic
 
-def _shift_right_logical(x, y):
+def _shift_right_arithmetic(x, y):
+  # TF shift is "implementation defined" if the shift amount is negative
+  # or larger or equal to the size of the value. We implement the XLA
+  # semantics to return the shift by the max value (x_bits - 1).
+  # TODO: it is likely better to add XlaOps for shifts
+  x_bits = 8 * x.dtype.size
+  clamp_y = tf.where(_shift_in_bounds(x, y), y, x_bits - 1)
+  return _shift_right_arithmetic_raw(x, clamp_y)
+
+tf_impl[lax.shift_right_arithmetic_p] = wrap_binary_op(_shift_right_arithmetic)
+
+def _shift_right_logical_raw(x, y):
   if x.dtype.is_unsigned:
     return tf.bitwise.right_shift(x, y)
   else:
@@ -557,9 +567,38 @@ def _shift_right_logical(x, y):
     y = tf.cast(y, unsigned_dtype)
     res = tf.bitwise.right_shift(x, y)
     return tf.cast(res, orig_dtype)
-tf_impl[lax.shift_right_logical_p] = _shift_right_logical
 
-tf_impl[lax.shift_left_p] = tf.bitwise.left_shift
+def _shift_right_logical(x, y):
+  # TF shift is "implementation defined" if the shift amount is negative
+  # or larger or equal to the size of the value. We implement the XLA semantics
+  # to return 0.
+  # TODO: it is likely better to add XlaOps for shifts
+  return tf.where(_shift_in_bounds(x, y),
+                  _shift_right_logical_raw(x, y),
+                  tf.zeros_like(x))
+
+tf_impl[lax.shift_right_logical_p] = wrap_binary_op(_shift_right_logical)
+
+def _shift_left(x, y):
+  # TF shift is "implementation defined" if the shift amount is negative
+  # or larger or equal to the size of the value. We implement the XLA semantics
+  # to return 0.
+  # TODO: it is likely better to add XlaOps for shifts
+  return tf.where(_shift_in_bounds(x, y),
+                  tf.bitwise.left_shift(x, y),
+                  tf.zeros_like(x))
+
+tf_impl[lax.shift_left_p] = wrap_binary_op(_shift_left)
+
+def _shift_in_bounds(x: TfVal, y: TfVal) -> TfVal:
+  # Return the TF expression for when y is within bounds (0 <= y < |x|)
+  x_bits = 8 * x.dtype.size
+  # TF does not have comparisons for uint16 and uint32 (despite what the
+  # documentation says)
+  y_comp = tf.cast(y, _UNSIGNED_TO_SIGNED_TABLE[y.dtype]) if y.dtype.is_unsigned else y
+  y_lt_x_bits = tf.math.less(y_comp, x_bits)
+  y_ge_0 = tf.math.greater_equal(y_comp, 0)
+  return tf.logical_and(y_lt_x_bits, y_ge_0)
 
 def _not(x):
   """Computes bitwise not with support for booleans.
