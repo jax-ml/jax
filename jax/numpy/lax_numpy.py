@@ -1865,6 +1865,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
       dtype = float_
     else:
       dtype = _dtype(a)
+  dtype = dtypes.canonicalize_dtype(dtype)
 
   return lax.div(
       sum(a, axis, dtype=dtype, keepdims=keepdims),
