@@ -151,8 +151,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       else:
         assert False
 
-    def is_tf_exception(lim: correctness_stats.Limitation):
-      return (lim.error_type == 'Missing TF support' and
+    def expected_missing_tf_support(lim: correctness_stats.Limitation):
+      return (lim.error_type == correctness_stats.CATEGORY_MISSING_TF_SUPPORT and
+              self.tf_default_device.device_type in lim.devices)
+    def expected_possible_incorrect(lim: correctness_stats.Limitation):
+      return (lim.error_type == correctness_stats.CATEGORY_POSSIBLE_INCORRECT_RESULTS and
               self.tf_default_device.device_type in lim.devices)
 
     result_tf = None
@@ -160,27 +163,48 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       current_limitations_len = len(correctness_stats.all_limitations)
       try:
         result_tf = run_tf(mode)
+        tf_exception = None
       except Exception as e:
-        new_limitations = (
-          correctness_stats.all_limitations[current_limitations_len:])
-        detected_tf_exception = any(map(is_tf_exception, new_limitations))
+        tf_exception = e
 
-        if not (expect_tf_exceptions or detected_tf_exception):
-          raise e
-        else:
-          for lim in new_limitations:
-            print("Detected limitation: {} for {} devices."
-                  .format(lim.error_string, ', '.join(lim.devices)))
+      new_limitations = (
+        correctness_stats.all_limitations[current_limitations_len:])
+      if new_limitations:
+        for lim in new_limitations:
+          print("Detected limitation: {} for {} devices."
+                .format(lim.error_string, ', '.join(lim.devices)))
 
-          print(f"Encountered expected exception for mode={mode}: {e}")
+      if any(map(expected_missing_tf_support, new_limitations)) or expect_tf_exceptions:
+        if tf_exception is not None:
+          print(f"Encountered expected exception for mode={mode}: {tf_exception}")
           continue
+        else:
+          print(f"WARNING: did not encounter expected exception for mode={mode}")
+      else:
+        if tf_exception is not None:
+          raise tf_exception
 
       if custom_assert is not None and (mode in ("eager", "graph") or
                                         always_custom_assert):
+        # If we have a custom assert, use it even if we expect incorrect results
         custom_assert(result_jax, result_tf)
       else:
-        # In compiled mode we expect the same result as JAX by default
-        self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
+        try:
+          # In compiled mode we expect the same result as JAX by default
+          self.assertAllClose(result_jax, result_tf, atol=atol, rtol=rtol)
+          check_failure = None
+        except Exception as e:
+          check_failure = e
+
+        if any(map(expected_possible_incorrect, new_limitations)):
+          if check_failure is not None:
+            print(f"Encountered expected result check failure for mode={mode}: {check_failure}")
+            continue
+          else:
+            print(f"WARNING: did not encounter expected result check failure for mode={mode}")
+        else:
+          if check_failure is not None:
+            raise check_failure
 
     return (result_jax, result_tf)
 
