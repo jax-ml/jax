@@ -2498,7 +2498,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return lax.scan(lambda s, x: (x*s, s), s, x)
 
     rng = np.random.RandomState(1234)
-    x = jnp.asarray(rng.randn(32, 2, 32))
+    x = jnp.asarray(rng.randn(32, 2, 32).astype('float32'))
     _, vjp_fun = api.vjp(cumprod, x)
 
     # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
@@ -2506,7 +2506,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     *_, ext_res = vjp_fun.args[0].args[0]
     self.assertIs(ext_res, x)
 
-    x = rng.randn(32, 2, 32)  # numpy.ndarray, not DeviceArray
+    x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not DeviceArray
     _, vjp_fun = api.vjp(cumprod, x)
     *_, ext_res = vjp_fun.args[0].args[0]
     self.assertIsInstance(ext_res, xla.DeviceArray)
