@@ -917,6 +917,57 @@ random_split = tuple(
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )
 
+def _make_dot_general_harness(
+    name, *, lhs_shape=(3, 4), rhs_shape=(4, 2), dtype=np.float32,
+    precision=None, dimension_numbers=(((1,), (0,)), ((), ()))):
+  return Harness(f"_{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}_precision={precision}".replace(' ', ''),
+                 lax.dot_general,
+                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype),
+                  StaticArg(dimension_numbers), StaticArg(precision)],
+                 dtype=dtype,
+                 lhs_shape=lhs_shape,
+                 rhs_shape=rhs_shape,
+                 dimension_numbers=dimension_numbers,
+                 precision=precision)
+
+# There are two execution paths in the conversion of dot_general. The main path
+# uses tf.einsum, while special cases use tf.linalg.matmul. For that reason,
+# the below tests are designed to perform the same checks on both execution
+# paths.
+lax_dot_general = tuple( # Validate dtypes and precision
+  # This first harness runs the tests for all dtypes and precisions using
+  # default values for all the other parameters. Variations of other parameters
+  # can thus safely skip testing their corresponding default value.
+  _make_dot_general_harness("dtypes_and_precision", precision=precision,
+                            lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+                            dimension_numbers=dimension_numbers, dtype=dtype)
+  for dtype in jtu.dtypes.all
+  for precision in [None, lax.Precision.DEFAULT, lax.Precision.HIGH,
+                    lax.Precision.HIGHEST]
+  for lhs_shape, rhs_shape, dimension_numbers in [
+    ((3, 4), (4, 2), (((1,), (0,)), ((), ()))),
+    ((1, 3, 4), (1, 4, 3), (((2, 1), (1, 2)), ((0,), (0,))))
+  ]
+) + tuple( # Validate batch dimensions
+  _make_dot_general_harness("batch_dimensions", lhs_shape=lhs_shape,
+                            rhs_shape=rhs_shape,
+                            dimension_numbers=dimension_numbers)
+  for lhs_shape, rhs_shape, dimension_numbers in [
+    # Unique pattern that can go through tf.linalg.matmul
+    ((4, 4, 3, 3, 4), (4, 4, 3, 4, 2), (((4,), (3,)), ((0, 1, 2), (0, 1, 2)))),
+    # Main path with out of order batch dimensions
+    ((8, 4, 3, 3, 4), (4, 8, 3, 4, 2), (((4, 3), (3, 2)), ((0, 1), (1, 0))))
+  ]
+) + tuple( # Validate squeezing behavior for matmul path
+  _make_dot_general_harness("squeeze", lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+                            dimension_numbers=dimension_numbers)
+  for lhs_shape, rhs_shape, dimension_numbers in [
+    ((4,), (4, 4), (((0,), (0,)), ((), ()))), # (1, 4) -> (4,)
+    ((4, 4), (4,), (((1,), (0,)), ((), ()))), # (4, 1) -> (4,)
+    ((4,), (4,), (((0,), (0,)), ((), ()))),   # (1, 1) -> ()
+  ]
+)
+
 def _make_conv_harness(name, *, lhs_shape=(2, 3, 9, 10), rhs_shape=(3, 3, 4, 5),
                        dtype=np.float32, window_strides=(1, 1), precision=None,
                        padding=((0, 0), (0, 0)), lhs_dilation=(1, 1),

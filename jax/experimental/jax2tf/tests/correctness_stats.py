@@ -215,6 +215,26 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype in [np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
 
+  # Testing with matmul (TODO: comment out and test without matmul)
+  if prim is lax.dot_general_p:
+    np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.bool, np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.int8]:
+      tf_unimpl(np_dtype)
+    elif np_dtype == np.int16:
+      # TODO(bchetioui): the path using 'einsum' is not compatible with int16
+      # arguments on CPU/GPU, while the one using 'matmul' is (but not in
+      # compiled mode).
+      tf_unimpl(np_dtype, additional_msg=("only cases representable as 2D "
+                                          "matrix multiplication can be "
+                                          "converted properly"),
+                devs=['CPU', 'GPU'])
+      tf_unimpl(np_dtype, devs=['TPU'])
+    elif np_dtype in [np.int16, np.int64]:
+      devs = ['CPU'] if np_dtype == np.int16 else ['CPU', 'GPU']
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"),
+                devs=devs)
   if prim is lax.conv_general_dilated_p:
     batch_group_count = kwargs['batch_group_count']
     if batch_group_count != 1:
