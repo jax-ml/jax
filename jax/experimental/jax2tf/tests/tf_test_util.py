@@ -216,10 +216,12 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     `func` must be a function from one argument to one result. `arg` is
     the argument before the transformation.
 
-    `transform` can be None, "jvp", "grad", "vmap", "jvp_vmap", "grad_vmap"
+    `transform` can be None, "jit", "jvp", "grad", "vmap", "jvp_vmap", "grad_vmap"
     """
     if transform is None:
       return self.ConvertAndCompare(func, arg)
+    if transform == "jit":
+      return self.ConvertAndCompare(jax.jit(func), arg)
     if transform == "jvp":
       t_func = lambda x, xt: jax.jvp(func, (x,), (xt,))
       return self.ConvertAndCompare(t_func, arg, np.full_like(arg, 0.1))

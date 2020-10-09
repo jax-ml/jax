@@ -342,6 +342,74 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, None)
     self.TransformConvertAndCompare(f, arg, "grad")
 
+  def test_convert_nullary_func(self):
+    # Even nullary functions are converted to TF (as opposed to constant-folded
+    # in JAX prior to conversion).
+    def f_jax():
+      return jnp.sin(1.)
+    f_tf = tf.function(jax2tf.convert(f_jax), autograph=False)
+    f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
+    self.assertIn('op: "Sin"', str(f_tf_graph))
+
+  def test_convert_of_nested_independent_jit(self):
+    def func(x):
+      def inner1(y):
+        return x + y
+      # The JIT does not have data dependency
+      return jax.jit(inner1)(1.)
+
+    jax2tf.convert(func)(2.)
+
+  def test_convert_of_nested_dependent_jit(self):
+    def func(x):
+      def inner1(y):
+        return x + y
+      # The JIT does have data dependency
+      return jax.jit(inner1)(x)
+
+    jax2tf.convert(func)(2.)  # No error
+
+  def test_nested_convert_error(self):
+    def outer(y):
+      return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      jax2tf.convert(outer)(np.ones((4, )))
+
+  def test_nested_convert_error_non_tracer(self):
+    """The inner convert takes non-tracer arguments"""
+    def outer(y):
+      sin_1 = jax2tf.convert(jnp.sin)(1.)  # Inner convert takes non-tracer arg
+      return y + sin_1
+
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      jax2tf.convert(outer)(2.)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_{transform}", transform=transform)
+    for transform in ["jit", "jvp", "grad", "vmap"]))
+  def test_convert_under_transform_error(self, transform="vmap"):
+    def outer(y):
+      return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
+
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"_{transform}", transform=transform)
+    for transform in ["jit", "jvp", "grad", "vmap"]))
+  def test_convert_under_transform_error_non_tracer(self, transform="jit"):
+    def outer(y):
+      sin_1 = jax2tf.convert(jnp.sin)(1.)  # Inner convert takes non-tracer arg
+      return y + sin_1
+
+    with self.assertRaisesRegex(
+        ValueError, "convert must be used outside all JAX transformations"):
+      self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
