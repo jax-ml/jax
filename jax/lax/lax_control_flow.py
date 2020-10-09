@@ -500,7 +500,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   cond_jaxpr_known, _, cond_uk = partial_eval_jaxpr(  # type: ignore
       cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False)
 
-  if cond_uk[0] or  all([not uk for uk in unknowns]) or all(unknowns):
+  if cond_uk[0] or all([not uk for uk in unknowns]) or all(unknowns):
     # If conditional is unknown, or all inputs are known, or all are unknown,
     # just do the default processing.
     return trace.default_process_primitive(while_p, tracers, params)
@@ -1582,6 +1582,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   # outputs from the jaxpr here, and updating out_flat below.
   extensive_invars = jaxpr_1_opt.jaxpr.invars[num_consts_1 + num_carry:]
   extensive_outvars = jaxpr_1_opt.jaxpr.outvars[num_carry:]
+  extensive_avals = [core.unmapped_aval(length, core.raise_to_shaped(v.aval))
+                     for v in extensive_outvars]
   fwd_extensive = [num_consts + num_carry + extensive_invars.index(v)
                    if v in extensive_invars else None for v in extensive_outvars]
   jaxpr_1_opt.jaxpr.outvars = (
@@ -1599,12 +1601,15 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
       num_consts=num_consts_1, num_carry=num_carry, linear=tuple(linear_1),
       unroll=unroll)
 
-  # Propagate the forwarded extensive outputs using fwd_extensive.
+  # Propagate the forwarded extensive outputs using fwd_extensive. Any
+  # numpy.ndarray inputs should be converted to JAX DeviceArrays.
   out_carry, out_extensive = split_list(out_flat, [num_carry])
   out_extensive_iter = iter(out_extensive)
-  out_extensive = [next(out_extensive_iter) if i is None else
-                   tracers[i].pval[1] if tracers[i].is_known() else tracers[i]
-                   for i in fwd_extensive]
+  out_extensive = [next(out_extensive_iter) if i is None
+                   else _maybe_device_put(tracers[i].pval[1]) if tracers[i].is_known()
+                   else tracers[i] for i in fwd_extensive]
+  assert all(a == core.raise_to_shaped(core.get_aval(out))
+             for a, out in zip(extensive_avals, out_extensive))
   out_flat = out_carry + out_extensive
 
   out_carry, ys, res_and_units = split_list(out_flat, [num_carry, num_ys])
@@ -1634,6 +1639,12 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                           source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return out_tracers
+
+def _maybe_device_put(x):
+  if isinstance(x, np.ndarray):
+    return lax._device_put_raw(x)
+  else:
+    return x
 
 def _promote_aval_rank(sz, aval):
   if aval is core.abstract_unit:
