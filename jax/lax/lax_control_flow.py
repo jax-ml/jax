@@ -1601,8 +1601,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
 
   # Propagate the forwarded extensive outputs using fwd_extensive.
   out_carry, out_extensive = split_list(out_flat, [num_carry])
-  out_extensive = iter(out_extensive)
-  out_extensive = [next(out_extensive) if i is None else
+  out_extensive_iter = iter(out_extensive)
+  out_extensive = [next(out_extensive_iter) if i is None else
                    tracers[i].pval[1] if tracers[i].is_known() else tracers[i]
                    for i in fwd_extensive]
   out_flat = out_carry + out_extensive
