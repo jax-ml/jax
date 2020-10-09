@@ -1393,8 +1393,6 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
     raise TypeError(msg.format(np.shape(fill_value)))
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = convert_element_type(fill_value, dtype)
-  if not config.omnistaging_enabled:
-    fill_value = xla.device_put_p.bind(fill_value)
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x):
