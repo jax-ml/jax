@@ -734,7 +734,7 @@ shift_inputs = [
   for arg in [
     np.array([-250, -1, 0, 1, 250], dtype=dtype),
   ]
-  for shift_amount in [0, 1, 2, 3, 7]
+  for shift_amount in [-8, -1, 0, 1, 3, 7, 8, 16, 32, 64]
 ]
 
 lax_shift_left = tuple(
@@ -747,7 +747,7 @@ lax_shift_left = tuple(
 lax_shift_right_logical = tuple(
   Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
           lax.shift_right_logical,
-          [arg, StaticArg(np.array([shift_amount], dtype=dtype))],
+          [arg, dtype(shift_amount)],
           dtype=dtype)
   for arg, dtype, shift_amount in shift_inputs
 )
