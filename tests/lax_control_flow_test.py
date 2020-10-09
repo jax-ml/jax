@@ -34,6 +34,7 @@ from jax import random
 from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
+from jax.interpreters import xla
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 
@@ -2489,6 +2490,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     init_weak = 0  # Python scalars are weakly-typed.
     result = lax.while_loop(cond_fun, body_fun, init_weak)
     self.assertArraysEqual(result, jnp.full_like(increment, 2))
+
+  def test_scan_vjp_forwards_extensive_residuals(self):
+    # https://github.com/google/jax/issues/4510
+    def cumprod(x):
+      s = jnp.ones((2, 32), jnp.float32)
+      return lax.scan(lambda s, x: (x*s, s), s, x)
+
+    rng = np.random.RandomState(1234)
+    x = jnp.asarray(rng.randn(32, 2, 32))
+    _, vjp_fun = api.vjp(cumprod, x)
+
+    # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
+    # just skip this test.
+    *_, ext_res = vjp_fun.args[0].args[0]
+    self.assertIs(ext_res, x)
+
+    x = rng.randn(32, 2, 32)  # numpy.ndarray, not DeviceArray
+    _, vjp_fun = api.vjp(cumprod, x)
+    *_, ext_res = vjp_fun.args[0].args[0]
+    self.assertIsInstance(ext_res, xla.DeviceArray)
+
 
 
 if __name__ == '__main__':
