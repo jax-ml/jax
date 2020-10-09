@@ -408,25 +408,17 @@ and CUDNN7 installations on your machine (for example, preinstalled on your
 cloud VM), you can run
 
 ```bash
-# install jaxlib
-PYTHON_VERSION=cp37  # alternatives: cp36, cp37, cp38
-CUDA_VERSION=cuda100  # alternatives: cuda100, cuda101, cuda102, cuda110
-PLATFORM=manylinux2010_x86_64  # alternatives: manylinux2010_x86_64
-BASE_URL='https://storage.googleapis.com/jax-releases'
-pip install --upgrade $BASE_URL/$CUDA_VERSION/jaxlib-0.1.55-$PYTHON_VERSION-none-$PLATFORM.whl
-
-pip install --upgrade jax  # install jax
+pip install --upgrade pip
+pip install --upgrade jax jaxlib==0.1.55+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
-The library package name must correspond to the version of the existing CUDA
+The jaxlib version must correspond to the version of the existing CUDA
 installation you want to use, with `cuda110` for CUDA 11.0, `cuda102` for CUDA
-10.2, `cuda101` for CUDA 10.1, and `cuda100` for CUDA 10.0. To find your CUDA
-and CUDNN versions, you can run commands like these, depending on your CUDNN
-install path:
+10.2, `cuda101` for CUDA 10.1, and `cuda100` for CUDA 10.0. You can find your
+CUDA version with: install path:
 
 ```bash
 nvcc --version
-grep CUDNN_MAJOR -A 2 /usr/local/cuda/include/cudnn.h  # might need different path
 ```
 
 Note that some GPU functionality expects the CUDA installation to be at
@@ -442,16 +434,6 @@ Or set the following environment variable before importing JAX:
 
 ```bash
 XLA_FLAGS=--xla_gpu_cuda_data_dir=/path/to/cuda
-```
-
-The Python version must match your Python interpreter. There are prebuilt wheels
-for Python 3.6, 3.7, and 3.8; for anything else, you must build from source. Jax
-requires Python 3.6 or above. Jax does not support Python 2 any more.
-
-To try automatic detection of the correct version for your system, you can run:
-
-```bash
-pip install --upgrade https://storage.googleapis.com/jax-releases/`nvcc -V | sed -En "s/.* release ([0-9]*)\.([0-9]*),.*/cuda\1\2/p"`/jaxlib-0.1.55-`python3 -V | sed -En "s/Python ([0-9]*)\.([0-9]*).*/cp\1\2/p"`-none-manylinux2010_x86_64.whl jax
 ```
 
 Please let us know on [the issue tracker](https://github.com/google/jax/issues)
