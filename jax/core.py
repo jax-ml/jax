@@ -232,9 +232,6 @@ class Literal:
   def __hash__(self):
     assert False
 
-  def __eq__(self, other):
-    assert False
-
   def __repr__(self):
     if hasattr(self, 'hash'):
       return '{}'.format(self.val)
