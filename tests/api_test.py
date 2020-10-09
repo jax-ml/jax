@@ -336,6 +336,62 @@ class CPPJitTest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x * 2 - 3., y)
 
+  def test_trivial_computations(self):
+    x = jnp.array([1, 2, 3])
+    y = self.jit(lambda x: x)(x)
+    self.assertIs(x, y)
+
+    z1, z2 = self.jit(lambda x: (x, x))(x)
+    self.assertIs(z1, z2)
+
+    x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
+    z1, z2, z3 = self.jit(lambda x, y: (y, 1, x))(x1, x2)
+    self.assertIs(z1, x2)
+    self.assertIs(z3, x1)
+    self.assertEqual(z2, 1)
+
+  def test_jit_bad_input(self):
+    def f(x):
+      return x
+
+    self.assertRaisesRegex(
+        TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
+        lambda: self.jit(f)("foo"))
+
+  def test_jit_on_all_devices(self):
+    # Verifies we can run the same computation on every device present, even
+    # if they are, for example, different models of GPU.
+    data = np.random.rand(1000).astype(np.float32)
+    f = self.jit(jnp.negative)
+    for device in jax.local_devices():
+      x = device_put(data, device=device)
+      np.testing.assert_array_equal(-data, f(x))
+
+  def test_jit_nested_donate_ignored(self):
+    jit_fun = self.jit(lambda x: self.jit(lambda y: y**2, donate_argnums=0)(x))
+    a = jax.device_put(jnp.array(1))
+
+    # NOTE(mattjj): stopped raising error here and instead just ignored
+    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
+    #   jit_fun(a)
+
+    jit_fun(a)  # doesn't crash
+
+  def test_debug_nans(self):
+    @self.jit
+    def f(x):
+      return jax.lax.cond(x == 1, lambda _: np.nan, lambda _: 2., operand=None)
+
+    f(1)
+    msg = r"invalid value \(nan\) encountered in cond"  # 'add' not 'xla_call'
+    FLAGS.jax_debug_nans = True
+    try:
+      with self.assertRaisesRegex(FloatingPointError, msg):
+        f(1)
+      f(2)
+    finally:
+      FLAGS.jax_debug_nans = False
+
 
 class PythonJitTest(CPPJitTest):
 
@@ -357,47 +413,6 @@ class PythonJitTest(CPPJitTest):
     g()                     # g still runs
     del g                   # no more references to x
     assert x() is None      # x is gone
-
-  def test_trivial_computations(self):
-    x = jnp.array([1, 2, 3])
-    y = self.jit(lambda x: x)(x)
-    self.assertIs(x, y)
-
-    z1, z2 = self.jit(lambda x: (x, x))(x)
-    self.assertIs(z1, z2)
-
-    x1, x2 = jnp.array([1, 2]), jnp.array([2, 3])
-    z1, z2, z3 = self.jit(lambda x, y: (y, 1, x))(x1, x2)
-    self.assertIs(z1, x2)
-    self.assertIs(z3, x1)
-    self.assertEqual(z2, 1)
-
-  def test_jit_bad_input(self):
-    def f(x):
-      return x
-
-    self.assertRaisesRegex(
-        TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
-        lambda: jit(f)("foo"))
-
-  def test_jit_on_all_devices(self):
-    # Verifies we can run the same computation on every device present, even
-    # if they are, for example, different models of GPU.
-    data = np.random.rand(1000).astype(np.float32)
-    f = self.jit(jnp.negative)
-    for device in jax.local_devices():
-      x = device_put(data, device=device)
-      np.testing.assert_array_equal(-data, f(x))
-
-  def test_jit_nested_donate_ignored(self):
-    jit_fun = self.jit(lambda x: self.jit(lambda y: y**2, donate_argnums=0)(x))
-    a = jax.device_put(jnp.array(1))
-
-    # NOTE(mattjj): stopped raising error here and instead just ignored
-    # with self.assertRaisesRegex(ValueError, "nested.*not supported"):
-    #   jit_fun(a)
-
-    jit_fun(a)  # doesn't crash
 
 
 class APITest(jtu.JaxTestCase):

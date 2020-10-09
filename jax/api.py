@@ -50,6 +50,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
                    extend_name_stack, wrap_name, cache)
 from .lib import jax_jit
+from .lib import version
 from .lib import xla_bridge as xb
 from .lib import xla_client as xc
 # Unused imports to be exported
@@ -86,10 +87,11 @@ zip = safe_zip
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
-flags.DEFINE_bool("experimental_cpp_jit", bool_env("JAX_CPP_JIT", False),
-                  "A temporary flag enabling the C++ jax.jit fast path."
-                  "Set this to `False` only if it crashes otherwise and report "
-                  "the error to the jax-team.")
+flags.DEFINE_bool(
+    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", version >= (0, 1, 56)),
+    "A temporary flag enabling the C++ jax.jit fast path."
+    "Set this to `False` only if it crashes otherwise and report "
+    "the error to the jax-team.")
 
 float0 = dtypes.float0
 
@@ -328,8 +330,9 @@ def _cpp_jit(
         # Not supported: ShardedDeviceArray, DeviceConstant.
         all(type(x) is xla.DeviceArray for x in out_flat) and
         # TODO(mattjj): Add support for lazy-expression.
+        # If the input is a DeviceArray, then it should have a trivial LazyExpr.
         all(
-            type(x) is xla.DeviceArray and xla.lazy.is_trivial(x._lazy_expr)
+            type(x) is not xla.DeviceArray or xla.lazy.is_trivial(x._lazy_expr)
             for x in args_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
@@ -379,7 +382,22 @@ def _cpp_jit(
   @wraps(fun)
   @api_boundary
   def f_jitted(*args, **kwargs):
-    return cpp_jitted_f(*args, **kwargs)
+    if FLAGS.jax_debug_nans and not _jit_is_disabled():
+      device_arrays = cpp_jitted_f(*args, **kwargs)
+      try:
+        xla.check_nans(xla.xla_call_p, [
+            da.device_buffer
+            for da in tree_leaves(device_arrays)
+            if hasattr(da, "device_buffer")
+        ])
+        return device_arrays
+      except FloatingPointError:
+        assert FLAGS.jax_debug_nans  # compiled_fun can only raise in this case
+        print("Invalid nan value encountered in the output of a C++-jit "
+              "function. Calling the de-optimized version.")
+        return cache_miss(*args, **kwargs)[0]  # probably won't return
+    else:
+      return cpp_jitted_f(*args, **kwargs)
 
   return f_jitted
 
