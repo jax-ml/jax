@@ -20,6 +20,7 @@ import jax
 from jax import abstract_arrays
 from jax import ad_util
 from jax import api
+from jax import config
 from jax import core
 from jax import custom_derivatives
 from jax import dtypes
@@ -154,7 +155,7 @@ def convert(fun, with_gradient=True):
 
   def converted_fun(*args: TfVal) -> TfVal:
     # TODO: is there a better way to check if we are inside a transformation?
-    if not core.trace_state_clean():
+    if config.omnistaging_enabled and not core.trace_state_clean():
       raise ValueError("convert must be used outside all JAX transformations."
                        + f"Trace state: {core.thread_local_state.trace_state}")
 
@@ -216,7 +217,8 @@ def convert(fun, with_gradient=True):
 
 def _interpret_fun(fun: lu.WrappedFun,
                    in_vals: Sequence[TfValOrUnit]) -> Sequence[TfValOrUnit]:
-  with core.new_base_main(TensorFlowTrace) as main:
+  new_main = core.new_base_main if config.omnistaging_enabled else core.new_main
+  with new_main(TensorFlowTrace) as main:
     fun = _interpret_subtrace(fun, main)
     out_vals: Sequence[TfValOrUnit] = fun.call_wrapped(*in_vals)
     del main
