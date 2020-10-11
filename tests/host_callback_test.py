@@ -205,6 +205,17 @@ class HostCallbackTest(jtu.JaxTestCase):
         3""", testing_stream.output)
     testing_stream.reset()
 
+  def test_empty(self):
+    """Tap empty arrays."""
+    hcb.id_print((), output_stream=testing_stream)
+    hcb.id_print((1., np.ones((2, 0))), what="second", output_stream=testing_stream)
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        [  ]
+        what: second
+        [ 1.00
+          [] ]""", testing_stream.output)
+
   def test_jit_simple(self):
     jit_fun1 = api.jit(lambda x: 3. * hcb.id_print(
         2. * x, what="here", output_stream=testing_stream))
