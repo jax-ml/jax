@@ -1349,6 +1349,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}_order={}_constants={}".format(
+          jtu.format_shape_dtype_string(a_shape, dtype),
+          order,
+          None if k_shape is None else jtu.format_shape_dtype_string(k_shape, dtype)),
+       "dtype": dtype, "a_shape": a_shape, "order" : order, "k_shape": k_shape}
+      for dtype in default_dtypes
+      for a_shape in one_dim_array_shapes
+      for order in range(5)
+      for k_shape in set([None, (), (1,), (order,), (order + 1,)])))
+  def testPolyInt(self, a_shape, order, k_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda arg1, arg2: np.polyint(arg1, m=order, k=arg2)
+    jnp_fun = lambda arg1, arg2: jnp.polyint(arg1, m=order, k=arg2)
+    args_maker = lambda: [rng(a_shape, dtype), None if k_shape is None else rng(k_shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=True)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
           jtu.format_shape_dtype_string(shape, dtype), axis),
        "shape": shape, "dtype": dtype, "axis": axis}

@@ -3055,13 +3055,37 @@ def polyadd(a1, a2):
 def polyder(p, m=1):
   p = asarray(p)
   if m < 0:
-    raise ValueError("Order of derivative must be positive")
+    raise ValueError("Order of derivative must be nonnegative")
   if m == 0:
     return p
   if m % 1:
     raise ValueError("m must be an integer")
-  coeff = (arange(len(p), m, -1) - 1 - arange(m)[:, newaxis]).prod(0)
+  coeff = (np.arange(len(p), m, -1) - 1 - np.arange(m)[:, newaxis]).prod(0)
   return p[:-m] * coeff
+
+
+@_wraps(np.polyint)
+def polyint(p, m=1, k=None):
+  p = asarray(p)
+  if m < 0:
+    raise ValueError("Order of antiderivative must be nonnegative")
+  if m == 0:
+    return p
+  if m % 1:
+    raise ValueError("m must be an integer")
+  if k is None:
+    k = zeros(m)
+  else:
+    k = atleast_1d(k)
+    if len(k) == 1 and m > 1:
+      k = k * ones(m)
+    if ndim(k) > 1 or len(k) < m:
+      raise ValueError("k must be a scalar or a rank-1 array of length 1 or >=m.")
+  coeff = 1 / np.prod([np.pad(np.arange(len(p) + i, 0, -1),
+                              (0, m - i), "constant", constant_values=1)
+                       for i in range(m)], 0)
+  return concatenate([p, k[:m]]) * coeff
+
 
 @_wraps(np.trim_zeros)
 def trim_zeros(filt, trim='fb'):
