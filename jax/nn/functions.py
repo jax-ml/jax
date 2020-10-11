@@ -21,7 +21,8 @@ from jax import custom_jvp
 from jax import dtypes
 from jax import lax
 from jax import core
-from jax.scipy.special import expit, logsumexp
+from jax.scipy.special import expit
+from jax.scipy.special import logsumexp as _logsumexp
 import jax.numpy as jnp
 
 # activations
@@ -207,6 +208,9 @@ def glu(x, axis=-1):
   return x1 * sigmoid(x2)
 
 # other functions
+
+logsumexp = _logsumexp
+
 
 def log_softmax(x, axis=-1):
   r"""Log-Softmax function.
