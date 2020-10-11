@@ -21,7 +21,7 @@ from jax import custom_jvp
 from jax import dtypes
 from jax import lax
 from jax import core
-from jax.scipy.special import expit
+from jax.scipy.special import expit, logsumexp
 import jax.numpy as jnp
 
 # activations

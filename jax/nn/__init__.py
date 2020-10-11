@@ -19,6 +19,7 @@ from . import initializers
 from .functions import (
   celu,
   elu,
+  expit,
   gelu,
   glu,
   hard_sigmoid,
@@ -28,6 +29,7 @@ from .functions import (
   leaky_relu,
   log_sigmoid,
   log_softmax,
+  logsumexp,
   normalize,
   one_hot,
   relu,
