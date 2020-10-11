@@ -60,7 +60,7 @@ restored_model = tf.saved_model.load('/some/directory')
 More involved examples of using SavedModel are described in the 
 [getting started Colab](JAX2TF_getting_started.ipynb).
 
-## Differentiaion
+## Differentiation
 
 The converted code supports differentiation from TF. 
 The main challenge with TF-differentiation of the converted code is that some 
