@@ -218,7 +218,7 @@ def convert(fun, with_gradient=True):
 def _interpret_fun(fun: lu.WrappedFun,
                    in_vals: Sequence[TfValOrUnit]) -> Sequence[TfValOrUnit]:
   new_main = core.new_base_main if config.omnistaging_enabled else core.new_main
-  with new_main(TensorFlowTrace) as main:
+  with new_main(TensorFlowTrace) as main:  # type: ignore
     fun = _interpret_subtrace(fun, main)
     out_vals: Sequence[TfValOrUnit] = fun.call_wrapped(*in_vals)
     del main
