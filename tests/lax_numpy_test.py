@@ -3622,11 +3622,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(type(jnp.arange(77, dtype=jnp.int32)),
                       type(lax.iota(np.int32, 77)))
 
-    # test laziness for int dtypes
-    if not config.omnistaging_enabled:
-      self.assertTrue(xla.is_device_constant(jnp.arange(77)))
-      self.assertTrue(xla.is_device_constant(jnp.arange(77, dtype=jnp.int32)))
-
   def testArangeJit(self):
     ans = api.jit(lambda: jnp.arange(5))()
     expected = np.arange(5)
@@ -3646,9 +3641,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue764(self):
     x = jnp.linspace(190, 200, 4)
     f = api.grad(lambda x: jnp.sum(jnp.tanh(x)))
-    # Expected values computed with autograd in float64 precision.
+    # Expected values computed with Autograd in float64 precision.
     expected = np.array([3.71669453e-165, 4.72999108e-168, 6.01954653e-171,
-                          7.66067839e-174], np.float64)
+                         7.66067839e-174], np.float64)
     self.assertAllClose(f(x), expected, check_dtypes=False)
 
   def testIssue776(self):
