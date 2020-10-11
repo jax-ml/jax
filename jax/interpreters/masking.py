@@ -307,6 +307,7 @@ class ShapeSpec(tuple):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
 def finalize_spec(polymorphic_shape, padded_shape):
+  # TODO: what if polymorphic_shape has a constant that does not match padded_shape?
   return tuple(_parse_lit(d) if e is _monomorphic_dim else e
                for e, d in zip(polymorphic_shape, padded_shape))
 
@@ -326,7 +327,7 @@ def _parse_dim(spec):
     return prod(map(_parse_dim, spec.split('*')))
   elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
     return _parse_lit(spec)
-  elif spec in _identifiers:
+  elif spec[0] in _identifiers:
     return _parse_id(spec)
   elif spec == '_':
     return _monomorphic_dim
