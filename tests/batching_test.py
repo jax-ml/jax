@@ -477,7 +477,7 @@ class BatchingTest(jtu.JaxTestCase):
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct,
-                        rtol=2e-2)
+                        rtol=2e-2, atol=2e-3)
 
   def testConvGeneralDilatedBatchNotMajor(self):
     W = jnp.array(np.random.randn(3, 3, 1, 4), dtype=np.float32)
@@ -559,7 +559,7 @@ class BatchingTest(jtu.JaxTestCase):
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct,
-                        rtol=3e-2)
+                        rtol=3e-2, atol=1e-3)
 
   def testCumProd(self):
    x = jnp.arange(9).reshape(3, 3) + 1
