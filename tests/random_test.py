@@ -203,6 +203,24 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
+      for dtype in [np.float16, np.float32, np.float64]))
+  def testTruncatedNormal(self, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    min_val = np.min(uncompiled_samples)
+    max_val = np.max(uncompiled_samples)
+    self.assertTrue(min_val > -0.3)
+    self.assertTrue(max_val < 0.3)
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
       for dtype in [np.float32, np.float64, np.int32, np.int64]))
   def testShuffle(self, dtype):
     key = random.PRNGKey(0)
