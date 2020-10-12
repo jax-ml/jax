@@ -21,7 +21,7 @@ from functools import wraps
 import jax
 from .. import core
 from .. import linear_util as lu
-from ..api import _TempAxisName, _mapped_axis_size, _check_callable, _check_arg
+from ..api import _mapped_axis_size, _check_callable, _check_arg
 from ..tree_util import tree_flatten, tree_unflatten
 from ..api_util import flatten_fun
 from ..interpreters import partial_eval as pe
@@ -31,7 +31,7 @@ def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
   warn("gmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
   binds_axis_name = axis_name is not None
-  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
 
   @wraps(fun)
   def f_gmapped(*args, **kwargs):
