@@ -2785,7 +2785,9 @@ def ix_(*args):
 
 @_wraps(np.indices)
 def indices(dimensions, dtype=int32, sparse=False):
-  dimensions = tuple(core.concrete_or_error(int, d, "dimensions argument of jnp.indices") for d in dimensions)
+  dimensions = tuple(
+      core.concrete_or_error(int, d, "dimensions argument of jnp.indices")
+      for d in dimensions)
   N = len(dimensions)
   output = []
   s = dimensions
