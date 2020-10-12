@@ -700,10 +700,10 @@ def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
 
 
 def truncated_normal(key: jnp.ndarray,
-                    lower: Union[float, jnp.ndarray],
-                    upper: Union[float, jnp.ndarray],
-                    shape: Optional[Sequence[int]] = None,
-                    dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
+                     lower: Union[float, jnp.ndarray],
+                     upper: Union[float, jnp.ndarray],
+                     shape: Optional[Sequence[int]] = None,
+                     dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
@@ -722,6 +722,7 @@ def truncated_normal(key: jnp.ndarray,
   Returns:
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
+    Returns values in the open interval ``(lower, upper)``.
   """
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
@@ -739,12 +740,18 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
     _check_shape("truncated_normal", shape, np.shape(lower), np.shape(upper))
 
   sqrt2 = np.array(np.sqrt(2), dtype)
-  a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
-  b = lax.erf(lax.convert_element_type(upper, dtype) / sqrt2)
+  lower = lax.convert_element_type(lower, dtype)
+  upper = lax.convert_element_type(upper, dtype)
+  a = lax.erf(lower / sqrt2)
+  b = lax.erf(upper / sqrt2)
   if not jnp.issubdtype(dtype, np.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
-  u = uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny)
-  return sqrt2 * lax.erf_inv(a + u * (b - a))
+  u = uniform(key, shape, dtype, minval=a, maxval=b)
+  out = sqrt2 * lax.erf_inv(u)
+  # Clamp the value to the open interval (lower, upper) to make sure that
+  # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
+  return jnp.clip(out, lax.nextafter(lower, np.array(np.inf, dtype=dtype)),
+                  lax.nextafter(upper, np.array(-np.inf, dtype=dtype)))
 
 
 def bernoulli(key: jnp.ndarray,
