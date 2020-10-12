@@ -1197,7 +1197,7 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callab
     docstr += "\n\nOriginal documentation:\n\n"
     docstr += fun.__doc__
 
-  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
 
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -1487,7 +1487,7 @@ def pmap(fun: Callable[..., T],
   # the given value.
 
   _check_callable(fun)
-  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
   static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums)
   donate_tuple = rebase_donate_argnums(_ensure_tuple(donate_argnums),
                                        static_broadcasted_tuple)
@@ -1534,22 +1534,6 @@ def pmap(fun: Callable[..., T],
 
   return f_pmapped
 
-# When a mapped function is given no axis name, we generate a name object based
-# on the id of the function object. Collisions aren't important because this
-# name can't be used in collectives, as user code never gets a ref to this
-# object. We don't want to use the function object itself because that might
-# persist references to the function object.
-# TODO(mattjj): revisit this unique axis name strategy
-class _TempAxisName:
-  def __init__(self, obj):
-    self.id = id(obj)
-  def __repr__(self):
-    return f'<axis {hex(self.id)}>'
-  def __hash__(self):
-    return hash(self.id)
-  def __eq__(self, other):
-    return type(other) is _TempAxisName and self.id == other.id
-
 
 def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
               ) -> Callable:
@@ -1557,7 +1541,7 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
     raise NotImplementedError("soft_pmap requires omnistaging.")
   warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
-  axis_name = _TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
 
   if any(axis != 0 for axis in tree_leaves(in_axes)):
     raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")

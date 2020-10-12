@@ -1201,13 +1201,43 @@ def extend_axis_env(axis_name, size: int, tag: Any):
   finally:
     thread_local_state.trace_state.axis_env.pop()
 
+
+# When a mapped function is given no axis name, we generate a name object based
+# on the id of the function object. Collisions aren't important because this
+# name can't be used in collectives, as user code never gets a ref to this
+# object. We don't want to use the function object itself because that might
+# persist references to the function object.
+# TODO(mattjj): revisit this unique axis name strategy
+class _TempAxisName:
+
+  def __init__(self, obj):
+    self.id = id(obj)
+
+  def __repr__(self):
+    return f'<axis {hex(self.id)}>'
+
+  def __hash__(self):
+    return hash(self.id)
+
+  def __eq__(self, other):
+    return type(other) is _TempAxisName and self.id == other.id
+
+
 def axis_frame(axis_name):
   frames = thread_local_state.trace_state.axis_env
   for frame in reversed(frames):
     if frame.name == axis_name:
       return frame
 
-  raise NameError("unbound axis name: {}".format(axis_name))
+  named_axis = [
+      frame.name
+      for frame in reversed(frames)
+      if not isinstance(frame.name, _TempAxisName)
+  ]
+  raise NameError(
+      f'unbound axis name: {axis_name}. The following axis names (e.g. defined '
+      'by pmap) are available to collectives operations:'
+      f'{named_axis}')
 
 
 # ------------------- Jaxpr checking -------------------
@@ -1426,7 +1456,7 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
   eqns = jaxpr.eqns[lo:hi]
   pps = []
   if len(eqns) == 0 and len(jaxpr.eqns) != 0:
-      pps.append(pp('...'))
+    pps.append(pp('...'))
   else:
     if lo != 0:
       pps.append(pp('...'))
