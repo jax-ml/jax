@@ -3993,7 +3993,7 @@ def _index_to_gather(x_shape, idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if isinstance(e, (Sequence, ndarray)))
+      if isscalar(e) or isinstance(e, (Sequence, ndarray)))
     advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
