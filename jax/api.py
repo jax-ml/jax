@@ -50,6 +50,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
                    extend_name_stack, wrap_name, cache)
 from .lib import jax_jit
+from .lib import version
 from .lib import xla_bridge as xb
 from .lib import xla_client as xc
 # Unused imports to be exported
@@ -86,10 +87,11 @@ zip = safe_zip
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
-flags.DEFINE_bool("experimental_cpp_jit", bool_env("JAX_CPP_JIT", False),
-                  "A temporary flag enabling the C++ jax.jit fast path."
-                  "Set this to `False` only if it crashes otherwise and report "
-                  "the error to the jax-team.")
+flags.DEFINE_bool(
+    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", version >= (0, 1, 56)),
+    "A temporary flag enabling the C++ jax.jit fast path."
+    "Set this to `False` only if it crashes otherwise and report "
+    "the error to the jax-team.")
 
 float0 = dtypes.float0
 
