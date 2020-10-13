@@ -1266,9 +1266,12 @@ def _select_and_gather_add(tangents: TfVal,
   init_identity = lambda x: pack(const(dtype, init), const(dtype, 0))
 
   out = _specialized_reduce_window(reducer, init_identity,
-                                   pack(operand, tangents), window_dimensions,
-                                   window_strides, padding, base_dilation,
-                                   window_dilation, _in_avals, _out_aval)
+                                   pack(operand, tangents),
+                                   window_dimensions=window_dimensions,
+                                   window_strides=window_strides,
+                                   padding=padding, base_dilation=base_dilation,
+                                   window_dilation=window_dilation,
+                                   _in_avals=_in_avals, _out_aval=_out_aval)
 
   return snd(out)
 
@@ -1330,31 +1333,93 @@ def _reduce_window(operand, init_value, *, jaxpr, consts, window_dimensions,
       base_dilation, window_dilation, _in_avals, _out_aval
   )
 
-def _specialized_reduce_window(reducer, identity, operand,
-                               window_dimensions, window_strides, padding,
-                               base_dilation, window_dilation, _in_avals, _out_aval):
-  """Wraps the TensorFlow reduce window operation based on a reducer and an identity
-  function defining the initial value of the reduction depending on the dtype of the
-  operand.
+# _try_tf_max_pool returns a Tensor when it succeeds, or a string describing why
+# it did not succeed otherwise.
+def _try_tf_max_pool(operand, window_dimensions, window_strides, padding,
+                     base_dilation, window_dilation) -> Union[str, TfVal]:
+  # TODO(bchetioui): this function is not exhaustive wrt which
+  # reduce_window_max cases can be translated into a call to max_pool. Further
+  # investigation is needed to fully flesh it out.
+
+  # Contrarily to the main path, tf.int8 is actually a valid type for
+  # tf.nn.max_pool.
+  if operand.dtype in [tf.bool, tf.uint32, tf.uint64, tf.complex64,
+                       tf.complex128]:
+    return f"tf.nn.max_pool does not support operands of type {operand.dtype}"
+  has_batch_dim = window_dimensions[0] == 1
+  has_channel_dim = window_dimensions[-1] == 1
+  nb_spatial_dimensions = len(operand.shape) - has_batch_dim - has_channel_dim
+  if nb_spatial_dimensions < 1 or nb_spatial_dimensions > 3:
+    return ("TensorFlow can only handle max pooling for arrays with 1, 2, or "
+            "3 spatial dimensions")
+  # TODO(bchetioui): does a simple conversion with another base dilation exist?
+  if list(base_dilation) != [1] * len(operand.shape):
+    return "Unimplemented support for base dilation"
+  # TODO(bchetioui): does a simple conversion with another window_dilation
+  # exist? The whole story seems similar to convolution.
+  if list(window_dilation) != [1] * len(operand.shape):
+    return "Unimplemented support for window dilation"
+  if list(padding) != [(0, 0)] * len(operand.shape):
+    return "Unimplemented support for padding"
+  # ReduceWindow in XLA takes an array of rank N as a parameter, but
+  # tf.nn.max_pool takes an array of rank N+2, with a default shape of the
+  # form [batch_size] + input_spatial_shape + [num_channels]
+  tf_operand = operand
+  tf_window_dimensions = list(window_dimensions)
+  tf_window_strides = list(window_strides)
+  if not has_batch_dim:
+    tf_operand = tf.expand_dims(tf_operand, 0)
+    tf_window_dimensions = [1] + tf_window_dimensions
+    tf_window_strides = [1] + tf_window_strides
+  if not has_channel_dim:
+    tf_operand = tf.expand_dims(tf_operand, -1)
+    tf_window_dimensions.append(1)
+    tf_window_strides.append(1)
+  tf_data_format = 'N' + 'DHW'[-nb_spatial_dimensions:] + 'C'
+  tf_padding = 'VALID'
+  result = tf.nn.max_pool(tf_operand, tf_window_dimensions, tf_window_strides,
+                          tf_padding, tf_data_format)
+  if not has_batch_dim:
+    result = tf.squeeze(result, 0)
+  if not has_channel_dim:
+    result = tf.squeeze(result, -1)
+  return result
+
+def _specialized_reduce_window(reducer, identity, operand, *, window_dimensions,
+                               window_strides, padding, base_dilation,
+                               window_dilation, _in_avals, _out_aval,
+                               name=None):
+  """Wraps the TensorFlow reduce window operation based on a reducer and an
+  identity function defining the initial value of the reduction depending on
+  the dtype of the operand.
 
   Args:
     reducer: reduction function of type TfVal -> TfVal -> TfVal
-    identity: function that takes a TensorFlow dtype as a parameter and returns the
-      starting value of the reduction.
+    identity: function that takes a TensorFlow dtype as a parameter and returns
+      the starting value of the reduction.
     operand: N dimensional array containing elements of type T
     window_dimensions: array of integers for window dimension values
     window_strides: array of integers for window stride values
     padding: array of pairs of integers for padding values
     base_dilation: array of integers for base dilation values
     window_dilation: array of integers for window dilation values
+    name: the name of the specialized reduce window primitive for which this
+      conversion function is called. This information may help to choose a
+      different conversion path (optional)
 
   Returns:
     The reduced operand.
   """
+  if name == "reduce_window_max":
+    res = _try_tf_max_pool(operand, window_dimensions, window_strides, padding,
+                           base_dilation, window_dilation)
+    if not isinstance(res, str):
+      return res
 
   return _common_reduce_window(
       operand, identity(operand.dtype), reducer, window_dimensions,
-      window_strides, padding, base_dilation, window_dilation, _in_avals, _out_aval
+      window_strides, padding, base_dilation, window_dilation, _in_avals,
+      _out_aval
   )
 
 def _get_max_identity(tf_dtype):
@@ -1383,13 +1448,14 @@ def _get_min_identity(tf_dtype):
 
 # pylint: disable=protected-access
 tf_impl_with_avals[lax.reduce_window_sum_p] = (
-    functools.partial(_specialized_reduce_window, tf.math.add, lambda x: 0))
+    functools.partial(_specialized_reduce_window, tf.math.add, lambda x: 0,
+                      name="reduce_window_sum"))
 tf_impl_with_avals[lax.reduce_window_min_p] = (
     functools.partial(_specialized_reduce_window, tf.math.minimum,
-                      _get_min_identity))
+                      _get_min_identity, name="reduce_window_min"))
 tf_impl_with_avals[lax.reduce_window_max_p] = (
     functools.partial(_specialized_reduce_window, tf.math.maximum,
-                      _get_max_identity))
+                      _get_max_identity, name="reduce_window_max"))
 tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
