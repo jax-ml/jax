@@ -989,4 +989,80 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
       (("NHWC", "HWIO", "NHWC"), (2, 9, 10, 3), (4, 5, 3, 3)), # TF default
       (("NCHW", "HWIO", "NHWC"), (2, 3, 9, 10), (4, 5, 3, 3)), # custom
   ]
+) + tuple(
+  _make_conv_harness("tf_conversion_path_1d", lhs_shape=lhs_shape,
+                     padding=padding, rhs_shape=rhs_shape,
+                     dimension_numbers=dimension_numbers, window_strides=(1,),
+                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
+  for padding, lhs_dilation, rhs_dilation in [
+    ("VALID", (1,), (1,)), # no dilation with "VALID" padding
+    ("SAME",  (1,), (1,)), # no dilation with "SAME" padding
+    ("VALID", (1,), (2,)), # dilation only on RHS with "VALID" padding
+    ("SAME",  (1,), (2,)), # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
+  ]
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    (("NWC", "WIO", "NWC"), (1, 28, 1), (3, 1, 16)), # TF default
+    # TODO(bchetioui): the NCW data format is not supported on CPU for TF
+    # for now. That path is thus disabled to allow the code to use XLA instead.
+  ]
+) + tuple(
+  _make_conv_harness("tf_conversion_path_2d", lhs_shape=lhs_shape,
+                     padding=padding, rhs_shape=rhs_shape,
+                     dimension_numbers=dimension_numbers, window_strides=(1, 1),
+                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
+  for padding, lhs_dilation, rhs_dilation in [
+    ("VALID", (1, 1), (1, 1)), # no dilation with "VALID" padding
+    ("SAME",  (1, 1), (1, 1)), # no dilation with "SAME" padding
+    ("VALID", (1, 1), (1, 2)), # dilation only on RHS with "VALID" padding
+    ("SAME",  (1, 1), (1, 2)), # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
+  ]
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    (("NHWC", "HWIO", "NHWC"), (1, 28, 28, 1), (3, 3, 1, 16)), # TF default
+    # TODO(bchetioui): the NCHW data format is not supported on CPU for TF
+    # for now. That path is thus disabled to allow the code to use XLA instead.
+  ]
+) + tuple(
+  _make_conv_harness("tf_conversion_path_3d", lhs_shape=lhs_shape,
+                     padding=padding, rhs_shape=rhs_shape,
+                     dimension_numbers=dimension_numbers,
+                     window_strides=(1, 1, 1), lhs_dilation=lhs_dilation,
+                     rhs_dilation=rhs_dilation)
+  for padding, lhs_dilation, rhs_dilation in [
+    ("VALID", (1, 1, 1), (1, 1, 1)), # no dilation with "VALID" padding
+    ("SAME",  (1, 1, 1), (1, 1, 1)), # no dilation with "SAME" padding
+    ("VALID", (1, 1, 1), (1, 1, 2)), # dilation only on RHS with "VALID" padding
+    ("SAME",  (1, 1, 1), (1, 1, 2)), # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
+  ]
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    # TF default
+    (("NDHWC", "DHWIO", "NDHWC"), (1, 4, 28, 28, 1), (2, 3, 3, 1, 16)),
+    # TODO(bchetioui): the NCDHW data format is not supported on CPU for TF
+    # for now. That path is thus disabled to allow the code to use XLA instead.
+  ]
+) + tuple(
+    # tf.nn.convolution only supports a subset of the possible dtypes for JAX
+    # convolutions (float16, float32, float64). With the below tests, we ensure
+    # that we avoid this branch in cases when it would not succeed.
+    _make_conv_harness("tf_conversion_path_dtype", lhs_shape=lhs_shape,
+                     padding='VALID', rhs_shape=rhs_shape, dtype=dtype,
+                     dimension_numbers=dimension_numbers, lhs_dilation=(1, 1),
+                     rhs_dilation=(1, 1))
+  for dtype in jtu.dtypes.all_inexact
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    (("NHWC", "HWIO", "NHWC"), (1, 28, 28, 1), (3, 3, 1, 16)), # TF default
+  ]
+) + tuple(
+  # Validate that feature_group_count != 1 does not go through tf.nn.convolution
+  # as that would result in an exception.
+  [_make_conv_harness("tf_avoid_path_feature_group_count", dtype=np.float32,
+                      lhs_shape=(1, 28, 28, 32), rhs_shape=(3, 3, 16, 8),
+                      padding='VALID', batch_group_count=1, lhs_dilation=(1, 1),
+                      rhs_dilation=(1, 1), feature_group_count=2,
+                      dimension_numbers=('NHWC', 'HWIO', 'NHWC'))]
 )
