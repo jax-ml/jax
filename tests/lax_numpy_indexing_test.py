@@ -148,6 +148,11 @@ STATIC_INDEXING_TESTS = [
         IndexSpec(shape=(3,), indexer=()),
         IndexSpec(shape=(3, 4), indexer=()),
     ]),
+    ("TupleOfIntAndSliceAndIntArray", [
+        IndexSpec(shape=(3, 2, 3), indexer=(0, slice(None), np.arange(3))),
+        IndexSpec(shape=(3, 2, 3), indexer=(np.int32(1), slice(None), np.arange(3))),
+        IndexSpec(shape=(3, 2, 3), indexer=(np.array(2), slice(None), np.arange(3))),
+    ]),
 ]
 
 STATIC_INDEXING_GRAD_TESTS = [
