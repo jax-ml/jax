@@ -96,8 +96,22 @@ pytype_library(
 )
 
 pytype_library(
+    name = "general_map",
+    srcs = ["experimental/general_map.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
     name = "jet",
     srcs = ["experimental/jet.py"],
+    srcs_version = "PY3",
+    deps = [":jax"],
+)
+
+pytype_library(
+    name = "experimental_doubledouble",
+    srcs = ["experimental/doubledouble.py"],
     srcs_version = "PY3",
     deps = [":jax"],
 )
