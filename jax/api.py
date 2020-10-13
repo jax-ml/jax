@@ -1234,14 +1234,15 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callab
 
   return batched_fun
 
-def _get_axis_size(name: str, i:int, shape: Tuple[int, ...], axis: int):
-  try:
-    return shape[axis]
-  except (IndexError, TypeError) as e:
-    raise ValueError(f"{name} got arg {i} of rank {len(shape)} "
-                     f"but axis to be mapped {axis}") from e
-
 def _mapped_axis_size(tree, vals, dims, name):
+  def _get_axis_size(name: str, i:int, shape: Tuple[int, ...], axis: int):
+    try:
+      return shape[axis]
+    except (IndexError, TypeError) as e:
+      ranks = tree_unflatten(tree, [np.ndim(x) for x, d in zip(vals, dims)])
+      raise ValueError(f"{name} got arg {i} of rank {len(shape)} but axis to be mapped {axis}. "
+                       f"The tree of ranks is:\n{ranks}") from e
+
   mapped_axis_sizes = {_get_axis_size(name, i, np.shape(x), d)
                        for i, (x, d) in enumerate(zip(vals, dims))
                        if d is not None}
