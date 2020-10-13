@@ -45,8 +45,10 @@ class JaxprStatsTest(jtu.JaxTestCase):
     hist = jaxpr_util.primitives_by_source(make_jaxpr(f)(1., 1.).jaxpr)
 
     sin_keys = [k for k in hist.keys() if k.startswith('sin @ ')]
-    self.assertEqual(len(sin_keys), 2)
-    self.assertTrue(all(count == 1 for count in hist.values()))
+    rem_keys = [k for k in hist.keys() if not k.startswith('sin @ ')]
+
+    self.assertEqual(sum(hist[k] for k in sin_keys), 2)
+    self.assertTrue(all(hist[k] == 1 for k in rem_keys))
 
   def test_primitives_by_shape(self):
     def f(x, y):
@@ -75,7 +77,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       return jnp.sin(s) + jnp.cos(y)  # sin, cos, add
 
     hist = jaxpr_util.source_locations(make_jaxpr(f)(1., 1.).jaxpr)
-    self.assertEqual(set(hist.values()), set([1, 3]))
+    self.assertEqual(sum(hist.values()), 4)
 
   def test_print_histogram(self):
     def f(x, y):
