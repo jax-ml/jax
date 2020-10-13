@@ -750,8 +750,10 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
   out = sqrt2 * lax.erf_inv(u)
   # Clamp the value to the open interval (lower, upper) to make sure that
   # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
-  return jnp.clip(out, lax.nextafter(lower, np.array(np.inf, dtype=dtype)),
-                  lax.nextafter(upper, np.array(-np.inf, dtype=dtype)))
+  return jnp.clip(
+      out,
+      lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
+      lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
 
 
 def bernoulli(key: jnp.ndarray,
