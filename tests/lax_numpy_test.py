@@ -2334,10 +2334,38 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       "weights": weights,
       "density": density
     }
+    for shape in [(5,), (12,)]
+    for dtype in int_dtypes
+    for bins in [2, [2, 2], [[0, 1, 3, 5], [0, 2, 3, 4, 6]]]
+    for weights in [False, True]
+    for density in [False, True]
+  ))
+  def testHistogram2d(self, shape, dtype, bins, weights, density):
+    rng = jtu.rand_default(self.rng())
+    _weights = lambda w: abs(w) if weights else None
+    np_fun = lambda a, b, w: np.histogram2d(a, b, bins=bins, weights=_weights(w), density=density)
+    jnp_fun = lambda a, b, w: jnp.histogram2d(a, b, bins=bins, weights=_weights(w), density=density)
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype), rng(shape, dtype)]
+    tol = {jnp.bfloat16: 2E-2, np.float16: 1E-1}
+    # np.searchsorted errors on bfloat16 with
+    # "TypeError: invalid type promotion with custom data type"
+    with np.errstate(divide='ignore', invalid='ignore'):
+        if dtype != jnp.bfloat16:
+            self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                              tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "_{}_bins={}_weights={}_density={}".format(
+      jtu.format_shape_dtype_string(shape, dtype), bins, weights, density),
+      "shape": shape,
+      "dtype": dtype,
+      "bins": bins,
+      "weights": weights,
+      "density": density
+    }
     for shape in [(5, 3), (10, 3)]
     for dtype in int_dtypes
-    # We only test explicit integer-valued bin edges because in other cases
-    # rounding errors lead to flaky tests.
     for bins in [(2, 2, 2), [[-5, 0, 4], [-4, -1, 2], [-6, -1, 4]]]
     for weights in [False, True]
     for density in [False, True]
@@ -4408,6 +4436,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'full_like': ['shape', 'subok', 'order'],
       'gradient': ['varargs', 'axis', 'edge_order'],
       'histogram': ['normed'],
+      'histogram2d': ['normed'],
       'histogramdd': ['normed'],
       'isneginf': ['out'],
       'isposinf': ['out'],

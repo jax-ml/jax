@@ -921,6 +921,22 @@ def histogram(a, bins=10, range=None, weights=None, density=None):
     counts = counts / bin_widths / counts.sum()
   return counts, bin_edges
 
+@_wraps(np.histogram2d)
+def histogram2d(x, y, bins=10, range=None, weights=None, density=None):
+
+  try:
+    N = len(bins)
+  except TypeError:
+    N = 1
+
+  if N != 1 and N != 2:
+    x_edges = y_edges = asarray(bins)
+    bins = [x_edges, y_edges]
+
+  sample = transpose(asarray([x, y]))
+  hist, edges = histogramdd(sample, bins, range, weights, density)
+  return hist, edges[0], edges[1]
+
 @_wraps(np.histogramdd)
 def histogramdd(sample, bins=10, range=None, weights=None, density=None):
   _check_arraylike("histogramdd", sample)
@@ -928,6 +944,14 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
 
   if weights is not None and weights.shape != (N,):
     raise ValueError("should have one weight for each sample.")
+
+  try:
+    num_bins = len(bins)
+    if num_bins != D:
+      raise ValueError("should be a bin for each dimension.")
+  except TypeError:
+    # when bin_size is integer, the same bin is used for each dimension
+    bins = D * [bins]
 
   bin_idx_by_dim = D*[None]
   nbins = np.empty(D, int)
