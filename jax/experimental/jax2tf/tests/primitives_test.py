@@ -69,7 +69,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                       | set(xla.initial_style_translations)
                       | set(xla.parallel_translations))
 
-    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl)
+    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl) | set(jax.experimental.jax2tf.jax2tf.tf_impl_with_avals)
     tf_not_yet_impl = set(jax.experimental.jax2tf.jax2tf.tf_not_yet_impl)
 
     all_primitives = tuple(sorted(all_primitives, key=str))
