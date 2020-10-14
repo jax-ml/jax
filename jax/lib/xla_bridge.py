@@ -23,9 +23,10 @@ XLA. There are also a handful of related casting utilities.
 from functools import partial
 import os
 from typing import Callable, Dict, Tuple, Union
-import warnings
 
 from absl import logging
+# Disable "WARNING: Logging before flag parsing goes to stderr." message
+logging._warn_preinit_stderr = 0
 
 from ..config import flags
 from .. import util
@@ -127,7 +128,8 @@ def _get_local_backend(platform=None):
     raise RuntimeError("No local XLA backends found.")
 
   if backend.platform == 'cpu' and platform != 'cpu':
-    warnings.warn('No GPU/TPU found, falling back to CPU.')
+    logging.warning('No GPU/TPU found, falling back to CPU. '
+                    '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
 
   return backend
 
