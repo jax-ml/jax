@@ -310,7 +310,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
       op_type=prim.name,
       op_name=str(pp_eqn_compact(prim.name, params))))
   platform = xb.get_backend(backend).platform
-  xla_args = _xla_callable_args(c, avals, tuple_args)
+  xla_args, _ = _xla_callable_args(c, avals, tuple_args)
   # return val always set as a side-effect on c
   if prim in backend_specific_translations[platform]:
     rule = backend_specific_translations[platform][prim]
@@ -680,7 +680,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
 
   c = xb.make_computation_builder("jit_{}".format(fun.__name__))
   xla_consts = _xla_consts(c, consts)
-  xla_args = _xla_callable_args(c, abstract_args, tuple_args)
+  xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args, donated_invars=donated_invars)
   out_nodes = jaxpr_subcomp(
       c, jaxpr, backend, AxisEnv(nreps, (), (), None), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
@@ -756,7 +756,8 @@ _replicated_param = object()
 
 def _xla_callable_args(
     c, avals, tuple_args, replicated=None,
-    partitions: Optional[Sequence[Optional[Sequence[int]]]] = None):
+    partitions: Optional[Sequence[Optional[Sequence[int]]]] = None,
+    donated_invars = None):
   assert partitions is None or len(partitions) == len(avals)
   if not tuple_args:
     if replicated is None:
@@ -767,10 +768,15 @@ def _xla_callable_args(
       parts = [_replicated_param if part is None else part
                for part in partitions]
     counts = it.count()
-    return [_xla_param(c, next(counts), xla_shape, r, p)
-            if a is not abstract_token else xops.CreateToken(c)
-            for (a, r, p) in safe_zip(avals, replicated, parts)
-            for xla_shape in aval_to_xla_shapes(a)]
+    xla_args = [_xla_param(c, next(counts), xla_shape, r, p)
+                if a is not abstract_token else xops.CreateToken(c)
+                for (a, r, p) in safe_zip(avals, replicated, parts)
+                for xla_shape in aval_to_xla_shapes(a)]
+    if donated_invars is not None:
+      donated_invars = [d
+                        for (a, r, p, d) in safe_zip(avals, replicated, parts, donated_invars)
+                        for xla_shape in aval_to_xla_shapes(a)]
+    return xla_args, donated_invars
   else:
     if replicated is not None:
       replicated = [r for a, r in zip(avals, replicated)
@@ -783,7 +789,7 @@ def _xla_callable_args(
     xla_args = [next(xla_inputs) if a is not abstract_token else
                 xops.CreateToken(c) for a in avals]
     assert next(xla_inputs, None) is None
-    return xla_args
+    return xla_args, donated_invars
 
 def _xla_param(builder, param_num, xla_shape, replicated, partitions):
   make_param = partial(xb.parameter, builder, param_num, xla_shape,

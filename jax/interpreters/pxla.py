@@ -637,8 +637,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = map(partial(xb.constant, c), consts)
-  xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args,
-                                    map(op.not_, mapped_invars), arg_parts)
+  xla_args, donated_invars = xla._xla_callable_args(c, sharded_avals, tuple_args,
+                                                    map(op.not_, mapped_invars), arg_parts,
+                                                    donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                   extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
@@ -1054,7 +1055,7 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
   xla_consts = map(partial(xb.constant, c), consts)
   chunked_avals = [core.unmapped_aval(chunk_size, aval) if m else aval
                    for m, aval in zip(mapped_invars, mapped_avals)]
-  xla_args = xla._xla_callable_args(c, chunked_avals, tuple_args)
+  xla_args, _ = xla._xla_callable_args(c, chunked_avals, tuple_args)
   axis_env = xla.AxisEnv(num_devices, (axis_name,), (num_devices,), None)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, None, axis_env, xla_consts,
                                 'soft_pmap', *xla_args)
