@@ -9,6 +9,14 @@ Change Log
 
 These are the release notes for JAX.
 
+jaxlib 0.1.57 (unreleased)
+------------------------------
+
+
+jaxlib 0.1.56 (October 14, 2020)
+------------------------------
+
+
 jax 0.2.3 (October 14 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.2...jax-v0.2.3>`_.
