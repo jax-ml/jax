@@ -2593,6 +2593,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                                 "JAX only supports number and bool dtypes.*"):
       jnp.array(3, [('a','<i4'),('b','<i4')])
 
+  def testArraySupportsFloat0(self):
+    jnp.array((0,), jax.float0)
+    jnp.zeros([], jax.float0)
+
   def testIssue121(self):
     assert not np.isscalar(jnp.array(3))
 

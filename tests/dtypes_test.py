@@ -179,6 +179,9 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
 
+  def testFloat0DtypeSymmetry(self):
+    a = jnp.array(0, jax.float0)
+    self.assertEqual(a.dtype, jax.float0)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
