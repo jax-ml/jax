@@ -363,6 +363,7 @@ def _cpp_jit(
         return cache_miss(*args, **kwargs)[0]  # probably won't return
     else:
       return cpp_jitted_f(*args, **kwargs)
+  f_jitted._cpp_jitted_f = cpp_jitted_f
 
   return f_jitted
 
