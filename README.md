@@ -409,7 +409,7 @@ cloud VM), you can run
 
 ```bash
 pip install --upgrade pip
-pip install --upgrade jax jaxlib==0.1.55+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install --upgrade jax jaxlib==0.1.56+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
 ```
 
 The jaxlib version must correspond to the version of the existing CUDA
