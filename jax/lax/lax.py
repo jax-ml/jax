@@ -4521,53 +4521,29 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
   # If there are overlapping indices in the scatter, it is unspecified which
   # update "wins". So we use the following perhaps surprising scheme:
-  # a) attach a positive ID to each update in updates, forming (value, id) pairs
-  #    (using a new array dimension because scatter doesn't actually support
-  #     pairs).
-  # b) perform the scatter, yielding (value, id) updates, which we split apart.
-  # c) perform the inverse gather on the ids (similar to
-  #    _scatter_add_transpose), and use it to build a mask for the tangent of
-  #    `updates`.
-  # d) perform a scatter-add on the masked JVP values. A benefit of using
-  #    scatter-add here is that we don't need a `scatter` transpose rule.
+  # a) attach a positive ID to each update in updates, and perform the scatter
+  #    on the IDs
+  # b) perform the inverse gather on the scattered IDs (similar to
+  #    _scatter_add_transpose).
+  # c) use the gathered IDs to mask the primal and tangent values.
+  # d) perform a scatter-add on the masked primal and tangent values. A benefit
+  #    of using scatter-add here is that we don't need a `scatter` transpose
+  #    rule.
 
-  # a) add unique positive IDs (iotas) to the updates, and zeros to the operand.
-  operand_shape = operand.shape
-  updates_shape = updates.shape
-  updates_dtype = _dtype(updates)
 
-  new_operand = reshape(operand, (1,) + operand_shape)
-  new_operand = pad(new_operand, _zero(operand),
-                    ((0, 1, 0),) + tuple((0, 0, 0) for _ in operand_shape))
-
-  # We specify the dtype here in case `updates_shape` is an empty tuple, in
-  # which case numpy defaults to float64.
-  ids_shape = np.array(updates_shape, dtype=np.int32)
+  # a) attach a positive ID to each update in `updates`, and perform a scatter
+  #    on the IDs.
+  ids_shape = np.array(updates.shape, dtype=np.int64)
   ids_shape[dnums.update_window_dims,] = 1
   num_ids = np.prod(ids_shape)
-  update_ids = add(reshape(iota(updates_dtype, num_ids), ids_shape),
-                   _ones(updates))
+  id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  update_ids = add(reshape(iota(id_dtype, num_ids), ids_shape),
+                   _ones(updates, dtype=id_dtype))
 
-  # TODO(phawkins): there is a potential bug here if the number of updates
-  # is large enough to overflow the number of mantissa bits in a float so IDs
-  # end up colliding. We could also utilize the exponent and sign bits, with a
-  # little more work.
-  assert num_ids < (2 ** dtypes.finfo(updates_dtype).nmant)
-
-  updates = reshape(updates, (1,) + updates_shape)
-  reshaped_update_ids = reshape(update_ids, (1,) + updates_shape)
-  updates_and_ids = concatenate((updates, reshaped_update_ids), 0)
-
-  new_dnums = ScatterDimensionNumbers(
-    update_window_dims=(0,) + tuple(d + 1 for d in dnums.update_window_dims),
-    inserted_window_dims=tuple(d + 1 for d in dnums.inserted_window_dims),
-    scatter_dims_to_operand_dims=tuple(d + 1 for d in dnums.scatter_dims_to_operand_dims))
-  outputs = scatter_p.bind(
-      new_operand, scatter_indices, updates_and_ids, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=new_dnums,
-      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
-  val_out = index_in_dim(outputs, 0, keepdims=False)
-  scattered_ids = index_in_dim(outputs, 1, keepdims=False)
+  scattered_ids = scatter(full(operand.shape, 0, id_dtype),
+                          scatter_indices, update_ids, dnums,
+                          indices_are_sorted=indices_are_sorted,
+                          unique_indices=unique_indices)
 
   # b) compute the inverse gather that "undoes" the scatter on the id values.
   gather_dnums = GatherDimensionNumbers(
@@ -4580,19 +4556,27 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
     if i in dnums.inserted_window_dims:
       slice_sizes.append(1)
     else:
-      slice_sizes.append(updates_shape[dnums.update_window_dims[pos]])
+      slice_sizes.append(updates.shape[dnums.update_window_dims[pos]])
       pos += 1
   gathered_update_ids = gather(scattered_ids, scatter_indices,
-                         dimension_numbers=gather_dnums,
-                         slice_sizes=slice_sizes)
+                               dimension_numbers=gather_dnums,
+                               slice_sizes=slice_sizes)
 
-  # c) mask off input JVP elements that do not correspond to a primal output.
+  # c) mask off input elements that do not correspond to a primal output.
+  masked_operand = select(eq(scattered_ids, _zeros(scattered_ids)),
+                          operand, _zeros(operand))
+  masked_updates = select(eq(update_ids,  gathered_update_ids),
+                          updates, _zeros(updates))
   masked_g_operand = select(eq(scattered_ids, _zeros(scattered_ids)),
                             g_operand, _zeros(g_operand))
   masked_g_updates = select(eq(update_ids, gathered_update_ids),
                             g_updates, _zeros(g_updates))
 
-  # d) perform a scatter-add to compute the tangent output.
+  # d) perform scatter-adds to compute the primal and tangent outputs.
+  val_out = scatter_add(masked_operand, scatter_indices, masked_updates,
+                        dimension_numbers=dnums,
+                        indices_are_sorted=indices_are_sorted,
+                        unique_indices=unique_indices)
   tangent_out = scatter_add(masked_g_operand, scatter_indices, masked_g_updates,
                             dimension_numbers=dnums,
                             indices_are_sorted=indices_are_sorted,
