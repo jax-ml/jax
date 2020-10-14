@@ -660,8 +660,8 @@ def _xla_computation(
     c = xb.make_computation_builder("xla_computation_{}".format(fun_name))
     xla_consts = map(partial(xb.constant, c), consts)
     should_tuple = tuple_args if tuple_args is not None else (len(avals) > 100)
-    xla_args = xla._xla_callable_args(
-        c, avals, should_tuple, partitions=in_parts_flat)
+    xla_args, donated_invars = xla._xla_callable_args(
+        c, avals, should_tuple, partitions=in_parts_flat, donated_invars=donated_invars)
     out_nodes = xla.jaxpr_subcomp(
         c, jaxpr, backend, axis_env_, xla_consts,
         extend_name_stack(wrap_name(fun_name, "xla_computation")), *xla_args)
