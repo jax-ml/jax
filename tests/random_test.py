@@ -120,6 +120,14 @@ class LaxRandomTest(jtu.JaxTestCase):
     np.testing.assert_equal(result[:n], np.full((n,), 0xc4923a9c, dtype=np.uint32))
     np.testing.assert_equal(result[n:], np.full((n,), 0x483df7a0, dtype=np.uint32))
 
+  def testThreefry2x32Empty(self):
+    # Regression test for an op-by-op crash for empty arrays in CUDA mode.
+    with api.disable_jit():
+      result = random.threefry_2x32(
+        (np.uint32(0x13198a2e), np.uint32(0x03707344)),
+        jnp.ones((10, 0,), jnp.uint32))
+    np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
+
   def testRngRandomBitsViewProperty(self):
     # TODO: add 64-bit if it ever supports this property.
     # TODO: will this property hold across endian-ness?
