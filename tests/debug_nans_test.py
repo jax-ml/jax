@@ -17,8 +17,11 @@
 from absl.testing import absltest
 
 import jax
+import numpy as np
+
 from jax import test_util as jtu
 from jax import numpy as jnp
+from jax.lib import version
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -54,13 +57,24 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testCallDeoptimized(self):
-    @jax.jit
-    def f(x):
-      return jnp.add(x, jnp.nan)
+    to_test = [jax.api._python_jit]
+    if version > (0, 1, 56):
+      to_test.append(jax.api._cpp_jit)
 
-    msg = r"invalid value \(nan\) encountered in add"  # 'add' not 'xla_call'
-    with self.assertRaisesRegex(FloatingPointError, msg):
-      f(1)
+    for jit in to_test:
+
+      @jit
+      def f(x):
+        return jax.lax.cond(
+            x == 1, lambda _: np.nan, lambda _: 2., operand=None)
+
+      # This makes sure, when using the C++ jit, that the Python code has been
+      # run to compile, and the next call won't go through `cache_miss`.
+      f(2)
+      # 'cond' not 'xla_call'
+      msg = r"invalid value \(nan\) encountered in cond"
+      with self.assertRaisesRegex(FloatingPointError, msg):
+        f(1)
 
 
 if __name__ == '__main__':

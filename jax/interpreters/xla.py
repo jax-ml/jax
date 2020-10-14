@@ -566,7 +566,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_inv
     # In addition to re-executing the Python code, which is usually undesirable
     # but which FLAGS.jax_debug_nans is meant to opt into, we'll be re-executing
     # any linear_util.py-style side effects, i.e. re-populating Stores created
-    # by any transformation_with(aux's applied to fun. Since this is
+    # by any transformation_with_aux's applied to fun. Since this is
     # intentional here, to avoid "Store occupied" errors we reset the stores to
     # be empty.
     for store in fun.stores: store.reset()

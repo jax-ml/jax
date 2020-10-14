@@ -336,28 +336,6 @@ class CPPJitTest(jtu.JaxTestCase):
     for x, y in zip(xs, ys):
       self.assertAllClose(x * 2 - 3., y)
 
-
-class PythonJitTest(CPPJitTest):
-
-  @property
-  def jit(self):
-    return jax.api._python_jit
-
-  def test_jit_reference_dropping(self):
-    x = jnp.ones(10)
-    f = (lambda x: lambda: x)(x)  # reference to x in f's closure
-    g = self.jit(f)
-    x = weakref.ref(x)      # no more strong ref to x in this scope
-    assert x() is not None  # x is still around
-    f()                     # f runs
-    g()                     # g runs
-    g()                     # g runs a second time
-    del f                   # delete the raw callable
-    assert x() is not None  # x is still around
-    g()                     # g still runs
-    del g                   # no more references to x
-    assert x() is None      # x is gone
-
   def test_trivial_computations(self):
     x = jnp.array([1, 2, 3])
     y = self.jit(lambda x: x)(x)
@@ -378,7 +356,7 @@ class PythonJitTest(CPPJitTest):
 
     self.assertRaisesRegex(
         TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
-        lambda: jit(f)("foo"))
+        lambda: self.jit(f)("foo"))
 
   def test_jit_on_all_devices(self):
     # Verifies we can run the same computation on every device present, even
@@ -398,6 +376,28 @@ class PythonJitTest(CPPJitTest):
     #   jit_fun(a)
 
     jit_fun(a)  # doesn't crash
+
+  def test_jit_reference_dropping(self):
+    x = jnp.ones(10)
+    f = (lambda x: lambda: x)(x)  # reference to x in f's closure
+    g = self.jit(f)
+    x = weakref.ref(x)      # no more strong ref to x in this scope
+    assert x() is not None  # x is still around
+    f()                     # f runs
+    g()                     # g runs
+    g()                     # g runs a second time
+    del f                   # delete the raw callable
+    assert x() is not None  # x is still around
+    g()                     # g still runs
+    del g                   # no more references to x
+    assert x() is None      # x is gone
+
+
+class PythonJitTest(CPPJitTest):
+
+  @property
+  def jit(self):
+    return jax.api._python_jit
 
 
 class APITest(jtu.JaxTestCase):

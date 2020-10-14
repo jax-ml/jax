@@ -178,6 +178,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     heaviside
     histogram
     histogram_bin_edges
+    histogram2d
     histogramdd
     hsplit
     hstack

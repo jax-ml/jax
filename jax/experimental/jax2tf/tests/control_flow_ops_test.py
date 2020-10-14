@@ -50,7 +50,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(jax.grad(f), jnp.float_(1.))
 
 
-  def test_cond_units(self, with_function=True):
+  def test_cond_units(self):
     def g(x):
       return lax.cond(True, lambda x: x, lambda y: y, x)
 

@@ -921,6 +921,22 @@ def histogram(a, bins=10, range=None, weights=None, density=None):
     counts = counts / bin_widths / counts.sum()
   return counts, bin_edges
 
+@_wraps(np.histogram2d)
+def histogram2d(x, y, bins=10, range=None, weights=None, density=None):
+
+  try:
+    N = len(bins)
+  except TypeError:
+    N = 1
+
+  if N != 1 and N != 2:
+    x_edges = y_edges = asarray(bins)
+    bins = [x_edges, y_edges]
+
+  sample = transpose(asarray([x, y]))
+  hist, edges = histogramdd(sample, bins, range, weights, density)
+  return hist, edges[0], edges[1]
+
 @_wraps(np.histogramdd)
 def histogramdd(sample, bins=10, range=None, weights=None, density=None):
   _check_arraylike("histogramdd", sample)
@@ -928,6 +944,14 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
 
   if weights is not None and weights.shape != (N,):
     raise ValueError("should have one weight for each sample.")
+
+  try:
+    num_bins = len(bins)
+    if num_bins != D:
+      raise ValueError("should be a bin for each dimension.")
+  except TypeError:
+    # when bin_size is integer, the same bin is used for each dimension
+    bins = D * [bins]
 
   bin_idx_by_dim = D*[None]
   nbins = np.empty(D, int)
@@ -2500,6 +2524,7 @@ def _can_call_numpy_array(x):
 @_wraps(np.asarray)
 def asarray(a, dtype=None, order=None):
   lax._check_user_dtype_supported(dtype, "asarray")
+  dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
   return array(a, dtype=dtype, copy=False, order=order)
 
 
@@ -2785,7 +2810,9 @@ def ix_(*args):
 
 @_wraps(np.indices)
 def indices(dimensions, dtype=int32, sparse=False):
-  dimensions = tuple(core.concrete_or_error(int, d, "dimensions argument of jnp.indices") for d in dimensions)
+  dimensions = tuple(
+      core.concrete_or_error(int, d, "dimensions argument of jnp.indices")
+      for d in dimensions)
   N = len(dimensions)
   output = []
   s = dimensions
@@ -3991,7 +4018,7 @@ def _index_to_gather(x_shape, idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
       (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if isinstance(e, (Sequence, ndarray)))
+      if isscalar(e) or isinstance(e, (Sequence, ndarray)))
     advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                       for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)

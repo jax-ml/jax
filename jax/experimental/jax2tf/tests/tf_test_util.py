@@ -16,7 +16,7 @@ import atexit
 import contextlib
 import logging
 import numpy as np
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 import tensorflow as tf  # type: ignore[import]
 
 import jax
@@ -24,7 +24,9 @@ from jax.config import config
 from jax import dtypes
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import correctness_stats
+from jax.interpreters import masking
 from jax import test_util as jtu
+from jax import tree_util
 from jax import numpy as jnp
 
 import os
@@ -103,9 +105,10 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
     # Monkey-patch jax2tf.TensorFlowTrace.get_primitive_impl to wrap the
     # resulting primitive in a categorizer.
-    wrapper = correctness_stats.collect_limitations
-    jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = ( # type: ignore
-      lambda s, p: wrapper(p, original_impl(s, p)))
+    def _new_get_primitive_impl(s, p):
+      impl, impl_needs_avals = original_impl(s, p)
+      return correctness_stats.collect_limitations(p, impl), impl_needs_avals
+    jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = _new_get_primitive_impl  # type: ignore
 
     def restore_get_primitive_impl():
       jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl = original_impl
@@ -240,3 +243,38 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       t_arg = np.stack([arg] * 4)
       return self.ConvertAndCompare(grad_func, t_arg)
     assert False, transform
+
+  def CheckShapePolymorphism(self, f_jax: Callable, *,
+                             input_signature: Sequence[tf.TensorSpec],
+                             in_shapes: Optional[Sequence[Any]],
+                             expected_output_signature: tf.TensorSpec):
+    """Convert a function using polymorphic shapes.
+
+    Args:
+      f_jax: a JAX function of `n` arguments
+      input_signature: used as the input signature
+        for the tf.function.
+      in_shapes: if given, it must be a sequence of `n` shape specifications
+        and must match the `input_signature`. (see jax2tf.convert).
+    """
+    f_tf = tf.function(jax2tf.convert(f_jax, in_shapes=in_shapes),
+                       autograph=False,
+                       input_signature=input_signature)
+    concrete_f_tf = f_tf.get_concrete_function(*input_signature)
+    if expected_output_signature:
+      concrete_output_tf_shape = concrete_f_tf.output_shapes
+      assert not isinstance(concrete_output_tf_shape, tuple)  # A single result
+      self.assertEqual(tuple(expected_output_signature.shape),
+                       tuple(concrete_output_tf_shape))
+    return f_tf
+
+  def MakeInputSignature(self, *in_shapes):
+    """From a pytree of in_shape string specification, make a pytree of tf.TensorSpec.
+    Dimension variables are replaced with None.
+    """
+    def in_shape_to_tensorspec(in_shape: str) -> tf.TensorSpec:
+      in_spec = masking.parse_spec(in_shape)
+      return tf.TensorSpec(tuple(int(dim_spec) if dim_spec.is_constant else None
+                                 for dim_spec in in_spec), dtype=tf.float32)
+
+    return tree_util.tree_multimap(in_shape_to_tensorspec, in_shapes)

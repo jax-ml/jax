@@ -491,6 +491,7 @@ pmax_p = core.Primitive('pmax')
 pmax_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmax_p] = \
     partial(_allreduce_translation_rule, lax.max_p)
+pxla.multi_host_supported_collectives.add(pmax_p)
 batching.split_axis_rules[pmax_p] = partial(_split_axis_comm_assoc, pmax_p)
 batching.primitive_batchers[pmax_p] = partial(_collective_batcher, pmax_p)
 batching.collective_rules[pmax_p] = \
@@ -504,6 +505,7 @@ pmin_p = core.Primitive('pmin')
 pmin_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 xla.parallel_translations[pmin_p] = \
     partial(_allreduce_translation_rule, lax.min_p)
+pxla.multi_host_supported_collectives.add(pmin_p)
 batching.split_axis_rules[pmin_p] = partial(_split_axis_comm_assoc, pmin_p)
 batching.primitive_batchers[pmin_p] = partial(_collective_batcher, pmin_p)
 batching.collective_rules[pmin_p] = \

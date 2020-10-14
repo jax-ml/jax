@@ -69,7 +69,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                       | set(xla.initial_style_translations)
                       | set(xla.parallel_translations))
 
-    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl)
+    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl) | set(jax.experimental.jax2tf.jax2tf.tf_impl_with_avals)
     tf_not_yet_impl = set(jax.experimental.jax2tf.jax2tf.tf_not_yet_impl)
 
     all_primitives = tuple(sorted(all_primitives, key=str))
@@ -608,24 +608,47 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_squeeze(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_dot_general)
+  def test_dot_general(self, harness: primitive_harness.Harness):
+    tol, dtype = None, harness.params["dtype"]
+    if dtype == dtypes.bfloat16:
+      tol = 0.3
+    elif dtype in [np.complex64, np.float32]:
+      if jtu.device_under_test() == "tpu":
+        tol = 0.1 if dtype == np.float32 else 0.3
+      else:
+        tol = 1e-5
+    elif dtype == np.float16:
+      if jtu.device_under_test() == "gpu":
+        tol = 0.1
+      else:
+        tol = 0.01
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=tol, rtol=tol)
+
   @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
-    if jtu.device_under_test() == "gpu" and harness.params["dtype"] in [np.complex64, np.complex128]:
+    dtype, device = harness.params["dtype"], jtu.device_under_test()
+    if device == "gpu" and dtype in [np.complex64, np.complex128]:
       raise unittest.SkipTest("TODO: crash on GPU in TF")
 
     tol = None
-    if jtu.device_under_test() == "gpu":
+    if device == "gpu":
       tol = 1e-4
-    elif jtu.device_under_test() == "tpu":
+    elif device == "tpu":
       tol = 1e-3
     # TODO(bchetioui): significant discrepancies in some float16 cases.
-    if harness.params["dtype"] == np.float16:
+    if dtype == np.float16:
       tol = 1.
     # TODO(bchetioui): slight occasional discrepancy in float32 cases.
-    elif harness.params["dtype"] == np.float32:
-      tol = 0.5 if jtu.device_under_test() == "tpu" else 1e-4
-    elif harness.params["dtype"] == np.complex64 and jtu.device_under_test() == "tpu":
+    elif dtype == np.float32:
+      tol = 0.5 if device == "tpu" else (1e-3 if device == "gpu" else 1e-4)
+    elif dtype == np.complex64 and device == "tpu":
       tol = 0.1
+    # TODO(bchetioui): slight discrepancy when going through the path using
+    # tf.nn.convolution.
+    elif dtype == np.float64 and device == "cpu":
+      tol = 1e-13
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol)
 
