@@ -33,7 +33,7 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import api, core, lax, lax_reference
+from jax import api, core, lax, lax_reference, lazy
 from jax.core import Primitive
 from jax.interpreters import ad
 from jax.interpreters import xla
@@ -1477,7 +1477,7 @@ class APITest(jtu.JaxTestCase):
   def test_dtype_warning(self):
     # cf. issue #1230
     if FLAGS.jax_enable_x64:
-      return  # test only applies when x64 is disabled
+      raise unittest.SkipTest("test only applies when x64 is disabled")
 
     def check_warning(warn, nowarn):
       with warnings.catch_warnings(record=True) as w:
@@ -2470,14 +2470,14 @@ class LazyTest(jtu.JaxTestCase):
       assert python_should_be_executing
       return jnp.sum(x)
 
-    x = jnp.arange(10, dtype=jnp.int32)
-    assert xla.is_device_constant(x)  # lazy iota
+    x = jnp.zeros(10, dtype=jnp.int32)
+    assert not lazy.is_trivial(x._lazy_expr)
 
     python_should_be_executing = True
     _ = f(x)
 
     python_should_be_executing = False  # should not recompile
-    x = np.arange(10, dtype=np.int32)
+    x = np.zeros(10, dtype=np.int32)
     _ = f(x)
 
   @parameterized.parameters(jtu.cases_from_list(range(10000)))

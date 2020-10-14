@@ -304,6 +304,7 @@ def _fold_in(key, data):
   return threefry_2x32(key, PRNGKey(data))
 
 
+@partial(jit, static_argnums=(1, 2))
 def _random_bits(key, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_prng_key(key):
