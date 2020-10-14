@@ -4882,6 +4882,10 @@ def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
     msg = ("reduce_window got inconsistent dtypes for operand and init_value: "
            " got operand dtype {} and init_value dtype {}.")
     raise TypeError(msg.format(operand.dtype, init_value.dtype))
+  if init_value.shape != ():
+    msg = ("reduce_window expected init_value to be a scalar but init_value "
+           "has shape {}.")
+    raise TypeError(msg.format(init_value.shape))
   return _common_reduce_window_shape_rule(
     operand, window_dimensions, window_strides, padding, base_dilation,
     window_dilation)
