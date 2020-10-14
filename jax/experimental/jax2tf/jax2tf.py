@@ -465,7 +465,7 @@ tf_not_yet_impl = [
 ]
 
 try:
-  tf_impl[lax.lax.tie_in_p] = lambda x, y: y
+  tf_impl[lax.tie_in_p] = lambda x, y: y
 except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -920,8 +920,8 @@ def _select_and_gather_add(tangents: TfVal,
   const = lambda dtype, x: tf.constant(np.array(x), dtype)
 
   if double_word_reduction:
-    word_dtype = lax.lax._UINT_DTYPES[nbits]
-    double_word_dtype = lax.lax._UINT_DTYPES[nbits * 2]
+    word_dtype = lax._UINT_DTYPES[nbits]
+    double_word_dtype = lax._UINT_DTYPES[nbits * 2]
 
     # Packs two values into a tuple.
     def pack(a, b):
