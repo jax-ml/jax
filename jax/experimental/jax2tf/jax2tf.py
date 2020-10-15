@@ -25,6 +25,7 @@ from jax import config
 from jax import core
 from jax import custom_derivatives
 from jax import dtypes
+from jax import lax
 from jax import lax_linalg
 from jax import linear_util as lu
 from jax import numpy as jnp
@@ -37,10 +38,8 @@ from jax.interpreters import masking
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax.lax import lax
 from jax.lax import lax_control_flow
 from jax.lax import lax_fft
-from jax.lax import lax_parallel
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -610,7 +609,7 @@ for unexpected in [
 tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
-  lax_control_flow.linear_solve_p,
+  lax.linear_solve_p,
   lax_linalg.lu_p,
   lax_linalg.triangular_solve_p,
 
@@ -618,16 +617,15 @@ tf_not_yet_impl = [
   lax.random_gamma_grad_p,
 
   # Not high priority?
-  lax.after_all_p, lax_parallel.all_to_all_p, lax.create_token_p, lax.cummax_p,
-  lax.cummin_p, lax.infeed_p, lax.outfeed_p, lax_parallel.pmax_p,
-  lax_parallel.pmin_p, lax_parallel.ppermute_p, lax_parallel.psum_p,
-  lax_parallel.axis_index_p,
+  lax.after_all_p, lax.all_to_all_p, lax.create_token_p, lax.cummax_p, lax.cummin_p,
+  lax.infeed_p, lax.outfeed_p, lax.pmax_p, lax.pmin_p, lax.ppermute_p, lax.psum_p,
+  lax.axis_index_p,
 
   pxla.xla_pmap_p,
 ]
 
 try:
-  tf_impl[lax.tie_in_p] = lambda x, y: y
+  tf_impl[lax.lax.tie_in_p] = lambda x, y: y
 except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -688,17 +686,6 @@ tf_impl[lax.imag_p] = tf.math.imag
 tf_impl[lax.add_p] = wrap_binary_op(tf.math.add)
 tf_impl[lax.sub_p] = wrap_binary_op(tf.math.subtract)
 tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
-
-
-def _iota(*, dtype, shape, dimension):
-  size = shape[dimension]
-  # Some dtypes are unsupporetd, like uint32, so we just fall back to int32.
-  # TODO(mattjj, necula): improve tf.range dtype handling
-  vec = tf.range(tf.cast(size, tf.int32), dtype=tf.int32)
-  vec_shape = [-1 if i == dimension else 1 for i in range(len(shape))]
-  return tf.cast(tf.broadcast_to(tf.reshape(vec, vec_shape), shape), dtype)
-
-tf_impl[lax.iota_p] = _iota
 
 
 def _div(lhs, rhs):
@@ -1240,8 +1227,8 @@ def _select_and_gather_add(tangents: TfVal,
   const = lambda dtype, x: tf.constant(np.array(x), dtype)
 
   if double_word_reduction:
-    word_dtype = lax._UINT_DTYPES[nbits]
-    double_word_dtype = lax._UINT_DTYPES[nbits * 2]
+    word_dtype = lax.lax._UINT_DTYPES[nbits]
+    double_word_dtype = lax.lax._UINT_DTYPES[nbits * 2]
 
     # Packs two values into a tuple.
     def pack(a, b):
@@ -1549,7 +1536,7 @@ def _cond(index: TfVal, *operands: TfVal,
                  for jaxpr in branches]
   return tf.switch_case(index, branches_tf)
 
-tf_impl[lax_control_flow.cond_p] = _cond
+tf_impl[lax.cond_p] = _cond
 
 
 def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
@@ -1616,10 +1603,10 @@ def _batched_cond_while(*args: TfVal,
                                 (init_pred_b, *init_carry))
   return res_carry
 
-tf_impl[lax_control_flow.while_p] = _while
+tf_impl[lax.while_p] = _while
 
 # We use the scan impl rule to rewrite in terms of while.
-tf_impl_with_avals[lax_control_flow.scan_p] = _convert_jax_impl(lax_control_flow._scan_impl)
+tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(lax_control_flow._scan_impl)
 
 def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
   # Some types originally incompatible with tf.math.top_k can be promoted

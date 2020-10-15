@@ -91,7 +91,7 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       pass
     return np.dtype(dtype)
 
-  if args and args[0] is not core.unit:
+  if args[0] is not core.unit:
     np_dtype = _to_np_dtype(args[0].dtype)
   else:
     np_dtype = None
