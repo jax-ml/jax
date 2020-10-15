@@ -814,88 +814,77 @@ lax_select_and_gather_add = tuple(
   for window_dilation in [(1, 1, 1, 1)]
 )
 
-lax_reduce_window = tuple(
-  # Tests with 2d shapes (see tests.lax_test.testReduceWindow)
-  Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
-          lax.reduce_window,
-          [RandArg(shape, dtype), StaticArg(init_value), StaticArg(computation),
-           StaticArg(window_dimensions), StaticArg(window_strides),
-           StaticArg(padding), StaticArg(base_dilation), StaticArg(window_dilation)],
-          shape=shape,
-          dtype=dtype,
-          init_value=init_value,
-          computation=computation,
-          window_dimensions=window_dimensions,
-          window_strides=window_strides,
-          padding=padding,
-          base_dilation=base_dilation,
-          window_dilation=window_dilation)
-  for computation in [lax.add, lax.max, lax.min, lax.mul]
-  for dtype in { lax.add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.max: jtu.dtypes.all
-               , lax.min: jtu.dtypes.all
-               }[computation]
-  for init_value in map(
-      dtype,
-      (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
-          { lax.add: ([0, 1], [0, 1])
-          , lax.mul: ([1], [1])
-          , lax.max: ([1], [-np.inf, 1])
-          , lax.min: ([0], [np.inf, 0])
-          }[computation]
-      )
-  )
-  for shape in [(4, 6)]
-  for window_dimensions in [(1, 2)]
-  for window_strides in [(2, 1)]
-  for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
-                                                      window_strides, p))
-                            for p in ['VALID', 'SAME']] +
-                           [((0, 3), (1, 2))]))
-  for base_dilation in [(2, 3)]
+def _make_reduce_window_harness(name, *, shape=(4, 6), base_dilation=(1, 1),
+                                computation=lax.add, window_dimensions=(2, 2),
+                                window_dilation=(1, 1), init_value=0,
+                                window_strides=(1, 1), dtype=np.float32,
+                                padding=((0, 0), (0, 0))):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
+                 lax.reduce_window,
+                 [RandArg(shape, dtype),
+                  np.array(init_value, dtype=dtype),
+                  StaticArg(computation), StaticArg(window_dimensions),
+                  StaticArg(window_strides), StaticArg(padding),
+                  StaticArg(base_dilation), StaticArg(window_dilation)],
+                 shape=shape,
+                 dtype=dtype,
+                 init_value=np.array(init_value, dtype=dtype),
+                 computation=computation,
+                 window_dimensions=window_dimensions,
+                 window_strides=window_strides,
+                 padding=padding,
+                 base_dilation=base_dilation,
+                 window_dilation=window_dilation)
+
+lax_reduce_window = tuple( # Validate dtypes across all execution paths
+  # This first harness runs the tests for all dtypes using default values for
+  # the other parameters (outside of computation and its init_value), through
+  # several execution paths. Variations of other parameters can thus safely
+  # skip testing their corresponding default value.
+  _make_reduce_window_harness("dtypes", dtype=dtype, computation=computation,
+                              init_value=init_value)
+  for dtype in jtu.dtypes.all
+  for computation, init_value in [
+    (lax.min, _get_min_identity(dtype)), # path through reduce_window_min
+    (lax.max, _get_max_identity(dtype)), # path through TF reduce_window_max
+    (lax.max, 1), # path through reduce_window
+  ] + ([
+    (lax.add, 0), # path_through reduce_window_add
+    (lax.mul, 1), # path through reduce_window_mul
+  ] if dtype != jnp.bool_ else [])
+) + tuple( # Validate window_dimensions
+  _make_reduce_window_harness("window_dimensions",
+                              window_dimensions=window_dimensions)
+  for window_dimensions in [(1, 1)]
+) + tuple( # Validate window_strides
+  _make_reduce_window_harness("window_strides", window_strides=window_strides)
+  for window_strides in [(1, 2)]
+) + tuple( # Validate padding
+  [_make_reduce_window_harness("padding", padding=((1, 2), (0, 3)))]
+) + tuple( # Validate base_dilation
+  _make_reduce_window_harness("base_dilation", base_dilation=base_dilation)
+  for base_dilation in [(1, 2)]
+) + tuple( # Validate window_dilation
+  _make_reduce_window_harness("window_dilation",
+                              window_dilation=window_dilation)
   for window_dilation in [(1, 2)]
-) + tuple(
-  # Tests with 4d shapes (see tests.lax_test.testReduceWindow)
-  Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
-          lax.reduce_window,
-          [RandArg(shape, dtype), StaticArg(init_value), StaticArg(computation),
-           StaticArg(window_dimensions), StaticArg(window_strides),
-           StaticArg(padding), StaticArg(base_dilation), StaticArg(window_dilation)],
-          shape=shape,
-          dtype=dtype,
-          init_value=init_value,
-          computation=computation,
-          window_dimensions=window_dimensions,
-          window_strides=window_strides,
-          padding=padding,
-          base_dilation=base_dilation,
-          window_dilation=window_dilation)
-  for computation in [lax.add, lax.max, lax.min, lax.mul]
-  for dtype in { lax.add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.max: jtu.dtypes.all
-               , lax.min: jtu.dtypes.all
-               }[computation]
-  for init_value in map(
-      dtype,
-      (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
-          { lax.add: ([0, 1], [0, 1])
-          , lax.mul: ([1], [1])
-          , lax.max: ([1], [-np.inf, 1])
-          , lax.min: ([0], [np.inf, 0])
-          }[computation]
-      )
-  )
-  for shape in [(3, 2, 4, 6)]
-  for window_dimensions in [(1, 1, 2, 1)]
-  for window_strides in [(1, 2, 2, 1)]
-  for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
-                                                      window_strides, p))
-                            for p in ['VALID', 'SAME']] +
-                           [((0, 1), (1, 0), (2, 3), (0, 2))]))
-  for base_dilation in [(2, 1, 3, 2)]
-  for window_dilation in [(1, 2, 2, 1)]
+) + tuple( # Validate squeezing behavior and dimensions in tf.nn.max_pool
+  _make_reduce_window_harness("squeeze_dim", computation=lax.max, shape=shape,
+                              dtype=np.float32, init_value=-np.inf,
+                              base_dilation=tuple([1] * len(shape)),
+                              window_dilation=tuple([1] * len(shape)),
+                              padding=tuple([(0, 0)] * len(shape)),
+                              window_strides=tuple([1] * len(shape)),
+                              window_dimensions=window_dimensions)
+  for shape, window_dimensions in [
+    ((2,), (2,)),           # 1 spatial dimension, left and right squeeze
+    ((2, 1), (2, 1)),       # 1 spatial dimension, left squeeze
+    ((1, 2), (1, 2)),       # 1 spatial dimension, right squeeze
+    ((1, 2, 1), (1, 2, 1)), # 1 spatial dimension no squeeze
+    ((2, 4), (2, 2)),       # 2 spatial dimensions, left and right squeeze
+    ((2, 4, 3), (2, 2, 2)), # 3 spatial dimensions, left and right squeeze
+    ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1)) # 3 spatial dimensions, no squeeze
+  ]
 )
 
 random_gamma = tuple(
