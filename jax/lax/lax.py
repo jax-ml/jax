@@ -463,6 +463,8 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
 Precision = xla_client.PrecisionConfig.Precision
 Precision.__str__ = lambda precision: precision.name
 PrecisionType = Any
+PrecisionLike = Union[None, PrecisionType, Tuple[PrecisionType, PrecisionType]]
+
 
 class ConvDimensionNumbers(NamedTuple):
   """Describes batch, spatial, and feature dimensions of a convolution.
@@ -489,7 +491,7 @@ def conv_general_dilated(
   rhs_dilation: Optional[Sequence[int]] = None,
   dimension_numbers: ConvGeneralDilatedDimensionNumbers  = None,
   feature_group_count: int = 1, batch_group_count: int = 1,
-  precision: Optional[PrecisionType] = None) -> Array:
+  precision: PrecisionLike = None) -> Array:
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
@@ -516,8 +518,9 @@ def conv_general_dilated(
     feature_group_count: integer, default 1. See XLA HLO docs.
     batch_group_count: integer, default 1. See XLA HLO docs.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the convolution result.
@@ -573,7 +576,7 @@ def conv_general_dilated(
       lhs_shape=lhs.shape, rhs_shape=rhs.shape,
       precision=_canonicalize_precision(precision))
 
-def dot(lhs: Array, rhs: Array, precision: Optional[PrecisionType] = None) -> Array:
+def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -586,8 +589,9 @@ def dot(lhs: Array, rhs: Array, precision: Optional[PrecisionType] = None) -> Ar
     lhs: an array of rank 1 or 2.
     rhs: an array of rank 1 or 2.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the product.
@@ -604,7 +608,7 @@ DotDimensionNumbers = Tuple[Tuple[Sequence[int], Sequence[int]],
                             Tuple[Sequence[int], Sequence[int]]]
 
 def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
-                precision: Optional[PrecisionType] = None) -> Array:
+                precision: PrecisionLike = None) -> Array:
   """More general contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -618,8 +622,9 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the result.
@@ -1492,7 +1497,7 @@ def stop_gradient(x):
 
 
 def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
-         padding: str, precision: Optional[PrecisionType] = None) -> Array:
+         padding: str, precision: PrecisionLike = None) -> Array:
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -1502,8 +1507,9 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the convolution result.
@@ -1516,7 +1522,7 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
                               padding: Union[str, Sequence[Tuple[int, int]]],
                               lhs_dilation: Optional[Sequence[int]],
                               rhs_dilation: Optional[Sequence[int]],
-                              precision: Optional[PrecisionType] = None) -> Array:
+                              precision: PrecisionLike = None) -> Array:
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -1534,8 +1540,9 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the convolution result.
@@ -1583,7 +1590,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
                    rhs_dilation: Optional[Sequence[int]] = None,
                    dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
                    transpose_kernel: bool = False,
-                   precision: Optional[PrecisionType] = None) -> Array:
+                   precision: PrecisionLike = None) -> Array:
   """Convenience wrapper for calculating the N-d convolution "transpose".
 
   This function directly calculates a fractionally strided conv rather than
@@ -1607,8 +1614,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       applied to the same kernel. For typical use in neural nets this is completely
       pointless and just makes input/output channel specification confusing.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
@@ -1760,7 +1768,7 @@ def dynamic_update_index_in_dim(operand: Array, update: Array, index: Array,
 
 
 def batch_matmul(lhs: Array, rhs: Array,
-                 precision: Optional[PrecisionType] = None) -> Array:
+                 precision: PrecisionLike = None) -> Array:
   """Batch matrix multiplication."""
   if _min(lhs.ndim, rhs.ndim) < 2:
     raise ValueError('Arguments to batch_matmul must be at least 2D, got {}, {}'
@@ -2833,7 +2841,10 @@ def _reshape_axis_out_of(src, size1, x):
 def _precision_config(precision):
   if precision is not None:
     config = xla_client.PrecisionConfig()
-    config.operand_precision.extend((precision, precision))
+    if isinstance(precision, tuple):
+      config.operand_precision.extend(precision)
+    else:
+      config.operand_precision.extend((precision, precision))
     return config
   return None
 
@@ -6036,11 +6047,15 @@ def remaining(original, *removed_lists):
 def _canonicalize_precision(precision):
   if precision is None:
     return None
-  if isinstance(precision, Precision):
+  if isinstance(precision, Precision) or (
+      isinstance(precision, tuple)
+      and len(precision) == 2
+      and all(isinstance(p, Precision) for p in precision)
+  ):
     return precision
   else:
-    msg = "Precision argument must be None or a lax.Precision value; got {}"
-    raise ValueError(msg.format(precision))
+    raise ValueError("Precision argument must be None, a lax.Precision value "
+                     f"or a tuple of two lax.Precision values; got {precision}")
 
 
 def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers):
