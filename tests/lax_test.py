@@ -2032,6 +2032,22 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       lax.conv_general_dilated(lhs, rhs, **kwargs)
 
+  def test_reduce_window_scalar_init_value_shape_rule(self):
+    # https://github.com/google/jax/issues/4574
+    args = { "operand": np.ones((4, 4), dtype=np.int32)
+           , "init_value": np.zeros((1,), dtype=np.int32)
+           , "computation": lax.max
+           , "window_dimensions": (2, 2)
+           , "window_strides": (2, 2)
+           , "padding": "VALID"
+           , "base_dilation": (1, 1)
+           , "window_dilation": (1, 1)
+           }
+
+    msg = (r"reduce_window expected init_value to be a scalar but init_value "
+           r"has shape \(1,\).")
+    with self.assertRaisesRegex(TypeError, msg):
+      lax.reduce_window(**args)
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
