@@ -3571,6 +3571,20 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertEqual(api.grad(foo, allow_int=True, argnums=(0, 1))(x, y),
                      (2., np.zeros(shape=(), dtype=float0)))
 
+  def test_float0_bwd_none(self):
+    @api.custom_vjp
+    def f(i, x):
+      return jnp.sin(x)
+    def f_fwd(i, x):
+      return f(i, x), jnp.cos(x)
+    def f_rev(cos_x, g):
+      return (None, 2 * cos_x * g)
+    f.defvjp(f_fwd, f_rev)
+
+    ans = api.grad(f, 1)(jnp.array([1, 2]), 3.)  # doesn't crash
+    expected = 2 * jnp.cos(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class InvertibleADTest(jtu.JaxTestCase):
 
