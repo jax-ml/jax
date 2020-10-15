@@ -19,7 +19,6 @@ from . import initializers
 from .functions import (
   celu,
   elu,
-  expit,
   gelu,
   glu,
   hard_sigmoid,
