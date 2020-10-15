@@ -45,5 +45,6 @@ Other functions
 
     softmax
     log_softmax
+    logsumexp
     normalize
     one_hot
