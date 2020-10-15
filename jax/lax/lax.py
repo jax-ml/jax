@@ -696,9 +696,23 @@ def reshape(operand: Array, new_sizes: Shape,
 
 def pad(operand: Array, padding_value: Array,
         padding_config: Sequence[Tuple[int, int, int]]) -> Array:
-  """Wraps XLA's `Pad
+  """Applies low, high, and/or interior padding to an array.
+
+  Wraps XLA's `Pad
   <https://www.tensorflow.org/xla/operation_semantics#pad>`_
   operator.
+
+  Args:
+    operand: an array to be padded.
+    padding_value: the value to be inserted as padding. Must have the same dtype
+      as ``operand``.
+    padding_config: a sequence of ``(low, high, interior)`` tuples of integers,
+      giving the amount of low, high, and interior (dilation) padding to insert
+      in each dimension.
+
+  Returns:
+    The ``operand`` array with padding value ``padding_value`` inserted in each
+    dimension according to the ``padding_config``.
   """
   return pad_p.bind(operand, padding_value, padding_config=tuple(padding_config))
 
@@ -1676,7 +1690,24 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
   return full(fill_shape, fill_value, dtype or _dtype(x))
 
 
-def collapse(operand: Array, start_dimension: int, stop_dimension: int) -> Array:
+def collapse(operand: Array, start_dimension: int,
+             stop_dimension: int) -> Array:
+  """Collapses dimensions of an array into a single dimension.
+
+  For example, if ``operand`` is an array with shape ``[2, 3, 4]``,
+  ``collapse(operand, 0, 2).shape == [6, 4]``. The elements of the collapsed
+  dimension are laid out major-to-minor, i.e., with the lowest-numbered
+  dimension as the slowest varying dimension.
+
+  Args:
+    operand: an input array.
+    start_dimension: the start of the dimensions to collapse (inclusive).
+    stop_dimension: the end of the dimensions to collapse (exclusive).
+
+  Returns:
+    An array where dimensions ``[start_dimension, stop_dimension)`` have been
+    collapsed (raveled) into a single dimension.
+  """
   lo, hi = start_dimension, stop_dimension
   size = prod(operand.shape[lo:hi])
   new_shape = operand.shape[:lo] + (size,) + operand.shape[hi:]
@@ -1750,6 +1781,9 @@ def dynamic_index_in_dim(operand: Array, index: Array, axis: int = 0,
 
 def dynamic_update_slice_in_dim(operand: Array, update: Array,
                                 start_index: Array, axis: int) -> Array:
+  """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
+     in a single ``axis``.
+  """
   axis = int(axis)
   start_indices = [_zero(start_index)] * _ndim(operand)
   start_indices[axis] = start_index
@@ -1758,6 +1792,9 @@ def dynamic_update_slice_in_dim(operand: Array, update: Array,
 
 def dynamic_update_index_in_dim(operand: Array, update: Array, index: Array,
                                 axis: int) -> Array:
+  """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
+     of size 1 in a single ``axis``.
+  """
   axis = int(axis)
   if _ndim(update) != _ndim(operand):
     assert _ndim(update) + 1 == _ndim(operand)

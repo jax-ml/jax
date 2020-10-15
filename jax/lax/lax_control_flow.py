@@ -2364,29 +2364,34 @@ def _interleave(a, b):
     return jnp.reshape(jnp.stack([a, b], axis=1),
                        (2 * half_num_elems,) + a.shape[1:])
 
-def associative_scan(fn, elems, reverse=False):
-  """Perform a scan with an associative binary operation, in parallel.
+def associative_scan(fn: Callable, elems, reverse: bool = False):
+  """Performs a scan with an associative binary operation, in parallel.
 
   Args:
-    fn: Python callable implementing an associative binary operation with
+    fn: A Python callable implementing an associative binary operation with
+      signature ``r = fn(a, b)``. Function `fn` must be associative, i.e., it
+      must satisfy the equation
+      ``fn(a, fn(b, c)) == fn(fn(a, b), c)``.
 
-      signature ``r = fn(a, b)``. This must satisfy associativity:
-      ``fn(a, fn(b, c)) == fn(fn(a, b), c)``. The inputs and result are
-      (possibly nested structures of) array(s) matching ``elems``. Each
-      array has a leading dimension in place of ``num_elems``; the `fn`
-      is expected to be scanned over this dimension. The result `r` has the same
-      shape (and structure) as the two inputs ``a`` and ``b``.
+      The inputs and result are (possibly nested Python tree structures of)
+      array(s) matching ``elems``. Each array has a leading dimension in place
+      of the ``num_elems`` dimension. `fn` should be applied elementwise over
+      the leading dimension (for example, by using :func:`jax.vmap` over the
+      elementwise function.)
+
+      The result `r` has the same shape (and structure) as the two inputs ``a``
+      and ``b``.
     elems: A (possibly nested structure of) array(s), each with leading
       dimension ``num_elems``.
     reverse: A boolean stating if the scan should be reversed with respect to
       the leading dimension.
 
   Returns:
-    result: A (possibly nested structure of) array(s) of the same shape
-      and structure as ``elems``, in which the ``k``th element is the result of
-      recursively applying ``fn`` to combine the first ``k`` elements of
-      ``elems``. For example, given ``elems = [a, b, c, ...]``, the result
-      would be ``[a, fn(a, b), fn(fn(a, b), c), ...]``.
+    A (possibly nested Python tree structure of) array(s) of the same shape
+    and structure as ``elems``, in which the ``k``'th element is the result of
+    recursively applying ``fn`` to combine the first ``k`` elements of
+    ``elems``. For example, given ``elems = [a, b, c, ...]``, the result
+    would be ``[a, fn(a, b), fn(fn(a, b), c), ...]``.
 
   Example 1: partial sums of an array of numbers:
 
@@ -2395,7 +2400,7 @@ def associative_scan(fn, elems, reverse=False):
 
   Example 2: partial products of an array of matrices
 
-  >>> mats = random.uniform(random.PRNGKey(0), (4, 2, 2))
+  >>> mats = jax.random.uniform(jax.random.PRNGKey(0), (4, 2, 2))
   >>> partial_prods = lax.associative_scan(jnp.matmul, mats)
   >>> partial_prods.shape
   (4, 2, 2)
