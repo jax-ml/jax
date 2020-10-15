@@ -3445,7 +3445,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x, None
 
     def foo_bwd(_, g):
-      return g
+      return (g, g)
 
     f.defvjp(foo_fwd, foo_bwd)
 
@@ -3458,7 +3458,7 @@ class CustomVJPTest(jtu.JaxTestCase):
             "and in particular must produce a tuple of length equal to the "
             "number of arguments to the primal function, but got VJP output "
             "structure {} for primal input structure {}.".format(
-                tree_util.tree_structure(1),
+                tree_util.tree_structure((1, 1)),
                 tree_util.tree_structure((1,)))
         ),
         lambda: api.grad(f)(2.))
