@@ -14,17 +14,19 @@
 """Tests for the jax2tf conversion for control-flow primitives."""
 
 from absl.testing import absltest
+from typing import Dict, Sequence
 
 import functools
 import operator
 import re
-import unittest
 
 import jax
 from jax import core
 from jax.experimental import jax2tf
+from jax import lax
 import jax.numpy as jnp
 from jax import test_util as jtu
+from jax import util
 import numpy as np
 from jax.interpreters import masking
 
@@ -32,6 +34,7 @@ from jax.interpreters import masking
 from jax.experimental.jax2tf.tests import tf_test_util
 
 import tensorflow as tf  # type: ignore[import]
+import unittest
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -48,11 +51,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                 input_signature=[tf.TensorSpec([2, 3])],
                                 in_shapes=None,
                                 expected_output_signature=tf.TensorSpec([2, 3]))
-
-    self.CheckShapePolymorphism(f_jax,
-                                input_signature=[tf.TensorSpec([2, None])],
-                                in_shapes=None,
-                                expected_output_signature=tf.TensorSpec([2, None]))
 
     self.CheckShapePolymorphism(f_jax,
                                 input_signature=[tf.TensorSpec([2, None])],
@@ -81,34 +79,32 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       return tf.Variable(np.ones(init_shape, np.float32),
                          dtype=tf.float32, shape=shape)
 
-    # Known shapes
-    # self.assertEqual((shaped_array([2, 3]),),
-    #                  input_avals([const((2, 3))], [None]))
-    # self.assertEqual((shaped_array([2, 3]),),
-    #                  input_avals([tf_const((2, 3))], [None]))
-    # self.assertEqual((shaped_array([2, 3]),),
-    #                  input_avals([tf_var((2, 3), (2, 3))], [None]))
-    # self.assertEqual((shaped_array([2, 3]),),
-    #                  input_avals([const((2, 3))], ["(2, 3)"]))
-    # self.assertEqual((shaped_array([2, 3]),),
-    #                  input_avals([tf_const((2, 3))], ["(_, 3)"]))
-    # self.assertEqual((shaped_array([2, 3]),),
-    #                  input_avals([tf_const((2, 3))], ["(_, 3)"]))
-    #
-    # # Partially known shapes
-    # self.assertEqual((shaped_array([2, 3]),),
-    #                   input_avals([tf_var((2, 3), [None, 3])], ["(2, 3)"]))
-    #
-    # self.assertEqual((shaped_array("(h, h)"),),
-    #                   input_avals([tf_var((2, 3), [None, None])], [("h, h")]))
-    #
-    # # Partially known shapes, create shape variables
-    # self.assertEqual((shaped_array("(s0, s1)"),),
-    #                   input_avals([tf_var((2, 3), [None, None])], [None]))
-    # self.assertEqual((shaped_array("(2, s0)"),),
-    #                   input_avals([tf_var((2, 3), [2, None])], [None]))
+    # Known shapes for the arguments
+    self.assertEqual((shaped_array([2, 3]),),
+                     input_avals([const((2, 3))], [None]))
+    self.assertEqual((shaped_array([2, 3]),),
+                     input_avals([tf_const((2, 3))], [None]))
+    self.assertEqual((shaped_array([2, 3]),),
+                     input_avals([tf_var((2, 3), (2, 3))], [None]))
+    self.assertEqual((shaped_array([2, 3]),),
+                     input_avals([const((2, 3))], ["(2, 3)"]))
+    self.assertEqual((shaped_array([2, 3]),),
+                     input_avals([tf_const((2, 3))], ["(_, 3)"]))
+    self.assertEqual((shaped_array([2, 3]),),
+                     input_avals([tf_const((2, 3))], ["(_, 3)"]))
+
+    # Partially known shapes for the arguments
+    self.assertEqual((shaped_array("(b, 3)"),),
+                      input_avals([tf_var((2, 3), [None, 3])], ["(b, 3)"]))
+
+    self.assertEqual((shaped_array("(h, h)"),),
+                      input_avals([tf_var((2, 3), [None, None])], [("h, h")]))
 
     # Some errors
+    with self.assertRaisesRegex(TypeError,
+                                re.escape("in_shape must be specified when the argument shape (2, None) is partially known")):
+      input_avals([tf_var((2, 3), [2, None])], [None])
+
     with self.assertRaisesRegex(
         TypeError,
         re.escape("in_shape (_) has different rank than actual argument shape (2, 3)")):
@@ -129,6 +125,28 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         re.escape("in_shape (2, 3) (resolved to (2, 3)) does not match argument shape (2, None) in dimension 1")):
       input_avals([tf_var((2, 3), [2, None])], ["(2, 3)"])
 
+  def test_solve_shape_vars(self):
+    def solve_shape_vars(shape_spec: str, shape: Sequence[int]) -> Dict[str, int]:
+      shape_polys = masking.parse_spec(shape_spec)
+      return jax2tf.jax2tf._solve_shape_vars(util.safe_zip(shape_polys, shape))
+
+    self.assertAllClose(solve_shape_vars("(a, b, c)", [1, 2, 3]),
+                         dict(a=1, b=2, c=3), check_dtypes=False)
+    self.assertAllClose(solve_shape_vars("(a + b, b + c, c)", [3, 5, 3]),
+                        dict(a=1, b=2, c=3), check_dtypes=False)
+    self.assertAllClose(solve_shape_vars("(a + b, 5, b)", [3, 5, 2]),
+                        dict(a=1, b=2), check_dtypes=False)
+    self.assertAllClose(solve_shape_vars("(2 * a + 1, 3 * a + b + 4, b)", [3, 9, 2]),
+                        dict(a=1, b=2), check_dtypes=False)
+
+    self.assertAllClose(jax2tf.jax2tf._solve_shape_vars([(2, 2)]),
+                        dict())
+
+    with self.assertRaisesRegex(
+        TypeError,
+        "only linear polynomials are supported as input shape specifications. Found 'a b'"):
+      self.assertAllClose(solve_shape_vars("(a + a * b, 5, b)", [2, 5, 2]),
+                          dict(a=1, b=2))
 
   def test_bad_in_shapes(self):
     def add2(x, y):
@@ -147,7 +165,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                   input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
                                   in_shapes=["(b, 4)"],
                                   expected_output_signature=tf.TensorSpec([None]))
-
 
   def test_pytree(self):
     """Arguments and in_shapes are pytrees."""
@@ -178,10 +195,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                  dict(a="(_,)", b="(4,)")],
       expected_output_signature=tf.TensorSpec([4]))
 
-
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""
-    # TODO: is this test really adding anything???
     @jax.custom_vjp
     def f(x):
       # x: [b1, b2, d1, d2] (a batch of matrices)
@@ -237,7 +252,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # TODO: there seems to be a bug here, the output should be (None, None, 8, 9)
     # self.assertEqual((None, None, 8, None), tuple(tf_grad.output_shapes[1]))
 
-
   def test_gradients_pytree(self):
     """Shape polymorphism with gradients and pytrees for inputs and outputs."""
     def f(x):
@@ -272,44 +286,18 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # The shape of the gradient should match the input
     self.assertEqual((None, 3, 4), tuple(tf_grad.output_shapes[1]["grad"]))
 
-
-  def test_matmul(self):
-    def f_jax(x, y):
-      return jnp.matmul(x, y)
-
-    self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None, 8, 4]), tf.TensorSpec([None, 4, None])],
-      in_shapes=["(batch, _, 4)", "(batch, 4, w)"],
-      expected_output_signature=tf.TensorSpec([None, 8, None]))
-
-  def test_reshape(self):
-    raise unittest.SkipTest("Not implemented")
-    def f_jax(x):
-      y = jnp.sin(x)
-      yshape0, yshape1 = y.shape
-      return y.reshape([2, -1])
-
-    self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None, None])],
-      in_shapes=["(2 * batch, d)"],
-      expected_output_signature=tf.TensorSpec([2, None]))
-
-
-  def test_mean(self):
-    raise unittest.SkipTest("Not yet implemented")
-    def f_jax(x):
-      return jnp.sum(x, axis=0) / jax2tf.shape_as_value(x)[0]
-
-    f_tf = self.CheckShapePolymorphism(
-      f_jax,
-      input_signature=[tf.TensorSpec([None, 4])],
-      in_shapes=[("batch, _")],
-      expected_output_signature=tf.TensorSpec([4]))
-    x = np.arange(12.).reshape((3, 4))
-    self.assertAllClose(np.array([4., 5., 6., 7.]), f_tf(x))
-
+  def test_cond(self):
+    # Test the primitive under conditional
+    def f(x, y):
+      # x: f32[B, H], y : f32[H]
+      return lax.cond(jnp.sum(x) > 0.,
+                      lambda _: x + y,
+                      lambda _: jnp.zeros_like(x),
+                      operand=None)
+    x = np.ones((2, 3))
+    y = np.ones((3,))
+    res_jax = f(x, y)
+    self.assertAllClose(res_jax, jax2tf.convert(f, in_shapes=["(b, h)", "h"])(x, y))
 
   def test_shape_error(self):
     """Some of the examples from the README."""
@@ -338,6 +326,271 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                 "Only integers, .* tensors are valid indices, got 0"):
       jax2tf.convert(lambda x: jnp.split(x, 2),
                      in_shapes=["(2*v,)"])(four_ones)
+
+
+class ShapeAsValueTest(tf_test_util.JaxToTfTestCase):
+
+  def test_concrete_shapes(self):
+    # Test shape_as_value with concrete shapes. All transformations work.
+    def f(x):
+      return jnp.sum(x, axis=0) * jax2tf.shape_as_value(x)[0]
+
+    x = np.arange(3.)
+    self.assertAllClose(9., f(x))
+    self.assertAllClose(9., jax.jit(f)(x))
+
+    res_primal, res_tangent = jax.jvp(f, (x,), (np.array([0.1, 0.2, 0.3]),))
+    self.assertAllClose((9., 1.8), (res_primal, res_tangent))
+
+    self.assertAllClose(np.array([3., 3., 3.]), jax.grad(f)(x))
+
+    xv = np.arange(24.).reshape((2, 3, 4))
+    res_vmap = jax.vmap(f, in_axes=1)(xv)
+    # Implement by iteration
+    res_iter = jnp.stack([f(xv[:, i, :]) for i in range(xv.shape[1])])
+    self.assertAllClose(res_iter, res_vmap)
+
+    res_mask2, _ = jax.mask(f, in_shapes=["(b,)"])([x], dict(b=2))
+    self.assertAllClose(2., res_mask2)
+    res_mask3, _ = jax.mask(f, in_shapes=["(b,)"])([x], dict(b=3))
+    self.assertAllClose(9., res_mask3)
+
+  def test_dynamic_shapes(self):
+    # Test shape_as_value with dynamic shapes. All transformations work.
+    def f(x):
+      return jnp.sum(x, axis=0) * jax2tf.shape_as_value(x)[0]
+
+    x = np.arange(3.)
+    self.assertAllClose(9., jax2tf.convert(f, in_shapes=["(b,)"])(x))
+    self.assertAllClose(9., jax2tf.convert(jax.jit(f), in_shapes=["(b,)"])(x))
+    self.assertAllClose(9., tf.function(jax2tf.convert(f, in_shapes=["(b,)"]))(x))
+
+    res_primal, res_tangent = jax2tf.convert(
+      lambda x, xt: jax.jvp(f, (x,), (xt,)),
+      in_shapes=["b", "b"])(x, np.array([0.1, 0.2, 0.3]))
+    self.assertAllClose((9., 1.8), (res_primal, res_tangent))
+
+    self.assertAllClose(np.array([3., 3., 3.]),
+                        jax2tf.convert(jax.grad(f),
+                                       in_shapes=["b"])(x))
+
+    xv = np.arange(24.).reshape((2, 3, 4))
+    res_vmap = jax.vmap(f, in_axes=1)(xv)
+    # Implement by iteration
+    res_iter = jnp.stack([f(xv[:, i, :]) for i in range(xv.shape[1])])
+    self.assertAllClose(res_iter, res_vmap)
+
+    res_mask2, _ = jax.mask(f, in_shapes=["(b,)"])([x], dict(b=2))
+    self.assertAllClose(2., res_mask2)
+    res_mask3, _ = jax.mask(f, in_shapes=["(b,)"])([x], dict(b=3))
+    self.assertAllClose(9., res_mask3)
+
+  def test_cond(self):
+    # Test the primitive under conditional
+    def f(x):
+      return lax.cond(jnp.sum(x) > 0.,
+                      lambda _: jnp.sum(x) / functools.reduce(lax.mul,
+                                                              jax2tf.shape_as_value(x)),
+                      lambda _: 0.,
+                      operand=None)
+    x = np.ones((2, 3, 4))
+    self.assertAllClose(1., f(x))
+    self.assertAllClose(1., jax2tf.convert(f, in_shapes=["(a, b, 4)"])(x))
+
+  def test_mean0(self):
+    def f_jax(x):
+      return jnp.sum(x, axis=0) / jax2tf.shape_as_value(x)[0]
+
+    x = np.arange(12.).reshape((3, 4))
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype)],
+      in_shapes=[("batch, _")],
+      expected_output_signature=tf.TensorSpec([4]))
+    self.assertAllClose(np.array([4., 5., 6., 7.]), f_tf(x))
+
+  def test_mean_all_axes(self):
+    def f_jax(x):
+      return jnp.sum(x) / np.prod(jax2tf.shape_as_value(x))
+
+    x = np.arange(12.).reshape((3, 4))
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype)],
+      in_shapes=[("batch, _")],
+      expected_output_signature=tf.TensorSpec([]))
+
+    self.assertAllClose(jnp.mean(x), f_tf(x))
+
+
+class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
+  """Tests for primitives that take shape values as parameters."""
+
+  def test_matmul(self):
+    def f_jax(x, y):
+      return jnp.matmul(x, y)
+
+    self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 8, 4]), tf.TensorSpec([None, 4, None])],
+      in_shapes=["(batch, _, 4)", "(batch, 4, w)"],
+      expected_output_signature=tf.TensorSpec([None, 8, None]))
+
+  def test_reshape(self):
+    def f_jax(x):
+      y = jnp.sin(x)
+      return y.reshape([2, -1])
+
+    self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, None])],
+      in_shapes=["(2 * batch, d)"],
+      expected_output_signature=tf.TensorSpec([2, None]))
+
+    self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([4, 3, None])],
+      in_shapes=["(4, 3, d)"],
+      expected_output_signature=tf.TensorSpec([2, None]))
+
+  def test_reshape_compiled(self):
+    # We compile the result of conversion, hence we need to involve the compiler
+    # twice, but we trace only once with shape polymorphism
+    traced = False
+    def f_jax(x):
+      nonlocal traced
+      traced = True
+      y = jnp.sin(x)
+      return y.reshape([2, -1])
+
+    x = np.ones((4, 3), dtype=np.float32)
+    res_jax = f_jax(x)
+
+    traced = False
+    # If we get_concrete_function we trace once
+    f_tf = tf.function(jax2tf.convert(f_jax, in_shapes=["(2 * batch, d)"]),
+                       autograph=False,
+                       experimental_compile=True).get_concrete_function(tf.TensorSpec([None, None], tf.float32))
+    self.assertTrue(traced)
+    traced = False
+    self.assertAllClose(res_jax, f_tf(x))
+    self.assertFalse(traced)
+
+    x = np.ones((6, 3), dtype=np.float32)
+    res_jax = f_jax(x)
+    traced = False
+
+    self.assertAllClose(res_jax, f_tf(x))
+    self.assertFalse(traced)  # We are not tracing again
+
+
+  def test_add(self):
+    def f_jax(x, y):
+      return jnp.add(x, y)
+
+    x = np.arange(12.).reshape((3, 4))
+    y = np.arange(24).reshape((2, 3, 4))
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype),
+                       tf.TensorSpec([None, None, 4], dtype=y.dtype)],
+      in_shapes=["(d, 4)", "(batch, d, 4)"],
+      expected_output_signature=tf.TensorSpec([None, None, 4]))
+
+    self.assertAllClose(f_jax(x, y), f_tf(x, y))
+
+  def test_squeeze(self):
+    def f_jax(x):
+      return jnp.squeeze(x, axis=1)
+    x = np.ones((4, 1))
+    res_jax = f_jax(x)
+
+    # Trace with a known dimension to squeeze
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 1], dtype=x.dtype)],
+      in_shapes=["(b, _)"],
+      expected_output_signature=tf.TensorSpec([None]))
+
+    self.assertAllClose(res_jax, f_tf(x))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("cannot select an axis to squeeze out which has size not equal to one, got shape=(b1, b2) and dimensions=(1,)")):
+      # Trace with unknown dimension to squeeze
+      self.CheckShapePolymorphism(
+        f_jax,
+        input_signature=[tf.TensorSpec([None, None])],
+        in_shapes=["(b1, b2)"],
+        expected_output_signature=tf.TensorSpec([None]))
+
+  def test_broadcast(self):
+    def f_jax(x):
+      return jnp.broadcast_to(x, [x.shape[0], x.shape[0], x.shape[1]])
+
+    x = np.arange(12.).reshape((3, 4))
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None, 4], dtype=x.dtype)],
+      in_shapes=[("batch, _")],
+      expected_output_signature=tf.TensorSpec([None, None, 4]))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_iota(self):
+    raise unittest.SkipTest("not yet working")
+    def f_jax(x):
+      x + lax.iota(np.float32, x.shape[0])
+
+    x = np.arange(12.)
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tf.TensorSpec([None], dtype=x.dtype)],
+      in_shapes=[("d")],
+      expected_output_signature=tf.TensorSpec([None]))
+
+    self.assertAllClose(f_jax(x), f_tf(x))
+
+  def test_gather(self):
+    def f(a, i):
+      return jnp.take(a, i, axis=1)
+
+    x = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))[:2, :3, :4]
+    i = np.array([1, 2], np.int32)
+
+    f_tf = self.CheckShapePolymorphism(
+      f,
+      input_signature=[tf.TensorSpec([None, 3, 4]), tf.TensorSpec([2], np.int32)],
+      in_shapes=["batch, _, _", "_"],
+      expected_output_signature=tf.TensorSpec([None, 2, 4]))
+
+    self.assertAllClose(f(x, i), f_tf(x, i))
+
+    # Does not yet work
+    # f_tf = self.CheckShapePolymorphism(
+    #   f,
+    #   input_signature=[tf.TensorSpec([None, 3, 4]), tf.TensorSpec([None], np.int32)],
+    #   in_shapes=["batch, _, _", "slice_size"],
+    #   expected_output_signature=tf.TensorSpec([None, None, 4]))
+    # self.assertAllClose(f(x, i), f_tf(x, i))
+
+  def test_gather_vmap(self):
+    raise unittest.SkipTest("does not yet work")
+    @jax.vmap
+    def f(a, i):
+      return jnp.take(a, i, axis=0)
+
+    x = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))[:2, :3, :4]
+    i = np.array([1, 2], np.int32)
+
+    f_tf = self.CheckShapePolymorphism(
+      f,
+      input_signature=[tf.TensorSpec([None, 3, 4]), tf.TensorSpec([None], np.int32)],
+      in_shapes=["batch, _, _", "batch"],
+      expected_output_signature=tf.TensorSpec([None, 2, 4]))
+
+    self.assertAllClose(f(x, i), f_tf(x, i))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
