@@ -489,7 +489,7 @@ def conv_general_dilated(
   padding: Union[str, Sequence[Tuple[int, int]]],
   lhs_dilation: Optional[Sequence[int]] = None,
   rhs_dilation: Optional[Sequence[int]] = None,
-  dimension_numbers: ConvGeneralDilatedDimensionNumbers  = None,
+  dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
   feature_group_count: int = 1, batch_group_count: int = 1,
   precision: PrecisionLike = None) -> Array:
   """General n-dimensional convolution operator, with optional dilation.
@@ -1400,8 +1400,18 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
   fill_value = convert_element_type(fill_value, dtype)
   return broadcast(fill_value, shape)
 
+# TODO(mattjj) remove, we only need this function because _device_put_raw is
+#  used directly in jnp.array/full instead of device_put_p.bind
+def _is_numpy_eval_tracing():
+  if not config.omnistaging_enabled: return False
+  stack = core.thread_local_state.trace_state.trace_stack
+  # TODO(mattjj) improve:
+  trace_type = stack.stack[0].trace_type
+  # __name__ avoids cyclic dependency with numpy_eval:
+  return trace_type.__name__ == 'NumpyEvalTrace'
+
 def _device_put_raw(x):
-  if isinstance(x, xla.DeviceArray):
+  if isinstance(x, xla.DeviceArray) or _is_numpy_eval_tracing():
     return x
   else:
     aval = raise_to_shaped(core.get_aval(x))
@@ -5833,7 +5843,7 @@ def _dilate_shape(shape, dilation):
     msg = "All dilations must be positive, got {}."
     raise TypeError(msg.format(dilation))
   dilation = (1,) * (len(shape) - len(dilation)) + tuple(dilation)
-  return np.where(shape == 0, 0,
+  return np.where(np.equal(shape, 0), 0,
                    np.multiply(dilation, np.subtract(shape, 1)) + 1)
 
 def _ceil_divide(x1, x2):
