@@ -338,7 +338,7 @@ _identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
 
-def _parse_lit(val_str): return Poly({Mon(): int(val_str)})
+def _parse_lit(val_str): return int(val_str)
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
@@ -458,8 +458,8 @@ class UniqueIds(dict):
 def remap_ids(names, shape_spec):
   return ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
                          : coeff for mon, coeff in poly.items()})
-                   if poly is not _monomorphic_dim else
-                   _monomorphic_dim for poly in shape_spec)
+                   if isinstance(poly, Poly) else
+                   poly for poly in shape_spec)
 
 def bind_shapes(polymorphic_shapes, padded_shapes):
   env = {}
