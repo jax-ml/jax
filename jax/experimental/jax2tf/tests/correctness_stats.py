@@ -150,6 +150,11 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # experimental_compile=True breaks for complex types.
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
+
+  if prim is lax_linalg.triangular_solve_p:
+    if np_dtype in [dtypes.bfloat16, np.float16]:
+      tf_unimpl(np_dtype)
+
   if prim is lax_linalg.svd_p:
     if np_dtype in [dtypes.bfloat16]:
       # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF

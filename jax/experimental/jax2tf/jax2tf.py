@@ -611,7 +611,6 @@ tf_not_yet_impl = [
 
   lax.linear_solve_p,
   lax_linalg.lu_p,
-  lax_linalg.triangular_solve_p,
 
   lax.igamma_grad_a_p,
   lax.random_gamma_grad_p,
@@ -1783,6 +1782,29 @@ def _eigh(operand: TfVal, lower: bool):
   return v, w
 
 tf_impl[lax_linalg.eigh_p] = _eigh
+
+def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
+                      transpose_a: bool, conjugate_a: bool,
+                      unit_diagonal: bool):
+  if unit_diagonal:
+    a = tf.linalg.set_diag(a, tf.ones(a.shape[:-1], dtype=a.dtype))
+  if not left_side:
+    rank = len(a.shape)
+    transpose_dimensions = list(range(rank - 2)) + [rank - 1, rank - 2]
+    a = tf.transpose(a, transpose_dimensions)
+    b = tf.transpose(b, transpose_dimensions)
+    lower = not lower
+  # adjoint == transpose for real dtypes, so special care need only be taken
+  # for complex types.
+  if a.dtype in [tf.complex64, tf.complex128]:
+    if (transpose_a and not conjugate_a) or (not transpose_a and conjugate_a):
+      a = tf.math.conj(a)
+  result = tf.linalg.triangular_solve(a, b, lower=lower, adjoint=transpose_a)
+  if not left_side:
+    result = tf.transpose(result, transpose_dimensions)
+  return result
+
+tf_impl[lax_linalg.triangular_solve_p] = _triangular_solve
 
 def _custom_jvp_call_jaxpr(*args: TfVal,
                            fun_jaxpr: core.ClosedJaxpr,
