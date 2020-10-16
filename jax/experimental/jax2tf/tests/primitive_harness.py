@@ -636,6 +636,20 @@ lax_linalg_eigh = tuple(
   if dtype != np.float16
 )
 
+lax_linalg_lu = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          lax_linalg.lu,
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [
+    (5, 5),    # square
+    (3, 5, 5), # batched
+    (3, 5),    # non-square
+  ]
+)
+
 def _make_triangular_solve_harness(name, *, left_side=True, lower=False,
                                    ab_shapes=((4, 4), (4, 1)), dtype=np.float32,
                                    transpose_a=False, conjugate_a=False,

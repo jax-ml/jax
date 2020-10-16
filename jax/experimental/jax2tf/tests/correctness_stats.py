@@ -141,6 +141,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
+  if prim is lax_linalg.lu_p:
+    if np_dtype == np.complex64:
+      tf_unimpl(np_dtype, devs=["TPU"])
+
   if prim is lax_linalg.triangular_solve_p:
     if np_dtype in [dtypes.bfloat16, np.float16]:
       tf_unimpl(np_dtype)

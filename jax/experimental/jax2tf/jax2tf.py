@@ -618,7 +618,6 @@ tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
   lax.linear_solve_p,
-  lax_linalg.lu_p,
 
   lax.igamma_grad_a_p,
   lax.random_gamma_grad_p,
@@ -1788,6 +1787,12 @@ def _eigh(operand: TfVal, lower: bool):
   return v, w
 
 tf_impl[lax_linalg.eigh_p] = _eigh
+
+def _lu(operand: TfVal, _in_avals, _out_aval):
+  return _convert_jax_impl(lax_linalg._lu_python)(operand, _in_avals=_in_avals,
+                                                  _out_aval=_out_aval)
+
+tf_impl_with_avals[lax_linalg.lu_p] = _lu
 
 def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
                       transpose_a: bool, conjugate_a: bool,
