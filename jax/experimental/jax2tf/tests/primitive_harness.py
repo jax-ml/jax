@@ -875,7 +875,7 @@ def _make_reduce_window_harness(name, *, shape=(4, 6), base_dilation=(1, 1),
   return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
                  lax.reduce_window,
                  [RandArg(shape, dtype),
-                  np.array(init_value, dtype=dtype),
+                  StaticArg(np.array(init_value, dtype=dtype)),  # Must be static to trigger the picking of the reducers
                   StaticArg(computation), StaticArg(window_dimensions),
                   StaticArg(window_strides), StaticArg(padding),
                   StaticArg(base_dilation), StaticArg(window_dilation)],
@@ -902,7 +902,7 @@ lax_reduce_window = tuple( # Validate dtypes across all execution paths
     (lax.max, _get_max_identity(dtype)), # path through TF reduce_window_max
     (lax.max, 1), # path through reduce_window
   ] + ([
-    (lax.add, 0), # path_through reduce_window_add
+    (lax.add, 0), # path_through reduce_window_sum
     (lax.mul, 1), # path through reduce_window_mul
   ] if dtype != jnp.bool_ else [])
 ) + tuple( # Validate window_dimensions
