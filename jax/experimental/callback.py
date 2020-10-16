@@ -156,3 +156,16 @@ class CallbackTrace(Trace):
     f = callback_subtrace(f, self.main)
     vals_out = call_primitive.bind(f, *vals_in, **params)
     return [CallbackTracer(self, val) for val in vals_out]
+
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+    # This implementation just drops the custom derivative rule.
+    # TODO(sharadmv): don't drop the custom derivative rule
+    del primitive, jvp  # Unused.
+    return fun.call_wrapped(*tracers)
+
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
+                              out_trees):
+    # This implementation just drops the custom derivative rule.
+    # TODO(sharadmv): don't drop the custom derivative rule
+    del primitive, fwd, bwd, out_trees  # Unused.
+    return fun.call_wrapped(*tracers)
