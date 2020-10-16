@@ -136,7 +136,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                                      return_sign=return_sign)
 
       args_maker = lambda: [rng(shapes[0], dtype)]
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-5)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
