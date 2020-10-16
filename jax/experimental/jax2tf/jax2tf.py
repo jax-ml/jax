@@ -560,6 +560,26 @@ class TensorFlowTrace(core.Trace):
   def post_process_map(self, map_primitive, out_tracers, params):
     raise NotImplementedError("post_process_map")
 
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+    # Drop the custom differentiation rule and act like a call primitive. This
+    # behavior is desirable because jax2tf stages code out of the JAX system, so
+    # there are no more JAX differentiation transformations to be applied.
+    del jvp  # Unused.
+    return self.process_call(core.call_p, fun, tracers, {})
+
+  def post_process_custom_jvp_call(self, out_tracers, params):
+    assert False  # unreachable assuming jax2tf runs with clean trace state
+
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
+    # Drop the custom differentiation rule and act like a call primitive. This
+    # behavior is desirable because jax2tf stages code out of the JAX system, so
+    # there are no more JAX differentiation transformations to be applied.
+    del fwd, bwd, out_trees  # Unused.
+    return self.process_call(core.call_p, fun, tracers, {})
+
+  def post_process_custom_vjp_call(self, out_tracers, params):
+    assert False  # unreachable assuming jax2tf runs with clean trace state
+
   def get_primitive_impl(self, p: core.Primitive) -> Tuple[Callable, bool]:
     # Returns the primitive implementation and whether the implementation
     # takes abstract values (see definition of tf_impl_with_avals)
@@ -1808,7 +1828,8 @@ tf_impl[lax_linalg.triangular_solve_p] = _triangular_solve
 
 def _custom_jvp_call_jaxpr(*args: TfVal,
                            fun_jaxpr: core.ClosedJaxpr,
-                           jvp_jaxpr_thunk: Callable) -> Sequence[TfVal]:
+                           jvp_jaxpr_thunk: Callable,
+                           num_consts: int) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
   return _interpret_jaxpr(fun_jaxpr, *args)
 
