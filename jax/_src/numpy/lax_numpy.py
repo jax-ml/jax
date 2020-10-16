@@ -39,19 +39,19 @@ import opt_einsum
 import jax
 from jax import jit, custom_jvp
 from .vectorize import vectorize
-from ._util import _wraps
-from .. import core
-from .. import dtypes
-from ..abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
-from ..config import flags, config
-from ..interpreters.xla import DeviceArray
-from ..interpreters.masking import Poly
-from .. import lax
-from ..lax.lax import _device_put_raw
-from .. import ops
-from ..util import (partial, unzip2, prod as _prod,
-                    subvals, safe_zip, canonicalize_axis as _canonicalize_axis)
-from ..tree_util import tree_leaves, tree_flatten
+from .util import _wraps
+from jax import core
+from jax import dtypes
+from jax.abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
+from jax.config import flags, config
+from jax.interpreters.xla import DeviceArray
+from jax.interpreters.masking import Poly
+from jax import lax
+from jax.lax.lax import _device_put_raw
+from jax import ops
+from jax.util import (partial, unzip2, prod as _prod,
+                      subvals, safe_zip, canonicalize_axis as _canonicalize_axis)
+from jax.tree_util import tree_leaves, tree_flatten
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum(

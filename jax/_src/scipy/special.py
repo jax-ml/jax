@@ -20,10 +20,10 @@ import scipy.special as osp_special
 from jax import lax
 from jax import api
 from jax.interpreters import ad
-from jax.numpy import lax_numpy as jnp
-from jax.numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
-                                 _promote_args_inexact)
-from jax.numpy._util import _wraps
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
+                                      _promote_args_inexact)
+from jax._src.numpy.util import _wraps
 
 
 @_wraps(osp_special.gammaln)

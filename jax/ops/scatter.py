@@ -16,7 +16,7 @@
 
 
 from .. import lax
-from ..numpy import lax_numpy as jnp
+from jax._src.numpy import lax_numpy as jnp
 from .. import util
 
 

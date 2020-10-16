@@ -16,7 +16,7 @@ import scipy.stats as osp_stats
 from jax.scipy.special import expit, logit
 
 from jax import lax
-from jax.numpy._util import _wraps
+from jax._src.numpy.util import _wraps
 
 
 @_wraps(osp_stats.logistic.logpdf, update_doc=False)

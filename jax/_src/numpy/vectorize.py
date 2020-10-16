@@ -11,14 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import functools
 import re
 from typing import Any, Callable, Dict, List, Tuple
 
-from .. import api
-from .. import lax
+from jax import api
+from jax import lax
 from . import lax_numpy as jnp
-from ..util import safe_map as map, safe_zip as zip
+from jax.util import safe_map as map, safe_zip as zip
 
 
 # See http://docs.scipy.org/doc/numpy/reference/c-api.generalized-ufuncs.html

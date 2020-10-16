@@ -22,8 +22,8 @@ import scipy.ndimage
 
 from jax import api
 from jax import lax
-from jax.numpy import lax_numpy as jnp
-from jax.numpy._util import _wraps
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.util import _wraps
 from jax.util import safe_zip as zip
 
 
