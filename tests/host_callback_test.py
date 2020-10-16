@@ -1187,7 +1187,7 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                     has_input_token=True, has_output_token=True):
     """Check that the rewrite of func(*args) matches expected."""
     jaxpr = api.make_jaxpr(func)(*args)
-    rewritten = hcb._rewrite_closed_jaxpr(jaxpr,
+    rewritten = hcb._rewrite_closed_jaxpr(jaxpr,  # noqa: F841
                                           has_input_token, has_output_token)
     # Since it is somewhat annoying to update the Jaxpr assertions when we change
     # the Jaxpr printing, we do not check these by default. It is recommended that
