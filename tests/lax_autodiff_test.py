@@ -743,10 +743,11 @@ class LaxAutodiffTest(jtu.JaxTestCase):
                 eps)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_shape={}_axis={}"
-       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
+      {"testcase_name": "_op={}_shape={}_axis={}_reverse={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis,
+               reverse),
        "op": op, "shape": shape, "dtype": dtype,
-       "axis": axis, "rng_factory": rng_factory}
+       "axis": axis, "reverse": reverse}
       for op, types in [
           (lax.cumsum, [np.float32, np.float64]),
           (lax.cumprod, [np.float32, np.float64]),
@@ -754,12 +755,13 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       for dtype in types
       for shape in [[10], [3, 4, 5]]
       for axis in range(len(shape))
-      for rng_factory in [
-          jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
-          else jtu.rand_small]))
-  def testCumulativeReduceGrad(self, op, shape, dtype, axis, rng_factory):
+      for reverse in [False, True]))
+  def testCumulativeReduceGrad(self, op, shape, dtype, axis, reverse):
+    rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
+                   else jtu.rand_small)
     rng = rng_factory(self.rng())
-    check_grads(partial(op, axis=axis), (rng(shape, dtype),), order=2)
+    check_grads(partial(op, axis=axis, reverse=reverse), (rng(shape, dtype),),
+                order=2)
 
 
   # TODO(b/205052657): enable more tests when supported
