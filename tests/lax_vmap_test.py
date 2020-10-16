@@ -541,11 +541,11 @@ class LaxVmapTest(jtu.JaxTestCase):
       self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_shape={}_axis={}_bdims={}"
+      {"testcase_name": "_op={}_shape={}_axis={}_bdims={}_reverse={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis,
-               bdims),
+               bdims, reverse),
        "op": op, "shape": shape, "dtype": dtype, "bdims": bdims,
-       "axis": axis, "rng_factory": rng_factory}
+       "axis": axis, "reverse": reverse}
       for op, types in [
           (lax.cumsum, [np.float32, np.float64]),
           (lax.cumprod, [np.float32, np.float64]),
@@ -554,13 +554,13 @@ class LaxVmapTest(jtu.JaxTestCase):
       for shape in [[10], [3, 4, 5]]
       for axis in range(len(shape))
       for bdims in all_bdims(shape)
-      for rng_factory in [
-          jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
-          else jtu.rand_small]))
-  def testCumulativeReduce(self, op, shape, dtype, axis, bdims, rng_factory):
+      for reverse in [False, True]))
+  def testCumulativeReduce(self, op, shape, dtype, axis, bdims, reverse):
+    rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
+                   else jtu.rand_small)
     rng = rng_factory(self.rng())
-    self._CheckBatching(partial(op, axis=axis), 7, bdims, (shape,), (dtype,),
-                        rng)
+    self._CheckBatching(partial(op, axis=axis, reverse=reverse), 7, bdims,
+                        (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_padding={}".format(np.dtype(dtype).name,

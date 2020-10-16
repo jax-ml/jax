@@ -244,12 +244,13 @@ deflinear(lax.reduce_window_sum_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
-def _cumulative_jet_rule(primals_in, series_in, *, axis: int,
+def _cumulative_jet_rule(primals_in, series_in, *, axis: int, reverse: bool,
                          combine_fn: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return jet(partial(lax_control_flow.associative_scan, combine_fn, axis=axis),
+  return jet(partial(lax_control_flow.associative_scan, combine_fn, axis=axis,
+                     reverse=reverse),
              primals_in, series_in)
 
 deflinear(lax_control_flow.cumsum_p)

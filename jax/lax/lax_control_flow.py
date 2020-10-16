@@ -2492,52 +2492,53 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
 
 # Cumulative reductions.
 
-def cumsum(operand: Array, axis: int) -> Array:
+def cumsum(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative sum along `axis`."""
-  return cumsum_p.bind(operand, axis=int(axis))
+  return cumsum_p.bind(operand, axis=int(axis), reverse=bool(reverse))
 
-def cumprod(operand: Array, axis: int) -> Array:
+def cumprod(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative product along `axis`."""
-  return cumprod_p.bind(operand, axis=int(axis))
+  return cumprod_p.bind(operand, axis=int(axis), reverse=bool(reverse))
 
-def cummax(operand: Array, axis: int) -> Array:
+def cummax(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative maximum along `axis`."""
-  return cummax_p.bind(operand, axis=int(axis))
+  return cummax_p.bind(operand, axis=int(axis), reverse=bool(reverse))
 
-def cummin(operand: Array, axis: int) -> Array:
+def cummin(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative minimum along `axis`."""
-  return cummin_p.bind(operand, axis=int(axis))
+  return cummin_p.bind(operand, axis=int(axis), reverse=bool(reverse))
 
-def _cumred_shape_rule(x, *, axis: int):
+def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   if axis < 0 or axis >= x.ndim:
     raise ValueError(
         "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
   return x.shape
 
-def _cumsum_transpose_rule(t, *, axis: int):
-  return [lax.rev(cumsum(lax.rev(t, (axis,)), axis=axis), (axis,))]
+def _cumsum_transpose_rule(t, *, axis: int, reverse: bool):
+  return [cumsum(t, axis=axis, reverse=not reverse)]
 
 
 
 def _cumred_tpu_translation_rule(window_reduce: Callable, x, *,
-                                 axis: int):
+                                 axis: int, reverse: bool):
   # On TPU, an implementation using reduce_window is handled specially by the
   # compiler and is efficient. On other backends, it is O(n^2).
   n = x.shape[axis]
   if n == 0:
     return x
   padding = [(0, 0)] * x.ndim
-  padding[axis] = (n - 1, 0)
+  padding[axis] = (0, n - 1) if reverse else (n - 1, 0)
   strides = [1] * x.ndim
   window_dims = [1] * x.ndim
   window_dims[axis] = n
   return window_reduce(x, window_dims, strides, padding)
 
-def _cumred_batch_rule(prim, batched_args, batch_dims, *, axis: int):
+def _cumred_batch_rule(prim, batched_args, batch_dims, *, axis: int,
+                       reverse: bool):
   operand, = batched_args
   bdim, = batch_dims
   axis = axis if axis < bdim else axis + 1
-  return prim.bind(operand, axis=axis), bdim
+  return prim.bind(operand, axis=axis, reverse=reverse), bdim
 
 def _cumred_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
@@ -2579,12 +2580,13 @@ xla.translations[cummin_p] = xla.lower_fun(
 xla.translations[cummax_p] = xla.lower_fun(
   partial(associative_scan, lax.max), multiple_results=False)
 
-def _cumulative_jvp_rule(primals, tangents, *, axis: int,
+def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,
                          combine_fn: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return api.jvp(partial(associative_scan, combine_fn, axis=axis),
+  return api.jvp(partial(associative_scan, combine_fn, axis=axis,
+                         reverse=reverse),
                  primals, tangents)
 
 ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)
