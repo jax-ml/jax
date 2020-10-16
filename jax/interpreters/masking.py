@@ -110,8 +110,11 @@ def eval_poly(poly, values_dict):
 def _ensure_poly(p):
   if type(p) is Poly:
     return p
-
   return Poly({Mon(): p})
+
+def _polys_to_ints(shape):
+  return tuple(int(d) if type(d) is Poly and d.is_constant else d
+               for d in shape)
 
 def is_polymorphic(shape: Sequence[Union[int, 'Poly']]):
   return any(map(lambda d: type(d) is Poly, shape))
@@ -338,7 +341,7 @@ _identifiers = frozenset(string.ascii_lowercase)
 
 def _parse_id(name): return Poly({Mon({name: 1}): 1})
 
-def _parse_lit(val_str): return Poly({Mon(): int(val_str)})
+def _parse_lit(val_str): return int(val_str)
 
 class MonomorphicDim(object):
   def __str__(self): return '_'
@@ -408,9 +411,10 @@ class MaskTrace(Trace):
     if primitive.name == 'reshape': params['polymorphic_shapes'] = polymorphic_shapes
     out = masking_rule(vals, logical_shapes, **params)
     if primitive.multiple_results:
-      return map(partial(MaskTracer, self), out, (o.shape for o in out_aval))
+      out_shapes = map(_polys_to_ints, [o.shape for o in out_aval])
+      return map(partial(MaskTracer, self), out, out_shapes)
     else:
-      return MaskTracer(self, out, out_aval.shape)
+      return MaskTracer(self, out, _polys_to_ints(out_aval.shape))
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
@@ -458,8 +462,8 @@ class UniqueIds(dict):
 def remap_ids(names, shape_spec):
   return ShapeSpec(Poly({Mon({names[id] : deg for id, deg in mon.items()})
                          : coeff for mon, coeff in poly.items()})
-                   if poly is not _monomorphic_dim else
-                   _monomorphic_dim for poly in shape_spec)
+                   if isinstance(poly, Poly) else
+                   poly for poly in shape_spec)
 
 def bind_shapes(polymorphic_shapes, padded_shapes):
   env = {}
