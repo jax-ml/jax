@@ -543,6 +543,14 @@ class Tracer:
                                     for name, pp_payload in contents)
     return str(base)
 
+  def __str__(self):
+    if isinstance(self.aval, ConcreteArray):
+      return f'Traced<{self.aval.val}>'
+    elif isinstance(self.aval, (ShapedArray, AbstractUnit)):
+      return f'Traced<{self.aval.str_short()}>'
+    else:
+      return repr(self)
+
   def _contents(self):
     try:
       return [(name, pp(repr(getattr(self, name)))) for name in self.__slots__]
