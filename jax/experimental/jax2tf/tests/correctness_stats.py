@@ -111,16 +111,6 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype in [np.float16, dtypes.bfloat16]:
       tf_unimpl(np_dtype)
 
-  if prim is lax.shift_right_arithmetic_p and np_dtype in [np.uint8, np.uint16]:
-    tf_possible_incorrect(np_dtype,
-      "If first operand has higher-order bit set the result will not have it set on TPU (JAX/XLA bug)",
-      devs=["TPU"])
-
-  if prim is lax.shift_right_logical_p and np_dtype in [np.int8, np.int16]:
-    tf_possible_incorrect(np_dtype,
-      "If first operand is negative the result will be negative on TPU (JAX/XLA bug)",
-      devs=["TPU"])
-
   if prim is lax_linalg.cholesky_p:
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;

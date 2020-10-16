@@ -583,18 +583,6 @@ def to_tf_dtype(jax_dtype):
 def to_jax_dtype(tf_dtype):
   return jnp.bfloat16 if tf_dtype == tf.bfloat16 else tf_dtype.as_numpy_dtype
 
-def promote_types(*values):
-  """Returns values casted to a common type using jnp.promote_types."""
-  dtype = to_tf_dtype(functools.reduce(
-      jnp.promote_types, (to_jax_dtype(v.dtype) for v in values)))
-  return tuple(tf.cast(v, dtype) for v in values)
-
-
-def wrap_binary_op(func):
-  def wrapped_func(lhs, rhs, **kwargs):
-    return func(*promote_types(lhs, rhs), **kwargs)
-  return wrapped_func
-
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
@@ -630,7 +618,7 @@ except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 tf_impl[ad_util.zeros_like_p] = tf.zeros_like
-tf_impl[ad_util.add_jaxvals_p] = wrap_binary_op(tf.math.add)
+tf_impl[ad_util.add_jaxvals_p] = tf.math.add
 tf_impl[xla.device_put_p] = lambda x, device=None: x
 
 tf_impl[lax.neg_p] = tf.math.negative
@@ -659,7 +647,7 @@ tf_impl[lax.sin_p] = tf.math.sin
 tf_impl[lax.sinh_p] = tf.math.sinh
 tf_impl[lax.cos_p] = tf.math.cos
 tf_impl[lax.cosh_p] = tf.math.cosh
-tf_impl[lax.atan2_p] = wrap_binary_op(tf.math.atan2)
+tf_impl[lax.atan2_p] = tf.math.atan2
 tf_impl[lax.acosh_p] = tf.math.acosh
 tf_impl[lax.atanh_p] = tf.math.atanh
 tf_impl[lax.asinh_p] = tf.math.asinh
@@ -669,8 +657,8 @@ tf_impl[lax.rsqrt_p] = tf.math.rsqrt
 
 tf_impl[lax.lgamma_p] = tf.math.lgamma
 tf_impl[lax.digamma_p] = tf.math.digamma
-tf_impl[lax.igamma_p] = wrap_binary_op(tf.math.igamma)
-tf_impl[lax.igammac_p] = wrap_binary_op(tf.math.igammac)
+tf_impl[lax.igamma_p] = tf.math.igamma
+tf_impl[lax.igammac_p] = tf.math.igammac
 tf_impl[lax.regularized_incomplete_beta_p] = tf.math.betainc
 tf_impl[lax.erf_p] = tf.math.erf
 tf_impl[lax.erfc_p] = tf.math.erfc
@@ -683,9 +671,9 @@ tf_impl[lax.conj_p] = tf.math.conj
 tf_impl[lax.real_p] = tf.math.real
 tf_impl[lax.imag_p] = tf.math.imag
 
-tf_impl[lax.add_p] = wrap_binary_op(tf.math.add)
-tf_impl[lax.sub_p] = wrap_binary_op(tf.math.subtract)
-tf_impl[lax.mul_p] = wrap_binary_op(tf.math.multiply)
+tf_impl[lax.add_p] = tf.math.add
+tf_impl[lax.sub_p] = tf.math.subtract
+tf_impl[lax.mul_p] = tf.math.multiply
 
 
 def _div(lhs, rhs):
@@ -702,11 +690,11 @@ def _rem(lhs, rhs):
   return tf.math.sign(lhs) * tf.math.floormod(tf.math.abs(lhs),
                                               tf.math.abs(rhs))
 
-tf_impl[lax.div_p] = wrap_binary_op(_div)
-tf_impl[lax.rem_p] = wrap_binary_op(_rem)
+tf_impl[lax.div_p] = _div
+tf_impl[lax.rem_p] = _rem
 
-tf_impl[lax.max_p] = wrap_binary_op(tf.math.maximum)
-tf_impl[lax.min_p] = wrap_binary_op(tf.math.minimum)
+tf_impl[lax.max_p] = tf.math.maximum
+tf_impl[lax.min_p] = tf.math.minimum
 
 # Map from TF signed types to TF unsigned types.
 _SIGNED_TO_UNSIGNED_TABLE = {
@@ -742,7 +730,7 @@ def _shift_right_arithmetic(x, y):
   clamp_y = tf.where(_shift_in_bounds(x, y), y, x_bits - 1)
   return _shift_right_arithmetic_raw(x, clamp_y)
 
-tf_impl[lax.shift_right_arithmetic_p] = wrap_binary_op(_shift_right_arithmetic)
+tf_impl[lax.shift_right_arithmetic_p] = _shift_right_arithmetic
 
 def _shift_right_logical_raw(x, y):
   if x.dtype.is_unsigned:
@@ -765,7 +753,7 @@ def _shift_right_logical(x, y):
                   _shift_right_logical_raw(x, y),
                   tf.zeros_like(x))
 
-tf_impl[lax.shift_right_logical_p] = wrap_binary_op(_shift_right_logical)
+tf_impl[lax.shift_right_logical_p] = _shift_right_logical
 
 def _shift_left(x, y):
   # TF shift is "implementation defined" if the shift amount is negative
@@ -776,7 +764,7 @@ def _shift_left(x, y):
                   tf.bitwise.left_shift(x, y),
                   tf.zeros_like(x))
 
-tf_impl[lax.shift_left_p] = wrap_binary_op(_shift_left)
+tf_impl[lax.shift_left_p] = _shift_left
 
 def _shift_in_bounds(x: TfVal, y: TfVal) -> TfVal:
   # Return the TF expression for when y is within bounds (0 <= y < |x|)
@@ -831,12 +819,12 @@ tf_impl[lax.or_p] = bool_to_int8(tf.bitwise.bitwise_or, argnums=(0, 1))
 tf_impl[lax.and_p] = bool_to_int8(tf.bitwise.bitwise_and, argnums=(0, 1))
 tf_impl[lax.xor_p] = bool_to_int8(tf.bitwise.bitwise_xor, argnums=(0, 1))
 
-tf_impl[lax.eq_p] = wrap_binary_op(tf.math.equal)
-tf_impl[lax.ne_p] = wrap_binary_op(tf.math.not_equal)
-tf_impl[lax.ge_p] = wrap_binary_op(tf.math.greater_equal)
-tf_impl[lax.gt_p] = wrap_binary_op(tf.math.greater)
-tf_impl[lax.le_p] = wrap_binary_op(tf.math.less_equal)
-tf_impl[lax.lt_p] = wrap_binary_op(tf.math.less)
+tf_impl[lax.eq_p] = tf.math.equal
+tf_impl[lax.ne_p] = tf.math.not_equal
+tf_impl[lax.ge_p] = tf.math.greater_equal
+tf_impl[lax.gt_p] = tf.math.greater
+tf_impl[lax.le_p] = tf.math.less_equal
+tf_impl[lax.lt_p] = tf.math.less
 
 tf_impl[lax_linalg.cholesky_p] = tf.linalg.cholesky
 
@@ -857,7 +845,7 @@ tf_impl[lax.clamp_p] = _clamp
 
 
 def _concatenate(*operands, dimension=None):
-  return tf.concat(promote_types(*operands), axis=dimension)
+  return tf.concat(operands, axis=dimension)
 tf_impl[lax.concatenate_p] = _concatenate
 
 
@@ -1034,8 +1022,7 @@ def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
   return out
 
 
-tf_impl_with_avals[lax.conv_general_dilated_p] = wrap_binary_op(
-    _conv_general_dilated)
+tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 
 
 def _dot_general(lhs, rhs, dimension_numbers, precision):
@@ -1120,7 +1107,7 @@ def _dot_general(lhs, rhs, dimension_numbers, precision):
                             "".join(rhs_axis_ids),
                             "".join(out_axis_ids))
   return tf.linalg.einsum(spec, lhs, rhs)
-tf_impl[lax.dot_general_p] = wrap_binary_op(_dot_general)
+tf_impl[lax.dot_general_p] = _dot_general
 
 
 def _broadcast(operand, sizes):
@@ -1161,7 +1148,7 @@ def _pad(operand, padding_value, padding_config,
   # TODO(necula): implement shape inference for XlaPad
   out.set_shape(_aval_to_tf_shape(_out_aval))
   return out
-tf_impl_with_avals[lax.pad_p] = wrap_binary_op(_pad)
+tf_impl_with_avals[lax.pad_p] = _pad
 
 
 def _rev(operand, dimensions):
@@ -1588,8 +1575,7 @@ tf_impl_with_avals[lax.scatter_mul_p] = _scatter
 tf_impl_with_avals[lax.scatter_add_p] = _scatter
 
 def _dynamic_update_slice(operand, update, *start_indices):
-  return tfxla.dynamic_update_slice(*promote_types(operand, update),
-                                    tf.stack(start_indices))
+  return tfxla.dynamic_update_slice(operand, update, tf.stack(start_indices))
 tf_impl[lax.dynamic_update_slice_p] = _dynamic_update_slice
 
 
