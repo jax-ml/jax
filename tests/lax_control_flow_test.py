@@ -2375,14 +2375,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x, n = jnp.arange(3), jnp.arange(4)
     api.vmap(api.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
 
-  def testAssociativeScanUnstructured1000(self):
-    data = np.arange(1000)
-    expected = np.cumsum(data)
-    result = lax.associative_scan(operator.add, data)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{shape}_axis={axis}",
+       "shape": shape, "axis": axis}
+      for shape in [
+        [0], [1], [2], [3], [5], [10], [1000],
+        [2, 3], [7, 5], [5, 6, 7]
+      ]
+      for axis in range(-len(shape), len(shape) - 1))
+  def testAssociativeScanUnstructured(self, shape, axis):
+    data = np.arange(np.prod(shape)).reshape(shape) + 7
+    expected = np.cumsum(data, axis=axis)
+    result = lax.associative_scan(operator.add, data, axis=axis)
     self.assertAllClose(result, expected, check_dtypes=False)
 
   def testAssociativeScanUnstructured1000Reverse(self):
-    data = np.arange(1000)
+    data = np.arange(1000) + 32
     expected = np.cumsum(data[::-1])[::-1]
     result = lax.associative_scan(operator.add, data, reverse=True)
     self.assertAllClose(result, expected, check_dtypes=False)

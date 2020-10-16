@@ -23,11 +23,12 @@ import inspect
 import itertools
 import operator
 import os
-from typing import Callable, Sequence, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
 
 import numpy as np
 
 import jax
+from jax import api
 from jax import core
 from jax import dtypes
 from jax import source_info_util
@@ -58,7 +59,7 @@ zip = safe_zip
 _reduce = functools.reduce
 
 T = TypeVar('T')
-
+Array = Any
 
 @cache()
 def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals):
@@ -2348,24 +2349,20 @@ ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
 batching.primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
 
 
-def _interleave(a, b):
+def _interleave(a, b, axis):
   """Given two Tensors of static shape, interleave them along the first axis."""
-  # TODO(mattjj)
-  import jax.numpy as jnp
-  # [a b c ...] [d e f ...] -> [a d b e c f ...]
-  half_num_elems = b.shape[0]
+  assert a.shape[axis] == b.shape[axis] or a.shape[axis] == b.shape[axis] + 1
+  a_pad = [(0, 0, 0)] * a.ndim
+  b_pad = [(0, 0, 0)] * b.ndim
+  a_pad[axis] = (0, 1 if a.shape[axis] == b.shape[axis] else 0, 1)
+  b_pad[axis] = (1, 0 if a.shape[axis] == b.shape[axis] else 1, 1)
+  return lax.add(lax.pad(a, lax._const(a, 0), a_pad),
+                 lax.pad(b, lax._const(b, 0), b_pad))
 
-  if a.shape[0] > b.shape[0]:
-    return jnp.concatenate(
-        [jnp.reshape(jnp.stack([a[: -1], b], axis=1),
-                     (2 * half_num_elems,) + a.shape[1:]),
-         a[-1:]], axis=0)
-  else:
-    return jnp.reshape(jnp.stack([a, b], axis=1),
-                       (2 * half_num_elems,) + a.shape[1:])
-
-def associative_scan(fn: Callable, elems, reverse: bool = False):
+def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   """Performs a scan with an associative binary operation, in parallel.
+
+  For an introduction to associative scans, see [BLE1990]_.
 
   Args:
     fn: A Python callable implementing an associative binary operation with
@@ -2374,24 +2371,25 @@ def associative_scan(fn: Callable, elems, reverse: bool = False):
       ``fn(a, fn(b, c)) == fn(fn(a, b), c)``.
 
       The inputs and result are (possibly nested Python tree structures of)
-      array(s) matching ``elems``. Each array has a leading dimension in place
-      of the ``num_elems`` dimension. `fn` should be applied elementwise over
-      the leading dimension (for example, by using :func:`jax.vmap` over the
+      array(s) matching ``elems``. Each array has a dimension in place
+      of the ``axis`` dimension. `fn` should be applied elementwise over
+      the ``axis`` dimension (for example, by using :func:`jax.vmap` over the
       elementwise function.)
 
-      The result `r` has the same shape (and structure) as the two inputs ``a``
-      and ``b``.
-    elems: A (possibly nested structure of) array(s), each with leading
-      dimension ``num_elems``.
+      The result ``r`` has the same shape (and structure) as the two inputs
+      ``a`` and ``b``.
+    elems: A (possibly nested Python tree structure of) array(s), each with
+      an ``axis`` dimension of size ``num_elems``.
     reverse: A boolean stating if the scan should be reversed with respect to
-      the leading dimension.
+      the ``axis`` dimension.
+    axis: an integer identifying the axis over which the scan should occur.
 
   Returns:
     A (possibly nested Python tree structure of) array(s) of the same shape
-    and structure as ``elems``, in which the ``k``'th element is the result of
-    recursively applying ``fn`` to combine the first ``k`` elements of
-    ``elems``. For example, given ``elems = [a, b, c, ...]``, the result
-    would be ``[a, fn(a, b), fn(fn(a, b), c), ...]``.
+    and structure as ``elems``, in which the ``k``'th element of ``axis`` is the
+    result of recursively applying ``fn`` to combine the first ``k`` elements
+    of ``elems`` along ``axis``. For example, given ``elems = [a, b, c, ...]``,
+    the result would be ``[a, fn(a, b), fn(fn(a, b), c), ...]``.
 
   Example 1: partial sums of an array of numbers:
 
@@ -2409,13 +2407,17 @@ def associative_scan(fn: Callable, elems, reverse: bool = False):
 
   >>> lax.associative_scan(jnp.add, jnp.arange(0, 4), reverse=True)
   [ 6, 6, 5, 3]
+
+  .. [BLE1990] Blelloch, Guy E. 1990. "Prefix Sums and Their Applications.",
+    Technical Report CMU-CS-90-190, School of Computer Science, Carnegie Mellon
+    University.
   """
   elems_flat, tree = tree_flatten(elems)
 
   if reverse:
-    elems_flat = [lax.rev(elem, [0]) for elem in elems_flat]
+    elems_flat = [lax.rev(elem, [axis]) for elem in elems_flat]
 
-  def lowered_fn(a_flat, b_flat):
+  def combine(a_flat, b_flat):
     # Lower `fn` to operate on flattened sequences of elems.
     a = tree_unflatten(tree, a_flat)
     b = tree_unflatten(tree, b_flat)
@@ -2424,14 +2426,13 @@ def associative_scan(fn: Callable, elems, reverse: bool = False):
     return c_flat
 
   # Check that all inputs have a consistent leading dimension `num_elems`.
-  num_elems = int(elems_flat[0].shape[0])
+  axis = lax._canonicalize_axis(axis, elems_flat[0].ndim)
+  num_elems = int(elems_flat[0].shape[axis])
+  if not all(int(elem.shape[axis]) == num_elems for elem in elems_flat[1:]):
+    raise ValueError('Array inputs to associative_scan must have the same '
+                     'first dimension. (saw: {})'
+                     .format([elems.shape for elem in elems_flat]))
 
-  if not all(int(elem.shape[0]) == num_elems for elem in elems_flat[1:]):
-    raise ValueError('Input `Tensor`s must have the same first dimension.'
-                     ' (saw: {})'.format([elems.shape for elem in elems_flat]))
-
-  if num_elems < 2:
-    return elems
 
   # Summary of algorithm:
   #
@@ -2451,47 +2452,144 @@ def associative_scan(fn: Callable, elems, reverse: bool = False):
   def _scan(elems):
     """Perform scan on `elems`."""
 
-    num_elems = elems[0].shape[0]
+    num_elems = elems[0].shape[axis]
 
-    reduced_elems = lowered_fn([elem[0:-1:2] for elem in elems],
-                               [elem[1::2] for elem in elems])
+    if num_elems < 2:
+      return elems
 
-    if reduced_elems[0].shape[0] == 1:
-      # Base case has either 2 or 3 elements.
-      if num_elems == 2:
-        return [lax.concatenate([elem[0:1], reduced_elem], dimension=0)
-                for (reduced_elem, elem) in zip(reduced_elems, elems)]
-      elif num_elems == 3:
-        reduced_reduced_elems = lowered_fn(
-          reduced_elems,
-          [elem[2:3] for elem in elems])
-        return [
-            lax.concatenate([elem[0:1], reduced_elem, reduced_reduced_elem],
-                            dimension=0)
-            for (reduced_reduced_elem, reduced_elem, elem)
-            in zip(reduced_reduced_elems, reduced_elems, elems)]
+    # Combine adjacent pairs of elements.
+    reduced_elems = combine(
+      [lax.slice_in_dim(elem, 0, -1, stride=2, axis=axis) for elem in elems],
+      [lax.slice_in_dim(elem, 1, None, stride=2, axis=axis) for elem in elems])
 
     # Recursively compute scan for partially reduced tensors.
     odd_elems = _scan(reduced_elems)
 
     if num_elems % 2 == 0:
-      results = lowered_fn([odd_elem[:-1] for odd_elem in odd_elems],
-                           [elem[2::2] for elem in elems])
+      even_elems = combine(
+        [lax.slice_in_dim(e, 0, -1, axis=axis) for e in odd_elems],
+        [lax.slice_in_dim(e, 2, None, stride=2, axis=axis) for e in elems])
     else:
-      results = lowered_fn(list(odd_elems), [elem[2::2] for elem in elems])
+      even_elems = combine(
+        odd_elems,
+        [lax.slice_in_dim(e, 2, None, stride=2, axis=axis) for e in elems])
 
     # The first element of a scan is the same as the first element
     # of the original `elems`.
-    even_elems = [lax.concatenate([elem[0:1], result], dimension=0)
-                  for (elem, result) in zip(elems, results)]
-    return tuple(_map(_interleave, even_elems, odd_elems))
+    even_elems = [
+      lax.concatenate([lax.slice_in_dim(elem, 0, 1, axis=axis), result],
+                      dimension=axis)
+      for (elem, result) in zip(elems, even_elems)]
+    return list(_map(partial(_interleave, axis=axis), even_elems, odd_elems))
 
   scans = _scan(elems_flat)
 
   if reverse:
-    scans = [lax.rev(scanned, [0]) for scanned in scans]
+    scans = [lax.rev(scanned, [axis]) for scanned in scans]
 
   return tree_unflatten(tree, scans)
+
+
+# Cumulative reductions.
+
+def cumsum(operand: Array, axis: int) -> Array:
+  """Computes a cumulative sum along `axis`."""
+  return cumsum_p.bind(operand, axis=int(axis))
+
+def cumprod(operand: Array, axis: int) -> Array:
+  """Computes a cumulative product along `axis`."""
+  return cumprod_p.bind(operand, axis=int(axis))
+
+def cummax(operand: Array, axis: int) -> Array:
+  """Computes a cumulative maximum along `axis`."""
+  return cummax_p.bind(operand, axis=int(axis))
+
+def cummin(operand: Array, axis: int) -> Array:
+  """Computes a cumulative minimum along `axis`."""
+  return cummin_p.bind(operand, axis=int(axis))
+
+def _cumred_shape_rule(x, *, axis: int):
+  if axis < 0 or axis >= x.ndim:
+    raise ValueError(
+        "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
+  return x.shape
+
+def _cumsum_transpose_rule(t, *, axis: int):
+  return [lax.rev(cumsum(lax.rev(t, (axis,)), axis=axis), (axis,))]
+
+
+
+def _cumred_tpu_translation_rule(window_reduce: Callable, x, *,
+                                 axis: int):
+  # On TPU, an implementation using reduce_window is handled specially by the
+  # compiler and is efficient. On other backends, it is O(n^2).
+  n = x.shape[axis]
+  if n == 0:
+    return x
+  padding = [(0, 0)] * x.ndim
+  padding[axis] = (n - 1, 0)
+  strides = [1] * x.ndim
+  window_dims = [1] * x.ndim
+  window_dims[axis] = n
+  return window_reduce(x, window_dims, strides, padding)
+
+def _cumred_batch_rule(prim, batched_args, batch_dims, *, axis: int):
+  operand, = batched_args
+  bdim, = batch_dims
+  axis = axis if axis < bdim else axis + 1
+  return prim.bind(operand, axis=axis), bdim
+
+def _cumred_dtype_rule(name, operand, *args, **kw):
+  if not dtypes.issubdtype(operand.dtype, np.number):
+    raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
+                    "of number.".format(name, np.dtype(operand.dtype).name))
+  return dtypes.canonicalize_dtype(operand.dtype)
+
+cumsum_p = lax.standard_primitive(
+  _cumred_shape_rule, partial(_cumred_dtype_rule, "cumsum"),
+  'cumsum')
+ad.deflinear(cumsum_p, _cumsum_transpose_rule)
+xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
+  partial(_cumred_tpu_translation_rule, lax._reduce_window_sum),
+  multiple_results=False)
+batching.primitive_batchers[cumsum_p] = partial(_cumred_batch_rule, cumsum_p)
+
+
+def _cumulative_reduction_primitive(name, reduce_window_fn):
+  reducer_p = lax.standard_primitive(
+    _cumred_shape_rule, partial(_cumred_dtype_rule, name),
+    name)
+  xla.backend_specific_translations['tpu'][reducer_p] = xla.lower_fun(
+    partial(_cumred_tpu_translation_rule, reduce_window_fn),
+    multiple_results=False)
+  batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule, reducer_p)
+  return reducer_p
+
+
+cumprod_p = _cumulative_reduction_primitive("cumprod", lax._reduce_window_prod)
+cummax_p = _cumulative_reduction_primitive("cummax", lax._reduce_window_max)
+cummin_p = _cumulative_reduction_primitive("cummin", lax._reduce_window_min)
+
+xla.translations[cumsum_p] = xla.lower_fun(
+  partial(associative_scan, lax.add), multiple_results=False)
+xla.translations[cumprod_p] = xla.lower_fun(
+  partial(associative_scan, lax.mul), multiple_results=False)
+xla.translations[cummin_p] = xla.lower_fun(
+  partial(associative_scan, lax.min), multiple_results=False)
+xla.translations[cummax_p] = xla.lower_fun(
+  partial(associative_scan, lax.max), multiple_results=False)
+
+def _cumulative_jvp_rule(primals, tangents, *, axis: int,
+                         combine_fn: Callable):
+  # Irrespective of backend, we always use the parallel prefix scan
+  # implementation when differentiating because reduce_window is not
+  # arbitrarily differentiable.
+  return api.jvp(partial(associative_scan, combine_fn, axis=axis),
+                 primals, tangents)
+
+ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)
+ad.primitive_jvps[cummin_p] = partial(_cumulative_jvp_rule, combine_fn=lax.min)
+ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)
 
 
 @config.register_omnistaging_disabler
