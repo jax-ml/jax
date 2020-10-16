@@ -12,4 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ._minimize import minimize  # noqa: F401
+# flake8: noqa: F401
+
+from jax._src.scipy.optimize.minimize import minimize
