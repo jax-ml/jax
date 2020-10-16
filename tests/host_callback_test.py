@@ -149,7 +149,6 @@ class HostCallbackTest(jtu.JaxTestCase):
       x1, y1 = hcb.id_print((x * 2., x * 3.), output_stream=testing_stream)
       return x1 + y1
 
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(func2)(3.)))
     self.assertEqual(3. * (2. + 3.), func2(3.))
     hcb.barrier_wait()
 
@@ -220,8 +219,6 @@ class HostCallbackTest(jtu.JaxTestCase):
     def func():  # jitted function does not take arguments
       return hcb.id_print(42, output_stream=testing_stream)
 
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(api.jit(func))()))
-
     self.assertAllClose(42, api.jit(func)())
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
@@ -232,8 +229,6 @@ class HostCallbackTest(jtu.JaxTestCase):
     def func(x1, x2):
       return hcb.id_print(x1 + x2, output_stream=testing_stream)
 
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(api.jit(func))(40, 2)))
-
     self.assertAllClose(42, api.jit(func)(40, 2))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
@@ -243,8 +238,6 @@ class HostCallbackTest(jtu.JaxTestCase):
   def test_jit_constant(self):
     def func(x):
       return hcb.id_print(42, result=x, output_stream=testing_stream)
-
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(api.jit(func))(5)))
 
     self.assertAllClose(5, api.jit(func)(5))
     hcb.barrier_wait()
@@ -727,7 +720,6 @@ class HostCallbackTest(jtu.JaxTestCase):
 
   def test_jvp(self):
     jvp_fun1 = lambda x, xt: api.jvp(fun1, (x,), (xt,))
-    #assertMultiLineStrippedEqual(self, "")
     res_primals, res_tangents = jvp_fun1(jnp.float32(5.), jnp.float32(0.1))
     self.assertAllClose(100., res_primals, check_dtypes=False)
     self.assertAllClose(4., res_tangents, check_dtypes=False)
@@ -790,7 +782,6 @@ class HostCallbackTest(jtu.JaxTestCase):
       return x * hcb.id_print(y * 3., what="y * 3",
                               output_stream=testing_stream)
     grad_func = api.grad(func)
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(grad_func)(5.)))
 
     res_grad = grad_func(jnp.float32(5.))
     self.assertAllClose(2. * 5. * 6., res_grad, check_dtypes=False)
@@ -837,7 +828,6 @@ class HostCallbackTest(jtu.JaxTestCase):
   def test_vmap(self):
     vmap_fun1 = api.vmap(fun1)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(vmap_fun1)(vargs)))
     vmap_fun1(vargs)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
@@ -856,7 +846,6 @@ class HostCallbackTest(jtu.JaxTestCase):
 
     vmap_func = api.vmap(func)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(vmap_func)(vargs)))
     _ = vmap_func(vargs)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
@@ -1177,6 +1166,20 @@ class HostCallbackTest(jtu.JaxTestCase):
 
     api.grad(loss)(1.0)  # should not fail
 
+  def test_remat(self):
+    def f(i, k):
+      x = hcb.id_print(k + i, output_stream=testing_stream)
+      return k * x
+
+    def loss(k):
+      return lax.fori_loop(0, 2, api.remat(f), k)
+    print(loss(3))
+    hcb.barrier_wait()
+    expected = """
+      3
+      10"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+
 
 class OutfeedRewriterTest(jtu.JaxTestCase):
 
@@ -1184,9 +1187,12 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                     has_input_token=True, has_output_token=True):
     """Check that the rewrite of func(*args) matches expected."""
     jaxpr = api.make_jaxpr(func)(*args)
-    # TODO: re-enable when we change the host_callback rewriter
-    #rewritten = hcb._rewrite_closed_jaxpr(jaxpr,
-    #                                      has_input_token, has_output_token)
+    rewritten = hcb._rewrite_closed_jaxpr(jaxpr,  # noqa: F841
+                                          has_input_token, has_output_token)
+    # Since it is somewhat annoying to update the Jaxpr assertions when we change
+    # the Jaxpr printing, we do not check these by default. It is recommended that
+    # before making changes to the code generation and Jaxpr rewriting, turn on
+    # the checking, update the expected Jaxpr, and then make the changes.
     #assertMultiLineStrippedEqual(self, expected, str(rewritten))
     del jaxpr
 
@@ -1542,6 +1548,39 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                       reverse=True
                       unroll=1 ] * 1.00 e * b
           in (c, f) }""", api.grad(g), [arg])
+
+  def test_remat_loop(self):
+    def f(k, x):
+      x = hcb.id_print(k + x)
+      return -k * x
+
+    def loss(k):
+      return lax.fori_loop(0, 1, api.remat(f), k)
+
+    self.assertRewrite("""
+        { lambda  ; a c.
+          let _ _ b d =
+                while[ body_jaxpr={ lambda  ; a b c f.
+                                    let d = add a 1
+                                        e g = remat_call[ call_jaxpr={ lambda  ; a b g.
+                                                                       let c = add a b
+                                                                           d h = id_tap[ arg_treedef_=*
+                                                                                         has_token_=True
+                                                                                         nr_tapped_args_=1
+                                                                                         tap_func_=_print  ] c g
+                                                                           e = neg a
+                                                                           f = mul e d
+                                                                       in (f, h) }
+                                                          concrete=False
+                                                          name=f ] a c f
+                                    in (d, b, e, g) }
+                       body_nconsts=0
+                       cond_jaxpr={ lambda  ; a b c e.
+                                    let d = lt a b
+                                    in (d,) }
+                       cond_nconsts=0 ] 0 1 a c
+          in (b, d) }""", loss, [2])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
