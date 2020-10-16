@@ -14,6 +14,7 @@
 
 from functools import partial
 import numpy as np
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -131,6 +132,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for nonzeros in [0, 3]))
   @jtu.skip_on_devices("gpu")
   def testRootsInvalid(self, zeros, nonzeros, dtype, rng_factory):
+    raise unittest.SkipTest("getting segfaults on MKL")
     rng = rng_factory(np.random.RandomState(0))
 
     # The polynomial coefficients here start with zero and would have to

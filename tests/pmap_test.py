@@ -1867,13 +1867,13 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testPmapStaticArgnums(self):
     @partial(pmap, axis_name='i', static_broadcasted_argnums=1)
     def f(x, y):
-      return jnp.sin(x + y)
+      return jnp.sin(x + y())
     shape = (xla_bridge.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
-    y = np.arange(4, dtype=np.float32)
+    y = lambda: 3.
 
     ans = f(x, y)
-    expected = np.sin(x + y[None])
+    expected = np.sin(x + 3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
 

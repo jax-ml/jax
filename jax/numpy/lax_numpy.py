@@ -29,7 +29,7 @@ import collections
 import operator
 import os
 import types
-from typing import Sequence, Set, Tuple, Union
+from typing import Sequence, FrozenSet, Tuple, Union
 from textwrap import dedent as _dedent
 import warnings
 
@@ -2277,7 +2277,34 @@ def _pad_edge(array, pad_width):
 def _pad(array, pad_width, mode, constant_values):
   array = asarray(array)
   nd = ndim(array)
-  pad_width = np.broadcast_to(np.asarray(pad_width), (nd, 2))
+
+  if nd == 0:
+    return array
+
+  pad_width_shape = np.shape(pad_width)
+  if pad_width_shape == (nd, 2):
+    # ((before_1, after_1), ..., (before_N, after_N))
+    pass
+  elif pad_width_shape == (1, 2):
+    # ((before, after),)
+    pad_width = pad_width * nd
+  elif pad_width_shape == (2,):
+    # (before, after)  (not in the numpy docstring but works anyway)
+    before, after = pad_width
+    pad_width = (pad_width,) * nd
+  elif pad_width_shape == (1,):
+    # (pad,)
+    pad_width, = pad_width
+    pad_width = ((pad_width, pad_width),) * nd
+  elif pad_width_shape == ():
+    # pad
+    pad_width = ((pad_width, pad_width),) * nd
+  else:
+    raise ValueError(f"pad_width given unexpected structure: {pad_width}. "
+                     "See docstring for valid pad_width formats.")
+  pad_width = np.array(pad_width)
+  assert pad_width.shape == (nd, 2), pad_width
+
   if np.any(pad_width < 0):
     raise ValueError("index can't contain negative values")
 
@@ -3291,7 +3318,7 @@ def einsum(*operands, optimize='greedy', precision=None):
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
       *operands, einsum_call=True, use_blas=True, optimize=optimize)
-  contractions = tuple(data[:3] for data in contractions)
+  contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
   return _einsum(operands, contractions, precision)
 
 @_wraps(np.einsum_path)
@@ -3304,7 +3331,7 @@ def _removechars(s, chars):
 
 @partial(jit, static_argnums=(1, 2))
 def _einsum(operands: Sequence,
-            contractions: Sequence[Tuple[Tuple[int, ...], Set[str], str]],
+            contractions: Sequence[Tuple[Tuple[int, ...], FrozenSet[str], str]],
             precision):
   operands = list(_promote_dtypes(*operands))
   def sum(x, axes):
@@ -3649,6 +3676,8 @@ def _roll(a, shift, axis):
 
 @_wraps(np.roll)
 def roll(a, shift, axis=None):
+  if isinstance(axis, list):
+    axis = tuple(axis)
   return _roll(a, shift, axis)
 
 

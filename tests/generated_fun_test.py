@@ -96,7 +96,22 @@ def eval_fun(fun, *args):
 
 def maybe_jit(f, num_args):
   static_argnums = thin(range(num_args), 0.5)
-  return jit(f, static_argnums=static_argnums)
+
+  def fun(*args):
+    partial_args = list(args)
+    for i in static_argnums:
+      partial_args[i] = None
+
+    @jit
+    def jitted_fun(*partial_args):
+      full_args = list(partial_args)
+      for i in static_argnums:
+        full_args[i] = args[i]
+      return f(*full_args)
+
+    return jitted_fun(*partial_args)
+
+  return fun
 
 counter = it.count()
 def fresh_var(ty):
@@ -228,8 +243,7 @@ class GeneratedFunTest(jtu.JaxTestCase):
     vals = gen_vals(fun.in_vars)
     fun = partial(eval_fun, fun)
     ans = fun(*vals)
-    static_argnums = thin(range(len(vals)), 0.5)
-    ans_jitted = jit(fun, static_argnums=static_argnums)(*vals)
+    ans_jitted = maybe_jit(fun, len(vals))(*vals)
     try:
       check_all_close(ans, ans_jitted)
     except:
