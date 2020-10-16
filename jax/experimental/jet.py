@@ -153,8 +153,14 @@ class JetTrace(core.Trace):
       return map(partial(JetTracer, trace), primals, series)
     return out, todo
 
-  def join(self, xt, yt):
-    assert False  # TODO?
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+    # TODO(mattjj): don't just ignore custom jvp rules?
+    del primitive, jvp  # Unused.
+    return fun.call_wrapped(*tracers)
+
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+    del primitive, fwd, bwd, out_trees  # Unused.
+    return fun.call_wrapped(*tracers)
 
 
 class ZeroTerm(object): pass

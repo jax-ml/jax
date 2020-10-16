@@ -215,11 +215,19 @@ class BatchTrace(Trace):
       out_dims = out_dims[:len(out_dims) // 2]
     return [BatchTracer(self, v, d) for v, d in zip(out_vals, out_dims)]
 
+  def post_process_custom_jvp_call(self, out_tracers, params):
+    vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+    main = self.main
+    def todo(vals):
+      trace = BatchTrace(main, core.cur_sublevel())
+      return map(partial(BatchTracer, trace), vals, dims)
+    return vals, todo
+
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
-    # TODO: Support collectives in custom_vjp?
+    # TODO(mattjj,apaszke): support collectives in custom_vjp?
     bwd = batch_fun(bwd, out_dims2, in_dims,
                     axis_name='__unused_axis_name', sum_match=True)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
@@ -370,11 +378,11 @@ def _promote_aval_rank(sz, aval):
   else:
     return ShapedArray((sz,) + aval.shape, aval.dtype)
 
-def batch_jaxpr(jaxpr, size, batched, instantiate):
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+def batch_jaxpr(closed_jaxpr, size, batched, instantiate):
+  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, batched_out = batched_traceable(f, size, batched, instantiate)
   avals_in = [_promote_aval_rank(size, a) if b else a
-              for a, b in zip(jaxpr.in_avals, batched)]
+              for a, b in zip(closed_jaxpr.in_avals, batched)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), batched_out()
 

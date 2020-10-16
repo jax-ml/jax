@@ -31,6 +31,10 @@ from ..config import config
 map = safe_map
 zip = safe_zip
 
+def _initial_style_jaxpr(fun, in_avals):
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  return core.ClosedJaxpr(jaxpr, consts)
+
 ################################################################################
 # Reverse call primitive
 ################################################################################
@@ -118,10 +122,9 @@ def _flatten_ivjp(in_tree, out_tree, *args):
 
 def _custom_ivjp(fun, ivjp, args):
   in_avals = [raise_to_shaped(get_aval(x)) for x in args]
-  fun_jaxpr = custom_derivatives._initial_style_jaxpr(fun, in_avals)
+  fun_jaxpr = _initial_style_jaxpr(fun, in_avals)
   try:
-    ivjp_jaxpr = custom_derivatives._initial_style_jaxpr(
-        ivjp, in_avals + fun_jaxpr.out_avals * 2)
+    ivjp_jaxpr = _initial_style_jaxpr(ivjp, in_avals + fun_jaxpr.out_avals * 2)
   except RecursionError:
     raise ValueError("Calls to {} from its custom ivjp aren't supported yet".format(fun.__name__))
   return custom_ivjp_p.bind(*args, fun_jaxpr=fun_jaxpr,
@@ -310,3 +313,15 @@ def get_primitive_inverse(p):
 def definverse(primitive, inverse_rule):
   primitive_inverses[primitive] = inverse_rule
   return inverse_rule
+
+
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
+  global _initial_style_jaxpr, custom_jvp_call
+
+  def _initial_style_jaxpr(fun, in_avals):
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
+    jaxpr, _, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
+                                         bottom=True, stage_out=False)  # type: ignore
+    assert not any(isinstance(c, core.Tracer) for c in consts)
+    return core.ClosedJaxpr(jaxpr, consts)
