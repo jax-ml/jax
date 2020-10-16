@@ -608,6 +608,7 @@ def _custom_vjp_call_jaxpr_vmap(args, in_dims, *, fun_jaxpr, fwd_jaxpr_thunk,
       fwd_jaxpr_thunk=batched_fwd_jaxpr_thunk, bwd=batched_bwd,
       out_trees=out_trees)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
+  out_dims = out_dims[:len(batched_outs)]  # TODO(mattjj): remove after #4008
   return batched_outs, out_dims
 batching.primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
