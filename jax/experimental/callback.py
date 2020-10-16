@@ -168,4 +168,4 @@ class CallbackTrace(Trace):
     # This implementation just drops the custom derivative rule.
     # TODO(sharadmv): don't drop the custom derivative rule
     del primitive, fwd, bwd, out_trees  # Unused.
-    return fun.call_wrapped(*tracers) 
+    return fun.call_wrapped(*tracers)
