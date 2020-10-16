@@ -42,10 +42,8 @@ class Config:
     self.meta = {}
     self.FLAGS = NameSpace(self.read)
     self.use_absl = False
-    self.omnistaging_enabled = False
-
-    self.omnistaging_enabled = False
-    self.omnistaging_enablers = []
+    self.omnistaging_enabled = bool_env('JAX_OMNISTAGING', True)
+    self._omnistaging_disablers = []
 
   def update(self, name, val):
     if self.use_absl:
@@ -116,15 +114,25 @@ class Config:
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
-      if FLAGS.jax_omnistaging:
-        self.enable_omnistaging()
+      if not FLAGS.jax_omnistaging:
+        self.disable_omnistaging()
 
-  # TODO(mattjj): remove this when omnistaging fully lands
+
+  def register_omnistaging_disabler(self, disabler):
+    if self.omnistaging_enabled:
+      self._omnistaging_disablers.append(disabler)
+    else:
+      disabler()
+
   def enable_omnistaging(self):
     if not self.omnistaging_enabled:
-      for enabler in self.omnistaging_enablers:
-        enabler()
-      self.omnistaging_enabled = True
+      raise Exception("can't re-enable omnistaging after it's been disabled")
+
+  def disable_omnistaging(self):
+    if self.omnistaging_enabled:
+      for disabler in self._omnistaging_disablers:
+        disabler()
+      self.omnistaging_enabled = False
 
 
 class NameSpace(object):
@@ -149,6 +157,6 @@ flags.DEFINE_bool(
 
 flags.DEFINE_bool(
     'jax_omnistaging',
-    bool_env('JAX_OMNISTAGING', False),
+    bool_env('JAX_OMNISTAGING', True),
     help='Enable staging based on dynamic context rather than data dependence.'
 )

@@ -9,6 +9,52 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.2.3 (October 14 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.2...jax-v0.2.3>`_.
+* The reason for another release so soon is we need to temporarily roll back a
+  new jit fastpath while we look into a performance degradation
+
+jax 0.2.2 (October 13 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.1...jax-v0.2.2>`_.
+
+jax 0.2.1 (October 6 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.0...jax-v0.2.1>`_.
+
+* Improvements:
+
+  * As a benefit of omnistaging, the host_callback functions are executed (in program
+    order) even if the result of the :py:func:`jax.experimental.host_callback.id_print`/
+    :py:func:`jax.experimental.host_callback.id_tap` is not used in the computation.
+
+jax (0.2.0) (September 23 2020)
+----------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0>`_.
+
+* Improvements:
+
+  * Omnistaging on by default. See `#3370 <https://github.com/google/jax/pull/3370>`_.
+
+
+jax (0.1.77) (September 15 2020)
+----------------
+
+* Breaking changes:
+
+  * New simplified interface for :py:func:`jax.experimental.host_callback.id_tap` (#4101)
+
+jaxlib 0.1.55 (September 8, 2020)
+------------------------------
+* Update XLA:
+
+  * Fix bug in DLPackManagedTensorToBuffer (#4196)
+
+jax 0.1.76 (September 8, 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.75...jax-v0.1.76>`_.
+
 jax 0.1.75 (July 30, 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.74...jax-v0.1.75>`_.
@@ -57,6 +103,9 @@ jax 0.1.73 (July 22, 2020)
   * hfft and ihfft (#3664)
   * jax.numpy.intersect1d (#3726)
   * jax.numpy.lexsort (#3812)
+  * ``lax.scan`` and the ``scan`` primitive support an ``unroll``
+    parameter for loop unrolling when lowering to XLA
+    (`#3738 <https://github.com/google/jax/pull/3738>`_).
 
 * Bug Fixes:
 

@@ -40,6 +40,7 @@ from .api import (
   disable_jit,
   eval_shape,
   flatten_fun_nokwargs,  # TODO(phawkins): update users to avoid this.
+  float0,
   grad,
   hessian,
   host_count,
@@ -54,6 +55,7 @@ from .api import (
   local_device_count,
   local_devices,
   linearize,
+  linear_transpose,
   make_jaxpr,
   mask,
   partial,  # TODO(phawkins): update callers to use functools.partial.

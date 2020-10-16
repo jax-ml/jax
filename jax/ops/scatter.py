@@ -17,6 +17,7 @@
 
 from .. import lax
 from ..numpy import lax_numpy as jnp
+from .. import util
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
@@ -302,8 +303,12 @@ def index_update(x, idx, y, indices_are_sorted=False, unique_indices=False):
   return _scatter_update(
       x, idx, y, lax.scatter, indices_are_sorted, unique_indices)
 
-def segment_sum(data, segment_ids, num_segments=None,
-                indices_are_sorted=False, unique_indices=False):
+def segment_sum(data,
+                segment_ids,
+                num_segments=None,
+                indices_are_sorted=False,
+                unique_indices=False,
+                bucket_size=None): # TODO(zhangqiaorjc): use non-None default.
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's segment_sum:
@@ -316,20 +321,40 @@ def segment_sum(data, segment_ids, num_segments=None,
       need not be sorted. Values outside of the range [0, num_segments) are
       wrapped into that range by applying jnp.mod.
     num_segments: optional, an int with positive value indicating the number of
-      segments. The default is ``max(segment_ids % data.shape[0]) + 1`` but
-      since `num_segments` determines the size of the output, a static value
+      segments. The default is set to be the minimum number of segments that
+      would support all positive and negative indices in `segment_ids`
+      calculated as ``max(max(segment_ids) + 1, max(-segment_ids))``.
+      Since `num_segments` determines the size of the output, a static value
       must be provided to use `segment_sum` in a `jit`-compiled function.
-    indices_are_sorted: whether `segment_ids` is known to be sorted
-    unique_indices: whether `segment_ids` is known to be free of duplicates
+    indices_are_sorted: whether `segment_ids` is known to be sorted.
+    unique_indices: whether `segment_ids` is known to be free of duplicates.
+    bucket_size: size of bucket to group indices into. segment_sum is performed
+      on each bucket separately to improve numerical stability of addition.
+      Default `None` means no bucketing.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
     segment sums.
   """
   if num_segments is None:
-    num_segments = jnp.max(jnp.mod(segment_ids, data.shape[0])) + 1
+    num_segments = max(jnp.max(segment_ids) + 1, jnp.max(-segment_ids))
   num_segments = int(num_segments)
 
   out = jnp.zeros((num_segments,) + data.shape[1:], dtype=data.dtype)
   segment_ids = jnp.mod(segment_ids, num_segments)
-  return index_add(out, segment_ids, data, indices_are_sorted, unique_indices)
+
+  num_buckets = 1 if bucket_size is None \
+                  else util.ceil_of_ratio(segment_ids.size, bucket_size)
+  if num_buckets == 1:
+    return index_add(out, segment_ids, data, indices_are_sorted, unique_indices)
+
+  # Bucketize indices and perform segment_sum on each bucket to improve
+  # numerical stability.
+  outs = []
+  for sub_data, sub_segment_ids in zip(
+      jnp.array_split(data, num_buckets),
+      jnp.array_split(segment_ids, num_buckets)):
+    outs.append(
+        segment_sum(sub_data, sub_segment_ids, num_segments, indices_are_sorted,
+                    unique_indices))
+  return jnp.sum(jnp.stack(outs), axis=0)

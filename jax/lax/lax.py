@@ -22,6 +22,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from .. import core
 from .. import ad_util
 from .. import api
@@ -39,7 +40,7 @@ from ..interpreters import ad
 from ..interpreters import invertible_ad as iad
 from ..interpreters import batching
 from ..interpreters import masking
-from ..util import cache, safe_zip, partial, prod, safe_map
+from ..util import cache, safe_zip, partial, prod, safe_map, canonicalize_axis
 from ..tree_util import tree_map
 from ..lib import pytree
 from ..lib import xla_bridge
@@ -60,12 +61,13 @@ DType = Any
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
-  # Replace 1 with 0 to avoid inconclusive comparisons for polymorphic dims:
-  out_shape = np.max(np.where(shapes == 1, 0, shapes), axis=0)
-  out_shape = np.where(np.all(shapes == 1, axis=0), 1, out_shape)
-  if not np.all((shapes == out_shape) | (shapes == 1)):
-    return None
-  return canonicalize_shape(out_shape)
+  for sizes in zip(*shapes):
+    sizes = [d for d in sizes if d != 1]
+    if sizes[:-1] != sizes[1:]:
+      break
+  else:
+    return tuple(next((d for d in sizes if d != 1), 1)
+                  for sizes in zip(*shapes))
 
 @cache()
 def broadcast_shapes(*shapes):
@@ -73,7 +75,7 @@ def broadcast_shapes(*shapes):
   if len(shapes) == 1:
     return shapes[0]
   ndim = _max(len(shape) for shape in shapes)
-  shapes = np.array([(1,) * (ndim - len(shape)) + shape for shape in shapes])
+  shapes = [(1,) * (ndim - len(shape)) + shape for shape in shapes]
   result_shape = _try_broadcast_shapes(shapes)
   if result_shape is None:
     raise ValueError("Incompatible shapes for broadcasting: {}"
@@ -113,7 +115,18 @@ def sign(x: Array) -> Array:
   return sign_p.bind(x)
 
 def nextafter(x1: Array, x2: Array) -> Array:
-  r"""Returns the next representable value after `x1` in the direction of `x2`."""
+  r"""Returns the next representable value after `x1` in the direction of `x2`.
+
+  Note that in some environments flush-denormal-to-zero semantics is used.
+  This means that, around zero, this function returns strictly non-zero
+  values which appear as zero in any operations. Consider this example::
+    >>> jnp.nextafter(0, 1)  # denormal numbers are representable
+    DeviceArray(1.e-45, dtype=float32)
+    >>> jnp.nextafter(0, 1) * 1  # but are flushed to zero
+    DeviceArray(0., dtype=float32)
+
+  For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
+  """
   return nextafter_p.bind(_brcast(x1, x2), _brcast(x2, x1))
 
 def floor(x: Array) -> Array:
@@ -450,6 +463,8 @@ def concatenate(operands: Sequence[Array], dimension: int) -> Array:
 Precision = xla_client.PrecisionConfig.Precision
 Precision.__str__ = lambda precision: precision.name
 PrecisionType = Any
+PrecisionLike = Union[None, PrecisionType, Tuple[PrecisionType, PrecisionType]]
+
 
 class ConvDimensionNumbers(NamedTuple):
   """Describes batch, spatial, and feature dimensions of a convolution.
@@ -476,7 +491,7 @@ def conv_general_dilated(
   rhs_dilation: Optional[Sequence[int]] = None,
   dimension_numbers: ConvGeneralDilatedDimensionNumbers  = None,
   feature_group_count: int = 1, batch_group_count: int = 1,
-  precision: Optional[PrecisionType] = None) -> Array:
+  precision: PrecisionLike = None) -> Array:
   """General n-dimensional convolution operator, with optional dilation.
 
   Wraps XLA's `Conv
@@ -503,8 +518,9 @@ def conv_general_dilated(
     feature_group_count: integer, default 1. See XLA HLO docs.
     batch_group_count: integer, default 1. See XLA HLO docs.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the convolution result.
@@ -560,7 +576,7 @@ def conv_general_dilated(
       lhs_shape=lhs.shape, rhs_shape=rhs.shape,
       precision=_canonicalize_precision(precision))
 
-def dot(lhs: Array, rhs: Array, precision: Optional[PrecisionType] = None) -> Array:
+def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None) -> Array:
   """Vector/vector, matrix/vector, and matrix/matrix multiplication.
 
   Wraps XLA's `Dot
@@ -573,8 +589,9 @@ def dot(lhs: Array, rhs: Array, precision: Optional[PrecisionType] = None) -> Ar
     lhs: an array of rank 1 or 2.
     rhs: an array of rank 1 or 2.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the product.
@@ -591,7 +608,7 @@ DotDimensionNumbers = Tuple[Tuple[Sequence[int], Sequence[int]],
                             Tuple[Sequence[int], Sequence[int]]]
 
 def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
-                precision: Optional[PrecisionType] = None) -> Array:
+                precision: PrecisionLike = None) -> Array:
   """More general contraction operator.
 
   Wraps XLA's `DotGeneral
@@ -605,8 +622,9 @@ def dot_general(lhs: Array, rhs: Array, dimension_numbers: DotDimensionNumbers,
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the result.
@@ -644,7 +662,8 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   """
   shape = _broadcast_in_dim_shape_rule(
     operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
-  if np.ndim(operand) == len(shape) and not len(broadcast_dimensions):
+  if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
+      and isinstance(operand, (xla.DeviceArray, core.Tracer))):
     return operand
   return broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
@@ -677,9 +696,23 @@ def reshape(operand: Array, new_sizes: Shape,
 
 def pad(operand: Array, padding_value: Array,
         padding_config: Sequence[Tuple[int, int, int]]) -> Array:
-  """Wraps XLA's `Pad
+  """Applies low, high, and/or interior padding to an array.
+
+  Wraps XLA's `Pad
   <https://www.tensorflow.org/xla/operation_semantics#pad>`_
   operator.
+
+  Args:
+    operand: an array to be padded.
+    padding_value: the value to be inserted as padding. Must have the same dtype
+      as ``operand``.
+    padding_config: a sequence of ``(low, high, interior)`` tuples of integers,
+      giving the amount of low, high, and interior (dilation) padding to insert
+      in each dimension.
+
+  Returns:
+    The ``operand`` array with padding value ``padding_value`` inserted in each
+    dimension according to the ``padding_config``.
   """
   return pad_p.bind(operand, padding_value, padding_config=tuple(padding_config))
 
@@ -857,8 +890,9 @@ def scatter_add(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -891,8 +925,9 @@ def scatter_mul(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -925,8 +960,9 @@ def scatter_min(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -959,8 +995,9 @@ def scatter_max(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -999,8 +1036,9 @@ def scatter(operand: Array, scatter_indices: Array, updates: Array,
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether `scatter_indices` is known to be free of duplicates.
-      If true, may improve performance on some backends.
+    unique_indices: whether the indices to be updated in ``operand`` are
+      guaranteed to not overlap with each other. If true, may improve performance on
+      some backends.
 
   Returns:
     An array containing the sum of `operand` and the scattered updates.
@@ -1132,7 +1170,9 @@ def reduce_window(operand: Array, init_value: Array, computation: Callable,
   operator.
   """
   if isinstance(padding, str):
-    padding = tuple(padtype_to_pads(operand.shape, window_dimensions,
+    dilated_window_dims = (window_dimensions if window_dilation is None else
+                           _dilate_shape(window_dimensions, window_dilation))
+    padding = tuple(padtype_to_pads(operand.shape, dilated_window_dims,
                                     window_strides, padding))
   else:
     padding = tuple(padding)
@@ -1290,22 +1330,6 @@ def _select_and_gather_add(tangents: Array, operand: Array,
       base_dilation=tuple(base_dilation),
       window_dilation=tuple(window_dilation))
 
-def cumsum(operand: Array, axis: int) -> Array:
-  """Computes a cumulative sum along `axis`."""
-  return cumsum_p.bind(operand, axis=int(axis))
-
-def cumprod(operand: Array, axis: int) -> Array:
-  """Computes a cumulative product along `axis`."""
-  return cumprod_p.bind(operand, axis=int(axis))
-
-def cummax(operand: Array, axis: int) -> Array:
-  """Computes a cumulative maximum along `axis`."""
-  return cummax_p.bind(operand, axis=int(axis))
-
-def cummin(operand: Array, axis: int) -> Array:
-  """Computes a cumulative minimum along `axis`."""
-  return cummin_p.bind(operand, axis=int(axis))
-
 def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
          is_stable: bool = True, num_keys: int = 1) -> Union[Array, Tuple[Array, ...]]:
   """Wraps XLA's `Sort
@@ -1329,20 +1353,20 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
       raise TypeError("Sort requires at least one operand")
     if not (1 <= num_keys <= len(operand)):
       raise ValueError(f"num_keys={num_keys} must be between 1 and len(operand)={len(operand)}")
-    dimension = _canonicalize_axis(dimension, len(operand[0].shape))
+    dimension = canonicalize_axis(dimension, len(operand[0].shape))
     return tuple(sort_p.bind(*operand, dimension=dimension,
                              is_stable=is_stable,
                              num_keys=num_keys))
   else:
     if num_keys != 1:
       raise ValueError(f"num_keys={num_keys} must equal 1 for a single operand.")
-    dimension = _canonicalize_axis(dimension, len(operand.shape))
+    dimension = canonicalize_axis(dimension, len(operand.shape))
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, num_keys=1)[0]
 
 def sort_key_val(keys: Array, values: Array, dimension: int = -1,
                  is_stable: bool = True) -> Tuple[Array, Array]:
   """Sorts ``keys`` along ``dimension`` and applies same permutation to ``values``."""
-  dimension = _canonicalize_axis(dimension, len(keys.shape))
+  dimension = canonicalize_axis(dimension, len(keys.shape))
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
@@ -1354,30 +1378,8 @@ def top_k(operand: Array, k: int) -> Tuple[Array, Array]:
   return top_k_p.bind(operand, k=k)
 
 def tie_in(x: Array, y: Array) -> Array:
-  """Returns the value of ``y`` but with a fake data dependence on ``x``.
-
-  When staging to XLA (e.g. running under jit or pmap), values that don't depend
-  on computation inputs are computed op-by-op, and folded into the XLA
-  computation as constants.
-
-  ``tie_in`` provides a way to explicitly stage values into the computation.
-  When staging to XLA and ``x`` is already staged, then the result of ``tie_in``
-  is ``y``, but staged to XLA. Downstream use of the result will also be staged
-  to XLA.
-
-  For example, ``lax.sin(const)`` would be constant-folded if ``const`` is
-  a constant array, but ``lax.sin(lax.tie_in(x, const))``, will be staged to
-  XLA as long as ``x`` is staged to XLA.
-  """
-  if config.omnistaging_enabled:
-    return y
-  else:
-    return tie_in_p.bind(x, y)
-
-# def tie_in(x: Array, y: Array) -> Array:
-#   """Deprecated. Ignores ``x`` and returns ``y``."""
-#   return y
-
+  """Deprecated. Ignores ``x`` and returns ``y``."""
+  return y
 
 def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
@@ -1393,12 +1395,7 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
-  if config.omnistaging_enabled:
-    fill_value = convert_element_type(fill_value, dtype)
-    if not isinstance(fill_value, (xla.DeviceArray, core.Tracer)):
-      fill_value = _device_put_raw(fill_value)
-  else:
-    fill_value = xla.device_put_p.bind(convert_element_type(fill_value, dtype))
+  fill_value = convert_element_type(fill_value, dtype)
   return broadcast(fill_value, shape)
 
 def _device_put_raw(x):
@@ -1406,7 +1403,7 @@ def _device_put_raw(x):
     return x
   else:
     aval = raise_to_shaped(core.get_aval(x))
-    return xla.array_result_handler(None, aval)(xla.device_put(x))
+    return xla.array_result_handler(None, aval)(*xla.device_put(x))
 
 def iota(dtype: DType, size: int) -> Array:
   """Wraps XLA's `Iota
@@ -1483,14 +1480,20 @@ def stop_gradient(x):
   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
   array(0., dtype=float32)
   """
-  return tree_map(ad_util.stop_gradient_p.bind, x)
+  def stop(x):
+    if (dtypes.issubdtype(_dtype(x), np.floating) or
+        dtypes.issubdtype(_dtype(x), np.complexfloating)):
+      return ad_util.stop_gradient_p.bind(x)
+    else:
+      return x  # only bind primitive on inexact dtypes, to avoid some staging
+  return tree_map(stop, x)
 
 
 ### convenience wrappers around traceables
 
 
 def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
-         padding: str, precision: Optional[PrecisionType] = None) -> Array:
+         padding: str, precision: PrecisionLike = None) -> Array:
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -1500,8 +1503,9 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
       strides.
     padding: either the string `'SAME'`, the string `'VALID'`.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the convolution result.
@@ -1514,7 +1518,7 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
                               padding: Union[str, Sequence[Tuple[int, int]]],
                               lhs_dilation: Optional[Sequence[int]],
                               rhs_dilation: Optional[Sequence[int]],
-                              precision: Optional[PrecisionType] = None) -> Array:
+                              precision: PrecisionLike = None) -> Array:
   """Convenience wrapper around `conv_general_dilated`.
 
   Args:
@@ -1532,8 +1536,9 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
       dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
       is also known as atrous convolution.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     An array containing the convolution result.
@@ -1581,7 +1586,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
                    rhs_dilation: Optional[Sequence[int]] = None,
                    dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
                    transpose_kernel: bool = False,
-                   precision: Optional[PrecisionType] = None) -> Array:
+                   precision: PrecisionLike = None) -> Array:
   """Convenience wrapper for calculating the N-d convolution "transpose".
 
   This function directly calculates a fractionally strided conv rather than
@@ -1605,8 +1610,9 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
       applied to the same kernel. For typical use in neural nets this is completely
       pointless and just makes input/output channel specification confusing.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, or a ``lax.Precision`` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+      the backend, a ``lax.Precision`` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      ``lax.Precision`` enums indicating precision of ``lhs``` and ``rhs``.
 
   Returns:
     Transposed N-d convolution, with output padding following the conventions of
@@ -1668,7 +1674,24 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
   return full(fill_shape, fill_value, dtype or _dtype(x))
 
 
-def collapse(operand: Array, start_dimension: int, stop_dimension: int) -> Array:
+def collapse(operand: Array, start_dimension: int,
+             stop_dimension: int) -> Array:
+  """Collapses dimensions of an array into a single dimension.
+
+  For example, if ``operand`` is an array with shape ``[2, 3, 4]``,
+  ``collapse(operand, 0, 2).shape == [6, 4]``. The elements of the collapsed
+  dimension are laid out major-to-minor, i.e., with the lowest-numbered
+  dimension as the slowest varying dimension.
+
+  Args:
+    operand: an input array.
+    start_dimension: the start of the dimensions to collapse (inclusive).
+    stop_dimension: the end of the dimensions to collapse (exclusive).
+
+  Returns:
+    An array where dimensions ``[start_dimension, stop_dimension)`` have been
+    collapsed (raveled) into a single dimension.
+  """
   lo, hi = start_dimension, stop_dimension
   size = prod(operand.shape[lo:hi])
   new_shape = operand.shape[:lo] + (size,) + operand.shape[hi:]
@@ -1742,6 +1765,9 @@ def dynamic_index_in_dim(operand: Array, index: Array, axis: int = 0,
 
 def dynamic_update_slice_in_dim(operand: Array, update: Array,
                                 start_index: Array, axis: int) -> Array:
+  """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
+     in a single ``axis``.
+  """
   axis = int(axis)
   start_indices = [_zero(start_index)] * _ndim(operand)
   start_indices[axis] = start_index
@@ -1750,6 +1776,9 @@ def dynamic_update_slice_in_dim(operand: Array, update: Array,
 
 def dynamic_update_index_in_dim(operand: Array, update: Array, index: Array,
                                 axis: int) -> Array:
+  """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
+     of size 1 in a single ``axis``.
+  """
   axis = int(axis)
   if _ndim(update) != _ndim(operand):
     assert _ndim(update) + 1 == _ndim(operand)
@@ -1758,7 +1787,7 @@ def dynamic_update_index_in_dim(operand: Array, update: Array, index: Array,
 
 
 def batch_matmul(lhs: Array, rhs: Array,
-                 precision: Optional[PrecisionType] = None) -> Array:
+                 precision: PrecisionLike = None) -> Array:
   """Batch matrix multiplication."""
   if _min(lhs.ndim, rhs.ndim) < 2:
     raise ValueError('Arguments to batch_matmul must be at least 2D, got {}, {}'
@@ -1942,11 +1971,21 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
   aval_dtypes = [aval.dtype for aval in avals]
   for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
     if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
-      msg = ('{} does not accept dtype {} at position {}. '
-             'Accepted dtypes at position {} are subtypes of {}.')
-      typename = str(np.dtype(aval_dtype).name)
-      typenames = ', '.join(t.__name__ for t in types)
-      raise TypeError(msg.format(name, typename, i, i, typenames))
+      if aval_dtype is dtypes.float0:
+        raise TypeError(
+            f"Called {name} with a float0 at position {i}. "
+            "float0s do not support any operations by design, because they "
+            "are not compatible with non-trivial vector spaces. No implicit dtype "
+            "conversion is done. You can use np.zeros_like(arr, dtype=np.float) "
+            "to cast a float0 array to a regular zeros array. \n"
+            "If you didn't expect to get a float0 you might have accidentally "
+            "taken a gradient with respect to an integer argument.")
+      else:
+        msg = ('{} does not accept dtype {} at position {}. '
+               'Accepted dtypes at position {} are subtypes of {}.')
+        typename = str(np.dtype(aval_dtype).name)
+        typenames = ', '.join(t.__name__ for t in types)
+        raise TypeError(msg.format(name, typename, i, i, typenames))
   _check_same_dtypes(name, False, *aval_dtypes)
   return result_dtype(*avals)
 
@@ -2431,15 +2470,27 @@ def _convert_element_type_translation_rule(c, operand, *, new_dtype, old_dtype):
   new_etype = xla_client.dtype_to_etype(new_dtype)
   return xops.ConvertElementType(operand, new_element_type=new_etype)
 
-def _convert_element_type_transpose_rule(t, *, new_dtype, old_dtype):
-  assert t.dtype == new_dtype, (t.dtype, new_dtype)
-  return [convert_element_type_p.bind(t, new_dtype=old_dtype,
-                                      old_dtype=new_dtype)]
+def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, old_dtype):
+  if type(ct) is ad_util.Zero:
+    return [ad_util.Zero(operand.aval)]
+  elif core.primal_dtype_to_tangent_dtype(old_dtype) is dtypes.float0:
+    return [ad_util.Zero(ShapedArray(operand.aval.shape, dtype=dtypes.float0))]
+  else:
+    return [convert_element_type_p.bind(ct, new_dtype=old_dtype,
+                                        old_dtype=new_dtype)]
+
+def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, old_dtype):
+  if core.primal_dtype_to_tangent_dtype(new_dtype) is dtypes.float0:
+    return ad_util.Zero(ShapedArray(tangent.shape, dtype=dtypes.float0))
+  else:
+    return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
+                                       old_dtype=old_dtype)
 
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
     'convert_element_type', _convert_element_type_translation_rule)
-ad.deflinear(convert_element_type_p, _convert_element_type_transpose_rule)
+ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
+ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
 
@@ -2467,6 +2518,10 @@ def _conv_general_dilated_shape_rule(
     lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
     batch_group_count, **unused_kwargs) -> Tuple[int, ...]:
   assert type(dimension_numbers) is ConvDimensionNumbers
+  if len(lhs.shape) != len(rhs.shape):
+    msg = ("conv_general_dilated lhs and rhs must have the same number of "
+           "dimensions, but got {} and {}.")
+    raise ValueError(msg.format(lhs.shape, rhs.shape))
   if not feature_group_count > 0:
     msg = ("conv_general_dilated feature_group_count "
            "must be a positive integer, got {}.")
@@ -2805,7 +2860,10 @@ def _reshape_axis_out_of(src, size1, x):
 def _precision_config(precision):
   if precision is not None:
     config = xla_client.PrecisionConfig()
-    config.operand_precision.extend((precision, precision))
+    if isinstance(precision, tuple):
+      config.operand_precision.extend(precision)
+    else:
+      config.operand_precision.extend((precision, precision))
     return config
   return None
 
@@ -3023,6 +3081,8 @@ ad.deflinear(broadcast_p, lambda t, sizes: [_reduce_sum(t, range(len(sizes)))])
 batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 
 def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
+  if type(operand) is np.ndarray:
+    operand = _device_put_raw(operand)
   if type(operand) is xla.DeviceArray and np.all(
       np.equal(operand.shape, np.take(shape, broadcast_dimensions))):
     shape = _broadcast_in_dim_shape_rule(
@@ -3121,7 +3181,7 @@ def _concatenate_shape_rule(*operands, **kwargs):
     msg = "All objects to concatenate must be arrays, got {}."
     op = next(op for op in operands if not isinstance(op, UnshapedArray))
     raise TypeError(msg.format(type(op)))
-  if len(set(operand.ndim for operand in operands)) != 1:
+  if len({operand.ndim for operand in operands}) != 1:
     msg = "Cannot concatenate arrays with different ranks, got {}."
     raise TypeError(msg.format(", ".join(str(o.ndim) for o in operands)))
   shapes = np.array([operand.shape for operand in operands])
@@ -3187,11 +3247,16 @@ def _pad_dtype_rule(operand, padding_value, *, padding_config):
   return _input_dtype(operand, padding_value)
 
 def _pad_shape_rule(operand, padding_value, *, padding_config):
-  lo, hi, interior = zip(*padding_config)
-  out_shape = np.add(
-    np.add(np.add(lo, hi), operand.shape),
-    np.maximum(0, np.multiply(interior, np.subtract(operand.shape, 1))))
-  return tuple(out_shape)
+  del padding_value
+  if not len(padding_config) == np.ndim(operand):
+    raise ValueError("length of padding_config must equal the number of axes "
+                     f"of operand, got padding_config {padding_config} "
+                     f"for operand shape {np.shape(operand)}")
+  if not all(i >= 0 for _, _, i in padding_config):
+    raise ValueError("interior padding in padding_config must be nonnegative, "
+                     f"got padding_config {padding_config}")
+  return tuple(l + h + d + (_max(0, d - 1) * i if i > 0 else 0)
+               for (l, h, i), d in zip(padding_config, np.shape(operand)))
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
@@ -3258,7 +3323,7 @@ masking.masking_rules[pad_p] = _pad_masking_rule
 def squeeze(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Squeeze any number of size 1 dimensions from an array."""
   ndim = np.ndim(array)
-  dimensions = tuple(sorted(_canonicalize_axis(i, ndim) for i in dimensions))
+  dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
   if not dimensions:
     return array
   return squeeze_p.bind(array, dimensions=dimensions)
@@ -3305,7 +3370,7 @@ batching.primitive_batchers[squeeze_p] = _squeeze_batch_rule
 def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
   """Insert any number of size 1 dimensions into an array."""
   ndim_out = np.ndim(array) + len(dimensions)
-  dims_set = frozenset(_canonicalize_axis(i, ndim_out) for i in dimensions)
+  dims_set = frozenset(canonicalize_axis(i, ndim_out) for i in dimensions)
   result_shape = list(np.shape(array))
   for i in sorted(dims_set):
     result_shape.insert(i, 1)
@@ -3384,12 +3449,30 @@ def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions):
     dimensions = (0,) + tuple(np.add(1, dimensions))
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
 
+def _reshape_masking_rule(padded_args, logical_shapes, polymorphic_shapes,
+                          new_sizes, dimensions):
+  operand, = padded_args
+  old_shape, = polymorphic_shapes
+  def is_poly(size): return type(size) is masking.Poly and not size.is_constant
+  def merge_const_sizes(shape):
+    """Merges all nonpolymorphic sizes into the previous polymorphic size."""
+    poly_dims = [i for i, size in enumerate(shape) if is_poly(size)]
+    return [prod(shape[start:stop])
+            for start, stop in zip([0] + poly_dims, poly_dims + [len(shape)])]
+  if merge_const_sizes(old_shape) != merge_const_sizes(new_sizes):
+    raise NotImplementedError(
+      "Reshape on padded dimensions causing fragmentation is not supported.")
+
+  return reshape(operand,
+                 new_sizes=masking.padded_shape_as_value(new_sizes),
+                 dimensions=dimensions)
+
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', _reshape_translation_rule)
 reshape_p.def_impl(_reshape_impl)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
 batching.primitive_batchers[reshape_p] = _reshape_batch_rule
-
+masking.masking_rules[reshape_p] = _reshape_masking_rule
 
 def _rev_shape_rule(operand, *, dimensions):
   _check_shapelike('rev', 'dimensions', dimensions)
@@ -3584,13 +3667,17 @@ def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
     pads = zip(start_indices, np.subtract(operand_shape, limit_indices),
                (0,) * len(start_indices))
   else:
-    real_limits = np.add(np.add(start_indices, 1),
-                          np.multiply(np.subtract(t.shape, 1), strides))
+    real_limits = np.add(
+      start_indices,
+      np.where(np.array(t.shape) == 0, 0,
+               np.add(1, np.multiply(np.subtract(t.shape, 1), strides))))
     pads = safe_zip(start_indices, np.subtract(operand_shape, real_limits),
                     np.subtract(strides, 1))
   result = pad(t, _const(t, 0), pads)
-  assert result.shape == operand_shape
+  assert result.shape == operand_shape, (
+    f"result.shape={result.shape} operand_shape={operand_shape}")
   return [result]
+
 
 def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
                          limit_indices, strides):
@@ -3811,17 +3898,140 @@ def _gather_dtype_rule(operand, start_indices, **kwargs):
     raise ValueError("start_indices must have an integer type")
   return dtypes.canonicalize_dtype(operand.dtype)
 
+_rank = lambda arr: len(arr.shape)
+
+def _is_sorted(dims, op_name, name):
+  for i in range(1, len(dims)):
+    if dims[i] < dims[i - 1]:
+      raise TypeError(f"{name} in {op_name} op must be sorted; got {dims}")
+
+def _sorted_dims_in_range(dims, rank, op_name, name):
+  if len(dims) == 0:
+    return
+  invalid_dim = None
+  if dims[0] < 0:
+    invalid_dim = dims[0]
+  elif dims[-1] >= rank:
+    invalid_dim = dims[-1]
+  if invalid_dim:
+    raise TypeError(f"Invalid {name} set in {op_name} op; valid range is "
+                    f"[0, {rank}); got: {invalid_dim}.")
+
+def _no_duplicate_dims(dims, op_name, name):
+  if len(set(dims)) != len(dims):
+    raise TypeError(f"{name} in {op_name} op must not repeat; got: {dims}.")
+
 def _gather_shape_rule(operand, start_indices, *, dimension_numbers,
                        slice_sizes):
-  if len(operand.shape) != len(slice_sizes):
-    msg = ("slice_sizes must have rank equal to the gather operand; "
-          "operand.shape={}, slice_sizes={}".format(operand.shape, slice_sizes))
-    raise ValueError(msg)
-  result_rank = len(dimension_numbers.offset_dims) + start_indices.ndim - 1
-  start_indices_shape = iter(start_indices.shape[:-1])
-  slice_sizes = iter(np.delete(slice_sizes, dimension_numbers.collapsed_slice_dims))
-  return tuple(next(slice_sizes) if i in dimension_numbers.offset_dims
-               else next(start_indices_shape) for i in range(result_rank))
+  """Validates the well-formedness of the arguments to Gather.
+
+  The code implements the checks based on the detailed operation semantics of
+  XLA's `Gather <https://www.tensorflow.org/xla/operation_semantics#gather>`_
+  operator and following the outline of the implementation of
+  ShapeInference::InferGatherShape in TensorFlow.
+  """
+
+  offset_dims = dimension_numbers.offset_dims
+  collapsed_slice_dims = dimension_numbers.collapsed_slice_dims
+  start_index_map = dimension_numbers.start_index_map
+
+  # Note: in JAX, index_vector_dim is always computed as below, cf. the
+  # documentation of the GatherDimensionNumbers class.
+  index_vector_dim = _rank(start_indices) - 1
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if _rank(start_indices) < index_vector_dim or index_vector_dim < 0:
+    raise TypeError(f"Gather index leaf dimension must be within [0, rank("
+                    f"start_indices) + 1). rank(start_indices) is "
+                    f"{_rank(start_indices)} and gather index leaf dimension "
+                    f"is {index_vector_dim}.")
+
+  expanded_start_indices_shape = list(start_indices.shape)
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if len(expanded_start_indices_shape) == index_vector_dim:
+    expanded_start_indices_shape.append(1)
+
+  # Start ValidateGatherDimensions
+  # In the error messages output by XLA, "offset_dims" is called "Output window
+  # dimensions" in error messages. For consistency's sake, our error messages
+  # stick to "offset_dims".
+  _is_sorted(offset_dims, "gather", "offset_dims")
+  _no_duplicate_dims(offset_dims, "gather", "offset_dims")
+
+  output_offset_dim_count = len(offset_dims)
+  output_shape_rank = len(offset_dims) + _rank(start_indices) - 1
+
+  for i in range(output_offset_dim_count):
+    offset_dim = offset_dims[i]
+    if offset_dim < 0 or offset_dim >= output_shape_rank:
+      raise TypeError(f"Offset dimension {i} in gather op is out of bounds; "
+                      f"got {offset_dim}, but should have been in "
+                      f"[0, {output_shape_rank})")
+
+  if len(start_index_map) != start_indices.shape[index_vector_dim]:
+    raise TypeError(f"Gather op has {len(start_index_map)} elements in "
+                    f"start_index_map and the bound of dimension "
+                    f"index_vector_dim={index_vector_dim} of start_indices is "
+                    f"{start_indices.shape[index_vector_dim]}. These two "
+                    f"numbers must be equal.")
+
+  for i in range(len(start_index_map)):
+    operand_dim_for_start_index_i = start_index_map[i]
+    if (operand_dim_for_start_index_i < 0 or
+        operand_dim_for_start_index_i >= _rank(operand)):
+      raise TypeError(f"Invalid start_index_map; domain is "
+                      f"[0, {_rank(operand)}), got: "
+                      f"{i}->{operand_dim_for_start_index_i}.")
+
+  _no_duplicate_dims(start_index_map, "gather", "start_index_map")
+
+  # _is_sorted and _sorted_dims_in_range are checked in the opposite order
+  # compared to the XLA implementation. In cases when the input is not sorted
+  # AND there are problematic collapsed_slice_dims, the error message will thus
+  # be different.
+  _is_sorted(collapsed_slice_dims, "gather", "collapsed_slice_dims")
+  _sorted_dims_in_range(collapsed_slice_dims, _rank(operand), "gather",
+                        "collapsed_slice_dims")
+  _no_duplicate_dims(collapsed_slice_dims, "gather", "collapsed_slice_dims")
+  # End ValidateGatherDimensions
+
+  if _rank(operand) != len(slice_sizes):
+    raise TypeError(f"Gather op must have one slice size for every input "
+                    f"dimension; got: len(slice_sizes)={len(slice_sizes)}, "
+                    f"input_shape.rank={_rank(operand)}")
+
+  if len(slice_sizes) != len(offset_dims) + len(collapsed_slice_dims):
+    raise TypeError(f"All components of the offset index in a gather op must "
+                    f"either be a offset dimension or explicitly collapsed; "
+                    f"got len(slice_sizes)={len(slice_sizes)}, "
+                    f"output_slice_sizes={offset_dims}, collapsed_slice_dims="
+                    f"{collapsed_slice_dims}.")
+
+  for i in range(len(slice_sizes)):
+    slice_size = slice_sizes[i]
+    corresponding_input_size = operand.shape[i]
+
+    if slice_size < 0 or slice_size > corresponding_input_size:
+      raise TypeError(f"Slice size at index {i} in gather op is out of range, "
+                      f"must be within [0, {corresponding_input_size + 1}), "
+                      f"got {slice_size}.")
+
+  for i in range(len(collapsed_slice_dims)):
+    bound = slice_sizes[collapsed_slice_dims[i]]
+    if bound > 1:
+      raise TypeError(f"Gather op can only collapse slice dims with bound 1 "
+                      f"or 0, but bound is {bound} for index "
+                      f"{collapsed_slice_dims[i]} at position {i}.")
+
+  expanded_start_indices_shape.pop(index_vector_dim)
+  start_indices_shape = iter(expanded_start_indices_shape)
+
+  slice_sizes = iter(np.delete(slice_sizes, collapsed_slice_dims))
+  return tuple(next(slice_sizes) if i in offset_dims
+               else next(start_indices_shape) for i in range(output_shape_rank))
 
 def _gather_translation_rule(c, operand, start_indices, *, dimension_numbers,
                              slice_sizes):
@@ -3934,7 +4144,110 @@ def _scatter_dtype_rule(operand, scatter_indices, updates, **kwargs):
   _check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
   return dtypes.canonicalize_dtype(operand.dtype)
 
-def _scatter_shape_rule(operand, scatter_indices, updates, **kwargs):
+def _scatter_shape_rule(operand, scatter_indices, updates, *, update_jaxpr,
+                        update_consts, dimension_numbers, indices_are_sorted,
+                        unique_indices):
+  """Validates the well-formedness of the ``dimension_numbers`` argument to
+  Scatter.
+
+  The code implements the checks based on the detailed operation semantics of
+  XLA's `Scatter <https://www.tensorflow.org/xla/operation_semantics#scatter>`_
+  operator and following the outline of the implementation of
+  ShapeInference::InferScatterShape in TensorFlow.
+  """
+
+  update_window_dims = dimension_numbers.update_window_dims
+  inserted_window_dims = dimension_numbers.inserted_window_dims
+  scatter_dims_to_operand_dims = dimension_numbers.scatter_dims_to_operand_dims
+  # Note: in JAX, index_vector_dim is always computed as below, cf. the
+  # documentation of the ScatterDimensionNumbers class.
+  index_vector_dim = _rank(scatter_indices) - 1
+
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if _rank(scatter_indices) < index_vector_dim or index_vector_dim < 0:
+    raise TypeError(f"Scatter index leaf dimension must be within [0, "
+                    f"rank(scatter_indices) + 1). rank(scatter_indices) is "
+                    f"{_rank(scatter_indices)} and scatter index leaf "
+                    f"dimension is {index_vector_dim}.")
+
+  expanded_scatter_indices_shape = list(scatter_indices.shape)
+  # This case should never happen in JAX, due to the implicit construction of
+  # index_vector_dim, but is included for completeness.
+  if len(expanded_scatter_indices_shape) == index_vector_dim:
+    expanded_scatter_indices_shape.append(1)
+
+  expected_updates_rank = (len(expanded_scatter_indices_shape) - 1 +
+                           len(update_window_dims))
+
+  if _rank(updates) != expected_updates_rank:
+    raise TypeError(f"Updates tensor must be of rank {expected_updates_rank}; "
+                    f"got {_rank(updates)}.")
+
+  # Validate update_window_dims
+  _is_sorted(update_window_dims, "scatter", "update_window_dims")
+  _no_duplicate_dims(update_window_dims, "scatter", "update_window_dims")
+  _sorted_dims_in_range(update_window_dims, _rank(updates), "scatter",
+                        "update_window_dims")
+
+  # Validate inserted_window_dims
+  _is_sorted(inserted_window_dims, "scatter", "inserted_window_dims")
+  _no_duplicate_dims(inserted_window_dims, "scatter", "inserted_window_dims")
+  _sorted_dims_in_range(inserted_window_dims, _rank(operand), "scatter",
+                        "inserted_window_dims")
+
+  # Validate window_size
+  window_size = len(update_window_dims) + len(inserted_window_dims)
+  if _rank(operand) != window_size:
+    raise TypeError(f"Scatter op has window of size {window_size}; doesn't "
+                    f"match operand of rank {_rank(operand)}.")
+
+  # Validate scatter_dims_to_operand_dims
+  if (len(scatter_dims_to_operand_dims) !=
+      scatter_indices.shape[index_vector_dim]):
+    raise TypeError(f"Scatter op has {len(scatter_dims_to_operand_dims)} "
+                    f"elements in scatter_dims_to_operand_dims and the bound "
+                    f"of dimension index_vector_dim={index_vector_dim} of "
+                    f"scatter_indices is "
+                    f"{scatter_indices.shape[index_vector_dim]}. These two "
+                    f"numbers must be equal")
+
+  for i in range(len(scatter_dims_to_operand_dims)):
+    dim = scatter_dims_to_operand_dims[i]
+    if dim < 0 or dim >= _rank(operand):
+      raise TypeError(f"Invalid scatter_dims_to_operand_dims mapping; domain "
+                      f"is [0, {_rank(operand)}), got: {i}->{dim}.")
+
+  _no_duplicate_dims(scatter_dims_to_operand_dims, "scatter",
+                     "scatter_dims_to_operand_dims")
+
+  max_update_slice_sizes = [operand.shape[i] for i in range(len(operand.shape))
+                            if not i in set(inserted_window_dims)]
+
+  for i in range(len(update_window_dims)):
+    update_window_dim = update_window_dims[i]
+    if updates.shape[update_window_dim] > max_update_slice_sizes[i]:
+      raise TypeError(f"Bounds of the window dimensions of updates must not "
+                      f"exceed the bounds of the corresponding dimensions of "
+                      f"operand. For dimension {update_window_dim}, updates "
+                      f"bound is {updates.shape[update_window_dim]}, operand "
+                      f"bound is {max_update_slice_sizes[i]}.")
+
+  update_scatter_dims = [dim for dim in range(_rank(updates)) if dim not in
+                         set(update_window_dims)]
+
+  scatter_dims_seen = 0
+  for i in update_scatter_dims:
+    if scatter_dims_seen == index_vector_dim:
+      scatter_dims_seen += 1
+    if updates.shape[i] != expanded_scatter_indices_shape[scatter_dims_seen]:
+      raise TypeError(f"Bounds of the scatter dimensions of updates must be "
+                      f"the same as the bounds of the corresponding dimensions "
+                      f"of scatter indices. For scatter dimension {i}, updates "
+                      f"bound is {updates.shape[i]}, scatter_indices bound is "
+                      f"{expanded_scatter_indices_shape[scatter_dims_seen]}.")
+    scatter_dims_seen += 1
+
   return operand.shape
 
 def _scatter_translation_rule(c, operand, scatter_indices, updates, *,
@@ -4244,53 +4557,29 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
 
   # If there are overlapping indices in the scatter, it is unspecified which
   # update "wins". So we use the following perhaps surprising scheme:
-  # a) attach a positive ID to each update in updates, forming (value, id) pairs
-  #    (using a new array dimension because scatter doesn't actually support
-  #     pairs).
-  # b) perform the scatter, yielding (value, id) updates, which we split apart.
-  # c) perform the inverse gather on the ids (similar to
-  #    _scatter_add_transpose), and use it to build a mask for the tangent of
-  #    `updates`.
-  # d) perform a scatter-add on the masked JVP values. A benefit of using
-  #    scatter-add here is that we don't need a `scatter` transpose rule.
+  # a) attach a positive ID to each update in updates, and perform the scatter
+  #    on the IDs
+  # b) perform the inverse gather on the scattered IDs (similar to
+  #    _scatter_add_transpose).
+  # c) use the gathered IDs to mask the primal and tangent values.
+  # d) perform a scatter-add on the masked primal and tangent values. A benefit
+  #    of using scatter-add here is that we don't need a `scatter` transpose
+  #    rule.
 
-  # a) add unique positive IDs (iotas) to the updates, and zeros to the operand.
-  operand_shape = operand.shape
-  updates_shape = updates.shape
-  updates_dtype = _dtype(updates)
 
-  new_operand = reshape(operand, (1,) + operand_shape)
-  new_operand = pad(new_operand, _zero(operand),
-                    ((0, 1, 0),) + tuple((0, 0, 0) for _ in operand_shape))
-
-  # We specify the dtype here in case `updates_shape` is an empty tuple, in
-  # which case numpy defaults to float64.
-  ids_shape = np.array(updates_shape, dtype=np.int32)
+  # a) attach a positive ID to each update in `updates`, and perform a scatter
+  #    on the IDs.
+  ids_shape = np.array(updates.shape, dtype=np.int64)
   ids_shape[dnums.update_window_dims,] = 1
   num_ids = np.prod(ids_shape)
-  update_ids = add(reshape(iota(updates_dtype, num_ids), ids_shape),
-                   _ones(updates))
+  id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
+  update_ids = add(reshape(iota(id_dtype, num_ids), ids_shape),
+                   _ones(updates, dtype=id_dtype))
 
-  # TODO(phawkins): there is a potential bug here if the number of updates
-  # is large enough to overflow the number of mantissa bits in a float so IDs
-  # end up colliding. We could also utilize the exponent and sign bits, with a
-  # little more work.
-  assert num_ids < (2 ** dtypes.finfo(updates_dtype).nmant)
-
-  updates = reshape(updates, (1,) + updates_shape)
-  reshaped_update_ids = reshape(update_ids, (1,) + updates_shape)
-  updates_and_ids = concatenate((updates, reshaped_update_ids), 0)
-
-  new_dnums = ScatterDimensionNumbers(
-    update_window_dims=(0,) + tuple(d + 1 for d in dnums.update_window_dims),
-    inserted_window_dims=tuple(d + 1 for d in dnums.inserted_window_dims),
-    scatter_dims_to_operand_dims=tuple(d + 1 for d in dnums.scatter_dims_to_operand_dims))
-  outputs = scatter_p.bind(
-      new_operand, scatter_indices, updates_and_ids, update_jaxpr=update_jaxpr,
-      update_consts=update_consts, dimension_numbers=new_dnums,
-      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices)
-  val_out = index_in_dim(outputs, 0, keepdims=False)
-  scattered_ids = index_in_dim(outputs, 1, keepdims=False)
+  scattered_ids = scatter(full(operand.shape, 0, id_dtype),
+                          scatter_indices, update_ids, dnums,
+                          indices_are_sorted=indices_are_sorted,
+                          unique_indices=unique_indices)
 
   # b) compute the inverse gather that "undoes" the scatter on the id values.
   gather_dnums = GatherDimensionNumbers(
@@ -4303,19 +4592,27 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
     if i in dnums.inserted_window_dims:
       slice_sizes.append(1)
     else:
-      slice_sizes.append(updates_shape[dnums.update_window_dims[pos]])
+      slice_sizes.append(updates.shape[dnums.update_window_dims[pos]])
       pos += 1
   gathered_update_ids = gather(scattered_ids, scatter_indices,
-                         dimension_numbers=gather_dnums,
-                         slice_sizes=slice_sizes)
+                               dimension_numbers=gather_dnums,
+                               slice_sizes=slice_sizes)
 
-  # c) mask off input JVP elements that do not correspond to a primal output.
+  # c) mask off input elements that do not correspond to a primal output.
+  masked_operand = select(eq(scattered_ids, _zeros(scattered_ids)),
+                          operand, _zeros(operand))
+  masked_updates = select(eq(update_ids,  gathered_update_ids),
+                          updates, _zeros(updates))
   masked_g_operand = select(eq(scattered_ids, _zeros(scattered_ids)),
                             g_operand, _zeros(g_operand))
   masked_g_updates = select(eq(update_ids, gathered_update_ids),
                             g_updates, _zeros(g_updates))
 
-  # d) perform a scatter-add to compute the tangent output.
+  # d) perform scatter-adds to compute the primal and tangent outputs.
+  val_out = scatter_add(masked_operand, scatter_indices, masked_updates,
+                        dimension_numbers=dnums,
+                        indices_are_sorted=indices_are_sorted,
+                        unique_indices=unique_indices)
   tangent_out = scatter_add(masked_g_operand, scatter_indices, masked_g_updates,
                             dimension_numbers=dnums,
                             indices_are_sorted=indices_are_sorted,
@@ -4605,6 +4902,10 @@ def _reduce_window_shape_rule(operand, init_value, *, jaxpr, consts,
     msg = ("reduce_window got inconsistent dtypes for operand and init_value: "
            " got operand dtype {} and init_value dtype {}.")
     raise TypeError(msg.format(operand.dtype, init_value.dtype))
+  if init_value.shape != ():
+    msg = ("reduce_window expected init_value to be a scalar but init_value "
+           "has shape {}.")
+    raise TypeError(msg.format(init_value.shape))
   return _common_reduce_window_shape_rule(
     operand, window_dimensions, window_strides, padding, base_dilation,
     window_dilation)
@@ -4730,8 +5031,10 @@ def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
 def _common_reduce_window_shape_rule(operand, window_dimensions,
                                      window_strides, padding, base_dilation,
                                      window_dilation):
-  _check_shapelike("reduce_window", "window_dimensions", window_dimensions)
-  _check_shapelike("reduce_window", "window_strides", window_strides)
+  _check_shapelike("reduce_window", "window_dimensions", window_dimensions,
+                   non_zero_shape=True)
+  _check_shapelike("reduce_window", "window_strides", window_strides,
+                   non_zero_shape=True)
   _check_shapelike("reduce_window", "base_dilation", base_dilation)
   _check_shapelike("reduce_window", "window_dilation", window_dilation)
   if operand.ndim != len(window_dimensions):
@@ -4858,35 +5161,22 @@ def _select_and_scatter_add_transpose(
                                     window_strides, padding, ones, ones)
   return [source_t, None]
 
-def _select_and_scatter_add_batch_rule(batched_args, batch_dims, **kwargs):
+def _select_and_scatter_add_batch_rule(
+    batched_args, batch_dims, *, select_prim, window_dimensions, window_strides,
+    padding):
   source, operand = batched_args
-  s_bdims, o_bdims = batch_dims
+  s_bdim, o_bdim = batch_dims
+  size = next(a.shape[bdim] for a, bdim in zip(batched_args, batch_dims)
+              if bdim is not None)
+  source = batching.bdim_at_front(source, s_bdim, size)
+  operand = batching.bdim_at_front(operand, o_bdim, size)
 
-  if s_bdims is not None and o_bdims is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    source = batching.moveaxis(source, s_bdims, 0)
-    operand = batching.moveaxis(operand, o_bdims, 0)
-    outputs = [
-        _select_and_scatter_add(s, o, **kwargs) for s, o in zip(source, operand)]
-    outputs = [broadcast(out, (1,)) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
-  elif s_bdims is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    source = batching.moveaxis(source, s_bdims, 0)
-    outputs = [
-        _select_and_scatter_add(s, operand, **kwargs) for s in source]
-    outputs = [broadcast(out, (1,)) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
-  elif o_bdims is not None:
-    #TODO(#212): use a map construct instead of unrolling.
-    operand = batching.moveaxis(operand, o_bdims, 0)
-    outputs = [
-        _select_and_scatter_add(source, o, **kwargs) for o in operand]
-    outputs = [broadcast(out, (1,)) for out in outputs]
-    outputs = concatenate(outputs, 0)
-    return outputs, 0
+  window_dimensions = (1,) + window_dimensions
+  window_strides = (1,) + window_strides
+  padding = ((0, 0),) + padding
+  out = _select_and_scatter_add(source, operand, select_prim, window_dimensions,
+                                window_strides, padding)
+  return out, 0
 
 select_and_scatter_add_p = standard_primitive(
     _select_and_scatter_add_shape_rule, _input_dtype, 'select_and_scatter_add',
@@ -5089,145 +5379,6 @@ xla.backend_specific_translations['tpu'][select_and_gather_add_p] = partial(
   _select_and_gather_add_translation,
   max_bits=32)
 
-
-# Parallel prefix-scan. See:
-# https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
-# and
-# Blelloch, Guy E. 1990. "Prefix Sums and Their Applications.", Technical Report
-# CMU-CS-90-190, School of Computer Science, Carnegie Mellon University.
-#
-# Unlike the Blelloch algorithm, we use an out-of-place algorithm that uses 2n
-# space. This is somewhat wasteful if we are interested only in the output of
-# the forward pass, but more memory-efficient if we intend to differentiate
-# through the implementation of the scan.
-def _prescan_power_of_two(x, axis: int, op: Callable, unit):
-  n = x.shape[axis]
-  assert n != 0 and n & (n - 1) == 0, "n must be a power of 2"
-
-  # Upsweep
-  xs = []
-  for d in range(0, n.bit_length() - 1):
-    x1 = slice_in_dim(x, 0, None, stride=2, axis=axis)
-    xs.append(x1)
-    x2 = slice_in_dim(x, 1, None, stride=2, axis=axis)
-    x = op(x1, x2)
-  total = x
-
-  # Downsweep
-  x = full_like(total, unit)
-  pad_left = [(0, 0, 0)] * len(x.shape)
-  pad_left[axis] = (1, 0, 1)
-  pad_right = [(0, 0, 0)] * len(x.shape)
-  pad_right[axis] = (0, 1, 1)
-  for w in reversed(xs):
-    x1 = pad(x, _const(x, 0), pad_right)
-    x2 = pad(x, _const(x, 0), pad_left)
-    w = pad(w, _const(x, 0), pad_left)
-    x = x1 + op(x2, w)
-
-  return x, total
-
-
-def _parallel_prefix_scan(x, axis: int, op: Callable, unit: Any):
-  if np.issubdtype(x.dtype, np.integer):
-    if np.isposinf(unit):
-      unit = np.iinfo(x.dtype).max
-    elif np.isneginf(unit):
-      unit = np.iinfo(x.dtype).min
-  n = x.shape[axis]
-  if n == 0:
-    return x
-  # Pads to the next largest power of two
-  nbits = n.bit_length()
-  if n == (1 << (nbits - 1)):
-    nbits -= 1
-  padding = [(0, 0, 0)] * len(x.shape)
-  padding[axis] = (0, (1 << nbits) - n, 0)
-  x = pad(x, _const(x, unit), padding)
-  x, total = _prescan_power_of_two(x, axis, op, unit)
-  return concatenate((slice_in_dim(x, 1, n, axis=axis), total), dimension=axis)
-
-_cumsum_prefix_scan = partial(_parallel_prefix_scan, op=add, unit=0)
-_cumprod_prefix_scan = partial(_parallel_prefix_scan, op=mul, unit=1)
-_cummax_prefix_scan = partial(_parallel_prefix_scan, op=max, unit=-np.inf)
-_cummin_prefix_scan = partial(_parallel_prefix_scan, op=min, unit=np.inf)
-
-def _cumred_shape_rule(x, *, axis: int):
-  if axis < 0 or axis >= x.ndim:
-    raise ValueError(
-        "axis {} is out of bounds for array of shape {}".format(axis, x.shape))
-  return x.shape
-
-def _cumsum_transpose_rule(t, *, axis: int):
-  return [rev(cumsum(rev(t, (axis,)), axis=axis), (axis,))]
-
-def _cumulative_jvp_rule(primals, tangents, *, axis: int,
-                         prefix_scan: Callable):
-  # Irrespective of backend, we always use the parallel prefix scan
-  # implementation when differentiating because reduce_window is not
-  # arbitrarily differentiable.
-  return api.jvp(partial(prefix_scan, axis=axis), primals, tangents)
-
-
-def _cumred_tpu_translation_rule(window_reduce: Callable, x, *,
-                                 axis: int):
-  # On TPU, an implementation using reduce_window is handled specially by the
-  # compiler and is efficient. On other backends, it is O(n^2).
-  n = x.shape[axis]
-  if n == 0:
-    return x
-  padding = [(0, 0)] * x.ndim
-  padding[axis] = (n - 1, 0)
-  strides = [1] * x.ndim
-  window_dims = [1] * x.ndim
-  window_dims[axis] = n
-  return window_reduce(x, window_dims, strides, padding)
-
-def _cumred_batch_rule(prim, batched_args, batch_dims, *, axis: int):
-  operand, = batched_args
-  bdim, = batch_dims
-  axis = axis if axis < bdim else axis + 1
-  return prim.bind(operand, axis=axis), bdim
-
-
-cumsum_p = standard_primitive(
-  _cumred_shape_rule, partial(_reduce_number_dtype_rule, "cumsum"),
-  'cumsum', xla.lower_fun(_cumsum_prefix_scan, multiple_results=False))
-ad.deflinear(cumsum_p, _cumsum_transpose_rule)
-xla.backend_specific_translations['tpu'][cumsum_p] = xla.lower_fun(
-  partial(_cumred_tpu_translation_rule, _reduce_window_sum),
-  multiple_results=False)
-batching.primitive_batchers[cumsum_p] = partial(_cumred_batch_rule, cumsum_p)
-
-
-def _cumulative_reduction_primitive(name, prefix_scan_fn, jvp_rule, reduce_window_fn):
-  reducer_p = standard_primitive(
-    _cumred_shape_rule, partial(_reduce_number_dtype_rule, name),
-    name, xla.lower_fun(prefix_scan_fn, multiple_results=False))
-  ad.primitive_jvps[reducer_p] = jvp_rule
-  xla.backend_specific_translations['tpu'][reducer_p] = xla.lower_fun(
-    partial(_cumred_tpu_translation_rule, reduce_window_fn),
-    multiple_results=False)
-  batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule, reducer_p)
-  return reducer_p
-
-
-cumprod_p = _cumulative_reduction_primitive("cumprod", _cumprod_prefix_scan,
-                                            partial(_cumulative_jvp_rule,
-                                                    prefix_scan=_cumprod_prefix_scan),
-                                            _reduce_window_prod)
-
-cummax_p = _cumulative_reduction_primitive("cummax", _cummax_prefix_scan,
-                                           partial(_cumulative_jvp_rule,
-                                                   prefix_scan=_cummax_prefix_scan),
-                                           _reduce_window_max)
-
-cummin_p = _cumulative_reduction_primitive("cummin", _cummin_prefix_scan,
-                                           partial(_cumulative_jvp_rule,
-                                                   prefix_scan=_cummin_prefix_scan),
-                                           _reduce_window_min)
-
-
 def _sort_abstract_eval(*args, **kwargs):
   args = tuple(raise_to_shaped(arg) for arg in args)
   if any(arg.shape != args[0].shape for arg in args[1:]):
@@ -5404,31 +5555,6 @@ xla.translations[top_k_p] = partial(standard_translate, 'top_k')
 ad.primitive_jvps[top_k_p] = _top_k_jvp
 batching.primitive_batchers[top_k_p] = _top_k_batch_rule
 
-def _tie_in_transpose_rule(t, x, y):
-  if ad.is_undefined_primal(x):
-    return [ad_util.Zero(x.aval), t]
-  else:
-    return [ad_util.Zero.from_value(x), t]
-
-def _tie_in_batch_rule(batched_args, batch_dims):
-  y = tie_in(*batched_args)
-  _, bdim_y = batch_dims
-  return y, bdim_y
-
-def _tie_in_impl(x, y):
-  core.check_valid_jaxtype(x)
-  core.check_valid_jaxtype(y)
-  return y
-
-tie_in_p = Primitive('tie_in')
-tie_in_p.def_impl(_tie_in_impl)
-tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
-xla.translations[tie_in_p] = lambda c, x, y: y
-ad.deflinear2(tie_in_p, _tie_in_transpose_rule)
-batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
-masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]
-
-
 def _stop_gradient_jvp_rule(primals, tangents):
   # if we don't call stop_gradient here, we'd only peel off one autodiff tracer
   x, = primals
@@ -5453,12 +5579,12 @@ def create_token(x):
        value of `x` is ignored.
   """
   # x is a dummy argument used to tie the operator into a trace.
-  return create_token_p.bind(x)
+  return create_token_p.bind(stop_gradient(x))
 
 create_token_p = Primitive("create_token")
 create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
 create_token_p.def_abstract_eval(lambda _: abstract_token)
-xla.translations[create_token_p] = lambda c, _: xops.CreateToken(c)
+xla.translations[create_token_p] = lambda c, *_: xops.CreateToken(c)
 
 def after_all(*operands):
   """Merges one or more XLA token values. Experimental.
@@ -5510,8 +5636,8 @@ def _infeed_abstract_eval(token, *, shapes, partitions):
 
 
 def _infeed_translation_rule(c, token, *, shapes, partitions):
-  shape = tuple(xla.aval_to_xla_shape(x).with_major_to_minor_layout_if_absent()
-                for x in shapes)
+  shape = tuple(shape.with_major_to_minor_layout_if_absent()
+                for x in shapes for shape in xla.aval_to_xla_shapes(x))
   build_infeed = partial(xops.InfeedWithToken, token,
                          xla_client.Shape.tuple_shape(shape))
   if partitions:
@@ -5712,7 +5838,7 @@ def conv_transpose_shape_tuple(lhs_shape, rhs_shape, window_strides, padding,
   return tuple(np.take(out_trans, np.argsort(out_perm)))
 
 
-def _check_shapelike(fun_name, arg_name, obj):
+def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
   """Check that `obj` is a shape-like value (e.g. tuple of nonnegative ints)."""
   if not isinstance(obj, (tuple, list, np.ndarray)):
     msg = "{} {} must be of type tuple/list/ndarray, got {}."
@@ -5726,12 +5852,14 @@ def _check_shapelike(fun_name, arg_name, obj):
     raise TypeError(msg.format(obj_arr.ndim))
   try:
     canonicalize_shape(obj_arr)
-  except TypeError:
+  except TypeError as err:
     msg = "{} {} must have every element be an integer type, got {}."
-    raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj))))
-  if not (obj_arr >= 0).all():
-    msg = "{} {} must have every element be nonnegative, got {}."
-    raise TypeError(msg.format(fun_name, arg_name, obj))
+    raise TypeError(msg.format(fun_name, arg_name, tuple(map(type, obj)))) from err
+  lower_bound, bound_error = (
+      (1, "strictly positive") if non_zero_shape else (0, "nonnegative"))
+  if not (obj_arr >= lower_bound).all():
+    msg = "{} {} must have every element be {}, got {}."
+    raise TypeError(msg.format(fun_name, arg_name, bound_error, obj))
 
 
 def _dynamic_slice_indices(operand, start_indices):
@@ -5791,11 +5919,15 @@ def remaining(original, *removed_lists):
 def _canonicalize_precision(precision):
   if precision is None:
     return None
-  if isinstance(precision, Precision):
+  if isinstance(precision, Precision) or (
+      isinstance(precision, tuple)
+      and len(precision) == 2
+      and all(isinstance(p, Precision) for p in precision)
+  ):
     return precision
   else:
-    msg = "Precision argument must be None or a lax.Precision value; got {}"
-    raise ValueError(msg.format(precision))
+    raise ValueError("Precision argument must be None, a lax.Precision value "
+                     f"or a tuple of two lax.Precision values; got {precision}")
 
 
 def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers):
@@ -5932,6 +6064,7 @@ def _check_user_dtype_supported(dtype, fun_name=None):
   np_dtype = np.dtype(dtype)
   if np_dtype.kind not in "biufc" and np_dtype.type != dtypes.bfloat16:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
+    msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
   if dtype is not None and np_dtype != dtypes.canonicalize_dtype(dtype):
     msg = ("Explicitly requested dtype {} {} is not available, "
@@ -5939,7 +6072,7 @@ def _check_user_dtype_supported(dtype, fun_name=None):
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
            "environment variable. "
            "See https://github.com/google/jax#current-gotchas for more.")
-    fun_name = "requested in {}".format(fun_name) if fun_name else ""
+    fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = dtypes.canonicalize_dtype(dtype).name
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype))
 
@@ -5956,7 +6089,69 @@ def _canonicalize_axis(axis, num_dims):
   return axis
 
 
-@config.omnistaging_enablers.append
-def omnistaging_enabler() -> None:
-  global _tie_in_transpose_rule, _tie_in_batch_rule, _tie_in_impl, tie_in_p
-  del _tie_in_transpose_rule, _tie_in_batch_rule, _tie_in_impl, tie_in_p
+tie_in_p = Primitive('tie_in')
+
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
+  global tie_in
+
+  def tie_in(x: Array, y: Array) -> Array:
+    """Returns the value of ``y`` but with a fake data dependence on ``x``.
+
+    When staging to XLA (e.g. running under jit or pmap), values that don't depend
+    on computation inputs are computed op-by-op, and folded into the XLA
+    computation as constants.
+
+    ``tie_in`` provides a way to explicitly stage values into the computation.
+    When staging to XLA and ``x`` is already staged, then the result of ``tie_in``
+    is ``y``, but staged to XLA. Downstream use of the result will also be staged
+    to XLA.
+
+    For example, ``lax.sin(const)`` would be constant-folded if ``const`` is
+    a constant array, but ``lax.sin(lax.tie_in(x, const))``, will be staged to
+    XLA as long as ``x`` is staged to XLA.
+    """
+    if config.omnistaging_enabled:
+      return y
+    else:
+      return tie_in_p.bind(x, y)
+
+  # If lax has already been imported, we need to monkey-patch the
+  # lax/__init__.py import of tie_in. If not (i.e. if this is running at lax
+  # module creation time) then we'll get an import error.
+  try:
+    jax.lax.tie_in = tie_in
+  except AttributeError:
+    pass
+
+  def _tie_in_transpose_rule(t, x, y):
+    if ad.is_undefined_primal(x):
+      return [ad_util.Zero(x.aval), t]
+    else:
+      return [ad_util.Zero.from_value(x), t]
+
+  def _tie_in_batch_rule(batched_args, batch_dims):
+    y = tie_in(*batched_args)
+    _, bdim_y = batch_dims
+    return y, bdim_y
+
+  def _tie_in_impl(x, y):
+    core.check_valid_jaxtype(x)
+    core.check_valid_jaxtype(y)
+    return y
+
+  def _tie_in_jvp(primals, tangents):
+    x, y = primals
+    x_dot, y_dot = tangents
+    if type(y_dot) is ad_util.Zero or core.get_aval(y_dot).dtype is dtypes.float0:
+      return y, y_dot  # skip tying in in this case
+    else:
+      return ad.linear_jvp(tie_in_p, primals, tangents)
+
+  tie_in_p.def_impl(_tie_in_impl)
+  tie_in_p.def_abstract_eval(lambda x, y: raise_to_shaped(y))
+  xla.translations[tie_in_p] = lambda c, x, y: y
+  ad.primitive_jvps[tie_in_p] = _tie_in_jvp
+  ad.primitive_transposes[tie_in_p] = partial(ad.linear_transpose2, _tie_in_transpose_rule)
+  batching.primitive_batchers[tie_in_p] = _tie_in_batch_rule
+  masking.masking_rules[tie_in_p] = lambda vals, logical_shapes: vals[1]

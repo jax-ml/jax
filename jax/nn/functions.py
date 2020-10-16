@@ -22,6 +22,7 @@ from jax import dtypes
 from jax import lax
 from jax import core
 from jax.scipy.special import expit
+from jax.scipy.special import logsumexp as _logsumexp
 import jax.numpy as jnp
 
 # activations
@@ -171,22 +172,33 @@ def selu(x):
   scale = 1.0507009873554804934193349852946
   return scale * elu(x, alpha)
 
-def gelu(x):
+def gelu(x, approximate: bool = True):
   r"""Gaussian error linear unit activation function.
 
-  Computes the element-wise function:
+  If ``approximate=False``, computes the element-wise function:
+
+  .. math::
+    \mathrm{gelu}(x) = \frac{x}{2} \left(1 + \mathrm{erf} \left(
+      \frac{x}{\sqrt{2}} \right) \right)
+
+  If ``approximate=True``, uses the approximate formulation of GELU:
 
   .. math::
     \mathrm{gelu}(x) = \frac{x}{2} \left(1 + \mathrm{tanh} \left(
       \sqrt{\frac{2}{\pi}} \left(x + 0.044715 x^3 \right) \right) \right)
 
-  We explicitly use the approximation rather than the exact formulation for
-  speed. For more information, see `Gaussian Error Linear Units (GELUs)
+  For more information, see `Gaussian Error Linear Units (GELUs)
   <https://arxiv.org/abs/1606.08415>`_, section 2.
+
+  Args:
+    approximate: whether to use the approximate or exact formulation.
   """
-  sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
-  cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
-  return x * cdf
+  if approximate:
+    sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
+    cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))
+    return x * cdf
+  else:
+    return jnp.array(x * (lax.erf(x / np.sqrt(2)) + 1) / 2, dtype=x.dtype)
 
 def glu(x, axis=-1):
   """Gated linear unit activation function."""
@@ -196,6 +208,9 @@ def glu(x, axis=-1):
   return x1 * sigmoid(x2)
 
 # other functions
+
+logsumexp = _logsumexp
+
 
 def log_softmax(x, axis=-1):
   r"""Log-Softmax function.
@@ -266,8 +281,9 @@ def one_hot(x, num_classes, *, dtype=jnp.float64):
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
   """
-  num_classes = core.concrete_or_error(int, num_classes,
-                                       "in jax.nn.one_hot argument `num_classes`")
+  num_classes = core.concrete_or_error(
+      int, num_classes,
+      "The error arose in jax.nn.one_hot argument `num_classes`.")
   dtype = dtypes.canonicalize_dtype(dtype)
   x = jnp.asarray(x)
   lhs = x[..., jnp.newaxis]

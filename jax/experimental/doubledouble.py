@@ -76,7 +76,7 @@ class DoublingTrace(core.Trace):
     assert call_primitive.multiple_results
     heads, tails = unzip2((t.head, t.tail) for t in tracers)
     nonzero_tails, in_tree_def = tree_flatten(tails)
-    f_double, out_tree_def = screen_nones(doubling_subtrace(f, self.master),
+    f_double, out_tree_def = screen_nones(doubling_subtrace(f, self.main),
                                           len(heads), in_tree_def)
     name = params.get('name', f.__name__)
     new_params = dict(params, name=wrap_name(name, 'doubledouble'),
@@ -87,8 +87,8 @@ class DoublingTrace(core.Trace):
 
 
 @lu.transformation
-def doubling_subtrace(master, heads, tails):
-  trace = DoublingTrace(master, core.cur_sublevel())
+def doubling_subtrace(main, heads, tails):
+  trace = DoublingTrace(main, core.cur_sublevel())
   in_tracers = [DoublingTracer(trace, h, t) if t is not None else h
                 for h, t in zip(heads, tails)]
   ans = yield in_tracers, {}
@@ -109,8 +109,8 @@ def screen_nones(num_heads, in_tree_def, *heads_and_tails):
 
 @lu.transformation
 def doubling_transform(*args):
-  with core.new_master(DoublingTrace) as master:
-    trace = DoublingTrace(master, core.cur_sublevel())
+  with core.new_main(DoublingTrace) as main:
+    trace = DoublingTrace(main, core.cur_sublevel())
     in_tracers = [DoublingTracer(trace, head, tail) for head, tail in args]
     outputs = yield in_tracers, {}
     if isinstance(outputs, Sequence):

@@ -22,7 +22,8 @@ __all__ = [
 
 import jaxlib
 
-_minimum_jaxlib_version = (0, 1, 51)
+# Must be kept in sync with the jaxlib version in build/test-requirements.txt
+_minimum_jaxlib_version = (0, 1, 55)
 try:
   from jaxlib import version as jaxlib_version
 except Exception as err:
@@ -39,11 +40,11 @@ def _check_jaxlib_version():
     msg = 'jaxlib is version {}, but this version of jax requires version {}.'
 
     if version == (0, 1, 23):
-        msg += ('\n\nA common cause of this error is that you installed jaxlib '
-                'using pip, but your version of pip is too old to support '
-                'manylinux2010 wheels. Try running:\n\n'
-                'pip install --upgrade pip\n'
-                'pip install --upgrade jax jaxlib\n')
+      msg += ('\n\nA common cause of this error is that you installed jaxlib '
+              'using pip, but your version of pip is too old to support '
+              'manylinux2010 wheels. Try running:\n\n'
+              'pip install --upgrade pip\n'
+              'pip install --upgrade jax jaxlib\n')
     raise ValueError(msg.format('.'.join(map(str, version)),
                                 '.'.join(map(str, _minimum_jaxlib_version))))
 
@@ -51,7 +52,11 @@ _check_jaxlib_version()
 
 from jaxlib import xla_client
 from jaxlib import lapack
-from jaxlib import pytree
+if version <  (0, 1, 53):
+  from jaxlib import pytree  # pytype: disable=import-error
+else:
+  pytree = xla_client._xla.pytree
+  jax_jit = xla_client._xla.jax_jit
 from jaxlib import cusolver
 try:
   from jaxlib import cuda_prng

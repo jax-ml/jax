@@ -24,15 +24,15 @@ import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast, no_type_check)
+                    Type, Union, cast)
 
 import numpy as np
 
 from . import dtypes
 from .config import FLAGS, config
 from . import linear_util as lu
-from . import source_info_util
 
+from . import source_info_util
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
 
@@ -67,15 +67,14 @@ class Jaxpr:
   def __init__(self, constvars: Sequence['Var'], invars: Sequence['Var'],
                outvars: Sequence['Atom'], eqns: Sequence['JaxprEqn']):
     """
-    Params:
-      constvars: list of variables introduced for constants (either literals
-        in the Python program, or the result of constant folding during the
-        generation of the Jaxpr). Array constants are replaced with such variables
-        while scalar constants are kept inline.
+    Args:
+      constvars: list of variables introduced for constants. Array constants are
+        replaced with such variables while scalar constants are kept inline.
       invars: list of input variables. Together, `constvars` and `invars` are
         the inputs to the Jaxpr.
       outvars: list of output variables.
-      eqns: list of equations."""
+      eqns: list of equations.
+    """
     self.constvars = list(constvars)
     self.invars = list(invars)
     self.outvars = list(outvars)
@@ -92,56 +91,46 @@ def jaxprs_in_params(params) -> Iterator[Jaxpr]:
     for v in vals:
       if isinstance(v, Jaxpr):
         yield v
-      elif isinstance(v, TypedJaxpr):
+      elif isinstance(v, ClosedJaxpr):
         yield v.jaxpr
 
 
 def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   """Generator for all subjaxprs found in the params of jaxpr.eqns.
+
   Does not descend recursively into the found subjaxprs.
   """
   for eqn in jaxpr.eqns:
     yield from jaxprs_in_params(eqn.params)
 
 
-class TypedJaxpr:
+class ClosedJaxpr:
   jaxpr: Jaxpr
-  literals: List['Any']
-  in_avals: List['AbstractValue']
-  out_avals: List['AbstractValue']
+  consts: List['Any']
 
-  def __init__(self, jaxpr: Jaxpr, literals: Sequence,
-               in_avals: Sequence['AbstractValue'],
-               out_avals: Sequence['AbstractValue']):
-    assert len(literals) == len(jaxpr.constvars)
-    assert len(in_avals) == len(jaxpr.invars)
-
-    assert not any(isinstance(l, Tracer) for l in literals), literals
-
-    if not skip_checks:
-      in_avals_raised = [raise_to_shaped(v) for v in in_avals]
-      out_avals_raised = [raise_to_shaped(v) for v in out_avals]
-      exp_in_avals = [v.aval for v in jaxpr.invars]
-      exp_out_avals = [v.aval for v in jaxpr.outvars]
-      assert in_avals_raised == exp_in_avals, "expected: {}, got: {}".format(exp_in_avals, in_avals_raised)
-      assert out_avals_raised == exp_out_avals, "expected: {}, got: {}".format(exp_out_avals, out_avals_raised)
-
+  def __init__(self, jaxpr: Jaxpr, consts: Sequence):
+    assert len(consts) == len(jaxpr.constvars)
     self.jaxpr = jaxpr
-    self.literals = list(literals)
-    self.in_avals = list(in_avals)
-    self.out_avals = list(out_avals)
+    self.consts = list(consts)
 
-  def __iter__(self):
-    return iter((self.jaxpr, self.literals, self.in_avals, self.out_avals))
+  @property
+  def in_avals(self):
+    return [v.aval for v in self.jaxpr.invars]
 
-  def __str__(self):
-    # TODO(mattjj): improve this with type annotations?
-    return str(pp_jaxpr(self.jaxpr))
-  __repr__ = __str__
+  @property
+  def out_avals(self):
+    return [v.aval for v in self.jaxpr.outvars]
+
+  @property
+  def literals(self):
+    return self.consts  # backwards compatible alias
+
+  def __str__(self): return str(self.jaxpr)
+  def __repr__(self): return repr(self.jaxpr)
 
 @curry
-def jaxpr_as_fun(typed_jaxpr: TypedJaxpr, *args):
-  return eval_jaxpr(typed_jaxpr.jaxpr, typed_jaxpr.literals, *args)
+def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
+  return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
 class JaxprEqn(NamedTuple):
@@ -243,9 +232,6 @@ class Literal:
   def __hash__(self):
     assert False
 
-  def __eq__(self, other):
-    assert False
-
   def __repr__(self):
     if hasattr(self, 'hash'):
       return '{}'.format(self.val)
@@ -268,19 +254,14 @@ class Primitive:
   def __repr__(self):
     return '{}'.format(self.name)
 
-  def bind(self, *args, **kwargs):
+
+  def bind(self, *args, **params):
     assert skip_checks or all(isinstance(arg, Tracer)
                               or valid_jaxtype(arg) for arg in args), args
     top_trace = find_top_trace(args)
-    if top_trace is None:
-      return self.impl(*args, **kwargs)
-
     tracers = map(top_trace.full_raise, args)
-    out_tracer = top_trace.process_primitive(self, tracers, kwargs)
-    if self.multiple_results:
-      return map(full_lower, out_tracer)
-    else:
-      return full_lower(out_tracer)
+    out = top_trace.process_primitive(self, tracers, params)
+    return map(full_lower, out) if self.multiple_results else full_lower(out)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -358,23 +339,24 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
 
 
 class Trace:
-  __slots__ = ['master', 'level', 'sublevel']
+  __slots__ = ['main', 'level', 'sublevel']
 
-  master: 'MasterTrace'
+  main: 'MainTrace'
   level: int
   sublevel: 'Sublevel'
 
-  def __init__(self, master: 'MasterTrace', sublevel: 'Sublevel') -> None:
-    self.master = master
-    self.level = master.level
+  def __init__(self, main: 'MainTrace', sublevel: 'Sublevel') -> None:
+    self.main = main
+    self.level = main.level
     self.sublevel = sublevel
 
   def full_raise(self, val) -> 'Tracer':
     if not isinstance(val, Tracer):
       return self.pure(val)
+    val._assert_live()
     level = self.level
     sublevel = self.sublevel
-    if val._trace.master is self.master:
+    if val._trace.main is self.main:
       if val._trace.sublevel == sublevel:
         return val
       elif val._trace.sublevel < sublevel:
@@ -411,30 +393,33 @@ class Trace:
         self.__class__.__name__, self.level, self.sublevel)
 
   def process_call(self, call_primitive, f, tracers, params):
-    raise NotImplementedError("must override to handle call-like primitives")
+    msg = (f"{type(self)} must override process_call to handle call-like "
+           "primitives")
+    raise NotImplementedError(msg)
 
   def process_map(self, call_primitive, f, tracers, params):
-    raise NotImplementedError("must override to handle map-like primitives")
+    msg = (f"{type(self)} must override process_map to handle map-like "
+           "primitives")
+    raise NotImplementedError(msg)
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
-    # As a default implementation, drop the custom differentiation rule. This
-    # behavior is desirable when staging out of the JAX system, but not when
-    # there are further differentiation transformations to be applied. Override
-    # this method to allow differentiation to be performed downstream.
-    del primitive, jvp  # Unused.
-    return fun.call_wrapped(*tracers)
+    msg = (f"{type(self)} must override process_custom_jvp_call "
+           "to handle custom_jvp primitives")
+    raise NotImplementedError(msg)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
-    # See comment in the above process_custom_jvp_call method.
-    del primitive, fwd, bwd, out_trees  # Unused.
-    return fun.call_wrapped(*tracers)
+    msg = (f"{type(self)} must override process_custom_vjp_call "
+           "to handle custom_vjp primitives")
+    raise NotImplementedError(msg)
 
-def escaped_tracer_error(detail):
+def escaped_tracer_error(detail=None):
   msg = ("Encountered an unexpected tracer. Perhaps this tracer escaped "
          "through global state from a previously traced function.\n"
          "The functions being transformed should not save traced values to "
-         "global state.\nDetails: {}.")
-  return UnexpectedTracerError(msg.format(detail))
+         "global state.")
+  if detail:
+    msg += " Detail: {}.".format(detail)
+  return UnexpectedTracerError(msg)
 
 class UnexpectedTracerError(Exception): pass
 
@@ -469,6 +454,12 @@ class Tracer:
   def aval(self):
     raise NotImplementedError("must override")
 
+  def _assert_live(self) -> None:
+    pass  # Override for liveness checking
+
+  # Python looks up special methods only on classes, not instances. This means
+  # these methods needs to be defined explicitly rather than relying on
+  # __getattr__.
   def __neg__(self): return self.aval._neg(self)
   def __pos__(self): return self.aval._pos(self)
   def __eq__(self, other): return self.aval._eq(self, other)
@@ -516,17 +507,14 @@ class Tracer:
   def __long__(self): return self.aval._long(self)
   def __hex__(self): return self.aval._hex(self)
   def __oct__(self): return self.aval._oct(self)
-
-  def __float__(self):
-    raise TypeError("JAX Tracer object cannot be interpreted as a float. "
-                    "Try using `x.astype(float)` instead.")
-
-  def __complex__(self):
-    raise TypeError("JAX Tracer object cannot be interpreted as a complex. "
-                    "Try using `x.astype(complex)` instead.")
+  def __float__(self): return self.aval._float(self)
+  def __complex__(self): return self.aval._complex(self)
 
   def __setitem__(self, idx, val):
     raise TypeError("JAX 'Tracer' objects do not support item assignment")
+
+  # NumPy also only looks up special methods on classes.
+  def __array_module__(self, types): return self.aval._array_module(self, types)
 
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
@@ -567,6 +555,9 @@ class Tracer:
   def __deepcopy__(self, unused_memo):
     return self
 
+  def _origin_msg(self) -> str:
+    return ""
+
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
 aval_property = namedtuple("aval_property", ["fget"])
@@ -574,6 +565,7 @@ aval_method = namedtuple("aval_method", ["fun"])
 
 
 class EvalTrace(Trace):
+  # See comments in https://github.com/google/jax/pull/3370
   def pure(self, x): return x
   lift = sublift = pure
 
@@ -584,8 +576,16 @@ class EvalTrace(Trace):
     return primitive.impl(f, *tracers, **params)
   process_map = process_call
 
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+    del primitive, jvp  # Unused.
+    return fun.call_wrapped(*tracers)
 
-class MasterTrace:
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+    del primitive, fwd, bwd, out_trees  # Unused.
+    return fun.call_wrapped(*tracers)
+
+
+class MainTrace:
   level: int
   trace_type: Type[Trace]
 
@@ -594,71 +594,62 @@ class MasterTrace:
     self.trace_type = trace_type
 
   def __repr__(self) -> str:
-    return "MasterTrace({},{})".format(self.level, self.trace_type.__name__)
+    return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
 
   def __hash__(self) -> int:
     return hash((self.level, self.trace_type))
 
   def __eq__(self, other: object) -> bool:
-    return (isinstance(other, MasterTrace) and
+    return (isinstance(other, MainTrace) and
             self.level == other.level and self.trace_type == other.trace_type)
 
 class TraceStack:
-  upward: List[MasterTrace]
-  downward: List[MasterTrace]
+  # See comments in https://github.com/google/jax/pull/3370
+  upward: List[MainTrace]
+  downward: List[MainTrace]
 
   def __init__(self):
-    self.upward = []
-    self.downward = []
+    eval_trace = MainTrace(0, EvalTrace)
+    self.stack = [eval_trace]
+    self.dynamic = eval_trace
 
-  def next_level(self, bottom: bool) -> int:
-    if bottom:
-      return - (len(self.downward) + 1)
-    else:
-      return len(self.upward)
+  def next_level(self) -> int:
+    return len(self.stack)
 
-  def push(self, master_trace: MasterTrace, bottom: bool) -> None:
-    if bottom:
-      self.downward.append(master_trace)
-    else:
-      self.upward.append(master_trace)
+  def push(self, main_trace: MainTrace) -> None:
+    self.stack.append(main_trace)
 
-  def pop(self, bottom: bool) -> None:
-    if bottom:
-      self.downward.pop()
-    else:
-      self.upward.pop()
+  def pop(self) -> None:
+    self.stack.pop()
 
   def __repr__(self) -> str:
-    return  'Trace stack\n{} ---\n{}'.format(
-      map('  {}\n'.format, self.upward[::-1]),
-      map('  {}\n'.format, self.downward))
+    stack_str = map('  {}\n'.format, self.stack[::-1])
+    return f'Trace stack\n{stack_str}\n{self.dynamic}'
 
   def copy(self):
-    new = TraceStack()
-    new.upward = self.upward[:]
-    new.downward = self.downward[:]
+    new = self.__new__(TraceStack)
+    new.stack = self.stack[:]
+    new.dynamic = self.dynamic
     return new
 
 class Sublevel(int): pass
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size'])
-
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
 
 class TraceState:
   trace_stack: TraceStack
   substack: List[Sublevel]
-  initial_style: bool
+  axis_env: List[AxisEnvFrame]
 
   def __init__(self) -> None:
     self.trace_stack = TraceStack()
     self.substack = [Sublevel(0)]
-    self.initial_style = False
+    self.axis_env = []
 
   def copy(self):
-    new = TraceState()
+    new = self.__new__(TraceState)
     new.trace_stack = self.trace_stack.copy()
     new.substack = self.substack[:]
-    new.initial_style = self.initial_style
+    new.axis_env = self.axis_env[:]
     return new
 
 # The global state of the tracer is accessed by a thread-local object.
@@ -669,11 +660,16 @@ class ThreadLocalState(threading.local):
     self.trace_state = TraceState()
 thread_local_state = ThreadLocalState()
 
+def trace_state_clean() -> bool:
+  trace_state = thread_local_state.trace_state
+  return (trace_state.substack == [Sublevel(0)] and
+          trace_state.axis_env == [] and
+          trace_state.trace_stack.stack == [MainTrace(0, EvalTrace)] and
+          trace_state.trace_stack.dynamic == MainTrace(0, EvalTrace))
+
 def reset_trace_state() -> bool:
   "Reset the global trace state and return True if it was already clean."
-  if (thread_local_state.trace_state.substack != [Sublevel(0)] or
-      thread_local_state.trace_state.trace_stack.downward or
-      thread_local_state.trace_state.trace_stack.upward):
+  if not trace_state_clean():
     thread_local_state.trace_state.__init__()  # type: ignore
     return False
   else:
@@ -683,22 +679,47 @@ def cur_sublevel() -> Sublevel:
   return thread_local_state.trace_state.substack[-1]
 
 @contextmanager
-def new_master(trace_type: Type[Trace], bottom=False) -> Generator[MasterTrace, None, None]:
-  level = thread_local_state.trace_state.trace_stack.next_level(bottom)
-  master = MasterTrace(level, trace_type)
-  thread_local_state.trace_state.trace_stack.push(master, bottom)
+def new_main(trace_type: Type[Trace], dynamic: bool = False,
+                ) -> Generator[MainTrace, None, None]:
+  # See comments in https://github.com/google/jax/pull/3370
+  stack = thread_local_state.trace_state.trace_stack
+  level = stack.next_level()
+  main = MainTrace(level, trace_type)
+  stack.push(main)
+  if dynamic:
+    prev_dynamic, stack.dynamic = stack.dynamic, main
 
   try:
-    yield master
+    yield main
   finally:
-    thread_local_state.trace_state.trace_stack.pop(bottom)
+    thread_local_state.trace_state.trace_stack.pop()
+    if dynamic:
+      stack.dynamic = prev_dynamic
 
   if check_leaks:
-    t = ref(master)
-    del master
+    t = ref(main)
+    del main
     if t() is not None:
       print(thread_local_state.trace_state.trace_stack)
       raise Exception('Leaked trace {}'.format(t()))
+
+@contextmanager
+def new_base_main(trace_type: Type[Trace]) -> Generator[MainTrace, None, None]:
+  # See comments in https://github.com/google/jax/pull/3370
+  stack = thread_local_state.trace_state.trace_stack
+  main = MainTrace(0, trace_type)
+  prev_dynamic, stack.dynamic = stack.dynamic, main
+  prev_base, stack.stack[0] = stack.stack[0], main
+  try:
+    yield main
+  finally:
+    stack.dynamic = prev_dynamic
+    stack.stack[0] = prev_base
+
+@contextmanager
+def eval_context():
+  with new_base_main(EvalTrace):
+    yield
 
 @contextmanager
 def new_sublevel() -> Generator[None, None, None]:
@@ -715,29 +736,24 @@ def new_sublevel() -> Generator[None, None, None]:
     if t() is not None:
       raise Exception('Leaked sublevel {}'.format(t()))
 
+def maybe_new_sublevel(trace):
+  # dynamic traces run the WrappedFun, so we raise the sublevel for them
+  dynamic = thread_local_state.trace_state.trace_stack.dynamic
+  return new_sublevel() if trace.main is dynamic else suppress()
+
 def full_lower(val):
   if isinstance(val, Tracer):
     return val.full_lower()
   else:
     return val
 
-def find_top_trace(xs) -> Optional[Trace]:
-  top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
-                  key=attrgetter('level'), default=None)
-  return top_trace and type(top_trace)(top_trace.master, cur_sublevel())
-
-@contextmanager
-def initial_style_staging():
-  trace_state = thread_local_state.trace_state
-  prev, trace_state.initial_style = trace_state.initial_style, True
-  try:
-    yield
-  finally:
-    trace_state.initial_style = prev
-
-@contextmanager
-def eval_context():
-  yield  # dummy implementation for forward compatibility
+def find_top_trace(xs) -> Trace:
+  top_main = max((x._trace.main for x in xs if isinstance(x, Tracer)),
+                 default=None, key=attrgetter('level'))
+  dynamic = thread_local_state.trace_state.trace_stack.dynamic
+  top_main = (dynamic if top_main is None or dynamic.level > top_main.level
+                else top_main)
+  return top_main and top_main.trace_type(top_main, cur_sublevel())  # type: ignore
 
 
 # -------------------- abstract values --------------------
@@ -745,9 +761,10 @@ def eval_context():
 
 class AbstractValue:
   __slots__: List[str] = []
+  _num_buffers: int = 1  # number of buffers used to represent the value.
 
   def at_least_vspace(self):
-    assert False
+    return self
 
   def __repr__(self):
     try:
@@ -767,6 +784,8 @@ class Bot(AbstractValue): pass
 bot = Bot()
 
 class AbstractUnit(AbstractValue):
+  # TODO(jakevdp): make it possible to set zero buffers
+  # _num_buffers = 0
   def join(self, other):
     if not skip_checks:
       assert other is abstract_unit, other
@@ -840,20 +859,22 @@ pytype_aval_mappings[Unit] = lambda _: abstract_unit
 
 class ConcretizationTypeError(TypeError): pass
 
-def raise_concretization_error(val, context=""):
-  msg = (f"Abstract tracer value encountered where concrete value is expected ({context}).\n"
-          "Use transformation parameters such as `static_argnums` for `jit` "
-          "to avoid tracing input values.\n"
-          "See `https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error`.\n"
-          f"Encountered value: {val}")
+def raise_concretization_error(val: Tracer, context=""):
+  msg = ("Abstract tracer value encountered where concrete value is expected.\n\n"
+         + context + "\n\n"
+         + val._origin_msg() + "\n\n"
+         "See https://jax.readthedocs.io/en/latest/faq.html#abstract-tracer-value-encountered-where-concrete-value-is-expected-error for more information.\n\n"
+          f"Encountered tracer value: {val}")
   raise ConcretizationTypeError(msg)
 
 
-def concretization_function_error(fun, context=""):
+def concretization_function_error(fun, suggest_astype=False):
   fname = getattr(fun, "__name__", fun)
-  fname_context = f"in `{fname}`"
-  if context:
-    fname_context += f" {context}"
+  fname_context = f"The problem arose with the `{fname}` function. "
+  if suggest_astype:
+    fname_context += ("If trying to convert the data type of a value, "
+                      f"try using `x.astype({fun.__name__})` "
+                      f"or `jnp.array(x, {fun.__name__})` instead.")
   def error(self, arg):
     raise_concretization_error(arg, fname_context)
   return error
@@ -861,6 +882,8 @@ def concretization_function_error(fun, context=""):
 
 def concrete_or_error(force: Any, val: Any, context=""):
   """Like force(val), but gives the context in the error message."""
+  if force is None:
+    force = lambda x: x
   if isinstance(val, Tracer):
     if isinstance(val.aval, ConcreteArray):
       return force(val.aval.val)
@@ -895,17 +918,15 @@ class UnshapedArray(AbstractValue):
                              ", weak_type=True" if self.weak_type else "")
 
   _bool = _nonzero = concretization_function_error(bool)
-  _float   = concretization_function_error(
-      float, "Try using `x.astype(float)` instead.")
-  _int     = concretization_function_error(
-      int, "Try using `x.astype(int)` instead.")
-  _complex = concretization_function_error(
-      complex, "Try using `x.astype(complex)` instead.")
+  _float   = concretization_function_error(float, True)
+  _int     = concretization_function_error(int, True)
+  _complex = concretization_function_error(complex, True)
   _hex     = concretization_function_error(hex)
   _oct     = concretization_function_error(oct)
 
   def at_least_vspace(self) -> AbstractValue:
-    return self
+    return UnshapedArray(primal_dtype_to_tangent_dtype(self.dtype),
+                         self.weak_type)
 
   def join(self, other):
     if self.dtype == other.dtype:
@@ -958,7 +979,8 @@ class ShapedArray(UnshapedArray):
     return hash((self.shape, self.dtype, self.weak_type))
 
   def at_least_vspace(self):
-    return self
+    return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
+                       self.weak_type)
 
   def join(self, other):
     if self.shape == other.shape and self.dtype == other.dtype:
@@ -978,8 +1000,8 @@ class ShapedArray(UnshapedArray):
   def __len__(self):
     try:
       return self.shape[0]
-    except IndexError:
-      raise TypeError("len() of unsized object")  # same as numpy error
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err  # same as numpy error
 
   def _len(self, ignored_tracer):
     return len(self)
@@ -1000,7 +1022,7 @@ class ConcreteArray(ShapedArray):
                                         weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
     self.val = val
-    assert self.dtype != np.dtype('O')
+    assert self.dtype != np.dtype('O'), val
 
   def __eq__(self, other):
     return (type(self) is type(other) and self.dtype == other.dtype
@@ -1011,7 +1033,8 @@ class ConcreteArray(ShapedArray):
     return id(self.val)
 
   def at_least_vspace(self):
-    return ShapedArray(self.shape, self.dtype, weak_type=self.weak_type)
+    return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
+                       weak_type=self.weak_type)
 
   def join(self, other) -> UnshapedArray:
     if self == other:
@@ -1032,10 +1055,18 @@ class ConcreteArray(ShapedArray):
     return ConcreteArray(self.val) if self.weak_type else self
 
   _bool = _nonzero = partialmethod(_forward_to_value, bool)
-  _int     = partialmethod(_forward_to_value, int)
-  _hex     = partialmethod(_forward_to_value, hex)
-  _oct     = partialmethod(_forward_to_value, oct)
+  _int             = partialmethod(_forward_to_value, int)
+  _hex             = partialmethod(_forward_to_value, hex)
+  _oct             = partialmethod(_forward_to_value, oct)
 
+  _float           = concretization_function_error(float, True)
+  _complex         = concretization_function_error(complex, True)
+
+def primal_dtype_to_tangent_dtype(primal_dtype):
+  if not dtypes.issubdtype(primal_dtype, np.inexact):
+    return dtypes.float0
+  else:
+    return primal_dtype
 
 class AbstractToken(AbstractValue):
   def join(self, other):
@@ -1048,15 +1079,19 @@ class AbstractToken(AbstractValue):
 abstract_token = AbstractToken()
 
 
-def raise_to_shaped(aval: AbstractValue, weak_type=False):
-  if isinstance(aval, ShapedArray):
-    return ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
-  elif aval is abstract_unit:
-    return abstract_unit
-  elif aval is abstract_token:
-    return abstract_token
-  else:
-    raise TypeError(type(aval))
+def raise_to_shaped(aval: AbstractValue, weak_type=None):
+  if weak_type is None:
+    weak_type = getattr(aval, 'weak_type', False)
+  for typ in type(aval).mro():
+    handler = raise_to_shaped_mappings.get(typ)
+    if handler: return handler(aval, weak_type)
+  raise TypeError(type(aval))
+
+raise_to_shaped_mappings : Dict[type, Callable] = {
+  AbstractUnit: lambda aval, _: aval,
+  AbstractToken: lambda aval, _: aval,
+  ShapedArray: lambda aval, weak_type: ShapedArray(aval.shape, aval.dtype, weak_type=weak_type)
+}
 
 # Registry for valid dimension types. This is used by masking.Poly.
 _DIMENSION_TYPES: Set[type] = {int}
@@ -1110,27 +1145,23 @@ def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
       ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans._trace)(ans._trace.master, cur_sublevel())
+    trace = type(ans._trace)(ans._trace.main, cur_sublevel())
     outs = map(trace.full_raise, outs)
     outs, cur_todo = primitive.post_process(trace, outs, params)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
-              fun: lu.WrappedFun, *args, **params):
+              fun, *args, **params):
   params_tuple = tuple(params.items())
   top_trace = find_top_trace(args)
-  level = (thread_local_state.trace_state.trace_stack.next_level(True)
-           if top_trace is None else top_trace.level)
-  params_tuple = tuple(params.items())
-  fun, env_trace_todo = process_env_traces(fun, primitive, level, params_tuple)
-  if top_trace is None:
-    with new_sublevel():
-      outs = primitive.impl(fun, *args, **params)
-  else:
-    tracers = map(top_trace.full_raise, args)
+  fun, env_trace_todo = process_env_traces(
+      fun, primitive, top_trace and top_trace.level, params_tuple)
+  tracers = map(top_trace.full_raise, args)
+  with maybe_new_sublevel(top_trace):
     outs = primitive.process(top_trace, fun, tracers, params)
-  return apply_todos(env_trace_todo(), map(full_lower, outs))
+  return map(full_lower, apply_todos(env_trace_todo(), outs))
+
 
 class CallPrimitive(Primitive):
   multiple_results = True
@@ -1170,6 +1201,53 @@ class MapPrimitive(Primitive):
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_map(self, out_tracers, params)
 
+@contextmanager
+def extend_axis_env(axis_name, size: int, tag: Any):
+  frame = AxisEnvFrame(axis_name, size, tag)
+  thread_local_state.trace_state.axis_env.append(frame)
+  try:
+    yield
+  finally:
+    thread_local_state.trace_state.axis_env.pop()
+
+
+# When a mapped function is given no axis name, we generate a name object based
+# on the id of the function object. Collisions aren't important because this
+# name can't be used in collectives, as user code never gets a ref to this
+# object. We don't want to use the function object itself because that might
+# persist references to the function object.
+# TODO(mattjj): revisit this unique axis name strategy
+class _TempAxisName:
+
+  def __init__(self, obj):
+    self.id = id(obj)
+
+  def __repr__(self):
+    return f'<axis {hex(self.id)}>'
+
+  def __hash__(self):
+    return hash(self.id)
+
+  def __eq__(self, other):
+    return type(other) is _TempAxisName and self.id == other.id
+
+
+def axis_frame(axis_name):
+  frames = thread_local_state.trace_state.axis_env
+  for frame in reversed(frames):
+    if frame.name == axis_name:
+      return frame
+
+  named_axis = [
+      frame.name
+      for frame in reversed(frames)
+      if not isinstance(frame.name, _TempAxisName)
+  ]
+  raise NameError(
+      f'unbound axis name: {axis_name}. The following axis names (e.g. defined '
+      'by pmap) are available to collectives operations:'
+      f'{named_axis}')
+
 
 # ------------------- Jaxpr checking -------------------
 
@@ -1203,8 +1281,7 @@ def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
     return False
 
 def typematch(aval1: UnshapedArray, aval2: UnshapedArray) -> bool:
-  return (raise_to_shaped(aval1).strip_weak_type() ==
-          raise_to_shaped(aval2).strip_weak_type())
+  return raise_to_shaped(aval1, weak_type=False) == raise_to_shaped(aval2, weak_type=False)
 
 class JaxprTypeError(TypeError): pass
 
@@ -1260,9 +1337,9 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
   map(write, jaxpr.invars, in_avals)
 
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
-    in_avals = map(read, eqn.invars)
     prim = eqn.primitive
     try:
+      in_avals = map(read, eqn.invars)
       if prim in custom_typechecks:
         custom_typechecks[prim](*in_avals, **eqn.params)
       if prim.call_primitive:
@@ -1349,7 +1426,7 @@ def pp_vars(vs: Sequence[Any], print_shapes: bool = False) -> str:
 def pp_eqn_compact(primitive_name: str, params: Dict) -> PrettyPrint:
   filtered_params = {k: v for k, v in params.items()
                      if (k != 'branches' and
-                         not isinstance(v, (Jaxpr, TypedJaxpr)))}
+                         not isinstance(v, (Jaxpr, ClosedJaxpr)))}
   return pp(primitive_name) >> pp_kv_pairs(sorted(filtered_params.items()))
 
 def pp_eqn(eqn: JaxprEqn, print_shapes: bool = False) -> PrettyPrint:
@@ -1358,7 +1435,7 @@ def pp_eqn(eqn: JaxprEqn, print_shapes: bool = False) -> PrettyPrint:
   pp_rhs = (pp(eqn.primitive.name) >>
             pp_kv_pairs(sorted(eqn.params.items())) >> pp(' ') >>
             pp(pp_vars(eqn.invars, print_shapes)))
-  if len(lhs) <= 6:
+  if len(lhs) <= 6 or print_shapes:
     return pp_lhs >> pp(' ') >> pp_rhs
   else:
     return pp_lhs + pp_rhs.indent(2)
@@ -1388,7 +1465,7 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
   eqns = jaxpr.eqns[lo:hi]
   pps = []
   if len(eqns) == 0 and len(jaxpr.eqns) != 0:
-      pps.append(pp('...'))
+    pps.append(pp('...'))
   else:
     if lo != 0:
       pps.append(pp('...'))
@@ -1402,11 +1479,11 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int,
            + pp('in {} }}'.format(str_outvars))).indent(2))
 
 def pp_jaxprs(jaxprs) -> PrettyPrint:
-  jaxprs = [j.jaxpr if isinstance(j, TypedJaxpr) else j for j in jaxprs]
+  jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp('( ') >> vcat(map(pp_jaxpr, jaxprs)) >> pp(' )')
 
 def pp_kv_pair(k, v):
-  if type(v) is tuple and all(isinstance(j, (Jaxpr, TypedJaxpr)) for j in v):
+  if type(v) is tuple and all(isinstance(j, (Jaxpr, ClosedJaxpr)) for j in v):
     pp_v = pp_jaxprs(v)
   else:
     pp_v = pp(v)
@@ -1418,60 +1495,64 @@ def pp_kv_pairs(kv_pairs):
   else:
     return pp('')
 
-
-# TODO(mattjj): remove when omnistaging fully lands
-@config.omnistaging_enablers.append
-@no_type_check
-def omnistaging_enabler() -> None:
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
-      new_master, reset_trace_state, extend_axis_env, axis_frame, \
-      axis_index, axis_index_p, new_base_master, eval_context, \
-      TraceStack, TraceState
-  del initial_style_staging
+      new_main, reset_trace_state, TraceStack, TraceState, extend_axis_env, \
+      eval_context
 
   class TraceStack:
-    stack: List[MasterTrace]
-    dynamic: MasterTrace
+    upward: List[MainTrace]
+    downward: List[MainTrace]
 
     def __init__(self):
-      eval_trace = MasterTrace(0, EvalTrace)
-      self.stack = [eval_trace]
-      self.dynamic = eval_trace
+      self.upward = []
+      self.downward = []
 
-    def next_level(self) -> int:
-      return len(self.stack)
+    def next_level(self, bottom: bool) -> int:
+      if bottom:
+        return - (len(self.downward) + 1)
+      else:
+        return len(self.upward)
 
-    def push(self, master_trace: MasterTrace) -> None:
-      self.stack.append(master_trace)
+    def push(self, main_trace: MainTrace, bottom: bool) -> None:
+      if bottom:
+        self.downward.append(main_trace)
+      else:
+        self.upward.append(main_trace)
 
-    def pop(self) -> None:
-      self.stack.pop()
+    def pop(self, bottom: bool) -> None:
+      if bottom:
+        self.downward.pop()
+      else:
+        self.upward.pop()
 
     def __repr__(self) -> str:
-      stack_str = map('  {}\n'.format, self.stack[::-1])
-      return f'Trace stack\n{stack_str}\n{self.dynamic}'
+      return  'Trace stack\n{} ---\n{}'.format(
+        map('  {}\n'.format, self.upward[::-1]),
+        map('  {}\n'.format, self.downward))
 
     def copy(self):
-      new = self.__new__(TraceStack)
-      new.stack = self.stack[:]
-      new.dynamic = self.dynamic
+      new = TraceStack()
+      new.upward = self.upward[:]
+      new.downward = self.downward[:]
       return new
 
   class TraceState:
     trace_stack: TraceStack
     substack: List[Sublevel]
-    axis_env: List[AxisEnvFrame]
+    initial_style: bool
 
     def __init__(self) -> None:
-      self.trace_stack = TraceStack()
+      self.trace_stack = TraceStack()  # type: ignore
       self.substack = [Sublevel(0)]
-      self.axis_env = []
+      self.initial_style = False
 
     def copy(self):
-      new = self.__new__(TraceState)
+      new = TraceState()
       new.trace_stack = self.trace_stack.copy()
       new.substack = self.substack[:]
-      new.axis_env = self.axis_env[:]
+      new.initial_style = self.initial_style
       return new
 
   thread_local_state = ThreadLocalState()
@@ -1479,144 +1560,86 @@ def omnistaging_enabler() -> None:
   def reset_trace_state() -> bool:
     "Reset the global trace state and return True if it was already clean."
     if (thread_local_state.trace_state.substack != [Sublevel(0)] or
-        thread_local_state.trace_state.axis_env != [] or
-        thread_local_state.trace_state.trace_stack.stack != [MasterTrace(0, EvalTrace)] or
-        thread_local_state.trace_state.trace_stack.dynamic != MasterTrace(0, EvalTrace)):
+        thread_local_state.trace_state.trace_stack.downward or
+        thread_local_state.trace_state.trace_stack.upward):
       thread_local_state.trace_state.__init__()  # type: ignore
       return False
     else:
       return True
 
-  def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
-                fun, *args, **params):
-    params_tuple = tuple(params.items())
-    top_trace = find_top_trace(args)
-    fun, env_trace_todo = process_env_traces(
-        fun, primitive, top_trace and top_trace.level, params_tuple)
-    tracers = map(top_trace.full_raise, args)
-    with maybe_new_sublevel(top_trace):
-      outs = primitive.process(top_trace, fun, tracers, params)
-    return map(full_lower, apply_todos(env_trace_todo(), outs))
-
-  def maybe_new_sublevel(trace):
-    # dynamic traces run the WrappedFun, so we raise the sublevel for them
-    dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    return new_sublevel() if trace.master is dynamic else suppress()
-
-  def find_top_trace(xs) -> Trace:
-    top_master = max((x._trace.master for x in xs if isinstance(x, Tracer)),
-                     default=None, key=attrgetter('level'))
-    dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    top_master = (dynamic if top_master is None or dynamic.level > top_master.level
-                  else top_master)
-    return top_master and top_master.trace_type(top_master, cur_sublevel())  # type: ignore
-
   @contextmanager
-  def new_master(trace_type: Type[Trace], dynamic: bool = False,
-                 ) -> Generator[MasterTrace, None, None]:
-    stack = thread_local_state.trace_state.trace_stack
-    level = stack.next_level()
-    master = MasterTrace(level, trace_type)
-    stack.push(master)
-    if dynamic:
-      prev_dynamic, stack.dynamic = stack.dynamic, master
+  def new_main(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
+    level = thread_local_state.trace_state.trace_stack.next_level(bottom)
+    main = MainTrace(level, trace_type)
+    thread_local_state.trace_state.trace_stack.push(main, bottom)
 
     try:
-      yield master
+      yield main
     finally:
-      thread_local_state.trace_state.trace_stack.pop()
-      if dynamic:
-        stack.dynamic = prev_dynamic
+      thread_local_state.trace_state.trace_stack.pop(bottom)
 
     if check_leaks:
-      t = ref(master)
-      del master
+      t = ref(main)
+      del main
       if t() is not None:
         print(thread_local_state.trace_state.trace_stack)
         raise Exception('Leaked trace {}'.format(t()))
 
-  @contextmanager
-  def new_base_master(trace_type: Type[Trace]) -> Generator[MasterTrace, None, None]:
-    stack = thread_local_state.trace_state.trace_stack
-    master = MasterTrace(0, trace_type)
-    prev_dynamic, stack.dynamic = stack.dynamic, master
-    prev_base, stack.stack[0] = stack.stack[0], master
-    try:
-      yield master
-    finally:
-      stack.dynamic = prev_dynamic
-      stack.stack[0] = prev_base
+  def find_top_trace(xs) -> Optional[Trace]:
+    top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
+                    key=attrgetter('level'), default=None)
+    return top_trace and type(top_trace)(top_trace.main, cur_sublevel())
 
   @contextmanager
   def eval_context():
-    with new_base_master(EvalTrace):
-      yield
+    yield  # dummy implementation for forward compatibility
 
-  def bind(self, *args, **params):
+  def bind(self, *args, **kwargs):
     assert skip_checks or all(isinstance(arg, Tracer)
                               or valid_jaxtype(arg) for arg in args), args
     top_trace = find_top_trace(args)
+    if top_trace is None:
+      return self.impl(*args, **kwargs)
+
     tracers = map(top_trace.full_raise, args)
-    out = top_trace.process_primitive(self, tracers, params)
-    return map(full_lower, out) if self.multiple_results else full_lower(out)
-  Primitive.bind = bind
+    out_tracer = top_trace.process_primitive(self, tracers, kwargs)
+    if self.multiple_results:
+      return map(full_lower, out_tracer)
+    else:
+      return full_lower(out_tracer)
+  Primitive.bind = bind  # type: ignore
+
+  def call_bind(primitive: Union['CallPrimitive', 'MapPrimitive'],
+                fun: lu.WrappedFun, *args, **params):
+    params_tuple = tuple(params.items())
+    top_trace = find_top_trace(args)
+    level = (thread_local_state.trace_state.trace_stack.next_level(True)
+            if top_trace is None else top_trace.level)
+    params_tuple = tuple(params.items())
+    fun, env_trace_todo = process_env_traces(fun, primitive, level, params_tuple)
+    if top_trace is None:
+      with new_sublevel():
+        outs = primitive.impl(fun, *args, **params)
+    else:
+      tracers = map(top_trace.full_raise, args)
+      outs = primitive.process(top_trace, fun, tracers, params)
+    return apply_todos(env_trace_todo(), map(full_lower, outs))
 
   @contextmanager
-  def extend_axis_env(axis_name, size: int):
-    frame = AxisEnvFrame(axis_name, size)
-    thread_local_state.trace_state.axis_env.append(frame)
+  def extend_axis_env(axis_name, size: int, tag: Any):
+    yield
+
+  @contextmanager
+  def initial_style_staging():
+    trace_state = thread_local_state.trace_state
+    prev, trace_state.initial_style = trace_state.initial_style, True
     try:
       yield
     finally:
-      frame_ = thread_local_state.trace_state.axis_env.pop()
-      assert frame is frame_
+      trace_state.initial_style = prev
 
-  def axis_frame(axis_name):
-    frames = thread_local_state.trace_state.axis_env
-    for frame in reversed(frames):
-      if frame.name == axis_name:
-        return frame
-    else:
-      raise NameError("unbound axis name: {}".format(axis_name))
-
-  def axis_index(axis_name):
-    """Return the index along the mapped axis ``axis_name``.
-
-    Args:
-      axis_name: hashable Python object used to name the mapped axis.
-
-    Returns:
-      An integer representing the index.
-
-    For example, with 8 XLA devices available:
-
-    >>> from functools import partial
-    >>> @partial(jax.pmap, axis_name='i')
-    ... def f(_):
-    ...   return lax.axis_index('i')
-    ...
-    >>> f(np.zeros(4))
-    ShardedDeviceArray([0, 1, 2, 3], dtype=int32)
-    >>> f(np.zeros(8))
-    ShardedDeviceArray([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
-    >>> @partial(jax.pmap, axis_name='i')
-    ... @partial(jax.pmap, axis_name='j')
-    ... def f(_):
-    ...   return lax.axis_index('i'), lax.axis_index('j')
-    ...
-    >>> x, y = f(np.zeros((4, 2)))
-    >>> print(x)
-    [[0 0]
-    [1 1]
-    [2 2]
-    [3 3]]
-    >>> print(y)
-    [[0 1]
-    [0 1]
-    [0 1]
-    [0 1]]
-    """
-    return axis_index_p.bind(axis_name=axis_name)
-
-  axis_index_p = Primitive('axis_index')
-  axis_index_p.def_abstract_eval(lambda *, axis_name: ShapedArray((), np.int32))
+# Casting float0 array to a float-valued zero array.
+def zeros_like_float0(array, dtype=None):
+  if not dtype:
+    dtype = np.float
+  return np.zeros(array.shape, dtype)

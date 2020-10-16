@@ -24,6 +24,7 @@ import jax
 from jax import numpy as jnp
 from jax import pmap
 from jax.config import config
+from jax.util import prod
 
 from benchmarks import benchmark
 
@@ -38,7 +39,7 @@ def pmap_shard_sharded_device_array_benchmark():
   """
 
   def get_benchmark_fn(nargs, nshards):
-    pmap_fn = pmap(lambda *args: jnp.sum(args))
+    pmap_fn = pmap(lambda *args: jnp.sum(jnp.array(args)))
     shape = (nshards, 4)
     args = [np.random.random(shape) for _ in range(nargs)]
     sharded_args = pmap(lambda x: x)(args)
@@ -68,7 +69,7 @@ def pmap_shard_device_array_benchmark():
   """
 
   def get_benchmark_fn(nargs, nshards):
-    pmap_fn = pmap(lambda *args: jnp.sum(args))
+    pmap_fn = pmap(lambda *args: jnp.sum(jnp.array(args)))
     shape = (nshards, 4)
     args = [jnp.array(np.random.random(shape)) for _ in range(nargs)]
     assert all(isinstance(arg, jax.xla.DeviceArray) for arg in args)
@@ -118,7 +119,7 @@ def sharded_device_array_indexing_benchmark():
     nshards = min(8, jax.local_device_count())
     shape = (nshards, 8, 8)
     def benchmark_fn():
-      arr = pmap(lambda x: x)(jnp.arange(jnp.prod(shape)).reshape(shape))
+      arr = pmap(lambda x: x)(jnp.arange(prod(shape)).reshape(shape))
       indices = indices_fn()
       for idx in indices:
         arr[idx]

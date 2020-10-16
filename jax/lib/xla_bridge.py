@@ -263,7 +263,7 @@ def host_id(backend: str = None):
 
 def host_ids(backend: str = None):
   """Returns a sorted list of all host IDs."""
-  return sorted(list(set(d.host_id for d in devices(backend))))
+  return sorted({d.host_id for d in devices(backend)})
 
 
 def host_count(backend: str = None):
@@ -406,7 +406,9 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
     staged into the XLA Computation.
   """
   # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
-  if np.any(np.equal(0, val.strides)) and val.size > 0:
+  if dtypes.result_type(val) == dtypes.float0:
+    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool))
+  elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)

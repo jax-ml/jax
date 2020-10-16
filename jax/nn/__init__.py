@@ -28,6 +28,7 @@ from .functions import (
   leaky_relu,
   log_sigmoid,
   log_softmax,
+  logsumexp,
   normalize,
   one_hot,
   relu,

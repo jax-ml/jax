@@ -19,7 +19,6 @@ For an example of its use, see examples/resnet50.py.
 
 
 import functools
-import itertools
 import operator as op
 
 from jax import lax
@@ -74,7 +73,6 @@ def GeneralConv(dimension_numbers, out_chan, filter_shape,
     output_shape = lax.conv_general_shape_tuple(
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
-    bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
     k1, k2 = random.split(rng)
     W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)
@@ -102,7 +100,6 @@ def GeneralConvTranspose(dimension_numbers, out_chan, filter_shape,
     output_shape = lax.conv_transpose_shape_tuple(
         input_shape, kernel_shape, strides, padding, dimension_numbers)
     bias_shape = [out_chan if c == 'C' else 1 for c in out_spec]
-    bias_shape = tuple(itertools.dropwhile(lambda x: x == 1, bias_shape))
     k1, k2 = random.split(rng)
     W, b = W_init(k1, kernel_shape), b_init(k2, bias_shape)
     return output_shape, (W, b)

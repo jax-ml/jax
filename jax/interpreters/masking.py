@@ -80,19 +80,19 @@ def mask_fun(fun, logical_env, padded_env, in_vals, polymorphic_shapes):
   logical_env_vals = [logical_env[k] for k in env_keys]
   # Make padded_env hashable
   padded_env = (env_keys, padded_env_vals)
-  with core.new_master(MaskTrace) as master:
-    fun, out_shapes = mask_subtrace(fun, master, polymorphic_shapes, padded_env)
+  with core.new_main(MaskTrace) as main:
+    fun, out_shapes = mask_subtrace(fun, main, polymorphic_shapes, padded_env)
     out_vals = fun.call_wrapped(*(logical_env_vals + in_vals))
-    del master
+    del main
   return out_vals, out_shapes()
 
 @lu.transformation_with_aux
-def mask_subtrace(master, shapes, padded_env, *in_vals):
+def mask_subtrace(main, shapes, padded_env, *in_vals):
   env_keys, _ = padded_env
   logical_env_vals, in_vals = in_vals[:len(env_keys)], in_vals[len(env_keys):]
   logical_env = dict(zip(env_keys, logical_env_vals))
   padded_env = dict(zip(*padded_env))
-  trace = MaskTrace(master, core.cur_sublevel())
+  trace = MaskTrace(main, core.cur_sublevel())
   in_tracers = [MaskTracer(trace, x, s).full_lower()
                 for x, s in zip(in_vals, shapes)]
   with extend_shape_envs(logical_env, padded_env):
@@ -200,6 +200,10 @@ class Poly(dict):
       return False  # See above.
     elif self == other:
       return True
+    else:
+      diff = self - other
+      if diff.is_constant:
+        return int(diff) >= 0
 
     raise ValueError('Polynomials comparison "{} >= {}" is inconclusive.'
                      .format(self, other))
@@ -303,6 +307,7 @@ class ShapeSpec(tuple):
     return 'ShapeSpec({})'.format(', '.join(map(str, self)))
 
 def finalize_spec(polymorphic_shape, padded_shape):
+  # TODO: what if polymorphic_shape has a constant that does not match padded_shape?
   return tuple(_parse_lit(d) if e is _monomorphic_dim else e
                for e, d in zip(polymorphic_shape, padded_shape))
 
@@ -322,7 +327,7 @@ def _parse_dim(spec):
     return prod(map(_parse_dim, spec.split('*')))
   elif spec.isdigit() or spec.startswith('-') and spec[1:].isdigit():
     return _parse_lit(spec)
-  elif spec in _identifiers:
+  elif spec[0] in _identifiers:
     return _parse_id(spec)
   elif spec == '_':
     return _monomorphic_dim
@@ -399,6 +404,8 @@ class MaskTrace(Trace):
     out_aval = primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals, polymorphic_shapes = unzip2((t.val, t.polymorphic_shape) for t in tracers)
     logical_shapes = map(shape_as_value, polymorphic_shapes)
+    # TODO(mattjj): generalize mask rule signature
+    if primitive.name == 'reshape': params['polymorphic_shapes'] = polymorphic_shapes
     out = masking_rule(vals, logical_shapes, **params)
     if primitive.multiple_results:
       return map(partial(MaskTracer, self), out, (o.shape for o in out_aval))
@@ -417,7 +424,7 @@ class MaskTrace(Trace):
       logical_env_vals = tuple(logical_env[k] for k in env_keys)
       # Make padded_env hashable
       padded_env = (env_keys, padded_env_vals)
-      f, shapes_out = mask_subtrace(f, self.master, shapes, padded_env)
+      f, shapes_out = mask_subtrace(f, self.main, shapes, padded_env)
       if 'donated_invars' in params:
         params = dict(params, donated_invars=((False,) * len(logical_env_vals) +
                                               params['donated_invars']))
@@ -426,9 +433,9 @@ class MaskTrace(Trace):
 
   def post_process_call(self, call_primitive, out_tracers, params):
     vals, shapes = unzip2((t.val, t.polymorphic_shape) for t in out_tracers)
-    master = self.master
+    main = self.main
     def todo(vals):
-      trace = MaskTrace(master, core.cur_sublevel())
+      trace = MaskTrace(main, core.cur_sublevel())
       return map(partial(MaskTracer, trace), vals, shapes)
     return vals, todo
 

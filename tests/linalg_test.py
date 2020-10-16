@@ -66,10 +66,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = rng(factor_shape, dtype)
       return [np.matmul(a, jnp.conj(T(a)))]
 
-    if (jnp.issubdtype(dtype, jnp.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      self.skipTest("Unimplemented case for complex Cholesky decomposition.")
-
     self._CheckAgainstNumpy(np.linalg.cholesky, jnp.linalg.cholesky, args_maker,
                             tol=1e-3)
     self._CompileAndCheck(jnp.linalg.cholesky, args_maker)
@@ -189,7 +185,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                     (2, 2, 2), (2, 3, 3), (3, 2, 2)]
       for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")
   def testSlogdet(self, shape, dtype, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
@@ -222,16 +217,26 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                               tol=1e-3)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}".format(
-           jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
+      {"testcase_name": "_shape={}_leftvectors={}_rightvectors={}".format(
+           jtu.format_shape_dtype_string(shape, dtype),
+           compute_left_eigenvectors, compute_right_eigenvectors),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory,
+       "compute_left_eigenvectors": compute_left_eigenvectors,
+       "compute_right_eigenvectors": compute_right_eigenvectors}
       for shape in [(0, 0), (4, 4), (5, 5), (50, 50), (2, 6, 6)]
       for dtype in float_types + complex_types
+      for compute_left_eigenvectors, compute_right_eigenvectors in [
+          (False, False),
+          (True, False),
+          (False, True),
+          (True, True)
+      ]
       for rng_factory in [jtu.rand_default]))
   # TODO(phawkins): enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.skip_on_devices("gpu", "tpu")
-  def testEig(self, shape, dtype, rng_factory):
+  def testEig(self, shape, dtype, compute_left_eigenvectors,
+              compute_right_eigenvectors, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
     n = shape[-1]
@@ -242,9 +247,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       norm = np.linalg.norm(x, axis=(-2, -1))
       return norm / ((n + 1) * jnp.finfo(dtype).eps)
 
+    def check_right_eigenvectors(a, w, vr):
+      self.assertTrue(
+        np.all(norm(np.matmul(a, vr) - w[..., None, :] * vr) < 100))
+
+    def check_left_eigenvectors(a, w, vl):
+      rank = len(a.shape)
+      aH = jnp.conj(a.transpose(list(range(rank - 2)) + [rank - 1, rank - 2]))
+      wC = jnp.conj(w)
+      check_right_eigenvectors(aH, wC, vl)
+
     a, = args_maker()
-    w, v = jnp.linalg.eig(a)
-    self.assertTrue(np.all(norm(np.matmul(a, v) - w[..., None, :] * v) < 100))
+    results = lax_linalg.eig(a, compute_left_eigenvectors,
+                             compute_right_eigenvectors)
+    w = results[0]
+
+    if compute_left_eigenvectors:
+      check_left_eigenvectors(a, w, results[1])
+    if compute_right_eigenvectors:
+      check_right_eigenvectors(a, w, results[1 + compute_left_eigenvectors])
 
     self._CompileAndCheck(partial(jnp.linalg.eig), args_maker,
                           rtol=1e-3)
@@ -553,9 +574,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testQr(self, shape, dtype, full_matrices, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if (jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest("No complex QR implementation")
     m, n = shape[-2:]
 
     if full_matrices:
@@ -1070,10 +1088,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    if (sym_pos and jnp.issubdtype(dtype, np.complexfloating) and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest(
-        "Complex Cholesky decomposition not implemented on TPU")
     osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
     jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
 
@@ -1163,7 +1177,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
           (True, (2, 8, 8), (2, 8, 10)),
       ]
       for rng_factory in [jtu.rand_default]))
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): Test fails on TPU.
   def testTriangularSolveGrad(
       self, lower, transpose_a, conjugate_a, unit_diagonal, left_side, a_shape,
       b_shape, dtype, rng_factory):
@@ -1292,20 +1305,37 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testExpmFrechet(self, n, dtype, rng_factory):
     rng = rng_factory(self.rng())
     jtu.skip_if_unsupported_type(dtype)
-    args_maker = lambda: [rng((n, n), dtype), rng((n, n), dtype),]
+    if dtype == np.float64 or dtype == np.complex128:
+      target_norms = [1.0e-2, 2.0e-1, 9.0e-01, 2.0, 3.0]
+      # TODO(zhangqiaorjc): Reduce tol to default 1e-15.
+      tol = {
+        np.dtype(np.float64): 1e-14,
+        np.dtype(np.complex128): 1e-14,
+      }
+    elif dtype == np.float32 or dtype == np.complex64:
+      target_norms = [4.0e-1, 1.0, 3.0]
+      tol = None
+    else:
+      raise TypeError("dtype={} is not supported.".format(dtype))
+    for norm in target_norms:
+      def args_maker():
+        a = rng((n, n), dtype)
+        a = a / np.linalg.norm(a, 1) * norm
+        e = rng((n, n), dtype)
+        return [a, e, ]
 
-    #compute_expm is True
-    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=True)
-    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=True)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=False)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
-    #compute_expm is False
-    osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=False)
-    jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=False)
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
-                            check_dtypes=False)
-    self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+      #compute_expm is True
+      osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=True)
+      jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=True)
+      self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                              check_dtypes=False, tol=tol)
+      self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
+      #compute_expm is False
+      osp_fun = lambda a,e: osp.linalg.expm_frechet(a,e,compute_expm=False)
+      jsp_fun = lambda a,e: jsp.linalg.expm_frechet(a,e,compute_expm=False)
+      self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                              check_dtypes=False, tol=tol)
+      self._CompileAndCheck(jsp_fun, args_maker, check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
      {"testcase_name":
@@ -1315,10 +1345,30 @@ class ScipyLinalgTest(jtu.JaxTestCase):
      for dtype in float_types + complex_types
      for rng_factory in [jtu.rand_small]))
   def testExpmGrad(self, n, dtype, rng_factory):
-     rng = rng_factory(self.rng())
-     jtu.skip_if_unsupported_type(dtype)
-     a = rng((n, n), dtype)
-     jtu.check_grads(jsp.linalg.expm, (a,), modes=["fwd"], order=1)
+    rng = rng_factory(self.rng())
+    jtu.skip_if_unsupported_type(dtype)
+    a = rng((n, n), dtype)
+    if dtype == np.float64 or dtype == np.complex128:
+      target_norms = [1.0e-2, 2.0e-1, 9.0e-01, 2.0, 3.0]
+    elif dtype == np.float32 or dtype == np.complex64:
+      target_norms = [4.0e-1, 1.0, 3.0]
+    else:
+      raise TypeError("dtype={} is not supported.".format(dtype))
+    # TODO(zhangqiaorjc): Reduce tol to default 1e-5.
+    # Lower tolerance is due to 2nd order derivative.
+    tol = {
+      # Note that due to inner_product, float and complex tol are coupled.
+      np.dtype(np.float32): 0.02,
+      np.dtype(np.complex64): 0.02,
+      np.dtype(np.float64): 1e-4,
+      np.dtype(np.complex128): 1e-4,
+    }
+    for norm in target_norms:
+      a = a / np.linalg.norm(a, 1) * norm
+      def expm(x):
+        return jsp.linalg.expm(x, upper_triangular=False, max_squarings=16)
+      jtu.check_grads(expm, (a,), modes=["fwd", "rev"], order=1, atol=tol,
+                      rtol=tol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

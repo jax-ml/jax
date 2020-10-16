@@ -29,6 +29,7 @@ import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.custom_derivatives import custom_jvp_call_jaxpr_p
 from jax.lax import lax
+from jax.lax import lax_control_flow
 from jax.lax import lax_fft
 
 def jet(fun, primals, series):
@@ -59,17 +60,17 @@ def jet(fun, primals, series):
 
 @lu.transformation
 def jet_fun(order, primals, series):
-  with core.new_master(JetTrace) as master:
-    master.order = order
-    out_primals, out_terms = yield (master, primals, series), {}
-    del master
+  with core.new_main(JetTrace) as main:
+    main.order = order
+    out_primals, out_terms = yield (main, primals, series), {}
+    del main
   out_terms = [[np.zeros_like(p)] * order if s is zero_series else s
                for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms
 
 @lu.transformation
-def jet_subtrace(master, primals, series):
-  trace = JetTrace(master, core.cur_sublevel())
+def jet_subtrace(main, primals, series):
+  trace = JetTrace(main, core.cur_sublevel())
   in_tracers = map(partial(JetTracer, trace), primals, series)
   ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
@@ -115,7 +116,7 @@ class JetTrace(core.Trace):
     return JetTracer(self, val.primal, val.terms)
 
   def process_primitive(self, primitive, tracers, params):
-    order = self.master.order              # pytype: disable=attribute-error
+    order = self.main.order              # pytype: disable=attribute-error
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
@@ -133,7 +134,7 @@ class JetTrace(core.Trace):
   def process_call(self, call_primitive, f, tracers, params):
     primals_in, series_in = unzip2((t.primal, t.terms) for t in tracers)
     primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
-    f_jet, out_tree_def = traceable(jet_subtrace(f, self.master), in_tree_def)
+    f_jet, out_tree_def = traceable(jet_subtrace(f, self.main), in_tree_def)
     update_params = call_param_updaters.get(call_primitive)
     new_params = (update_params(params, len(primals_and_series))
                   if update_params else params)
@@ -145,15 +146,21 @@ class JetTrace(core.Trace):
     primals, series = unzip2((t.primal, t.terms) for t in out_tracers)
     out, treedef = tree_flatten((primals, series))
     del primals, series
-    master = self.master
+    main = self.main
     def todo(x):
       primals, series = tree_unflatten(treedef, x)
-      trace = JetTrace(master, core.cur_sublevel())
+      trace = JetTrace(main, core.cur_sublevel())
       return map(partial(JetTracer, trace), primals, series)
     return out, todo
 
-  def join(self, xt, yt):
-    assert False  # TODO?
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+    # TODO(mattjj): don't just ignore custom jvp rules?
+    del primitive, jvp  # Unused.
+    return fun.call_wrapped(*tracers)
+
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+    del primitive, fwd, bwd, out_trees  # Unused.
+    return fun.call_wrapped(*tracers)
 
 
 class ZeroTerm(object): pass
@@ -237,24 +244,21 @@ deflinear(lax.reduce_window_sum_p)
 deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
-# TODO(mattjj): remove when omnistaging fully lands
-try: deflinear(lax.tie_in_p)
-except AttributeError: pass
-
 def _cumulative_jet_rule(primals_in, series_in, *, axis: int,
-                         prefix_scan: Callable):
+                         combine_fn: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return jet(partial(prefix_scan, axis=axis), primals_in, series_in)
+  return jet(partial(lax_control_flow.associative_scan, combine_fn, axis=axis),
+             primals_in, series_in)
 
-deflinear(lax.cumsum_p)
-jet_rules[lax.cumprod_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cumprod_prefix_scan)
-jet_rules[lax.cummax_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cummax_prefix_scan)
-jet_rules[lax.cummin_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cummin_prefix_scan)
+deflinear(lax_control_flow.cumsum_p)
+jet_rules[lax_control_flow.cumprod_p] = partial(_cumulative_jet_rule,
+                                                combine_fn=lax.mul)
+jet_rules[lax_control_flow.cummax_p] = partial(_cumulative_jet_rule,
+                                               combine_fn=lax.max)
+jet_rules[lax_control_flow.cummin_p] = partial(_cumulative_jet_rule,
+                                               combine_fn=lax.min)
 
 
 def def_deriv(prim, deriv):
@@ -523,8 +527,8 @@ def _gen_reduce_choose_taylor_rule(chooser_fun):
     series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
     return primal_out, series_out
   return chooser_taylor_rule
-jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax.reduce_max_p.bind)
-jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax.reduce_min_p.bind)
+jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(lax._reduce_max)
+jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(lax._reduce_min)
 
 def _abs_taylor_rule(x, series_in, **params):
   x, = x
@@ -584,3 +588,6 @@ def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
   del jvp_jaxpr_thunk
   return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
 jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
+
+
+deflinear(lax.tie_in_p)

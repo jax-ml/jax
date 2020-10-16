@@ -13,12 +13,15 @@
 # limitations under the License.
 
 
+import itertools as it
 import numpy as np
+from unittest import skipIf
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
+from jax.interpreters import batching
 from jax import test_util as jtu
 from jax import lax
 from jax import lax_linalg
@@ -328,7 +331,7 @@ class BatchingTest(jtu.JaxTestCase):
     # test modeling the code in https://github.com/google/jax/issues/54
 
     def func(xs):
-      return jnp.array([x for x in xs])
+      return jnp.array(list(xs))
 
     xs = jnp.ones((5, 1))
     jacrev(func)(xs)  # don't crash
@@ -474,7 +477,7 @@ class BatchingTest(jtu.JaxTestCase):
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct,
-                        rtol=2e-2)
+                        rtol=2e-2, atol=2e-3)
 
   def testConvGeneralDilatedBatchNotMajor(self):
     W = jnp.array(np.random.randn(3, 3, 1, 4), dtype=np.float32)
@@ -556,7 +559,7 @@ class BatchingTest(jtu.JaxTestCase):
           jnp.reshape(g, (1,) + g.shape)]
     per_example_direct = jnp.concatenate(per_example_direct, axis=0)
     self.assertAllClose(per_example, per_example_direct,
-                        rtol=3e-2)
+                        rtol=3e-2, atol=1e-3)
 
   def testCumProd(self):
    x = jnp.arange(9).reshape(3, 3) + 1
@@ -976,6 +979,138 @@ class BatchingTest(jtu.JaxTestCase):
     ans = vmap(scalar_f2)(xs)
     expected = jnp.array([scalar_f2(x) for x in xs])
     self.assertAllClose(ans, expected)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "_collective={}".format(seq.__name__).replace(" ", ""),
+       "collective": collective,
+       "seq": seq}
+      for collective, seq in [(lax.psum, jnp.sum),
+                              (lax.pmean, jnp.mean),
+                              (lambda x, n: lax.pmax(x, n), jnp.max),
+                              (lambda x, n: lax.pmin(x, n), jnp.min)])
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testCollective(self, collective, seq):
+    x = jnp.arange(64).reshape((4, 4, 4))
+    self.assertAllClose(
+      vmap(lambda x: x - collective(x, 'i'), axis_name='i')(x),
+      x - seq(x, axis=0))
+
+    self.assertAllClose(
+      vmap(vmap(lambda x: x - collective(x, ('j', 'i')), axis_name='i'), axis_name='j')(x),
+      x - seq(x, axis=(0, 1)))
+
+    self.assertAllClose(
+      vmap(vmap(lambda x: x - collective(x, ('i', 'j')), axis_name='i'), axis_name='j')(x),
+      x - seq(x, axis=(1, 0)))
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testPPermute(self):
+    nelem = 10
+    ntests = 10
+    x = np.arange(nelem)
+    rng = np.random.RandomState(1)
+    for i in range(ntests):
+      perm = np.arange(nelem)
+      rng.shuffle(perm)
+      perm_pairs = np.stack([np.arange(nelem), perm], axis=-1)
+      rng.shuffle(perm_pairs)
+      self.assertAllClose(
+        vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs), axis_name='i')(x),
+        x - x[perm])
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllToAll(self, vmap_axis, split_axis, concat_axis):
+    d = vmap_axis
+
+    def shape_fun(x, out_d):
+      shape = list(x.shape)
+      vmap_dim_id = shape.pop(d)
+      split_dim_id = shape.pop(split_axis)
+      shape.insert(concat_axis, vmap_dim_id)
+      shape.insert(out_d, split_dim_id)
+      return tuple(shape)
+
+    shape = (2, 3, 4, 5)
+    x = np.arange(np.prod(shape)).reshape(shape)
+    rule = batching.collective_rules[lax.all_to_all_p]
+    (y,), (out_d,) = rule((x,), (d,), None, None, split_axis, concat_axis)
+    exp_shape = shape_fun(x, out_d)
+    self.assertEqual(y.shape, exp_shape)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
+       "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
+      for split_axis, concat_axis, vmap_axis in it.product(range(2), range(2), range(3)))
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAllToAllSplitAxis(self, vmap_axis, split_axis, concat_axis):
+    shape = (4, 4, 4)
+    x = np.arange(np.prod(shape)).reshape(shape)
+
+    @partial(vmap, in_axes=vmap_axis, axis_name='i')
+    @partial(vmap, in_axes=vmap_axis, axis_name='j')
+    def f(x):
+      return lax.all_to_all(x, ('i', 'j'), split_axis, concat_axis)
+
+    unroll_shape = (2, 2, *shape[1:])
+    unroll_shape = list(shape)
+    unroll_shape[vmap_axis:vmap_axis+1] = (2, 2)
+    x_unroll = x.reshape(unroll_shape)
+    y_unrolled = f(x_unroll)
+    y = y_unrolled.reshape(shape)
+
+    if vmap_axis <= split_axis:
+      split_axis += 1
+    ref = jnp.moveaxis(x, (vmap_axis, split_axis),
+                          (concat_axis + 1, 0))
+    self.assertAllClose(y, ref)
+
+  def testNegativeAxes(self):
+    x = np.arange(3*4*5).reshape(3, 4, 5)
+    self.assertAllClose(jax.vmap(jnp.sum, in_axes=-3)(x),
+                        jnp.sum(x, axis=(1, 2)))
+    self.assertAllClose(jax.vmap(jnp.sum, in_axes=-2)(x),
+                        jnp.sum(x, axis=(0, 2)))
+    self.assertAllClose(jax.vmap(jnp.sum, in_axes=-1)(x),
+                        jnp.sum(x, axis=(0, 1)))
+
+    with self.assertRaisesRegex(ValueError, "vmap got arg 0 of rank 3 but axis to be mapped -4"):
+      jax.vmap(jnp.sum, in_axes=-4)(x)
+
+    id = lambda y: y
+    self.assertAllClose(x, jax.vmap(id, in_axes=0, out_axes=-3)(x))
+    self.assertAllClose(x.transpose(1, 0, 2),
+                        jax.vmap(id, in_axes=0, out_axes=-2)(x))
+    self.assertAllClose(x.transpose(1, 2, 0),
+                        jax.vmap(id, in_axes=0, out_axes=-1)(x))
+
+    with self.assertRaisesRegex(ValueError, "axis -4 is out of bounds.*"):
+      jax.vmap(id, in_axes=0, out_axes=-4)(x)
+
+    self.assertAllClose(
+      np.full((5,), 7),
+      jax.vmap(lambda *xs: xs, in_axes=(0, None), out_axes=(0, -1))(
+        np.arange(5), 7)[1])
+
+    with self.assertRaisesRegex(ValueError, "axis -2 is out of bounds.*"):
+      jax.vmap(lambda *xs: xs, in_axes=(0, None), out_axes=(0, -2))(
+        np.arange(5), 7)
+
+  @skipIf(not jax.config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testAxisIndex(self):
+    x = np.arange(10)
+    self.assertAllClose(
+      vmap(lambda x: x - lax.axis_index('i'), axis_name='i')(x),
+      x - np.arange(x.shape[0]))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -21,7 +21,6 @@ from jax import lax
 import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
-import unittest
 
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -46,21 +45,22 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     model.f = tf.function(jax2tf.convert(f_jax),
                           autograph=False,
                           input_signature=[tf.TensorSpec([], tf.float32)])
-    x = np.array(0.7)
+    x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
     restored_model = self.save_and_load_model(model)
     self.assertAllClose(restored_model.f(x), f_jax(x))
 
   def test_gradient_disabled(self):
     f_jax = lambda x: x * x
+
     model = tf.Module()
-    model.f = tf.function(jax2tf.convert(f_jax),
+    model.f = tf.function(jax2tf.convert(f_jax, with_gradient=False),
                           autograph=False,
                           input_signature=[tf.TensorSpec([], tf.float32)])
-    x = np.array(0.7)
+    x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
     restored_model = self.save_and_load_model(model)
-    xv = tf.Variable(0.7)
+    xv = tf.Variable(0.7, dtype=jnp.float32)
     self.assertAllClose(restored_model.f(x), f_jax(x))
 
     with self.assertRaisesRegex(LookupError,
@@ -87,10 +87,10 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     model.f = tf.function(jax2tf.convert(f_jax, with_gradient=True),
                           autograph=False,
                           input_signature=[tf.TensorSpec([], tf.float32)])
-    x = np.array(0.7)
+    x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), f_jax(x))
     restored_model = self.save_and_load_model(model)
-    xv = tf.Variable(0.7)
+    xv = tf.Variable(0.7, dtype=jnp.float32)
     self.assertAllClose(restored_model.f(x), f_jax(x))
     with tf.GradientTape() as tape:
       y = restored_model.f(xv)
@@ -125,16 +125,10 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     self._compare_with_saved_model(f_jax, arr)
 
   def test_xla_context_preserved_gather(self):
-    raise unittest.SkipTest("Disable in preparation for fixing b/153556869")
     def f_jax(arr):
       return arr[100]  # out of bounds, should return the last element
     arr = np.arange(10, dtype=np.float32)
-    if jtu.device_under_test() != "tpu":
-      # TODO(b/153556869): the compilation attributes are not saved in savedmodel
-      with self.assertRaisesRegex(BaseException, "Input 2 to .* XlaGather must be a compile-time constant"):
-        self._compare_with_saved_model(f_jax, arr)
-    else:
-      self._compare_with_saved_model(f_jax, arr)
+    self._compare_with_saved_model(f_jax, arr)
 
 
 if __name__ == "__main__":

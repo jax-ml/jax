@@ -24,12 +24,16 @@ from . import partial_eval as pe
 from ..core import raise_to_shaped, get_aval, Literal, Jaxpr
 from ..api_util import flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, register_pytree_node
-from ..util import safe_map, safe_zip, unzip2, split_list
+from ..util import safe_map, safe_zip, split_list
 from .. import custom_derivatives
 from ..config import config
 
 map = safe_map
 zip = safe_zip
+
+def _initial_style_jaxpr(fun, in_avals):
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  return core.ClosedJaxpr(jaxpr, consts)
 
 ################################################################################
 # Reverse call primitive
@@ -118,10 +122,9 @@ def _flatten_ivjp(in_tree, out_tree, *args):
 
 def _custom_ivjp(fun, ivjp, args):
   in_avals = [raise_to_shaped(get_aval(x)) for x in args]
-  fun_jaxpr = custom_derivatives._initial_style_jaxpr(fun, in_avals)
+  fun_jaxpr = _initial_style_jaxpr(fun, in_avals)
   try:
-    ivjp_jaxpr = custom_derivatives._initial_style_jaxpr(
-        ivjp, in_avals + fun_jaxpr.out_avals * 2)
+    ivjp_jaxpr = _initial_style_jaxpr(ivjp, in_avals + fun_jaxpr.out_avals * 2)
   except RecursionError:
     raise ValueError("Calls to {} from its custom ivjp aren't supported yet".format(fun.__name__))
   return custom_ivjp_p.bind(*args, fun_jaxpr=fun_jaxpr,
@@ -217,12 +220,11 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
         ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
             complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals), instantiate=True)
       else:
-        ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(
+        ivjp_jaxpr, out_pvals, _ = pe.trace_to_jaxpr(  # type: ignore
           complete_ivjp_flat, map(pe.PartialVal.unknown, in_avals),
-          instantiate=True, stage_out=False)
+          instantiate=True, stage_out=False)  # type: ignore
       assert not ivjp_jaxpr.constvars  # That might happen some time, but don't bother until then
-      out_avals = map(raise_to_shaped, unzip2(out_pvals)[0])
-      ivjp_jaxpr = core.TypedJaxpr(ivjp_jaxpr, [], in_avals, out_avals)
+      ivjp_jaxpr = core.ClosedJaxpr(ivjp_jaxpr, [])
 
     # Once we know what the ivjp can do exactly, we have to isolate the part we are
     # actually able to compute with the values we have at hand.
@@ -234,8 +236,8 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
       jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(  # type: ignore
           ivjp_jaxpr, unknowns, instantiate=False)  # type:ignore
     else:
-      jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(
-          ivjp_jaxpr, unknowns, instantiate=False, trace_type=None)
+      jaxpr_known, jaxpr_unknown, out_unknowns = pe.partial_eval_jaxpr(  # type: ignore
+          ivjp_jaxpr, unknowns, instantiate=False, trace_type=None)  # type: ignore
     unknown_rec_primals_in, unknown_cotangents = split_list(out_unknowns, [num_inputs])
     # Make sure we're able to compute all cotangents. We don't really care if we
     # can reconstruct or primals or not, although failure to do so might result in
@@ -243,7 +245,6 @@ def inv_backward_pass(jaxpr: core.Jaxpr, consts, primals_in, primals_out, cotang
     assert not any(unknown_cotangents)
     # Remove residual outputs -- we won't be computing the unknown jaxpr anyway.
     num_outputs = len(jaxpr_unknown.jaxpr.outvars)
-    jaxpr_known.out_avals = jaxpr_known.out_avals[:num_outputs]
     jaxpr_known.jaxpr.outvars = jaxpr_known.jaxpr.outvars[:num_outputs]
     # TODO: We could drop the outputs that correspond to primals that we already know.
     #       This only matters in eager mode, so leaving it out for now...
@@ -312,3 +313,15 @@ def get_primitive_inverse(p):
 def definverse(primitive, inverse_rule):
   primitive_inverses[primitive] = inverse_rule
   return inverse_rule
+
+
+@config.register_omnistaging_disabler
+def omnistaging_disabler() -> None:
+  global _initial_style_jaxpr, custom_jvp_call
+
+  def _initial_style_jaxpr(fun, in_avals):
+    in_pvals = [pe.PartialVal.unknown(aval) for aval in in_avals]
+    jaxpr, _, consts = pe.trace_to_jaxpr(fun, in_pvals, instantiate=True,
+                                         bottom=True, stage_out=False)  # type: ignore
+    assert not any(isinstance(c, core.Tracer) for c in consts)
+    return core.ClosedJaxpr(jaxpr, consts)

@@ -26,7 +26,7 @@ usage() {
   exit 1
 }
 
-if [[ $# != 2 ]]
+if [[ $# -lt 2 ]]
 then
   usage
 fi
@@ -34,7 +34,7 @@ fi
 # Builds and activates a specific Python version.
 pyenv local "$PY_VERSION"
 
-PY_TAG=$(python -c "import wheel; import wheel.pep425tags as t; print(t.get_abbr_impl() + t.get_impl_ver())")
+PY_TAG=$(python -c "import packaging.tags as t; print(t.interpreter_name() + t.interpreter_version())")
 
 echo "Python tag: $PY_TAG"
 
@@ -59,5 +59,6 @@ case $2 in
     usage
 esac
 
+export JAX_CUDA_VERSION=$3
 python setup.py bdist_wheel --python-tag "$PY_TAG" --plat-name "$PLAT_NAME"
 cp -r dist/* /dist

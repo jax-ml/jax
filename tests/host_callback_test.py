@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import functools
 import logging
 import os
@@ -35,6 +31,7 @@ from jax import test_util as jtu
 from jax.config import config
 from jax.experimental import host_callback as hcb
 from jax.lib import xla_bridge
+from jax.util import prod
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -88,8 +85,12 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
     x = np.around(float(matched), decimals=2)
     return f"{x:.2f}"
   what = re.sub(r"\-?\d*\.[\-\def]*", repl_floats, what)
-  what = re.sub(r"output_stream=[^\]\n]*", "", what)
-  what = re.sub(r"threshold=[^\]\n]*", "", what)
+  what = re.sub(r"output_stream=[^\]\n,]*,?", "", what)
+  what = re.sub(r"threshold=[^\]\n,]*,?", "", what)
+  what = re.sub(r"bwd=[^\]\n]*", "", what)
+  what = re.sub(r"out_trees=[^\]\n]*", "", what)
+  what = re.sub(r"fwd_jaxpr_thunk=[^\]\n]*", "", what)
+  what = re.sub(r"jvp_jaxpr_thunk=[^\]\n]*", "", what)
   # Empty lines
   what = re.sub(r"^\s*\n", "", what, flags=re.MULTILINE)
   def repl_func(match_group):
@@ -98,7 +99,7 @@ def assertMultiLineStrippedEqual(tst: jtu.JaxTestCase,
       return "tap_func_=_print"
     else:
       return "..."
-  what = re.sub(r"tap_func_=(.*)", repl_func, what)
+  what = re.sub(r"tap_func_=([^\]\n,]*),?", repl_func, what)
   tst.assertMultiLineStrippedEqual(expected, what)
 
 
@@ -113,7 +114,7 @@ class HostCallbackTest(jtu.JaxTestCase):
     if os.getenv("XLA_FLAGS") != self.old_flags:
       os.environ["XLA_FLAGS"] = self.old_flags
       xla_bridge.get_backend.cache_clear()
-    hcb.barrier_wait()
+    hcb.barrier_wait("HostCallbackTest.tearDown")
 
   def helper_set_devices(self, nr_devices):
     flags_str = os.getenv("XLA_FLAGS", "")
@@ -137,10 +138,10 @@ class HostCallbackTest(jtu.JaxTestCase):
     self.assertAllClose((5. * 2.) ** 2, fun1(5.))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-what: a * 2
-10.00
-what: y * 3
-30.00""", testing_stream.output)
+        what: a * 2
+        10.00
+        what: y * 3
+        30.00""", testing_stream.output)
     testing_stream.reset()
 
   def test_with_tuple_results(self):
@@ -148,13 +149,12 @@ what: y * 3
       x1, y1 = hcb.id_print((x * 2., x * 3.), output_stream=testing_stream)
       return x1 + y1
 
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(func2)(3.)))
     self.assertEqual(3. * (2. + 3.), func2(3.))
     hcb.barrier_wait()
 
     assertMultiLineStrippedEqual(self, """
-[ 6.00
-  9.00 ]""", testing_stream.output)
+        [ 6.00
+          9.00 ]""", testing_stream.output)
     testing_stream.reset()
 
   def test_with_dict_results(self):
@@ -165,8 +165,8 @@ what: y * 3
     self.assertEqual(3. * (2. + 3.), func2(3.))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-{ a=6.00
-  b=9.00 }""", testing_stream.output)
+        { a=6.00
+          b=9.00 }""", testing_stream.output)
     testing_stream.reset()
 
   def test_with_result(self):
@@ -178,8 +178,8 @@ what: y * 3
     self.assertEqual(3. * 4., func2(3.))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-[ 6.00
-  9.00 ]""", testing_stream.output)
+        [ 6.00
+          9.00 ]""", testing_stream.output)
     testing_stream.reset()
 
   def test_eval_tap_exception(self):
@@ -189,7 +189,7 @@ what: y * 3
 
     def func(x):
       x1 = hcb.id_print(x + 1, what="x1", output_stream=testing_stream)
-      x2 = hcb.id_tap(tap_err, x1 + 1, what="err")
+      x2 = hcb.id_tap(tap_err, x1 + 1)
       x3 = hcb.id_print(x2 + 1, what="x3", output_stream=testing_stream)
       return x3
 
@@ -199,10 +199,10 @@ what: y * 3
 
     # We should have received everything before the error
     assertMultiLineStrippedEqual(self, """
-what: x1
-1
-what: x3
-3""", testing_stream.output)
+        what: x1
+        1
+        what: x3
+        3""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_simple(self):
@@ -211,20 +211,38 @@ what: x3
     self.assertAllClose(6. * 5., jit_fun1(5.))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-what: here
-10.00""", testing_stream.output)
+        what: here
+        10.00""", testing_stream.output)
+    testing_stream.reset()
+
+  def test_jit_no_invars(self):
+    def func():  # jitted function does not take arguments
+      return hcb.id_print(42, output_stream=testing_stream)
+
+    self.assertAllClose(42, api.jit(func)())
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+    42""", testing_stream.output)
+    testing_stream.reset()
+
+  def test_jit_multiple_invars(self):
+    def func(x1, x2):
+      return hcb.id_print(x1 + x2, output_stream=testing_stream)
+
+    self.assertAllClose(42, api.jit(func)(40, 2))
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+    42""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_constant(self):
     def func(x):
       return hcb.id_print(42, result=x, output_stream=testing_stream)
 
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(api.jit(func))(5)))
-
     self.assertAllClose(5, api.jit(func)(5))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-42""", testing_stream.output)
+    42""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_sequence1(self):
@@ -240,10 +258,10 @@ what: here
     hcb.barrier_wait()
 
     assertMultiLineStrippedEqual(self, """
-where: 1
-1
-where: 2
-2""", testing_stream.output)
+        where: 1
+        1
+        where: 2
+        2""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit2(self):
@@ -257,14 +275,37 @@ where: 2
     self.assertEqual(11, api.jit(func)(10))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-where: 1
-1
-where: 2
-2
-where: 1
-10
-where: 2
-11""", testing_stream.output)
+        where: 1
+        1
+        where: 2
+        2
+        where: 1
+        10
+        where: 2
+        11""", testing_stream.output)
+    testing_stream.reset()
+
+  def test_jit_result_unused(self):
+    """We can id_print even if we don't use the result."""
+    if not config.omnistaging_enabled:
+      raise SkipTest("Test requires omnistaging")
+    def func(x):
+      hcb.id_print(x, where="1", output_stream=testing_stream)
+      hcb.id_print(x + 1, where="2", output_stream=testing_stream)
+      return x + 1
+
+    self.assertEqual(2, api.jit(func)(1))
+    self.assertEqual(11, api.jit(func)(10))
+    hcb.barrier_wait()
+    assertMultiLineStrippedEqual(self, """
+        where: 1
+        1
+        where: 2
+        2
+        where: 1
+        10
+        where: 2
+        11""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_nested(self):
@@ -279,12 +320,12 @@ where: 2
     self.assertEqual(3, api.jit(func)(1))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-where: 1
-1
-where: nested
-2
-where: 3
-3""", testing_stream.output)
+        where: 1
+        1
+        where: nested
+        2
+        where: 3
+        3""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_devices(self):
@@ -322,17 +363,21 @@ where: 3
       else:
         assert False
     tap_count = 0
-    def tap_func(a, what=""):
+
+    def tap_func(a, _, *, what=""):
       nonlocal tap_count
       tap_count += 1
       self.assertEqual(func(5, what), a)
 
     transform = api.jit if with_jit else lambda f: f
     for what in ("pair_1_x", "pair_x_2x", "dict"):
-      self.assertEqual(func(10, what),
-                       transform(lambda x: hcb.id_tap(tap_func, func(x, what),
-                                                      result=func(x * 2, what),
-                                                      what=what))(5))
+      transformed = transform(
+          lambda x: hcb.id_tap(
+              functools.partial(tap_func, what=what),
+              func(x, what),
+              result=func(x * 2, what))
+          )(5)
+      self.assertEqual(func(10, what), transformed)
     hcb.barrier_wait()  # Wait for receivers to be done
     self.assertEqual(3, tap_count)
 
@@ -346,7 +391,7 @@ where: 3
     """Call id_tap multiple times, concurrently or in sequence. """
     if concurrent and jtu.device_under_test() == "gpu":
       # TODO(necula): it seems that on GPU if multiple host threads run
-      # a jit computation, the mutliple computations are interleaved on the
+      # a jit computation, the multiple computations are interleaved on the
       # GPU. This can result in the outfeed trains being interleaved, which
       # will trigger an error. The solution is to fix on GPU the receiving
       # logic so that we can outfeed the train as one tuple, and receive it
@@ -355,7 +400,7 @@ where: 3
       raise SkipTest("concurrent id_tap not supported on GPU")
     received = set()
     count = 5
-    def pause_tap(idx, **kwargs):
+    def pause_tap(idx, _):
       received.add(int(idx))
       logging.info(f"Starting do_tap {idx}. Sleeping 1sec ...")
       time.sleep(0.3)
@@ -432,14 +477,14 @@ where: 3
     self.assertEqual(4, transform(func)(1))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-where: 1
-1
-where: 2
-2
-where: cond_f
--1
-where: end
-4""", testing_stream.output)
+        where: 1
+        1
+        where: 2
+        2
+        where: cond_f
+        -1
+        where: end
+        4""", testing_stream.output)
     testing_stream.reset()
 
   @parameterized.named_parameters(
@@ -468,24 +513,24 @@ where: end
     self.assertEqual(4, transform(func)(1))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-where: 1
-1
-where: 2
-2
-where: w_b_1
-2
-where: w_b_t
-3
-where: w_b_2
-3
-where: w_b_1
-3
-where: w_b_f
--1
-where: w_b_2
-4
-where: end
-4""", testing_stream.output)
+        where: 1
+        1
+        where: 2
+        2
+        where: w_b_1
+        2
+        where: w_b_t
+        3
+        where: w_b_2
+        3
+        where: w_b_1
+        3
+        where: w_b_f
+        -1
+        where: w_b_2
+        4
+        where: end
+        4""", testing_stream.output)
     testing_stream.reset()
 
   def test_jit_while_pred_tap(self):
@@ -504,19 +549,19 @@ where: end
     self.assertEqual(3, api.jit(func)(1))
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self,
-      """
-where: w_p
-True
-where: w_b
-2
-where: w_p
-True
-where: w_b
-3
-where: w_p
-False
-where: 3
-3""", testing_stream.output)
+        """
+        where: w_p
+        True
+        where: w_b
+        2
+        where: w_p
+        True
+        where: w_b
+        3
+        where: w_p
+        False
+        where: 3
+        3""", testing_stream.output)
     testing_stream.reset()
 
   @parameterized.named_parameters(
@@ -548,30 +593,30 @@ where: 3
     self.assertAllClose(jnp.array([1, 2, 3]), res)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-where: 1
-1
-where: 2
-2
-where: s_1
-0
-where: s_t
-1
-where: s_2
-1
-where: s_1
-1
-where: s_f
--1
-where: s_2
-2
-where: s_1
-2
-where: s_t
-3
-where: s_2
-3
-where: 10
-[1 2 3]""", testing_stream.output)
+        where: 1
+        1
+        where: 2
+        2
+        where: s_1
+        0
+        where: s_t
+        1
+        where: s_2
+        1
+        where: s_1
+        1
+        where: s_f
+        -1
+        where: s_2
+        2
+        where: s_1
+        2
+        where: s_t
+        3
+        where: s_2
+        3
+        where: 10
+        [1 2 3]""", testing_stream.output)
     testing_stream.reset()
 
   @parameterized.named_parameters(
@@ -589,7 +634,7 @@ where: 10
     if jtu.device_under_test() == "tpu":
       if dtype in (jnp.int16,):
         raise SkipTest(f"transfering {dtype} not supported on TPU")
-    args = [jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)]
+    args = [jnp.arange(prod(shape), dtype=dtype).reshape(shape)]
     if nr_args > 1:
       args = args * nr_args
     jit_fun1 = api.jit(lambda xs: hcb.id_print(
@@ -612,14 +657,14 @@ where: 10
     # Several jit's without data dependencies; they may interfere
     count = 0  # Count tap invocations
     nr_arrays = 5
-    def tap_func(arg, **_):
+    def tap_func(arg, _):
       nonlocal count
       assert len(arg) == nr_arrays
       count += 1
     # This is the function that we'll run multiple times
     def func(x, count):
       for i in range(count):
-        x = hcb.id_tap(tap_func, [x + i for i in range(nr_arrays)], i=i)[-1]
+        x = hcb.id_tap(tap_func, [x + i for i in range(nr_arrays)])[-1]
       return x
 
     x = jnp.array(1, dtype=np.int32)
@@ -636,7 +681,7 @@ where: 10
       raise NotImplementedError
     def func(x):
       x1 = hcb.id_print(x + 1, what="x1", output_stream=testing_stream)
-      x2 = hcb.id_tap(tap_err, x1 + 1, what="err")
+      x2 = hcb.id_tap(tap_err, x1 + 1)
       x3 = hcb.id_print(x2 + 1, what="x3", output_stream=testing_stream)
       return x3
 
@@ -649,26 +694,11 @@ where: 10
     self.assertEqual(3, res)
     # We should have received all others
     assertMultiLineStrippedEqual(self, """
-what: x1
-1
-what: x3
-3""", testing_stream.output)
+        what: x1
+        1
+        what: x3
+        3""", testing_stream.output)
     testing_stream.reset()
-
-  def test_jit_nested_cond_no_print(self):
-    """A nested conditional, without any prints"""
-    raise SkipTest("skip this")
-    @api.jit
-    def cfun(x):
-      return lax.cond(
-          lax.lt(x, 2),
-          lambda x: x,
-          lambda x: lax.cond(x < 5,
-                             3, lambda x: x,
-                             4, lambda y: y),
-          x)
-    print(self._testMethodName, api.xla_computation(cfun)(1).as_hlo_text())
-    cfun(1)
 
   def test_while(self):
     """Executing while, even without JIT uses compiled code"""
@@ -682,33 +712,32 @@ what: x3
     func(y)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-1
-2
-3
-4""", testing_stream.output)
+        1
+        2
+        3
+        4""", testing_stream.output)
     testing_stream.reset()
 
   def test_jvp(self):
     jvp_fun1 = lambda x, xt: api.jvp(fun1, (x,), (xt,))
-    #assertMultiLineStrippedEqual(self, "")
     res_primals, res_tangents = jvp_fun1(jnp.float32(5.), jnp.float32(0.1))
     self.assertAllClose(100., res_primals, check_dtypes=False)
     self.assertAllClose(4., res_tangents, check_dtypes=False)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-what: a * 2
-10.00
-transforms: ({'name': 'jvp'},) what: a * 2
-0.20
-what: y * 3
-30.00
-transforms: ({'name': 'jvp'},) what: y * 3
-0.60""", testing_stream.output)
+        what: a * 2
+        10.00
+        transforms: ['jvp'] what: a * 2
+        0.20
+        what: y * 3
+        30.00
+        transforms: ['jvp'] what: y * 3
+        0.60""", testing_stream.output)
     testing_stream.reset()
 
   def test_grad_primal_unused(self):
-    raise SkipTest("broken by omnistaging")  # TODO(mattjj,gnecula): update
-
+    if not config.omnistaging_enabled:
+      raise SkipTest("Test requires omnistaging")
     # The output of id_print is not needed for backwards pass
     def func(x):
       return 2. * hcb.id_print(x * 3., what="x * 3",
@@ -716,15 +745,24 @@ transforms: ({'name': 'jvp'},) what: y * 3
 
     grad_func = api.grad(func)
     jaxpr = str(api.make_jaxpr(grad_func)(5.))
-    # Just making the Jaxpr invokes the id_print once
+    # making the Jaxpr does not print anything
     hcb.barrier_wait()
+
     assertMultiLineStrippedEqual(self, """
-{ lambda  ; a.
-  let
-  in (6.00,) }""", jaxpr)
-    assertMultiLineStrippedEqual(self, """
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 3
-2.00""", testing_stream.output)
+        { lambda  ; a.
+          let b = mul a 3.00
+              c = id_tap[ arg_treedef_=*
+                          nr_tapped_args_=1
+                          tap_func_=_print   what='x * 3') ] b
+              _ = mul c 2.00
+              d = mul 1.00 2.00
+              e _ = id_tap[ arg_treedef_=*
+                            nr_tapped_args_=1
+                            tap_func_=_print   what='x * 3')
+                            transforms=(('jvp',), ('transpose',)) ] d 0.00
+              f = mul e 3.00
+          in (f,) }""", jaxpr)
+    assertMultiLineStrippedEqual(self, "", testing_stream.output)
     testing_stream.reset()
 
     res_grad = grad_func(jnp.float32(5.))
@@ -732,10 +770,10 @@ transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 3
 
     self.assertAllClose(6., res_grad, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
-what: x * 3
-15.00
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 3
-2.00""", testing_stream.output)
+        what: x * 3
+        15.00
+        transforms: ['jvp', 'transpose'] what: x * 3
+        2.00""", testing_stream.output)
     testing_stream.reset()
 
   def test_grad_simple(self):
@@ -744,65 +782,59 @@ transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 3
       return x * hcb.id_print(y * 3., what="y * 3",
                               output_stream=testing_stream)
     grad_func = api.grad(func)
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(grad_func)(5.)))
 
     res_grad = grad_func(jnp.float32(5.))
     self.assertAllClose(2. * 5. * 6., res_grad, check_dtypes=False)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-what: x * 2
-10.00
-what: y * 3
-30.00
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: y * 3
-5.00
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
-15.00""", testing_stream.output)
+        what: x * 2
+        10.00
+        what: y * 3
+        30.00
+        transforms: ['jvp', 'transpose'] what: y * 3
+        5.00
+        transforms: ['jvp', 'transpose'] what: x * 2
+        15.00""", testing_stream.output)
     testing_stream.reset()
 
   def test_grad_double(self):
-    raise SkipTest("broken by omnistaging")  # TODO(mattjj,gnecula): update
-
+    if not config.omnistaging_enabled:
+      raise SkipTest("Test requires omnistaging")
     def func(x):
       y = hcb.id_print(x * 2., what="x * 2", output_stream=testing_stream)
       return x * (y * 3.)
 
     grad_func = api.grad(api.grad(func))
-    # Just making the Jaxpr invokes the id_print twice
+    # making the Jaxpr does not print anything
     _ = api.make_jaxpr(grad_func)(5.)
     hcb.barrier_wait()
-    assertMultiLineStrippedEqual(self, """
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
-3.00
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}, {'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
-2.00""", testing_stream.output)
-    testing_stream.reset()
+    assertMultiLineStrippedEqual(self, "", testing_stream.output)
+
     res_grad = grad_func(jnp.float32(5.))
 
     self.assertAllClose(12., res_grad, check_dtypes=False)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-what: x * 2
-10.00
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
-15.00
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}, {'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
-2.00
-transforms: ({'name': 'jvp'}, {'name': 'transpose'}) what: x * 2
-3.00""", testing_stream.output)
+        what: x * 2
+        10.00
+        transforms: ['jvp', 'transpose'] what: x * 2
+        15.00
+        transforms: ['jvp', 'transpose', 'jvp', 'transpose'] what: x * 2
+        2.00
+        transforms: ['jvp', 'transpose'] what: x * 2
+        3.00""", testing_stream.output)
     testing_stream.reset()
 
   def test_vmap(self):
     vmap_fun1 = api.vmap(fun1)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(vmap_fun1)(vargs)))
     vmap_fun1(vargs)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) what: a * 2
-[ 8.00 10.00]
-transforms: ({'name': 'batch', 'batch_dims': (0, 0)},) what: y * 3
-[24.00 30.00]""", testing_stream.output)
+        transforms: [('batch', {'batch_dims': (0,)})] what: a * 2
+        [ 8.00 10.00]
+        transforms: [('batch', {'batch_dims': (0, 0)})] what: y * 3
+        [24.00 30.00]""", testing_stream.output)
     testing_stream.reset()
 
   def test_vmap_not_batched(self):
@@ -814,13 +846,12 @@ transforms: ({'name': 'batch', 'batch_dims': (0, 0)},) what: y * 3
 
     vmap_func = api.vmap(func)
     vargs = jnp.array([jnp.float32(4.), jnp.float32(5.)])
-    #assertMultiLineStrippedEqual(self, "", str(api.make_jaxpr(vmap_func)(vargs)))
     _ = vmap_func(vargs)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-transforms: ({'name': 'batch', 'batch_dims': (None, 0)},)
-[ 3.00
-  [4.00 5.00] ]""", testing_stream.output)
+        transforms: [('batch', {'batch_dims': (None, 0)})]
+        [ 3.00
+          [4.00 5.00] ]""", testing_stream.output)
     testing_stream.reset()
 
   def test_double_vmap(self):
@@ -838,10 +869,10 @@ transforms: ({'name': 'batch', 'batch_dims': (None, 0)},)
     _ = sum_all(xv, yv)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-transforms: ({'name': 'batch', 'batch_dims': (0,)}, {'name': 'batch', 'batch_dims': (0,)})
-[[0 1 2 3 4]
- [1 2 3 4 5]
- [2 3 4 5 6]]""", testing_stream.output)
+        transforms: [('batch', {'batch_dims': (0,)}), ('batch', {'batch_dims': (0,)})]
+        [[0 1 2 3 4]
+        [1 2 3 4 5]
+        [2 3 4 5 6]]""", testing_stream.output)
     testing_stream.reset()
 
   def test_vmap_while(self):
@@ -862,14 +893,14 @@ transforms: ({'name': 'batch', 'batch_dims': (0,)}, {'name': 'batch', 'batch_dim
                         check_dtypes=False)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 1
-[0 1 2 3 4]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: w_b
-[1 2 3 4 5]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: w_b
-[2 3 3 4 5]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 3
-[2 2 2 3 4]""", testing_stream.output)
+        transforms: [('batch', {'batch_dims': (0,)})] where: 1
+        [0 1 2 3 4]
+        transforms: [('batch', {'batch_dims': (0,)})] where: w_b
+        [1 2 3 4 5]
+        transforms: [('batch', {'batch_dims': (0,)})] where: w_b
+        [2 3 3 4 5]
+        transforms: [('batch', {'batch_dims': (0,)})] where: 3
+        [2 2 2 3 4]""", testing_stream.output)
     testing_stream.reset()
 
   def test_vmap_while_tap_cond(self):
@@ -891,20 +922,20 @@ transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 3
     hcb.barrier_wait()
     self.assertAllClose(np.array([2, 2, 2, 3, 4]), res, check_dtypes=False)
     assertMultiLineStrippedEqual(self, """
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 1
-[0 1 2 3 4]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: w_c
-[ True  True False False False]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: w_b
-[1 2 3 4 5]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: w_c
-[ True False False False False]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: w_b
-[2 3 3 4 5]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: w_c
-[False False False False False]
-transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 3
-[2 2 2 3 4]""", testing_stream.output)
+        transforms: [('batch', {'batch_dims': (0,)})] where: 1
+        [0 1 2 3 4]
+        transforms: [('batch', {'batch_dims': (0,)})] where: w_c
+        [ True  True False False False]
+        transforms: [('batch', {'batch_dims': (0,)})] where: w_b
+        [1 2 3 4 5]
+        transforms: [('batch', {'batch_dims': (0,)})] where: w_c
+        [ True False False False False]
+        transforms: [('batch', {'batch_dims': (0,)})] where: w_b
+        [2 3 3 4 5]
+        transforms: [('batch', {'batch_dims': (0,)})] where: w_c
+        [False False False False False]
+        transforms: [('batch', {'batch_dims': (0,)})] where: 3
+        [2 2 2 3 4]""", testing_stream.output)
     testing_stream.reset()
 
   def test_pmap(self):
@@ -916,6 +947,94 @@ transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 3
     expected_res = jnp.stack([fun1_equiv(2. + a) for a in range(api.local_device_count())])
     self.assertAllClose(expected_res, res, check_dtypes=False)
 
+  def test_scan_custom_jvp(self):
+    """custom JVP, inside scan.
+    This exercises the custom_jvp_call_jaxpr primitives."""
+    @api.custom_jvp
+    def f(x):
+      return x * hcb.id_print(x, output_stream=testing_stream, what="x")
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * hcb.id_print(x_dot, output_stream=testing_stream, what="x_dot")
+      return primal_out, tangent_out
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((2,), 0.7)
+    self.assertAllClose(0.7 * 0.7 * 2, g(arg))
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+        what: x
+        0.7
+        what: x
+        0.7""", testing_stream.output)
+    testing_stream.reset()
+
+    self.assertAllClose(np.array([2.1, 2.1]), api.grad(g)(arg), check_dtypes=False)
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+        what: x
+        0.7
+        what: x
+        0.7
+        transforms: ['transpose'] what: x_dot
+        2.1
+        transforms: ['transpose'] what: x_dot
+        2.1""", testing_stream.output)
+
+  def test_scan_custom_vjp(self):
+    """custom VJP, inside scan.
+    This exercises the custom_vjp_call_jaxpr primitives."""
+    @api.custom_vjp
+    def f(x):
+      return x * hcb.id_print(x, output_stream=testing_stream, what="x")
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), 3. * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * hcb.id_print(ct_b, output_stream=testing_stream, what="ct_b"),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((2,), 0.7)
+
+    self.assertAllClose(0.7 * 0.7 * 2, g(arg))
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+        what: x
+        0.7
+        what: x
+        0.7""", testing_stream.output)
+    testing_stream.reset()
+
+    self.assertAllClose(np.array([2.1, 2.1]), api.grad(g)(arg), check_dtypes=False)
+    hcb.barrier_wait()
+    self.assertMultiLineStrippedEqual("""
+        what: x
+        0.7
+        what: x
+        0.7
+        what: ct_b
+        1.
+        what: ct_b
+        1.""", testing_stream.output)
+
   def test_mask(self):
     # TODO(necula)
     raise SkipTest("masking has regressed")
@@ -924,21 +1043,21 @@ transforms: ({'name': 'batch', 'batch_dims': (0,)},) where: 3
       return jnp.sum(hcb.id_print(x, what="x", output_stream=testing_stream))
     args = [jnp.arange(4)], dict(n=np.int64(2))
     assertMultiLineStrippedEqual(self, """
-{ lambda c f ; a b.
-  let d = lt c b
-      e = id_tap[ func=_print
-                  logical_shapes=[(Traced<ShapedArray(int32[]):JaxprTrace(level=0/0)>,)]
-                  transforms=('mask',)
-                  what=x ] a
-      g = select d e f
-      h = reduce_sum[ axes=(0,) ] g
-  in (h,) }""", str(api.make_jaxpr(padded_sum)(*args)))
+        { lambda c f ; a b.
+          let d = lt c b
+              e = id_tap[ func=_print
+                          logical_shapes=[(Traced<ShapedArray(int32[]):JaxprTrace(level=0/0)>,)]
+                          transforms=('mask',)
+                          what=x ] a
+              g = select d e f
+              h = reduce_sum[ axes=(0,) ] g
+          in (h,) }""", str(api.make_jaxpr(padded_sum)(*args)))
 
     _ = padded_sum(*args)
     self.assertMultiLineStrippedEqual("""
-logical_shapes: [(2,)] transforms: ('mask',) what: x
-[0 1 2 3]
-   """, testing_stream.output)
+        logical_shapes: [(2,)] transforms: ['mask',) what: x
+        [0 1 2 3]
+          """, testing_stream.output)
     testing_stream.reset()
 
   def test_outfeed_receiver(self):
@@ -946,10 +1065,10 @@ logical_shapes: [(2,)] transforms: ('mask',) what: x
     with hcb.outfeed_receiver():
       self.assertAllClose((5. * 2.) ** 2, fun1(5.), check_dtypes=True)
     assertMultiLineStrippedEqual(self, """
-what: a * 2
-10.00
-what: y * 3
-30.00""", testing_stream.output)
+        what: a * 2
+        10.00
+        what: y * 3
+        30.00""", testing_stream.output)
     testing_stream.reset()
 
 
@@ -975,15 +1094,15 @@ what: y * 3
     # Wait for the results
     hcb.barrier_wait()
     expected = """
-what: x times i
-[[0. 1. 2.]
- [3. 4. 5.]]
-what: x times i
-[[ 0.  2.  4.]
- [ 6.  8. 10.]]
-what: x times i
-[[ 0.  6. 12.]
- [18. 24. 30.]]"""
+        what: x times i
+        [[0. 1. 2.]
+        [3. 4. 5.]]
+        what: x times i
+        [[ 0.  2.  4.]
+        [ 6.  8. 10.]]
+        what: x times i
+        [[ 0.  6. 12.]
+        [18. 24. 30.]]"""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
     testing_stream.reset()
     # Call again
@@ -1024,6 +1143,43 @@ what: x times i
           comp, token, 123,
           [xla_bridge.constant(comp, np.zeros((2,), dtype=np.float32))])
 
+  def test_id_tap_deprecated_kwargs(self):
+    def func(x, transforms, y):
+      pass
+    with self.assertWarnsRegex(
+        FutureWarning, r"Support for \*\*kwargs in ``id_tap``"):
+      hcb.id_tap(func, 1, y=2)
+
+  def test_odeint(self):
+    # TODO: find a smaller repro for bug #4015
+    # Seems to be xla_call(scan(xla_call)), all under grad.
+    from jax.experimental.ode import odeint
+
+    def f(x, t, k):
+      x = hcb.id_print(x)
+      return -k * x
+
+    def loss(k=1.0):
+      t = jnp.linspace(0, 0.001, num=2)
+      xs = odeint(f, 1.0, t, k)
+      return xs[-1]
+
+    api.grad(loss)(1.0)  # should not fail
+
+  def test_remat(self):
+    def f(i, k):
+      x = hcb.id_print(k + i, output_stream=testing_stream)
+      return k * x
+
+    def loss(k):
+      return lax.fori_loop(0, 2, api.remat(f), k)
+    print(loss(3))
+    hcb.barrier_wait()
+    expected = """
+      3
+      10"""
+    self.assertMultiLineStrippedEqual(expected, testing_stream.output)
+
 
 class OutfeedRewriterTest(jtu.JaxTestCase):
 
@@ -1031,40 +1187,84 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                     has_input_token=True, has_output_token=True):
     """Check that the rewrite of func(*args) matches expected."""
     jaxpr = api.make_jaxpr(func)(*args)
-    # TODO: re-enable when we change the host_callback rewriter
-    #rewritten = hcb._rewrite_typed_jaxpr(jaxpr,
-    #                                     has_input_token, has_output_token)
+    rewritten = hcb._rewrite_closed_jaxpr(jaxpr,  # noqa: F841
+                                          has_input_token, has_output_token)
+    # Since it is somewhat annoying to update the Jaxpr assertions when we change
+    # the Jaxpr printing, we do not check these by default. It is recommended that
+    # before making changes to the code generation and Jaxpr rewriting, turn on
+    # the checking, update the expected Jaxpr, and then make the changes.
     #assertMultiLineStrippedEqual(self, expected, str(rewritten))
     del jaxpr
 
   def test_no_outfeed(self):
     self.assertRewrite("""
-{ lambda  ; a.
-  let b = mul a a
-      c = add a b
-  in (c,) }""", lambda x: x + x * x, [0], has_input_token=False,
-                       has_output_token=False)
+        { lambda  ; a.
+          let b = mul a a
+              c = add a b
+          in (c,) }""", lambda x: x + x * x, [0], has_input_token=False,
+                              has_output_token=False)
     self.assertRewrite("""
-{ lambda  ; a d.
-  let b = mul a a
-      c = add a b
-  in (c,) }""", lambda x: x + x * x, [0], has_output_token=False)
+        { lambda  ; a d.
+          let b = mul a a
+              c = add a b
+          in (c,) }""", lambda x: x + x * x, [0], has_output_token=False)
     self.assertRewrite("""
-{ lambda  ; a d.
-  let b = mul a a
-      c = add a b
-  in (c, d) }""", lambda x: x + x * x, [0])
+        { lambda  ; a d.
+          let b = mul a a
+              c = add a b
+          in (c, d) }""", lambda x: x + x * x, [0])
 
   def test_simple_outfeed(self):
     self.assertRewrite("""
-{ lambda  ; a d.
-  let b = add a a
-      c e = id_tap[ arg_treedef_=*
-                    has_token_=True
-                    nr_tapped_args_=1
-                    tap_func_=_print
-                    ] b d
-  in (c, e) }""", lambda x: hcb.id_print(x + x), [0])
+        { lambda  ; a d.
+          let b = add a a
+              c e = id_tap[ arg_treedef_=*
+                            has_token_=True
+                            nr_tapped_args_=1
+                            tap_func_=_print  ] b d
+          in (c, e) }""", lambda x: hcb.id_print(x + x), [0])
+
+  def test_simple_outfeed_without_input_token(self):
+    self.assertRewrite("""
+        { lambda  ; a b.
+          let e = create_token a b
+              c = add a b
+              d f = id_tap[ arg_treedef_=*
+                            has_token_=True
+                            nr_tapped_args_=1
+                            tap_func_=_print  ] c e
+          in (d,) }""", lambda x1, x2: hcb.id_print(x1 + x2), [1, 2],
+                        has_input_token=False, has_output_token=False)
+
+  def test_simple_outfeed_without_input_token_nor_invars(self):
+    self.assertRewrite("""
+        { lambda  ; .
+          let b = create_token
+              a c = id_tap[ arg_treedef_=*
+                            has_token_=True
+                            nr_tapped_args_=1
+                            tap_func_=_print  ] 42 b
+          in (a,) }""", lambda: hcb.id_print(42), [],
+                        has_input_token=False, has_output_token=False)
+
+  def test_multiple_tap_without_dependencies(self):
+    def f(x):
+      hcb.id_print(x, what="x")
+      hcb.id_print(x + 1, what="x + 1")
+      return 2
+
+    self.assertRewrite("""
+        { lambda  ; a c.
+          let _ d = id_tap[ arg_treedef_=*
+                            has_token_=True
+                            nr_tapped_args_=1
+                            tap_func_=_print   what='x') ] a c
+              b = add a 1
+              _ e = id_tap[ arg_treedef_=*
+                            has_token_=True
+                            nr_tapped_args_=1
+                            tap_func_=_print   what='x + 1') ] b d
+          in (2, e) }""", f, [1])
 
   def test_cond(self):
     y = jnp.ones(5)  # captured const
@@ -1072,49 +1272,50 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
       return lax.cond(z > 0, (1, 2), lambda a: (a[0], jnp.zeros(5)),
                       z, lambda a: (hcb.id_print(a), y))
     self.assertRewrite("""
-{ lambda e f ; a b i.
-  let c = gt b 0
-      d = convert_element_type[ new_dtype=int32
-                                old_dtype=bool ] c
-      g h j = cond[ branches=( { lambda  ; f_ e a b c g.
-                                 let d h = id_tap[ arg_treedef_=*
-                                                   has_token_=True
-                                                   nr_tapped_args_=1
-                                                   tap_func_=_print
-                                                   ] c g
-                                 in (d, e, h) }
-                               { lambda  ; d g_ a b c h.
-                                 let
-                                 in (a, d, h) } )
-                    linear=(False, False, False, False, False, False) ] d e f 1 2 b i
-  in (g, h, j) }""", func, [y, 5])
+        { lambda a ; b c h.
+          let d = gt c 0
+              e = convert_element_type[ new_dtype=int32
+                                        old_dtype=bool ] d
+              f g i = cond[ branches=( { lambda  ; a b c d f.
+                                         let e g = id_tap[ arg_treedef_=*
+                                                           has_token_=True
+                                                           nr_tapped_args_=1
+                                                           tap_func_=_print  ] d f
+                                         in (e, a, g) }
+                                       { lambda  ; f_ a b c g.
+                                         let d = broadcast_in_dim[ broadcast_dimensions=(  )
+                                                                   shape=(5,) ] 0.00
+                                         in (a, d, g) } )
+                            linear=(False, False, False, False, False) ] e a 1 2 c h
+          in (f, g, i) }""", func, [y, 5])
 
   def test_while(self):
-    ct_body = jnp.ones(5, np.float32)     # captured const for the body
-    ct_cond = jnp.ones(5, np.float32) # captured const for the conditional
+    ct_body = jnp.ones(5, np.float32)  # captured const for the body
+    ct_cond = jnp.ones(5, np.float32)  # captured const for the conditional
 
     def func(x):
+      # x: f32[5]
+      # c: (f32[5], f32)
       return lax.while_loop(lambda c: c[1] < jnp.sum(c[0] + ct_cond),
                             lambda c: (ct_body, hcb.id_print(c[1]) + 1.),
                             (x, np.float32(1.)))
     self.assertRewrite("""
-{ lambda b c ; a f.
-  let d e g = while[ body_jaxpr={ lambda  ; c a b f.
-                                  let d g = id_tap[ arg_treedef_=*
-                                                    has_token_=True
-                                                    nr_tapped_args_=1
-                                                    tap_func_=_print
-                                                    ] b f
-                                      e = add d 1.00
-                                  in (c, e, g) }
-                     body_nconsts=1
-                     cond_jaxpr={ lambda  ; c a b g.
-                                  let d = add a c
-                                      e = reduce_sum[ axes=(0,) ] d
-                                      f = lt b e
-                                  in (f,) }
-                     cond_nconsts=1 ] b c a 1.00 f
-  in (d, e, g) }""", func, [ct_body])
+        { lambda a b ; c f.
+          let d e g = while[ body_jaxpr={ lambda  ; a b c f.
+                                          let d g = id_tap[ arg_treedef_=*
+                                                            has_token_=True
+                                                            nr_tapped_args_=1
+                                                            tap_func_=_print  ] c f
+                                              e = add d 1.00
+                                          in (a, e, g) }
+                             body_nconsts=1
+                             cond_jaxpr={ lambda  ; a b c g.
+                                          let d = add b a
+                                              e = reduce_sum[ axes=(0,) ] d
+                                              f = lt c e
+                                          in (f,) }
+                             cond_nconsts=1 ] a b c 1.00 f
+          in (d, e, g) }""", func, [ct_body])
 
   def test_while_pred_outfeed(self):
     """A while with outfeed in the pred."""
@@ -1127,67 +1328,258 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                             (x, 1))
 
     self.assertRewrite("""
-{ lambda b c ; a e.
-  let g h = xla_call[ call_jaxpr={ lambda  ; c a b f.
-                                   let _ d g = id_tap[ arg_treedef_=*
-                                                       has_token_=True
-                                                       nr_tapped_args_=1
-                                                       tap_func_=_print
-                                                       ] c b f
-                                       e = lt d 5
-                                   in (e, g) }
-                      donated_invars=(False, False, False, False)
-                      name=cond_before ] b a 1 e
-      x d _ f =
-        while[ body_jaxpr={ lambda  ; m n o p q r.
-                            let s t u = xla_call[ call_jaxpr={ lambda  ; c a b f.
-                                                               let d g = id_tap[ arg_treedef_=*
-                                                                                 has_token_=True
-                                                                                 nr_tapped_args_=1
-                                                                                 tap_func_=_print
-                                                                                 ] b f
-                                                                   e = add d 1
-                                                               in (c, e, g) }
-                                                  donated_invars=(False, False, False, False, False, False, False)
-                                                  name=body ] n p q r
-                                v w = xla_call[ call_jaxpr={ lambda  ; c a b f.
-                                                             let _ d g = id_tap[ arg_treedef_=*
-                                                                                 has_token_=True
-                                                                                 nr_tapped_args_=1
-                                                                                 tap_func_=_print
-                                                                                 ] c b f
-                                                                 e = lt d 5
-                                                             in (e, g) }
-                                                donated_invars=(False, False, False, False, False, False)
-                                                name=cond_body ] m s t u
-                            in (v, s, t, w) }
-               body_nconsts=2
-               cond_jaxpr={ lambda  ; i j k l.
-                            let
-                            in (i,) }
-               cond_nconsts=0 ] b c g a 1 h
-  in (d, 5, f) }""", func, [ct_body])
+        { lambda a b ; c f.
+          let h i = xla_call[ call_jaxpr={ lambda  ; a b c f.
+                                           let _ d g = id_tap[ arg_treedef_=*
+                                                               has_token_=True
+                                                               nr_tapped_args_=1
+                                                               tap_func_=_print  ] a c f
+                                               e = lt d 5
+                                           in (e, g) }
+                              donated_invars=(False, False, False, False)
+                              name=cond_before ] a c 1 f
+              y d e g =
+                while[ body_jaxpr={ lambda  ; n o p q r s.
+                                    let t u v = xla_call[ call_jaxpr={ lambda  ; a b c f.
+                                                                       let d g = id_tap[ arg_treedef_=*
+                                                                                         has_token_=True
+                                                                                         nr_tapped_args_=1
+                                                                                         tap_func_=_print  ] c f
+                                                                           e = add d 1
+                                                                       in (a, e, g) }
+                                                          donated_invars=(False, False, False, False)
+                                                          name=body ] o q r s
+                                        w x = xla_call[ call_jaxpr={ lambda  ; a b c f.
+                                                                     let _ d g = id_tap[ arg_treedef_=*
+                                                                                         has_token_=True
+                                                                                         nr_tapped_args_=1
+                                                                                         tap_func_=_print  ] a c f
+                                                                         e = lt d 5
+                                                                     in (e, g) }
+                                                        donated_invars=(False, False, False, False)
+                                                        name=cond_body ] n t u v
+                                    in (w, t, u, x) }
+                       body_nconsts=2
+                       cond_jaxpr={ lambda  ; j k l m.
+                                    let
+                                    in (j,) }
+                       cond_nconsts=0 ] a b h c 1 i
+          in (d, e, g) }""", func, [ct_body])
 
   def test_scan(self):
     y = jnp.ones(5)  # captured const
     def func(x):
       return lax.scan(lambda c, a: (hcb.id_print(c), y), (1, 2), x)
     self.assertRewrite("""
-{ lambda b ; a f.
-  let c d g e =
-        scan[ jaxpr={ lambda  ; f a b g c.
-                      let d e h = id_tap[ arg_treedef_=PyTreeDef(tuple, [*,*])
-                                          has_token_=True
-                                          nr_tapped_args_=2
-                                          tap_func_=_print
-                                          ] a b g
-                      in (d, e, h, f) }
-              length=5
-              linear=(False, False, False, False, False)
-              num_carry=3
-              num_consts=1
-              reverse=False ] b 1 2 f a
-  in (c, d, e, g) }""", func, [y])
+        { lambda a ; b f.
+          let c d g e =
+                scan[ jaxpr={ lambda  ; a b c g d.
+                              let e f h = id_tap[ arg_treedef_=PyTreeDef(tuple, [*,*])
+                                                  has_token_=True
+                                                  nr_tapped_args_=2
+                                                  tap_func_=_print  ] b c g
+                              in (e, f, h, a) }
+                      length=5
+                      linear=(False, False, False, False, False)
+                      num_carry=3
+                      num_consts=1
+                      reverse=False
+                      unroll=1 ] a 1 2 f b
+          in (c, d, e, g) }""", func, [y])
+
+  def test_scan_custom_jvp(self):
+    """custom JVP, inside scan.
+    This exercises the custom_jvp_call_jaxpr primitives."""
+    @api.custom_jvp
+    def f(x):
+      return x * hcb.id_print(x)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      x_dot, = tangents
+      primal_out = f(x)
+      tangent_out = 3. * x * hcb.id_print(x_dot)
+      return primal_out, tangent_out
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((5,), 0.7)
+    self.assertRewrite("""
+      { lambda  ; a c.
+        let b d _ = scan[ jaxpr={ lambda  ; a e b.
+                                  let c f = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d.
+                                                                               let b e = id_tap[ arg_treedef_=*
+                                                                                                 has_token_=True
+                                                                                                 nr_tapped_args_=1
+                                                                                                 tap_func_=_print  ] a d
+                                                                                   c = mul a b
+                                                                               in (c, e) }
+                                                                   ] b e
+                                      d = add a c
+                                  in (d, f, 0.00) }
+                          length=5
+                          linear=(False, False, False)
+                          num_carry=2
+                          num_consts=0
+                          reverse=False
+                          unroll=1 ] 0.00 c a
+        in (b, d) }""", g, [arg])
+    self.assertRewrite("""
+        { lambda  ; a d.
+          let _ _ e _ b =
+                scan[ jaxpr={ lambda  ; a b h c d.
+                              let e i = custom_jvp_call_jaxpr[ fun_jaxpr={ lambda  ; a d.
+                                                                           let b e = id_tap[ arg_treedef_=*
+                                                                                             has_token_=True
+                                                                                             nr_tapped_args_=1
+                                                                                             tap_func_=_print  ] a d
+                                                                               c = mul a b
+                                                                           in (c, e) }
+                                                               ] c h
+                                  f = add a e
+                                  g = mul c 3.00
+                              in (f, *, i, 0.00, g) }
+                      length=5
+                      linear=(False, True, False, True, False)
+                      num_carry=3
+                      num_consts=0
+                      reverse=False
+                      unroll=1 ] 0.00 * d a *
+              _ _ f _ c =
+                scan[ jaxpr={ lambda  ; a b g c d.
+                              let e = mul b d
+                                  f h = id_tap[ arg_treedef_=*
+                                                has_token_=True
+                                                nr_tapped_args_=1
+                                                tap_func_=_print
+                                                transforms=(('transpose',),) ] e g
+                              in (*, b, h, *, f) }
+                      length=5
+                      linear=(True, True, True, False, False)
+                      num_carry=3
+                      num_consts=0
+                      reverse=True
+                      unroll=1 ] * 1.00 e * b
+          in (c, f) }""", api.grad(g), [arg])
+
+  def test_scan_custom_vjp(self):
+    """custom VJP, inside scan.
+    This exercises the custom_vjp_call_jaxpr primitives."""
+    @api.custom_vjp
+    def f(x):
+      return x * hcb.id_print(x)
+
+    # f_fwd: a -> (b, residual)
+    def f_fwd(x):
+      return f(x), 3. * x
+    # f_bwd: (residual, CT b) -> [CT a]
+    def f_bwd(residual, ct_b):
+      return residual * hcb.id_print(ct_b),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    def g(x):
+      # Sum f(x_i)
+      return lax.scan(lambda carry, inp: (carry + f(inp), 0.),
+                      np.full(x.shape[1:], 0.),  # Like x w/o leading dim
+                      x)[0]
+
+    arg = np.full((2,), 0.7)
+    self.assertRewrite("""
+        { lambda  ; a c.
+          let b d _ = scan[ jaxpr={ lambda  ; a e b.
+                                    let c f = custom_vjp_call_jaxpr[
+                                                                     fun_jaxpr={ lambda  ; a d.
+                                                                                 let b e = id_tap[ arg_treedef_=*
+                                                                                                   has_token_=True
+                                                                                                   nr_tapped_args_=1
+                                                                                                   tap_func_=_print  ] a d
+                                                                                     c = mul a b
+                                                                                 in (c, e) }
+                                                                     ] b e
+                                        d = add a c
+                                    in (d, f, 0.00) }
+                            length=2
+                            linear=(False, False, False)
+                            num_carry=2
+                            num_consts=0
+                            reverse=False
+                            unroll=1 ] 0.00 c a
+          in (b, d) }""", g, [arg])
+    self.assertRewrite("""
+        { lambda  ; a d.
+          let _ _ e _ b =
+                scan[ jaxpr={ lambda  ; a b h c d.
+                              let e i = custom_vjp_call_jaxpr[
+                                                               fun_jaxpr={ lambda  ; a d.
+                                                                           let b e = id_tap[ arg_treedef_=*
+                                                                                             has_token_=True
+                                                                                             nr_tapped_args_=1
+                                                                                             tap_func_=_print  ] a d
+                                                                               c = mul a b
+                                                                           in (c, e) }
+                                                               ] c h
+                                  f = add a e
+                                  g = mul c 3.00
+                              in (f, *, i, 0.00, g) }
+                      length=2
+                      linear=(False, True, False, True, False)
+                      num_carry=3
+                      num_consts=0
+                      reverse=False
+                      unroll=1 ] 0.00 * d a *
+              _ _ f _ c =
+                scan[ jaxpr={ lambda  ; a b g c d.
+                              let e h = id_tap[ arg_treedef_=*
+                                                has_token_=True
+                                                nr_tapped_args_=1
+                                                tap_func_=_print  ] b g
+                                  f = mul d e
+                              in (*, b, h, *, f) }
+                      length=2
+                      linear=(True, True, True, False, False)
+                      num_carry=3
+                      num_consts=0
+                      reverse=True
+                      unroll=1 ] * 1.00 e * b
+          in (c, f) }""", api.grad(g), [arg])
+
+  def test_remat_loop(self):
+    def f(k, x):
+      x = hcb.id_print(k + x)
+      return -k * x
+
+    def loss(k):
+      return lax.fori_loop(0, 1, api.remat(f), k)
+
+    self.assertRewrite("""
+        { lambda  ; a c.
+          let _ _ b d =
+                while[ body_jaxpr={ lambda  ; a b c f.
+                                    let d = add a 1
+                                        e g = remat_call[ call_jaxpr={ lambda  ; a b g.
+                                                                       let c = add a b
+                                                                           d h = id_tap[ arg_treedef_=*
+                                                                                         has_token_=True
+                                                                                         nr_tapped_args_=1
+                                                                                         tap_func_=_print  ] c g
+                                                                           e = neg a
+                                                                           f = mul e d
+                                                                       in (f, h) }
+                                                          concrete=False
+                                                          name=f ] a c f
+                                    in (d, b, e, g) }
+                       body_nconsts=0
+                       cond_jaxpr={ lambda  ; a b c e.
+                                    let d = lt a b
+                                    in (d,) }
+                       cond_nconsts=0 ] 0 1 a c
+          in (b, d) }""", loss, [2])
 
 
 if __name__ == "__main__":

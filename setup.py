@@ -14,7 +14,6 @@
 
 from setuptools import setup, find_packages
 
-global __version__
 __version__ = None
 
 with open('jax/version.py') as f:

@@ -62,6 +62,7 @@ dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
 
+import threading
 from typing import Any, Tuple, Callable
 import weakref
 
@@ -84,6 +85,10 @@ class Store(object):
     if self._val is not _EMPTY_STORE_VALUE:
       raise StoreException("Store occupied")
     self._val = val
+
+  def reset(self):
+    # This should only be called in exceptional circumstances (e.g. debugging).
+    self._val = _EMPTY_STORE_VALUE
 
   @property
   def val(self):
@@ -147,7 +152,17 @@ class WrappedFun(object):
       stack.append((gen, out_store))
     gen = None
 
-    ans = self.f(*args, **dict(self.params, **kwargs))
+    try:
+      ans = self.f(*args, **dict(self.params, **kwargs))
+    except:
+      # Some transformations yield from inside context managers, so we have to
+      # interrupt them before reraising the exception. Otherwise they will only
+      # get garbage-collected at some later time, running their cleanup tasks only
+      # after this exception is handled, which can corrupt the global state.
+      while stack:
+        stack.pop()[0].close()
+      raise
+
     del args
     while stack:
       gen, out_store = stack.pop()
@@ -200,6 +215,13 @@ def wrap_init(f, params={}) -> WrappedFun:
   return WrappedFun(f, (), (), tuple(sorted(params.items())))
 
 
+class _CacheLocalContext(threading.local):
+
+  def __init__(self):
+    super(_CacheLocalContext, self).__init__()
+    self.most_recent_entry = None
+
+
 def cache(call: Callable):
   """Memoization decorator for functions taking a WrappedFun as first argument.
 
@@ -212,6 +234,7 @@ def cache(call: Callable):
      A memoized version of ``call``.
   """
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+  thread_local: threading.local = _CacheLocalContext()
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
@@ -223,10 +246,22 @@ def cache(call: Callable):
     else:
       ans = call(fun, *args)
       cache[key] = (ans, fun.stores)
+
+    thread_local.most_recent_entry = weakref.ref(ans)
     return ans
 
+  def _most_recent_entry():
+    most_recent_entry = thread_local.most_recent_entry
+    if most_recent_entry is not None:
+      result = most_recent_entry()
+      thread_local.most_recent_entry = None
+      return result
+
+  memoized_fun.most_recent_entry = _most_recent_entry  # type: ignore
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
+
   return memoized_fun
+
 
 @transformation
 def hashable_partial(x, *args):
@@ -242,7 +277,7 @@ def merge_linear_aux(aux1, aux2):
     try:
       out2 = aux2()
     except StoreException:
-      raise StoreException("neither store occupied")
+      raise StoreException("neither store occupied") from None
     else:
       return False, out2
   else:
