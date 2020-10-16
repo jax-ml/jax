@@ -613,6 +613,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                  mk_new_var: Callable[[core.AbstractValue], core.Var]):
   """Rewrite an `eqn` and append equations to `eqns`.
 
+  This is only called if the current primitive uses outfeed.
   Assume that the current token is in `input_token_var` and the resulting
   token must end in `output_token_var`.
   """
@@ -698,9 +699,19 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             eqn.primitive,
             dict(
                 eqn.params,
-                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True,
-                                          True),
+                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
                 donated_invars=eqn.params["donated_invars"] + (False,)
+            ),
+          eqn.source_info))
+  elif eqn.primitive is pe.remat_call_p:
+    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
+    eqns.append(
+        core.new_jaxpr_eqn(
+            eqn.invars + [input_token_var], eqn.outvars + [output_token_var],
+            eqn.primitive,
+            dict(
+                eqn.params,
+                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
             ),
           eqn.source_info))
   elif eqn.primitive is custom_derivatives.custom_jvp_call_jaxpr_p:

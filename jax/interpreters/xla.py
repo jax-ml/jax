@@ -1305,9 +1305,13 @@ def _remat_translation_rule(c, axis_env, in_nodes,
   xb.parameter(dummy_subc, 0, c.get_shape(false_op), replicated=[])
 
   def zeros(xla_shape):
-    shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-    zero = xb.constant(dummy_subc, np.array(0, dtype=dtype))
-    return xops.Broadcast(zero, shape)
+    if xla_shape.is_array():
+      shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
+      zero = xb.constant(dummy_subc, np.array(0, dtype=dtype))
+      return xops.Broadcast(zero, shape)
+    else:
+      # It is a token
+      return xops.CreateToken(dummy_subc)
   out_nodes = [zeros(s) for s in out_node_shapes]
   dummy_subc = dummy_subc.build(xops.Tuple(dummy_subc, out_nodes))
 
