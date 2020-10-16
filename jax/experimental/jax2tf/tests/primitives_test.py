@@ -457,6 +457,18 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=atol, rtol=rtol)
 
+  @primitive_harness.parameterized(primitive_harness.lax_linear_solve)
+  def test_linear_solve(self, harness: primitive_harness.Harness):
+    a, b = harness.dyn_args_maker(self.rng())
+    if harness.params["symmetric"]:
+      a = a + a.T
+    tol = None
+    if (harness.params["dtype"] == np.float32 and
+        jtu.device_under_test() == "tpu"):
+      tol = 0.01
+
+    self.ConvertAndCompare(harness.dyn_fun, a, b, atol=tol, rtol=tol)
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]

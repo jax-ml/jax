@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-10-16*
+*Last generated on (YYYY-MM-DD): 2020-10-19*
 
 ## Updating the documentation
 
@@ -52,6 +52,7 @@ conversion to Tensorflow.
 | erfc | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | fft | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | complex128, float64 | CPU, GPU, TPU |
 | lgamma | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
+| lu | Missing TF support | Primitive is unimplemented in TF | complex64 | TPU |
 | max | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | min | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | mul | Missing TF support | Primitive is unimplemented in TF | uint32, uint64 | CPU, GPU, TPU |
@@ -78,16 +79,17 @@ conversion to Tensorflow.
 | sort | Missing TF support | Primitive is unimplemented in TF; stable sort not implemented for XlaSort | ALL | CPU, GPU, TPU |
 | svd | Missing TF support | Primitive is unimplemented in TF; this works on JAX because JAX uses a custom implementation | complex128, complex64 | CPU, GPU |
 | top_k | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | float64, int64, uint64 | CPU, GPU, TPU |
+| triangular_solve | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
 
 ## Not yet implemented primitive conversions
 
 The conversion of the following JAX primitives is not yet implemented:
 
-`after_all`, `all_to_all`, `axis_index`, `create_token`, `cummax`, `cummin`, `custom_linear_solve`, `igamma_grad_a`, `infeed`, `lu`, `outfeed`, `pmax`, `pmin`, `ppermute`, `psum`, `random_gamma_grad`, `reduce`, `rng_uniform`, `triangular_solve`, `xla_pmap`
+`after_all`, `all_to_all`, `axis_index`, `create_token`, `cummax`, `cummin`, `igamma_grad_a`, `infeed`, `outfeed`, `pmax`, `pmin`, `ppermute`, `psum`, `random_gamma_grad`, `reduce`, `rng_uniform`, `xla_pmap`
 
 ## Primitive conversions with missing tests
 
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmax`, `argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `device_put`, `imag`, `integer_pow`, `real`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `stop_gradient`, `tie_in`
+`argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `device_put`, `integer_pow`, `rev`, `select_and_scatter`, `select_and_scatter_add`, `tie_in`

@@ -703,6 +703,41 @@ lax_linalg_triangular_solve = tuple( # Validate dtypes
   # conjugate_a is irrelevant for real dtypes, and is thus omitted
 )
 
+def _make_linear_solve_harnesses():
+  def linear_solve(a, b, solve, transpose_solve=None, symmetric=False):
+    matvec = partial(lax.dot, a, precision=lax.Precision.HIGHEST)
+    return lax.custom_linear_solve(matvec, b, solve, transpose_solve, symmetric)
+
+  def explicit_jacobian_solve(matvec, b):
+    return lax.stop_gradient(jnp.linalg.solve(jax.api.jacobian(matvec)(b), b))
+
+  def _make_harness(name, *, shape=(4, 4), dtype=np.float32, symmetric=False,
+                    solvers=(explicit_jacobian_solve, explicit_jacobian_solve)):
+    solve, transpose_solve = solvers
+    transpose_solve_name = transpose_solve.__name__ if transpose_solve else None
+    return Harness(f"_{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_b={jtu.format_shape_dtype_string(shape[:-1], dtype)}_solve={solve.__name__}_transposesolve={transpose_solve_name}_symmetric={symmetric}",
+                   linear_solve,
+                   [RandArg(shape, dtype), RandArg(shape[:-1], dtype),
+                    StaticArg(solve), StaticArg(transpose_solve),
+                    StaticArg(symmetric)],
+                   shape=shape,
+                   dtype=dtype,
+                   solve=solve,
+                   transpose_solve=transpose_solve,
+                   symmetric=symmetric)
+
+  return tuple( # Validate dtypes
+    _make_harness("dtypes", dtype=dtype)
+    for dtype in
+      jtu.dtypes.all_floating if not dtype in [np.float16, dtypes.bfloat16]
+  ) + tuple( # Validate symmetricity
+    [_make_harness("symmetric", symmetric=True)]
+  ) + tuple( # Validate removing transpose_solve
+    [_make_harness("transpose_solve", solvers=(explicit_jacobian_solve, None))]
+  )
+
+lax_linear_solve = _make_linear_solve_harnesses()
+
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
           lax.slice,
@@ -917,7 +952,7 @@ lax_reduce_window = tuple( # Validate dtypes across all execution paths
     (lax.max, 1), # path through reduce_window
   ] + ([
     (lax.add, 0), # path_through reduce_window_sum
-    (lax.mul, 1), # path through reduce_window_mul
+    (lax.mul, 1), # path through reduce_window
   ] if dtype != jnp.bool_ else [])
 ) + tuple( # Validate window_dimensions
   _make_reduce_window_harness("window_dimensions",

@@ -618,8 +618,6 @@ for unexpected in [
 tf_not_yet_impl = [
   lax.reduce_p, lax.rng_uniform_p,
 
-  lax.linear_solve_p,
-
   lax.igamma_grad_a_p,
   lax.random_gamma_grad_p,
 
@@ -1817,6 +1815,12 @@ def _triangular_solve(a: TfVal, b: TfVal, *, left_side: bool, lower: bool,
   return result
 
 tf_impl[lax_linalg.triangular_solve_p] = _triangular_solve
+
+def _linear_solve(*args: TfVal, const_lengths, jaxprs, _in_avals, _out_aval):
+  return _convert_jax_impl(lax_control_flow._custom_linear_solve_impl)(
+    *args, const_lengths=const_lengths, jaxprs=jaxprs, _in_avals=_in_avals, _out_aval=_out_aval)
+
+tf_impl_with_avals[lax.linear_solve_p] = _linear_solve
 
 def _custom_jvp_call_jaxpr(*args: TfVal,
                            fun_jaxpr: core.ClosedJaxpr,
