@@ -323,9 +323,6 @@ class JVPTrace(Trace):
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     tangents_in = map(instantiate_zeros, tangents_in)
-    # Cast float0 to zeros with the primal dtype because custom vjp rules don't
-    # currently handle float0s
-    tangents_in = replace_float0s(primals_in, tangents_in)
     res_and_primals_out = fwd.call_wrapped(*map(core.full_lower, primals_in))
     out_tree, res_tree = out_trees()
     res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
