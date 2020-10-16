@@ -57,6 +57,10 @@ Operators
     conv_transpose
     cos
     cosh
+    cummax
+    cummin
+    cumprod
+    cumsum
     digamma
     div
     dot

@@ -29,6 +29,7 @@ import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.custom_derivatives import custom_jvp_call_jaxpr_p
 from jax.lax import lax
+from jax.lax import lax_control_flow
 from jax.lax import lax_fft
 
 def jet(fun, primals, series):
@@ -238,19 +239,20 @@ deflinear(lax_fft.fft_p)
 deflinear(xla.device_put_p)
 
 def _cumulative_jet_rule(primals_in, series_in, *, axis: int,
-                         prefix_scan: Callable):
+                         combine_fn: Callable):
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return jet(partial(prefix_scan, axis=axis), primals_in, series_in)
+  return jet(partial(lax_control_flow.associative_scan, combine_fn, axis=axis),
+             primals_in, series_in)
 
-deflinear(lax.cumsum_p)
-jet_rules[lax.cumprod_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cumprod_prefix_scan)
-jet_rules[lax.cummax_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cummax_prefix_scan)
-jet_rules[lax.cummin_p] = partial(_cumulative_jet_rule,
-                                   prefix_scan=lax._cummin_prefix_scan)
+deflinear(lax_control_flow.cumsum_p)
+jet_rules[lax_control_flow.cumprod_p] = partial(_cumulative_jet_rule,
+                                                combine_fn=lax.mul)
+jet_rules[lax_control_flow.cummax_p] = partial(_cumulative_jet_rule,
+                                               combine_fn=lax.max)
+jet_rules[lax_control_flow.cummin_p] = partial(_cumulative_jet_rule,
+                                               combine_fn=lax.min)
 
 
 def def_deriv(prim, deriv):
