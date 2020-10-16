@@ -14,7 +14,7 @@
 from functools import partial
 from typing import Any, Callable, Mapping, Optional, Tuple, Union
 
-from ._bfgs import minimize_bfgs
+from .bfgs import minimize_bfgs
 from typing import NamedTuple
 import jax.numpy as jnp
 

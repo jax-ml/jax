@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,22 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# flake8: noqa: F401
 
-import scipy.stats as osp_stats
-
-from ... import lax
-from ...numpy._util import _wraps
-from ...numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or
-
-
-@_wraps(osp_stats.uniform.logpdf, update_doc=False)
-def logpdf(x, loc=0, scale=1):
-  x, loc, scale = _promote_args_inexact("uniform.logpdf", x, loc, scale)
-  log_probs = lax.neg(lax.log(scale))
-  return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)),
-               -inf, log_probs)
-
-@_wraps(osp_stats.uniform.pdf, update_doc=False)
-def pdf(x, loc=0, scale=1):
-  return lax.exp(logpdf(x, loc, scale))
+from jax._src.scipy.stats.uniform import (
+  logpdf,
+  pdf,
+)

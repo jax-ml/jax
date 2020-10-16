@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2020 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,27 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import scipy.stats as osp_stats
+# flake8: noqa: F401
 
-from ... import lax
-from ...numpy._util import _wraps
-from ...numpy.lax_numpy import (_promote_args_inexact, _constant_like,
-                                where, inf, logical_or)
-from ..special import betaln
-
-
-@_wraps(osp_stats.beta.logpdf, update_doc=False)
-def logpdf(x, a, b, loc=0, scale=1):
-  x, a, b, loc, scale = _promote_args_inexact("beta.logpdf", x, a, b, loc, scale)
-  one = _constant_like(x, 1)
-  shape_term = lax.neg(betaln(a, b))
-  y = lax.div(lax.sub(x, loc), scale)
-  log_linear_term = lax.add(lax.mul(lax.sub(a, one), lax.log(y)),
-                            lax.mul(lax.sub(b, one), lax.log1p(lax.neg(y))))
-  log_probs = lax.sub(lax.add(shape_term, log_linear_term), lax.log(scale))
-  return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)), -inf, log_probs)
-
-@_wraps(osp_stats.beta.pdf, update_doc=False)
-def pdf(x, a, b, loc=0, scale=1):
-  return lax.exp(logpdf(x, a, b, loc, scale))
+from jax._src.scipy.stats.beta import (
+  logpdf,
+  pdf,
+)
