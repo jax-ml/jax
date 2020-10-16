@@ -1190,43 +1190,58 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         check_dtypes=False)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_mode={}_rpadwidth={}_rconstantvalues={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), mode, pad_width_rank,
-          constant_values_rank),
+      {"testcase_name": "_shape={}_mode={}_padwidth={}_constantvalues={}".format(
+          jtu.format_shape_dtype_string(shape, dtype), mode, pad_width,
+          constant_values),
        "shape": shape, "dtype": dtype, "mode": mode,
-       "pad_width_rank": pad_width_rank,
-       "constant_values_rank": constant_values_rank,
-       "rng_factory": jtu.rand_default,
-       "irng_factory": partial(jtu.rand_int, high=3)}
-      for mode, constant_values_rank, shapes in [
-        ('constant', 0, all_shapes),
-        ('constant', 1, all_shapes),
-        ('constant', 2, all_shapes),
-        ('symmetric', None, nonempty_shapes),
-        ('reflect', None, nonempty_shapes),
-        ('wrap', None, nonempty_shapes),
-        ('edge', None, nonempty_shapes),
+       "pad_width": pad_width, "constant_values": constant_values,
+       "rng_factory": jtu.rand_default}
+      for mode, shapes in [
+          ('constant', all_shapes),
+          ('symmetric', nonempty_shapes),
+          ('reflect', nonempty_shapes),
+          ('wrap', nonempty_shapes),
+          ('edge', nonempty_shapes),
       ]
       for shape, dtype in _shape_and_dtypes(shapes, all_dtypes)
-      for pad_width_rank in range(3)))
-  def testPad(self, shape, dtype, mode, pad_width_rank, constant_values_rank,
-              rng_factory, irng_factory):
+      for constant_values in [
+          # None is used for modes other than 'constant'
+          None,
+          # constant
+          0, 1,
+          # (constant,)
+          (0,), (2.718,),
+          # ((before_const, after_const),)
+          ((0, 2),), ((-1, 3.14),),
+          # ((before_1, after_1), ..., (before_N, after_N))
+          tuple((i / 2, -3.14 * i) for i in range(len(shape))),
+      ]
+      for pad_width in [
+        # ((before_1, after_1), ..., (before_N, after_N))
+        tuple((i % 3, (i + 1) % 3) for i in range(len(shape))),
+        # ((before, after),)
+        ((1, 2),), ((2, 0),),
+        # (before, after)  (not in the docstring but works in numpy)
+        (2, 0), (0, 0),
+        # (pad,)
+        (1,), (2,),
+        # pad
+        0, 1,
+      ]
+      if (pad_width != () and constant_values != () and
+          ((mode == 'constant' and constant_values is not None) or
+           (mode != 'constant' and constant_values is None)))))
+  def testPad(self, shape, dtype, mode, pad_width, constant_values, rng_factory):
     rng = rng_factory(self.rng())
-    irng = irng_factory(self.rng())
-    pad_width = irng([len(shape), 2][2 - pad_width_rank:], np.int32)
-    def np_fun(x, kwargs):
-      if pad_width.size == 0:
-        return x
-      return np.pad(x, pad_width, mode=mode, **kwargs)
-    def jnp_fun(x, kwargs):
-      return jnp.pad(x, pad_width, mode=mode, **kwargs)
-
-    def args_maker():
-      kwargs = {}
-      if constant_values_rank:
-        kwargs["constant_values"] = rng(
-          [len(shape), 2][2 - constant_values_rank:], dtype)
-      return rng(shape, dtype), kwargs
+    args_maker = lambda: [rng(shape, dtype)]
+    if constant_values is None:
+      np_fun = partial(np.pad, pad_width=pad_width, mode=mode)
+      jnp_fun = partial(jnp.pad, pad_width=pad_width, mode=mode)
+    else:
+      np_fun = partial(np.pad, pad_width=pad_width, mode=mode,
+                       constant_values=constant_values)
+      jnp_fun = partial(jnp.pad, pad_width=pad_width, mode=mode,
+                        constant_values=constant_values)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
@@ -3730,6 +3745,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testIssue883(self):
     # from https://github.com/google/jax/issues/883
+    raise SkipTest("we decided to disallow arrays as static args")
 
     @partial(api.jit, static_argnums=(1,))
     def f(x, v):
