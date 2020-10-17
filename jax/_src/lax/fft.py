@@ -22,11 +22,11 @@ from jax.api import jit, linear_transpose, ShapeDtypeStruct
 from jax.core import Primitive
 from jax.interpreters import xla
 from jax.util import prod
-from . import dtypes, lax
-from .. import lib
-from ..lib import xla_client
-from ..interpreters import ad
-from ..interpreters import batching
+from jax import dtypes, lax
+from jax import lib
+from jax.lib import xla_client
+from jax.interpreters import ad
+from jax.interpreters import batching
 
 xops = xla_client.ops
 

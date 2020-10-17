@@ -47,7 +47,7 @@ from jax.config import flags, config
 from jax.interpreters.xla import DeviceArray
 from jax.interpreters.masking import Poly
 from jax import lax
-from jax.lax.lax import _device_put_raw
+from jax._src.lax.lax import _device_put_raw
 from jax import ops
 from jax.util import (partial, unzip2, prod as _prod,
                       subvals, safe_zip, canonicalize_axis as _canonicalize_axis)

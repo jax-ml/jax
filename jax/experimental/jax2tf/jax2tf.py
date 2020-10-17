@@ -38,8 +38,9 @@ from jax.interpreters import masking
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax.lax import lax_control_flow
-from jax.lax import lax_fft
+from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import fft as lax_fft
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -632,7 +633,7 @@ tf_not_yet_impl = [
 ]
 
 try:
-  tf_impl[lax.lax.tie_in_p] = lambda x, y: y
+  tf_impl[lax.tie_in_p] = lambda x, y: y
 except AttributeError:
   pass
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
@@ -1233,8 +1234,8 @@ def _select_and_gather_add(tangents: TfVal,
   const = lambda dtype, x: tf.constant(np.array(x), dtype)
 
   if double_word_reduction:
-    word_dtype = lax.lax._UINT_DTYPES[nbits]
-    double_word_dtype = lax.lax._UINT_DTYPES[nbits * 2]
+    word_dtype = lax_internal._UINT_DTYPES[nbits]
+    double_word_dtype = lax_internal._UINT_DTYPES[nbits * 2]
 
     # Packs two values into a tuple.
     def pack(a, b):
