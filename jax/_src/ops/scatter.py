@@ -15,9 +15,9 @@
 # Helpers for indexed updates.
 
 
-from .. import lax
+from jax import lax
 from jax._src.numpy import lax_numpy as jnp
-from .. import util
+from jax import util
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
