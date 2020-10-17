@@ -16,7 +16,7 @@
 
 # flake8: noqa: F401
 from . import initializers
-from .functions import (
+from jax._src.nn.functions import (
   celu,
   elu,
   gelu,
