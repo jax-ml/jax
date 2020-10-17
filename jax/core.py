@@ -1025,9 +1025,12 @@ class ConcreteArray(ShapedArray):
     assert self.dtype != np.dtype('O'), val
 
   def __eq__(self, other):
-    return (type(self) is type(other) and self.dtype == other.dtype
-            and self.shape == other.shape and self.weak_type == other.weak_type
-            and np.all(self.val == other.val))
+    if (type(self) is type(other) and self.dtype == other.dtype
+        and self.shape == other.shape and self.weak_type == other.weak_type):
+      with eval_context():  # in case self.val is a DeviceArray
+        return (self.val == other.val).all()
+    else:
+      return False
 
   def __hash__(self):
     return id(self.val)
