@@ -748,13 +748,13 @@ def correlate(a, v, mode='valid', *, precision=None):
 
 
 def _normalize_float(x):
-    info = finfo(_dtype(x))
-    cond = lax.abs(x) < info.tiny
-    x1 = where(cond, x * (1 << info.nmant), x)
-    x2 = where(cond,
-               full_like(x, -info.nmant, dtype=np.int32),
-               zeros_like(x, dtype=np.int32))
-    return lax.convert_element_type(x1, _dtype(x)), x2
+  info = finfo(_dtype(x))
+  cond = lax.abs(x) < info.tiny
+  x1 = where(cond, x * (1 << info.nmant), x)
+  x2 = where(cond, full_like(x, -info.nmant, dtype=np.int32),
+             zeros_like(x, dtype=np.int32))
+  return lax.convert_element_type(x1, _dtype(x)), x2
+
 
 _INT_DTYPES = {
   16: np.int16,
@@ -1466,21 +1466,22 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
 
 @partial(jit, static_argnums=2)
 def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
-    """
+  """
     Helper function for intersect1d which is jit-able
     """
-    ar = concatenate((ar1, ar2))
-    if return_indices:
-      iota = lax.broadcasted_iota(np.int64, shape(ar), dimension=0)
-      aux, indices = lax.sort_key_val(ar, iota)
-    else:
-      aux = sort(ar)
+  ar = concatenate((ar1, ar2))
+  if return_indices:
+    iota = lax.broadcasted_iota(np.int64, shape(ar), dimension=0)
+    aux, indices = lax.sort_key_val(ar, iota)
+  else:
+    aux = sort(ar)
 
-    mask = aux[1:] == aux[:-1]
-    if return_indices:
-      return aux, mask, indices
-    else:
-      return aux, mask
+  mask = aux[1:] == aux[:-1]
+  if return_indices:
+    return aux, mask, indices
+  else:
+    return aux, mask
+
 
 @_wraps(np.intersect1d)
 def intersect1d(ar1, ar2, assume_unique=False, return_indices=False):
@@ -2324,10 +2325,13 @@ def _pad(array, pad_width, mode, constant_values):
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
 
+
 @_wraps(np.pad)
-def pad(array, pad_width, mode='constant', constant_values=0):
-  if isinstance(pad_width, list):
-    pad_width = tuple(pad_width)
+def pad(array, pad_width, mode="constant", constant_values=0):
+  if isinstance(pad_width, Sequence):
+    pad_width = tuple(
+        tuple(int(i) for i in x) if isinstance(x, Sequence) else x
+        for x in pad_width)
   return _pad(array, pad_width, mode, constant_values)
 
 
@@ -2803,7 +2807,7 @@ def meshgrid(*args, **kwargs):
     output.append(lax.broadcast_in_dim(a, s, (i,)))
 
   if indexing == "xy" and len(args) >= 2:
-      output[0], output[1] = output[1], output[0]
+    output[0], output[1] = output[1], output[0]
 
   return output
 
@@ -3302,8 +3306,9 @@ def tensordot(a, b, axes=2, *, precision=None):
       contracting_dims = (tuple(_canonicalize_axis(i, a_ndim) for i in ax1),
                           tuple(_canonicalize_axis(i, b_ndim) for i in ax2))
     else:
-        msg = "tensordot requires both axes lists to be either ints, tuples or lists, got {} and {}"
-        raise TypeError(msg.format(ax1, ax2))
+      msg = ("tensordot requires both axes lists to be either ints, tuples or "
+             "lists, got {} and {}")
+      raise TypeError(msg.format(ax1, ax2))
   else:
     msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
            "of lists/tuples of ints.")
@@ -4470,8 +4475,8 @@ def corrcoef(x, y=None, rowvar=True):
   _check_arraylike("corrcoef", x)
   c = cov(x, y, rowvar)
   if len(shape(c)) == 0:
-      # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
-      return divide(c, c)
+    # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
+    return divide(c, c)
   d = diag(c)
   stddev = sqrt(real(d))
   c = divide(c, stddev[:,None])
@@ -4479,10 +4484,10 @@ def corrcoef(x, y=None, rowvar=True):
 
   real_part = clip(real(c), -1, 1)
   if iscomplexobj(c):
-      complex_part = clip(imag(c), -1, 1)
-      c = lax.complex(real_part, complex_part)
+    complex_part = clip(imag(c), -1, 1)
+    c = lax.complex(real_part, complex_part)
   else:
-      c = real_part
+    c = real_part
   return c
 
 
