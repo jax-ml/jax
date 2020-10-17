@@ -9,7 +9,8 @@ API
 
 .. autofunction:: id_tap
 .. autofunction:: id_print
-.. autofunction:: outfeed_receiver
+.. autofunction:: call
+.. autofunction:: barrier_wait
 .. autoexception:: TapFunctionException
 
 
