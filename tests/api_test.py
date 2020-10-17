@@ -1966,6 +1966,38 @@ class APITest(jtu.JaxTestCase):
       xla.device_put = orig_device_put
     self.assertEqual(count, 0)
 
+  def test_join_concrete_arrays_with_omnistaging(self):
+    # https://github.com/google/jax/issues/4622
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test is omnistaging-specific")
+
+    x = jnp.array([1., 2., 3.])
+    y = jnp.array([1., 2., 4.])
+
+    @jit
+    def f():
+      core.lattice_join(core.ConcreteArray(x), core.ConcreteArray(y))
+
+    f()  # doesn't crash
+
+  def test_linearize_aval_error(self):
+    # https://github.com/google/jax/issues/4622
+    f = lambda x: x
+
+    # these should not error
+    _, f_jvp = api.linearize(f, 1.)
+    f_jvp(1.)
+    _, f_jvp = api.linearize(f, np.ones(2, np.int32))
+    f_jvp(np.zeros(2, float0))
+
+    # these should error
+    _, f_jvp = api.linearize(f, 1.)
+    with self.assertRaisesRegex(ValueError, "tangent values inconsistent"):
+      f_jvp(1)
+    _, f_jvp = api.linearize(f, np.ones(2, np.int32))
+    with self.assertRaisesRegex(ValueError, "tangent values inconsistent"):
+      f_jvp(np.ones(2, np.int32))
+
 
 class RematTest(jtu.JaxTestCase):
 
