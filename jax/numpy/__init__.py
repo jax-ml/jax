@@ -16,9 +16,9 @@
 from . import fft
 from . import linalg
 
-from ..interpreters.xla import DeviceArray
+from jax.interpreters.xla import DeviceArray
 
-from .lax_numpy import (
+from jax._src.numpy.lax_numpy import (
     ComplexWarning, NINF, NZERO, PZERO, abs, absolute, add, all, allclose,
     alltrue, amax, amin, angle, any, append,
     apply_along_axis, apply_over_axes, arange, arccos, arccosh, arcsin,
@@ -63,16 +63,18 @@ from .lax_numpy import (
     unpackbits, unravel_index, unsignedinteger, unwrap, vander, var, vdot, vsplit,
     vstack, where, zeros, zeros_like, _NOT_IMPLEMENTED)
 
-from .polynomial import roots
-from .vectorize import vectorize
+from jax._src.numpy.polynomial import roots
+from jax._src.numpy.vectorize import vectorize
 
+# TODO(phawkins): remove this import after fixing users.
+from jax._src.numpy import lax_numpy
 
 # Module initialization is encapsulated in a function to avoid accidental
 # namespace pollution.
 def _init():
   import numpy as np
-  from . import lax_numpy
-  from .. import util
+  from jax._src.numpy import lax_numpy
+  from jax import util
   # Builds a set of all unimplemented NumPy functions.
   for name, func in util.get_module_functions(np).items():
     if name not in globals():

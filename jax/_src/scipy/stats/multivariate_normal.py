@@ -19,8 +19,8 @@ import scipy.stats as osp_stats
 from jax import lax
 from jax.lax_linalg import cholesky, triangular_solve
 from jax import numpy as jnp
-from jax.numpy._util import _wraps
-from jax.numpy.lax_numpy import _promote_dtypes_inexact
+from jax._src.numpy.util import _wraps
+from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
 
 
 @_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False)

@@ -49,7 +49,7 @@ from . import lax
 from . import numpy as jnp
 from . import dtypes
 from .api import jit, vmap
-from .numpy.lax_numpy import _constant_like, asarray
+from jax._src.numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng

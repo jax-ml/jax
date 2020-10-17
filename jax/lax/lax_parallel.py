@@ -35,7 +35,7 @@ from jax.util import partial, unzip2, prod
 from jax.lib import xla_client as xc
 from jax.lib import xla_bridge as xb
 from jax.config import config
-from jax.numpy import lax_numpy
+from jax._src.numpy import lax_numpy
 
 xops = xc.ops
 
