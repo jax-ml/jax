@@ -29,7 +29,6 @@ from .util import _wraps
 from .vectorize import vectorize
 from . import lax_numpy as jnp
 from jax.util import canonicalize_axis
-from jax.third_party.numpy.linalg import cond, multi_dot, tensorinv, tensorsolve # noqa: F401
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
 _H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))

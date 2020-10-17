@@ -16,7 +16,6 @@
 
 from jax._src.numpy.linalg import (
   cholesky,
-  cond,
   det,
   eig,
   eigh,
@@ -26,16 +25,20 @@ from jax._src.numpy.linalg import (
   lstsq,
   matrix_power,
   matrix_rank,
-  multi_dot,
   norm,
   pinv,
   qr,
   slogdet,
   solve,
   svd,
-  tensorinv,
-  tensorsolve,
 )
+from jax._src.third_party.numpy.linalg import (
+  cond,
+  multi_dot,
+  tensorinv,
+  tensorsolve
+)
+
 
 # Module initialization is encapsulated in a function to avoid accidental
 # namespace pollution.
