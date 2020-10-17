@@ -1133,16 +1133,16 @@ class APITest(jtu.JaxTestCase):
   def test_issue_871(self):
     T = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
     x = jnp.array([1, 2, 3])
+    msg = ("linearized function called on tangent values inconsistent with "
+           "the original primal values")
 
     y, f_jvp = api.linearize(jnp.sum, x)
-    jtu.check_raises(lambda: f_jvp(T), ValueError,
-                     ("linearized function called on tangent values "
-                      "inconsistent with the original primal values."))
+    with self.assertRaisesRegex(ValueError, msg):
+      f_jvp(T)
 
     y, f_jvp = api.linearize(api.jit(jnp.sum), x)
-    jtu.check_raises(lambda: f_jvp(T), ValueError,
-                     ("linearized function called on tangent values "
-                      "inconsistent with the original primal values."))
+    with self.assertRaisesRegex(ValueError, msg):
+      f_jvp(T)
 
   def test_partial_eval_lower(self):
     # this is a simplified model of a bug that arose when we first used @jit in
