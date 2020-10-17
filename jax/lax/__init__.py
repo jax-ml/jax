@@ -15,6 +15,7 @@
 # flake8: noqa: F401
 from .lax import (
   ConvDimensionNumbers,
+  ConvGeneralDilatedDimensionNumbers,
   DotDimensionNumbers,
   GatherDimensionNumbers,
   Precision,
