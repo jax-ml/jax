@@ -113,7 +113,7 @@ from typing import Any, List, cast
 
 from jax import abstract_arrays
 from jax import lax, core
-from jax.lax import lax_control_flow
+from jax._src.lax import control_flow as lax_control_flow
 from jax import tree_util
 from jax import numpy as jnp
 from jax.interpreters import partial_eval as pe

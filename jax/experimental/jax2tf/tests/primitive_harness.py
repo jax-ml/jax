@@ -571,7 +571,7 @@ def _fft_harness_gen(nb_axes):
 
   return tuple(
     Harness(f"{nb_axes}d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
-            lax.lax_fft.fft,
+            lax.fft,
             [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
             rng_factory=_fft_rng_factory(dtype),
             shape=shape,

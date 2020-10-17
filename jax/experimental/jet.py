@@ -28,9 +28,9 @@ from jax.tree_util import (register_pytree_node, tree_structure,
 import jax.linear_util as lu
 from jax.interpreters import xla
 from jax.custom_derivatives import custom_jvp_call_jaxpr_p
-from jax.lax import lax
-from jax.lax import lax_control_flow
-from jax.lax import lax_fft
+from jax._src.lax import lax
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src.lax import fft as lax_fft
 
 def jet(fun, primals, series):
   try:

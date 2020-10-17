@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from .lax import (
+from jax._src.lax.lax import (
   ConvDimensionNumbers,
   ConvGeneralDilatedDimensionNumbers,
   DotDimensionNumbers,
@@ -273,6 +273,7 @@ from .lax import (
   tanh,
   tanh_p,
   tie_in,
+  tie_in_p,
   top_k,
   top_k_p,
   transpose,
@@ -282,7 +283,7 @@ from .lax import (
   xor_p,
   zeros_like_array,
 )
-from .lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
+from jax._src.lax.lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
                   _reduce_and, _reduce_window_sum, _reduce_window_max,
                   _reduce_window_min, _reduce_window_prod,
                   _select_and_gather_add,
@@ -290,8 +291,8 @@ from .lax import (_reduce_sum, _reduce_max, _reduce_min, _reduce_or,
                   _const, _eq_meet, _broadcasting_select,
                   _check_user_dtype_supported, _one, _zero, _const,
                   _upcast_fp16_for_computation, _broadcasting_shape_rule,
-                  _eye, _tri, _delta, _ones, _zeros)
-from .lax_control_flow import (
+                  _eye, _tri, _delta, _ones, _zeros, _dilate_shape)
+from jax._src.lax.control_flow import (
   associative_scan,
   cond,
   cond_p,
@@ -315,11 +316,11 @@ from .lax_control_flow import (
   while_loop,
   while_p,
 )
-from .lax_fft import (
+from jax._src.lax.fft import (
   fft,
   fft_p,
 )
-from .lax_parallel import (
+from jax._src.lax.parallel import (
   all_gather,
   all_to_all,
   all_to_all_p,
@@ -337,3 +338,8 @@ from .lax_parallel import (
   psum_p,
   pswapaxes,
 )
+
+# TODO(phawkins): fix callers and remove these imports.
+from . import lax
+from . import lax_parallel
+from . import lax_control_flow
