@@ -1464,6 +1464,19 @@ def in1d(ar1, ar2, assume_unique=False, invert=False):
   else:
     return (ar1[:, None] == ar2).any(-1)
 
+@_wraps(np.setdiff1d, lax_description="""
+In the JAX version, the `assume_unique` argument is not referenced.
+""")
+def setdiff1d(ar1, ar2, assume_unique=False):
+  ar1 = core.concrete_or_error(asarray, ar1, "The error arose in setdiff1d()")
+  ar2 = core.concrete_or_error(asarray, ar2, "The error arose in setdiff1d()")
+
+  ar1 = unique(ar1)
+  ar2 = unique(ar2)
+
+  idx = in1d(ar1, ar2, invert=True)
+  return ar1[idx]
+
 @partial(jit, static_argnums=2)
 def _intersect1d_sorted_mask(ar1, ar2, return_indices=False):
   """
