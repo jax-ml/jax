@@ -24,6 +24,7 @@ import itertools
 import jax
 from jax import dtypes
 from jax import lax
+from jax import lax_linalg
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -401,6 +402,47 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, triangular_operand,
                            custom_assert=custom_assert,
                            always_custom_assert=always_custom_assert)
+
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_lu)
+  def test_lu(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    if dtype in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest(
+        f"LU is not implemented in JAX for dtype {dtype}.")
+    tol = None
+    if dtype in [np.float32, np.complex64]:
+      if jtu.device_under_test() == "tpu":
+        tol = 0.1
+      else:
+        tol = 1e-5
+    if dtype in [np.float64, np.complex128]:
+      tol = 1e-13
+    operand, = harness.dyn_args_maker(self.rng())
+
+    def custom_assert(result_jax, result_tf):
+      lu, pivots, perm = tuple(map(lambda t: t.numpy(), result_tf))
+      batch_dims = operand.shape[:-2]
+      m, n = operand.shape[-2], operand.shape[-1]
+      def _make_permutation_matrix(perm):
+        result = []
+        for idx in itertools.product(*map(range, operand.shape[:-1])):
+          result += [0 if c != perm[idx] else 1 for c in range(m)]
+        result = np.reshape(np.array(result, dtype=dtype), [*batch_dims, m, m])
+        return result
+
+      k = min(m, n)
+      l = jnp.tril(lu, -1)[...,:, :k] + jnp.eye(m, k, dtype=dtype)
+      u = jnp.triu(lu)[...,:k, :]
+      p_mat = _make_permutation_matrix(perm)
+
+      self.assertArraysEqual(lax_linalg.lu_pivots_to_permutation(pivots, m),
+                             perm)
+      self.assertAllClose(jnp.matmul(p_mat, operand), jnp.matmul(l, u),
+                          atol=tol, rtol=tol)
+
+    self.ConvertAndCompare(harness.dyn_fun, operand, atol=tol, rtol=tol,
+                           custom_assert=custom_assert,
+                           always_custom_assert=True)
 
   @primitive_harness.parameterized(
       primitive_harness.lax_linalg_triangular_solve)
