@@ -1247,6 +1247,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             check_dtypes=shape is not jtu.PYTHON_SCALAR_SHAPE)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testPadWithNumpyPadWidth(self):
+    a = [1, 2, 3, 4, 5]
+    f = jax.jit(
+        partial(
+            jnp.pad,
+            pad_width=np.asarray((2, 3)),
+            mode="constant",
+            constant_values=(4, 6)))
+
+    np.testing.assert_array_equal(
+        f(a),
+        np.pad(
+            a,
+            pad_width=np.asarray((2, 3)),
+            mode="constant",
+            constant_values=(4, 6)))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape=[{}]_reps={}".format(
           jtu.format_shape_dtype_string(shape, dtype), reps),
@@ -2365,9 +2382,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # np.searchsorted errors on bfloat16 with
     # "TypeError: invalid type promotion with custom data type"
     with np.errstate(divide='ignore', invalid='ignore'):
-        if dtype != jnp.bfloat16:
-            self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                              tol=tol)
+      if dtype != jnp.bfloat16:
+        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                          tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2395,8 +2412,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # np.searchsorted errors on bfloat16 with
     # "TypeError: invalid type promotion with custom data type"
     if dtype != jnp.bfloat16:
-        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
-                              tol=tol)
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -2562,10 +2579,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
            np.float64: 1e-12, np.complex64: 1e-5}
     check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE
     try:
-        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
-                                check_dtypes=check_dtypes, tol=tol)
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                              check_dtypes=check_dtypes, tol=tol)
     except ZeroDivisionError:
-        self.skipTest("don't support checking for ZeroDivisionError")
+      self.skipTest("don't support checking for ZeroDivisionError")
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           rtol=tol, atol=tol)
 
@@ -2616,8 +2633,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     assert type(jnp.array(np.array([]))) == jax.interpreters.xla.DeviceArray
 
     class NDArrayLike:
-        def __array__(self, dtype=None):
-            return np.array([], dtype=dtype)
+      def __array__(self, dtype=None):
+        return np.array([], dtype=dtype)
     assert type(jnp.array(NDArrayLike())) == jax.interpreters.xla.DeviceArray
 
     # NOTE(mattjj): disabled b/c __array__ must produce ndarrays
@@ -3383,9 +3400,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     a_rng = a_rng(self.rng())
     q_rng = q_rng(self.rng())
     if "median" in op:
-        args_maker = lambda: [a_rng(a_shape, a_dtype)]
+      args_maker = lambda: [a_rng(a_shape, a_dtype)]
     else:
-        args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+      args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
     def np_fun(*args):
       args = [x if jnp.result_type(x) != jnp.bfloat16 else
               np.asarray(x, np.float32) for x in args]
