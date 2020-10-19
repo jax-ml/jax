@@ -3696,7 +3696,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIssue776(self):
     """Tests that the scatter-add transpose rule instantiates symbolic zeros."""
     def f(u):
-      y = jax.ops.index_add(np.ones(10,), [2, 4, 5], u)
+      y = jnp.ones(10).at[np.array([2, 4, 5])].add(u)
       # The transpose rule for lax.tie_in returns a symbolic zero for its first
       # argument.
       return lax.tie_in(y, 7.)
@@ -4008,7 +4008,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     endpoints = rng((2,), dtype)
     out = jnp.linspace(*endpoints, 10, dtype=dtype)
-    self.assertAllClose(out[[0, -1]], endpoints, rtol=0, atol=0)
+    self.assertAllClose(out[np.array([0, -1])], endpoints, rtol=0, atol=0)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(

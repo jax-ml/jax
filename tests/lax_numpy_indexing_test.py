@@ -14,6 +14,7 @@
 
 
 import collections
+from contextlib import contextmanager
 import enum
 from functools import partial
 import itertools
@@ -458,7 +459,7 @@ class IndexingTest(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.asarray(x)[indexer]
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters({
       "testcase_name":
@@ -562,7 +563,7 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -613,7 +614,7 @@ class IndexingTest(jtu.JaxTestCase):
     jnp_fun = lambda x, idx: jnp.asarray(x)[idx]
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -672,7 +673,8 @@ class IndexingTest(jtu.JaxTestCase):
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: jnp.asarray(x)[indexer]
-    check_grads(fun, (arg,), 2, tol, tol, eps=1.)
+    with suppress_deprecated_indexing_warnings():
+      check_grads(fun, (arg,), 2, tol, tol, eps=1.)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -699,7 +701,7 @@ class IndexingTest(jtu.JaxTestCase):
 
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
+      self._CompileAndCheck(jnp_fun, args_maker)
 
   def testAdvancedIndexingManually(self):
     x = np.random.RandomState(0).randn(3, 4, 5)
@@ -752,7 +754,8 @@ class IndexingTest(jtu.JaxTestCase):
   def testBooleanIndexingList1D(self):
     idx = [True, True, False]
     x = api.device_put(np.arange(3))
-    ans = x[idx]
+    with suppress_deprecated_indexing_warnings():
+      ans = x[idx]
     expected = np.arange(3)[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -766,7 +769,8 @@ class IndexingTest(jtu.JaxTestCase):
   def testBooleanIndexingList2DBroadcast(self):
     idx = [True, True, False, True]
     x = np.arange(8).reshape(4, 2)
-    ans = api.device_put(x)[idx]
+    with suppress_deprecated_indexing_warnings():
+      ans = api.device_put(x)[idx]
     expected = x[idx]
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -946,7 +950,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
-    self._CompileAndCheck(jax_fn, args_maker)
+      self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
@@ -973,7 +977,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, unique_indices=True)
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
-    self._CompileAndCheck(jax_fn, args_maker)
+      self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
@@ -1002,7 +1006,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
           op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True)
-    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+      self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}_sugared={}".format(
@@ -1029,7 +1033,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
     with suppress_deprecated_indexing_warnings():
       self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
-    self._CompileAndCheck(jax_fn, args_maker)
+      self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
@@ -1104,6 +1108,40 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       warnings.simplefilter("error")
       jnp.zeros(5).at[::2].set(1)
       self.assertLen(w, 0)
+
+  @contextmanager
+  def assertNoWarnings(self):
+    with warnings.catch_warnings(record=True) as caught_warnings:
+      yield
+    self.assertEmpty(caught_warnings)
+
+  @parameterized.named_parameters(jtu.cases_from_list({
+      "testcase_name": "idx={}".format(idx), "idx": idx, "idx_type": idx_type}
+    for idx, idx_type in [
+      ([0], "array"),
+      ([0, 0], "array"),
+      ([[0, 0]], "tuple"),
+      ([0, [0, 1]], "tuple"),
+      ([0, np.arange(2)], "tuple"),
+      ([0, None], "tuple"),
+      ([0, slice(None)], "tuple"),
+    ]))
+  def testIndexSequenceDeprecationWarning(self, idx, idx_type):
+    msg = fr"Using a non-tuple sequence for multidimensional indexing is deprecated.*arr\[{idx_type}\(seq\)\]"
+    normalize = {"array": np.array, "tuple": tuple}[idx_type]
+    x = jnp.arange(6).reshape(3, 2)
+
+    with self.assertWarnsRegex(FutureWarning, msg):
+      idx_get = x[idx]
+    with self.assertNoWarnings():
+      idx_get_norm = x[normalize(idx)]
+    self.assertArraysEqual(idx_get, idx_get_norm)
+
+    with self.assertWarnsRegex(FutureWarning, msg):
+      idx_set = x.at[idx].set(0)
+    with self.assertNoWarnings():
+      idx_set_norm = x.at[normalize(idx)].set(0)
+    self.assertArraysEqual(idx_set, idx_set_norm)
 
 
 if __name__ == "__main__":
