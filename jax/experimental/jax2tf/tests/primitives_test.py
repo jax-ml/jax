@@ -24,6 +24,7 @@ import itertools
 import jax
 from jax import dtypes
 from jax import lax
+from jax import lax_linalg
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -69,7 +70,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                       | set(xla.initial_style_translations)
                       | set(xla.parallel_translations))
 
-    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl)
+    tf_impl = set(jax.experimental.jax2tf.jax2tf.tf_impl) | set(jax.experimental.jax2tf.jax2tf.tf_impl_with_avals)
     tf_not_yet_impl = set(jax.experimental.jax2tf.jax2tf.tf_not_yet_impl)
 
     all_primitives = tuple(sorted(all_primitives, key=str))
@@ -337,6 +338,137 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, operand,
                            custom_assert=custom_assert)
 
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_eigh)
+  def test_eigh(self, harness: primitive_harness.Harness):
+    operand = harness.dyn_args_maker(self.rng())[0]
+    lower = harness.params["lower"]
+    # Make operand self-adjoint
+    operand = (operand + np.conj(np.swapaxes(operand, -1, -2))) / 2
+    # Make operand lower/upper triangular
+    triangular_operand = np.tril(operand) if lower else np.triu(operand)
+    dtype = harness.params["dtype"]
+
+    if (dtype in [np.complex64, np.complex128] and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("TODO: complex eigh not supported on TPU in JAX")
+
+    def custom_assert(result_jax, result_tf):
+      result_tf = tuple(map(lambda e: e.numpy(), result_tf))
+      inner_dimension = operand.shape[-1]
+
+      def check_right_eigenvectors(a, w, vr):
+        tol = 1e-16
+        # TODO(bchetioui): tolerance needs to be very high in compiled mode,
+        # specifically for eigenvectors.
+        if dtype == np.float64:
+          tol = 1e-6
+        elif dtype == np.float32:
+          tol = 1e-2
+        elif dtype in [dtypes.bfloat16, np.complex64]:
+          tol = 1e-3
+        elif dtype == np.complex128:
+          tol = 1e-13
+        self.assertAllClose(np.matmul(a, vr) - w[..., None, :] * vr,
+                            np.zeros(a.shape, dtype=vr.dtype),
+                            atol=tol)
+
+      def check_eigenvalue_is_in_array(eigenvalue, eigenvalues_array):
+        tol = None
+        if dtype in [dtypes.bfloat16, np.float32, np.complex64]:
+          tol = 1e-3
+        elif dtype in [np.float64, np.complex128]:
+          tol = 1e-11
+        closest_diff = min(abs(eigenvalues_array - eigenvalue))
+        self.assertAllClose(closest_diff, np.array(0., closest_diff.dtype),
+                            atol=tol)
+
+      _, all_w_jax = result_jax
+      all_vr_tf, all_w_tf = result_tf
+
+      for idx in itertools.product(*map(range, operand.shape[:-2])):
+        w_jax, w_tf = all_w_jax[idx], all_w_tf[idx]
+        for i in range(inner_dimension):
+          check_eigenvalue_is_in_array(w_jax[i], w_tf)
+          check_eigenvalue_is_in_array(w_tf[i], w_jax)
+
+      check_right_eigenvectors(operand, all_w_tf, all_vr_tf)
+
+    # On CPU and GPU, JAX makes custom calls
+    always_custom_assert = True
+    # On TPU, JAX calls xops.Eigh
+    if jtu.device_under_test == "tpu":
+      always_custom_assert = False
+
+    self.ConvertAndCompare(harness.dyn_fun, triangular_operand,
+                           custom_assert=custom_assert,
+                           always_custom_assert=always_custom_assert)
+
+  @primitive_harness.parameterized(primitive_harness.lax_linalg_lu)
+  def test_lu(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    if dtype in [np.float16, dtypes.bfloat16]:
+      raise unittest.SkipTest(
+        f"LU is not implemented in JAX for dtype {dtype}.")
+    tol = None
+    if dtype in [np.float32, np.complex64]:
+      if jtu.device_under_test() == "tpu":
+        tol = 0.1
+      else:
+        tol = 1e-5
+    if dtype in [np.float64, np.complex128]:
+      tol = 1e-13
+    operand, = harness.dyn_args_maker(self.rng())
+
+    def custom_assert(result_jax, result_tf):
+      lu, pivots, perm = tuple(map(lambda t: t.numpy(), result_tf))
+      batch_dims = operand.shape[:-2]
+      m, n = operand.shape[-2], operand.shape[-1]
+      def _make_permutation_matrix(perm):
+        result = []
+        for idx in itertools.product(*map(range, operand.shape[:-1])):
+          result += [0 if c != perm[idx] else 1 for c in range(m)]
+        result = np.reshape(np.array(result, dtype=dtype), [*batch_dims, m, m])
+        return result
+
+      k = min(m, n)
+      l = jnp.tril(lu, -1)[...,:, :k] + jnp.eye(m, k, dtype=dtype)
+      u = jnp.triu(lu)[...,:k, :]
+      p_mat = _make_permutation_matrix(perm)
+
+      self.assertArraysEqual(lax_linalg.lu_pivots_to_permutation(pivots, m),
+                             perm)
+      self.assertAllClose(jnp.matmul(p_mat, operand), jnp.matmul(l, u),
+                          atol=tol, rtol=tol)
+
+    self.ConvertAndCompare(harness.dyn_fun, operand, atol=tol, rtol=tol,
+                           custom_assert=custom_assert,
+                           always_custom_assert=True)
+
+  @primitive_harness.parameterized(
+      primitive_harness.lax_linalg_triangular_solve)
+  def test_triangular_solve(self, harness: primitive_harness.Harness):
+    dtype = harness.params["dtype"]
+    if dtype == np.float16 and jtu.device_under_test() == "gpu":
+      raise unittest.SkipTest(
+        f"Triangular solve is not implemented in JAX for dtype {dtype}")
+    atol = rtol = None
+    if dtype == np.float32:
+      atol = rtol = 1e-5
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=atol, rtol=rtol)
+
+  @primitive_harness.parameterized(primitive_harness.lax_linear_solve)
+  def test_linear_solve(self, harness: primitive_harness.Harness):
+    a, b = harness.dyn_args_maker(self.rng())
+    if harness.params["symmetric"]:
+      a = a + a.T
+    tol = None
+    if (harness.params["dtype"] == np.float32 and
+        jtu.device_under_test() == "tpu"):
+      tol = 0.01
+
+    self.ConvertAndCompare(harness.dyn_fun, a, b, atol=tol, rtol=tol)
+
   @primitive_harness.parameterized(primitive_harness.lax_unary_elementwise)
   def test_unary_elementwise(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
@@ -406,7 +538,16 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_min_max)
   def test_min_max(self, harness: primitive_harness.Harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+    # TODO(bchetioui): discrepancies between TF & JAX when comparing with NaN;
+    # JAX always returns NaN, while TF returns the value NaN is compared with.
+    def custom_assert(result_jax, result_tf):
+      mask = np.isnan(result_jax)
+      self.assertAllClose(result_jax[~ mask], result_tf[~ mask])
+    # TODO(bchetioui): figure out why we need always_custom_assert=True
+    always_custom_assert = True
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           custom_assert=custom_assert,
+                           always_custom_assert=always_custom_assert)
 
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
@@ -487,14 +628,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_shift_right_logical)
   def test_shift_right_logical(self, harness):
-    if jtu.device_under_test() == "tpu" and harness.params["dtype"] in [np.int8, np.int16]:
-      raise unittest.SkipTest("TODO: silent error for negative inputs")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_shift_right_arithmetic)
   def test_shift_right_arithmetic(self, harness):
-    if jtu.device_under_test() == "tpu" and harness.params["dtype"] in [np.uint8, np.uint16]:
-      raise unittest.SkipTest("TODO: silent error for negative inputs")
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_slice)
@@ -538,24 +675,47 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_squeeze(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_dot_general)
+  def test_dot_general(self, harness: primitive_harness.Harness):
+    tol, dtype = None, harness.params["dtype"]
+    if dtype == dtypes.bfloat16:
+      tol = 0.3
+    elif dtype in [np.complex64, np.float32]:
+      if jtu.device_under_test() == "tpu":
+        tol = 0.1 if dtype == np.float32 else 0.3
+      else:
+        tol = 1e-5
+    elif dtype == np.float16:
+      if jtu.device_under_test() == "gpu":
+        tol = 0.1
+      else:
+        tol = 0.01
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=tol, rtol=tol)
+
   @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
-    if jtu.device_under_test() == "gpu" and harness.params["dtype"] in [np.complex64, np.complex128]:
+    dtype, device = harness.params["dtype"], jtu.device_under_test()
+    if device == "gpu" and dtype in [np.complex64, np.complex128]:
       raise unittest.SkipTest("TODO: crash on GPU in TF")
 
     tol = None
-    if jtu.device_under_test() == "gpu":
+    if device == "gpu":
       tol = 1e-4
-    elif jtu.device_under_test() == "tpu":
+    elif device == "tpu":
       tol = 1e-3
     # TODO(bchetioui): significant discrepancies in some float16 cases.
-    if harness.params["dtype"] == np.float16:
+    if dtype == np.float16:
       tol = 1.
     # TODO(bchetioui): slight occasional discrepancy in float32 cases.
-    elif harness.params["dtype"] == np.float32:
-      tol = 0.5 if jtu.device_under_test() == "tpu" else 1e-4
-    elif harness.params["dtype"] == np.complex64 and jtu.device_under_test() == "tpu":
+    elif dtype == np.float32:
+      tol = 0.5 if device == "tpu" else (1e-3 if device == "gpu" else 1e-4)
+    elif dtype == np.complex64 and device == "tpu":
       tol = 0.1
+    # TODO(bchetioui): slight discrepancy when going through the path using
+    # tf.nn.convolution.
+    elif dtype == np.float64 and device == "cpu":
+      tol = 1e-13
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
                            atol=tol, rtol=tol)
 

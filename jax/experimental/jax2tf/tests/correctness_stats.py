@@ -42,6 +42,9 @@ Limitation = NamedTuple("Limitation", [ ("primitive_name", str)
                                       , ("devices", Tuple[str,...])
                                       ])
 
+CATEGORY_POSSIBLE_INCORRECT_RESULTS = "Possible incorrect results"
+CATEGORY_MISSING_TF_SUPPORT = "Missing TF support"
+
 def categorize(prim: core.Primitive, *args, **kwargs) \
     -> List[Limitation]:
   """
@@ -71,12 +74,15 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   def tf_unimpl(np_dtype: Optional[NpDType] = None,
                 additional_msg: Optional[str] = None,
                 devs: Sequence[str] = all_devices) -> None:
-
-    missing_tf_support = "Missing TF support"
-    msg = "Primitive is unimplemented"
+    msg = "Primitive is unimplemented in TF"
     if additional_msg:
       msg += '; ' + additional_msg
-    _report_failure(missing_tf_support, msg, np_dtype, devs=devs)
+    _report_failure(CATEGORY_MISSING_TF_SUPPORT, msg, np_dtype, devs=devs)
+
+  def tf_possible_incorrect(np_dtype: Optional[NpDType] = None,
+                         msg: str = "",
+                         devs: Sequence[str] = all_devices) -> None:
+    _report_failure(CATEGORY_POSSIBLE_INCORRECT_RESULTS, msg, np_dtype, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
     try:
@@ -85,25 +91,27 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       pass
     return np.dtype(dtype)
 
-  if prim in [lax.min_p, lax.max_p]:
+  if args[0] is not core.unit:
     np_dtype = _to_np_dtype(args[0].dtype)
+  else:
+    np_dtype = None
+
+  if prim in [lax.min_p, lax.max_p, lax.reduce_window_min_p,
+              lax.reduce_window_max_p]:
     if np_dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
                     np.complex64, np.complex128]:
       tf_unimpl(np_dtype)
 
   if prim in [lax.rem_p, lax.atan2_p]:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.float16, dtypes.bfloat16]:
       # b/158006398: TF kernels are missing for 'rem' and 'atan2'
       tf_unimpl(np_dtype)
 
   if prim is lax.nextafter_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.float16, dtypes.bfloat16]:
       tf_unimpl(np_dtype)
 
   if prim is lax_linalg.cholesky_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
@@ -111,7 +119,6 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
                                           "mode (experimental_compile=True))"))
 
   if prim is lax_linalg.qr_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
@@ -126,8 +133,23 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if compute_left_eigenvectors and compute_right_eigenvectors:
       tf_unimpl(additional_msg=("it is not possible to request both left and "
                                 "right eigenvectors for now"))
+
+  if prim is lax_linalg.eigh_p:
+    if np_dtype in [np.complex64, np.complex128]:
+      # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
+      # experimental_compile=True breaks for complex types.
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"))
+
+  if prim is lax_linalg.lu_p:
+    if np_dtype == np.complex64:
+      tf_unimpl(np_dtype, devs=["TPU"])
+
+  if prim is lax_linalg.triangular_solve_p:
+    if np_dtype in [dtypes.bfloat16, np.float16]:
+      tf_unimpl(np_dtype)
+
   if prim is lax_linalg.svd_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [dtypes.bfloat16]:
       # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
       tf_unimpl(np_dtype, devs=["TPU"])
@@ -143,7 +165,6 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       tf_unimpl(np_dtype, additional_msg=additional_msg, devs=["CPU", "GPU"])
 
   if prim is lax.select_and_gather_add_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     # TODO: the conversion is only supported for float16/float32 on CPU/GPU,
     # and float16 on TPU. This is because we do not implement a precision
     # reduction in the case where packing 2 n-bit values together results in
@@ -161,24 +182,24 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
         tf_unimpl(np_dtype, devs=devs)
 
   if prim in [lax.add_p, lax.reduce_window_sum_p]:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.uint16, np.uint32, np.uint64]:
       # TODO(bchetioui): tf.math.add is not defined for the above types.
       tf_unimpl(np_dtype)
 
   if prim is lax.mul_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.uint32, np.uint64]:
       # TODO(bchetioui): tf.math.multiply is not defined for the above types.
       tf_unimpl(np_dtype)
 
   if prim in [lax.scatter_mul_p, lax.scatter_add_p]:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype == np.complex64:
       tf_unimpl(np_dtype, devs=["TPU"])
 
+  if prim in [lax.scatter_max_p, lax.scatter_min_p, lax.scatter_p]:
+    if np_dtype == np.bool_:
+      tf_unimpl(np_dtype)
+
   if prim is lax.sort_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.complex64, np.complex128]:
       tf_unimpl(np_dtype)
     if np_dtype == np.bool_ and len(args) == 2:
@@ -195,12 +216,30 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
         "sorting more than 2 arrays is not supported for XlaSort"))
 
   if prim is lax.population_count_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
 
-  if prim is lax.conv_general_dilated_p:
+  # Testing with matmul (TODO: comment out and test without matmul)
+  if prim is lax.dot_general_p:
     np_dtype = _to_np_dtype(args[0].dtype)
+    if np_dtype in [np.bool, np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.int8]:
+      tf_unimpl(np_dtype)
+    elif np_dtype == np.int16:
+      # TODO(bchetioui): the path using 'einsum' is not compatible with int16
+      # arguments on CPU/GPU, while the one using 'matmul' is (but not in
+      # compiled mode).
+      tf_unimpl(np_dtype, additional_msg=("only cases representable as 2D "
+                                          "matrix multiplication can be "
+                                          "converted properly"),
+                devs=['CPU', 'GPU'])
+      tf_unimpl(np_dtype, devs=['TPU'])
+    elif np_dtype in [np.int16, np.int64]:
+      devs = ['CPU'] if np_dtype == np.int16 else ['CPU', 'GPU']
+      tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
+                                          "mode (experimental_compile=True))"),
+                devs=devs)
+  if prim is lax.conv_general_dilated_p:
     batch_group_count = kwargs['batch_group_count']
     if batch_group_count != 1:
       tf_unimpl(additional_msg="batch_group_count != 1 unsupported")
@@ -211,26 +250,22 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
   if prim in [lax.acosh_p, lax.asinh_p, lax.atanh_p, lax.bessel_i0e_p,
               lax.bessel_i1e_p, lax.digamma_p, lax.erf_p, lax.erf_inv_p,
               lax.erfc_p, lax.lgamma_p, lax.round_p, lax.rsqrt_p]:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype == dtypes.bfloat16:
       tf_unimpl(np_dtype, devs=["CPU", "GPU"])
 
   if prim in [lax.sinh_p, lax.cosh_p, lax.atanh_p, lax.asinh_p, lax.acosh_p,
               lax.erf_inv_p]:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype == np.float16:
       # b/158006398: float16 support missing from the kernel of the above
       # operations.
       tf_unimpl(np_dtype)
 
-  if prim is lax.lax_fft.fft_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
+  if prim is lax.fft_p:
     if np_dtype in [np.float64, np.complex128]:
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
   if prim is lax.top_k_p:
-    np_dtype = _to_np_dtype(args[0].dtype)
     if np_dtype in [np.float64, np.int64, np.uint64]:
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
@@ -254,7 +289,7 @@ def merge_similar_limitations(limitations: Sequence[Limitation]) \
 
 def prettify(limitations: Sequence[Limitation]) -> str:
   """Constructs a summary markdown table based on a list of limitations."""
-  limitations = sorted(list(set(limitations)))
+  limitations = list(set(limitations))
 
   def _pipewrap(columns):
     return '| ' + ' | '.join(columns) + ' |'
@@ -265,7 +300,8 @@ def prettify(limitations: Sequence[Limitation]) -> str:
                  , 'Affected dtypes'
                  , 'Affected devices' ]
 
-  table = [column_names, ['---'] * len(column_names)]
+  header = [column_names, ['---'] * len(column_names)]
+  table = []
 
   for lim in limitations:
     table.append([ lim.primitive_name
@@ -276,7 +312,7 @@ def prettify(limitations: Sequence[Limitation]) -> str:
                  , ', '.join(lim.devices)
                  ])
 
-  return '\n'.join(line for line in map(_pipewrap, table))
+  return '\n'.join(line for line in map(_pipewrap, header + sorted(table)))
 
 def prettify_as_ordered_list(collec: Collection[core.Primitive]) -> str:
   """Builds an ordered summary markdown list of a collection of primitives."""

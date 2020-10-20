@@ -240,7 +240,7 @@ lax_add_mul = tuple(
 ) + tuple(
   Harness(f"fun={f_jax.__name__}_bounds_{jtu.dtype_str(dtype)}",
           f_jax,
-          [StaticArg(lhs), StaticArg(rhs)],
+          [lhs, rhs],
           f_jax=f_jax,
           dtype=dtype)
   for f_jax in [lax.add, lax.mul]
@@ -265,14 +265,16 @@ lax_min_max = tuple(
 ) + tuple(
   Harness(f"fun={f_jax.__name__}_inf_nan_{jtu.dtype_str(dtype)}_{lhs[0]}_{rhs[0]}",
           f_jax,
-          [StaticArg(lhs), StaticArg(rhs)],
+          [lhs, rhs],
           f_jax=f_jax,
           dtype=dtype)
   for f_jax in [lax.min, lax.max]
   for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
   for lhs, rhs in [
-    (np.array([np.inf], dtype=dtype), np.array([np.nan], dtype=dtype)),
-    (np.array([-np.inf], dtype=dtype), np.array([np.nan], dtype=dtype))
+    (np.array([np.inf, np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype)),
+    (np.array([-np.inf, -np.inf], dtype=dtype),
+     np.array([np.nan, np.nan], dtype=dtype))
   ]
 )
 
@@ -569,7 +571,7 @@ def _fft_harness_gen(nb_axes):
 
   return tuple(
     Harness(f"{nb_axes}d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
-            lax.lax_fft.fft,
+            lax.fft,
             [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
             rng_factory=_fft_rng_factory(dtype),
             shape=shape,
@@ -619,6 +621,122 @@ lax_linalg_eig = tuple(
   for compute_left_eigenvectors in [False, True]
   for compute_right_eigenvectors in [False, True]
 )
+
+lax_linalg_eigh = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_lower={lower}",
+          lax_linalg.eigh,
+          [RandArg(shape, dtype), StaticArg(lower), StaticArg(False)],
+          shape=shape,
+          dtype=dtype,
+          lower=lower)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [(0, 0), (50, 50), (2, 20, 20)]
+  for lower in [False, True]
+  # Filter out cases where implementation is missing in JAX
+  if dtype != np.float16
+)
+
+lax_linalg_lu = tuple(
+  Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          lax_linalg.lu,
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+  for shape in [
+    (5, 5),    # square
+    (3, 5, 5), # batched
+    (3, 5),    # non-square
+  ]
+)
+
+def _make_triangular_solve_harness(name, *, left_side=True, lower=False,
+                                   ab_shapes=((4, 4), (4, 1)), dtype=np.float32,
+                                   transpose_a=False, conjugate_a=False,
+                                   unit_diagonal=False):
+  a_shape, b_shape = ab_shapes
+  f_lax = lambda a, b: (lax_linalg.triangular_solve_p.bind(
+      a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
+      conjugate_a=conjugate_a, unit_diagonal=unit_diagonal))
+
+  return Harness(f"_{name}_a={jtu.format_shape_dtype_string(a_shape, dtype)}_b={jtu.format_shape_dtype_string(b_shape, dtype)}_leftside={left_side}_lower={lower}_transposea={transpose_a}_conjugatea={conjugate_a}_unitdiagonal={unit_diagonal}",
+                 f_lax,
+                 [RandArg(a_shape, dtype), RandArg(b_shape, dtype)],
+                 dtype=dtype,
+                 a_shape=a_shape,
+                 b_shape=b_shape,
+                 left_side=left_side,
+                 lower=lower,
+                 tranpose_a=transpose_a,
+                 conjugate_a=conjugate_a,
+                 unit_diagonal=unit_diagonal)
+
+lax_linalg_triangular_solve = tuple( # Validate dtypes
+  # This first harness runs the tests for all dtypes using default values for
+  # all the other parameters, except unit_diagonal (to ensure that
+  # tf.linalg.set_diag works reliably for all dtypes). Variations of other
+  # parameters can thus safely skip testing their corresponding default value.
+  # Note that this validates solving on the left.
+  _make_triangular_solve_harness("dtypes", dtype=dtype,
+                                 unit_diagonal=unit_diagonal)
+  for dtype in jtu.dtypes.all_inexact
+  for unit_diagonal in [False, True]
+) + tuple( # Validate shapes when solving on the right
+  _make_triangular_solve_harness("shapes_right", ab_shapes=ab_shapes,
+                                 left_side=False)
+  for ab_shapes in [
+    ((4, 4), (1, 4)),        # standard
+    ((2, 8, 8), (2, 10, 8)), # batched
+  ]
+) + tuple( # Validate transformations of a complex matrix
+  _make_triangular_solve_harness("complex_transformations", dtype=np.complex64,
+                                 lower=lower, transpose_a=transpose_a,
+                                 conjugate_a=conjugate_a)
+  for lower in [False, True]
+  for transpose_a in [False, True]
+  for conjugate_a in [False, True]
+) + tuple( # Validate transformations of a real matrix
+  _make_triangular_solve_harness("real_transformations", dtype=np.float32,
+                                 lower=lower, transpose_a=transpose_a)
+  for lower in [False, True]
+  for transpose_a in [False, True]
+  # conjugate_a is irrelevant for real dtypes, and is thus omitted
+)
+
+def _make_linear_solve_harnesses():
+  def linear_solve(a, b, solve, transpose_solve=None, symmetric=False):
+    matvec = partial(lax.dot, a, precision=lax.Precision.HIGHEST)
+    return lax.custom_linear_solve(matvec, b, solve, transpose_solve, symmetric)
+
+  def explicit_jacobian_solve(matvec, b):
+    return lax.stop_gradient(jnp.linalg.solve(jax.api.jacobian(matvec)(b), b))
+
+  def _make_harness(name, *, shape=(4, 4), dtype=np.float32, symmetric=False,
+                    solvers=(explicit_jacobian_solve, explicit_jacobian_solve)):
+    solve, transpose_solve = solvers
+    transpose_solve_name = transpose_solve.__name__ if transpose_solve else None
+    return Harness(f"_{name}_a={jtu.format_shape_dtype_string(shape, dtype)}_b={jtu.format_shape_dtype_string(shape[:-1], dtype)}_solve={solve.__name__}_transposesolve={transpose_solve_name}_symmetric={symmetric}",
+                   linear_solve,
+                   [RandArg(shape, dtype), RandArg(shape[:-1], dtype),
+                    StaticArg(solve), StaticArg(transpose_solve),
+                    StaticArg(symmetric)],
+                   shape=shape,
+                   dtype=dtype,
+                   solve=solve,
+                   transpose_solve=transpose_solve,
+                   symmetric=symmetric)
+
+  return tuple( # Validate dtypes
+    _make_harness("dtypes", dtype=dtype)
+    for dtype in
+      jtu.dtypes.all_floating if not dtype in [np.float16, dtypes.bfloat16]
+  ) + tuple( # Validate symmetricity
+    [_make_harness("symmetric", symmetric=True)]
+  ) + tuple( # Validate removing transpose_solve
+    [_make_harness("transpose_solve", solvers=(explicit_jacobian_solve, None))]
+  )
+
+lax_linear_solve = _make_linear_solve_harnesses()
 
 lax_slice = tuple(
   Harness(f"_shape={shape}_start_indices={start_indices}_limit_indices={limit_indices}_strides={strides}",  # type: ignore
@@ -718,7 +836,7 @@ shift_inputs = [
   for arg in [
     np.array([-250, -1, 0, 1, 250], dtype=dtype),
   ]
-  for shift_amount in [0, 1, 2, 3, 7]
+  for shift_amount in [-8, -1, 0, 1, 3, 7, 8, 16, 32, 64]
 ]
 
 lax_shift_left = tuple(
@@ -731,7 +849,7 @@ lax_shift_left = tuple(
 lax_shift_right_logical = tuple(
   Harness(f"_dtype={dtype.__name__}_shift_amount={shift_amount}",  # type: ignore
           lax.shift_right_logical,
-          [arg, StaticArg(np.array([shift_amount], dtype=dtype))],
+          [arg, dtype(shift_amount)],
           dtype=dtype)
   for arg, dtype, shift_amount in shift_inputs
 )
@@ -798,88 +916,77 @@ lax_select_and_gather_add = tuple(
   for window_dilation in [(1, 1, 1, 1)]
 )
 
-lax_reduce_window = tuple(
-  # Tests with 2d shapes (see tests.lax_test.testReduceWindow)
-  Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
-          lax.reduce_window,
-          [RandArg(shape, dtype), StaticArg(init_value), StaticArg(computation),
-           StaticArg(window_dimensions), StaticArg(window_strides),
-           StaticArg(padding), StaticArg(base_dilation), StaticArg(window_dilation)],
-          shape=shape,
-          dtype=dtype,
-          init_value=init_value,
-          computation=computation,
-          window_dimensions=window_dimensions,
-          window_strides=window_strides,
-          padding=padding,
-          base_dilation=base_dilation,
-          window_dilation=window_dilation)
-  for computation in [lax.add, lax.max, lax.min, lax.mul]
-  for dtype in { lax.add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.max: jtu.dtypes.all
-               , lax.min: jtu.dtypes.all
-               }[computation]
-  for init_value in map(
-      dtype,
-      (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
-          { lax.add: ([0, 1], [0, 1])
-          , lax.mul: ([1], [1])
-          , lax.max: ([1], [-np.inf, 1])
-          , lax.min: ([0], [np.inf, 0])
-          }[computation]
-      )
-  )
-  for shape in [(4, 6)]
-  for window_dimensions in [(1, 2)]
-  for window_strides in [(2, 1)]
-  for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
-                                                      window_strides, p))
-                            for p in ['VALID', 'SAME']] +
-                           [((0, 3), (1, 2))]))
-  for base_dilation in [(2, 3)]
+def _make_reduce_window_harness(name, *, shape=(4, 6), base_dilation=(1, 1),
+                                computation=lax.add, window_dimensions=(2, 2),
+                                window_dilation=(1, 1), init_value=0,
+                                window_strides=(1, 1), dtype=np.float32,
+                                padding=((0, 0), (0, 0))):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
+                 lax.reduce_window,
+                 [RandArg(shape, dtype),
+                  StaticArg(np.array(init_value, dtype=dtype)),  # Must be static to trigger the picking of the reducers
+                  StaticArg(computation), StaticArg(window_dimensions),
+                  StaticArg(window_strides), StaticArg(padding),
+                  StaticArg(base_dilation), StaticArg(window_dilation)],
+                 shape=shape,
+                 dtype=dtype,
+                 init_value=np.array(init_value, dtype=dtype),
+                 computation=computation,
+                 window_dimensions=window_dimensions,
+                 window_strides=window_strides,
+                 padding=padding,
+                 base_dilation=base_dilation,
+                 window_dilation=window_dilation)
+
+lax_reduce_window = tuple( # Validate dtypes across all execution paths
+  # This first harness runs the tests for all dtypes using default values for
+  # the other parameters (outside of computation and its init_value), through
+  # several execution paths. Variations of other parameters can thus safely
+  # skip testing their corresponding default value.
+  _make_reduce_window_harness("dtypes", dtype=dtype, computation=computation,
+                              init_value=init_value)
+  for dtype in jtu.dtypes.all
+  for computation, init_value in [
+    (lax.min, _get_min_identity(dtype)), # path through reduce_window_min
+    (lax.max, _get_max_identity(dtype)), # path through TF reduce_window_max
+    (lax.max, 1), # path through reduce_window
+  ] + ([
+    (lax.add, 0), # path_through reduce_window_sum
+    (lax.mul, 1), # path through reduce_window
+  ] if dtype != jnp.bool_ else [])
+) + tuple( # Validate window_dimensions
+  _make_reduce_window_harness("window_dimensions",
+                              window_dimensions=window_dimensions)
+  for window_dimensions in [(1, 1)]
+) + tuple( # Validate window_strides
+  _make_reduce_window_harness("window_strides", window_strides=window_strides)
+  for window_strides in [(1, 2)]
+) + tuple( # Validate padding
+  [_make_reduce_window_harness("padding", padding=((1, 2), (0, 3)))]
+) + tuple( # Validate base_dilation
+  _make_reduce_window_harness("base_dilation", base_dilation=base_dilation)
+  for base_dilation in [(1, 2)]
+) + tuple( # Validate window_dilation
+  _make_reduce_window_harness("window_dilation",
+                              window_dilation=window_dilation)
   for window_dilation in [(1, 2)]
-) + tuple(
-  # Tests with 4d shapes (see tests.lax_test.testReduceWindow)
-  Harness(f"4d_shape={jtu.format_shape_dtype_string(shape, dtype)}_initvalue={init_value}_computation={computation.__name__}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}".replace(' ', ''),
-          lax.reduce_window,
-          [RandArg(shape, dtype), StaticArg(init_value), StaticArg(computation),
-           StaticArg(window_dimensions), StaticArg(window_strides),
-           StaticArg(padding), StaticArg(base_dilation), StaticArg(window_dilation)],
-          shape=shape,
-          dtype=dtype,
-          init_value=init_value,
-          computation=computation,
-          window_dimensions=window_dimensions,
-          window_strides=window_strides,
-          padding=padding,
-          base_dilation=base_dilation,
-          window_dilation=window_dilation)
-  for computation in [lax.add, lax.max, lax.min, lax.mul]
-  for dtype in { lax.add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.max: jtu.dtypes.all
-               , lax.min: jtu.dtypes.all
-               }[computation]
-  for init_value in map(
-      dtype,
-      (lambda ts: ts[0] if not dtype in jtu.dtypes.all_floating else ts[1])(
-          { lax.add: ([0, 1], [0, 1])
-          , lax.mul: ([1], [1])
-          , lax.max: ([1], [-np.inf, 1])
-          , lax.min: ([0], [np.inf, 0])
-          }[computation]
-      )
-  )
-  for shape in [(3, 2, 4, 6)]
-  for window_dimensions in [(1, 1, 2, 1)]
-  for window_strides in [(1, 2, 2, 1)]
-  for padding in tuple(set([tuple(lax.padtype_to_pads(shape, window_dimensions,
-                                                      window_strides, p))
-                            for p in ['VALID', 'SAME']] +
-                           [((0, 1), (1, 0), (2, 3), (0, 2))]))
-  for base_dilation in [(2, 1, 3, 2)]
-  for window_dilation in [(1, 2, 2, 1)]
+) + tuple( # Validate squeezing behavior and dimensions in tf.nn.max_pool
+  _make_reduce_window_harness("squeeze_dim", computation=lax.max, shape=shape,
+                              dtype=np.float32, init_value=-np.inf,
+                              base_dilation=tuple([1] * len(shape)),
+                              window_dilation=tuple([1] * len(shape)),
+                              padding=tuple([(0, 0)] * len(shape)),
+                              window_strides=tuple([1] * len(shape)),
+                              window_dimensions=window_dimensions)
+  for shape, window_dimensions in [
+    ((2,), (2,)),           # 1 spatial dimension, left and right squeeze
+    ((2, 1), (2, 1)),       # 1 spatial dimension, left squeeze
+    ((1, 2), (1, 2)),       # 1 spatial dimension, right squeeze
+    ((1, 2, 1), (1, 2, 1)), # 1 spatial dimension no squeeze
+    ((2, 4), (2, 2)),       # 2 spatial dimensions, left and right squeeze
+    ((2, 4, 3), (2, 2, 2)), # 3 spatial dimensions, left and right squeeze
+    ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1)) # 3 spatial dimensions, no squeeze
+  ]
 )
 
 random_gamma = tuple(
@@ -899,6 +1006,57 @@ random_split = tuple(
                                np.array([0xFFFFFFFF, 0], dtype=np.uint32),
                                np.array([0, 0xFFFFFFFF], dtype=np.uint32),
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
+)
+
+def _make_dot_general_harness(
+    name, *, lhs_shape=(3, 4), rhs_shape=(4, 2), dtype=np.float32,
+    precision=None, dimension_numbers=(((1,), (0,)), ((), ()))):
+  return Harness(f"_{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}_precision={precision}".replace(' ', ''),
+                 lax.dot_general,
+                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype),
+                  StaticArg(dimension_numbers), StaticArg(precision)],
+                 dtype=dtype,
+                 lhs_shape=lhs_shape,
+                 rhs_shape=rhs_shape,
+                 dimension_numbers=dimension_numbers,
+                 precision=precision)
+
+# There are two execution paths in the conversion of dot_general. The main path
+# uses tf.einsum, while special cases use tf.linalg.matmul. For that reason,
+# the below tests are designed to perform the same checks on both execution
+# paths.
+lax_dot_general = tuple( # Validate dtypes and precision
+  # This first harness runs the tests for all dtypes and precisions using
+  # default values for all the other parameters. Variations of other parameters
+  # can thus safely skip testing their corresponding default value.
+  _make_dot_general_harness("dtypes_and_precision", precision=precision,
+                            lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+                            dimension_numbers=dimension_numbers, dtype=dtype)
+  for dtype in jtu.dtypes.all
+  for precision in [None, lax.Precision.DEFAULT, lax.Precision.HIGH,
+                    lax.Precision.HIGHEST]
+  for lhs_shape, rhs_shape, dimension_numbers in [
+    ((3, 4), (4, 2), (((1,), (0,)), ((), ()))),
+    ((1, 3, 4), (1, 4, 3), (((2, 1), (1, 2)), ((0,), (0,))))
+  ]
+) + tuple( # Validate batch dimensions
+  _make_dot_general_harness("batch_dimensions", lhs_shape=lhs_shape,
+                            rhs_shape=rhs_shape,
+                            dimension_numbers=dimension_numbers)
+  for lhs_shape, rhs_shape, dimension_numbers in [
+    # Unique pattern that can go through tf.linalg.matmul
+    ((4, 4, 3, 3, 4), (4, 4, 3, 4, 2), (((4,), (3,)), ((0, 1, 2), (0, 1, 2)))),
+    # Main path with out of order batch dimensions
+    ((8, 4, 3, 3, 4), (4, 8, 3, 4, 2), (((4, 3), (3, 2)), ((0, 1), (1, 0))))
+  ]
+) + tuple( # Validate squeezing behavior for matmul path
+  _make_dot_general_harness("squeeze", lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+                            dimension_numbers=dimension_numbers)
+  for lhs_shape, rhs_shape, dimension_numbers in [
+    ((4,), (4, 4), (((0,), (0,)), ((), ()))), # (1, 4) -> (4,)
+    ((4, 4), (4,), (((1,), (0,)), ((), ()))), # (4, 1) -> (4,)
+    ((4,), (4,), (((0,), (0,)), ((), ()))),   # (1, 1) -> ()
+  ]
 )
 
 def _make_conv_harness(name, *, lhs_shape=(2, 3, 9, 10), rhs_shape=(3, 3, 4, 5),
@@ -973,4 +1131,80 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
       (("NHWC", "HWIO", "NHWC"), (2, 9, 10, 3), (4, 5, 3, 3)), # TF default
       (("NCHW", "HWIO", "NHWC"), (2, 3, 9, 10), (4, 5, 3, 3)), # custom
   ]
+) + tuple(
+  _make_conv_harness("tf_conversion_path_1d", lhs_shape=lhs_shape,
+                     padding=padding, rhs_shape=rhs_shape,
+                     dimension_numbers=dimension_numbers, window_strides=(1,),
+                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
+  for padding, lhs_dilation, rhs_dilation in [
+    ("VALID", (1,), (1,)), # no dilation with "VALID" padding
+    ("SAME",  (1,), (1,)), # no dilation with "SAME" padding
+    ("VALID", (1,), (2,)), # dilation only on RHS with "VALID" padding
+    ("SAME",  (1,), (2,)), # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
+  ]
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    (("NWC", "WIO", "NWC"), (1, 28, 1), (3, 1, 16)), # TF default
+    # TODO(bchetioui): the NCW data format is not supported on CPU for TF
+    # for now. That path is thus disabled to allow the code to use XLA instead.
+  ]
+) + tuple(
+  _make_conv_harness("tf_conversion_path_2d", lhs_shape=lhs_shape,
+                     padding=padding, rhs_shape=rhs_shape,
+                     dimension_numbers=dimension_numbers, window_strides=(1, 1),
+                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
+  for padding, lhs_dilation, rhs_dilation in [
+    ("VALID", (1, 1), (1, 1)), # no dilation with "VALID" padding
+    ("SAME",  (1, 1), (1, 1)), # no dilation with "SAME" padding
+    ("VALID", (1, 1), (1, 2)), # dilation only on RHS with "VALID" padding
+    ("SAME",  (1, 1), (1, 2)), # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
+  ]
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    (("NHWC", "HWIO", "NHWC"), (1, 28, 28, 1), (3, 3, 1, 16)), # TF default
+    # TODO(bchetioui): the NCHW data format is not supported on CPU for TF
+    # for now. That path is thus disabled to allow the code to use XLA instead.
+  ]
+) + tuple(
+  _make_conv_harness("tf_conversion_path_3d", lhs_shape=lhs_shape,
+                     padding=padding, rhs_shape=rhs_shape,
+                     dimension_numbers=dimension_numbers,
+                     window_strides=(1, 1, 1), lhs_dilation=lhs_dilation,
+                     rhs_dilation=rhs_dilation)
+  for padding, lhs_dilation, rhs_dilation in [
+    ("VALID", (1, 1, 1), (1, 1, 1)), # no dilation with "VALID" padding
+    ("SAME",  (1, 1, 1), (1, 1, 1)), # no dilation with "SAME" padding
+    ("VALID", (1, 1, 1), (1, 1, 2)), # dilation only on RHS with "VALID" padding
+    ("SAME",  (1, 1, 1), (1, 1, 2)), # dilation only on RHS with "SAME" padding
+    # TODO(bchetioui): LHS dilation with string padding can never be done using
+    # TF convolution functions for now.
+  ]
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    # TF default
+    (("NDHWC", "DHWIO", "NDHWC"), (1, 4, 28, 28, 1), (2, 3, 3, 1, 16)),
+    # TODO(bchetioui): the NCDHW data format is not supported on CPU for TF
+    # for now. That path is thus disabled to allow the code to use XLA instead.
+  ]
+) + tuple(
+    # tf.nn.convolution only supports a subset of the possible dtypes for JAX
+    # convolutions (float16, float32, float64). With the below tests, we ensure
+    # that we avoid this branch in cases when it would not succeed.
+    _make_conv_harness("tf_conversion_path_dtype", lhs_shape=lhs_shape,
+                     padding='VALID', rhs_shape=rhs_shape, dtype=dtype,
+                     dimension_numbers=dimension_numbers, lhs_dilation=(1, 1),
+                     rhs_dilation=(1, 1))
+  for dtype in jtu.dtypes.all_inexact
+  for dimension_numbers, lhs_shape, rhs_shape in [
+    (("NHWC", "HWIO", "NHWC"), (1, 28, 28, 1), (3, 3, 1, 16)), # TF default
+  ]
+) + tuple(
+  # Validate that feature_group_count != 1 does not go through tf.nn.convolution
+  # as that would result in an exception.
+  [_make_conv_harness("tf_avoid_path_feature_group_count", dtype=np.float32,
+                      lhs_shape=(1, 28, 28, 32), rhs_shape=(3, 3, 16, 8),
+                      padding='VALID', batch_group_count=1, lhs_dilation=(1, 1),
+                      rhs_dilation=(1, 1), feature_group_count=2,
+                      dimension_numbers=('NHWC', 'HWIO', 'NHWC'))]
 )

@@ -66,6 +66,8 @@ complex_ = np.complex128
 # float_ = np.float32
 # complex_ = np.complex64
 
+# Trivial vectorspace datatype needed for tangent values of int/bool primals
+float0 = np.dtype([('float0', np.void, 0)])
 
 _dtype_to_32bit_dtype = {
     np.dtype('int64'): np.dtype('int32'),
@@ -96,6 +98,7 @@ python_scalar_dtypes = {
   int: np.dtype(int_),
   float: np.dtype(float_),
   complex: np.dtype(complex_),
+  float0: float0
 }
 
 def scalar_type_of(x):

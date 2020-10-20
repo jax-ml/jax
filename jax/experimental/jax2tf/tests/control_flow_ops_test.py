@@ -33,15 +33,15 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: t + 1., lambda f: f, x)
 
-    self.ConvertAndCompare(f_jax, True, jnp.float_(1.))
-    self.ConvertAndCompare(f_jax, False, jnp.float_(1.))
+    self.ConvertAndCompare(f_jax, jnp.bool_(True), jnp.float_(1.))
+    self.ConvertAndCompare(f_jax, jnp.bool_(False), jnp.float_(1.))
 
   def test_cond_multiple_results(self):
     def f_jax(pred, x):
       return lax.cond(pred, lambda t: (t + 1., 1.), lambda f: (f + 2., 2.), x)
 
-    self.ConvertAndCompare(f_jax, True, jnp.float_(1.))
-    self.ConvertAndCompare(f_jax, False, jnp.float_(1.))
+    self.ConvertAndCompare(f_jax, jnp.bool_(True), jnp.float_(1.))
+    self.ConvertAndCompare(f_jax, jnp.bool_(False), jnp.float_(1.))
 
   def test_cond_partial_eval(self):
     def f(x):
@@ -50,7 +50,7 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(jax.grad(f), jnp.float_(1.))
 
 
-  def test_cond_units(self, with_function=True):
+  def test_cond_units(self):
     def g(x):
       return lax.cond(True, lambda x: x, lambda y: y, x)
 
@@ -186,8 +186,9 @@ class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
     def g(x):
       return lax.while_loop(lambda carry: carry[0] < 10,
-                            lambda carry: (carry[0] + 1, f(carry[1])),
-                            (0, x))
+                            lambda carry: (carry[0] + 1., f(carry[1])),
+                            (0., x))
+
     arg = jnp.float_(0.7)
     self.TransformConvertAndCompare(g, arg, None)
     self.TransformConvertAndCompare(g, arg, "jvp")

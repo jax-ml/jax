@@ -68,6 +68,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     around
     array
     array_equal
+    array_equiv
     array_repr
     array_split
     array_str
@@ -92,6 +93,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     cdouble
     ceil
     character
+    choose
     clip
     column_stack
     complex_
@@ -176,6 +178,8 @@ Not every function in NumPy is implemented; contributions are welcome!
     heaviside
     histogram
     histogram_bin_edges
+    histogram2d
+    histogramdd
     hsplit
     hstack
     hypot

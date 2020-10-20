@@ -14,6 +14,7 @@
 
 from functools import partial
 import numpy as np
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -32,12 +33,6 @@ all_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 
 
 class TestPolynomial(jtu.JaxTestCase):
-
-  def testNotImplemented(self):
-    for name in jnp.polynomial._NOT_IMPLEMENTED:
-      func = getattr(jnp.polynomial, name)
-      with self.assertRaises(NotImplementedError):
-        func()
 
   @parameterized.named_parameters(jtu.cases_from_list(
     {"testcase_name": "_dtype={}_leading={}_trailing={}".format(
@@ -131,6 +126,7 @@ class TestPolynomial(jtu.JaxTestCase):
     for nonzeros in [0, 3]))
   @jtu.skip_on_devices("gpu")
   def testRootsInvalid(self, zeros, nonzeros, dtype, rng_factory):
+    raise unittest.SkipTest("getting segfaults on MKL")  # TODO(#3711)
     rng = rng_factory(np.random.RandomState(0))
 
     # The polynomial coefficients here start with zero and would have to

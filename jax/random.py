@@ -49,7 +49,7 @@ from . import lax
 from . import numpy as jnp
 from . import dtypes
 from .api import jit, vmap
-from .numpy.lax_numpy import _constant_like, asarray
+from jax._src.numpy.lax_numpy import _constant_like, asarray
 from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
@@ -213,6 +213,10 @@ def _threefry2x32_gpu_translation_rule(c, k1, k2, x1, x2):
       c.get_shape(k1).dimensions(), c.get_shape(k2).dimensions(),
       c.get_shape(x1).dimensions(), c.get_shape(x2).dimensions())
   rank = len(shape)
+  if 0 in shape:
+    zeros = xla_client.ops.Broadcast(
+        xla_bridge.constant(c, np.array(0, np.uint32)), shape)
+    return xla_client.ops.Tuple(c, [zeros, zeros])
   def _broadcast(x):
     ndims = c.get_shape(x).rank()
     return xla_client.ops.BroadcastInDim(x, shape,
@@ -308,12 +312,17 @@ def _random_bits(key, bit_width, shape):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
   size = prod(shape)
   max_count = int(np.ceil(bit_width * size / 32))
-  if max_count >= jnp.iinfo(np.uint32).max:
-    # TODO(mattjj): just split the key here
-    raise TypeError("requesting more random bits than a single call provides.")
 
-  counts = lax.iota(np.uint32, max_count)
-  bits = threefry_2x32(key, counts)
+  nblocks, rem = divmod(max_count, jnp.iinfo(np.uint32).max)
+  if not nblocks:
+    bits = threefry_2x32(key, lax.iota(np.uint32, rem))
+  else:
+    *subkeys, last_key = split(key, nblocks + 1)
+    blocks = [threefry_2x32(k, lax.iota(np.uint32, jnp.iinfo(np.uint32).max))
+              for k in subkeys]
+    last = threefry_2x32(last_key, lax.iota(np.uint32, rem))
+    bits = lax.concatenate(blocks + [last], 0)
+
   dtype = _UINT_DTYPES[bit_width]
   if bit_width == 64:
     bits = [lax.convert_element_type(x, dtype) for x in jnp.split(bits, 2)]
@@ -695,10 +704,10 @@ def _multivariate_normal(key, mean, cov, shape, dtype) -> jnp.ndarray:
 
 
 def truncated_normal(key: jnp.ndarray,
-                    lower: Union[float, jnp.ndarray],
-                    upper: Union[float, jnp.ndarray],
-                    shape: Optional[Sequence[int]] = None,
-                    dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
+                     lower: Union[float, jnp.ndarray],
+                     upper: Union[float, jnp.ndarray],
+                     shape: Optional[Sequence[int]] = None,
+                     dtype: np.dtype = dtypes.float_) -> jnp.ndarray:
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
@@ -717,6 +726,7 @@ def truncated_normal(key: jnp.ndarray,
   Returns:
     A random array with the specified dtype and shape given by ``shape`` if
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
+    Returns values in the open interval ``(lower, upper)``.
   """
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
@@ -734,12 +744,20 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> jnp.ndarray:
     _check_shape("truncated_normal", shape, np.shape(lower), np.shape(upper))
 
   sqrt2 = np.array(np.sqrt(2), dtype)
-  a = lax.erf(lax.convert_element_type(lower, dtype) / sqrt2)
-  b = lax.erf(lax.convert_element_type(upper, dtype) / sqrt2)
+  lower = lax.convert_element_type(lower, dtype)
+  upper = lax.convert_element_type(upper, dtype)
+  a = lax.erf(lower / sqrt2)
+  b = lax.erf(upper / sqrt2)
   if not jnp.issubdtype(dtype, np.floating):
     raise TypeError("truncated_normal only accepts floating point dtypes.")
-  u = uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny)
-  return sqrt2 * lax.erf_inv(a + u * (b - a))
+  u = uniform(key, shape, dtype, minval=a, maxval=b)
+  out = sqrt2 * lax.erf_inv(u)
+  # Clamp the value to the open interval (lower, upper) to make sure that
+  # rounding (or if we chose `a` for `u`) doesn't push us outside of the range.
+  return jnp.clip(
+      out,
+      lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
+      lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
 
 
 def bernoulli(key: jnp.ndarray,

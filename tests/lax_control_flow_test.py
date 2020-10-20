@@ -34,6 +34,7 @@ from jax import random
 from jax import test_util as jtu
 from jax.util import unzip2
 from jax.lib import xla_bridge
+from jax.interpreters import xla
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 
@@ -238,17 +239,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("body_fun output and input must have same type structure, got PyTreeDef(tuple, [*,*]) and *.")):
       lax.while_loop(lambda c: True, lambda c: (1., 1.), 0.)
-    if config.omnistaging_enabled:
-      expected = ("body_fun output and input must have identical types, got\n"
-                  "ShapedArray(bool[])\n"
-                  "and\n"
-                  "ShapedArray(float32[]).")
-    else:
-      expected = ("body_fun output and input must have identical types, got\n"
-                  "ShapedArray(bool[])\n"
-                  "and\n"
-                  "ShapedArray(float32[]).")
-    with self.assertRaisesWithLiteralMatch(TypeError, expected):
+    with self.assertRaisesWithLiteralMatch(TypeError,
+        ("body_fun output and input must have identical types, got\n"
+         "ShapedArray(bool[], weak_type=True)\n"
+         "and\n"
+         "ShapedArray(float32[]).")):
       lax.while_loop(lambda c: True, lambda c: True, np.float32(0.))
 
   def testNestedWhileWithDynamicUpdateSlice(self):
@@ -2380,14 +2375,23 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x, n = jnp.arange(3), jnp.arange(4)
     api.vmap(api.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
 
-  def testAssociativeScanUnstructured1000(self):
-    data = np.arange(1000)
-    expected = np.cumsum(data)
-    result = lax.associative_scan(operator.add, data)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{shape}_axis={axis}",
+       "shape": shape, "axis": axis}
+      for shape in [
+        [0], [1], [2], [3], [5], [10], [1000],
+        [2, 3], [7, 5], [5, 6, 7]
+      ]
+      for axis in range(-len(shape), len(shape) - 1))
+  def testAssociativeScanUnstructured(self, shape, axis):
+    data = np.arange(np.prod(shape)).reshape(shape) + 7
+    expected = np.cumsum(data, axis=axis)
+    result = lax.associative_scan(operator.add, data, axis=axis)
     self.assertAllClose(result, expected, check_dtypes=False)
 
   def testAssociativeScanUnstructured1000Reverse(self):
-    data = np.arange(1000)
+    data = np.arange(1000) + 32
     expected = np.cumsum(data[::-1])[::-1]
     result = lax.associative_scan(operator.add, data, reverse=True)
     self.assertAllClose(result, expected, check_dtypes=False)
@@ -2468,6 +2472,54 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         r'invalid cond param linear of type str, '
         r'tuple of bool required:\nmulti\nline',
         lambda: core.check_jaxpr(jaxpr))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.all_integer)
+  def test_scan_init_weak_type(self, dtype):
+    def func(carry, x):
+      return carry + x, x
+    init_weak = 0  # Python scalars are weakly-typed.
+    x = jnp.ones(5, dtype=dtype)
+    carry, result = lax.scan(func, init_weak, x)
+    self.assertEqual(carry, x.sum())
+    self.assertArraysEqual(result, x)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
+      for dtype in jtu.dtypes.all_integer)
+  def test_while_loop_init_weak_type(self, dtype):
+    # This tests whether lax.while_loop can properly handle weakly-typed
+    # initial values.
+    def cond_fun(val):
+      return val < 2
+    def body_fun(val):
+      return val + increment
+    increment = jnp.array(1, dtype=dtype)
+    init_weak = 0  # Python scalars are weakly-typed.
+    result = lax.while_loop(cond_fun, body_fun, init_weak)
+    self.assertArraysEqual(result, jnp.full_like(increment, 2))
+
+  def test_scan_vjp_forwards_extensive_residuals(self):
+    # https://github.com/google/jax/issues/4510
+    def cumprod(x):
+      s = jnp.ones((2, 32), jnp.float32)
+      return lax.scan(lambda s, x: (x*s, s), s, x)
+
+    rng = np.random.RandomState(1234)
+    x = jnp.asarray(rng.randn(32, 2, 32).astype('float32'))
+    _, vjp_fun = api.vjp(cumprod, x)
+
+    # Need to spelunk into vjp_fun. This is fragile, and if it causes problems
+    # just skip this test.
+    *_, ext_res = vjp_fun.args[0].args[0]
+    self.assertIs(ext_res, x)
+
+    x = rng.randn(32, 2, 32).astype('float32')  # numpy.ndarray, not DeviceArray
+    _, vjp_fun = api.vjp(cumprod, x)
+    *_, ext_res = vjp_fun.args[0].args[0]
+    self.assertIsInstance(ext_res, xla.DeviceArray)
+
 
 
 if __name__ == '__main__':

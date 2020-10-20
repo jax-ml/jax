@@ -21,6 +21,10 @@ __version__ = None
 with open('jaxlib/version.py') as f:
   exec(f.read(), globals())
 
+cuda_version = os.environ.get("JAX_CUDA_VERSION")
+if cuda_version:
+  __version__ += "+cuda" + cuda_version.replace(".", "")
+
 binary_libs = [os.path.basename(f) for f in glob('jaxlib/*.so*')]
 
 setup(

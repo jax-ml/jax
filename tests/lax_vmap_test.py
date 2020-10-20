@@ -541,11 +541,11 @@ class LaxVmapTest(jtu.JaxTestCase):
       self._CheckBatching(fun, 3, bdims, (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_shape={}_axis={}_bdims={}"
+      {"testcase_name": "_op={}_shape={}_axis={}_bdims={}_reverse={}"
        .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis,
-               bdims),
+               bdims, reverse),
        "op": op, "shape": shape, "dtype": dtype, "bdims": bdims,
-       "axis": axis, "rng_factory": rng_factory}
+       "axis": axis, "reverse": reverse}
       for op, types in [
           (lax.cumsum, [np.float32, np.float64]),
           (lax.cumprod, [np.float32, np.float64]),
@@ -554,13 +554,13 @@ class LaxVmapTest(jtu.JaxTestCase):
       for shape in [[10], [3, 4, 5]]
       for axis in range(len(shape))
       for bdims in all_bdims(shape)
-      for rng_factory in [
-          jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
-          else jtu.rand_small]))
-  def testCumulativeReduce(self, op, shape, dtype, axis, bdims, rng_factory):
+      for reverse in [False, True]))
+  def testCumulativeReduce(self, op, shape, dtype, axis, bdims, reverse):
+    rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
+                   else jtu.rand_small)
     rng = rng_factory(self.rng())
-    self._CheckBatching(partial(op, axis=axis), 7, bdims, (shape,), (dtype,),
-                        rng)
+    self._CheckBatching(partial(op, axis=axis, reverse=reverse), 7, bdims,
+                        (shape,), (dtype,), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}_padding={}".format(np.dtype(dtype).name,
@@ -593,6 +593,34 @@ class LaxVmapTest(jtu.JaxTestCase):
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape, shape):
         self._CheckBatching(fun, 3, bdims, (shape, shape), (dtype, dtype), rng)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_dtype={jtu.format_shape_dtype_string(shape, dtype)}"
+      f"_padding={padding}_dims={dims}_strides={strides}",
+       "dtype": dtype, "padding": padding, "shape": shape,
+       "dims": dims, "strides": strides}
+      for dtype in float_dtypes
+      for padding in ["VALID", "SAME"]
+      for shape in [(3, 2, 4, 6)]
+      for dims in [(1, 1, 2, 1)]
+      for strides in [(1, 2, 2, 1), (1, 1, 1, 1)]))
+  def testSelectAndScatterAdd(self, dtype, padding, shape, dims, strides):
+    rng = jtu.rand_small(self.rng())
+
+    pads = lax.padtype_to_pads(shape, dims, strides, padding)
+
+    def fun(operand, cotangents):
+      return lax._select_and_scatter_add(operand, cotangents, lax.ge_p, dims,
+                                         strides, pads)
+    ones = (1,) * len(shape)
+    cotangent_shape = api.eval_shape(
+      lambda x: lax._select_and_gather_add(x, x, lax.ge_p, dims, strides,
+                                           pads, ones, ones),
+      np.ones(shape, dtype)).shape
+
+    for bdims in all_bdims(cotangent_shape, shape):
+      self._CheckBatching(fun, 3, bdims, (cotangent_shape, shape),
+                          (dtype, dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_bdims={}_fft_ndims={}"

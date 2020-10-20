@@ -57,6 +57,10 @@ Operators
     conv_transpose
     cos
     cosh
+    cummax
+    cummin
+    cumprod
+    cumsum
     digamma
     div
     dot
@@ -64,6 +68,7 @@ Operators
     dynamic_index_in_dim
     dynamic_slice
     dynamic_slice_in_dim
+    dynamic_update_slice
     dynamic_update_index_in_dim
     dynamic_update_slice_in_dim
     eq

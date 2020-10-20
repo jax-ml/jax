@@ -706,7 +706,8 @@ class LaxTest(jtu.JaxTestCase):
       for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]
       for dtype in all_dtypes
       for precision in [None, lax.Precision.DEFAULT, lax.Precision.HIGH,
-                        lax.Precision.HIGHEST]
+                        lax.Precision.HIGHEST,
+                        (lax.Precision.DEFAULT, lax.Precision.HIGHEST)]
       for rng_factory in [jtu.rand_default]))
   def testDot(self, lhs_shape, rhs_shape, dtype, precision, rng_factory):
     rng = rng_factory(self.rng())
@@ -1419,10 +1420,11 @@ class LaxTest(jtu.JaxTestCase):
       self.assertEqual(shape, result.shape)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_shape={}_axis={}"
-       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis),
+      {"testcase_name": "_op={}_shape={}_axis={}_reverse={}"
+       .format(op.__name__, jtu.format_shape_dtype_string(shape, dtype), axis,
+               reverse),
        "op": op, "np_op": np_op, "shape": shape, "dtype": dtype,
-       "axis": axis, "rng_factory": rng_factory}
+       "axis": axis, "reverse": reverse}
       for op, np_op, types in [
           (lax.cumsum, np.cumsum, default_dtypes),
           (lax.cumprod, np.cumprod, default_dtypes),
@@ -1432,13 +1434,17 @@ class LaxTest(jtu.JaxTestCase):
       for dtype in types
       for shape in [[10], [3, 4, 5]]
       for axis in range(len(shape))
-      for rng_factory in [
-          jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
-          else jtu.rand_small]))
-  def testCumulativeReduce(self, op, np_op, shape, dtype, axis, rng_factory):
+      for reverse in [False, True]))
+  def testCumulativeReduce(self, op, np_op, shape, dtype, axis, reverse):
+    rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
+                   else jtu.rand_small)
     rng = rng_factory(self.rng())
-    fun = partial(op, axis=axis)
-    np_fun = partial(np_op, axis=axis, dtype=dtype)
+    fun = partial(op, axis=axis, reverse=reverse)
+    def np_fun(x):
+      if reverse:
+        return np.flip(np_op(np.flip(x, axis), axis=axis, dtype=dtype), axis)
+      else:
+        return np_op(x, axis=axis, dtype=dtype)
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
     self._CheckAgainstNumpy(np_fun, fun, args_maker)
@@ -2031,6 +2037,22 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       lax.conv_general_dilated(lhs, rhs, **kwargs)
 
+  def test_reduce_window_scalar_init_value_shape_rule(self):
+    # https://github.com/google/jax/issues/4574
+    args = { "operand": np.ones((4, 4), dtype=np.int32)
+           , "init_value": np.zeros((1,), dtype=np.int32)
+           , "computation": lax.max
+           , "window_dimensions": (2, 2)
+           , "window_strides": (2, 2)
+           , "padding": "VALID"
+           , "base_dilation": (1, 1)
+           , "window_dilation": (1, 1)
+           }
+
+    msg = (r"reduce_window expected init_value to be a scalar but init_value "
+           r"has shape \(1,\).")
+    with self.assertRaisesRegex(TypeError, msg):
+      lax.reduce_window(**args)
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

@@ -120,6 +120,14 @@ class LaxRandomTest(jtu.JaxTestCase):
     np.testing.assert_equal(result[:n], np.full((n,), 0xc4923a9c, dtype=np.uint32))
     np.testing.assert_equal(result[n:], np.full((n,), 0x483df7a0, dtype=np.uint32))
 
+  def testThreefry2x32Empty(self):
+    # Regression test for an op-by-op crash for empty arrays in CUDA mode.
+    with api.disable_jit():
+      result = random.threefry_2x32(
+        (np.uint32(0x13198a2e), np.uint32(0x03707344)),
+        jnp.ones((10, 0,), jnp.uint32))
+    np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
+
   def testRngRandomBitsViewProperty(self):
     # TODO: add 64-bit if it ever supports this property.
     # TODO: will this property hold across endian-ness?
@@ -200,6 +208,24 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
+      for dtype in [np.float16, np.float32, np.float64]))
+  def testTruncatedNormal(self, dtype):
+    key = random.PRNGKey(0)
+    rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
+    crand = api.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    min_val = np.min(uncompiled_samples)
+    max_val = np.max(uncompiled_samples)
+    self.assertTrue(min_val > -0.3)
+    self.assertTrue(max_val < 0.3)
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype={}".format(np.dtype(dtype).name), "dtype": dtype}
@@ -856,6 +882,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       random.choice(key, 5, 2, replace=False)
     with self.assertRaises(TypeError):
       random.choice(key, 5, 2, replace=True)
+
+  def test_eval_shape_big_random_array(self):
+    def f(x):
+      return random.normal(random.PRNGKey(x), (int(1e12),))
+    with core.skipping_checks():  # check_jaxpr will materialize array
+      api.eval_shape(f, 0)  # doesn't error
 
 
 if __name__ == "__main__":

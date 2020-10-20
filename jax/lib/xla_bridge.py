@@ -23,9 +23,10 @@ XLA. There are also a handful of related casting utilities.
 from functools import partial
 import os
 from typing import Callable, Dict, Tuple, Union
-import warnings
 
 from absl import logging
+# Disable "WARNING: Logging before flag parsing goes to stderr." message
+logging._warn_preinit_stderr = 0
 
 from ..config import flags
 from .. import util
@@ -127,7 +128,8 @@ def _get_local_backend(platform=None):
     raise RuntimeError("No local XLA backends found.")
 
   if backend.platform == 'cpu' and platform != 'cpu':
-    warnings.warn('No GPU/TPU found, falling back to CPU.')
+    logging.warning('No GPU/TPU found, falling back to CPU. '
+                    '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
 
   return backend
 
@@ -406,7 +408,9 @@ def _ndarray_constant_handler(c, val, canonicalize_types=True):
     staged into the XLA Computation.
   """
   # TODO(mattjj): revise this to use xops.BroadcastInDim rather than Transpose
-  if np.any(np.equal(0, val.strides)) and val.size > 0:
+  if dtypes.result_type(val) == dtypes.float0:
+    return _numpy_array_constant(c, np.zeros(val.shape, dtype=np.bool))
+  elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))
     collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)

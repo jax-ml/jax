@@ -9,6 +9,46 @@ Change Log
 
 These are the release notes for JAX.
 
+jaxlib 0.1.57 (unreleased)
+------------------------------
+
+jax 0.2.4 (October 19 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.3...jax-v0.2.4>`_.
+
+
+jaxlib 0.1.56 (October 14, 2020)
+------------------------------
+
+
+jax 0.2.3 (October 14 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.2...jax-v0.2.3>`_.
+* The reason for another release so soon is we need to temporarily roll back a
+  new jit fastpath while we look into a performance degradation
+
+jax 0.2.2 (October 13 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.1...jax-v0.2.2>`_.
+
+jax 0.2.1 (October 6 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.0...jax-v0.2.1>`_.
+
+* Improvements:
+
+  * As a benefit of omnistaging, the host_callback functions are executed (in program
+    order) even if the result of the :py:func:`jax.experimental.host_callback.id_print`/
+    :py:func:`jax.experimental.host_callback.id_tap` is not used in the computation.
+
+jax (0.2.0) (September 23 2020)
+----------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.1.77...jax-v0.2.0>`_.
+
+* Improvements:
+
+  * Omnistaging on by default. See `#3370 <https://github.com/google/jax/pull/3370>`_.
+
 
 jax (0.1.77) (September 15 2020)
 ----------------

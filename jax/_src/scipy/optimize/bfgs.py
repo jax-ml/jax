@@ -18,7 +18,7 @@ from typing import Callable, NamedTuple, Optional, Union
 import jax
 import jax.numpy as jnp
 from jax import lax
-from ._line_search import line_search
+from .line_search import line_search
 
 
 class _BFGSResults(NamedTuple):

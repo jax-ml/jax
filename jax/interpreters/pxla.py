@@ -66,6 +66,15 @@ unsafe_map, map = map, safe_map
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
 
+def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client._xla.PyLocalBuffer]:
+  """Call device_put on a sequence of devices and return a flat sequence of buffers."""
+  if replicate:
+    return list(it.chain.from_iterable(xla.device_put(x, device) for device in devices))
+  else:
+    return list(it.chain.from_iterable(xla.device_put(val, device) for val, device in safe_zip(x, devices)))
+
+
+
 # TODO(skye): make this a namedtuple. This may allow us to use ShardingSpecs in
 # performance-sensitive code, e.g. shard_args.
 class ShardingSpec:
@@ -237,9 +246,9 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
-    lambda x, devices, _: [xla.device_put(core.unit, d) for d in devices]
+    lambda x, devices, _: device_put(core.unit, devices, replicate=True)
 def _shard_array(x, devices, indices):
-  return [xla.device_put(x[i], d) for (i, d) in zip(indices, devices)]
+  return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
@@ -247,7 +256,7 @@ def _shard_device_array(x, devices, indices):
   start_indices, limit_indices, removed_dims = map(tuple, unzip3(
       _as_slice_indices(x, idx) for idx in indices))
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
-  return [xla.device_put(s, d) for s, d in zip(shards, devices)]
+  return device_put(shards, devices)
 shard_arg_handlers[xla.DeviceArray] = _shard_device_array
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
@@ -628,8 +637,9 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = map(partial(xb.constant, c), consts)
-  xla_args = xla._xla_callable_args(c, sharded_avals, tuple_args,
-                                    map(op.not_, mapped_invars), arg_parts)
+  xla_args, donated_invars = xla._xla_callable_args(c, sharded_avals, tuple_args,
+                                                    map(op.not_, mapped_invars), arg_parts,
+                                                    donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
                                   extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
@@ -862,7 +872,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None):
   replicated_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
   # TODO(skye): figure out how partitioning should work here
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, 1, None, aval, True)
-  device_buffers = [xla.device_put(val, d) for d in devices]
+  device_buffers = device_put(val, devices, replicate=True)
   return ShardedDeviceArray(replicated_aval, sharding_spec, device_buffers)
 
 def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, mapped):
@@ -955,9 +965,10 @@ def _pmap_translation_rule(c, axis_env,
     _xla_shard(c, aval, new_env, in_node) if in_node_mapped else in_node
     for aval, in_node, in_node_mapped in zip(in_avals, in_nodes, mapped_invars))
 
-  sharded_outs = xla.jaxpr_subcomp(
-      c, call_jaxpr, backend, new_env, (),
-      extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
+  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+    sharded_outs = xla.jaxpr_subcomp(
+        c, call_jaxpr, backend, new_env, (),
+        extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_xla_unshard(c, aval, new_env, shard, backend=backend)
           for aval, shard in zip(out_avals, sharded_outs)]
@@ -1044,7 +1055,7 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
   xla_consts = map(partial(xb.constant, c), consts)
   chunked_avals = [core.unmapped_aval(chunk_size, aval) if m else aval
                    for m, aval in zip(mapped_invars, mapped_avals)]
-  xla_args = xla._xla_callable_args(c, chunked_avals, tuple_args)
+  xla_args, _ = xla._xla_callable_args(c, chunked_avals, tuple_args)
   axis_env = xla.AxisEnv(num_devices, (axis_name,), (num_devices,), None)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, None, axis_env, xla_consts,
                                 'soft_pmap', *xla_args)

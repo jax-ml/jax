@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Set, List
 from . import partial_eval as pe
 from ..config import config
 from .. import core
+from ..dtypes import dtype, float0
 from ..core import Trace, Tracer, get_aval, call_p, Primitive, Literal
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
@@ -46,6 +47,8 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True) -> Any:
 
 @lu.transformation
 def jvpfun(instantiate, primals, tangents):
+  tangents = [Zero.from_value(t) if not isinstance(t, Zero)
+              and dtype(t) is float0 else t for t in tangents]
   with core.new_main(JVPTrace) as main:
     out_primals, out_tangents = yield (main, primals, tangents), {}
     del main
@@ -90,7 +93,7 @@ def linearize(traceable, *primals, **kwargs):
     jvpfun, aux = jvp(traceable, has_aux=True)
 
   in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-            + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
+              + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
                     for p in primals))
   _, in_tree = tree_flatten(((primals, primals), {}))
   jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
@@ -143,6 +146,18 @@ def unpair_pval(pval):
     aval_1, aval_2 = aval
     return (aval_1, const_1), (aval_2, const_2)
 
+def replace_float0s(primal, tangent):
+  if dtype(tangent) is float0:
+    return core.zeros_like_float0(tangent, dtype(primal))
+  else:
+    return tangent
+
+def recast_to_float0(primal, tangent):
+  if core.primal_dtype_to_tangent_dtype(dtype(primal)) == float0:
+    return Zero(get_aval(primal).at_least_vspace())
+  else:
+    return tangent
+
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type errors if you will)
 def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
   if all(type(ct) is Zero for ct in cotangents_in):
@@ -155,7 +170,7 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
       ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
       if not core.skip_checks:
         ct_aval = core.get_aval(ct_env[v])
-        assert v.aval == core.lattice_join(v.aval, ct_aval), (v.aval, ct_aval)
+        assert v.aval.strip_weak_type() == core.lattice_join(v.aval, ct_aval).strip_weak_type(), (v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.get(v, Zero(v.aval))
@@ -238,10 +253,12 @@ def get_primitive_transpose(p):
 class JVPTrace(Trace):
 
   def pure(self, val):
-    return JVPTracer(self, val, Zero.from_value(val))
+    tangent_zero = Zero(get_aval(val).at_least_vspace())
+    return JVPTracer(self, val, tangent_zero)
 
   def lift(self, val):
-    return JVPTracer(self, val, Zero.from_value(val))
+    tangent_zero = Zero(get_aval(val).at_least_vspace())
+    return JVPTracer(self, val, tangent_zero)
 
   def sublift(self, val):
     return JVPTracer(self, val.primal, val.tangent)
@@ -296,9 +313,16 @@ class JVPTrace(Trace):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)
     tangents_in = map(instantiate_zeros, tangents_in)
+    # Cast float0 to zeros with the primal dtype because custom jvp rules don't
+    # currently handle float0s
+    tangents_in = map(replace_float0s, primals_in, tangents_in)
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
+    tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
+
+  def post_process_custom_jvp_call(self, out_tracers, params):
+    raise CustomJVPException()
 
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, *, out_trees):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
@@ -310,7 +334,11 @@ class JVPTrace(Trace):
     tangents_out = custom_lin_p.bind(
         *res, *tangents_in, num_res=res_tree.num_leaves, bwd=bwd,
         avals_out=avals_out)
+    tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
+
+  def post_process_custom_vjp_call(self, out_tracers, params):
+    raise CustomVJPException()
 
   def join(self, xt, yt):
     xz, yz = type(xt) is Zero, type(yt) is Zero
@@ -347,9 +375,11 @@ class JVPTracer(Tracer):
 
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
-    primal_aval = raise_to_shaped(get_aval(primal))
-    tangent_aval = raise_to_shaped(get_aval(tangent))
-    assert primal_aval == tangent_aval, (primal_aval, tangent_aval)
+    primal_aval = raise_to_shaped(get_aval(primal), weak_type=False)
+    tangent_aval = raise_to_shaped(get_aval(tangent), weak_type=False)
+    assert primal_aval.shape == tangent_aval.shape, (primal_aval.shape, tangent_aval.shape)
+    expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
+    assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
 
 call_param_updaters: Dict[core.Primitive, Callable] = {}
 call_transpose_param_updaters: Dict[core.Primitive, Callable] = {}
@@ -453,6 +483,8 @@ deflinear(add_jaxvals_p, lambda t: (t, t))
 
 def instantiate_zeros(tangent):
   if type(tangent) is Zero:
+    if isinstance(tangent.aval, Tracer):
+      return tangent.aval
     return zeros_like_aval(tangent.aval)
   else:
     return tangent
@@ -600,8 +632,7 @@ def _custom_lin_transpose(cts_out, *invals, num_res, bwd, avals_out):
   res, _ = split_list(invals, [num_res])
   cts_out = map(instantiate_zeros_aval, avals_out, cts_out)
   cts_in = bwd.call_wrapped(*res, *cts_out)
-  cts_in_flat, _ = tree_flatten(cts_in)  # already checked tree structure
-  return [None] * num_res + cts_in_flat
+  return [None] * num_res + list(cts_in)
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 
 
@@ -670,6 +701,28 @@ def defvjp2(prim, *vjps):
     return ans, vjpfun
   defvjp_all(prim, vjpmaker)
 
+
+class CustomJVPException(Exception):
+  def __init__(self):
+    # TODO(mattjj): track source provenance on AD tracers, improve error
+    msg = ("Detected differentiation of a custom_jvp function with respect to "
+           "a closed-over value. That isn't supported because the custom JVP "
+           "rule only specifies how to differentiate the custom_jvp function "
+           "with respect to explicit input parameters. Try passing the "
+           "closed-over value into the custom_jvp function as an argument, and "
+           "adapting the custom_jvp rule.")
+    super().__init__(msg)
+
+class CustomVJPException(Exception):
+  def __init__(self):
+    # TODO(mattjj): track source provenance on AD tracers, improve error
+    msg = ("Detected differentiation of a custom_vjp function with respect to "
+           "a closed-over value. That isn't supported because the custom VJP "
+           "rule only specifies how to differentiate the custom_vjp function "
+           "with respect to explicit input parameters. Try passing the "
+           "closed-over value into the custom_vjp function as an argument, and "
+           "adapting the custom_vjp fwd and bwd rules.")
+    super().__init__(msg)
 
 @config.register_omnistaging_disabler
 def omnistaging_disabler() -> None:

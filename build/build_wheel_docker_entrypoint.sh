@@ -26,7 +26,7 @@ usage() {
   exit 1
 }
 
-if [[ $# != 2 ]]
+if [[ $# -lt 2 ]]
 then
   usage
 fi
@@ -59,5 +59,6 @@ case $2 in
     usage
 esac
 
+export JAX_CUDA_VERSION=$3
 python setup.py bdist_wheel --python-tag "$PY_TAG" --plat-name "$PLAT_NAME"
 cp -r dist/* /dist

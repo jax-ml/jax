@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import numpy as np
 
-from jax.numpy import lax_numpy as jnp
-from jax.numpy.vectorize import vectorize
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.vectorize import vectorize
 from jax import ad_util
 from jax import api
 from jax import lax
@@ -31,6 +30,7 @@ from jax.abstract_arrays import ShapedArray
 from jax.core import Primitive
 from jax.lax import (standard_primitive, standard_unop, naryop_dtype_rule,
                      _float, _complex, _input_dtype, _broadcasting_select)
+from jax._src.lax import lax as lax_internal
 from jax.lib import lapack
 from jax.lib import cusolver
 
@@ -273,7 +273,8 @@ def eigh_abstract_eval(operand, lower):
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
     v = ShapedArray(batch_dims + (n, n), operand.dtype)
-    w = ShapedArray(batch_dims + (n,), lax.lax._complex_basetype(operand.dtype))
+    w = ShapedArray(batch_dims + (n,),
+                    lax_internal._complex_basetype(operand.dtype))
   else:
     v, w = operand, operand
   return v, w
@@ -686,8 +687,7 @@ def _lu_cpu_gpu_translation_rule(getrf_impl, c, operand):
 
 
 def _lu_tpu_translation_rule(c, operand):
-  shape = c.get_shape(operand)
-  if hasattr(xops, "LU") and shape.numpy_dtype() == np.float32:
+  if hasattr(xops, "LU"):
     lu, pivot, perm = xops.LU(operand)
     return xops.Tuple(c, [lu, pivot, perm])
   else:
@@ -931,7 +931,8 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    s = ShapedArray(batch_dims + (min(m, n),), lax.lax._complex_basetype(operand.dtype))
+    s = ShapedArray(batch_dims + (min(m, n),),
+                    lax_internal._complex_basetype(operand.dtype))
     if compute_uv:
       u = ShapedArray(batch_dims + (m, m if full_matrices else min(m, n)), operand.dtype)
       vt = ShapedArray(batch_dims + (n if full_matrices else min(m, n), n), operand.dtype)
