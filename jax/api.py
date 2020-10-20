@@ -88,7 +88,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_bool("jax_disable_jit", bool_env("JAX_DISABLE_JIT", False),
                   "Disable JIT compilation and just call original Python.")
 flags.DEFINE_bool(
-    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", version >= (0, 1, 57)),
+    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", False),
     "A temporary flag enabling the C++ jax.jit fast path."
     "Set this to `False` only if it crashes otherwise and report "
     "the error to the jax-team.")
