@@ -12,6 +12,10 @@ These are the release notes for JAX.
 jaxlib 0.1.57 (unreleased)
 ------------------------------
 
+jax 0.2.4 (October 19 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.3...jax-v0.2.4>`_.
+
 
 jaxlib 0.1.56 (October 14, 2020)
 ------------------------------
