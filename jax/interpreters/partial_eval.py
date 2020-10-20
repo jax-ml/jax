@@ -942,7 +942,7 @@ class JaxprStackFrame:
   def find_progenitors(self, tracer):
     var = self.tracer_to_var.get(id(tracer))
     if not var:
-      return []
+      return None, None
     active_vars = {var}
     for eqn in self.eqns[::-1]:
       produced = set(eqn.outvars) & active_vars
@@ -1009,8 +1009,18 @@ class DynamicJaxprTrace(core.Trace):
   def getvar(self, tracer):
     var = self.frame.tracer_to_var.get(id(tracer))
     if var is None:
-      self.frame.tracers.append(tracer)
-      var = self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(tracer.aval)
+      if tracer.line_info is not None:
+        detail = f"tracer created on line {source_info_util.summarize(tracer.line_info)}"
+      else:
+        detail = None
+      raise core.escaped_tracer_error(detail)
+    return var
+
+  def makevar(self, tracer):
+    var = self.frame.tracer_to_var.get(id(tracer))
+    assert var is None, "a jaxpr variable must be created only once per tracer"
+    self.frame.tracers.append(tracer)
+    var = self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(tracer.aval)
     return var
 
   def getconstvar(self, c):
@@ -1033,7 +1043,7 @@ class DynamicJaxprTrace(core.Trace):
     source_info = source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
-    outvars = map(self.getvar, out_tracers)
+    outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
     self.frame.eqns.append(eqn)
     return out_tracers if primitive.multiple_results else out_tracers.pop()
@@ -1046,8 +1056,8 @@ class DynamicJaxprTrace(core.Trace):
     source_info = source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
-    outvars = map(self.getvar, out_tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
+    outvars = map(self.makevar, out_tracers)
     new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
     update_params = call_param_updaters.get(call_primitive)
     if update_params:
@@ -1072,8 +1082,8 @@ class DynamicJaxprTrace(core.Trace):
     source_info = source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
     invars = map(self.getvar, tracers)
-    outvars = map(self.getvar, out_tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
+    outvars = map(self.makevar, out_tracers)
     new_mapped_invars = (False,) * len(consts) + params['mapped_invars']
     new_params = dict(params, mapped_invars=new_mapped_invars,
                       call_jaxpr=convert_constvars_jaxpr(jaxpr))
@@ -1096,8 +1106,8 @@ class DynamicJaxprTrace(core.Trace):
         lambda: trace_to_subjaxpr_dynamic(jvp, self.main, 2 * in_avals)[::2])
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
-    outvars = map(self.getvar, out_tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
+    outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim.initial_style,
                         dict(fun_jaxpr=closed_fun_jaxpr,
                              jvp_jaxpr_thunk=jvp_jaxpr_thunk,
@@ -1117,8 +1127,8 @@ class DynamicJaxprTrace(core.Trace):
         lambda: trace_to_subjaxpr_dynamic(fwd, self.main, in_avals)[::2])
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
-    outvars = map(self.getvar, out_tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
+    outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim.initial_style,
                         dict(fun_jaxpr=closed_fun_jaxpr,
                              fwd_jaxpr_thunk=fwd_jaxpr_thunk,
