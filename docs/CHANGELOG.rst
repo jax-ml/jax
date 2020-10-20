@@ -13,6 +13,7 @@ jaxlib 0.1.57 (unreleased)
 ------------------------------
 * Fixed a bug where the hash of bfloat16 values was not correctly initialized
   and could change (#4651).
+* Add support for retaining ownership when passing arrays to DLPack (#4636).
 
 jax 0.2.4 (October 19 2020)
 --------------------------
