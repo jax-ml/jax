@@ -22,7 +22,6 @@ from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
                            Partial)
 from jax.util import safe_map as map
 
-
 def _vdot_real_part(x, y):
   """Vector dot-product guaranteed to have a real valued result."""
   # all our uses of vdot() in CG are for computing an operator of the form
