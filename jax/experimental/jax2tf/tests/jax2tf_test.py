@@ -328,7 +328,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.TransformConvertAndCompare(f, arg, "grad")
     # TODO: check that the TF code also computes "sin" 5 times
 
-
   def test_remat_free_var(self):
     def f(x):
       y = 2 * x
@@ -409,6 +408,18 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError, "convert must be used outside all JAX transformations"):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
+
+  def test_name_scope(self):
+    log = []
+
+    @jax.named_call
+    def my_test_function(x):
+      y = tf.Variable(1., name="foo")
+      log.append(y.name)
+      return x * x
+
+    jax2tf.convert(my_test_function)(2)
+    self.assertIn("my_test_function/foo", log[0])
 
 
 if __name__ == "__main__":

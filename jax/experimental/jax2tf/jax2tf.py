@@ -36,6 +36,7 @@ from jax.lib import xla_bridge as xb
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
+import re
 
 # These don't have public equivalents.
 # pylint: disable=g-direct-tensorflow-import
@@ -44,6 +45,16 @@ from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
 from jaxlib import xla_client
 
+# TF scope validation, refer to tensorflow/python/framework/ops.py
+_VALID_SCOPE_REGEX = re.compile("^[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*$")
+_INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/>-]")
+
+
+def _sanitize_scope_name(name):
+  scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
+  if not _VALID_SCOPE_REGEX.match(scope_name):
+    scope_name = ".{}".format(scope_name)
+  return scope_name
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
@@ -735,7 +746,14 @@ class TensorFlowTrace(core.Trace):
     assert call_primitive.multiple_results
     vals: Sequence[TfVal] = [t.val for t in tracers]
     f = _interpret_subtrace(f, self.main, tuple(t.aval for t in tracers))
-    vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = f.call_wrapped(*vals)
+    if call_primitive == core.named_call_p:
+      print(params["name"])
+      with tf.name_scope(_sanitize_scope_name(params["name"])):
+        vals_out: Sequence[Tuple[TfVal,
+                                 core.AbstractValue]] = f.call_wrapped(*vals)
+    else:
+      vals_out: Sequence[Tuple[TfVal,
+                               core.AbstractValue]] = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
@@ -1187,8 +1205,8 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
 
   def convert_dilation_and_compute_result(tf_padding, tf_dim_nums):
     no_dilation = [1] * nb_spatial_dimensions
-      # TODO(bchetioui): is there a generic way to do a transposed atrous
-      # convolution in TensorFlow?
+    # TODO(bchetioui): is there a generic way to do a transposed atrous
+    # convolution in TensorFlow?
     if not (list(lhs_dilation) == no_dilation or
             list(rhs_dilation) == no_dilation):
       return "Both LHS and RHS dilations are set"
@@ -1265,35 +1283,35 @@ def _dot_general(lhs, rhs, dimension_numbers, precision):
       and 1 <= rhs_dim - len(rhs_batch) <= 2
       and lhs_contracting == (len(lhs.shape) - 1,)
       and rhs_contracting == (len(lhs_batch),)):
-        # All the inputs to tf.linalg.matmul must have 2 inner dimensions,
-        # after their batch dimensions, so we need to expand the dimensions
-        # appropriately. We can get to this branch with three combinations of
-        # inner shapes:
-        # - lhs.inner_shape == [a, b], rhs.inner_shape == [b, c]
-        #   - in this case, the resulting inner shape is [a, c];
-        # - lhs.inner_shape == [b]   , rhs.inner_shape == [b, c]
-        #   - in this case, we need to expand lhs to [1, b], and the resulting
-        #     shape is [c]. We need to squeeze the result of tf.linalg.matmul
-        #     as it will have shape [1, c];
-        # - lhs.shape == [batch] + [a, b], rhs.shape == [batch] + [b]
-        #   - in this case, we need to expand rhs to [b, 1], and the resulting
-        #     shape is [a]. We need to squeeze the result of tf.linalg.matmul
-        #     as it will have shape [a, 1];
-        # - lhs.shape == [batch] + [b]   , rhs.shape == [batch] + [b]
-        #   - in this case, we need to expand lhs to [1, b] and rhs to [b, 1],
-        #     and the resulting shape is (). We need to squeeze the result of
-        #     tf.linalg.matmul as it will have shape [1, 1].
-        squeeze_idxs = []
-        if lhs_dim - len(lhs_batch) == 1:
-          lhs = tf.expand_dims(lhs, lhs_dim - 1)
-          squeeze_idxs.append(len(lhs.shape) - 2)
-        if rhs_dim - len(rhs_batch) == 1:
-          rhs = tf.expand_dims(rhs, rhs_dim - 2)
-          squeeze_idxs.append(len(rhs.shape) - 1)
-        result = tf.linalg.matmul(lhs, rhs)
-        if len(squeeze_idxs) != 0:
-          result = tf.squeeze(result, squeeze_idxs)
-        return result
+    # All the inputs to tf.linalg.matmul must have 2 inner dimensions,
+    # after their batch dimensions, so we need to expand the dimensions
+    # appropriately. We can get to this branch with three combinations of
+    # inner shapes:
+    # - lhs.inner_shape == [a, b], rhs.inner_shape == [b, c]
+    #   - in this case, the resulting inner shape is [a, c];
+    # - lhs.inner_shape == [b]   , rhs.inner_shape == [b, c]
+    #   - in this case, we need to expand lhs to [1, b], and the resulting
+    #     shape is [c]. We need to squeeze the result of tf.linalg.matmul
+    #     as it will have shape [1, c];
+    # - lhs.shape == [batch] + [a, b], rhs.shape == [batch] + [b]
+    #   - in this case, we need to expand rhs to [b, 1], and the resulting
+    #     shape is [a]. We need to squeeze the result of tf.linalg.matmul
+    #     as it will have shape [a, 1];
+    # - lhs.shape == [batch] + [b]   , rhs.shape == [batch] + [b]
+    #   - in this case, we need to expand lhs to [1, b] and rhs to [b, 1],
+    #     and the resulting shape is (). We need to squeeze the result of
+    #     tf.linalg.matmul as it will have shape [1, 1].
+    squeeze_idxs = []
+    if lhs_dim - len(lhs_batch) == 1:
+      lhs = tf.expand_dims(lhs, lhs_dim - 1)
+      squeeze_idxs.append(len(lhs.shape) - 2)
+    if rhs_dim - len(rhs_batch) == 1:
+      rhs = tf.expand_dims(rhs, rhs_dim - 2)
+      squeeze_idxs.append(len(rhs.shape) - 1)
+    result = tf.linalg.matmul(lhs, rhs)
+    if len(squeeze_idxs) != 0:
+      result = tf.squeeze(result, squeeze_idxs)
+    return result
 
   new_id = iter(string.ascii_letters)
   lhs_axis_ids = [next(new_id) for _ in lhs.shape]
@@ -1973,6 +1991,7 @@ def _fft(x, fft_type, fft_lengths):
               IFFT: [tf.signal.ifft, tf.signal.ifft2d, tf.signal.ifft3d],
               RFFT: [tf.signal.rfft, tf.signal.rfft2d, tf.signal.rfft3d],
               IRFFT: [tf.signal.irfft, tf.signal.irfft2d, tf.signal.irfft3d]}
+
   return tf_funcs[fft_type][len(fft_lengths) - 1](x)
 
 tf_impl[lax_fft.fft_p] = _fft
