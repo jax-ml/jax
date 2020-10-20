@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Tuple
+
+from absl import logging
 
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
 from . import linear_util as lu
 from .util import safe_map, curry, WrapHashably, Hashable
 from .core import unit
-
-from typing import Tuple
 
 map = safe_map
 
@@ -48,7 +49,7 @@ def apply_flat_fun(fun, io_tree, *py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten((py_args, {}))
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -62,7 +63,7 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   in_tree_expected, out_tree = io_tree
   args, in_tree = tree_flatten(py_args)
   if in_tree != in_tree_expected:
-      raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
+    raise TypeError("Expected {}, got {}".format(in_tree_expected, in_tree))
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
@@ -74,6 +75,7 @@ def flatten_fun_nokwargs2(in_tree, *args_flat):
   aux_flat, aux_tree = tree_flatten(aux)
   yield (ans_flat, aux_flat), (ans_tree, aux_tree)
 
+
 def argnums_partial(f, dyn_argnums, args):
   if isinstance(dyn_argnums, int):
     dyn_argnums = (dyn_argnums,)
@@ -83,6 +85,32 @@ def argnums_partial(f, dyn_argnums, args):
                       for i, arg in enumerate(args)])
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, fixed_args), dyn_args
+
+
+def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
+                           args: Tuple[Any]):
+  """Version of ``argnums_partial`` that checks hashability of static_argnums."""
+  dyn_argnums = tuple(i for i in range(len(args)) if i not in static_argnums)
+  dyn_args = tuple(args[i] for i in dyn_argnums)
+
+  fixed_args = [unit] * len(args)  # type: ignore
+  for i in static_argnums:
+    static_arg = args[i]
+    try:
+      hash(static_arg)
+    except TypeError:
+      logging.warning(
+          "Static argument (index %s) of type %s for function %s is "
+          "non-hashable. As this can lead to unexpected cache-misses, it "
+          "will raise an error in a near future.", i, type(static_arg),
+          f.__name__)
+      # e.g. ndarrays, DeviceArrays
+      fixed_args[i] = WrapHashably(static_arg)  # type: ignore
+    else:
+      fixed_args[i] = Hashable(static_arg)  # type: ignore
+
+  return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
+
 
 @lu.transformation
 def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
