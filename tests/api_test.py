@@ -2384,6 +2384,9 @@ class RematTest(jtu.JaxTestCase):
 
   def test_escaped_tracer_remat(self):
     # b/169779185
+    if not config.omnistaging_enabled:
+      raise unittest.SkipTest("test only works with omnistaging")
+
     def f():
       seq = [jnp.zeros([])]
       def g():
