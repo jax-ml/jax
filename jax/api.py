@@ -198,6 +198,14 @@ def _python_jit(
       raise ValueError(msg.format(static_argnums, donate_argnums, len(args)))
     f = lu.wrap_init(fun)
     if static_argnums:
+      static_args = [arg for i, arg in enumerate(args) if i in static_argnums]
+      for static_arg, static_index in zip(static_args, static_argnums):
+        try:
+          hash(static_arg)
+        except TypeError:
+          raise ValueError(
+              f"Static arguments (arg {static_index} for function {fun} should be hashable and comparable through __eq__. Got type {type(static_arg)}: {static_arg}. Static_argnums: {static_argnums}"
+          )
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f, dyn_args = argnums_partial(f, dyn_argnums, args)
     else:
