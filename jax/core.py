@@ -1344,7 +1344,7 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
     try:
       in_avals = map(read, eqn.invars)
       typecheck_assert(all(not isinstance(ina, ConcreteArray) for ina in in_avals),
-                       f"Equation given ConcreteArray type inputs")
+                       "Equation given ConcreteArray type inputs")
       if prim in custom_typechecks:
         custom_typechecks[prim](*in_avals, **eqn.params)
       if prim.call_primitive:
