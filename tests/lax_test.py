@@ -493,6 +493,190 @@ class LaxTest(jtu.JaxTestCase):
 
     self._CompileAndCheck(fun, args_maker)
 
+  def testConvGeneralDilatedPatchesOverlapping1D(self):
+    lhs = np.array([[1]], np.float32).reshape((1, 1))
+    patches = lax.conv_general_dilated_patches(
+      lhs=lhs,
+      filter_shape=(),
+      window_strides=(),
+      padding='SAME'
+    )
+    self.assertAllClose(lhs, patches)
+
+    dn = ('NHC', 'OIH', 'NHC')
+    lhs = np.array([1, 2, 3, 4, 5], np.float32).reshape((1, -1, 1))
+
+    patches = lax.conv_general_dilated_patches(
+        lhs=lhs,
+        filter_shape=(2,),
+        window_strides=(2,),
+        padding='VALID',
+        dimension_numbers=dn
+    )
+    self.assertAllClose(
+        np.array([[1, 2],
+                  [3, 4]], np.float32).reshape((1, 2, 2)), patches)
+
+    patches = lax.conv_general_dilated_patches(
+        lhs=lhs,
+        filter_shape=(3,),
+        window_strides=(1,),
+        padding='SAME',
+        dimension_numbers=dn
+    )
+    self.assertAllClose(
+        np.array([[0, 1, 2],
+                  [1, 2, 3],
+                  [2, 3, 4],
+                  [3, 4, 5],
+                  [4, 5, 0]], np.float32).reshape((1, 5, 3)), patches)
+
+    patches = lax.conv_general_dilated_patches(
+        lhs=lhs,
+        filter_shape=(3,),
+        window_strides=(1,),
+        padding='SAME',
+        rhs_dilation=(2,),
+        dimension_numbers=dn
+    )
+    self.assertAllClose(
+        np.array([[0, 1, 3],
+                  [0, 2, 4],
+                  [1, 3, 5],
+                  [2, 4, 0],
+                  [3, 5, 0]], np.float32).reshape((1, 5, 3)), patches)
+
+  def testConvGeneralDilatedPatchesOverlapping2D(self):
+    lhs = np.array([[1, 2, 3],
+                    [4, 5, 6]], np.float32).reshape((1, 2, 3, 1))
+    patches = lax.conv_general_dilated_patches(
+        lhs=lhs,
+        filter_shape=(2, 2),
+        window_strides=(1, 1),
+        padding='SAME',
+        dimension_numbers=('NHWC', 'OIHW', 'NHWC')
+    )
+    self.assertAllClose(np.array([[1, 2, 4, 5],
+                                  [2, 3, 5, 6],
+                                  [3, 0, 6, 0],
+                                  [4, 5, 0, 0],
+                                  [5, 6, 0, 0],
+                                  [6, 0, 0, 0]],
+                                 np.float32).reshape((1, 2, 3, 4)), patches)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+           "_lhs_shape={}_filter_shape={}_strides={}_padding={}"
+           "_dims={}_precision={}".format(
+               jtu.format_shape_dtype_string(lhs_shape, dtype),
+               jtu.format_shape_dtype_string(filter_shape, dtype),
+               strides,
+               padding,
+               "None" if dim_nums is None else ",".join(dim_nums),
+               precision
+           ),
+       "lhs_shape": lhs_shape,
+       "filter_shape": filter_shape,
+       "dtype": dtype,
+       "strides": strides,
+       "padding": padding,
+       "dimension_numbers": dim_nums,
+       "rng_factory": rng_factory,
+       "precision": precision
+      }
+      for dtype in inexact_dtypes
+      for rng_factory in [jtu.rand_small]
+      for lhs_shape, filter_shape, strides, padding, dim_nums in [
+          ((2, 5), (), (), [], ("NC", "OI", "CN")),
+          ((2, 3, 4), (2,), (2,), [(0, 2)], ("CNH", "OHI", "HNC")),
+          ((3, 1, 4, 5), (1, 3), (1, 3), [(3, 1), (2, 2)],
+           ("NCHW", "OIHW", "NCHW")),
+          ((3, 2, 5, 6), (4, 3), (4, 3), [(5, 2), (2, 4)],
+           None),
+          ((1, 2, 3, 4), (1, 1), (1, 1), [(0, 0), (0, 0)],
+           ("NCWH", "OHWI", "CNHW")),
+          ((1, 2, 3, 4), (3, 2), (1, 1), [(0, 0), (0, 0)],
+           ("CWHN", "HOWI", "NCHW")),
+          ((2, 3, 4, 5, 6), (2, 1, 3), (2, 1, 3), [(1, 2), (5, 3), (3, 5)],
+           ("NHWDC", "HDIWO", "DCWNH"))
+      ]
+      for precision in [None,
+                        lax.Precision.DEFAULT,
+                        lax.Precision.HIGH,
+                        lax.Precision.HIGHEST]
+      ))
+  def testConvGeneralDilatedPatchesNonOverlapping(self,
+                                                  lhs_shape,
+                                                  filter_shape,
+                                                  dtype,
+                                                  strides,
+                                                  padding,
+                                                  dimension_numbers,
+                                                  rng_factory,
+                                                  precision):
+    rng = rng_factory(self.rng())
+    lhs = rng(lhs_shape, dtype)
+
+    if dimension_numbers is None:
+      lhs_spec, rhs_spec, out_spec = "NCHW", "OIHW", "NCHW"
+    else:
+      lhs_spec, rhs_spec, out_spec = dimension_numbers
+
+    filter_spec = ''.join(c for c in rhs_spec if c not in ('I', 'O'))
+    patches_spec = out_spec.replace('C', 'C' + filter_spec.lower())
+
+    full_padding = []
+    for c in lhs_spec:
+      if c in ('N', 'C'):
+        full_padding += [(0, 0)]
+      else:
+        full_padding += [padding[filter_spec.index(c)]]
+
+    lhs_padded = np.pad(lhs, full_padding, 'constant')
+    out = lax.transpose(lhs_padded, [lhs_spec.index(c) for c in out_spec])
+
+    patches = lax.conv_general_dilated_patches(
+        lhs=lhs,
+        filter_shape=filter_shape,
+        window_strides=strides,
+        padding=padding,
+        dimension_numbers=dimension_numbers,
+        precision=precision
+    )
+
+    source = []
+
+    # Test that output spatial shape is factored into `#patches x patch_size`.
+    for c in out_spec:
+      out_c = out.shape[out_spec.index(c)]
+      patch_c = patches.shape[out_spec.index(c)]
+
+      if c == 'N':
+        self.assertEqual(out_c, patch_c)
+      elif c == 'C':
+        self.assertEqual(out_c * np.prod(filter_shape), patch_c)
+      else:
+        self.assertEqual(out_c, patch_c * filter_shape[filter_spec.index(c)])
+
+        source += [patches_spec.index(c), patches_spec.index(c.lower())]
+
+    # Test that stacking patches together gives the source image, padded.
+    c = out_spec.index('C')
+    patches = patches.reshape(patches.shape[:c] +
+                              (lhs_shape[lhs_spec.index('C')],) +
+                              filter_shape +
+                              patches.shape[c + 1:]
+                              )
+    patches = np.moveaxis(patches, source, range(len(source)))
+    for i in range(len(filter_shape)):
+      patches = patches.reshape(patches.shape[:i] + (-1,) +
+                                patches.shape[2 + i:])
+    patches = np.moveaxis(
+        patches,
+        range(len(filter_shape)),
+        [out_spec.index(c) for c in out_spec if c not in ('N', 'C')])
+    self.assertAllClose(out, patches)
+
   # TODO(mattjj): test conv_general_dilated against numpy
 
   def testConv0DIsDot(self):

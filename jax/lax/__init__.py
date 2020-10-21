@@ -338,6 +338,9 @@ from jax._src.lax.parallel import (
   psum_p,
   pswapaxes,
 )
+from jax._src.lax.other import (
+  conv_general_dilated_patches
+)
 
 # TODO(phawkins): fix callers and remove these imports.
 from . import lax
