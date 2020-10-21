@@ -2382,6 +2382,20 @@ class RematTest(jtu.JaxTestCase):
     with assertEvals(2):
       vjp(v)
 
+  def test_escaped_tracer_remat(self):
+    # b/169779185
+    def f():
+      seq = [jnp.zeros([])]
+      def g():
+        seq[0] += 1  # this is line 7 btw
+        return seq[0]
+
+      api.remat(g)()
+      api.remat(g)()
+
+    with self.assertRaisesRegex(core.UnexpectedTracerError, "global state"):
+      api.jit(f)()
+
 
 class JaxprTest(jtu.JaxTestCase):
 
