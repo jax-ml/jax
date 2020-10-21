@@ -3646,33 +3646,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = 2. * jnp.cos(jnp.arange(3.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_initial_style_vmap_2(self):
-    # This is like test_initial_style_vmap except the primal function closes
-    # over an array constant.
-    y = jnp.array([1., 2., 3.])
-
-    @api.custom_vjp
-    def f(x):
-      assert jnp.ndim(x) == 0
-      return 3 * x * jnp.sum(y)
-    def f_fwd(x):
-      return f(x), jnp.cos(x)
-    def f_rev(cos_x, g):
-      return (2 * cos_x * g,)
-    f.defvjp(f_fwd, f_rev)
-
-    def foo(x):
-      out, _  = lax.scan(lambda c, _: (f(c), None), x, None, length=1)
-      return out
-
-    ans = api.vmap(foo)(jnp.arange(3.))
-    expected = 3. * jnp.arange(3.) * 6
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
-    ans = api.grad(lambda x: api.vmap(foo)(x).sum())(jnp.arange(3.))
-    expected = 2. * jnp.cos(jnp.arange(3.))
-    self.assertAllClose(ans, expected, check_dtypes=False)
-
   def test_nondiff_arg(self):
     @partial(api.custom_vjp, nondiff_argnums=(0,))
     def app(f, x):
@@ -3942,6 +3915,33 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     scan_range = jnp.arange(4)
     lax.scan(scan_body, x, scan_range)  # don't crash
+
+  def test_initial_style_vmap_3(self):
+    # This is like test_initial_style_vmap except the primal function closes
+    # over an array constant.
+    y = jnp.array([1., 2., 3.])
+
+    @api.custom_vjp
+    def f(x):
+      assert jnp.ndim(x) == 0
+      return 3 * x * jnp.sum(y)
+    def f_fwd(x):
+      return f(x), jnp.cos(x)
+    def f_rev(cos_x, g):
+      return (2 * cos_x * g,)
+    f.defvjp(f_fwd, f_rev)
+
+    def foo(x):
+      out, _  = lax.scan(lambda c, _: (f(c), None), x, None, length=1)
+      return out
+
+    ans = api.vmap(foo)(jnp.arange(3.))
+    expected = 3. * jnp.arange(3.) * 6
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(lambda x: api.vmap(foo)(x).sum())(jnp.arange(3.))
+    expected = 2. * jnp.cos(jnp.arange(3.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_bwd_closes_over_tracer(self):
     def f(y):
