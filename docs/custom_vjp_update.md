@@ -70,7 +70,7 @@ Here's a case where we actually need `nondiff_argnums` with `custom_vjp`:
 from functools import partial
 import jax
 
-@partial(jax.custom_vjp, nondiff_argnums)
+@partial(jax.custom_vjp, nondiff_argnums=(0,))
 def skip_app(f, x):
   return f(x)
 

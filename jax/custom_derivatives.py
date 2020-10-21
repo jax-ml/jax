@@ -183,9 +183,10 @@ class custom_jvp:
       raise AttributeError(msg.format(self.__name__))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
-      args = [_stop_gradient(x) if i in self.nondiff_argnums else x
+      nondiff_argnums = set(self.nondiff_argnums)
+      args = [_stop_gradient(x) if i in nondiff_argnums else x
               for i, x in enumerate(args)]
-      diff_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      diff_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args)
@@ -455,7 +456,8 @@ class custom_vjp:
     args = _resolve_kwargs(self.fun, args, kwargs)
     if self.nondiff_argnums:
       for i in self.nondiff_argnums: _check_for_tracers(args[i])
-      dyn_argnums = [i for i in range(len(args)) if i not in self.nondiff_argnums]
+      nondiff_argnums = set(self.nondiff_argnums)
+      dyn_argnums = [i for i in range(len(args)) if i not in nondiff_argnums]
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), dyn_argnums, args)
       static_args = [args[i] for i in self.nondiff_argnums]
       fwd, _ = argnums_partial(lu.wrap_init(self.fwd), dyn_argnums, args)
