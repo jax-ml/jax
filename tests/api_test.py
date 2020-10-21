@@ -3388,6 +3388,27 @@ class CustomJVPTest(jtu.JaxTestCase):
     expected = api.grad(api.grad(api.grad(g)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_initial_style_vmap_2(self):
+    y = jnp.array([1., 2., 3.])
+
+    @api.custom_jvp
+    def f(x):
+      assert jnp.ndim(x) == 0
+      return 3 * x * jnp.sum(y)
+    def f_jvp(primals, tangents):
+      x, = primals
+      g, = tangents
+      return f(x), 2 * g
+    f.defjvp(f_jvp)
+
+    def foo(x):
+      out, _  = lax.scan(lambda c, _: (f(c), None), x, None, length=1)
+      return out
+
+    ans = api.grad(lambda x: api.vmap(foo)(x).sum())(jnp.ones(3))
+    expected = 2. * jnp.ones(3)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
