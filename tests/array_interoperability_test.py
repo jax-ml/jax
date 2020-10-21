@@ -116,6 +116,8 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in dlpack_dtypes))
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testJaxToTensorFlow(self, shape, dtype):
+    if jax.lib.version < (0, 1, 57):
+      raise unittest.SkipTest("Requires jaxlib >= 0.1.57");
     if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.uint64,
                                               jnp.float64]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
@@ -158,6 +160,8 @@ class DLPackTest(jtu.JaxTestCase):
      for dtype in torch_dtypes))
   @unittest.skipIf(not torch, "Test requires PyTorch")
   def testJaxToTorch(self, shape, dtype):
+    if jax.lib.version < (0, 1, 57):
+      raise unittest.SkipTest("Requires jaxlib >= 0.1.57");
     if not FLAGS.jax_enable_x64 and dtype in [jnp.int64, jnp.float64]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
