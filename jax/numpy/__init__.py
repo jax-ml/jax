@@ -55,7 +55,7 @@ from jax._src.numpy.lax_numpy import (
     prod, product, promote_types, ptp, quantile,
     rad2deg, radians, ravel, ravel_multi_index, real, reciprocal, remainder, repeat, reshape,
     result_type, right_shift, rint, roll, rollaxis, rot90, round, row_stack,
-    save, savez, searchsorted, select, set_printoptions, shape, sign, signbit,
+    save, savez, searchsorted, select, set_printoptions, setdiff1d, shape, sign, signbit,
     signedinteger, sin, sinc, single, sinh, size, sometrue, sort, sort_complex, split, sqrt,
     square, squeeze, stack, std, subtract, sum, swapaxes, take, take_along_axis,
     tan, tanh, tensordot, tile, trace, trapz, transpose, tri, tril, tril_indices, tril_indices_from,

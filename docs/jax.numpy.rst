@@ -316,6 +316,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     searchsorted
     select
     set_printoptions
+    setdiff1d
     shape
     sign
     signbit
