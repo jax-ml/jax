@@ -551,7 +551,6 @@ def conv_general_dilated(
   If `dimension_numbers` is `None`, the default is `('NCHW', 'OIHW', 'NCHW')`
   (for a 2D convolution).
   """
-  dnums: ConvDimensionNumbers
   dnums = conv_dimension_numbers(lhs.shape, rhs.shape, dimension_numbers)
   if lhs_dilation is None:
     lhs_dilation = (1,) * (lhs.ndim - 2)
@@ -5934,7 +5933,8 @@ def _canonicalize_precision(precision):
                      f"or a tuple of two lax.Precision values; got {precision}")
 
 
-def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers):
+def conv_dimension_numbers(lhs_shape, rhs_shape, dimension_numbers
+                           ) -> ConvDimensionNumbers:
   """Converts convolution `dimension_numbers` to a `ConvDimensionNumbers`.
 
   Args:
