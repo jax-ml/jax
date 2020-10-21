@@ -1320,7 +1320,7 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
 
   def read(v: Atom) -> AbstractValue:
     if isinstance(v, Literal):
-      return get_aval(v.val)
+      return raise_to_shaped(get_aval(v.val))
     else:
       typecheck_assert(v in env, f"Variable '{v}' not defined")
       return env[v]
@@ -1343,6 +1343,8 @@ def _check_jaxpr(jaxpr: Jaxpr, in_avals: Sequence[AbstractValue]):
     prim = eqn.primitive
     try:
       in_avals = map(read, eqn.invars)
+      typecheck_assert(all(not isinstance(ina, ConcreteArray) for ina in in_avals),
+                       "Equation given ConcreteArray type inputs")
       if prim in custom_typechecks:
         custom_typechecks[prim](*in_avals, **eqn.params)
       if prim.call_primitive:
