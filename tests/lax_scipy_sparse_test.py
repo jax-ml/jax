@@ -422,10 +422,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     init = jnp.array(np.random.randn(2**N)).astype(dtype)
     init /= jnp.linalg.norm(init)
 
-    ncv = 20
+    ncv = 30
     numeig = 4
     which = 'SA'
-    tol = 1E-8
+    tol = 1E-10
     maxiter = 30
     eta, _, _ = jax.scipy.sparse.linalg.eigsh(
         matvec=matvec,
