@@ -160,9 +160,9 @@ def get_hoppings(dtype, N, which):
     if dtype in (np.complex128, np.complex64):
       hop -= 1j * jnp.ones(N - 1, dtype)
   elif which == 'randn':
-    hop = -jnp.array(np.random.randn(N - 1, dtype))
+    hop = -jnp.array(np.random.randn(N - 1).astype(dtype))
     if dtype in (np.complex128, np.complex64):
-      hop -= 1j * jnp.array(np.random.randn(N - 1, dtype))
+      hop -= 1j * jnp.array(np.random.randn(N - 1).astype(dtype))
   return hop
 
 
