@@ -430,7 +430,6 @@ def eigsh(
 
   # sort_fun returns `num_expand` least relevant eigenvalues
   # (those to be removed by shifted QR)
-  bound = 1E10
   if which == 'LA':
     sort_fun = Partial(LA_sort, num_expand)
   elif which == 'SA':
@@ -439,6 +438,7 @@ def eigsh(
     raise ValueError(f"which = {which} not implemented")
 
   it = 1  # we already did one lanczos factorization
+  isometry = jnp.eye(num_krylov_vecs, numeig, dtype=dtype)
   def outer_loop(carry):
     alphas, betas, Vm, fm, it, numits, ar_converged, _, _ = carry
     # pack into alphas and betas into tridiagonal matrix
@@ -452,23 +452,21 @@ def eigsh(
     # ||fk|| = \beta_m in reference above
 
     Vk, Hk, fk = shifted_QR(Vm, Hm, fm, shifts, numeig)
+    # reset matrices
     Vk = Vk.at[numeig:, :].set(0.0)
     Hk = Hk.at[numeig:, :].set(0.0)
     Hk = Hk.at[:, numeig:].set(0.0)
 
     # extract new alphas and betas
-
     alphas = jnp.diag(Hk)
     betas = jnp.diag(Hk, -1)
-    matnorm = jnp.sqrt(jnp.dot(alphas, alphas) + jnp.dot(betas, betas))
-    diag = jnp.zeros(num_krylov_vecs, dtype=dtype)
-    diag = diag.at[numeig:].set(bound)
-    alphastest = alphas + diag
+    matnorm = jnp.sqrt(jnp.vdot(alphas, alphas) + 2 * jnp.vdot(betas, betas))
     beta_k = jnp.linalg.norm(fk)
-    Hktest = jnp.diag(alphastest) + jnp.diag(betas, -1) + jnp.diag(betas.conj(), 1)
+    Hktest = jnp.matmul(
+        isometry.T,
+        jnp.matmul(Hk, isometry, precision=precision),
+        precision=precision)
     converged = check_eigvals_convergence(beta_k, Hktest, matnorm, tol, numeig)
-    # reset matrices
-
     #####################################################
     # faked conditional statement using while control flow
     # only perform a lanczos factorization if `not converged`
