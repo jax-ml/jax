@@ -406,7 +406,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
       x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
       out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
-      return out.ravel()
+      return out.ravel().astype(dtype)
 
     H = np.diag(pot) + np.diag(hop.conj(), 1) + np.diag(hop, -1)
     single_particle_energies = np.linalg.eigh(H)[0]
