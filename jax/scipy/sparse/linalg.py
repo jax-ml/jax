@@ -430,7 +430,7 @@ def eigsh(
 
   # sort_fun returns `num_expand` least relevant eigenvalues
   # (those to be removed by shifted QR)
-  bound = 1E100
+  bound = 1E10
   if which == 'LA':
     sort_fun = Partial(LA_sort, num_expand)
   elif which == 'SA':
