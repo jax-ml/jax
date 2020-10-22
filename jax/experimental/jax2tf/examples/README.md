@@ -13,6 +13,10 @@ At the moment, the open-source TensorFlow model server is missing XLA support,
 but the Google version can be used, as shown in the
 [serving examples](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/serving/README.md).
 
+A jax2tf-generated SavedModel can also be converted to a format usable with
+TensorFlow.js in some cases where the conversion does not require XLA support,
+as shown in the [Quickdraw TensorFlow.js example](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md).
+
 # Preparing the model for jax2tf
 
 The most important detail for using jax2tf with SavedModel is to express
