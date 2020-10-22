@@ -402,11 +402,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
               np.array(list(bin(n)[2:]), dtype=int)[::-1])[0]]))
     many_body_energies = np.sort(many_body_energies)
 
+    np.random.seed(10)
     init = jnp.array(np.random.randn(2**N)).astype(dtype)
     init /= jnp.linalg.norm(init)
 
     ncv = 20
-    numeig = 6
+    numeig = 4
     which = 'SA'
     tol = 1E-8
     maxiter = 30
