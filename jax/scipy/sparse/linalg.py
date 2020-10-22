@@ -463,9 +463,9 @@ def eigsh(
     matnorm = jnp.sqrt(jnp.dot(alphas, alphas) + jnp.dot(betas, betas))
     diag = jnp.zeros(num_krylov_vecs, dtype=dtype)
     diag = diag.at[numeig:].set(bound)
-    alphas = alphas + diag
+    alphastest = alphas + diag
     beta_k = jnp.linalg.norm(fk)
-    Hktest = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(betas.conj(), 1)
+    Hktest = jnp.diag(alphastest) + jnp.diag(betas, -1) + jnp.diag(betas.conj(), 1)
     converged = check_eigvals_convergence(beta_k, Hktest, matnorm, tol, numeig)
     # reset matrices
 
