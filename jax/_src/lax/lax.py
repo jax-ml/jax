@@ -3756,13 +3756,16 @@ def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
 def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   assert ad.is_undefined_primal(operand)
   assert all(not ad.is_undefined_primal(s) for s in start_indices)
-  operand_shape = operand.aval.shape
+  operand_shape, operand_dtype = operand.aval.shape, operand.aval.dtype
   if config.omnistaging_enabled:
-    zeros = full(operand_shape, _zero(t))
+    zeros = full(operand_shape, 0, operand_dtype)
   else:
     zeros = full(operand_shape, tie_in(t, _zero(t)))
-  return ([dynamic_update_slice(zeros, t, start_indices)] +
-          [None] * len(start_indices))
+  if type(t) is ad_util.Zero:
+    return [zeros] + [None] * len(start_indices)
+  else:
+    return ([dynamic_update_slice(zeros, t, start_indices)] +
+            [None] * len(start_indices))
 
 def _batch_dynamic_slice_indices(indices, bdims):
   if len(indices) == 0:
