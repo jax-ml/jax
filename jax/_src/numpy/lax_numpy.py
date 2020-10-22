@@ -850,7 +850,7 @@ def fmod(x1, x2):
   _check_arraylike("fmod", x1, x2)
   if issubdtype(_dtype(x1, x2), integer):
     x2 = where(x2 == 0, 1, x2)
-  return lax.rem(*_promote_args(np.fmod, x1, x2))
+  return lax.rem(*_promote_args("fmod", x1, x2))
 
 
 @_wraps(np.cbrt)
