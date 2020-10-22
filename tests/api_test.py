@@ -119,17 +119,17 @@ class CPPJitTest(jtu.JaxTestCase):
 
     side[:] = []
     f2 = self.jit(f, static_argnums=(0, 2, 3, 4))
-    assert f2(one, two, three, True, False) == 123
+    assert f2(1, 2, 3, True, False) == 123
     assert len(side) == 1
-    assert f2(one, three, three, True, False) == 133
+    assert f2(1, 3, 3, True, False) == 133
     assert len(side) == 1
-    assert f2(two, two, three, True, False) == 223
+    assert f2(2, 2, 3, True, False) == 223
     assert len(side) == 2
-    assert f2(two, four, three, True, False) == 243
+    assert f2(2, 4, 3, True, False) == 243
     assert len(side) == 2
-    assert f2(two, four, three, True, True) == 243
+    assert f2(2, 4, 3, True, True) == 243
     assert len(side) == 3
-    assert f2(two, five, three, True, True) == 253
+    assert f2(2, 5, 3, True, True) == 253
     assert len(side) == 3
 
   def test_static_args_equality(self):
@@ -255,15 +255,11 @@ class CPPJitTest(jtu.JaxTestCase):
         static_argnums=(0, 1),
         donate_argnums=(2, 3))
 
-    a = jnp.array(1)
-    b = jnp.array(2)
     c = jax.device_put(jnp.array([1., 1.]))
     d = jax.device_put(jnp.array([1., 1., 1.]))
-    e, f = jit_fun(a, b, c, d)
+    e, f = jit_fun(1, 2, c, d)
     np.testing.assert_allclose(e, jnp.array([4., 4.]))
     np.testing.assert_allclose(f, jnp.array([4., 4., 4.]))
-    self.assertNotDeleted(a)
-    self.assertNotDeleted(b)
     self.assertDeleted(c)
     self.assertDeleted(d)
 
@@ -418,6 +414,40 @@ class CPPJitTest(jtu.JaxTestCase):
     g()                     # g still runs
     del g                   # no more references to x
     assert x() is None      # x is gone
+
+  def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
+    if version < (0, 1, 58):
+      raise unittest.SkipTest("Disabled because it depends on some future "
+                              "release of jax_jit.cc within jaxlib.")
+
+    if self.jit != jax.api._cpp_jit:
+      raise unittest.SkipTest("this test only applies to _cpp_jit")
+
+    f = lambda x, y: x + 3
+    jitted_f = jax.api._cpp_jit(f, static_argnums=[1])
+
+    jitted_f(1, 1)
+
+    msg = (
+        """Non-hashable static arguments are not supported. An error occured while trying to hash an object of type <class 'numpy.ndarray'>, 1. The error was:
+TypeError: unhashable type: 'numpy.ndarray'""")
+
+    with self.assertRaisesRegex(ValueError, re.escape(msg)):
+      jitted_f(1, np.asarray(1))
+
+    class HashableWithoutEq:
+
+      def __hash__(self):
+        return 1
+
+      def __eq__(self, other):
+        raise NotImplementedError(
+            "A Python error is as is, without stack trace")
+
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("static arguments should be comparable using __eq__")):
+      jitted_f(1, HashableWithoutEq())
 
 
 class PythonJitTest(CPPJitTest):
@@ -3897,21 +3927,26 @@ class CustomVJPTest(jtu.JaxTestCase):
     # Create the custom function
     @api.custom_vjp
     def custom_fun(x):
-        return x.sum()
+      return x.sum()
+
     def forward(x):
-        return x.sum(), (jnp.ones_like(x),)
+      return x.sum(), (jnp.ones_like(x),)
+
     def backward(res, g):
-        return g*res[0],
+      return g * res[0],
+
     custom_fun.defvjp(forward, backward)
 
     def train_fun(x):
-        def summed_fun(x):
-            return api.vmap(custom_fun)(x).sum()
-        return api.grad(summed_fun)(x)
+
+      def summed_fun(x):
+        return api.vmap(custom_fun)(x).sum()
+
+      return api.grad(summed_fun)(x)
 
     def scan_body(carry, inputs):
-        x = carry
-        return carry, train_fun(x)
+      x = carry
+      return carry, train_fun(x)
 
     scan_range = jnp.arange(4)
     lax.scan(scan_body, x, scan_range)  # don't crash
