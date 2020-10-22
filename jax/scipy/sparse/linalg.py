@@ -21,9 +21,6 @@ from jax import lax, device_put, ops
 from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
                            Partial)
 from jax.util import safe_map as map
-from jax import ShapedArray
-
-JaxPrecisionType = type(lax.Precision.DEFAULT)
 
 def _vdot_real_part(x, y):
   """Vector dot-product guaranteed to have a real valued result."""
@@ -191,8 +188,8 @@ def iterative_classical_gram_schmidt(vector, krylov_vectors,
       vector.
     iterations: Number of iterations.
   Returns:
-    jax.ShapedArray: The orthogonalized vector.
-    jax.ShapedArray: The overlaps of `vector` with all previous
+    jax.numpy.ndarray: The orthogonalized vector.
+    jax.numpy.ndarray: The overlaps of `vector` with all previous
       krylov vectors
   """
   vec = vector
@@ -203,10 +200,9 @@ def iterative_classical_gram_schmidt(vector, krylov_vectors,
     overlaps = overlaps + ov
   return vec, overlaps
 
-def lanczos_factorization(matvec: Callable, v0: ShapedArray,
-    Vm: ShapedArray, alphas: ShapedArray, betas: ShapedArray,
-    start: int, num_krylov_vecs: int, tol: float, precision: JaxPrecisionType
-):
+def lanczos_factorization(matvec: Callable, v0: jnp.ndarray,
+    Vm: jnp.ndarray, alphas: jnp.ndarray, betas: jnp.ndarray,
+    start: int, num_krylov_vecs: int, tol: float, precision):
   """
   Compute an m-step lanczos factorization of `matvec`, with
   m <=`num_krylov_vecs`. The factorization will
@@ -243,13 +239,13 @@ def lanczos_factorization(matvec: Callable, v0: ShapedArray,
       krylov-vector falls below `tol`.
 
   Returns:
-    jax.ShapedArray: An array of shape
+    jax.numpy.ndarray: An array of shape
       `(num_krylov_vecs, np.prod(initial_state.shape))` of krylov vectors.
-    jax.ShapedArray: The diagonal elements of the tridiagonal reduced
+    jax.numpy.ndarray: The diagonal elements of the tridiagonal reduced
       operator ("alphas")
-    jax.ShapedArray: The lower-diagonal elements of the tridiagonal reduced
+    jax.numpy.ndarray: The lower-diagonal elements of the tridiagonal reduced
       operator ("betas")
-    jax.ShapedArray: The unnormalized residual of the Lanczos process.
+    jax.numpy.ndarray: The unnormalized residual of the Lanczos process.
     float: The norm of the residual.
     int: The number of performed iterations.
     bool: if `True`: iteration hit an invariant subspace.
@@ -304,21 +300,21 @@ def lanczos_factorization(matvec: Callable, v0: ShapedArray,
 
 def SA_sort(
     p: int,
-    evals: ShapedArray) -> Tuple[ShapedArray, ShapedArray]:
+    evals: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
   inds = jnp.argsort(evals)
   shifts = evals[inds][-p:]
   return shifts, inds
 
 def LA_sort(p: int,
-            evals: ShapedArray) -> Tuple[ShapedArray, ShapedArray]:
+            evals: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
   inds = jnp.argsort(evals)[::-1]
   shifts = evals[inds][-p:]
   return shifts, inds
 
 def shifted_QR(
-    Vm: ShapedArray, Hm: ShapedArray, fm: ShapedArray,
-    shifts: ShapedArray,
-    numeig: int) -> Tuple[ShapedArray, ShapedArray, ShapedArray]:
+    Vm: jnp.ndarray, Hm: jnp.ndarray, fm: jnp.ndarray,
+    shifts: jnp.ndarray,
+    numeig: int) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
   # compress arnoldi factorization
   q = jnp.zeros(Hm.shape[0], dtype=Hm.dtype)
   q = q.at[-1].set(1.0)
@@ -337,8 +333,8 @@ def shifted_QR(
   fk = Vm[numeig, :] * Hm[numeig, numeig - 1] + fm * q[numeig - 1]
   return Vm, Hm, fk
 
-def get_vectors(Vm: ShapedArray, unitary: ShapedArray,
-                inds: ShapedArray, numeig: int) -> ShapedArray:
+def get_vectors(Vm: jnp.ndarray, unitary: jnp.ndarray,
+                inds: jnp.ndarray, numeig: int) -> jnp.ndarray:
 
   def body_vector(i, states):
     dim = unitary.shape[1]
@@ -355,7 +351,7 @@ def get_vectors(Vm: ShapedArray, unitary: ShapedArray,
   return state_vectors
 
 
-def check_eigvals_convergence(beta_m: float, Hm: ShapedArray,
+def check_eigvals_convergence(beta_m: float, Hm: jnp.ndarray,
                               tol: float, numeig: int) -> bool:
   eigvals, eigvecs = jnp.linalg.eig(Hm)
   # TODO (mganahl) confirm that this is a valid matrix norm)
@@ -367,10 +363,10 @@ def check_eigvals_convergence(beta_m: float, Hm: ShapedArray,
   return jnp.all(beta_m * vals < thresh)
 
 def eigsh(
-    matvec: Callable, initial_state: ShapedArray,
+    matvec: Callable, initial_state: jnp.ndarray,
     num_krylov_vecs: int, numeig: int, which: Text, tol: float, maxiter: int,
-    precision: JaxPrecisionType
-) -> Tuple[ShapedArray, List[ShapedArray], int]:
+    precision
+) -> Tuple[jnp.ndarray, List[jnp.ndarray], int]:
   """
   Implicitly restarted Lanczos factorization of `matvec`. The routine
   finds the lowest `numeig` eigenvector-eigenvalue pairs of `matvec`
@@ -399,7 +395,7 @@ def eigsh(
     precision: jax.lax.Precision used within lax operations.
 
   Returns:
-    jax.ShapedArray: Eigenvalues.
+    jax.numpy.ndarray: Eigenvalues.
     List: Eigenvectors.
     int: Number of inner Krylov iterations of the last Lanczos
       factorization.
