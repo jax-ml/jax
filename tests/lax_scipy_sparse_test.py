@@ -365,7 +365,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     ccT = jnp.kron(c @ P, c.T)
     cTc = jnp.kron(c.T, c)
 
-    @jax.jit
     def matvec(vec):
       x = vec.reshape((4, 2**(N - 2)))
       out = jnp.zeros(x.shape, x.dtype)
