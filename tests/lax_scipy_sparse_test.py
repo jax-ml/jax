@@ -199,6 +199,22 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       jtu.cases_from_list({
+          "testcase_name": "_dtype={}".format(np.dtype(dtype).name),
+          "dtype": dtype}
+       for dtype in float_types + complex_types))
+  def test_LA_sort(self, dtype):
+    np.random.seed(10)
+    x = np.random.rand(20).astype(dtype)
+    p = 10
+    actual_x, actual_inds = jax.scipy.sparse.linalg.LA_sort(
+        p, jnp.array(np.real(x)))
+    exp_inds = np.argsort(x)
+    exp_x = x[exp_inds][p-1::-1]
+    self.assertAllClose(exp_x.astype(dtype), actual_x.astype(dtype))
+    self.assertAllClose(exp_inds[::-1], actual_inds)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
           "testcase_name": "_dtype={}_ncv={}".format(np.dtype(dtype).name, ncv),
           "dtype": dtype, "ncv": ncv}
        for dtype in float_types + complex_types
