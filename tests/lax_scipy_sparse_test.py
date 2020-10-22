@@ -22,11 +22,13 @@ import scipy.sparse.linalg
 from jax import jit
 import jax.numpy as jnp
 from jax import lax
+from jax.tree_util import Partial
 from jax import test_util as jtu
 from jax.tree_util import register_pytree_node_class
 import jax.scipy.sparse.linalg
 
 from jax.config import config
+config.update('jax_enable_x64', True)
 config.parse_flags_with_absl()
 
 float_types = [np.float32, np.float64]
@@ -178,6 +180,248 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.cg(A, b)
     self.assertAllClose(expected, actual.value)
 
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_dtype={}".format(np.dtype(dtype).name),
+          "dtype": dtype}
+       for dtype in float_types + complex_types))
+  def test_SA_sort(self, dtype):
+    np.random.seed(10)
+    x = np.random.rand(20).astype(dtype)
+    p = 10
+    actual_x, actual_inds = jax.scipy.sparse.linalg.SA_sort(
+        p, jnp.array(np.real(x)))
+    exp_inds = np.argsort(x)
+    exp_x = x[exp_inds][-p:]
+    self.assertAllClose(exp_x.astype(dtype), actual_x.astype(dtype))
+    self.assertAllClose(exp_inds, actual_inds)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_dtype={}_ncv={}".format(np.dtype(dtype).name, ncv),
+          "dtype": dtype, "ncv": ncv}
+       for dtype in float_types + complex_types
+       for ncv in [10,20,30]))
+  def test_lanczos_factorization(self, dtype, ncv):
+    np.random.seed(10)
+    D = 1000
+    precision = jax.lax.Precision.HIGHEST
+    mat = np.random.rand(D, D).astype(dtype)
+    Ham = mat + mat.T.conj()
+    x = np.random.rand(D).astype(dtype)
+
+    def matvec(vector):
+      return Ham @ vector
+
+    Vm = jnp.zeros((ncv, D), dtype=dtype)
+    alphas = jnp.zeros(ncv, dtype=dtype)
+    betas = jnp.zeros(ncv - 1, dtype=dtype)
+    start = 0
+    tol = 1E-5
+    Vm, alphas, betas, residual, norm, _, _ = jax.scipy.sparse.linalg.lanczos_factorization(
+        matvec, x, Vm, alphas, betas, start, ncv, tol, precision)
+    Hm = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(betas.conj(), 1)
+    fm = residual * norm
+    em = np.zeros((1, Vm.shape[0]))
+    em[0, -1] = 1
+    #test lanczos relation
+    decimal = np.finfo(dtype).precision - 2
+    np.testing.assert_almost_equal(
+        Ham @ Vm.T - Vm.T @ Hm - fm[:, None] * em,
+        np.zeros((D, ncv)).astype(dtype), decimal=decimal)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_dtype={}_ncv={}_jit".format(np.dtype(dtype).name, ncv),
+          "dtype": dtype, "ncv": ncv}
+       for dtype in float_types + complex_types
+       for ncv in [10,20,30]))
+  def test_lanczos_factorization_jit(self, dtype, ncv):
+    np.random.seed(10)
+    D = 1000
+    precision = jax.lax.Precision.HIGHEST
+    mat = np.random.rand(D, D).astype(dtype)
+    Ham = mat + mat.T.conj()
+    x = np.random.rand(D).astype(dtype)
+
+    @jit
+    def matvec(vector):
+      return Ham @ vector
+
+    Vm = jnp.zeros((ncv, D), dtype=dtype)
+    alphas = jnp.zeros(ncv, dtype=dtype)
+    betas = jnp.zeros(ncv - 1, dtype=dtype)
+    start = 0
+    tol = 1E-5
+    lan_fact_jit = jit(jax.scipy.sparse.linalg.lanczos_factorization,
+                       static_argnums=(5, 6, 7, 8))
+    Vm, alphas, betas, residual, norm, _, _ = lan_fact_jit(
+      Partial(matvec), x, Vm, alphas, betas, start, ncv, tol, precision)
+    Hm = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(betas.conj(), 1)
+    fm = residual * norm
+    em = np.zeros((1, Vm.shape[0]))
+    em[0, -1] = 1
+    #test lanczos relation
+    decimal = np.finfo(dtype).precision - 2
+    np.testing.assert_almost_equal(
+        Ham @ Vm.T - Vm.T @ Hm - fm[:, None] * em,
+        np.zeros((D, ncv)).astype(dtype), decimal=decimal)
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_dtype={}_which={}".format(np.dtype(dtype).name, which),
+          "dtype": dtype, "which": which}
+       for dtype in float_types + complex_types
+       for which in ['SA', 'LA']))
+  def test_eigsh_small_matrix(self, dtype, which):
+
+    def generate_data(dtype, D):
+      H = np.random.randn(D, D).astype(dtype)
+      init = np.random.randn(D).astype(dtype)
+      if dtype in (np.complex64, np.complex128):
+        H += 1j * np.random.randn(D, D).astype(dtype)
+        init += 1j * np.random.randn(D).astype(dtype)
+      return H + H.T.conj(), init
+
+    def compare_eigvals_and_eigvecs(U, eta, U_exact, eta_exact, thresh=1E-8):
+      _, iy = np.nonzero(np.abs(eta[:, None] - eta_exact[None, :]) < thresh)
+      U_exact_perm = U_exact[:, iy]
+      U_exact_perm = U_exact_perm / np.expand_dims(np.sum(U_exact_perm, axis=0), 0)
+      U = U / np.expand_dims(np.sum(U, axis=0), 0)
+      prec = np.finfo(U.dtype).precision
+      atol = 10**(-prec // 2)
+      rtol = atol
+      np.testing.assert_allclose(U_exact_perm, U, atol=atol, rtol=rtol)
+      np.testing.assert_allclose(eta, eta_exact[iy], atol=atol, rtol=rtol)
+
+    thresh = {
+        np.complex64: 1E-3,
+        np.float32: 1E-3,
+        np.float64: 1E-4,
+        np.complex128: 1E-4
+    }
+    D = 1000
+    np.random.seed(10)
+    H, init = generate_data(dtype, D)
+
+    def mv(x):
+      return jnp.matmul(H, x, precision=jax.lax.Precision.HIGHEST)
+
+    eta, U, _ = jax.scipy.sparse.linalg.eigsh(
+        mv,
+        init,
+        num_krylov_vecs=60,
+        numeig=4,
+        which=which,
+        tol=1E-10,
+        maxiter=500,
+        precision=jax.lax.Precision.HIGHEST)
+    eta_exact, U_exact = jnp.linalg.eigh(H)
+    compare_eigvals_and_eigvecs(
+        np.stack(U, axis=1), eta, U_exact, eta_exact, thresh=thresh[dtype])
+
+
+
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+              "_dtype={}_N={}_hop_type={}".format(
+                  np.dtype(dtype).name, N, hop_type_atol),
+          "dtype": dtype,
+          "N": N,
+          "hop_type_atol": hop_type_atol
+      } for dtype in [np.float64, np.complex128]
+        for N in [14, 18]
+        for hop_type_atol in [('uniform', 1E-12), ('randn', 1E-8)]))
+
+  def test_eigsh_large_problem(self, N, dtype, hop_type_atol):
+    """
+    Find the lowest eigenvalues and eigenvectors
+    of a 1d free-fermion Hamiltonian on N sites.
+    The dimension of the hermitian matrix is
+    (2**N, 2**N).
+    """
+
+    def get_hoppings(dtype, N, which):
+      if which == 'uniform':
+        hop = -jnp.ones(N - 1, dtype)
+        if dtype in (np.complex128, np.complex64):
+          hop -= 1j * jnp.ones(N - 1, dtype)
+      elif which == 'randn':
+        hop = -jnp.array(np.random.randn(N - 1).astype(dtype))
+        if dtype in (np.complex128, np.complex64):
+          hop -= 1j * jnp.array(np.random.randn(N - 1).astype(dtype))
+      return hop
+    hop_type, atol = hop_type_atol
+    hop = get_hoppings(dtype, N, hop_type)
+    pot = jnp.ones(N, dtype)
+    P = jnp.diag(np.array([0, -1])).astype(dtype)
+    c = jnp.array([[0, 1], [0, 0]], dtype)
+    n = c.T @ c
+    eye = jnp.eye(2,dtype=dtype)
+    neye = jnp.kron(n, eye)
+    eyen = jnp.kron(eye, n)
+    ccT = jnp.kron(c @ P, c.T)
+    cTc = jnp.kron(c.T, c)
+
+    @jax.jit
+    def matvec(vec):
+      x = vec.reshape((4, 2**(N - 2)))
+      out = jnp.zeros(x.shape, x.dtype)
+      t1 = neye * pot[0] + eyen * pot[1] / 2
+      t2 = cTc * hop[0] - ccT * jnp.conj(hop[0])
+      out += jnp.einsum('ij,ki -> kj', x, t1 + t2)
+      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
+      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+          (4, 2**(N - 2)))
+      for site in range(1, N - 2):
+        t1 = neye * pot[site] / 2 + eyen * pot[site + 1] / 2
+        t2 = cTc * hop[site] - ccT * jnp.conj(hop[site])
+        out += jnp.einsum('ij,ki -> kj', x, t1 + t2)
+        x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
+        out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+            (4, 2**(N - 2)))
+      t1 = neye * pot[N - 2] / 2 + eyen * pot[N - 1]
+      t2 = cTc * hop[N - 2] - ccT * jnp.conj(hop[N - 2])
+      out += jnp.einsum('ij,ki -> kj', x, t1 + t2)
+      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
+      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+          (4, 2**(N - 2)))
+
+      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
+      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
+      return out.ravel()
+
+    H = np.diag(pot) + np.diag(hop.conj(), 1) + np.diag(hop, -1)
+    single_particle_energies = np.linalg.eigh(H)[0]
+
+    many_body_energies = []
+    for n in range(2**N):
+      many_body_energies.append(
+          np.sum(single_particle_energies[np.nonzero(
+              np.array(list(bin(n)[2:]), dtype=int)[::-1])[0]]))
+    many_body_energies = np.sort(many_body_energies)
+
+    init = jnp.array(np.random.randn(2**N)).astype(dtype)
+    init /= jnp.linalg.norm(init)
+
+    ncv = 20
+    numeig = 6
+    which = 'SA'
+    tol = 1E-8
+    maxiter = 30
+    eta, _, _ = jax.scipy.sparse.linalg.eigsh(
+        matvec=matvec,
+        initial_state=init,
+        num_krylov_vecs=ncv,
+        numeig=numeig,
+        which=which,
+        tol=tol,
+        maxiter=maxiter,
+        precision=jax.lax.Precision.HIGHEST)
+    np.testing.assert_allclose(
+        eta, many_body_energies[:numeig], atol=atol, rtol=atol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
