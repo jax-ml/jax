@@ -28,6 +28,8 @@ sh_binary(
         "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
         "//jaxlib",
         "//jaxlib:lapack.so",
+        "//jaxlib:_pocketfft.so",
+        "//jaxlib:pocketfft_flatbuffers_py",
     ] + if_cuda([
         "//jaxlib:cublas_kernels",
         "//jaxlib:cusolver_kernels",
@@ -35,4 +37,3 @@ sh_binary(
     ]),
     deps = ["@bazel_tools//tools/bash/runfiles"],
 )
-

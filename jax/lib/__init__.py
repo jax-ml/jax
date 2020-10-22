@@ -67,3 +67,8 @@ try:
   from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
+
+try:
+  from jaxlib import pocketfft  # pytype: disable=import-error
+except:
+  pocketfft = None

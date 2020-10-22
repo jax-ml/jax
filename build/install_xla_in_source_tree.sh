@@ -53,6 +53,9 @@ fi
 # Copy the XLA dependencies into jax/lib, fixing up some imports to point to the
 # new location.
 cp -f "$(rlocation __main__/jaxlib/lapack.so)" "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/_pocketfft.so)" "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/pocketfft_flatbuffers_py_generated.py)" "${TARGET}/jaxlib"
+cp -f "$(rlocation __main__/jaxlib/pocketfft.py)" "${TARGET}/jaxlib"
 if [[ -x "$(rlocation __main__/jaxlib/cusolver_kernels.so)" ]]; then
   cp -f "$(rlocation __main__/jaxlib/cublas_kernels.so)" "${TARGET}/jaxlib"
   cp -f "$(rlocation __main__/jaxlib/cusolver_kernels.so)" "${TARGET}/jaxlib"

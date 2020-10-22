@@ -147,6 +147,10 @@ class FftTest(jtu.JaxTestCase):
     self.assertRaises(
         ValueError, lambda: func(rng([2, 3], dtype=np.float64), axes=[-3]))
 
+  def testFftEmpty(self):
+    out = jnp.fft.fft(jnp.zeros((0,), jnp.complex64)).block_until_ready()
+    self.assertArraysEqual(jnp.zeros((0,), jnp.complex64), out)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inverse={}_real={}_hermitian={}_shape={}_axis={}".format(
           inverse, real, hermitian, jtu.format_shape_dtype_string(shape, dtype), axis),

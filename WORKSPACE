@@ -50,6 +50,9 @@ tf_workspace(
 
 tf_bind()
 
+load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
+pocketfft()
+
 # Required for TensorFlow dependency on @com_github_grpc_grpc
 
 load("@com_github_grpc_grpc//bazel:grpc_deps.bzl", "grpc_deps")
