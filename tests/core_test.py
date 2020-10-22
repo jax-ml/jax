@@ -381,7 +381,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
       return jnp.sin(x) + jnp.cos(x)
 
     def new_jaxpr():
-      return make_jaxpr(f)(1.).jaxpr
+      return make_jaxpr(f)(jnp.float32(1.)).jaxpr
 
     # jaxpr is:
     #

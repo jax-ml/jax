@@ -562,7 +562,7 @@ class _WhileBuilder(_LoopBuilder):
     if not tree_util.treedef_is_leaf(cond_tree):
       msg = "cond_fun must return a boolean scalar, but got pytree {}."
       raise TypeError(msg.format(cond_tree))
-    if cond_jaxpr.out_avals != [abstract_arrays.ShapedArray((), np.bool_)]:
+    if [a.strip_weak_type() for a in cond_jaxpr.out_avals] != [abstract_arrays.ShapedArray((), np.bool_)]:
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
 

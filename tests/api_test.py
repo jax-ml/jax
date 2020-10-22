@@ -1778,7 +1778,7 @@ class APITest(jtu.JaxTestCase):
 
     @api.jit
     def g(x):
-      return f(2, x)
+      return f(jnp.int_(2), x)
 
     jaxpr_subcomp = xla.jaxpr_subcomp
 
@@ -1789,7 +1789,7 @@ class APITest(jtu.JaxTestCase):
 
     try:
       xla.jaxpr_subcomp = jaxpr_subcomp_and_collect
-      ans = g(3)
+      ans = g(jnp.int_(3))
     finally:
       xla.jaxpr_subcomp = jaxpr_subcomp
 
@@ -1938,7 +1938,7 @@ class APITest(jtu.JaxTestCase):
   def test_omnistaging_flag(self):
     if FLAGS.jax_omnistaging:
       jaxpr = api.make_jaxpr(lambda: jnp.add(1, 1))()
-      self.assertLen(jaxpr.jaxpr.eqns, 1)
+      self.assertLen(jaxpr.jaxpr.eqns, 3)
     else:
       # omnistaging can be enabled programmatically without setting the flag,
       # but that shouldn't happen in tests
@@ -2458,10 +2458,10 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_cond(self):
     def f(x):
-      return lax.cond(x >= 0.,
-                      x + 1.,
+      return lax.cond(x >= jnp.float_(0.),
+                      x + jnp.float_(1.),
                       lambda xt: xt + x,
-                      x + 2.,
+                      x + jnp.float_(2.),
                       lambda xf: xf - x)
     if config.omnistaging_enabled:
       expected = """
@@ -2497,7 +2497,7 @@ class JaxprTest(jtu.JaxTestCase):
                       linear=(False, False, False, False) ] c a a d e
         in (f,) }
         """
-    jaxpr = api.make_jaxpr(f)(3.)
+    jaxpr = api.make_jaxpr(f)(jnp.float_(3.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
 
   def test_make_jaxpr_static_argnums(self):

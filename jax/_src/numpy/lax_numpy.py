@@ -212,12 +212,12 @@ _DEFAULT_TYPEMAP = {
   np.complex_: complex_
 }
 
-def _np_array(obj, dtype=None, **kwargs):
-  """Return a properly-typed numpy array.
+def _np_array_with_jax_dtypes(obj, dtype=None, **kwargs):
+  """Return a numpy array with jax default dtypes.
 
-  `_np_array(obj, **kwds)` is equivalent to `np.array(obj, **kwds)`, with the
-  exception that when obj.dtype is not defined and dtype is not specified, it
-  uses Jax's default dtypes.
+  `_np_array_with_jax_dtypes(obj, **kwds)` is equivalent to `np.array(obj, **kwds)`,
+  with the exception that when obj.dtype is not defined and dtype is not specified,
+  it uses Jax's default dtypes.
   """
   arr = np.array(obj, dtype=dtype, **kwargs)
   obj_dtype = getattr(obj, 'dtype', None)
@@ -226,7 +226,7 @@ def _np_array(obj, dtype=None, **kwargs):
     arr = arr.astype(_DEFAULT_TYPEMAP[arr_dtype])
   return arr
 
-_np_asarray = partial(_np_array, copy=False)
+_np_asarray_with_jax_dtypes = partial(_np_array_with_jax_dtypes, copy=False)
 
 def _promote_shapes(fun_name, *args):
   """Prepend implicit leading singleton dimensions for Numpy broadcasting."""
@@ -265,7 +265,8 @@ def _promote_dtypes(*args):
     return args
   else:
     to_dtype = result_type(*args)
-    return [lax.convert_element_type(x, to_dtype) for x in args]
+    weak_type = _all(dtypes.is_weakly_typed(x) for x in args)
+    return [lax.set_weak_type(lax.convert_element_type(x, to_dtype), weak_type) for x in args]
 
 def _promote_dtypes_inexact(*args):
   """Convenience function to apply Numpy argument dtype promotion.
@@ -379,7 +380,7 @@ def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False)
 def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn, lax_doc=False):
   def fn(x1, x2):
     x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
-    return lax_fn(x1, x2) if x1.dtype != bool_ else bool_lax_fn(x1, x2)
+    return lax_fn(x1, x2) if _dtype(x1) != bool_ else bool_lax_fn(x1, x2)
   return _wraps(numpy_fn)(fn)
   if lax_doc:
     doc = _dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
@@ -989,7 +990,7 @@ def histogramdd(sample, bins=10, range=None, weights=None, density=None):
 def heaviside(x1, x2):
   _check_arraylike("heaviside", x1, x2)
   x1, x2 = _promote_dtypes_inexact(x1, x2)
-  zero = lax._const(x1, 0)
+  zero = np.array(0, dtype=_dtype(x1))
   return where(lax.lt(x1, zero), zero,
                where(lax.gt(x1, zero), lax._const(x1, 1), x2))
 
@@ -2523,10 +2524,11 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
   lax._check_user_dtype_supported(dtype, "array")
+  weak_type = dtype is None and dtypes.is_weakly_typed(object)
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
   if _can_call_numpy_array(object):
-    object = _np_array(object, dtype=dtype, ndmin=ndmin)
+    object = _np_asarray_with_jax_dtypes(object, dtype=dtype, ndmin=ndmin)
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
@@ -2536,26 +2538,27 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
     if isinstance(object, DeviceArray) and copy:
       # We perform a copy by bouncing back to the host
       # TODO(phawkins): add a device runtime function to copy a buffer
-      out = _device_put_raw(_np_asarray(object))
+      out = _device_put_raw(_np_asarray_with_jax_dtypes(object))
     else:
       out = object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([array(elt, dtype=dtype) for elt in object])
     else:
-      out = _device_put_raw(_np_array([], dtype=dtype))
+      out = _device_put_raw(_np_array_with_jax_dtypes([], dtype=dtype))
   else:
     try:
       view = memoryview(object)
     except TypeError:
       pass  # `object` does not support the buffer interface.
     else:
-      return array(_np_asarray(view), dtype, copy)
+      return array(_np_asarray_with_jax_dtypes(view), dtype, copy, order, ndmin)
 
-    raise TypeError("Unexpected input type for array: {}".format(type(object)))
+    raise TypeError(f"Unexpected input type for array: {type(object)}")
 
   if dtype and _dtype(out) != dtype:
     out = lax.convert_element_type(out, dtype)
+  out = lax.set_weak_type(out, weak_type)
 
   if ndmin > ndim(out):
     out = lax.broadcast(out, (1,) * (ndmin - ndim(out)))
@@ -2679,7 +2682,7 @@ def identity(n, dtype=None):
 @_wraps(np.arange)
 def arange(start, stop=None, step=None, dtype=None):
   lax._check_user_dtype_supported(dtype, "arange")
-  require = partial(core.concrete_or_error, _np_asarray)
+  require = partial(core.concrete_or_error, _np_asarray_with_jax_dtypes)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
   if stop is None and step is None:
     start = require(start, msg("stop"))

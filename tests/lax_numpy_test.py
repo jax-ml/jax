@@ -4448,6 +4448,38 @@ class NumpyGradTests(jtu.JaxTestCase):
 
     check_grads(f, (1.,), order=1)
 
+  def testWeakTypes(self):
+    def assert_weak_typed(x):
+      self.assertTrue(x.aval.weak_type)
+    def assert_strong_typed(x):
+      self.assertFalse(x.aval.weak_type)
+
+    x_weak = jnp.full((1,), 1)
+    x_strong = jnp.full((1,), 1, dtype='int32')
+
+    assert_weak_typed(x_weak)
+    assert_strong_typed(x_strong)
+
+    assert_strong_typed(x_weak.astype('int32'))
+
+    assert_strong_typed(x_strong + x_strong)
+    assert_strong_typed(x_weak + x_strong)
+    assert_weak_typed(x_weak + x_weak)
+
+    assert_weak_typed(jnp.array(1))
+    assert_weak_typed(jnp.asarray(1))
+
+    assert_strong_typed(jnp.array(1, dtype='int32'))
+    assert_strong_typed(jnp.asarray(1, dtype='int32'))
+
+    assert_weak_typed(jnp.zeros_like(x_weak))
+    assert_weak_typed(jnp.ones_like(x_weak))
+    assert_weak_typed(jnp.full_like(x_weak, 0))
+
+    assert_strong_typed(jnp.zeros_like(x_strong))
+    assert_strong_typed(jnp.ones_like(x_strong))
+    assert_strong_typed(jnp.full_like(x_strong, 0))
+
 
 class NumpySignaturesTest(jtu.JaxTestCase):
 

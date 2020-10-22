@@ -33,11 +33,11 @@ raise_to_shaped = core.raise_to_shaped
 
 def make_shaped_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return ShapedArray(np.shape(x), dtype)
+  return ShapedArray(np.shape(x), dtype, weak_type=dtypes.is_weakly_typed(x))
 
 def zeros_like_array(x):
   dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return zeros_like_shaped_array(ShapedArray(np.shape(x), dtype))
+  return zeros_like_shaped_array(ShapedArray(np.shape(x), dtype, weak_type=dtypes.is_weakly_typed(x)))
 
 array_types = {np.ndarray, np.bool_,
                np.int8, np.int16, np.int32, np.int64,

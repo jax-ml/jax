@@ -231,10 +231,15 @@ def promote_types(a, b):
 
 
 def is_python_scalar(x):
+  return is_weakly_typed(x) and np.ndim(x) == 0
+
+
+def is_weakly_typed(x):
   try:
-    return x.aval.weak_type and np.ndim(x) == 0
+    return x.aval.weak_type
   except AttributeError:
     return type(x) in python_scalar_dtypes
+
 
 def _dtype_priority(dtype):
   if issubdtype(dtype, np.bool_):
@@ -258,10 +263,10 @@ def result_type(*args):
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
     return dtype(args[0])
-  scalars = []
+  weak_dtypes = []
   dtypes = []
   for x in args:
-    (scalars if is_python_scalar(x) else dtypes).append(dtype(x))
+    (weak_dtypes if is_weakly_typed(x) else dtypes).append(dtype(x))
   array_priority = max(map(_dtype_priority, dtypes)) if dtypes else -1
-  dtypes += [x for x in scalars if _dtype_priority(x) > array_priority]
+  dtypes.extend(dt for dt in weak_dtypes if _dtype_priority(dt) > array_priority)
   return canonicalize_dtype(functools.reduce(promote_types, dtypes))

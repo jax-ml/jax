@@ -2321,6 +2321,57 @@ class LazyConstantTest(jtu.JaxTestCase):
     make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
     self._Check(make_const, expected)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": "_{}".format(rec.op),
+         "op_name": rec.op, "dtypes": rec.dtypes}
+      for rec in LAX_OPS if rec.nargs == 1))
+  def testUnaryWeakTypes(self, op_name, dtypes):
+    if op_name == 'acos':
+      # TODO(jakevdp): fix this. It will involve handling weakly-typed arrays,
+      # and propagating that weak typing through lax.full and lax.where.
+      self.skipTest('acos is a known failure')
+    op = getattr(lax, op_name)
+    for dtype in [np.bool_, np.uint32, np.int32, np.float32, np.complex64]:
+      if dtype in dtypes:
+        py_val = dtype(1).item()
+        lax_val = lax.full((), py_val, dtype)
+        break
+    else:
+      raise ValueError("no available dtypes")
+
+    py_op = op(py_val)
+    lax_op = op(lax_val)
+
+    self.assertAllClose(py_op, lax_op, check_dtypes=False)
+    self.assertTrue(py_op.aval.weak_type)
+    self.assertFalse(lax_op.aval.weak_type)
+
+
+  def testFullWeakTypes(self):
+    self.assertTrue(lax.full((), 0).aval.weak_type)
+    self.assertTrue(lax.full((), 0.0).aval.weak_type)
+    self.assertFalse(lax.full((), 0, dtype='int32').aval.weak_type)
+    self.assertFalse(lax.full((), 0.0, dtype='int32').aval.weak_type)
+    self.assertFalse(lax.full((), np.int32(0)).aval.weak_type)
+    self.assertFalse(lax.full((), np.float32(0)).aval.weak_type)
+
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": "_{}".format(dtype.__name__),
+         "dtype": dtype}
+      for dtype in float_dtypes))
+  def testUnaryJitInvariance(self, dtype):
+    # https://github.com/google/jax/pull/3903
+    x = lax.full((10,), 1, dtype=dtype)
+
+    def f(x, y):
+      return x + abs(y)
+
+    self.assertAllClose(
+      f(x, 1.0),
+      api.jit(f)(x, 1.0)
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

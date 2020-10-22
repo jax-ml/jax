@@ -258,6 +258,14 @@ def _convert_element_type(operand, new_dtype, old_dtype):
   return (head, tail)
 doubling_rules[lax.convert_element_type_p] = _convert_element_type
 
+def _set_weak_type(operand, *, new_weak_type, old_weak_type):
+  head, tail = operand
+  head = lax.set_weak_type_p.bind(head, new_weak_type=new_weak_type, old_weak_type=old_weak_type)
+  if tail is not None:
+    tail = lax.set_weak_type_p.bind(tail, new_weak_type=new_weak_type, old_weak_type=old_weak_type)
+  return (head, tail)
+doubling_rules[lax.set_weak_type_p] = _set_weak_type
+
 def _add_jaxvals(xs, ys):
   # return ad_util.jaxval_adders[type(xs[0])](xs, ys)
   return _add2(xs, ys)

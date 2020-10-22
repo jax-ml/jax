@@ -402,6 +402,8 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
   if type(operand) in dtypes.python_scalar_dtypes:
     operand = np.asarray(operand, new_dtype)
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
+  if dtypes.is_weakly_typed(operand):
+    operand = set_weak_type(operand, False)
   if old_dtype == new_dtype:
     return operand
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
@@ -666,9 +668,10 @@ def broadcast_in_dim(operand: Array, shape: Shape,
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions)
       and isinstance(operand, (xla.DeviceArray, core.Tracer))):
     return operand
-  return broadcast_in_dim_p.bind(
+  result = broadcast_in_dim_p.bind(
       operand, shape=tuple(shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
+  return set_weak_type(result, dtypes.is_weakly_typed(operand))
 
 def broadcast_to_rank(x: Array, rank: int) -> Array:
   """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
@@ -1395,9 +1398,11 @@ def full(shape: Shape, fill_value: Array, dtype: Optional[DType] = None) -> Arra
   if np.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
+  weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = convert_element_type(fill_value, dtype)
-  return broadcast(fill_value, shape)
+  result = broadcast(fill_value, shape)
+  return set_weak_type(result, weak_type)
 
 def _device_put_raw(x):
   if isinstance(x, xla.DeviceArray):
@@ -1672,7 +1677,10 @@ def full_like(x: Array, fill_value: Array, dtype: Optional[DType] = None,
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
   if not config.omnistaging_enabled:
     fill_value = tie_in(x, fill_value)
-  return full(fill_shape, fill_value, dtype or _dtype(x))
+  result = full(fill_shape, fill_value, dtype or _dtype(x))
+  if dtype is None and dtypes.is_weakly_typed(fill_value) and dtypes.is_weakly_typed(x):
+    return set_weak_type(result, True)
+  return result
 
 
 def collapse(operand: Array, start_dimension: int,
@@ -1936,9 +1944,11 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, *args, **kwargs):
   if least_specialized is ConcreteArray:
     return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs))
   elif least_specialized is ShapedArray:
-    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs))
+    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs),
+                       weak_type=all(aval.weak_type for aval in args))
   elif least_specialized is UnshapedArray:
-    return UnshapedArray(dtype_rule(*args, **kwargs))
+    return UnshapedArray(dtype_rule(*args, **kwargs),
+                         weak_type=all(aval.weak_type for aval in args))
   else:
     raise TypeError(args, least_specialized)
 
@@ -2496,6 +2506,57 @@ ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
 masking.defvectorized(convert_element_type_p)
+
+
+def set_weak_type(x, weak_type):
+  old_weak_type = dtypes.is_weakly_typed(x)
+  if bool(weak_type) == bool(old_weak_type):
+    return x
+  return set_weak_type_p.bind(x, old_weak_type=old_weak_type, new_weak_type=weak_type)
+
+set_weak_type_p = core.Primitive('set_weak_type')
+
+@set_weak_type_p.def_impl
+def _set_weak_type_impl(a, *, old_weak_type, new_weak_type):
+  # TODO(jakevdp): understand why this is not always true.
+  # assert bool(dtypes.is_weakly_typed(a)) == bool(old_weak_type), (a, old_weak_type)
+  if not hasattr(a, 'aval'):  # TODO(jakevdp): fix this
+    # assert bool(dtypes.is_weakly_typed(a)) == bool(new_weak_type), (a, new_weak_type)
+    return a
+  if type(a.aval) is ShapedArray:
+    aval = ShapedArray(a.aval.shape, a.aval.dtype, weak_type=new_weak_type)
+    return xla.DeviceArray(aval, a._device, a._lazy_expr, a.device_buffer)
+  elif type(a.aval) is ConcreteArray:
+    aval = ConcreteArray(a.aval.val, weak_type=new_weak_type)
+    return xla.DeviceArray(aval, a._device, a._lazy_expr, a.device_buffer)
+  else:
+    raise NotImplementedError(f"_set_weak_type_impl for object of type {type(a)}")
+
+@set_weak_type_p.def_abstract_eval
+def _set_weak_type_abstract_eval(a, *, old_weak_type, new_weak_type):
+  # TODO(jakevdp): understand why this is not always true.
+  # assert bool(a.weak_type) == bool(old_weak_type), (a, old_weak_type)
+  if type(a) is ShapedArray:
+    return ShapedArray(a.shape, a.dtype, bool(new_weak_type))
+  elif type(a) is UnshapedArray:
+    return UnshapedArray(a.dtype, bool(new_weak_type))
+  elif type(a) is ConcreteArray:
+    return ConcreteArray(a.val, bool(new_weak_type))
+  else:
+    raise NotImplementedError(f"_set_weak_type_abstract_eval for object of type {type(a)}")
+
+def _set_weak_type_transpose_rule(t, *, old_weak_type, new_weak_type):
+  # TODO(jakevdp): understand why this is not always true.
+  # assert bool(dtypes.is_weakly_typed(t)) == bool(new_weak_type), (t, new_weak_type)
+  return [set_weak_type_p.bind(t, old_weak_type=new_weak_type, new_weak_type=old_weak_type)]
+
+def _set_weak_type_translation_rule(c, a, *, old_weak_type, new_weak_type):
+  return a
+
+xla.translations[set_weak_type_p] = _set_weak_type_translation_rule
+ad.deflinear(set_weak_type_p, _set_weak_type_transpose_rule)
+batching.defvectorized(set_weak_type_p)
+masking.defvectorized(set_weak_type_p)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):

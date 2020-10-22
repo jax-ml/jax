@@ -56,6 +56,9 @@ scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
 
+def identity(x):
+  return x
+
 class DtypesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -81,8 +84,8 @@ class DtypesTest(jtu.JaxTestCase):
     testcases = [
       (jnp.array(1.), 0., jnp.float_),
       (jnp.array(1.), jnp.array(0.), jnp.float_),
-      (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float_),
-      (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float_),
+      (jnp.array(1.), jnp.array(0., dtype=jnp.float16), jnp.float16),
+      (jnp.array(1.), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1.), jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array(1., dtype=jnp.float16), 0., jnp.float16),
       (jnp.array(1., dtype=jnp.float32), 0., jnp.float32),
@@ -137,6 +140,21 @@ class DtypesTest(jtu.JaxTestCase):
       for t1, t2 in itertools.combinations(groups, 2):
           self.assertEqual(np.promote_types(t1, t2),
                            dtypes.promote_types(t1, t2))
+
+  @parameterized.named_parameters(
+    {"testcase_name": "xtype={}_ytype={}_xfun={}_yfun={}".format(
+      xtype.__name__, ytype.__name__, xfun.__name__, yfun.__name__),
+     "xtype": xtype, "ytype": ytype, "xfun": xfun, "yfun": yfun}
+    for xtype, ytype in itertools.combinations_with_replacement(
+      [int, float, jnp.int16, jnp.float16, jnp.int32, jnp.float32], 2)
+    for xfun, yfun in itertools.combinations_with_replacement(
+      [identity, abs, jnp.array], 2)
+    )
+  def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
+    """Test jit invariance of simple binary promotion rules with and without weak types."""
+    f = lambda x, y: xfun(x) + yfun(y)
+    args_maker = lambda: [xtype(1), ytype(1)]
+    self._CompileAndCheck(f, args_maker, check_dtypes=True)
 
   def testScalarInstantiation(self):
     for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:

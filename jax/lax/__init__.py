@@ -238,6 +238,8 @@ from jax._src.lax.lax import (
   select_and_scatter_add_p,
   select_and_scatter_p,
   select_p,
+  set_weak_type,
+  set_weak_type_p,
   shift_left,
   shift_left_p,
   shift_right_arithmetic,

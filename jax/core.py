@@ -1017,7 +1017,9 @@ class ConcreteArray(ShapedArray):
   __slots__ = ['val']
   array_abstraction_level = 0
 
-  def __init__(self, val, weak_type=False):
+  def __init__(self, val, weak_type=None):
+    if weak_type is None:
+      weak_type = dtypes.is_weakly_typed(val)
     super(ConcreteArray, self).__init__(np.shape(val), np.result_type(val),
                                         weak_type=weak_type)
     # Note: canonicalized self.dtype doesn't necessarily match self.val
@@ -1277,7 +1279,7 @@ def typecheck(aval: AbstractValue, x) -> bool:
 
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
   """Determine whether `aval` conforms to `aval_ref`"""
-  aval_ref = raise_to_shaped(aval_ref).strip_weak_type()
+  aval_ref = raise_to_shaped(aval_ref, weak_type=False)
   try:
     return aval_ref == lattice_join(aval_ref, aval).strip_weak_type()
   except TypeError:

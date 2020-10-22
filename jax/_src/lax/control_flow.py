@@ -1020,7 +1020,7 @@ def _cond_transpose(cts, *args, branches, linear):
   branches_trans = tuple(
       _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
   lin_in_avals = [raise_to_shaped(a, weak_type=False) for a, l in zip(in_avals, linear) if l]
-  assert all(jaxpr.out_avals == lin_in_avals for jaxpr in branches_trans)
+  assert all([aval.strip_weak_type() for aval in jaxpr.out_avals] == lin_in_avals for jaxpr in branches_trans)
 
   res = ops[:num_res]
   cts = _map(ad.instantiate_zeros_aval, branches[0].out_avals, cts)
