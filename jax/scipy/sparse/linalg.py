@@ -351,11 +351,10 @@ def get_vectors(Vm: jnp.ndarray, unitary: jnp.ndarray,
   return state_vectors
 
 
-def check_eigvals_convergence(beta_m: float, Hm: jnp.ndarray,
+def check_eigvals_convergence(beta_m: float, Hm: jnp.ndarray, Hm_norm: float,
                               tol: float, numeig: int) -> bool:
   eigvals, eigvecs = jnp.linalg.eigh(Hm)
   # TODO (mganahl) confirm that this is a valid matrix norm)
-  Hm_norm = jnp.linalg.norm(Hm)
   thresh = jnp.maximum(
       jnp.finfo(eigvals.dtype).eps * Hm_norm,
       jnp.abs(eigvals[:numeig]) * tol)
@@ -395,7 +394,8 @@ def eigsh(
     precision: jax.lax.Precision used within lax operations.
 
   Returns:
-    jax.numpy.ndarray: Eigenvalues.
+    jax.numpy.ndarray: Eigenvalues, sorted in most-desired order
+      (most desired first).
     List: Eigenvectors.
     int: Number of inner Krylov iterations of the last Lanczos
       factorization.
@@ -430,6 +430,7 @@ def eigsh(
 
   # sort_fun returns `num_expand` least relevant eigenvalues
   # (those to be removed by shifted QR)
+  bound = 1E100
   if which == 'LA':
     sort_fun = Partial(LA_sort, num_expand)
   elif which == 'SA':
@@ -451,16 +452,22 @@ def eigsh(
     # ||fk|| = \beta_m in reference above
 
     Vk, Hk, fk = shifted_QR(Vm, Hm, fm, shifts, numeig)
-    # reset matrices
     Vk = Vk.at[numeig:, :].set(0.0)
     Hk = Hk.at[numeig:, :].set(0.0)
     Hk = Hk.at[:, numeig:].set(0.0)
 
-    beta_k = jnp.linalg.norm(fk)
-    converged = check_eigvals_convergence(beta_k, Hk, tol, numeig)
     # extract new alphas and betas
+
     alphas = jnp.diag(Hk)
     betas = jnp.diag(Hk, -1)
+    matnorm = jnp.sqrt(jnp.dot(alphas, alphas) + jnp.dot(betas, betas))
+    diag = jnp.zeros(num_krylov_vecs, dtype=dtype)
+    diag = diag.at[numeig:].set(bound)
+    alphas = alphas + diag
+    beta_k = jnp.linalg.norm(fk)
+    Hktest = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(betas.conj(), 1)
+    converged = check_eigvals_convergence(beta_k, Hktest, matnorm, tol, numeig)
+    # reset matrices
 
     #####################################################
     # faked conditional statement using while control flow
@@ -512,8 +519,9 @@ def eigsh(
   # (after numits < num_krylov_vecs iterations)
   # and numeig > numits, then spurious 0.0 eigenvalues will be returned
   Hm = (numits > jnp.arange(num_krylov_vecs))[:, None] * Hm * (
-      numits > jnp.arange(num_krylov_vecs))[None, :]
+    numits > jnp.arange(num_krylov_vecs))[None, :]
   eigvals, U = jnp.linalg.eigh(Hm)
+
   inds = sort_fun(eigvals)[1][:numeig]
   vectors = get_vectors(Vm, U, inds, numeig)
   return eigvals[inds], [
