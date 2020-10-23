@@ -862,6 +862,68 @@ lax_shift_right_arithmetic = tuple(
   for arg, dtype, shift_amount in shift_inputs
 )
 
+def _make_select_and_scatter_add_harness(
+    name, *, shape=(2, 4, 6), dtype=np.float32, select_prim=lax.ge_p,
+    window_dimensions=(2, 2, 2), window_strides=(1, 1, 1),
+    padding=((0, 0), (0, 0), (0, 0)), nb_inactive_dims=0):
+  ones = (1,) * len(shape)
+  cotangent_shape = jax.api.eval_shape(
+      lambda x: lax._select_and_gather_add(x, x, lax.ge_p, window_dimensions,
+                                           window_strides, padding, ones, ones),
+      np.ones(shape, dtype)).shape
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}",
+                 lax._select_and_scatter_add,
+                 [RandArg(cotangent_shape, dtype), RandArg(shape, dtype),
+                  StaticArg(select_prim), StaticArg(window_dimensions),
+                  StaticArg(window_strides), StaticArg(padding)],
+                 shape=shape,
+                 dtype=dtype,
+                 select_prim=select_prim,
+                 window_dimensions=window_dimensions,
+                 window_strides=window_strides,
+                 padding=padding,
+                 # JAX can only run select_and_scatter_add on TPU when 2
+                 # or more dimensions are inactive
+                 run_on_tpu=(nb_inactive_dims >= 2))
+
+lax_select_and_scatter_add = tuple( # Validate dtypes
+  _make_select_and_scatter_add_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set([np.complex64, np.complex128])
+) + tuple( # Validate different reduction primitives
+  _make_select_and_scatter_add_harness("select_prim", select_prim=select_prim)
+  for select_prim in [lax.le_p]
+) + tuple( # Validate padding
+  _make_select_and_scatter_add_harness("padding", padding=padding)
+  for padding in [
+    # TODO(bchetioui): commented out the test based on
+    # https://github.com/google/jax/issues/4690
+    #((1, 2), (2, 3), (3, 4)) # non-zero padding
+    ((1, 1), (1, 1), (1, 1)) # non-zero padding
+  ]
+) + tuple( # Validate window_dimensions
+  _make_select_and_scatter_add_harness("window_dimensions",
+                                       window_dimensions=window_dimensions)
+  for window_dimensions in [
+    (1, 2, 3) # uneven dimensions
+  ]
+) + tuple( # Validate window_strides
+  _make_select_and_scatter_add_harness("window_strides",
+                                       window_strides=window_strides)
+  for window_strides in [
+    (1, 2, 3) # smaller than/same as/bigger than corresponding window dimension
+  ]
+) + tuple( # Validate dtypes on TPU
+  _make_select_and_scatter_add_harness("tpu_dtypes", dtype=dtype,
+                                       nb_inactive_dims=nb_inactive_dims,
+                                       window_strides=window_strides,
+                                       window_dimensions=window_dimensions)
+  for dtype in set(jtu.dtypes.all) - set([np.bool_, np.complex64, np.complex128,
+                                          np.int8, np.uint8])
+  for window_strides, window_dimensions, nb_inactive_dims in [
+    ((1, 2, 1), (1, 3, 1), 2)
+  ]
+)
+
 lax_select_and_gather_add = tuple(
   # Tests with 2d shapes (see tests.lax_autodiff_test.testReduceWindowGrad)
   Harness(f"2d_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_padding={padding}_basedilation={base_dilation}_windowdilation={window_dilation}",
