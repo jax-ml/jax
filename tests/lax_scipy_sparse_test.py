@@ -350,11 +350,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       pot = mod.ones(N, dtype)
       if dtype in (np.complex128, np.complex64):
         hop -= 1j * mod.ones(N - 1, dtype)
-    elif hop_type == 'randn':
-      hop = -mod.array(np.random.randn(N - 1).astype(dtype))
-      pot = mod.array(np.random.randn(N).astype(dtype))
+    elif hop_type == 'rand':
+      hop = -mod.array(np.random.rand(N - 1).astype(dtype)-0.5)
+      pot = mod.array(np.random.rand(N).astype(dtype)-0.5)
       if dtype in (np.complex128, np.complex64):
-        hop -= 1j * mod.array(np.random.randn(N - 1).astype(dtype))
+        hop -= 1j * mod.array(np.random.rand(N - 1).astype(dtype)-0.5)
 
     P = mod.diag(np.array([0, -1])).astype(dtype)
     c = mod.array([[0, 1], [0, 0]], dtype)
@@ -404,8 +404,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           "N": N,
           "hop_type_atol": hop_type_atol
       } for dtype in [np.float64, np.complex128]
-        for N in [14, 18]
-        for hop_type_atol in [('uniform', 1E-12), ('randn', 1E-10)]))
+        for N in [18]
+        for hop_type_atol in [('uniform', 1E-12), ('rand', 1E-10)]))
 
   def test_eigsh_large_problem(self, N, dtype, hop_type_atol):
     """
@@ -426,14 +426,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     init = jnp.array(np.random.randn(2**N)).astype(dtype)
     init /= jnp.linalg.norm(init)
 
-    numeig=6
+    numeig=8
     eta, _, _ = jax.scipy.sparse.linalg.eigsh(
         matvec=jit(matvec),
         initial_state=init,
         num_krylov_vecs=20,
         numeig=numeig,
         which='SA',
-        tol=1E-8,
+        tol=1E-10,
         maxiter=30,
         precision=jax.lax.Precision.HIGHEST)
 
@@ -459,7 +459,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           "hop_type_atol": hop_type_atol
       } for dtype in [np.float64, np.complex128]
         for N in [18]
-        for hop_type_atol in [('uniform', 1E-12), ('randn', 1E-10)]))
+        for hop_type_atol in [('uniform', 1E-12), ('rand', 1E-10)]))
   def test_eigsh_scipy_consistency(self, N, dtype, hop_type_atol):
     """
     Find the lowest eigenvalues and eigenvectors
@@ -479,10 +479,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     init = jnp.array(np.random.randn(2**N)).astype(dtype)
     init /= jnp.linalg.norm(init)
 
-    numeig=6
-    ncv=30
+    numeig=8
+    ncv=20
     maxiter=30
-    tol=1E-8
+    tol=1E-10
     which = 'SA'
     eta, _, _ = jax.scipy.sparse.linalg.eigsh(
         matvec=jit(matvec),
