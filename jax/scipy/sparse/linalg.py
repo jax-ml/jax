@@ -393,8 +393,7 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
       numeig: The number of desired eigenvector-eigenvalue pairs.
     which: Which eigenvalues to target.
       Currently supported: `which = 'LR'` (largest real part).
-    tol: Convergence flag. If the norm of a krylov vector drops below `tol`
-      the iteration is terminated.
+    tol: Desired precision of computed eigenvalues.
     maxiter: Maximum number of (outer) iteration steps.
     precision: jax.lax.Precision used within lax operations.
 
