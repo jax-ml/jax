@@ -337,7 +337,63 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     compare_eigvals_and_eigvecs(
         np.stack(U, axis=1), eta, U_exact, eta_exact, thresh=thresh[dtype])
 
+  @staticmethod
+  def eigsh_data(N,
+                 hop_type,
+                 seed=10,
+                 dtype=np.float64,
+                 mod = jnp):
 
+    np.random.seed(seed)
+    if hop_type == 'uniform':
+      hop = -mod.ones(N - 1, dtype)
+      pot = mod.ones(N, dtype)
+      if dtype in (np.complex128, np.complex64):
+        hop -= 1j * mod.ones(N - 1, dtype)
+    elif hop_type == 'randn':
+      hop = -mod.array(np.random.randn(N - 1).astype(dtype))
+      pot = mod.array(np.random.randn(N).astype(dtype))
+      if dtype in (np.complex128, np.complex64):
+        hop -= 1j * mod.array(np.random.randn(N - 1).astype(dtype))
+
+    P = mod.diag(np.array([0, -1])).astype(dtype)
+    c = mod.array([[0, 1], [0, 0]], dtype)
+    n = c.T @ c
+    eye = mod.eye(2,dtype=dtype)
+    neye = mod.kron(n, eye)
+    eyen = mod.kron(eye, n)
+    ccT = mod.kron(c @ P, c.T)
+    cTc = mod.kron(c.T, c)
+
+    def matvec(vec):
+      x = vec.reshape((4, 2**(N - 2)))
+      out = mod.zeros(x.shape, x.dtype)
+      t1 = neye * pot[0] + eyen * pot[1] / 2
+      t2 = cTc * hop[0] - ccT * mod.conj(hop[0])
+      out += mod.einsum('ij,ki -> kj', x, t1 + t2)
+      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
+      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+          (4, 2**(N - 2)))
+      for site in range(1, N - 2):
+        t1 = neye * pot[site] / 2 + eyen * pot[site + 1] / 2
+        t2 = cTc * hop[site] - ccT * mod.conj(hop[site])
+        out += mod.einsum('ij,ki -> kj', x, t1 + t2)
+        x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+            (4, 2**(N - 2)))
+        out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+            (4, 2**(N - 2)))
+      t1 = neye * pot[N - 2] / 2 + eyen * pot[N - 1]
+      t2 = cTc * hop[N - 2] - ccT * mod.conj(hop[N - 2])
+      out += mod.einsum('ij,ki -> kj', x, t1 + t2)
+      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
+      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+          (4, 2**(N - 2)))
+
+      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
+      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
+      return out.ravel().astype(dtype)
+
+    return pot, hop, matvec
 
   @parameterized.named_parameters(
       jtu.cases_from_list({
@@ -349,7 +405,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           "hop_type_atol": hop_type_atol
       } for dtype in [np.float64, np.complex128]
         for N in [14, 18]
-        for hop_type_atol in [('uniform', 1E-12), ('randn', 1E-8)]))
+        for hop_type_atol in [('uniform', 1E-12), ('randn', 1E-10)]))
 
   def test_eigsh_large_problem(self, N, dtype, hop_type_atol):
     """
@@ -358,55 +414,28 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     The dimension of the hermitian matrix is
     (2**N, 2**N).
     """
-
-    def get_hoppings(dtype, N, which):
-      if which == 'uniform':
-        hop = -jnp.ones(N - 1, dtype)
-        if dtype in (np.complex128, np.complex64):
-          hop -= 1j * jnp.ones(N - 1, dtype)
-      elif which == 'randn':
-        hop = -jnp.array(np.random.randn(N - 1).astype(dtype))
-        if dtype in (np.complex128, np.complex64):
-          hop -= 1j * jnp.array(np.random.randn(N - 1).astype(dtype))
-      return hop
     hop_type, atol = hop_type_atol
-    hop = get_hoppings(dtype, N, hop_type)
-    pot = jnp.ones(N, dtype)
-    P = jnp.diag(np.array([0, -1])).astype(dtype)
-    c = jnp.array([[0, 1], [0, 0]], dtype)
-    n = c.T @ c
-    eye = jnp.eye(2,dtype=dtype)
-    neye = jnp.kron(n, eye)
-    eyen = jnp.kron(eye, n)
-    ccT = jnp.kron(c @ P, c.T)
-    cTc = jnp.kron(c.T, c)
 
-    def matvec(vec):
-      x = vec.reshape((4, 2**(N - 2)))
-      out = jnp.zeros(x.shape, x.dtype)
-      t1 = neye * pot[0] + eyen * pot[1] / 2
-      t2 = cTc * hop[0] - ccT * jnp.conj(hop[0])
-      out += jnp.einsum('ij,ki -> kj', x, t1 + t2)
-      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
-      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
-          (4, 2**(N - 2)))
-      for site in range(1, N - 2):
-        t1 = neye * pot[site] / 2 + eyen * pot[site + 1] / 2
-        t2 = cTc * hop[site] - ccT * jnp.conj(hop[site])
-        out += jnp.einsum('ij,ki -> kj', x, t1 + t2)
-        x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
-        out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
-            (4, 2**(N - 2)))
-      t1 = neye * pot[N - 2] / 2 + eyen * pot[N - 1]
-      t2 = cTc * hop[N - 2] - ccT * jnp.conj(hop[N - 2])
-      out += jnp.einsum('ij,ki -> kj', x, t1 + t2)
-      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
-      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
-          (4, 2**(N - 2)))
+    pot, hop, matvec = self.eigsh_data(
+        N,
+        hop_type,
+        seed=10,
+        dtype=dtype,
+        mod=jnp)
 
-      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
-      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
-      return out.ravel().astype(dtype)
+    init = jnp.array(np.random.randn(2**N)).astype(dtype)
+    init /= jnp.linalg.norm(init)
+
+    numeig=6
+    eta, _, _ = jax.scipy.sparse.linalg.eigsh(
+        matvec=jit(matvec),
+        initial_state=init,
+        num_krylov_vecs=20,
+        numeig=numeig,
+        which='SA',
+        tol=1E-8,
+        maxiter=30,
+        precision=jax.lax.Precision.HIGHEST)
 
     H = np.diag(pot) + np.diag(hop.conj(), 1) + np.diag(hop, -1)
     single_particle_energies = np.linalg.eigh(H)[0]
@@ -417,18 +446,46 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           np.sum(single_particle_energies[np.nonzero(
               np.array(list(bin(n)[2:]), dtype=int)[::-1])[0]]))
     many_body_energies = np.sort(many_body_energies)
+    np.testing.assert_allclose(
+        eta, many_body_energies[:numeig], atol=atol, rtol=atol)
 
-    np.random.seed(10)
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+              "_dtype={}_N={}_hop_type={}".format(
+                  np.dtype(dtype).name, N, hop_type_atol),
+          "dtype": dtype,
+          "N": N,
+          "hop_type_atol": hop_type_atol
+      } for dtype in [np.float64, np.complex128]
+        for N in [18]
+        for hop_type_atol in [('uniform', 1E-12), ('randn', 1E-10)]))
+  def test_eigsh_scipy_consistency(self, N, dtype, hop_type_atol):
+    """
+    Find the lowest eigenvalues and eigenvectors
+    of a 1d free-fermion Hamiltonian on N sites.
+    The dimension of the hermitian matrix is
+    (2**N, 2**N).
+    """
+    hop_type, atol = hop_type_atol
+
+    _,_, matvec = self.eigsh_data(
+        N,
+        hop_type,
+        seed=10,
+        dtype=dtype,
+        mod=jnp)
+
     init = jnp.array(np.random.randn(2**N)).astype(dtype)
     init /= jnp.linalg.norm(init)
 
-    ncv = 30
-    numeig = 4
+    numeig=6
+    ncv=20
+    maxiter=30
+    tol=1E-8
     which = 'SA'
-    tol = 1E-10
-    maxiter = 30
     eta, _, _ = jax.scipy.sparse.linalg.eigsh(
-        matvec=matvec,
+        matvec=jit(matvec),
         initial_state=init,
         num_krylov_vecs=ncv,
         numeig=numeig,
@@ -436,8 +493,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         tol=tol,
         maxiter=maxiter,
         precision=jax.lax.Precision.HIGHEST)
-    np.testing.assert_allclose(
-        eta, many_body_energies[:numeig], atol=atol, rtol=atol)
+
+    _,_,matvecnp = self.eigsh_data(
+        N,
+        hop_type,
+        seed=10,
+        dtype=dtype,
+        mod=np)
+    op = scipy.sparse.linalg.LinearOperator(
+        shape=(2**N, 2**N), matvec=matvecnp, dtype=dtype)
+    etasp, _ = scipy.sparse.linalg.eigsh(
+        op, k=numeig, ncv=ncv, maxiter=maxiter, which=which, tol=tol)
+    np.testing.assert_allclose(np.sort(etasp), eta, atol=atol, rtol=atol)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
