@@ -35,7 +35,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=['jaxlib'],
     python_requires='>=3.6',
-    install_requires=['scipy', 'numpy>=1.12', 'absl-py'],
+    install_requires=['scipy', 'numpy>=1.12', 'absl-py', 'flatbuffers'],
     url='https://github.com/google/jax',
     license='Apache-2.0',
     package_data={'jaxlib': binary_libs},

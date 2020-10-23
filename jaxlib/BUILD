@@ -17,6 +17,7 @@
 load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", "pybind_extension")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load("@flatbuffers//:build_defs.bzl", "flatbuffer_cc_library", "flatbuffer_py_library")
 
 licenses(["notice"])
 
@@ -32,6 +33,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":kernel_helpers",
+        "@com_google_absl//absl/base",
         "@pybind11",
     ],
 )
@@ -76,8 +78,10 @@ py_library(
     srcs = [
         "cuda_prng.py",
         "cusolver.py",
+        "pocketfft.py",
         "version.py",
     ],
+    deps = [":pocketfft_flatbuffers_py"],
 )
 
 py_library(
@@ -171,6 +175,35 @@ pybind_extension(
         ":kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/stream_executor/cuda:cudart_stub",
         "@local_config_cuda//cuda:cuda_headers",
+        "@pybind11",
+    ],
+)
+
+flatbuffer_cc_library(
+    name = "pocketfft_flatbuffers_cc",
+    srcs = ["pocketfft.fbs"],
+)
+
+flatbuffer_py_library(
+    name = "pocketfft_flatbuffers_py",
+    srcs = ["pocketfft.fbs"],
+)
+
+pybind_extension(
+    name = "_pocketfft",
+    srcs = ["pocketfft.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_pocketfft",
+    deps = [
+        ":kernel_pybind11_helpers",
+        ":pocketfft_flatbuffers_cc",
+        "@com_google_absl//absl/strings",
+        "@flatbuffers//:runtime_cc",
+        "@pocketfft",
         "@pybind11",
     ],
 )
