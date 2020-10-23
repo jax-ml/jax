@@ -445,28 +445,29 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
   it = 1  # we already did one lanczos factorization
   def outer_loop(carry):
     alphas, betas, Vm, fm, it, numits, ar_converged, _, _ = carry
-    # pack into alphas and betas into tridiagonal matrix
+    # pack alphas and betas into tridiagonal matrix
     Hm = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(
         betas.conj(), 1)
     evals, _ = jnp.linalg.eigh(Hm)
     shifts, _ = sort_fun(evals)
     # perform shifted QR iterations to compress lanczos factorization
     # Note that ||fk|| typically decreases as one iterates the outer loop
-    # indicating that iram converges.
-    # ||fk|| = \beta_m in reference above
+    # indicating that irlm converges.
+    # ||fk|| = \beta_m in references above
 
     Vk, Hk, fk = shifted_QR(Vm, Hm, fm, shifts, numeig)
     # extract new alphas and betas
     alphas = jnp.diag(Hk)
     betas = jnp.diag(Hk, -1)
+    alphas = alphas.at[numeig:].set(0.0)
+    betas = betas.at[numeig-1:].set(0.0)
     beta_k = jnp.linalg.norm(fk)
     Hktest = Hk[:numeig, :numeig]
     matnorm = jnp.linalg.norm(Hktest)
     converged = check_eigvals_convergence(beta_k, Hktest, matnorm, tol)
     #####################################################
-    # faked conditional statement using while control flow
+    # fake conditional statement using while control flow
     # only perform a lanczos factorization if `not converged`
-
     def do_lanczos(vals):
       Vk, alphas, betas, fk, _, _, _, _ = vals
       # restart
@@ -502,10 +503,16 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
   res = lax.while_loop(cond_fun, outer_loop, carry)
   alphas, betas, Vm = res[0], res[1], res[2]
   numits, ar_converged, converged = res[5], res[6], res[7]
-  Hm = jnp.diag(alphas[:numeig]) + jnp.diag(betas[:numeig-1], -1) + jnp.diag(
-      betas.conj()[:numeig-1], 1)
-  eigvals, U = jnp.linalg.eigh(Hm)
+  Hm = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(
+      betas.conj(), 1)
+  # FIXME (mganahl): under certain circumstances, the routine can still
+  # return spurious 0 eigenvalues: if lanczos terminated early
+  # (after numits < num_krylov_vecs iterations)
+  # and numeig > numits, then spurious 0.0 eigenvalues will be returned
+  Hm = (numits > jnp.arange(num_krylov_vecs))[:, None] * Hm * (
+      numits > jnp.arange(num_krylov_vecs))[None, :]
 
+  eigvals, U = jnp.linalg.eigh(Hm)
   inds = sort_fun(eigvals)[1][:numeig]
   vectors = get_vectors(Vm, U, inds, numeig)
   return eigvals[inds], [
