@@ -23,8 +23,7 @@ def repo():
         strip_prefix = "pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e",
         urls = [
             "https://gitlab.mpcdf.mpg.de/mtr/pocketfft/-/archive/53e9dd4d12f986207c96d97c5183f5a72239c76e/pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e.tar.gz",
-            # Repeat the URL to silence the Tensorflow third_party_http_archive mirror check.
-            "https://gitlab.mpcdf.mpg.de/mtr/pocketfft/-/archive/53e9dd4d12f986207c96d97c5183f5a72239c76e/pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e.tar.gz",
+            "https://storage.googleapis.com/jax-releases/mirror/pocketfft/pocketfft-53e9dd4d12f986207c96d97c5183f5a72239c76e.tar.gz",
         ],
         build_file = "@//third_party/pocketfft:BUILD.bazel",
     )
