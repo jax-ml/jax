@@ -480,7 +480,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     init /= jnp.linalg.norm(init)
 
     numeig=6
-    ncv=20
+    ncv=30
     maxiter=30
     tol=1E-8
     which = 'SA'
