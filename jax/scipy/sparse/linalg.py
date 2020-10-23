@@ -226,7 +226,7 @@ def lanczos_factorization(matvec: Callable, v0: jnp.ndarray,
     Vm: An array for storing the krylov vectors. The individual
       vectors are stored as rows.
       The shape of `krylov_vecs` has to be
-      (num_krylov_vecs + 1, np.ravel(v0).shape[0]).
+      (num_krylov_vecs, np.ravel(v0).shape[0]).
     alphas: An array for storing the diagonal elements of the reduced
       operator.
     betas: An array for storing the lower diagonal elements of the
@@ -234,7 +234,7 @@ def lanczos_factorization(matvec: Callable, v0: jnp.ndarray,
     start: Integer denoting the start position where the first
       produced krylov_vector should be inserted into `Vm`
     num_krylov_vecs: Number of krylov iterations, should be identical to
-      `Vm.shape[0] + 1`
+      `Vm.shape[0]`
     tol: Convergence parameter. Iteration is terminated if the norm of a
       krylov-vector falls below `tol`.
 
