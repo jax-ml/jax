@@ -382,6 +382,10 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
   (after numits < num_krylov_vecs iterations)
   and numeig > numits, then spurious 0.0 eigenvalues will be returned.
 
+  References:
+  http://emis.impa.br/EMIS/journals/ETNA/vol.2.1994/pp1-21.dir/pp1-21.pdf
+  http://people.inf.ethz.ch/arbenz/ewp/Lnotes/chapter11.pdf
+
   Args:
     matvec: A callable representing the linear operator.
     initial_state: An starting vector for the iteration.
