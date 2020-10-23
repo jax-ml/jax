@@ -315,7 +315,7 @@ def shifted_QR(
     Vm: jnp.ndarray, Hm: jnp.ndarray, fm: jnp.ndarray,
     shifts: jnp.ndarray,
     numeig: int) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-  # compress arnoldi factorization
+  # compress factorization
   q = jnp.zeros(Hm.shape[0], dtype=Hm.dtype)
   q = q.at[-1].set(1.0)
 
