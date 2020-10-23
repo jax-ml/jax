@@ -354,7 +354,7 @@ def get_vectors(Vm: jnp.ndarray, unitary: jnp.ndarray,
 def check_eigvals_convergence(beta_m: float, Hm: jnp.ndarray, Hm_norm: float,
                               tol: float) -> bool:
   eigvals, eigvecs = jnp.linalg.eigh(Hm)
-  # TODO (mganahl) confirm that this is a valid matrix norm)
+  # TODO (mganahl): confirm that this is a valid matrix norm
   thresh = jnp.maximum(
       jnp.finfo(eigvals.dtype).eps * Hm_norm,
       jnp.abs(eigvals) * tol)
