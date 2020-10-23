@@ -224,7 +224,7 @@ def lanczos_factorization(matvec: Callable, v0: jnp.ndarray,
     matvec: The matrix vector product.
     v0: Initial state to `matvec`.
     Vm: An array for storing the krylov vectors. The individual
-      vectors are stored as columns.
+      vectors are stored as rows.
       The shape of `krylov_vecs` has to be
       (num_krylov_vecs + 1, np.ravel(v0).shape[0]).
     alphas: An array for storing the diagonal elements of the reduced
