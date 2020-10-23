@@ -92,7 +92,7 @@ def minimize(
   if options is None:
     options = {}
 
-  fun_with_args = partial(fun, *args)
+  fun_with_args = lambda param: fun(param, *args)
 
   if method.lower() == 'bfgs':
     results = minimize_bfgs(fun_with_args, x0, **options)
