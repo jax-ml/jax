@@ -1411,73 +1411,55 @@ def iota(dtype: DType, size: int) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#iota>`_
   operator.
   """
-  if config.omnistaging_enabled:
-    dtype = dtypes.canonicalize_dtype(dtype)
-    size = core.concrete_or_error(int, size, "size argument of lax.iota")
-    return iota_p.bind(dtype=dtype, shape=(size,), dimension=0)
-  else:
-    size = size if type(size) is masking.Poly else int(size)
-    shape = canonicalize_shape((size,))
-    dtype = dtypes.canonicalize_dtype(dtype)
-    lazy_expr = lazy.iota(dtype, shape[0])
-    aval = ShapedArray(shape, dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  size = size if type(size) is masking.Poly else int(size)
+  shape = canonicalize_shape((size,))
+  dtype = dtypes.canonicalize_dtype(dtype)
+  lazy_expr = lazy.iota(dtype, shape[0])
+  aval = ShapedArray(shape, dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = canonicalize_shape(shape)
-  dimension = core.concrete_or_error(
-      int, dimension, "dimension argument of lax.broadcasted_iota")
-  return iota_p.bind(dtype=dtype, shape=shape, dimension=dimension)
+  dimension = int(dimension)
+  return broadcast_in_dim(iota(dtype, shape[dimension]), shape, [dimension])
 
 def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
-  """Like numpy.eye, create a 2D array with ones on a diagonal."""
+  """Like numpy.eye, create a 2D array with ones on a diagonal.
+
+  This function exists for creating lazy identity matrices; that is,
+  materialization of the array is delayed and it may be fused into consumers to
+  avoid materialization at all."""
   N, M = tuple(map(int, shape))
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
-  if config.omnistaging_enabled:
-    bool_eye = eq(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
-                  broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_eye, new_dtype=dtype,
-                                       old_dtype=np.bool_)
-  else:
-    lazy_expr = lazy.eye(dtype, (N, M), offset)
-    aval = ShapedArray((N, M), dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  lazy_expr = lazy.eye(dtype, (N, M), offset)
+  aval = ShapedArray((N, M), dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
-  """This utility function exists for creating Kronecker delta arrays."""
+  """This function exists for creating lazy Kronecker delta arrays, particularly
+  for use in jax.numpy.einsum to express traces. It differs from ``eye`` in that
+  it can create arrays of any rank, but doesn't allow offsets."""
   shape = tuple(map(int, shape))
   axes = tuple(map(int, axes))
   dtype = dtypes.canonicalize_dtype(dtype)
   base_shape = tuple(np.take(shape, axes))
-  if config.omnistaging_enabled:
-    iotas = [broadcasted_iota(np.uint32, base_shape, i)
-             for i in range(len(base_shape))]
-    eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-    result = convert_element_type_p.bind(_reduce(operator.and_, eyes),
-                                         new_dtype=dtype, old_dtype=np.bool_)
-    return broadcast_in_dim(result, shape, axes)
-  else:
-    lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
-    aval = ShapedArray(shape, dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
+  aval = ShapedArray(shape, dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
-  """Like numpy.tri, create a 2D array with ones below a diagonal."""
+  """Like numpy.tri, create a 2D array with ones below a diagonal.
+  This function exists for creating lazy triangular matrices, particularly for
+  use in jax.numpy.tri."""
   N, M = tuple(map(int, shape))
   offset = int(offset)
   dtype = dtypes.canonicalize_dtype(dtype)
-  if config.omnistaging_enabled:
-    bool_tri = ge(add(broadcasted_iota(np.int32, (N, M), 0), np.int32(offset)),
-                  broadcasted_iota(np.int32, (N, M), 1))
-    return convert_element_type_p.bind(bool_tri, old_dtype=np.int32,
-                                       new_dtype=dtype)
-  else:
-    lazy_expr = lazy.tri(dtype, (N, M), offset)
-    aval = ShapedArray((N, M), dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+  lazy_expr = lazy.tri(dtype, (N, M), offset)
+  aval = ShapedArray((N, M), dtype)
+  return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
 
 def stop_gradient(x):
   """Stops gradient computation.
@@ -5735,30 +5717,6 @@ rng_uniform_p = Primitive("rng_uniform")
 rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
 rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
 xla.translations[rng_uniform_p] = _rng_uniform_translation_rule
-
-
-def _iota_abstract_eval(*, dtype, shape, dimension):
-  _check_shapelike("iota", "shape", shape)
-  if not any(dtypes.issubdtype(dtype, t) for t in _num):
-    msg = 'iota does not accept dtype {}. Accepted dtypes are subtypes of {}.'
-    typename = str(np.dtype(dtype).name)
-    accepted_typenames = (t.__name__ for t in _num)
-    raise TypeError(msg.format(typename, ', '.join(accepted_typenames)))
-  if not 0 <= dimension < len(shape):
-    raise ValueError("iota dimension must be between 0 and len(shape), got "
-                     f"dimension={dimension} for shape {shape}")
-  return ShapedArray(shape, dtype)
-
-def _iota_translation_rule(c, dtype, shape, dimension):
-  etype = xla_client.dtype_to_etype(dtype)
-  xla_shape = xc.Shape.array_shape(etype, shape)
-  return xops.Iota(c, xla_shape, dimension)
-
-iota_p = Primitive('iota')
-iota_p.def_impl(partial(xla.apply_primitive, iota_p))
-iota_p.def_abstract_eval(_iota_abstract_eval)
-xla.translations[iota_p] = _iota_translation_rule
-
 
 ### util
 
