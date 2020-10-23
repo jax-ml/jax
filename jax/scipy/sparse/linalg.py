@@ -263,7 +263,7 @@ def lanczos_factorization(matvec: Callable, v0: jnp.ndarray,
       lambda x: betas.at[start - 1].set(Z),
       lambda x: betas, start)
 
-  # body of the arnoldi iteration
+  # body of the lanczos iteration
   def body(vals):
     Vm, alphas, betas, previous_vector, _, i = vals
     Av = matvec(previous_vector)
@@ -352,13 +352,13 @@ def get_vectors(Vm: jnp.ndarray, unitary: jnp.ndarray,
 
 
 def check_eigvals_convergence(beta_m: float, Hm: jnp.ndarray, Hm_norm: float,
-                              tol: float, numeig: int) -> bool:
+                              tol: float) -> bool:
   eigvals, eigvecs = jnp.linalg.eigh(Hm)
   # TODO (mganahl) confirm that this is a valid matrix norm)
   thresh = jnp.maximum(
       jnp.finfo(eigvals.dtype).eps * Hm_norm,
-      jnp.abs(eigvals[:numeig]) * tol)
-  vals = jnp.abs(eigvecs[numeig - 1, :numeig])
+      jnp.abs(eigvals) * tol)
+  vals = jnp.abs(eigvecs[-1, :])
   return jnp.all(beta_m * vals < thresh)
 
 
@@ -439,7 +439,6 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
     raise ValueError(f"which = {which} not implemented")
 
   it = 1  # we already did one lanczos factorization
-  isometry = jnp.eye(num_krylov_vecs, numeig, dtype=dtype)
   def outer_loop(carry):
     alphas, betas, Vm, fm, it, numits, ar_converged, _, _ = carry
     # pack into alphas and betas into tridiagonal matrix
@@ -453,21 +452,13 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
     # ||fk|| = \beta_m in reference above
 
     Vk, Hk, fk = shifted_QR(Vm, Hm, fm, shifts, numeig)
-    # reset matrices
-    Vk = Vk.at[numeig:, :].set(0.0)
-    Hk = Hk.at[numeig:, :].set(0.0)
-    Hk = Hk.at[:, numeig:].set(0.0)
-
     # extract new alphas and betas
     alphas = jnp.diag(Hk)
     betas = jnp.diag(Hk, -1)
-    matnorm = jnp.sqrt(jnp.vdot(alphas, alphas) + 2 * jnp.vdot(betas, betas))
     beta_k = jnp.linalg.norm(fk)
-    Hktest = jnp.matmul(
-        jnp.transpose(isometry),
-        jnp.matmul(Hk, isometry, precision=precision),
-        precision=precision)
-    converged = check_eigvals_convergence(beta_k, Hktest, matnorm, tol, numeig)
+    Hktest = Hk[:numeig, :numeig]
+    matnorm = jnp.linalg.norm(Hktest)
+    converged = check_eigvals_convergence(beta_k, Hktest, matnorm, tol)
     #####################################################
     # faked conditional statement using while control flow
     # only perform a lanczos factorization if `not converged`
@@ -507,21 +498,8 @@ def eigsh(matvec: Callable,#pylint: disable=too-many-statements
   res = lax.while_loop(cond_fun, outer_loop, carry)
   alphas, betas, Vm = res[0], res[1], res[2]
   numits, ar_converged, converged = res[5], res[6], res[7]
-  Hm = jnp.diag(alphas) + jnp.diag(betas, -1) + jnp.diag(
-      betas.conj(), 1)
-
-  # before exhausting the allowed size of the Krylov subspace,
-  # (i.e. `numit` < 'num_krylov_vecs'), set elements
-  # at positions m, n with m, n >= `numit` to 0.0.
-  # FIXME (mganahl): under certain circumstances, the routine can still
-  # return spurious 0 eigenvalues: if lanczos terminated early
-  # (after numits < num_krylov_vecs iterations)
-  # and numeig > numits, then spurious 0.0 eigenvalues will be returned
-  Hm = jnp.matmul(
-    jnp.transpose(isometry),
-    jnp.matmul(Hm, isometry, precision=precision),
-    precision=precision)
-
+  Hm = jnp.diag(alphas[:numeig]) + jnp.diag(betas[:numeig-1], -1) + jnp.diag(
+      betas.conj()[:numeig-1], 1)
   eigvals, U = jnp.linalg.eigh(Hm)
 
   inds = sort_fun(eigvals)[1][:numeig]
