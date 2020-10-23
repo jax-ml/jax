@@ -65,7 +65,7 @@ from .interpreters import batching
 from .interpreters import masking
 from .interpreters import invertible_ad as iad
 from .interpreters.invertible_ad import custom_ivjp
-from .custom_derivatives import custom_jvp, custom_vjp
+from .custom_derivatives import custom_jvp, custom_vjp, custom_gradient
 from .config import flags, config, bool_env
 
 AxisName = Any
@@ -2471,16 +2471,6 @@ def defvjp(fun, *vjprules):
                    for x, vjp in zip(primals, vjprules))
     return ans, vjpfun
   defvjp_all(fun, custom_vjp)
-
-def custom_gradient(fun):
-  """This API is deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp` instead."""
-
-  def primal_fun(*args, **kwargs):
-    ans, _ = fun(*args, **kwargs)
-    return ans
-  primal_fun = custom_transforms(primal_fun)
-  defvjp_all(primal_fun, fun)
-  return primal_fun
 
 def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
   return (x,) if isinstance(x, int) else tuple(x)

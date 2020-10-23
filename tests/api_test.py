@@ -4203,6 +4203,37 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = 2 * jnp.cos(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_custom_gradient(self):
+    @api.custom_gradient
+    def f(x):
+      return x ** 2, lambda g: (g * x,)
+
+    self.assertAllClose(f(3.), 9., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
+    self.assertAllClose(api.grad(api.grad(f))(3.), 1., check_dtypes=False)
+
+  def test_custom_gradient_2(self):
+    @api.custom_gradient
+    def f(x, y):
+      return x * y, lambda g: (y, x)
+
+    self.assertAllClose(f(3., 4.), 12., check_dtypes=False)
+    self.assertAllClose(api.grad(f, argnums=(0, 1))(3., 4.), (4., 3.),
+                        check_dtypes=False)
+
+  def test_custom_gradient_3(self):
+    @api.custom_gradient
+    def f(x):
+      vjp = lambda g: (jnp.cos(x) * jnp.array([3., 4., 5.]),)
+      return jnp.sum(jnp.sin(x)), vjp
+
+    self.assertAllClose(f(jnp.arange(3)), jnp.sum(jnp.sin(jnp.arange(3.))),
+                        check_dtypes=False)
+    self.assertAllClose(
+        api.grad(f)(jnp.arange(3.)),
+        api.grad(lambda x: jnp.sum(jnp.sin(x)))(jnp.arange(3.)) * jnp.array([3., 4., 5.]),
+        check_dtypes=False)
+
 
 class InvertibleADTest(jtu.JaxTestCase):
 
@@ -4473,14 +4504,6 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     expected = 2.
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_custom_gradient(self):
-    @api.custom_gradient
-    def f(x):
-      return x ** 2, lambda g: (g * x,)
-
-    self.assertAllClose(f(3.), 9., check_dtypes=False)
-    self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
-
   def test_custom_vjp_zeros(self):
     @api.custom_transforms
     def f(x, y):
@@ -4516,6 +4539,7 @@ class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
     real_x = np.random.RandomState(0).randn(n)
     b = jnp.dot(a + jnp.eye(a.shape[0]), real_x)
     print(gf(a, b))  # doesn't crash
+
 
 class BufferDonationTest(jtu.JaxTestCase):
 
