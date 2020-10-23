@@ -361,11 +361,12 @@ def check_eigvals_convergence(beta_m: float, Hm: jnp.ndarray, Hm_norm: float,
   vals = jnp.abs(eigvecs[numeig - 1, :numeig])
   return jnp.all(beta_m * vals < thresh)
 
-def eigsh(
-    matvec: Callable, initial_state: jnp.ndarray,
-    num_krylov_vecs: int, numeig: int, which: Text, tol: float, maxiter: int,
-    precision
-) -> Tuple[jnp.ndarray, List[jnp.ndarray], int]:
+
+def eigsh(matvec: Callable,#pylint: disable=too-many-statements
+          initial_state: jnp.ndarray,
+          num_krylov_vecs: int,
+          numeig: int, which: Text, tol: float, maxiter: int,
+          precision) -> Tuple[jnp.ndarray, List[jnp.ndarray], int]:
   """
   Implicitly restarted Lanczos factorization of `matvec`. The routine
   finds the lowest `numeig` eigenvector-eigenvalue pairs of `matvec`
@@ -463,7 +464,7 @@ def eigsh(
     matnorm = jnp.sqrt(jnp.vdot(alphas, alphas) + 2 * jnp.vdot(betas, betas))
     beta_k = jnp.linalg.norm(fk)
     Hktest = jnp.matmul(
-        isometry.T,
+        jnp.transpose(isometry),
         jnp.matmul(Hk, isometry, precision=precision),
         precision=precision)
     converged = check_eigvals_convergence(beta_k, Hktest, matnorm, tol, numeig)
@@ -517,7 +518,7 @@ def eigsh(
   # (after numits < num_krylov_vecs iterations)
   # and numeig > numits, then spurious 0.0 eigenvalues will be returned
   Hm = jnp.matmul(
-    isometry.T,
+    jnp.transpose(isometry),
     jnp.matmul(Hm, isometry, precision=precision),
     precision=precision)
 
