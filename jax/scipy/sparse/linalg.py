@@ -516,8 +516,11 @@ def eigsh(
   # return spurious 0 eigenvalues: if lanczos terminated early
   # (after numits < num_krylov_vecs iterations)
   # and numeig > numits, then spurious 0.0 eigenvalues will be returned
-  Hm = (numits > jnp.arange(num_krylov_vecs))[:, None] * Hm * (
-    numits > jnp.arange(num_krylov_vecs))[None, :]
+  Hm = jnp.matmul(
+    isometry.T,
+    jnp.matmul(Hm, isometry, precision=precision),
+    precision=precision)
+
   eigvals, U = jnp.linalg.eigh(Hm)
 
   inds = sort_fun(eigvals)[1][:numeig]
