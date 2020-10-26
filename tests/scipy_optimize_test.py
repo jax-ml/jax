@@ -86,6 +86,14 @@ class TestBFGS(jtu.JaxTestCase):
     scipy_res = scipy.optimize.minimize(func(np), x0, method='BFGS').x
     self.assertAllClose(scipy_res, jax_res, atol=2e-5, check_dtypes=False)
 
+  def test_fixes4594(self):
+    n = 2
+    A = jnp.eye(n) * 1e4
+    def f(x):
+      return jnp.mean((A @ x) ** 2)
+    results = jax.scipy.optimize.minimize(f, jnp.ones(n), method='BFGS')
+    self.assertAllClose(results.x, jnp.zeros(n), atol=1e-6, rtol=1e-6)
+
 
 if __name__ == "__main__":
   absltest.main()
