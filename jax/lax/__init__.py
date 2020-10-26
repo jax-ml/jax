@@ -62,7 +62,6 @@ from jax._src.lax.lax import (
   broadcast,
   broadcast_in_dim,
   broadcast_in_dim_p,
-  broadcast_p,
   broadcast_shapes,
   broadcast_to_rank,
   broadcasted_iota,
