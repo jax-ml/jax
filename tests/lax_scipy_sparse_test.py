@@ -284,227 +284,227 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         Ham @ Vm.T - Vm.T @ Hm - fm[:, None] * em,
         np.zeros((D, ncv)).astype(dtype), decimal=decimal)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name": "_dtype={}_which={}".format(np.dtype(dtype).name, which),
-          "dtype": dtype, "which": which}
-       for dtype in float_types + complex_types
-       for which in ['SA', 'LA']))
-  def test_eigsh_small_matrix(self, dtype, which):
+  # @parameterized.named_parameters(
+  #     jtu.cases_from_list({
+  #         "testcase_name": "_dtype={}_which={}".format(np.dtype(dtype).name, which),
+  #         "dtype": dtype, "which": which}
+  #      for dtype in float_types + complex_types
+  #      for which in ['SA', 'LA']))
+  # def test_eigsh_small_matrix(self, dtype, which):
 
-    def generate_data(dtype, D):
-      H = np.random.randn(D, D).astype(dtype)
-      init = np.random.randn(D).astype(dtype)
-      if dtype in (np.complex64, np.complex128):
-        H += 1j * np.random.randn(D, D).astype(dtype)
-        init += 1j * np.random.randn(D).astype(dtype)
-      return H + H.T.conj(), init
+  #   def generate_data(dtype, D):
+  #     H = np.random.randn(D, D).astype(dtype)
+  #     init = np.random.randn(D).astype(dtype)
+  #     if dtype in (np.complex64, np.complex128):
+  #       H += 1j * np.random.randn(D, D).astype(dtype)
+  #       init += 1j * np.random.randn(D).astype(dtype)
+  #     return H + H.T.conj(), init
 
-    def compare_eigvals_and_eigvecs(U, eta, U_exact, eta_exact, thresh=1E-8):
-      _, iy = np.nonzero(np.abs(eta[:, None] - eta_exact[None, :]) < thresh)
-      U_exact_perm = U_exact[:, iy]
-      U_exact_perm = U_exact_perm / np.expand_dims(np.sum(U_exact_perm, axis=0), 0)
-      U = U / np.expand_dims(np.sum(U, axis=0), 0)
-      prec = np.finfo(U.dtype).precision
-      atol = 10**(-prec // 2)
-      rtol = atol
-      np.testing.assert_allclose(U_exact_perm, U, atol=atol, rtol=rtol)
-      np.testing.assert_allclose(eta, eta_exact[iy], atol=atol, rtol=rtol)
+  #   def compare_eigvals_and_eigvecs(U, eta, U_exact, eta_exact, thresh=1E-8):
+  #     _, iy = np.nonzero(np.abs(eta[:, None] - eta_exact[None, :]) < thresh)
+  #     U_exact_perm = U_exact[:, iy]
+  #     U_exact_perm = U_exact_perm / np.expand_dims(np.sum(U_exact_perm, axis=0), 0)
+  #     U = U / np.expand_dims(np.sum(U, axis=0), 0)
+  #     prec = np.finfo(U.dtype).precision
+  #     atol = 10**(-prec // 2)
+  #     rtol = atol
+  #     np.testing.assert_allclose(U_exact_perm, U, atol=atol, rtol=rtol)
+  #     np.testing.assert_allclose(eta, eta_exact[iy], atol=atol, rtol=rtol)
 
-    thresh = {
-        np.complex64: 1E-3,
-        np.float32: 1E-3,
-        np.float64: 1E-4,
-        np.complex128: 1E-4
-    }
-    D = 1000
-    np.random.seed(10)
-    H, init = generate_data(dtype, D)
+  #   thresh = {
+  #       np.complex64: 1E-3,
+  #       np.float32: 1E-3,
+  #       np.float64: 1E-4,
+  #       np.complex128: 1E-4
+  #   }
+  #   D = 1000
+  #   np.random.seed(10)
+  #   H, init = generate_data(dtype, D)
 
-    def mv(x):
-      return jnp.matmul(H, x, precision=jax.lax.Precision.HIGHEST)
+  #   def mv(x):
+  #     return jnp.matmul(H, x, precision=jax.lax.Precision.HIGHEST)
 
-    eta, U, _ = jax.scipy.sparse.linalg.eigsh(
-        mv,
-        init,
-        num_krylov_vecs=60,
-        numeig=4,
-        which=which,
-        tol=1E-10,
-        maxiter=500,
-        precision=jax.lax.Precision.HIGHEST)
-    eta_exact, U_exact = jnp.linalg.eigh(H)
-    compare_eigvals_and_eigvecs(
-        np.stack(U, axis=1), eta, U_exact, eta_exact, thresh=thresh[dtype])
+  #   eta, U, _ = jax.scipy.sparse.linalg.eigsh(
+  #       mv,
+  #       init,
+  #       num_krylov_vecs=60,
+  #       numeig=4,
+  #       which=which,
+  #       tol=1E-10,
+  #       maxiter=500,
+  #       precision=jax.lax.Precision.HIGHEST)
+  #   eta_exact, U_exact = jnp.linalg.eigh(H)
+  #   compare_eigvals_and_eigvecs(
+  #       np.stack(U, axis=1), eta, U_exact, eta_exact, thresh=thresh[dtype])
 
-  @staticmethod
-  def eigsh_data(N,
-                 hop_type,
-                 seed=10,
-                 dtype=np.float64,
-                 mod = jnp):
+  # @staticmethod
+  # def eigsh_data(N,
+  #                hop_type,
+  #                seed=10,
+  #                dtype=np.float64,
+  #                mod = jnp):
 
-    np.random.seed(seed)
-    if hop_type == 'uniform':
-      hop = -mod.ones(N - 1, dtype)
-      pot = mod.ones(N, dtype)
-      if dtype in (np.complex128, np.complex64):
-        hop -= 1j * mod.ones(N - 1, dtype)
-    elif hop_type == 'rand':
-      hop = -mod.array(np.random.rand(N - 1).astype(dtype)-0.5)
-      pot = mod.array(np.random.rand(N).astype(dtype)-0.5)
-      if dtype in (np.complex128, np.complex64):
-        hop -= 1j * mod.array(np.random.rand(N - 1).astype(dtype)-0.5)
+  #   np.random.seed(seed)
+  #   if hop_type == 'uniform':
+  #     hop = -mod.ones(N - 1, dtype)
+  #     pot = mod.ones(N, dtype)
+  #     if dtype in (np.complex128, np.complex64):
+  #       hop -= 1j * mod.ones(N - 1, dtype)
+  #   elif hop_type == 'rand':
+  #     hop = -mod.array(np.random.rand(N - 1).astype(dtype)-0.5)
+  #     pot = mod.array(np.random.rand(N).astype(dtype)-0.5)
+  #     if dtype in (np.complex128, np.complex64):
+  #       hop -= 1j * mod.array(np.random.rand(N - 1).astype(dtype)-0.5)
 
-    P = mod.diag(np.array([0, -1])).astype(dtype)
-    c = mod.array([[0, 1], [0, 0]], dtype)
-    n = c.T @ c
-    eye = mod.eye(2,dtype=dtype)
-    neye = mod.kron(n, eye)
-    eyen = mod.kron(eye, n)
-    ccT = mod.kron(c @ P, c.T)
-    cTc = mod.kron(c.T, c)
+  #   P = mod.diag(np.array([0, -1])).astype(dtype)
+  #   c = mod.array([[0, 1], [0, 0]], dtype)
+  #   n = c.T @ c
+  #   eye = mod.eye(2,dtype=dtype)
+  #   neye = mod.kron(n, eye)
+  #   eyen = mod.kron(eye, n)
+  #   ccT = mod.kron(c @ P, c.T)
+  #   cTc = mod.kron(c.T, c)
 
-    def matvec(vec):
-      x = vec.reshape((4, 2**(N - 2)))
-      out = mod.zeros(x.shape, x.dtype)
-      t1 = neye * pot[0] + eyen * pot[1] / 2
-      t2 = cTc * hop[0] - ccT * mod.conj(hop[0])
-      out += mod.einsum('ij,ki -> kj', x, t1 + t2)
-      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
-      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
-          (4, 2**(N - 2)))
-      for site in range(1, N - 2):
-        t1 = neye * pot[site] / 2 + eyen * pot[site + 1] / 2
-        t2 = cTc * hop[site] - ccT * mod.conj(hop[site])
-        out += mod.einsum('ij,ki -> kj', x, t1 + t2)
-        x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
-            (4, 2**(N - 2)))
-        out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
-            (4, 2**(N - 2)))
-      t1 = neye * pot[N - 2] / 2 + eyen * pot[N - 1]
-      t2 = cTc * hop[N - 2] - ccT * mod.conj(hop[N - 2])
-      out += mod.einsum('ij,ki -> kj', x, t1 + t2)
-      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
-      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
-          (4, 2**(N - 2)))
+  #   def matvec(vec):
+  #     x = vec.reshape((4, 2**(N - 2)))
+  #     out = mod.zeros(x.shape, x.dtype)
+  #     t1 = neye * pot[0] + eyen * pot[1] / 2
+  #     t2 = cTc * hop[0] - ccT * mod.conj(hop[0])
+  #     out += mod.einsum('ij,ki -> kj', x, t1 + t2)
+  #     x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
+  #     out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+  #         (4, 2**(N - 2)))
+  #     for site in range(1, N - 2):
+  #       t1 = neye * pot[site] / 2 + eyen * pot[site + 1] / 2
+  #       t2 = cTc * hop[site] - ccT * mod.conj(hop[site])
+  #       out += mod.einsum('ij,ki -> kj', x, t1 + t2)
+  #       x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+  #           (4, 2**(N - 2)))
+  #       out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+  #           (4, 2**(N - 2)))
+  #     t1 = neye * pot[N - 2] / 2 + eyen * pot[N - 1]
+  #     t2 = cTc * hop[N - 2] - ccT * mod.conj(hop[N - 2])
+  #     out += mod.einsum('ij,ki -> kj', x, t1 + t2)
+  #     x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape((4, 2**(N - 2)))
+  #     out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(
+  #         (4, 2**(N - 2)))
 
-      x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
-      out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
-      return out.ravel().astype(dtype)
+  #     x = x.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
+  #     out = out.reshape((2, 2**(N - 1))).transpose((1, 0)).reshape(2**N)
+  #     return out.ravel().astype(dtype)
 
-    return pot, hop, matvec
+  #   return pot, hop, matvec
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name":
-              "_dtype={}_N={}_hop_type={}".format(
-                  np.dtype(dtype).name, N, hop_type_atol),
-          "dtype": dtype,
-          "N": N,
-          "hop_type_atol": hop_type_atol
-      } for dtype in [np.float64, np.complex128]
-        for N in [14]
-        for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
+  # @parameterized.named_parameters(
+  #     jtu.cases_from_list({
+  #         "testcase_name":
+  #             "_dtype={}_N={}_hop_type={}".format(
+  #                 np.dtype(dtype).name, N, hop_type_atol),
+  #         "dtype": dtype,
+  #         "N": N,
+  #         "hop_type_atol": hop_type_atol
+  #     } for dtype in [np.float64, np.complex128]
+  #       for N in [14]
+  #       for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
 
-  def test_eigsh_large_problem(self, N, dtype, hop_type_atol):
-    """
-    Find the lowest eigenvalues and eigenvectors
-    of a 1d free-fermion Hamiltonian on N sites.
-    The dimension of the hermitian matrix is
-    (2**N, 2**N).
-    """
-    hop_type, atol = hop_type_atol
+  # def test_eigsh_large_problem(self, N, dtype, hop_type_atol):
+  #   """
+  #   Find the lowest eigenvalues and eigenvectors
+  #   of a 1d free-fermion Hamiltonian on N sites.
+  #   The dimension of the hermitian matrix is
+  #   (2**N, 2**N).
+  #   """
+  #   hop_type, atol = hop_type_atol
 
-    pot, hop, matvec = self.eigsh_data(
-        N,
-        hop_type,
-        seed=10,
-        dtype=dtype,
-        mod=jnp)
+  #   pot, hop, matvec = self.eigsh_data(
+  #       N,
+  #       hop_type,
+  #       seed=10,
+  #       dtype=dtype,
+  #       mod=jnp)
 
-    init = jnp.array(np.random.randn(2**N)).astype(dtype)
-    init /= jnp.linalg.norm(init)
+  #   init = jnp.array(np.random.randn(2**N)).astype(dtype)
+  #   init /= jnp.linalg.norm(init)
 
-    numeig=4
-    eta, _, _ = jax.scipy.sparse.linalg.eigsh(
-        matvec=jit(matvec),
-        initial_state=init,
-        num_krylov_vecs=20,
-        numeig=numeig,
-        which='SA',
-        tol=1E-10,
-        maxiter=30,
-        precision=jax.lax.Precision.HIGHEST)
+  #   numeig=4
+  #   eta, _, _ = jax.scipy.sparse.linalg.eigsh(
+  #       matvec=jit(matvec),
+  #       initial_state=init,
+  #       num_krylov_vecs=20,
+  #       numeig=numeig,
+  #       which='SA',
+  #       tol=1E-10,
+  #       maxiter=30,
+  #       precision=jax.lax.Precision.HIGHEST)
 
-    H = np.diag(pot) + np.diag(hop.conj(), 1) + np.diag(hop, -1)
-    single_particle_energies = np.linalg.eigh(H)[0]
+  #   H = np.diag(pot) + np.diag(hop.conj(), 1) + np.diag(hop, -1)
+  #   single_particle_energies = np.linalg.eigh(H)[0]
 
-    many_body_energies = []
-    for n in range(2**N):
-      many_body_energies.append(
-          np.sum(single_particle_energies[np.nonzero(
-              np.array(list(bin(n)[2:]), dtype=int)[::-1])[0]]))
-    many_body_energies = np.sort(many_body_energies)
-    np.testing.assert_allclose(
-        eta, many_body_energies[:numeig], atol=atol, rtol=atol)
+  #   many_body_energies = []
+  #   for n in range(2**N):
+  #     many_body_energies.append(
+  #         np.sum(single_particle_energies[np.nonzero(
+  #             np.array(list(bin(n)[2:]), dtype=int)[::-1])[0]]))
+  #   many_body_energies = np.sort(many_body_energies)
+  #   np.testing.assert_allclose(
+  #       eta, many_body_energies[:numeig], atol=atol, rtol=atol)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name":
-              "_dtype={}_N={}_hop_type={}".format(
-                  np.dtype(dtype).name, N, hop_type_atol),
-          "dtype": dtype,
-          "N": N,
-          "hop_type_atol": hop_type_atol
-      } for dtype in [np.float64, np.complex128]
-        for N in [14]
-        for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
-  def test_eigsh_scipy_consistency(self, N, dtype, hop_type_atol):
-    """
-    Find the lowest eigenvalues and eigenvectors
-    of a 1d free-fermion Hamiltonian on N sites.
-    The dimension of the hermitian matrix is
-    (2**N, 2**N).c
-    """
-    hop_type, atol = hop_type_atol
+  # @parameterized.named_parameters(
+  #     jtu.cases_from_list({
+  #         "testcase_name":
+  #             "_dtype={}_N={}_hop_type={}".format(
+  #                 np.dtype(dtype).name, N, hop_type_atol),
+  #         "dtype": dtype,
+  #         "N": N,
+  #         "hop_type_atol": hop_type_atol
+  #     } for dtype in [np.float64, np.complex128]
+  #       for N in [14]
+  #       for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
+  # def test_eigsh_scipy_consistency(self, N, dtype, hop_type_atol):
+  #   """
+  #   Find the lowest eigenvalues and eigenvectors
+  #   of a 1d free-fermion Hamiltonian on N sites.
+  #   The dimension of the hermitian matrix is
+  #   (2**N, 2**N).c
+  #   """
+  #   hop_type, atol = hop_type_atol
 
-    _,_, matvec = self.eigsh_data(
-        N,
-        hop_type,
-        seed=10,
-        dtype=dtype,
-        mod=jnp)
+  #   _,_, matvec = self.eigsh_data(
+  #       N,
+  #       hop_type,
+  #       seed=10,
+  #       dtype=dtype,
+  #       mod=jnp)
 
-    init = jnp.array(np.random.randn(2**N)).astype(dtype)
-    init /= jnp.linalg.norm(init)
+  #   init = jnp.array(np.random.randn(2**N)).astype(dtype)
+  #   init /= jnp.linalg.norm(init)
 
-    numeig=4
-    ncv=20
-    maxiter=30
-    tol=1E-10
-    which = 'SA'
-    eta, _, _ = jax.scipy.sparse.linalg.eigsh(
-        matvec=jit(matvec),
-        initial_state=init,
-        num_krylov_vecs=ncv,
-        numeig=numeig,
-        which=which,
-        tol=tol,
-        maxiter=maxiter,
-        precision=jax.lax.Precision.HIGHEST)
+  #   numeig=4
+  #   ncv=20
+  #   maxiter=30
+  #   tol=1E-10
+  #   which = 'SA'
+  #   eta, _, _ = jax.scipy.sparse.linalg.eigsh(
+  #       matvec=jit(matvec),
+  #       initial_state=init,
+  #       num_krylov_vecs=ncv,
+  #       numeig=numeig,
+  #       which=which,
+  #       tol=tol,
+  #       maxiter=maxiter,
+  #       precision=jax.lax.Precision.HIGHEST)
 
-    _,_,matvecnp = self.eigsh_data(
-        N,
-        hop_type,
-        seed=10,
-        dtype=dtype,
-        mod=np)
-    op = scipy.sparse.linalg.LinearOperator(
-        shape=(2**N, 2**N), matvec=matvecnp, dtype=dtype)
-    etasp, _ = scipy.sparse.linalg.eigsh(
-        op, k=numeig, ncv=ncv, maxiter=maxiter, which=which, tol=tol)
-    np.testing.assert_allclose(np.sort(etasp), eta, atol=atol, rtol=atol)
+  #   _,_,matvecnp = self.eigsh_data(
+  #       N,
+  #       hop_type,
+  #       seed=10,
+  #       dtype=dtype,
+  #       mod=np)
+  #   op = scipy.sparse.linalg.LinearOperator(
+  #       shape=(2**N, 2**N), matvec=matvecnp, dtype=dtype)
+  #   etasp, _ = scipy.sparse.linalg.eigsh(
+  #       op, k=numeig, ncv=ncv, maxiter=maxiter, which=which, tol=tol)
+  #   np.testing.assert_allclose(np.sort(etasp), eta, atol=atol, rtol=atol)
 
 
 if __name__ == "__main__":
