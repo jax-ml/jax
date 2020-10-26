@@ -69,12 +69,12 @@ Example Usage:
 
 .. code-block:: python
 
-  opt = optimizers.sgd(learning_rate)
-  opt_state = opt.init(params)
+  opt_init, opt_update, get_params = optimizers.sgd(learning_rate)
+  opt_state = opt_init(params)
 
   def step(step, opt_state):
-    value, grads = jax.value_and_grad(loss_fn)(opt.get_params(opt_state))
-    opt_state = opt.update(step, grads, opt_state)
+    value, grads = jax.value_and_grad(loss_fn)(get_params(opt_state))
+    opt_state = opt_update(step, grads, opt_state)
     return value, opt_state
 
   for step in range(num_steps):
