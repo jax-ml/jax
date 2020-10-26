@@ -132,7 +132,7 @@ def jit(fun: Callable[..., T],
       depend on static arguments will be constant-folded in Python (during
       tracing), and so the corresponding argument values can be any Python
       object. Static arguments should be hashable, meaning both ``__hash__``
-      and ``__eq__` are implemented. Calling the jitted function with different
+      and ``__eq__`` are implemented. Calling the jitted function with different
       values for these constants will trigger recompilation. If the jitted
       function is called with fewer positional arguments than indicated by
       ``static_argnums`` then an error is raised. Arguments that are not arrays
