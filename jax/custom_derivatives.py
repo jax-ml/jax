@@ -33,6 +33,9 @@ from .interpreters import xla
 from .interpreters.batching import not_mapped
 from .config import config
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
 map = safe_map
 zip = safe_zip
 

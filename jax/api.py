@@ -69,6 +69,9 @@ from .interpreters.invertible_ad import custom_ivjp
 from .custom_derivatives import custom_jvp, custom_vjp, custom_gradient
 from .config import flags, config, bool_env
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
 AxisName = Any
 
 # This TypeVar is used below to express the fact that function call signatures

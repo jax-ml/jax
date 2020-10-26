@@ -17,16 +17,10 @@ import sys
 import traceback
 import types
 
-from .api_util import wraps
+_exclude_paths = [__file__]
 
-
-_jax_path = os.path.dirname(__file__)
-_include_paths = [
-    os.path.join(_jax_path, path) for path in (
-        'config.py', 'dlpack.py', 'experimental', 'lax', 'lax_linalg.py',
-        'lax_reference.py', 'nn', 'numpy', 'ops', 'profiler.py', 'random.py',
-        'scipy', 'test_util.py', 'third_party', 'tools',
-    )]
+def register_exclusion(path):
+  _exclude_paths.append(path)
 
 _jax_message_append = (
     'The stack trace above excludes JAX-internal frames.\n'
@@ -42,10 +36,8 @@ def path_starts_with(path, path_prefix):
   return os.path.samefile(common, path_prefix)
 
 def include_frame(f):
-  return (
-      not path_starts_with(f.f_code.co_filename, _jax_path) or
-      any(path_starts_with(f.f_code.co_filename, path)
-          for path in _include_paths))
+  return not any(path_starts_with(f.f_code.co_filename, path)
+                 for path in _exclude_paths)
 
 # When scanning stack traces, we might encounter frames from cpython that are
 # removed from printed stack traces, such as frames from parts of importlib. We
@@ -129,6 +121,7 @@ def api_boundary(fun):
   ``api_boundary``, such an exception is accompanied by an additional traceback
   that excludes the frames specific to JAX's implementation.
   '''
+  from .api_util import wraps   # avoid cyclic dependencies
 
   if not filtered_tracebacks_supported():
     return fun

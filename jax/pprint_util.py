@@ -15,6 +15,9 @@
 import functools
 import operator as op
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
 
 class PrettyPrint:
   """Crude Hughes-inspired pretty printer."""

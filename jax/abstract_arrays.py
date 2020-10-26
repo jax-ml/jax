@@ -20,6 +20,9 @@ from . import ad_util
 from . import core
 from . import dtypes
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
 _DIMENSION_TYPES = core._DIMENSION_TYPES
 
 UnshapedArray = core.UnshapedArray

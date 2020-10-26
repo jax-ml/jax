@@ -44,6 +44,10 @@ from .lib import pytree
 
 from .util import partial, safe_zip, unzip2
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
+
 def tree_flatten(tree):
   """Flattens a pytree.
 

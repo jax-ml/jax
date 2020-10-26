@@ -20,6 +20,9 @@ import types
 
 import numpy as np
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
 
 def safe_zip(*args):
   n = len(args[0])
