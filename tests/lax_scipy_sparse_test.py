@@ -284,58 +284,58 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         Ham @ Vm.T - Vm.T @ Hm - fm[:, None] * em,
         np.zeros((D, ncv)).astype(dtype), decimal=decimal)
 
-  # @parameterized.named_parameters(
-  #     jtu.cases_from_list({
-  #         "testcase_name": "_dtype={}_which={}".format(np.dtype(dtype).name, which),
-  #         "dtype": dtype, "which": which}
-  #      for dtype in float_types + complex_types
-  #      for which in ['SA', 'LA']))
-  # def test_eigsh_small_matrix(self, dtype, which):
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name": "_dtype={}_which={}".format(np.dtype(dtype).name, which),
+          "dtype": dtype, "which": which}
+       for dtype in float_types + complex_types
+       for which in ['SA', 'LA']))
+  def test_eigsh_small_matrix(self, dtype, which):
 
-  #   def generate_data(dtype, D):
-  #     H = np.random.randn(D, D).astype(dtype)
-  #     init = np.random.randn(D).astype(dtype)
-  #     if dtype in (np.complex64, np.complex128):
-  #       H += 1j * np.random.randn(D, D).astype(dtype)
-  #       init += 1j * np.random.randn(D).astype(dtype)
-  #     return H + H.T.conj(), init
+    def generate_data(dtype, D):
+      H = np.random.randn(D, D).astype(dtype)
+      init = np.random.randn(D).astype(dtype)
+      if dtype in (np.complex64, np.complex128):
+        H += 1j * np.random.randn(D, D).astype(dtype)
+        init += 1j * np.random.randn(D).astype(dtype)
+      return H + H.T.conj(), init
 
-  #   def compare_eigvals_and_eigvecs(U, eta, U_exact, eta_exact, thresh=1E-8):
-  #     _, iy = np.nonzero(np.abs(eta[:, None] - eta_exact[None, :]) < thresh)
-  #     U_exact_perm = U_exact[:, iy]
-  #     U_exact_perm = U_exact_perm / np.expand_dims(np.sum(U_exact_perm, axis=0), 0)
-  #     U = U / np.expand_dims(np.sum(U, axis=0), 0)
-  #     prec = np.finfo(U.dtype).precision
-  #     atol = 10**(-prec // 2)
-  #     rtol = atol
-  #     np.testing.assert_allclose(U_exact_perm, U, atol=atol, rtol=rtol)
-  #     np.testing.assert_allclose(eta, eta_exact[iy], atol=atol, rtol=rtol)
+    def compare_eigvals_and_eigvecs(U, eta, U_exact, eta_exact, thresh=1E-8):
+      _, iy = np.nonzero(np.abs(eta[:, None] - eta_exact[None, :]) < thresh)
+      U_exact_perm = U_exact[:, iy]
+      U_exact_perm = U_exact_perm / np.expand_dims(np.sum(U_exact_perm, axis=0), 0)
+      U = U / np.expand_dims(np.sum(U, axis=0), 0)
+      prec = np.finfo(U.dtype).precision
+      atol = 10**(-prec // 2)
+      rtol = atol
+      np.testing.assert_allclose(U_exact_perm, U, atol=atol, rtol=rtol)
+      np.testing.assert_allclose(eta, eta_exact[iy], atol=atol, rtol=rtol)
 
-  #   thresh = {
-  #       np.complex64: 1E-3,
-  #       np.float32: 1E-3,
-  #       np.float64: 1E-4,
-  #       np.complex128: 1E-4
-  #   }
-  #   D = 1000
-  #   np.random.seed(10)
-  #   H, init = generate_data(dtype, D)
+    thresh = {
+        np.complex64: 1E-3,
+        np.float32: 1E-3,
+        np.float64: 1E-4,
+        np.complex128: 1E-4
+    }
+    D = 1000
+    np.random.seed(10)
+    H, init = generate_data(dtype, D)
 
-  #   def mv(x):
-  #     return jnp.matmul(H, x, precision=jax.lax.Precision.HIGHEST)
+    def mv(x):
+      return jnp.matmul(H, x, precision=jax.lax.Precision.HIGHEST)
 
-  #   eta, U, _ = jax.scipy.sparse.linalg.eigsh(
-  #       mv,
-  #       init,
-  #       num_krylov_vecs=60,
-  #       numeig=4,
-  #       which=which,
-  #       tol=1E-10,
-  #       maxiter=500,
-  #       precision=jax.lax.Precision.HIGHEST)
-  #   eta_exact, U_exact = jnp.linalg.eigh(H)
-  #   compare_eigvals_and_eigvecs(
-  #       np.stack(U, axis=1), eta, U_exact, eta_exact, thresh=thresh[dtype])
+    eta, U, _ = jax.scipy.sparse.linalg.eigsh(
+        mv,
+        init,
+        num_krylov_vecs=60,
+        numeig=4,
+        which=which,
+        tol=1E-10,
+        maxiter=500,
+        precision=jax.lax.Precision.HIGHEST)
+    eta_exact, U_exact = jnp.linalg.eigh(H)
+    compare_eigvals_and_eigvecs(
+        np.stack(U, axis=1), eta, U_exact, eta_exact, thresh=thresh[dtype])
 
   # @staticmethod
   # def eigsh_data(N,
