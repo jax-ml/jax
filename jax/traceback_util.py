@@ -17,7 +17,9 @@ import sys
 import traceback
 import types
 
-_exclude_paths = [__file__]
+from . import util
+
+_exclude_paths = [__file__, util.__file__]
 
 def register_exclusion(path):
   _exclude_paths.append(path)
@@ -121,12 +123,11 @@ def api_boundary(fun):
   ``api_boundary``, such an exception is accompanied by an additional traceback
   that excludes the frames specific to JAX's implementation.
   '''
-  from .api_util import wraps   # avoid cyclic dependencies
 
   if not filtered_tracebacks_supported():
     return fun
 
-  @wraps(fun)
+  @util.wraps(fun)
   def reraise_with_filtered_traceback(*args, **kwargs):
     try:
       return fun(*args, **kwargs)

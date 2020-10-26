@@ -20,9 +20,6 @@ import types
 
 import numpy as np
 
-from . import traceback_util
-traceback_util.register_exclusion(__file__)
-
 
 def safe_zip(*args):
   n = len(args[0])
@@ -260,3 +257,17 @@ def canonicalize_axis(axis, num_dims):
 
 def ceil_of_ratio(x, y):
   return -(-x // y)
+
+@curry
+def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
+  try:
+    fun.__name__ = namestr.format(fun=get_name(wrapped))
+    fun.__module__ = get_module(wrapped)
+    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
+    fun.__wrapped__ = wrapped
+  finally:
+    return fun
+
+def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
+def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
+def get_doc(fun): return getattr(fun, "__doc__", "")
