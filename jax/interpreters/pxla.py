@@ -1121,7 +1121,7 @@ def _soft_pmap_interp(chunk_size, jaxpr, consts, mapped_invars, *args):
       raise NotImplementedError  # TODO
     else:
       if any(in_mapped):
-        rule = batching.get_primitive_batcher(eqn.primitive)
+        rule = batching.get_primitive_batcher(eqn.primitive, None)
         in_axes = [0 if m else batching.not_mapped for m in in_mapped]
         out_vals, out_axes = rule(in_vals, in_axes, **eqn.params)
         if not eqn.primitive.multiple_results:
