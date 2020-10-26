@@ -404,7 +404,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           "N": N,
           "hop_type_atol": hop_type_atol
       } for dtype in [np.float64, np.complex128]
-        for N in [16]
+        for N in [14]
         for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
 
   def test_eigsh_large_problem(self, N, dtype, hop_type_atol):
@@ -458,14 +458,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           "N": N,
           "hop_type_atol": hop_type_atol
       } for dtype in [np.float64, np.complex128]
-        for N in [16]
+        for N in [14]
         for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
   def test_eigsh_scipy_consistency(self, N, dtype, hop_type_atol):
     """
     Find the lowest eigenvalues and eigenvectors
     of a 1d free-fermion Hamiltonian on N sites.
     The dimension of the hermitian matrix is
-    (2**N, 2**N).
+    (2**N, 2**N).c
     """
     hop_type, atol = hop_type_atol
 
