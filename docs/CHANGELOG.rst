@@ -15,6 +15,11 @@ jaxlib 0.1.57 (unreleased)
   and could change (#4651).
 * Add support for retaining ownership when passing arrays to DLPack (#4636).
 
+jax 0.2.5 (October 25 2020)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.4...jax-v0.2.5>`_.
+
+
 jax 0.2.4 (October 19 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.3...jax-v0.2.4>`_.
