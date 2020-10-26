@@ -19,25 +19,14 @@ from absl import logging
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
 from . import linear_util as lu
-from .util import safe_map, curry, WrapHashably, Hashable
+from .util import safe_map, WrapHashably, Hashable
 from .core import unit
+
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
 
 map = safe_map
 
-
-@curry
-def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
-  try:
-    fun.__name__ = namestr.format(fun=get_name(wrapped))
-    fun.__module__ = get_module(wrapped)
-    fun.__doc__ = docstr.format(fun=get_name(wrapped), doc=get_doc(wrapped), **kwargs)
-    fun.__wrapped__ = wrapped
-  finally:
-    return fun
-
-def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
-def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
-def get_doc(fun): return getattr(fun, "__doc__", "")
 
 @lu.transformation_with_aux
 def flatten_fun(in_tree, *args_flat):

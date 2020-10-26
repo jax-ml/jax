@@ -40,7 +40,7 @@ from . import linear_util as lu
 from . import ad_util
 from . import dtypes
 from .core import eval_jaxpr
-from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
+from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial,
                        argnums_partial_except, flatten_axes, donation_vector,
                        rebase_donate_argnums)
@@ -49,7 +49,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
-                   extend_name_stack, wrap_name, cache)
+                   extend_name_stack, wrap_name, cache, wraps)
 from .lib import jax_jit
 from .lib import version
 from .lib import xla_bridge as xb
@@ -68,6 +68,9 @@ from .interpreters import invertible_ad as iad
 from .interpreters.invertible_ad import custom_ivjp
 from .custom_derivatives import custom_jvp, custom_vjp, custom_gradient
 from .config import flags, config, bool_env
+
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
 
 AxisName = Any
 
