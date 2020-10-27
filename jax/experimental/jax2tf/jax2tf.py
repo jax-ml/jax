@@ -13,7 +13,6 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 import functools
-import itertools
 import string
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
 
@@ -874,8 +873,7 @@ tf_impl[lax.mul_p] = tf.math.multiply
 
 
 def _iota(*, dtype, shape, dimension):
-  size = shape[dimension]
-  # Some dtypes are unsupporetd, like uint32, so we just fall back to int32.
+  # Some dtypes are unsupported, like uint32, so we just fall back to int32.
   # TODO(mattjj, necula): improve tf.range dtype handling
   shape_tf = _eval_shape(shape)
   vec = tf.range(tf.cast(shape_tf[dimension], tf.int32), dtype=tf.int32)
