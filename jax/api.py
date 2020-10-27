@@ -26,11 +26,11 @@ import collections
 import functools
 import inspect
 import itertools as it
-import operator
+import sys
 import threading
 import weakref
-from typing import (Any, Callable, Iterable, List, NamedTuple, Optional,
-                    Sequence, Tuple, TypeVar, Union)
+from typing import (Any, Callable, Iterable, NamedTuple, Optional, Sequence,
+                    Tuple, TypeVar, Union, overload)
 from warnings import warn
 
 import numpy as np
@@ -86,6 +86,8 @@ AxisName = Any
 # Should this raise any type errors for the tracing code in future, we can disable
 # type checking in parts of the tracing code, or remove these annotations.
 F = TypeVar("F", bound=Callable)
+T = TypeVar("T")
+U = TypeVar("U")
 
 map = safe_map
 zip = safe_zip
@@ -1829,7 +1831,33 @@ def _vjp_pullback_wrapper(cotangent_dtypes, io_tree, fun, py_args):
   return tree_unflatten(out_tree, ans)
 
 
-def vjp(
+if sys.version_info >= (3, 8):
+    from typing import Literal
+
+    @overload  # type: ignore
+    def vjp(fun: Callable[..., T],
+            *primals: Any,
+            has_aux: Literal[False] = False) -> Tuple[T, Callable]:
+        ...
+
+    @overload
+    def vjp(fun: Callable[..., Tuple[T, U]],
+            *primals: Any,
+            has_aux: Literal[True]) -> Tuple[T, Callable, U]:
+        ...
+else:
+    @overload  # type: ignore
+    def vjp(fun: Callable[..., T], *primals: Any) -> Tuple[T, Callable]:
+        ...
+
+    @overload
+    def vjp(fun: Callable[..., Any],
+            *primals: Any,
+            has_aux: bool) -> Union[Tuple[Any, Callable],
+                                    Tuple[Any, Callable, Any]]:
+        ...
+
+def vjp(  # type: ignore
     fun: Callable, *primals, has_aux: bool = False,
 ) -> Union[Tuple[Any, Callable], Tuple[Any, Callable, Any]]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
