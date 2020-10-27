@@ -134,12 +134,13 @@ def jit(fun: Callable[..., T],
       arguments to treat as static (compile-time constant). Operations that only
       depend on static arguments will be constant-folded in Python (during
       tracing), and so the corresponding argument values can be any Python
-      object. Static arguments should be hashable, meaning both ``__hash__``
-      and ``__eq__`` are implemented. Calling the jitted function with different
-      values for these constants will trigger recompilation. If the jitted
-      function is called with fewer positional arguments than indicated by
-      ``static_argnums`` then an error is raised. Arguments that are not arrays
-      or containers thereof must be marked as static. Defaults to ().
+      object. Static arguments should be hashable, meaning both ``__hash__`` and
+      ``__eq__`` are implemented, and immutable. Calling the jitted function
+      with different values for these constants will trigger recompilation. If
+      the jitted function is called with fewer positional arguments than
+      indicated by ``static_argnums`` then an error is raised. Arguments that
+      are not arrays or containers thereof must be marked as static.
+      Defaults to ().
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via :py:func:`jax.devices`.) The default is inherited from
