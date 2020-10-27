@@ -27,8 +27,7 @@ from jax.util import safe_map as map
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 _vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
 
-# aliases for working with pytreedef _vdot_real_part(x, y):
-
+# aliases for working with pytrees
 def _vdot_real_part(x, y):
   """Vector dot-product guaranteed to have a real valued result despite
      possibly complex input. Thus neglects the real-imaginary cross-terms.
@@ -43,16 +42,20 @@ def _vdot_real_part(x, y):
   result = vdot(x.real, y.real)
   if jnp.iscomplexobj(x) or jnp.iscomplexobj(y):
     result += vdot(x.imag, y.imag)
-  return result.real
+  return result
+
 
 def _vdot_real_tree(x, y):
   return sum(tree_leaves(tree_multimap(_vdot_real_part, x, y)))
 
+
 def _norm_tree(x):
   return jnp.sqrt(_vdot_real_tree(x, x))
 
+
 def _vdot_tree(x, y):
   return sum(tree_leaves(tree_multimap(_vdot, x, y)))
+
 
 def _mul(scalar, tree):
   return tree_map(partial(operator.mul, scalar), tree)
@@ -279,10 +282,7 @@ def _iterative_classical_gram_schmidt(Q, x, max_iterations=2):
 
     def qnorm_cond(carry):
       k, not_done, _, _ = carry
-      return lax.cond(not_done,
-                      lambda x: k < (max_iterations - 1),
-                      lambda x: False,
-                      0)
+      return jnp.logical_and(not_done, k < (max_iterations - 1))
 
     def qnorm(carry):
       k, _, q, qnorm_scaled = carry
@@ -297,11 +297,8 @@ def _iterative_classical_gram_schmidt(Q, x, max_iterations=2):
   def cond_function(carry):
     k, _, r, qnorm_scaled = carry
     _, rnorm = _safe_normalize(r, return_norm=True)
-    return lax.cond(
-        k < (max_iterations - 1),
-        lambda x: rnorm < qnorm_scaled,
-        lambda x: False,
-        0)
+    return jnp.logical_and(k < (max_iterations - 1), rnorm < qnorm_scaled)
+
   k, q, r, qnorm_scaled = body_function((0, q, r, xnorm_scaled))
   k, q, r, _ = lax.while_loop(cond_function, body_function,
                               (k, q, r, qnorm_scaled))
@@ -391,11 +388,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
 
   def loop_cond(carry):
     k, err, _, _, _, _ = carry
-    return lax.cond(k < restart,
-                    lambda x: x[0] > x[1],
-                    lambda x: False,
-                    (err, inner_tol))
-    # return k < restart and err > tol
+    return jnp.logical_and(k < restart, err > inner_tol)
 
   def arnoldi_qr_step(carry):
     k, _, V, R, beta_vec, givens = carry
@@ -443,10 +436,11 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
 
   def loop_cond(carry):
     _, _, breakdown, k = carry
-    return lax.cond(k < restart,
-                    lambda x: ~x,
-                    lambda x: False,
-                    breakdown)
+    return jnp.logical_and(k < restart, jnp.logical_not(breakdown))
+    #  return lax.cond(k < restart,
+    #                  lambda x: ~x,
+    #                  lambda x: False,
+    #                  breakdown)
 
   def arnoldi_process(carry):
     V, H, _, k = carry
@@ -489,10 +483,7 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
 
   def cond_fun(value):
     _, k, _, residual_norm = value
-    return lax.cond(k < maxiter,
-                    lambda x: x[0] > x[1],
-                    lambda x: False,
-                    (residual_norm, outer_tol))
+    return jnp.logical_and(k < maxiter, residual_norm > outer_tol)
 
   def body_fun(value):
     x, k, unit_residual, residual_norm = value
@@ -581,10 +572,8 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   if M is None:
     M = _identity
 
-  try:
-    size = sum(bi.size for bi in tree_leaves(b))
-  except AttributeError:
-    size = len(tree_leaves(b))
+  b, x0 = device_put((b, x0))
+  size = sum(bi.size for bi in tree_leaves(b))
 
   if maxiter is None:
     maxiter = 10 * size  # copied from scipy
@@ -595,7 +584,6 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
         'x0 and b must have matching tree structure: '
         f'{tree_structure(x0)} vs {tree_structure(b)}')
 
-  b, x0 = device_put((b, x0))
   b_norm = _norm_tree(b)
   if b_norm == 0:
     return b, 0
@@ -617,5 +605,5 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   x = lax.custom_linear_solve(A, b, solve=_solve, transpose_solve=_solve)
 
   failed = jnp.isnan(_norm_tree(x))
-  info = lax.cond(failed, lambda x: -1, lambda x: 0, 0)
+  info = jnp.where(failed, x=-1, y=0)
   return x, info
