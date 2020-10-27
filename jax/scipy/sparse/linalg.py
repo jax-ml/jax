@@ -404,7 +404,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   carry = (0, residual_norm, V, R, beta_vec, givens)
   carry = lax.while_loop(loop_cond, arnoldi_qr_step, carry)
   k, residual_norm, V, R, beta_vec, _ = carry
-  _ = k # Until we figure out how to pass this to the user.
+  del k  # Until we figure out how to pass this to the user.
 
   y = jsp.linalg.solve_triangular(R[:, :-1].T, beta_vec[:-1])
   Vy = tree_map(lambda X: _dot(X[..., :-1], y), V)
