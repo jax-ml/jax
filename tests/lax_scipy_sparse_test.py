@@ -17,6 +17,7 @@ from functools import partial
 from absl.testing import parameterized
 from absl.testing import absltest
 import numpy as np
+import scipy
 import scipy.sparse.linalg
 
 from jax import jit
@@ -449,62 +450,62 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     np.testing.assert_allclose(
         eta, many_body_energies[:numeig], atol=atol, rtol=atol)
 
-  # @parameterized.named_parameters(
-  #     jtu.cases_from_list({
-  #         "testcase_name":
-  #             "_dtype={}_N={}_hop_type={}".format(
-  #                 np.dtype(dtype).name, N, hop_type_atol),
-  #         "dtype": dtype,
-  #         "N": N,
-  #         "hop_type_atol": hop_type_atol
-  #     } for dtype in [np.float64, np.complex128]
-  #       for N in [14]
-  #       for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
-  # def test_eigsh_scipy_consistency(self, N, dtype, hop_type_atol):
-  #   """
-  #   Find the lowest eigenvalues and eigenvectors
-  #   of a 1d free-fermion Hamiltonian on N sites.
-  #   The dimension of the hermitian matrix is
-  #   (2**N, 2**N).c
-  #   """
-  #   hop_type, atol = hop_type_atol
+  @parameterized.named_parameters(
+      jtu.cases_from_list({
+          "testcase_name":
+              "_dtype={}_N={}_hop_type={}".format(
+                  np.dtype(dtype).name, N, hop_type_atol),
+          "dtype": dtype,
+          "N": N,
+          "hop_type_atol": hop_type_atol
+      } for dtype in [np.float64, np.complex128]
+        for N in [14]
+        for hop_type_atol in [('uniform', 1E-9), ('rand', 1E-9)]))
+  def test_eigsh_scipy_consistency(self, N, dtype, hop_type_atol):
+    """
+    Find the lowest eigenvalues and eigenvectors
+    of a 1d free-fermion Hamiltonian on N sites.
+    The dimension of the hermitian matrix is
+    (2**N, 2**N).c
+    """
+    hop_type, atol = hop_type_atol
 
-  #   _,_, matvec = self.eigsh_data(
-  #       N,
-  #       hop_type,
-  #       seed=10,
-  #       dtype=dtype,
-  #       mod=jnp)
+    _,_, matvec = self.eigsh_data(
+        N,
+        hop_type,
+        seed=10,
+        dtype=dtype,
+        mod=jnp)
 
-  #   init = jnp.array(np.random.randn(2**N)).astype(dtype)
-  #   init /= jnp.linalg.norm(init)
+    init = jnp.array(np.random.randn(2**N)).astype(dtype)
+    init /= jnp.linalg.norm(init)
 
-  #   numeig=4
-  #   ncv=20
-  #   maxiter=30
-  #   tol=1E-10
-  #   which = 'SA'
-  #   eta, _, _ = jax.scipy.sparse.linalg.eigsh(
-  #       matvec=jit(matvec),
-  #       initial_state=init,
-  #       num_krylov_vecs=ncv,
-  #       numeig=numeig,
-  #       which=which,
-  #       tol=tol,
-  #       maxiter=maxiter,
-  #       precision=jax.lax.Precision.HIGHEST)
+    numeig=4
+    ncv=20
+    maxiter=30
+    tol=1E-10
+    which = 'SA'
+    eta, _, _ = jax.scipy.sparse.linalg.eigsh(
+        matvec=jit(matvec),
+        initial_state=init,
+        num_krylov_vecs=ncv,
+        numeig=numeig,
+        which=which,
+        tol=tol,
+        maxiter=maxiter,
+        precision=jax.lax.Precision.HIGHEST)
 
-  #   _,_,matvecnp = self.eigsh_data(
-  #       N,
-  #       hop_type,
-  #       seed=10,
-  #       dtype=dtype,
-  #       mod=np)
-  #   op = scipy.sparse.linalg.LinearOperator(
-  #       shape=(2**N, 2**N), matvec=matvecnp, dtype=dtype)
-  #   etasp, _ = scipy.sparse.linalg.eigsh(
-  #       op, k=numeig, ncv=ncv, maxiter=maxiter, which=which, tol=tol)
-  #   np.testing.assert_allclose(np.sort(etasp), eta, atol=atol, rtol=atol)
+    _,_,matvecnp = self.eigsh_data(
+        N,
+        hop_type,
+        seed=10,
+        dtype=dtype,
+        mod=np)
+    op = scipy.sparse.linalg.LinearOperator(
+        shape=(2**N, 2**N), matvec=matvecnp, dtype=dtype)
+    etasp, _ = scipy.sparse.linalg.eigsh(
+        op, k=numeig, v0=np.array(init), ncv=ncv, maxiter=maxiter, which=which, tol=tol)
+    np.testing.assert_allclose(np.sort(etasp), eta, atol=atol, rtol=atol)
 
 
 if __name__ == "__main__":
