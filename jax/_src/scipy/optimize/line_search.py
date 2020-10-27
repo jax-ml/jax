@@ -112,7 +112,7 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
 
     # This will cause the line search to stop, and since the Wolfe conditions
     # are not satisfied the minimization should stop too.
-    state = state._replace(failed=state.failed | (dalpha <= 1e-5))
+    state = state._replace(failed=state.failed | (dalpha <= 1e-10))
 
     # Cubmin is sometimes nan, though in this case the bounds check will fail.
     a_j_cubic = _cubicmin(state.a_lo, state.phi_lo, state.dphi_lo, state.a_hi,

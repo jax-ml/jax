@@ -11,9 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from functools import partial
 from typing import Any, Callable, Mapping, Optional, Tuple, Union
-
 from .bfgs import minimize_bfgs
 from typing import NamedTuple
 import jax.numpy as jnp
@@ -92,7 +90,7 @@ def minimize(
   if options is None:
     options = {}
 
-  fun_with_args = partial(fun, *args)
+  fun_with_args = lambda x: fun(x, *args)
 
   if method.lower() == 'bfgs':
     results = minimize_bfgs(fun_with_args, x0, **options)
