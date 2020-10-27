@@ -3624,11 +3624,20 @@ def _select_masking_rule(padded_vals, logical_shapes):
   assert np.array_equal(pred_shape, false_shape)
   return select(*padded_vals)
 
+def _select_jvp(primals, tangents):
+  pred, on_true, on_false = primals
+  _, on_true_dot, on_false_dot = tangents
+  out = select(pred, on_true, on_false)
+  if type(on_true_dot) is ad_util.Zero:
+    out_dot = select(pred, _zeros(on_false_dot), on_false_dot)
+  elif type(on_false_dot) is ad_util.Zero:
+    out_dot = select(pred, on_true_dot, _zeros(on_true_dot))
+  else:
+    out_dot = select(pred, on_true_dot, on_false_dot)
+  return out, out_dot
+
 select_p = standard_primitive(_select_shape_rule, _select_dtype_rule, 'select')
-ad.defjvp(select_p,
-          None,
-          lambda g, b, x, y: select(b, g, _zeros(g)),
-          lambda g, b, x, y: select(b, _zeros(g), g))
+ad.primitive_jvps[select_p] = _select_jvp
 ad.primitive_transposes[select_p] = _select_transpose_rule
 batching.primitive_batchers[select_p] = _select_batch_rule
 masking.masking_rules[select_p] = _select_masking_rule
