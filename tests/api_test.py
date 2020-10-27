@@ -415,6 +415,18 @@ class CPPJitTest(jtu.JaxTestCase):
     del g                   # no more references to x
     assert x() is None      # x is gone
 
+  def test_jit_raises_on_first_invocation_on_non_hashable_static_argnum(self):
+    if self.jit != jax.api._python_jit:
+      raise unittest.SkipTest("this test only applies to _python_jit")
+    f = lambda x, y: x + 3
+    jitted_f = self.jit(f, static_argnums=(1,))
+
+    msg = ("Non-hashable static arguments are not supported, as this can lead "
+           "to unexpected cache-misses. Static argument (index 1) of type "
+           "<class 'numpy.ndarray'> for function <lambda> is non-hashable.")
+    with self.assertRaisesRegex(ValueError, re.escape(msg)):
+      jitted_f(1, np.asarray(1))
+
   def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
     if version < (0, 1, 58):
       raise unittest.SkipTest("Disabled because it depends on some future "
@@ -428,9 +440,9 @@ class CPPJitTest(jtu.JaxTestCase):
 
     jitted_f(1, 1)
 
-    msg = (
-        """Non-hashable static arguments are not supported. An error occured while trying to hash an object of type <class 'numpy.ndarray'>, 1. The error was:
-TypeError: unhashable type: 'numpy.ndarray'""")
+    msg = ("Non-hashable static arguments are not supported. An error occured "
+           "while trying to hash an object of type <class 'numpy.ndarray'>, 1. "
+           "The error was:\nTypeError: unhashable type: 'numpy.ndarray'")
 
     with self.assertRaisesRegex(ValueError, re.escape(msg)):
       jitted_f(1, np.asarray(1))

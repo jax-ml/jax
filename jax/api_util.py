@@ -88,13 +88,10 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
     try:
       hash(static_arg)
     except TypeError:
-      logging.warning(
-          "Static argument (index %s) of type %s for function %s is "
-          "non-hashable. As this can lead to unexpected cache-misses, it "
-          "will raise an error in a near future.", i, type(static_arg),
-          f.__name__)
-      # e.g. ndarrays, DeviceArrays
-      fixed_args[i] = WrapHashably(static_arg)  # type: ignore
+      raise ValueError(
+          "Non-hashable static arguments are not supported, as this can lead "
+          f"to unexpected cache-misses. Static argument (index {i}) of type "
+          f"{type(static_arg)} for function {f.__name__} is non-hashable.")
     else:
       fixed_args[i] = Hashable(static_arg)  # type: ignore
 
