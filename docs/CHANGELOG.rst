@@ -9,20 +9,38 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.2.6 (Unreleased)
+--------------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6>`_.
+
+* New Features:
+
+  * Add support for shape-polymorphic tracing for the jax.experimental.jax2tf converter.
+    See `README.md <https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md>`_.
+
 jaxlib 0.1.57 (unreleased)
 ------------------------------
 * Fixed a bug where the hash of bfloat16 values was not correctly initialized
   and could change (#4651).
 * Add support for retaining ownership when passing arrays to DLPack (#4636).
 
-jax 0.2.5 (October 25 2020)
+jax 0.2.5 (October 27 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.4...jax-v0.2.5>`_.
 
+* Improvements:
+
+  * Ensure that `check_jaxpr` does not perform FLOPS.  See `#4650 <https://github.com/google/jax/pull/4650>`_.
+  * Expanded the set of JAX primitives converted by jax2tf.
+    See `primitives_with_limited_support.md <https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md>`_.
 
 jax 0.2.4 (October 19 2020)
 --------------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.3...jax-v0.2.4>`_.
+
+* Improvements:
+
+  * Add support for `remat` to jax.experimental.host_callback.  See `#4608 <https://github.com/google/jax/pull/4608>`_.
 
 
 jaxlib 0.1.56 (October 14, 2020)
