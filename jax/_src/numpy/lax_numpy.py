@@ -29,7 +29,7 @@ import collections
 import operator
 import os
 import types
-from typing import Sequence, FrozenSet, Tuple, Union
+from typing import Sequence, FrozenSet, Tuple, Union, Iterable
 from textwrap import dedent as _dedent
 import warnings
 
@@ -850,7 +850,7 @@ def fmod(x1, x2):
   _check_arraylike("fmod", x1, x2)
   if issubdtype(_dtype(x1, x2), integer):
     x2 = where(x2 == 0, 1, x2)
-  return lax.rem(*_promote_args(np.fmod, x1, x2))
+  return lax.rem(*_promote_args("fmod", x1, x2))
 
 
 @_wraps(np.cbrt)
@@ -2341,9 +2341,9 @@ def _pad(array, pad_width, mode, constant_values):
 
 @_wraps(np.pad)
 def pad(array, pad_width, mode="constant", constant_values=0):
-  if isinstance(pad_width, Sequence):
+  if isinstance(pad_width, Iterable):
     pad_width = tuple(
-        tuple(int(i) for i in x) if isinstance(x, Sequence) else x
+        tuple(int(i) for i in x) if isinstance(x, Iterable) else x
         for x in pad_width)
   return _pad(array, pad_width, mode, constant_values)
 

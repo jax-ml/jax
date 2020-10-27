@@ -2238,6 +2238,14 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       lax.reduce_window(**args)
 
+  def test_select_jvp_complexity(self):
+    if not config.omnistaging_enabled:
+      raise SkipTest("test requires omnistaging")
+    jaxpr = jax.make_jaxpr(lambda x: jax.jvp(lambda x: lax.select(True, x, x),
+                                             (x,), (1.,)))(1.)
+    self.assertLen(jaxpr.jaxpr.eqns, 2)
+
+
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
     # check casting to ndarray works

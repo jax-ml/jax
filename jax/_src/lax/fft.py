@@ -27,6 +27,7 @@ from jax import lib
 from jax.lib import xla_client
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.lib import pocketfft
 
 xops = xla_client.ops
 
@@ -146,3 +147,5 @@ fft_p.def_abstract_eval(fft_abstract_eval)
 xla.translations[fft_p] = fft_translation_rule
 ad.deflinear(fft_p, fft_transpose_rule)
 batching.primitive_batchers[fft_p] = fft_batching_rule
+if pocketfft:
+  xla.backend_specific_translations['cpu'][fft_p] = pocketfft.pocketfft

@@ -19,11 +19,11 @@ import jax.numpy as jnp
 from jax import core
 from jax.core import Trace, Tracer
 from jax import linear_util as lu
-from jax.util import partial, safe_map
+from jax.util import partial, safe_map, wraps
 
 import inspect
-from jax.api_util import (wraps, flatten_fun_nokwargs)
-from jax.tree_util import (tree_flatten, tree_unflatten)
+from jax.api_util import flatten_fun_nokwargs
+from jax.tree_util import tree_flatten, tree_unflatten
 
 map = safe_map
 

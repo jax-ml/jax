@@ -68,6 +68,10 @@ import weakref
 
 from .util import curry
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
+
 class StoreException(Exception): pass
 
 

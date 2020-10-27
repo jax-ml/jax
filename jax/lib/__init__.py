@@ -67,3 +67,10 @@ try:
   from jaxlib import tpu_client  # pytype: disable=import-error
 except:
   tpu_client = None
+
+# TODO(phawkins): Make this import unconditional once the minimum jaxlib version
+# is 0.1.57 or greater.
+try:
+  from jaxlib import pocketfft  # pytype: disable=import-error
+except:
+  pocketfft = None

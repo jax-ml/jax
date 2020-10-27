@@ -19,6 +19,10 @@ from typing import Any, Optional
 
 from .lib import xla_client
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
+
 Traceback = Any  # xla_client.Traceback
 Frame = Any  # xla_client.Traceback::Frame
 

@@ -40,15 +40,16 @@ from . import linear_util as lu
 from . import ad_util
 from . import dtypes
 from .core import eval_jaxpr
-from .api_util import (wraps, flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
-                       flatten_fun_nokwargs2, argnums_partial, flatten_axes,
-                       donation_vector, rebase_donate_argnums)
+from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
+                       flatten_fun_nokwargs2, argnums_partial,
+                       argnums_partial_except, flatten_axes, donation_vector,
+                       rebase_donate_argnums)
 from .traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
-                   extend_name_stack, wrap_name, cache)
+                   extend_name_stack, wrap_name, cache, wraps)
 from .lib import jax_jit
 from .lib import version
 from .lib import xla_bridge as xb
@@ -65,8 +66,11 @@ from .interpreters import batching
 from .interpreters import masking
 from .interpreters import invertible_ad as iad
 from .interpreters.invertible_ad import custom_ivjp
-from .custom_derivatives import custom_jvp, custom_vjp
+from .custom_derivatives import custom_jvp, custom_vjp, custom_gradient
 from .config import flags, config, bool_env
+
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
 
 AxisName = Any
 
@@ -130,11 +134,12 @@ def jit(fun: Callable[..., T],
       arguments to treat as static (compile-time constant). Operations that only
       depend on static arguments will be constant-folded in Python (during
       tracing), and so the corresponding argument values can be any Python
-      object. Calling the jitted function with different values for these
-      constants will trigger recompilation. If the jitted function is called
-      with fewer positional arguments than indicated by ``static_argnums`` then
-      an error is raised. Arguments that are not arrays or containers thereof
-      must be marked as static. Defaults to ().
+      object. Static arguments should be hashable, meaning both ``__hash__``
+      and ``__eq__`` are implemented. Calling the jitted function with different
+      values for these constants will trigger recompilation. If the jitted
+      function is called with fewer positional arguments than indicated by
+      ``static_argnums`` then an error is raised. Arguments that are not arrays
+      or containers thereof must be marked as static. Defaults to ().
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via :py:func:`jax.devices`.) The default is inherited from
@@ -198,8 +203,7 @@ def _python_jit(
       raise ValueError(msg.format(static_argnums, donate_argnums, len(args)))
     f = lu.wrap_init(fun)
     if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      f, dyn_args = argnums_partial(f, dyn_argnums, args)
+      f, dyn_args = argnums_partial_except(f, static_argnums, args)
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
@@ -258,8 +262,7 @@ def _cpp_jit(
     # work/code that is redundant between C++ and Python. We can try that later.
     f = lu.wrap_init(fun)
     if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      f, dyn_args = argnums_partial(f, dyn_argnums, args)
+      f, dyn_args = argnums_partial_except(f, static_argnums, args)
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
@@ -623,8 +626,7 @@ def _xla_computation(
 
     f = lu.wrap_init(fun)
     if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      f, dyn_args = argnums_partial(f, dyn_argnums, args)
+      f, dyn_args = argnums_partial_except(f, static_argnums, args)
     else:
       dyn_args = args
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
@@ -1997,7 +1999,7 @@ def make_jaxpr(fun: Callable,
     wrapped = lu.wrap_init(fun)
     if static_argnums:
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      wrapped, _ = argnums_partial(wrapped, dyn_argnums, args)
+      wrapped, args = argnums_partial(wrapped, dyn_argnums, args)
     jax_args, in_tree = tree_flatten((args, kwargs))
     jaxtree_fun, out_tree = flatten_fun(wrapped, in_tree)
     in_avals = [raise_to_shaped(core.get_aval(x)) for x in jax_args]
@@ -2471,16 +2473,6 @@ def defvjp(fun, *vjprules):
                    for x, vjp in zip(primals, vjprules))
     return ans, vjpfun
   defvjp_all(fun, custom_vjp)
-
-def custom_gradient(fun):
-  """This API is deprecated. See :py:func:`jax.custom_jvp` and :py:func:`jax.custom_vjp` instead."""
-
-  def primal_fun(*args, **kwargs):
-    ans, _ = fun(*args, **kwargs)
-    return ans
-  primal_fun = custom_transforms(primal_fun)
-  defvjp_all(primal_fun, fun)
-  return primal_fun
 
 def _ensure_tuple(x: Union[int, Iterable[int]]) -> Tuple[int, ...]:
   return (x,) if isinstance(x, int) else tuple(x)

@@ -74,8 +74,8 @@ class AbstractSparseArray(core.ShapedArray):
   def indices(self):
     return sp_indices_p.bind(self)
 
-def abstract_sparse_array(arr):
-  return AbstractSparseArray(arr.shape, arr.dtype, arr.index_dtype, arr.nnz)
+class ConcreteSparseArray(AbstractSparseArray):
+  pass
 
 def sparse_array_result_handler(device, aval):
   def build_sparse_array(data_buf, indices_buf):
@@ -96,9 +96,9 @@ def sparse_array_device_put_handler(a, device):
     xla.xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
   )
 
-core.pytype_aval_mappings[SparseArray] = abstract_sparse_array
+core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
-xla.pytype_aval_mappings[SparseArray] = abstract_sparse_array
+xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
 xla.device_put_handlers[SparseArray] = sparse_array_device_put_handler
 xla.xla_result_handlers[AbstractSparseArray] = sparse_array_result_handler
@@ -199,13 +199,13 @@ class AbstractEmpty(core.AbstractValue):
   def __eq__(self, other):
     return isinstance(other, AbstractEmpty)
 
+class ConcreteEmpty(AbstractEmpty):
+  pass
 
-def abstract_empty(e):
-  return AbstractEmpty()
 
-core.pytype_aval_mappings[Empty] = abstract_empty
+core.pytype_aval_mappings[Empty] = lambda x: ConcreteEmpty()
 core.raise_to_shaped_mappings[AbstractEmpty] = lambda aval, _: aval
-xla.pytype_aval_mappings[Empty] = abstract_empty
+xla.pytype_aval_mappings[Empty] = lambda x: AbstractEmpty()
 xla.canonicalize_dtype_handlers[Empty] = lambda x: x
 xla.device_put_handlers[Empty] = lambda _, __: ()
 xla.xla_result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())

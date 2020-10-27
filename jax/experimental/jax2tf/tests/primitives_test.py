@@ -144,8 +144,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_fft(self, harness: primitive_harness.Harness):
     if len(harness.params["fft_lengths"]) > 3:
-      with self.assertRaisesRegex(RuntimeError, "FFT only supports ranks 1-3"):
-        harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+      if jtu.device_under_test() == "gpu":
+        with self.assertRaisesRegex(RuntimeError,
+                                    "FFT only supports ranks 1-3"):
+          harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
+      else:
+        raise unittest.SkipTest("TF does not support >3D FFTs.")
     elif (jtu.device_under_test() == "tpu" and
           len(harness.params["fft_lengths"]) > 1):
       # TODO(b/140351181): FFT is mostly unimplemented on TPU, even for JAX
@@ -154,7 +158,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     else:
       tol = None
-      if jtu.device_under_test() == "gpu":
+      if jtu.device_under_test() in ("cpu", "gpu"):
         if harness.params["dtype"] in jtu.dtypes.boolean:
           tol = 0.01
         else:

@@ -36,6 +36,9 @@ from . import source_info_util
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
 
+from . import traceback_util
+traceback_util.register_exclusion(__file__)
+
 # TODO(dougalm): compilation cache breaks the leak detector. Consisder solving.
 check_leaks = False
 
