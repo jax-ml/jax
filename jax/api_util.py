@@ -14,8 +14,6 @@
 
 from typing import Any, Tuple
 
-from absl import logging
-
 from .tree_util import (tree_flatten, tree_unflatten, tree_multimap, _replace_nones,
                         tree_structure)
 from . import linear_util as lu
