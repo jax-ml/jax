@@ -229,7 +229,7 @@ class Poly(dict):
     return str(self)
 
   def __int__(self):
-    assert self.is_constant
+    assert self.is_constant, f"casting polynomial '{self}' to integer"
     return op.index(next(iter(self.values())))
 
   def evaluate(self, env):
