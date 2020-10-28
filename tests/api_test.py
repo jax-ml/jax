@@ -428,7 +428,7 @@ class CPPJitTest(jtu.JaxTestCase):
       jitted_f(1, np.asarray(1))
 
   def test_cpp_jit_raises_on_non_hashable_static_argnum(self):
-    if version < (0, 1, 58):
+    if version < (0, 1, 57):
       raise unittest.SkipTest("Disabled because it depends on some future "
                               "release of jax_jit.cc within jaxlib.")
 
