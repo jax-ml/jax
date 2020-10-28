@@ -16,6 +16,7 @@
 import enum
 import itertools
 import operator
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -178,6 +179,66 @@ class DtypesTest(jtu.JaxTestCase):
     # jnp.int32(tracer) should work.
     self.assertEqual(jnp.int32(101),
                      jax.jit(lambda x: jnp.int32(x))(jnp.float32(101.4)))
+
+
+class TestPromotionTables(jtu.JaxTestCase):
+
+  @unittest.skipIf(not FLAGS.jax_enable_x64, "Weak dtype promotion table test requires X64 mode.")
+  def testWeakDtypesPromotionTable(self):
+    """Test that the weak & strong dtype promotion table does not change over time."""
+    # Note: * here refers to weakly-typed values
+    typecodes = \
+      ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
+    expected = [
+      ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
+      ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f8','c8'],
+      ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f8','c8'],
+      ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f8','c8'],
+      ['u8','u8','u8','u8','u8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','u8','f8','c8'],
+      ['i1','i2','i4','i8','f8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f8','c8'],
+      ['i2','i2','i4','i8','f8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f8','c8'],
+      ['i4','i4','i4','i8','f8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f8','c8'],
+      ['i8','i8','i8','i8','f8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
+      ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c8'],
+      ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c8'],
+      ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c8'],
+      ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
+      ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
+      ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
+      ['i8','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+      ['f8','f8','f8','f8','f8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
+      ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c4','c8','c*','c*','c*'],
+    ]
+    typecode_to_dtype = {
+      'b1': jnp.bool_,
+      'u1': jnp.uint8, 'u2': jnp.uint16, 'u4': jnp.uint32, 'u8': jnp.uint64,
+      'i1': jnp.int8, 'i2': jnp.int16, 'i4': jnp.int32, 'i8': jnp.int64,
+      'bf': jnp.bfloat16, 'f2': jnp.float16, 'f4': jnp.float32, 'f8': jnp.float64,
+      'c4': jnp.complex64, 'c8': jnp.complex128,
+      'i*': jnp.int64, 'f*': jnp.float64, 'c*': jnp.complex128,
+    }
+    dtype_to_typecode = {jnp.dtype(v): k for k, v in typecode_to_dtype.items()
+                        if not k.endswith('*')}
+
+    def typecode_to_val(typecode):
+      weak_type = typecode.endswith('*')
+      dtype = typecode_to_dtype[typecode]
+      val = dtype(0)
+      if weak_type:
+        val = val.item()
+      return val
+
+    def val_to_typecode(val):
+      dtype = dtypes.result_type(val)
+      weak_type = dtypes.is_python_scalar(val)
+      typecode = dtype_to_typecode[dtype]
+      if weak_type:
+        typecode = typecode[:-1] + '*'
+      return typecode
+
+    vals = [typecode_to_val(t) for t in typecodes]
+    table = [[val_to_typecode(v1 + v2) for v1 in vals] for v2 in vals]
+    self.assertEqual(table, expected)
 
 
 if __name__ == "__main__":
