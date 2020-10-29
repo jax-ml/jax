@@ -567,37 +567,42 @@ lax_linalg_qr = tuple(
   for full_matrices in [False, True]
 )
 
-def _fft_harness_gen(nb_axes):
+def _make_fft_harness(name, *, shape=(14, 15, 16, 17), dtype=np.float32,
+                      fft_type=xla_client.FftType.FFT, fft_lengths=(17,)):
   def _fft_rng_factory(dtype):
-    _all_integers = jtu.dtypes.all_integer + jtu.dtypes.all_unsigned + jtu.dtypes.boolean
+    _all_integers = (jtu.dtypes.all_integer + jtu.dtypes.all_unsigned +
+        jtu.dtypes.boolean)
     # For integer types, use small values to keep the errors small
     if dtype in _all_integers:
       return jtu.rand_small
     else:
       return jtu.rand_default
 
-  return tuple(
-    Harness(f"{nb_axes}d_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
-            lax.fft,
-            [RandArg(shape, dtype), StaticArg(fft_type), StaticArg(fft_lengths)],
-            rng_factory=_fft_rng_factory(dtype),
-            shape=shape,
-            dtype=dtype,
-            fft_type=fft_type,
-            fft_lengths=fft_lengths)
-    for dtype in jtu.dtypes.all
-    for shape in filter(lambda x: len(x) >= nb_axes,
-                        [(10,), (12, 13), (14, 15, 16), (14, 15, 16, 17)])
-    for fft_type, fft_lengths in [(xla_client.FftType.FFT, shape[-nb_axes:]),
-                                  (xla_client.FftType.IFFT, shape[-nb_axes:]),
-                                  (xla_client.FftType.RFFT, shape[-nb_axes:]),
-                                  (xla_client.FftType.IRFFT,
-                                   shape[-nb_axes:-1] + ((shape[-1] - 1) * 2,))]
-    if not (dtype in jtu.dtypes.complex and fft_type == xla_client.FftType.RFFT)
-  )
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
+                 lax.fft,
+                 [RandArg(shape, dtype), StaticArg(fft_type),
+                  StaticArg(fft_lengths)],
+                 rng_factory=_fft_rng_factory(dtype),
+                 shape=shape,
+                 dtype=dtype,
+                 fft_type=fft_type,
+                 fft_lengths=fft_lengths)
 
-lax_fft = tuple(_fft_harness_gen(1) + _fft_harness_gen(2) + _fft_harness_gen(3) +
-                _fft_harness_gen(4))
+lax_fft = tuple( # Validate dtypes
+  _make_fft_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate dimensions per FFT type
+  _make_fft_harness("fft_and_dims", shape=shape, fft_type=fft_type,
+                    fft_lengths=fft_lengths)
+  for shape in [(14, 15, 16, 17)]
+  for dims in [1, 2, 3]
+  # FFT, IFFT, RFFT, IRFFT
+  for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3]))
+  for fft_lengths in [
+    shape[-dims:] if fft_type != xla_client.FftType.IRFFT else
+    shape[-dims:-1] + ((shape[-1] - 1) * 2,)
+  ]
+)
 
 lax_linalg_svd = tuple(
   Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",

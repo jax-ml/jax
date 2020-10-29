@@ -1914,22 +1914,19 @@ def _sort(*operand: TfVal, dimension: int, is_stable: bool, num_keys: int) -> Tu
 tf_impl[lax.sort_p] = _sort
 
 def _fft(x, fft_type, fft_lengths):
-  shape = x.shape
-  assert len(fft_lengths) <= len(shape)
-  if ((fft_type == xla_client.FftType.IRFFT and
-       fft_lengths != shape[-len(fft_lengths):-1] + ((shape[-1] - 1) * 2,)) or
-      (fft_type != xla_client.FftType.IRFFT and
-       fft_lengths != shape[-len(fft_lengths):])):
-     raise NotImplementedError(f"Unsupported fft_lengths={fft_lengths} for fft_type={fft_type} of array with shape={shape}.")
-  tf_funcs = {xla_client.FftType.FFT: [tf.signal.fft, tf.signal.fft2d,
-                                       tf.signal.fft3d],
-              xla_client.FftType.IFFT: [tf.signal.ifft, tf.signal.ifft2d,
-                                        tf.signal.ifft3d],
-              xla_client.FftType.RFFT: [tf.signal.rfft, tf.signal.rfft2d,
-                                        tf.signal.rfft3d],
-              xla_client.FftType.IRFFT: [tf.signal.irfft, tf.signal.irfft2d,
-                                         tf.signal.irfft3d]}
-
+  FFT, IFFT, RFFT, IRFFT = list(map(xla_client.FftType, [0, 1, 2, 3]))
+  if fft_type == IRFFT:
+    expected_lengths = x.shape[-len(fft_lengths):-1] + ((x.shape[-1] - 1) * 2,)
+  else:
+    expected_lengths = x.shape[-len(fft_lengths):]
+  if expected_lengths != fft_lengths:
+    raise NotImplementedError(
+      f"Unsupported fft_lengths={fft_lengths} for fft_type={fft_type} of "
+      f"array with shape={x.shape}.")
+  tf_funcs = {FFT: [tf.signal.fft, tf.signal.fft2d, tf.signal.fft3d],
+              IFFT: [tf.signal.ifft, tf.signal.ifft2d, tf.signal.ifft3d],
+              RFFT: [tf.signal.rfft, tf.signal.rfft2d, tf.signal.rfft3d],
+              IRFFT: [tf.signal.irfft, tf.signal.irfft2d, tf.signal.irfft3d]}
   return tf_funcs[fft_type][len(fft_lengths) - 1](x)
 
 tf_impl[lax_fft.fft_p] = _fft

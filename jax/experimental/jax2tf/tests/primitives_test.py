@@ -141,7 +141,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_fft)
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_fft(self, harness: primitive_harness.Harness):
     if len(harness.params["fft_lengths"]) > 3:
       if jtu.device_under_test() == "gpu":
