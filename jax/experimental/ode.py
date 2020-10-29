@@ -19,6 +19,9 @@ autograd/diff library and the Dormand-Prince method for adaptive integration
 stepsize calculation. Provides improved integration accuracy over fixed
 stepsize integration methods.
 
+For details of the mixed 4th/5th order Runge-Kutta integration method, see
+https://doi.org/10.1090/S0025-5718-1986-0815836-3
+
 Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 """
 
