@@ -65,10 +65,6 @@ conversion to Tensorflow.
 | rem | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
 | round | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | rsqrt | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
-| scatter-add | Missing TF support | Primitive is unimplemented in TF | complex64 | TPU |
-| scatter-max | Missing TF support | Primitive is unimplemented in TF | bool | CPU, GPU, TPU |
-| scatter-min | Missing TF support | Primitive is unimplemented in TF | bool | CPU, GPU, TPU |
-| scatter-mul | Missing TF support | Primitive is unimplemented in TF | complex64 | TPU |
 | select_and_gather_add | Missing TF support | Primitive is unimplemented in TF | float32, float64 | TPU |
 | select_and_gather_add | Missing TF support | Primitive is unimplemented in TF | float64 | CPU, GPU |
 | sinh | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |

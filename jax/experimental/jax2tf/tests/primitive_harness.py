@@ -385,10 +385,14 @@ lax_gather = tuple(
   ]
 )
 
-lax_scatter = tuple(
-  # Directly from lax.scatter in tests/lax_test.py
-  Harness(
-    f"fun={f_lax.__name__}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}".replace(' ', ''),
+def _make_scatter_harness(name, *, shape=(5,), f_lax=lax.scatter_min,
+                          indices_are_sorted=False, unique_indices=False,
+                          scatter_indices=np.array([[0], [2]]),
+                          update_shape=(2,), dtype=np.float32,
+                          dimension_numbers=((), (0,), (0,))):
+  dimension_numbers = lax.ScatterDimensionNumbers(*dimension_numbers)
+  return Harness(
+    f"{name}_fun={f_lax.__name__}_shape={jtu.format_shape_dtype_string(shape, dtype)}_scatterindices={scatter_indices.tolist()}_updateshape={update_shape}_updatewindowdims={dimension_numbers.update_window_dims}_insertedwindowdims={dimension_numbers.inserted_window_dims}_scatterdimstooperanddims={dimension_numbers.scatter_dims_to_operand_dims}_indicesaresorted={indices_are_sorted}_uniqueindices={unique_indices}".replace(' ', ''),
     partial(f_lax, indices_are_sorted=indices_are_sorted,
             unique_indices=unique_indices),
     [RandArg(shape, dtype), StaticArg(scatter_indices),
@@ -401,30 +405,33 @@ lax_scatter = tuple(
     dimension_numbers=dimension_numbers,
     indices_are_sorted=indices_are_sorted,
     unique_indices=unique_indices)
+
+lax_scatter = tuple( # Validate dtypes
+  _make_scatter_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate f_lax/update_jaxpr
+  _make_scatter_harness("update_function", f_lax=f_lax)
   # We explicitly decide against testing lax.scatter, as its reduction function
   # is lambda x, y: y, which is not commutative and thus makes results
   # non-deterministic when an index into the operand is updated several times.
-  for f_lax in [lax.scatter_min, lax.scatter_max, lax.scatter_mul,
-                lax.scatter_add]
-  for dtype in { lax.scatter_min: jtu.dtypes.all
-               , lax.scatter_max: jtu.dtypes.all
-                 # lax.scatter_mul and lax.scatter_add are not compatible with
-                 # np.bool_ operands.
-               , lax.scatter_mul: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               , lax.scatter_add: filter(lambda t: t != np.bool_, jtu.dtypes.all)
-               }[f_lax]
-  for shape, scatter_indices, update_shape, dimension_numbers in [
-      ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
-        update_window_dims=(), inserted_window_dims=(0,),
-        scatter_dims_to_operand_dims=(0,))),
-      ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
-        update_window_dims=(1,), inserted_window_dims=(),
-        scatter_dims_to_operand_dims=(0,))),
-      ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
-        update_window_dims=(1,), inserted_window_dims=(0,),
-        scatter_dims_to_operand_dims=(0,))),
+  for f_lax in [
+    lax.scatter_add,
+    lax.scatter_max,
+    lax.scatter_mul
   ]
-  for indices_are_sorted in [False, True]
+) + tuple( # Validate shapes, dimension numbers and scatter indices
+  _make_scatter_harness("shapes_and_dimension_numbers", shape=shape,
+                        update_shape=update_shape,
+                        scatter_indices=np.array(scatter_indices),
+                        dimension_numbers=dimension_numbers)
+  for shape, scatter_indices, update_shape, dimension_numbers in [
+    ((10,),   [[0], [0], [0]], (3, 2), ((1,), (), (0,))),
+    ((10, 5), [[0], [2], [1]], (3, 3), ((1,), (0,), (0,)))
+  ]
+) + tuple ( # Validate sorted indices
+  [_make_scatter_harness("indices_are_sorted", indices_are_sorted=True)]
+) + tuple( # Validate unique_indices
+  _make_scatter_harness("unique_indices", unique_indices=unique_indices)
   # `unique_indices` does not affect correctness, only performance, and thus
   # does not need to be tested here. If/when it will make sense to add a test
   # with `unique_indices` = True, particular care will have to be taken with
