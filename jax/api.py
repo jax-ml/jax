@@ -1677,7 +1677,7 @@ def _jvp(fun: lu.WrappedFun, primals, tangents):
     if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
       msg = ("primal and tangent arguments to jax.jvp do not match; "
              "dtypes must be equal, or in case of int/bool primal dtype "
-             "the tangent dtype must be float0."
+             "the tangent dtype must be float0. "
              f"Got primal dtype {_dtype(p)} and so expected tangent dtype "
              f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
              f"tangent dtype {_dtype(t)} instead.")
