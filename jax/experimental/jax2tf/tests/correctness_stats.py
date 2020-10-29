@@ -164,6 +164,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
                         "implementation")
       tf_unimpl(np_dtype, additional_msg=additional_msg, devs=["CPU", "GPU"])
 
+  if prim is lax.select_and_scatter_add_p:
+    if np_dtype in [np.uint64, np.uint32, np.uint16]:
+      tf_unimpl(np_dtype)
+
   if prim is lax.select_and_gather_add_p:
     # TODO: the conversion is only supported for float16/float32 on CPU/GPU,
     # and float16 on TPU. This is because we do not implement a precision

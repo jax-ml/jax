@@ -266,6 +266,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            custom_assert=custom_assert,
                            always_custom_assert=True)
 
+  @primitive_harness.parameterized(primitive_harness.lax_select_and_scatter_add)
+  def test_select_and_scatter_add(self, harness: primitive_harness.Harness):
+    if jtu.device_under_test() == "tpu" and not harness.params["run_on_tpu"]:
+      raise unittest.SkipTest(
+        "TODO: select_and_scatter on JAX on TPU only works when the parameters "
+        "define 2 or more inactive dimensions"
+      )
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_select_and_gather_add)
   @jtu.ignore_warning(category=UserWarning,
                       message="Using reduced precision for gradient.*")

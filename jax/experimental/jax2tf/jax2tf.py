@@ -1664,18 +1664,20 @@ def _select_and_scatter(
 
 tf_impl[lax.select_and_scatter_p] = _select_and_scatter
 
-def _select_and_scatter_add(
-    operand, source, init_value, select_jaxpr, select_consts, scatter_jaxpr,
-    scatter_consts, window_dimensions, window_strides, padding):
-  del select_jaxpr, select_consts, scatter_jaxpr, scatter_consts
-  # TODO(phawkins): handle the select and scatter jaxprs correctly.
-  a = tf.constant(0, operand.dtype)
-  select_fn = _ge_fn.get_concrete_function(a, a)
-  scatter_fn = _add_fn.get_concrete_function(a, a)
-  return tfxla.select_and_scatter(operand, window_dimensions, window_strides,
-                                  padding, source, init_value, select_fn,
-                                  scatter_fn)
-tf_impl[lax.select_and_scatter_add_p] = _select_and_scatter_add
+@functools.partial(bool_to_int8, argnums=(0, 1))
+def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
+                            window_strides, padding, _in_avals, _out_aval):
+  init_value = tf.zeros((), operand.dtype)
+  select_fn = (tf.function(tf_impl[select_prim], autograph=False)
+                 .get_concrete_function(init_value, init_value))
+  scatter_fn = _add_fn.get_concrete_function(init_value, init_value)
+  out = tfxla.select_and_scatter(operand, window_dimensions, window_strides,
+                                 padding, source, init_value, select_fn,
+                                 scatter_fn)
+  out.set_shape(_aval_to_tf_shape(_out_aval))
+  return out
+
+tf_impl_with_avals[lax.select_and_scatter_add_p] = _select_and_scatter_add
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   # We use the random._threefry2x32_lowering, but since add is not implemented
