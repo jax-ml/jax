@@ -997,7 +997,7 @@ class DynamicJaxprTrace(core.Trace):
     return tracer
 
   def new_const(self, val):
-    aval = raise_to_shaped(get_aval(val), weak_type=dtypes.is_python_scalar(val))
+    aval = raise_to_shaped(get_aval(val), weak_type=dtypes.is_weakly_typed(val))
     tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
     self.frame.tracers.append(tracer)
     var = self.frame.tracer_to_var[id(tracer)] = self.getconstvar(val)
