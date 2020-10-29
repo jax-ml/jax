@@ -16,7 +16,6 @@
 import enum
 import itertools
 import operator
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -183,32 +182,53 @@ class DtypesTest(jtu.JaxTestCase):
 
 class TestPromotionTables(jtu.JaxTestCase):
 
-  @unittest.skipIf(not FLAGS.jax_enable_x64, "Weak dtype promotion table test requires X64 mode.")
   def testWeakDtypesPromotionTable(self):
     """Test that the weak & strong dtype promotion table does not change over time."""
     # Note: * here refers to weakly-typed values
     typecodes = \
       ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
-    expected = [
-      ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
-      ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f8','c8'],
-      ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f8','c8'],
-      ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f8','c8'],
-      ['u8','u8','u8','u8','u8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','u8','f8','c8'],
-      ['i1','i2','i4','i8','f8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f8','c8'],
-      ['i2','i2','i4','i8','f8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f8','c8'],
-      ['i4','i4','i4','i8','f8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f8','c8'],
-      ['i8','i8','i8','i8','f8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
-      ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c8'],
-      ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c8'],
-      ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c8'],
-      ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
-      ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
-      ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
-      ['i8','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
-      ['f8','f8','f8','f8','f8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
-      ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c4','c8','c*','c*','c*'],
-    ]
+    if FLAGS.jax_enable_x64:
+      expected = [
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
+        ['u1','u1','u2','u4','u8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','u1','f8','c8'],
+        ['u2','u2','u2','u4','u8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','u2','f8','c8'],
+        ['u4','u4','u4','u4','u8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','u4','f8','c8'],
+        ['u8','u8','u8','u8','u8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','u8','f8','c8'],
+        ['i1','i2','i4','i8','f8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i1','f8','c8'],
+        ['i2','i2','i4','i8','f8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f8','c8'],
+        ['i4','i4','i4','i8','f8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f8','c8'],
+        ['i8','i8','i8','i8','f8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c8'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c8'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c8'],
+        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
+        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
+        ['i8','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
+        ['f8','f8','f8','f8','f8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
+        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c4','c8','c*','c*','c*'],
+      ]
+    else:
+      expected = [
+        ['b1','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
+        ['u1','u1','u2','u4','u4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','u1','f4','c4'],
+        ['u2','u2','u2','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u2','f4','c4'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f4','c4'],
+        ['u4','u4','u4','u4','u4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','u4','f4','c4'],
+        ['i1','i2','i4','i4','i4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i1','f4','c4'],
+        ['i2','i2','i4','i4','i4','i2','i2','i4','i4','bf','f2','f4','f4','c4','c4','i2','f4','c4'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
+        ['i4','i4','i4','i4','i4','i4','i4','i4','i4','bf','f2','f4','f4','c4','c4','i4','f4','c4'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f4','c4','c4','bf','bf','c4'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f4','c4','c4','f2','f2','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','c4','c4','f4','f4','c4'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4'],
+        ['i4','u1','u2','u4','u4','i1','i2','i4','i4','bf','f2','f4','f4','c4','c4','i*','f*','c*'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','bf','f2','f4','f4','c4','c4','f*','f*','c*'],
+        ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c*','c*','c*'],
+      ]
     typecode_to_dtype = {
       'b1': jnp.bool_,
       'u1': jnp.uint8, 'u2': jnp.uint16, 'u4': jnp.uint32, 'u8': jnp.uint64,
@@ -238,7 +258,16 @@ class TestPromotionTables(jtu.JaxTestCase):
 
     vals = [typecode_to_val(t) for t in typecodes]
     table = [[val_to_typecode(v1 + v2) for v1 in vals] for v2 in vals]
-    self.assertEqual(table, expected)
+
+    def show_differences(epected, actual):
+      diffs = ""
+      for i, t1 in enumerate(typecodes):
+        for j, t2 in enumerate(typecodes):
+          if expected[i][j] != actual[i][j]:
+            diffs += f"\n{t1}, {t2} -> want {expected[i][j]}, got {actual[i][j]}"
+      return diffs
+
+    self.assertEqual(table, expected, show_differences(expected, table))
 
 
 if __name__ == "__main__":
