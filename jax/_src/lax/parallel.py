@@ -782,7 +782,7 @@ def _axis_index_bind(*, axis_name):
   for name in reversed(axis_name):
     frame = core.axis_frame(name)
     if frame.main_trace is not None:
-      trace = frame.main_trace.trace_type(frame.main_trace, core.cur_sublevel())
+      trace = frame.main_trace.with_cur_sublevel()
       name_idx = trace.process_axis_index(frame)
     else:
       name_idx = core.Primitive.bind(axis_index_p, axis_name=name)

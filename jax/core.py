@@ -591,10 +591,12 @@ class EvalTrace(Trace):
 class MainTrace:
   level: int
   trace_type: Type[Trace]
+  payload: Dict[str, Any]
 
-  def __init__(self, level, trace_type) -> None:
+  def __init__(self, level, trace_type, **payload) -> None:
     self.level = level
     self.trace_type = trace_type
+    self.payload = payload
 
   def __repr__(self) -> str:
     return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
@@ -604,7 +606,12 @@ class MainTrace:
 
   def __eq__(self, other: object) -> bool:
     return (isinstance(other, MainTrace) and
-            self.level == other.level and self.trace_type == other.trace_type)
+            self.level == other.level and
+            self.trace_type == other.trace_type and
+            self.payload == other.payload)
+
+  def with_cur_sublevel(self):
+    return self.trace_type(self, cur_sublevel(), **self.payload)
 
 class TraceStack:
   # See comments in https://github.com/google/jax/pull/3370
@@ -682,12 +689,13 @@ def cur_sublevel() -> Sublevel:
   return thread_local_state.trace_state.substack[-1]
 
 @contextmanager
-def new_main(trace_type: Type[Trace], dynamic: bool = False,
-                ) -> Generator[MainTrace, None, None]:
+def new_main(trace_type: Type[Trace],
+             dynamic: bool = False,
+             **payload) -> Generator[MainTrace, None, None]:
   # See comments in https://github.com/google/jax/pull/3370
   stack = thread_local_state.trace_state.trace_stack
   level = stack.next_level()
-  main = MainTrace(level, trace_type)
+  main = MainTrace(level, trace_type, **payload)
   stack.push(main)
   if dynamic:
     prev_dynamic, stack.dynamic = stack.dynamic, main
@@ -756,7 +764,7 @@ def find_top_trace(xs) -> Trace:
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
                 else top_main)
-  return top_main and top_main.trace_type(top_main, cur_sublevel())  # type: ignore
+  return top_main and top_main.with_cur_sublevel()  # type: ignore
 
 
 # -------------------- abstract values --------------------
@@ -1151,7 +1159,7 @@ def process_env_traces(primitive: Union['CallPrimitive', 'MapPrimitive'],
       ans = max(tracers, key=lambda x: x._trace.level)
     else:
       break
-    trace = type(ans._trace)(ans._trace.main, cur_sublevel())
+    trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, cur_todo = primitive.post_process(trace, outs, params)
     todo.append(cur_todo)
@@ -1576,9 +1584,9 @@ def omnistaging_disabler() -> None:
       return True
 
   @contextmanager
-  def new_main(trace_type: Type[Trace], bottom=False) -> Generator[MainTrace, None, None]:
+  def new_main(trace_type: Type[Trace], bottom=False, **payload) -> Generator[MainTrace, None, None]:
     level = thread_local_state.trace_state.trace_stack.next_level(bottom)
-    main = MainTrace(level, trace_type)
+    main = MainTrace(level, trace_type, **payload)
     thread_local_state.trace_state.trace_stack.push(main, bottom)
 
     try:
@@ -1596,7 +1604,7 @@ def omnistaging_disabler() -> None:
   def find_top_trace(xs) -> Optional[Trace]:
     top_trace = max((x._trace for x in xs if isinstance(x, Tracer)),
                     key=attrgetter('level'), default=None)
-    return top_trace and type(top_trace)(top_trace.main, cur_sublevel())
+    return top_trace and top_trace.main.with_cur_sublevel()
 
   @contextmanager
   def eval_context():

@@ -363,7 +363,8 @@ def _pred_bcast_select(c, pred, x, y, x_y_aval: core.AbstractValue):
     bcast_pred = xops.BroadcastInDim(pred, x_shape, list(range(len(pred_shape))))
     return xops.Select(bcast_pred, x, y)
 
-def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
+def _while_loop_batching_rule(args, dims, axis_name,
+                              cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
   orig_batched = [d is not batching.not_mapped for d in dims]
@@ -378,10 +379,11 @@ def _while_loop_batching_rule(args, dims, cond_nconsts, cond_jaxpr,
   for _ in range(1 + len(carry_bat)):
     batched = bconst_bat + carry_bat
     body_jaxpr_batched, carry_bat_out = batching.batch_jaxpr(
-        body_jaxpr, size, batched, instantiate=carry_bat)
+        body_jaxpr, size, batched, instantiate=carry_bat, axis_name=axis_name)
     cond_jaxpr_batched, (pred_bat,) = batching.batch_jaxpr(
         cond_jaxpr, size, cconst_bat + carry_bat,
-        instantiate=bool(cond_jaxpr.out_avals[0].shape))
+        instantiate=bool(cond_jaxpr.out_avals[0].shape),
+        axis_name=axis_name)
     carry_bat_out = _map(partial(operator.or_, pred_bat), carry_bat_out)
     if carry_bat_out == carry_bat:
       break
@@ -547,7 +549,7 @@ ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.initial_style_translations[while_p] = _while_loop_translation_rule
 ad.primitive_transposes[while_p] = _while_transpose_error
-batching.primitive_batchers[while_p] = _while_loop_batching_rule
+batching.initial_style_batchers[while_p] = _while_loop_batching_rule
 
 
 ### cond and switch
@@ -769,7 +771,7 @@ def _cond_index_bcast_and_select_tree(indices, branch_vals):
         indices, np.shape(branch_vals[0]), list(range(np.ndim(indices))))
     return _select_tree(bcast_indices, branch_vals)
 
-def _cond_batching_rule(args, dims, branches, linear):
+def _cond_batching_rule(args, dims, axis_name, branches, linear):
   # TODO: maybe avoid moving arg axes to front if we're promoting to select?
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
   args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
@@ -779,11 +781,11 @@ def _cond_batching_rule(args, dims, branches, linear):
   index, *ops = args
   index_bat, *bat = orig_bat
 
-  branches_out_bat = [batching.batch_jaxpr(jaxpr, size, bat, False)[1]
+  branches_out_bat = [batching.batch_jaxpr(jaxpr, size, bat, False, axis_name)[1]
                       for jaxpr in branches]
   out_bat = [any(bat) for bat in zip(*branches_out_bat)]
 
-  branches_batched = tuple(batching.batch_jaxpr(jaxpr, size, bat, out_bat)[0]
+  branches_batched = tuple(batching.batch_jaxpr(jaxpr, size, bat, out_bat, axis_name)[0]
                            for jaxpr in branches)
 
   if index_bat:
@@ -1107,7 +1109,7 @@ cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
 ad.primitive_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
-batching.primitive_batchers[cond_p] = _cond_batching_rule
+batching.initial_style_batchers[cond_p] = _cond_batching_rule
 xla.initial_style_translations[cond_p] = _cond_translation_rule
 core.custom_typechecks[cond_p] = _cond_typecheck
 
@@ -1728,7 +1730,7 @@ def _make_closed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.Abstrac
   return core.ClosedJaxpr(jaxpr, consts)
 
 
-def _scan_batching_rule(args, dims, reverse, length, jaxpr, num_consts,
+def _scan_batching_rule(args, dims, axis_name, reverse, length, jaxpr, num_consts,
                         num_carry, linear, unroll):
   num_ys = len(jaxpr.out_avals) - num_carry
   size, = {x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped}
@@ -1744,7 +1746,9 @@ def _scan_batching_rule(args, dims, reverse, length, jaxpr, num_consts,
   for _ in range(1 + len(carry_batched)):
     batched = const_batched + carry_batched + xs_batched
     jaxpr_batched, batched_out = batching.batch_jaxpr(
-        jaxpr, size, batched, instantiate=carry_batched + [False] * num_ys)
+        jaxpr, size, batched,
+        instantiate=carry_batched + [False] * num_ys,
+        axis_name=axis_name)
     carry_batched_out, ys_batched = batched_out[:num_carry], batched_out[num_carry:]
     if carry_batched_out == carry_batched:
       break
@@ -1865,7 +1869,7 @@ ad.primitive_jvps[scan_p] = _scan_jvp
 ad.primitive_transposes[scan_p] = _scan_transpose
 pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.initial_style_translations[scan_p] = xla.lower_fun_initial_style(_scan_impl)
-batching.primitive_batchers[scan_p] = _scan_batching_rule
+batching.initial_style_batchers[scan_p] = _scan_batching_rule
 masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 
@@ -2267,7 +2271,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
   return [None] * sum(const_lengths) + cotangent_b
 
 
-def _linear_solve_batching_rule(args, dims, const_lengths, jaxprs):
+def _linear_solve_batching_rule(args, dims, axis_name, const_lengths, jaxprs):
   orig_bat = [d is not batching.not_mapped for d in dims]
   size, = {
       a.shape[d] for a, d in zip(args, dims) if d is not batching.not_mapped
@@ -2287,23 +2291,23 @@ def _linear_solve_batching_rule(args, dims, const_lengths, jaxprs):
   for i in range(1 + len(orig_b_bat) + len(solve.out_avals)):
     # Apply vecmat and solve -> new batched parts of x
     solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
-        solve, size, solve_bat + b_bat, instantiate=x_bat)
+        solve, size, solve_bat + b_bat, instantiate=x_bat, axis_name=axis_name)
     if vecmat is None:
       vecmat_jaxpr_batched = None
       x_bat_out = solve_x_bat
     else:
       vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
-          vecmat, size, vecmat_bat + b_bat, instantiate=x_bat)
+          vecmat, size, vecmat_bat + b_bat, instantiate=x_bat, axis_name=axis_name)
       x_bat_out = _map(operator.or_, vecmat_x_bat, solve_x_bat)
     # Apply matvec and solve_t -> new batched parts of b
     matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
-        matvec, size, matvec_bat + x_bat_out, instantiate=b_bat)
+        matvec, size, matvec_bat + x_bat_out, instantiate=b_bat, axis_name=axis_name)
     if solve_t is None:
       solve_t_jaxpr_batched = None
       b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
     else:
       solve_t_jaxpr_batched, solve_t_b_bat = batching.batch_jaxpr(
-          solve_t, size, solve_t_bat + x_bat_out, instantiate=b_bat)
+          solve_t, size, solve_t_bat + x_bat_out, instantiate=b_bat, axis_name=axis_name)
       b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
                       orig_b_bat)
     if x_bat_out == x_bat and b_bat_out == b_bat:
@@ -2346,7 +2350,7 @@ ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
 xla.initial_style_translations[linear_solve_p] = \
     xla.lower_fun_initial_style(_custom_linear_solve_impl)
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-batching.primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
+batching.initial_style_batchers[linear_solve_p] = _linear_solve_batching_rule
 
 
 def _interleave(a, b, axis):
