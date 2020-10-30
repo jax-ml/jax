@@ -250,7 +250,7 @@ class TestPromotionTables(jtu.JaxTestCase):
 
     def val_to_typecode(val):
       dtype = dtypes.result_type(val)
-      weak_type = dtypes.is_python_scalar(val)
+      weak_type = dtypes.is_weakly_typed(val)
       typecode = dtype_to_typecode[dtype]
       if weak_type:
         typecode = typecode[:-1] + '*'

@@ -166,6 +166,19 @@ can_cast = np.can_cast
 issubsctype = np.issubsctype
 
 
+class _WeakType:
+  def __init__(self, type):
+    assert type in [int, float, complex], f"WeakType(type={type}) not supported."
+    self.type = type
+  def __repr__(self):
+    return f"_WeakType({self.type.name})"
+  def __hash__(self):
+    return hash((self.type,))
+  def __eq__(self, other):
+    if isinstance(other, _WeakType):
+      return self.type == other.type
+    return NotImplemented
+
 # List of all valid JAX dtypes, in the order they appear in the type promotion
 # table.
 _jax_types = [
@@ -184,30 +197,46 @@ _jax_types = [
   np.dtype('float64'),
   np.dtype('complex64'),
   np.dtype('complex128'),
+  _WeakType(int),
+  _WeakType(float),
+  _WeakType(complex),
 ]
+
+def _jax_type(value):
+  """Return the jax type for a value."""
+  dtype_ = dtype(value)
+  if is_weakly_typed(value):
+    pytype = type(dtype_.type(0).item())
+    if pytype in [int, float, complex]:
+      return _WeakType(pytype)
+  return dtype_
 
 # Mapping from types to their type numbers.
 _jax_type_nums = {t: i for i, t in enumerate(_jax_types)}
 
+
 def _make_type_promotion_table():
-  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8 = _jax_types
-  #  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8
+  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s_, f_, c_ = _jax_types
+  #  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s*, f*, c*
   return np.array([
-    [b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # b1
-    [u1, u1, u2, u4, u8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # u1
-    [u2, u2, u2, u4, u8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8],  # u2
-    [u4, u4, u4, u4, u8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8],  # u4
-    [u8, u8, u8, u8, u8, f8, f8, f8, f8, bf, f2, f4, f8, c4, c8],  # u8
-    [s1, s2, s4, s8, f8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # s1
-    [s2, s2, s4, s8, f8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8],  # s2
-    [s4, s4, s4, s8, f8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8],  # s4
-    [s8, s8, s8, s8, f8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8],  # s8
-    [bf, bf, bf, bf, bf, bf, bf, bf, bf, bf, f4, f4, f8, c4, c8],  # bf
-    [f2, f2, f2, f2, f2, f2, f2, f2, f2, f4, f2, f4, f8, c4, c8],  # f2
-    [f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f8, c4, c8],  # f4
-    [f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, c8, c8],  # f8
-    [c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c8, c4, c8],  # c4
-    [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8],  # c8
+    [b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s8, f8, c8],  # b1
+    [u1, u1, u2, u4, u8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8, u1, f8, c8],  # u1
+    [u2, u2, u2, u4, u8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8, u2, f8, c8],  # u2
+    [u4, u4, u4, u4, u8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8, u4, f8, c8],  # u4
+    [u8, u8, u8, u8, u8, f8, f8, f8, f8, bf, f2, f4, f8, c4, c8, u8, f8, c8],  # u8
+    [s1, s2, s4, s8, f8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s1, f8, c8],  # s1
+    [s2, s2, s4, s8, f8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8, s2, f8, c8],  # s2
+    [s4, s4, s4, s8, f8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8, s4, f8, c8],  # s4
+    [s8, s8, s8, s8, f8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8, s8, f8, c8],  # s8
+    [bf, bf, bf, bf, bf, bf, bf, bf, bf, bf, f4, f4, f8, c4, c8, bf, bf, c8],  # bf
+    [f2, f2, f2, f2, f2, f2, f2, f2, f2, f4, f2, f4, f8, c4, c8, f2, f2, c8],  # f2
+    [f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f8, c4, c8, f4, f4, c8],  # f4
+    [f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, c8, c8, f8, f8, c8],  # f8
+    [c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c8, c4, c8, c4, c4, c4],  # c4
+    [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8],  # c8
+    [s8, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s_, f_, c_],  # s*
+    [f8, f8, f8, f8, f8, f8, f8, f8, f8, bf, f2, f4, f8, c4, c8, f_, f_, c_],  # f*
+    [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c4, c8, c_, c_, c_],  # c*
   ])
 
 _type_promotion_table = _make_type_promotion_table()
@@ -224,20 +253,22 @@ def promote_types(a, b):
   Returns:
     A :class:`numpy.dtype` object.
   """
-  a = np.dtype(a)
-  b = np.dtype(b)
+  a = a if isinstance(a, _WeakType) else np.dtype(a)
+  b = b if isinstance(b, _WeakType) else np.dtype(b)
   try:
     return _type_promotion_table[_jax_type_nums[a], _jax_type_nums[b]]
   except KeyError:
     pass
   raise TypeError("Invalid type promotion of {} and {}".format(a, b))
 
-
-def is_python_scalar(x):
+def is_weakly_typed(x):
   try:
-    return x.aval.weak_type and np.ndim(x) == 0
+    return x.aval.weak_type
   except AttributeError:
     return type(x) in python_scalar_dtypes
+
+def is_python_scalar(x):
+  return is_weakly_typed(x) and np.ndim(x) == 0
 
 def _dtype_priority(dtype):
   if issubdtype(dtype, np.bool_):
@@ -261,10 +292,8 @@ def result_type(*args):
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
     return dtype(args[0])
-  scalars = []
-  dtypes = []
-  for x in args:
-    (scalars if is_python_scalar(x) else dtypes).append(dtype(x))
-  array_priority = max(map(_dtype_priority, dtypes)) if dtypes else -1
-  dtypes += [x for x in scalars if _dtype_priority(x) > array_priority]
-  return canonicalize_dtype(functools.reduce(promote_types, dtypes))
+  result_type = functools.reduce(promote_types, (_jax_type(arg) for arg in args))
+  if isinstance(result_type, _WeakType):
+    # TODO(jakevdp): propagate weak_type=True to the result in this case.
+    return canonicalize_dtype(result_type.type)
+  return canonicalize_dtype(result_type)
