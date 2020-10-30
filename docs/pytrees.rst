@@ -4,67 +4,79 @@ Pytrees
 What is a pytree?
 ^^^^^^^^^^^^^^^^^
 
-In JAX, a pytree is **a container of leaf elements and/or more pytrees**.
-Containers include lists, tuples, and dicts (JAX can be extended to consider
-other container types as pytrees, see `Extending pytrees`_ below). A leaf
-element is anything that's not a pytree, e.g. an array. In other words, a pytree
-is just **a possibly-nested standard or user-registered Python container**.  If
-nested, note that the container types do not need to match. A single "leaf",
-i.e. a non-container object, is also considered a pytree.
+In JAX, we use the term *pytree* to refer to a tree-like structure built out of
+container-like Python objects. Classes are considered container-like if they
+are in the pytree registry, which by default includes lists, tuples, and dicts.
+That is:
+
+1. any object whose type is *not* in the pytree container registry is
+   considered a *leaf* pytree;
+2. any object whose type is in the pytree container registry, and which
+   contains pytrees, is considered a pytree.
+
+For each entry in the pytree container registry, a container-like type is
+registered with a pair of functions which specify how to convert an instance of
+the container type to a ``(children, metadata)`` pair and how to convert such a
+pair back to an instance of the container type. Using these functions, JAX can
+canonicalize any tree of reigstered container objects into tuples.
 
 Example pytrees::
 
-  [1, "a", object()] # 3 leaves
+  [1, "a", object()]  # 3 leaves
 
-  (1, (2, 3), ()) # 3 leaves
+  (1, (2, 3), ())  # 3 leaves
 
-  [1, {"k1": 2, "k2": (3, 4)}, 5] # 5 leaves
+  [1, {"k1": 2, "k2": (3, 4)}, 5]  # 5 leaves
+
+JAX can be extended to consider other container types as pytrees; see
+`Extending pytrees`_ below.
 
 Pytrees and JAX functions
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Many JAX functions, including all function transformations, operate over pytrees
-of arrays (other leaf types are sometimes allowed as well). Transformations are
-only applied to the leaf arrays while preserving the original pytree structure;
-for example, ``vmap`` and ``pmap`` only map over arrays, but automatically map
-over arrays inside of standard Python sequences, and can return mapped Python
-sequences.
+Many JAX functions, like ``jax.lax.scan``, operate over pytrees of arrays.
+JAX function transformations can be applied to functions that accept as input
+and produce as output pytrees of arrays.
 
 Applying optional parameters to pytrees
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Some JAX function transformations take optional parameters that specify how
 certain input or output values should be treated (e.g. the ``in_axes`` and
-``out_axes`` arguments to ``vmap``). These parameters are also pytrees, and the
-leaf values are "matched up" with the corresponding input or output leaf arrays.
-For example, if we pass the following input to vmap (note that the input
-arguments to a function are considered a tuple)::
+``out_axes`` arguments to ``vmap``). These parameters can also be pytrees, and
+their structure must correspond to the pytree structure of the corresponding
+arguments. In particular, to be able to "match up" leaves in these parameter
+pytrees with values in the argument pytrees, the parameter pytrees are often
+constrained to be tree prefixes of the argument pytrees.
+
+For example, if we pass the following input to ``vmap`` (note that the input
+arguments to a function considered a tuple)::
 
   (a1, {"k1": a2, "k2": a3})
 
-We can use the following ``in_axes`` pytree to specify that only the "k2"
-argument is mapped (axis=0) and the rest aren't mapped over (axis=None)::
+We can use the following ``in_axes`` pytree to specify that only the ``k2``
+argument is mapped (``axis=0``) and the rest aren't mapped over
+(``axis=None``)::
 
   (None, {"k1": None, "k2": 0})
 
-Note that the optional parameter pytree structure must match that of the main
-input pytree. However, the optional parameters can optionally be specified as a
+The optional parameter pytree structure must match that of the main input
+pytree. However, the optional parameters can optionally be specified as a
 "prefix" pytree, meaning that a single leaf value can be applied to an entire
 sub-pytree. For example, if we have the same ``vmap`` input as above, but wish
 to only map over the dictionary argument, we can use::
 
   (None, 0)  # equivalent to (None, {"k1": 0, "k2": 0})
 
-Or, if we want every argument to be mapped, we can simply write a single leaf 
+Or, if we want every argument to be mapped, we can simply write a single leaf
 value that is applied over the entire argument tuple pytree::
 
   0
 
-This happens to be the default ``in_axes`` value!
+This happens to be the default ``in_axes`` value for ``vmap``!
 
 The same logic applies to other optional parameters that refer to specific input
-or output values of a transformed function, e.g. ``vmap``'s ``out_axes`` and
-``pmaps``'s ``in_axes``.
+or output values of a transformed function, e.g. ``vmap``'s ``out_axes``.
 
 
 Developer information
@@ -77,16 +89,16 @@ container types with JAX. Some of these details may change.*
 Internal pytree handling
 ------------------------
 
-JAX canonicalizes pytrees into flat lists of numeric or array types at the
-`api.py` boundary (and also in control flow primitives). This keeps downstream
-JAX internals simpler: `vmap` etc. can handle user functions that accept and
-return Python containers, while all the other parts of the system can operate on
-functions that only take (multiple) array arguments and always return a flat
-list of arrays.
+JAX flattens pytrees into lists of leaves at the ``api.py`` boundary (and also
+in control flow primitives). This keeps downstream JAX internals simpler:
+transformations like ``grad``, ``jit``, and ``vmap`` can handle user functions
+that accept and return the myriad different Python containers, while all the
+other parts of the system can operate on functions that only take (multiple)
+array arguments and always return a flat list of arrays.
 
-When JAX flattens a pytree it will produce a list of leaves and a `treedef`
-object that encodes the structure of the original value. The `treedef` can then
-be used to construct a matching structured value after transforming the
+When JAX flattens a pytree it will produce a list of leaves and a ``treedef``
+object that encodes the structure of the original value. The ``treedef`` can
+then be used to construct a matching structured value after transforming the
 leaves. Pytrees are tree-like, rather than DAG-like or graph-like, in that we
 handle them assuming referential transparency and that they can't contain
 reference cycles.
@@ -170,9 +182,8 @@ treated as leaves::
 Extending pytrees
 -----------------
 
-By default, any part of a structured value that is not recognized as an internal
-pytree node is treated as a leaf (and such containers could not be passed to
-JAX-traceable functions)::
+By default, any part of a structured value that is not recognized as an
+internal pytree node (i.e. container-like) is treated as a leaf::
 
   class Special(object):
     def __init__(self, x, y):
