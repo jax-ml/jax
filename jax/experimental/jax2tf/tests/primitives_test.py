@@ -113,21 +113,35 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_top_k)
   def test_top_k(self, harness: primitive_harness.Harness):
-    if (harness.params["k"] > harness.params["shape"][-1] or
-        harness.params["k"] < 0):
+    custom_assert = None
+    k, dtype = harness.params["k"], harness.params["dtype"]
+    if k > harness.params["shape"][-1] or k < 0:
       with self.assertRaisesRegex(ValueError, "k argument to top_k must be"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    elif harness.params["dtype"] in jtu.dtypes.complex:
+      return
+    if dtype in jtu.dtypes.complex:
       # TODO(necula): fix top_k complex bug on TPU
       if jtu.device_under_test() == "tpu":
         raise unittest.SkipTest("top_k complex on TPU raises different error")
-      with self.assertRaisesRegex(RuntimeError, "Unimplemented: complex comparison"):
+      with self.assertRaisesRegex(RuntimeError,
+                                  "Unimplemented: complex comparison"):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
-    # TODO: TF and JAX sort [inf, nan] differently.
-    elif harness.name.startswith("nan_"):
-      raise unittest.SkipTest("inconsistent [nan, inf] sorting")
-    else:
-      self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+      return
+    if dtype in jtu.dtypes.all_inexact:
+      def custom_assert(result_jax, result_tf):
+        assert len(result_jax) == len(result_tf)
+        # TODO: TF and JAX sort [inf, nan] differently.
+        first_arr_jax, first_arr_tf = result_jax[0], result_tf[0].numpy()
+        if np.all(first_arr_jax == first_arr_tf):
+          for arr_jax, arr_tf in zip(result_jax, result_tf):
+            self.assertArraysEqual(arr_jax, arr_tf)
+        else:
+          mask_jax, mask_tf = np.isnan(first_arr_jax), np.isnan(first_arr_tf)
+          self.assertArraysEqual(first_arr_jax[~ mask_jax],
+                                 first_arr_tf[~ mask_tf])
+
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           custom_assert=custom_assert)
 
   @primitive_harness.parameterized(primitive_harness.lax_sort)
   def test_sort(self, harness: primitive_harness.Harness):
