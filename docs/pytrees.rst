@@ -4,9 +4,9 @@ Pytrees
 What is a pytree?
 ^^^^^^^^^^^^^^^^^
 
-In JAX, we use the term *pytree* to refer to a tree-like structure of
+In JAX, we use the term *pytree* to refer to a tree-like structure built out of
 container-like Python objects. Classes are considered container-like if they
-are in a pytree registry, which by default includes lists, tuples, and dicts.
+are in the pytree registry, which by default includes lists, tuples, and dicts.
 That is:
 
 1. any object whose type is *not* in the pytree container registry is
@@ -18,7 +18,7 @@ For each entry in the pytree container registry, a container-like type is
 registered with a pair of functions which specify how to convert an instance of
 the container type to a ``(children, metadata)`` pair and how to convert such a
 pair back to an instance of the container type. Using these functions, JAX can
-canonicalize any tree of reigstered container types into tuples.
+canonicalize any tree of reigstered container objects into tuples.
 
 Example pytrees::
 
