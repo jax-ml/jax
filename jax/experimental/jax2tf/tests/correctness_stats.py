@@ -195,14 +195,6 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # TODO(bchetioui): tf.math.multiply is not defined for the above types.
       tf_unimpl(np_dtype)
 
-  if prim in [lax.scatter_mul_p, lax.scatter_add_p]:
-    if np_dtype == np.complex64:
-      tf_unimpl(np_dtype, devs=["TPU"])
-
-  if prim in [lax.scatter_max_p, lax.scatter_min_p, lax.scatter_p]:
-    if np_dtype == np.bool_:
-      tf_unimpl(np_dtype)
-
   if prim is lax.sort_p:
     if np_dtype in [np.complex64, np.complex128]:
       tf_unimpl(np_dtype)
