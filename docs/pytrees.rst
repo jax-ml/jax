@@ -9,8 +9,8 @@ container-like Python objects. Classes are considered container-like if they
 are in a pytree registry, which by default includes lists, tuples, and dicts.
 That is:
 
-1. any object whose type is _not_ in the pytree container registry is
-   considered a _leaf_ pytree;
+1. any object whose type is *not* in the pytree container registry is
+   considered a *leaf* pytree;
 2. any object whose type is in the pytree container registry, and which
    contains pytrees, is considered a pytree.
 
