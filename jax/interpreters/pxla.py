@@ -339,13 +339,15 @@ def _shard_device_array(x, devices, indices):
       _as_slice_indices(x, idx) for idx in indices))
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   return device_put(shards, devices)
-shard_arg_handlers[xla.DeviceArray] = _shard_device_array
+shard_arg_handlers[xla._DeviceArray] = _shard_device_array
+shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
+
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
 # require duplicating the ordering logic of spec_to_indices, which is more
 # subtle and more likely to change than the index logic we have to support here.
-def _as_slice_indices(arr: xla.DeviceArray, idx: Index) -> Tuple[
+def _as_slice_indices(arr: xla.DeviceArrayProtocol, idx: Index) -> Tuple[
     Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
   """Returns start_indices, limit_indices, removed_dims"""
   start_indices = [0] * arr.ndim
@@ -423,7 +425,7 @@ pxla_result_handlers[ConcreteArray] = array_result_handler
 
 ### lazy device-memory persistence and result handling
 
-class ShardedDeviceArray(xla.DeviceArray):
+class ShardedDeviceArray(xla._DeviceArray):
   """A ShardedDeviceArray is an ndarray sharded across devices.
 
   The purpose of a ShardedDeviceArray is to reduce the number of transfers when
@@ -457,6 +459,8 @@ class ShardedDeviceArray(xla.DeviceArray):
                sharding_spec, # TODO(skye): add type annotation back, see below
                device_buffers: List[xb.xla_client._xla.PyLocalBuffer] = None,
                indices: Optional[Tuple[Index, ...]] = None):
+    xla.DeviceArray.__init__(self)
+
     # TODO(skye): this is temporary staging while we switch users over to
     # providing sharding_spec. It assumes that any pre-existing callers are
     # creating pmap-style ShardedDeviceArrays over the first dimension.

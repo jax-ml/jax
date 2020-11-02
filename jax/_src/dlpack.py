@@ -19,7 +19,7 @@ import jax.lib
 from jax.lib import xla_client
 from jax.lib import xla_bridge
 
-def to_dlpack(x: xla.DeviceArray, take_ownership: bool = False):
+def to_dlpack(x: xla.DeviceArrayProtocol, take_ownership: bool = False):
   """Returns a DLPack tensor that encapsulates a DeviceArray `x`.
 
   Takes ownership of the contents of `x`; leaves `x` in an invalid/deleted

@@ -1043,6 +1043,13 @@ class APITest(jtu.JaxTestCase):
     # Tests mostly that block_until_ready() does not produce an error.
     self.assertTrue(y is x)
 
+  def test_devicearray_weakref_friendly(self):
+    x = device_put(1.)
+    y = weakref.ref(x)
+    self.assertEqual(y(), 1.)
+    del x
+    self.assertIsNone(y())
+
   def test_namedtuple_transparency(self):
     # See https://github.com/google/jax/issues/446
     Point = collections.namedtuple("Point", ["x", "y"])
