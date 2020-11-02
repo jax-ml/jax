@@ -31,8 +31,8 @@ import jax.numpy as jnp
 from jax.scipy.special import expit
 from jax import mask, vmap, jit, grad, shapecheck, make_jaxpr
 from jax.interpreters.masking import (
-    shape_as_value, ShapeError, parse_spec, Poly, Mon, finalize_spec,
-    eval_poly_shape, remap_ids, UniqueIds)
+  shape_as_value, ShapeError, parse_spec, Poly, Mon, finalize_spec,
+  eval_poly_shape, remap_ids, UniqueIds)
 
 config.parse_flags_with_absl()
 
@@ -64,7 +64,7 @@ class PolyTest(jtu.JaxTestCase):
       ['m + n', 'ShapeSpec(m + n)'],
       ['m + n * k', 'ShapeSpec(k n + m)'],
       ['m + 3 * k', 'ShapeSpec(3 k + m)'],
-      ['-3 + k + k * k', 'ShapeSpec(k**2 + k + -3)'],
+      ['-3 + k + k * k', 'ShapeSpec(k^2 + k + -3)'],
       ['', 'ShapeSpec()'],
       ['_', 'ShapeSpec(_)'],
   ])
@@ -95,6 +95,14 @@ class PolyTest(jtu.JaxTestCase):
     assert not len(set(hash(Mon({'a': i})) for i in range(10))) == 1
     assert hash(Mon({'a': 1, 'b': 1})) == hash(Mon({'b': 1, 'a': 1}))
 
+  @parameterized.parameters([
+    (Mon({'a': 1}), Mon({'b': 1})),
+    (Mon({'a': 2, 'b': 1}), Mon({'b': 1})),
+  ])
+  def test_Mon_floordiv(self, divisor, quotient):
+    dividend = quotient * divisor
+    self.assertEqual(quotient, dividend // divisor)
+
   def test_Poly_compare(self):
     poly = Poly({Mon(): 3, Mon({'n': 1}): 4})
     # Assume poly > 0 to make various shape rules work with polymorphic shapes:
@@ -113,11 +121,33 @@ class PolyTest(jtu.JaxTestCase):
     self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
     self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
 
-  def test_Poly_divmod(self):
-    n = Poly({Mon({'n': 1}): 1})
-    assert (n, 1) == divmod(2*n+1, 2)
-    assert (2*n, 0) == divmod(10*n, 5)
-    assert (2*n+4, 3) == divmod(10*n+23, 5)
+  n = Poly({Mon({'n': 1}): 1})
+  m = Poly({Mon({'m': 1}): 1})
+
+  must_divide_msg = " must divide size"
+
+  @parameterized.parameters([
+    (1, constant_poly(0), 0),
+    (n, 0, 0),
+    (2, n, 1),
+    (5, 2 * n, 0),
+    (5, 2 * n + 4, 3),
+    (n * n, n + 1, 0),
+    (2 * n + 1, 2 * n + 1, n + 2, must_divide_msg),
+    (n * m + 1, m + n + 1, n - 1, must_divide_msg),
+    (n, n, 0),
+    (n, n, 1, must_divide_msg),
+    (n + 1, -n + 1, -1, must_divide_msg),
+  ])
+  def test_Poly_divmod(self, divisor, quotient, remainder, error_message=None):
+    dividend = quotient * divisor + remainder
+    expected = (quotient, remainder)
+    if dividend.is_constant: dividend = int(dividend)
+    if error_message:
+      with self.assertRaisesRegex(ValueError, error_message):
+        divmod(dividend, divisor)
+    else:
+      self.assertEqual(expected, divmod(dividend, divisor))
 
   def test_Poly_rsub(self):
     n = Poly({Mon({'n': 1}): 1})
@@ -594,7 +624,11 @@ class MaskingTest(jtu.JaxTestCase):
   def test_lax_slice(self):
     self.check(lambda x: lax.slice(x, (1,), (x.shape[0],)), ['n'], 'n+-1',
                {'n': 2}, [(3,)], ['float_'], jtu.rand_default(self.rng()))
-    # TODO: self.check(lambda x: lax.slice(x, (x.shape[0] // 2,), (x.shape[0],)), ['2*n'], dict(n=jnp.array([2, 3])), 'n')
+    # TODO self.check(lambda x: lax.slice(x, (x.shape[0] // 2,), (x.shape[0],)),
+    #  ['2*n'], 'n', {'n': 2}, [(6,)], ['float_'], jtu.rand_default(self.rng()))
+    self.check(lambda x: lax.slice(x, (0,), (x.shape[0],), (x.shape[0],)),
+               ['n'], '1', {'n': 2}, [(5,)], ['float_'],
+               jtu.rand_default(self.rng()))
 
   def test_reshape(self):
     self.check(lambda x: jnp.reshape(x, (x.shape[1], 2, 4, 1)),
@@ -633,11 +667,9 @@ class MaskingTest(jtu.JaxTestCase):
                  ['2, n'], '2 * n', dict(n=2), [(2, 3)],
                  ['float_'], jtu.rand_default(self.rng()))
 
-    if False:
-      # TODO fix lax._compute_newshape on polymorphic shapes:
-      self.check(lambda x: jnp.reshape(x, (x.shape[0], -1)),
-                 ['n, 3, 1, 2'], 'n, 6', dict(n=1), [(2, 3, 1, 2)],
-                 ['float_'], jtu.rand_default(self.rng()))
+    self.check(lambda x: jnp.reshape(x, (x.shape[0], -1)),
+               ['n, 3, 1, 2'], 'n, 6', dict(n=1), [(2, 3, 1, 2)],
+               ['float_'], jtu.rand_default(self.rng()))
 
   def test_transpose(self):
     self.check(lambda x: lax.transpose(x, (1, 0, 2)),

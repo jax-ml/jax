@@ -3681,9 +3681,9 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
       msg = "slice strides must be positive, got {}"
       raise TypeError(msg.format(strides))
 
-  result_shape = np.floor_divide(
-      np.add(np.subtract(limit_indices, start_indices), strides) - 1, strides)
-  return tuple(result_shape)
+  diff = np.subtract(limit_indices, start_indices)
+  # Not np.divmod since Poly.__rdivmod__ is ignored by NumPy, breaks poly stride
+  return tuple(q + (r > 0) for q, r in map(divmod, diff, strides))
 
 def _slice_translation_rule(c, operand, *, start_indices, limit_indices,
                             strides):
@@ -3732,6 +3732,7 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
 def _slice_masking_rule(
     padded_vals, logical_shapes, start_indices, limit_indices, strides):
   operand, = padded_vals
+  strides = masking.padded_shape_as_value(strides) if strides else None
   return slice(operand,
                start_indices=masking.padded_shape_as_value(start_indices),
                limit_indices=masking.padded_shape_as_value(limit_indices),
