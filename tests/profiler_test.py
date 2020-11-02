@@ -33,7 +33,7 @@ except ImportError:
 
 try:
   from tensorflow.python.profiler import profiler_client
-  from tensorflow.python.profiler import profiler_v2 as profiler
+  from tensorflow.python.profiler import profiler_v2 as tf_profiler
 except ImportError:
   profiler_client = None
 
@@ -90,7 +90,8 @@ class ProfilerTest(unittest.TestCase):
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
-      profiler.start_server(port)
+      # Must keep return value `server` around.
+      server = jax.profiler.start_server(port)  # noqa: F841
       worker_start.set()
       x = jnp.ones((1000, 1000))
       while True:
@@ -101,7 +102,7 @@ class ProfilerTest(unittest.TestCase):
 
     def on_profile(port, logdir, worker_start):
       worker_start.wait()
-      options = profiler.ProfilerOptions(
+      options = tf_profiler.ProfilerOptions(
           host_tracer_level=2,
           python_tracer_level=2,
           device_tracer_level=1,
@@ -116,7 +117,7 @@ class ProfilerTest(unittest.TestCase):
 
     logdir = absltest.get_default_test_tmpdir()
     # Remove any existing log files.
-    shutil.rmtree(logdir)
+    shutil.rmtree(logdir, ignore_errors=True)
     port = portpicker.pick_unused_port()
     thread_profiler = threading.Thread(
         target=on_profile, args=(port, logdir, self.worker_start))
