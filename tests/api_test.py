@@ -1785,12 +1785,12 @@ class APITest(jtu.JaxTestCase):
   def test_nested_jit_hoisting(self):
     @api.jit
     def f(x, y):
-      z = 2 * x
-      return y + z, 3
+      z = jnp.int32(2) * x
+      return y + z, jnp.int32(3)
 
     @api.jit
     def g(x):
-      return f(2, x)
+      return f(jnp.int32(2), x)
 
     jaxpr_subcomp = xla.jaxpr_subcomp
 
@@ -1801,7 +1801,7 @@ class APITest(jtu.JaxTestCase):
 
     try:
       xla.jaxpr_subcomp = jaxpr_subcomp_and_collect
-      ans = g(3)
+      ans = g(jnp.int32(3))
     finally:
       xla.jaxpr_subcomp = jaxpr_subcomp
 

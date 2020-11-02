@@ -16,6 +16,7 @@
 import enum
 import itertools
 import operator
+from unittest import skipIf
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -55,6 +56,10 @@ scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
                 jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
+
+def identity(x):
+  """A named identity function for use in tests"""
+  return x
 
 class DtypesTest(jtu.JaxTestCase):
 
@@ -137,6 +142,23 @@ class DtypesTest(jtu.JaxTestCase):
       for t1, t2 in itertools.combinations(groups, 2):
           self.assertEqual(np.promote_types(t1, t2),
                            dtypes.promote_types(t1, t2))
+
+  # TODO(jakevdp): fix these breakages and enable this test.
+  @skipIf(True, "Binary promotion is not yet invariant under jit in some cases.")
+  @parameterized.named_parameters(
+    {"testcase_name": "xtype={}_ytype={}_xfun={}_yfun={}".format(
+      xtype.__name__, ytype.__name__, xfun.__name__, yfun.__name__),
+     "xtype": xtype, "ytype": ytype, "xfun": xfun, "yfun": yfun}
+    for xtype, ytype in itertools.product(
+      [int, float, jnp.int16, jnp.int32, jnp.float16, jnp.float32], repeat=2)
+    for xfun, yfun in itertools.product(
+      [identity, abs, jnp.array], repeat=2)
+    )
+  def testBinaryPromotionJitInvariance(self, xtype, ytype, xfun, yfun):
+    """Test jit invariance of simple binary promotion rules with and without weak types."""
+    f = lambda x, y: xfun(x) + yfun(y)
+    args_maker = lambda: [xtype(1), ytype(1)]
+    self._CompileAndCheck(f, args_maker, check_dtypes=True)
 
   def testScalarInstantiation(self):
     for t in [jnp.bool_, jnp.int32, jnp.bfloat16, jnp.float32, jnp.complex64]:

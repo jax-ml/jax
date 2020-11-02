@@ -2329,6 +2329,35 @@ class LazyConstantTest(jtu.JaxTestCase):
     make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
     self._Check(make_const, expected)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+        {"testcase_name": "_{}".format(rec.op),
+         "op_name": rec.op, "rec_dtypes": rec.dtypes}
+      for rec in LAX_OPS if rec.nargs == 1))
+  def testUnaryWeakTypes(self, op_name, rec_dtypes):
+    """Test that all lax unary ops propagate weak_type information appropriately."""
+    if op_name in ['acos', 'asin', 'atan', 'tan']:
+      # TODO(jakevdp): fix this. It will involve handling weakly-typed arrays,
+      # and propagating that weak typing through lax.full and lax.where.
+      self.skipTest(f'lax.{op_name} is a known failure')
+
+    # Find a valid dtype for the function.
+    for dtype in [np.float_, np.int_, np.complex_, np.bool_]:
+      dtype = dtypes.canonicalize_dtype(dtype)
+      if dtype in rec_dtypes:
+        py_val = dtype.type(1).item()
+        lax_val = lax.full((), py_val, dtype)
+        break
+    else:
+      raise ValueError("no available dtypes")
+
+    op = getattr(lax, op_name)
+    py_op = op(py_val)
+    lax_op = op(lax_val)
+
+    self.assertAllClose(py_op, lax_op, check_dtypes=True)
+    self.assertTrue(py_op.aval.weak_type)
+    self.assertFalse(lax_op.aval.weak_type)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

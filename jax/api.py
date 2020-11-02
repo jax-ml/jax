@@ -1975,20 +1975,26 @@ def make_jaxpr(fun: Callable,
   >>> print(f(3.0))
   -0.83602
   >>> jax.make_jaxpr(f)(3.0)
-  { lambda  ; a.
-    let b = cos a
-        c = sin b
-    in (c,) }
+  { lambda  ; a.    
+    let b = convert_element_type[ new_dtype=float32
+                                  old_dtype=float32 ] a
+        c = cos b
+        d = sin c
+    in (d,) }
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
   { lambda  ; a.
-    let b = cos a
-        c = sin a
-        _ = sin b
-        d = cos b
-        e = mul 1.0 d
-        f = neg e
-        g = mul f c
-    in (g,) }
+    let b = convert_element_type[ new_dtype=float32
+                                  old_dtype=float32 ] a
+        c = cos b
+        d = sin b
+        _ = sin c
+        e = cos c
+        f = mul 1.0 e
+        g = neg f
+        h = mul g d
+        i = convert_element_type[ new_dtype=float32
+                                  old_dtype=float32 ] h
+    in (i,) }
   """
   _check_callable(fun)
   if isinstance(static_argnums, int):

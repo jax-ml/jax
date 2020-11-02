@@ -30,7 +30,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jit(jnp.sin)(x)
       return jnp.sin(s) + jnp.cos(y)
 
-    hist = jaxpr_util.primitives(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.primitives(make_jaxpr(f)(jnp.float32(1.), jnp.float32(1.)).jaxpr)
 
     for k in ['add', 'sin', 'cos', 'xla_call']:
       assert k in hist, k
@@ -76,7 +76,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       s = jnp.sin(x)                  # sin
       return jnp.sin(s) + jnp.cos(y)  # sin, cos, add
 
-    hist = jaxpr_util.source_locations(make_jaxpr(f)(1., 1.).jaxpr)
+    hist = jaxpr_util.source_locations(make_jaxpr(f)(jnp.float32(1.), jnp.float32(1.)).jaxpr)
     self.assertEqual(sum(hist.values()), 4)
 
   def test_print_histogram(self):

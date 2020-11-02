@@ -402,7 +402,7 @@ def convert_element_type(operand: Array, new_dtype: DType) -> Array:
   if type(operand) in dtypes.python_scalar_dtypes:
     operand = np.asarray(operand, new_dtype)
   old_dtype = dtypes.canonicalize_dtype(_dtype(operand))
-  if old_dtype == new_dtype:
+  if old_dtype == new_dtype and not dtypes.is_weakly_typed(operand):
     return operand
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):
@@ -1939,24 +1939,25 @@ _input_dtype = lambda *args, **_: dtypes.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
 
-def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
+def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None, weak_type_rule=None):
+  weak_type_rule = weak_type_rule or partial(_standard_weak_type_rule, name)
   prim = Primitive(name)
   prim.def_impl(partial(xla.apply_primitive, prim))
-  prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
+  prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule, weak_type_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
   return prim
 
-
-def standard_abstract_eval(prim, shape_rule, dtype_rule, *args, **kwargs):
+def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule, *args, **kwargs):
   assert all(isinstance(arg, UnshapedArray) for arg in args), args
+  weak_type = weak_type_rule(*args, **kwargs)
   least_specialized = _max(
       map(type, args), key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
-    return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs))
+    return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs), weak_type=weak_type)
   elif least_specialized is ShapedArray:
-    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs))
+    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs), weak_type=weak_type)
   elif least_specialized is UnshapedArray:
-    return UnshapedArray(dtype_rule(*args, **kwargs))
+    return UnshapedArray(dtype_rule(*args, **kwargs), weak_type=weak_type)
   else:
     raise TypeError(args, least_specialized)
 
@@ -2021,6 +2022,12 @@ def _broadcasting_shape_rule(name, *avals):
     msg = '{} got incompatible shapes for broadcasting: {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
   return result_shape
+
+
+def _standard_weak_type_rule(name, *avals, **kwargs):
+  # Currently this only returns True for a unary primitive with a weakly-typed input.
+  # TODO(jakevdp): expand propagation of weak types to other function signatures.
+  return len(avals) == 1 and getattr(avals[0], 'weak_type', False)
 
 
 def naryop(result_dtype, accepted_dtypes, name, translation_rule=None):
@@ -2507,9 +2514,13 @@ def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, old_dtype):
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
                                        old_dtype=old_dtype)
 
+def _convert_element_type_weak_type_rule(*avals, **kwargs):
+  return False
+
 convert_element_type_p = standard_primitive(
     _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-    'convert_element_type', _convert_element_type_translation_rule)
+    'convert_element_type', _convert_element_type_translation_rule,
+    _convert_element_type_weak_type_rule)
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
@@ -5938,7 +5949,6 @@ def _dynamic_slice_indices(operand, start_indices):
             if isinstance(i, (int, np.integer))
             else select(lt(i, _const(i, 0)), add(i, _const(i, d)), i)
             for i, d in zip(start_indices, operand.shape)]
-
 
 
 def _const(example, val):

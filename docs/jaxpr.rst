@@ -207,18 +207,26 @@ For example:
 ...
 >>> print(make_jaxpr(one_of_three)(1, 5.))
 { lambda  ; a b.
-  let c = clamp 0 a 2
-      d = cond[ branches=( { lambda  ; a.
-                             let b = add a 1.0
-                             in (b,) }
+  let c = convert_element_type[ new_dtype=int32
+                                old_dtype=int32 ] a
+      d = clamp 0 c 2
+      e = cond[ branches=( { lambda  ; a.
+                             let b = convert_element_type[ new_dtype=float32
+                                                           old_dtype=float32 ] a
+                                 c = add b 1.0
+                             in (c,) }
                            { lambda  ; a.
-                             let b = sub a 2.0
-                             in (b,) }
+                             let b = convert_element_type[ new_dtype=float32
+                                                           old_dtype=float32 ] a
+                                 c = sub b 2.0
+                             in (c,) }
                            { lambda  ; a.
-                             let b = add a 3.0
-                             in (b,) } )
-                linear=(False,) ] c b
-  in (d,) }
+                             let b = convert_element_type[ new_dtype=float32
+                                                           old_dtype=float32 ] a
+                                 c = add b 3.0
+                             in (c,) } )
+                linear=(False,) ] d b
+  in (e,) }
 
 The cond primitive has a number of parameters:
 
@@ -246,17 +254,23 @@ Another example, using :py:func:`lax.cond`:
 ...
 >>> print(make_jaxpr(func7)(5.))
 { lambda  ; a.
-  let b = ge a 0.0
-      c = convert_element_type[ new_dtype=int32
-                                old_dtype=bool ] b
-      d = cond[ branches=( { lambda  ; a.
-                             let b = sub a 3.0
-                             in (b,) }
+  let b = convert_element_type[ new_dtype=float32
+                                old_dtype=float32 ] a
+      c = ge b 0.0
+      d = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] c
+      e = cond[ branches=( { lambda  ; a.
+                             let b = convert_element_type[ new_dtype=float32
+                                                           old_dtype=float32 ] a
+                                 c = sub b 3.0
+                             in (c,) }
                            { lambda  ; a.
-                             let b = add a 3.0
-                             in (b,) } )
-                linear=(False,) ] c a
-  in (d,) }
+                             let b = convert_element_type[ new_dtype=float32
+                                                           old_dtype=float32 ] a
+                                 c = add b 3.0
+                             in (c,) } )
+                linear=(False,) ] d a
+  in (e,) }
 
 
 In this case, the boolean predicate is converted to an integer index
@@ -277,19 +291,23 @@ contains a constant ``jnp.ones(1)`` that is hoisted as a `constvar`
 ...
 >>> print(make_jaxpr(func8)(5., (jnp.zeros(1), 2.)))
 { lambda a ; b c d.
-  let e = ge b 0.0
-      f = convert_element_type[ new_dtype=int32
-                                old_dtype=bool ] e
-      g = cond[ branches=( { lambda  ; a b c.
+  let e = convert_element_type[ new_dtype=float32
+                                old_dtype=float32 ] b
+      f = ge e 0.0
+      g = convert_element_type[ new_dtype=int32
+                                old_dtype=bool ] f
+      h = cond[ branches=( { lambda  ; a b c.
                              let d = convert_element_type[ new_dtype=float32
                                                            old_dtype=int32 ] a
-                                 e = add d c
-                             in (e,) }
-                           { lambda  ; f_ a b.
-                             let
+                                 e = convert_element_type[ new_dtype=float32
+                                                           old_dtype=float32 ] c
+                                 f = add d e
+                             in (f,) }
+                           { lambda  ; g_ a b.
+                             let 
                              in (a,) } )
-                linear=(False, False, False) ] f a c d
-  in (g,) }
+                linear=(False, False, False) ] g a c d
+  in (h,) }
 
 
 While
@@ -370,9 +388,13 @@ For the example consider the function ``func11`` below
                             shape=(16,) ] 1.0
       d e = scan[ jaxpr={ lambda  ; a b c d.
                           let e = mul c d
-                              f = add b e
-                              g = add f a
-                          in (g, b) }
+                              f = convert_element_type[ new_dtype=float32
+                                                        old_dtype=float32 ] b
+                              g = add f e
+                              h = convert_element_type[ new_dtype=float32
+                                                        old_dtype=float32 ] a
+                              i = add g h
+                          in (i, b) }
                   length=16
                   linear=(False, False, False, False)
                   num_carry=1
@@ -408,19 +430,25 @@ computation should run. For example
 ...
 >>> print(make_jaxpr(func12)(1.))
 { lambda  ; a.
-  let b = sub a 2.0
-      c = xla_call[ backend=None
+  let b = convert_element_type[ new_dtype=float32
+                                old_dtype=float32 ] a
+      c = sub b 2.0
+      d = xla_call[ backend=None
                     call_jaxpr={ lambda  ; a b.
                                  let c = broadcast_in_dim[ broadcast_dimensions=(  )
                                                            shape=(1,) ] 1.0
-                                     d = mul a c
-                                     e = add b d
-                                 in (e,) }
+                                     d = convert_element_type[ new_dtype=float32
+                                                               old_dtype=float32 ] a
+                                     e = mul d c
+                                     f = add b e
+                                 in (f,) }
                     device=None
                     donated_invars=(False, False)
-                    name=inner ] a b
-      d = add a c
-  in (d,) }
+                    name=inner ] a c
+      e = convert_element_type[ new_dtype=float32
+                                old_dtype=float32 ] a
+      f = add e d
+  in (f,) }
 
 
 XLA_pmap
@@ -443,20 +471,23 @@ captured using the ``xla_pmap`` primitive. Consider this example
                     axis_size=1
                     backend=None
                     call_jaxpr={ lambda  ; a b.
-                                 let c = add b a
-                                     d = broadcast_in_dim[ broadcast_dimensions=(  )
+                                 let c = convert_element_type[ new_dtype=float32
+                                                               old_dtype=float32 ] a
+                                     d = add b c
+                                     e = broadcast_in_dim[ broadcast_dimensions=(  )
                                                            shape=(1,) ] 1.0
-                                     e = add c d
-                                     f = psum[ axis_index_groups=None
+                                     f = add d e
+                                     g = psum[ axis_index_groups=None
                                                axis_name=rows ] b
-                                     g = div e f
-                                 in (g,) }
+                                     h = div f g
+                                 in (h,) }
                     devices=None
                     donated_invars=(False, False)
                     global_axis_size=None
                     mapped_invars=(False, True)
                     name=inner ] b a
   in (c,) }
+
 
 The ``xla_pmap`` primitive specifies the name of the axis (parameter ``rows``)
 and the body of the function to be mapped as the ``call_jaxpr`` parameter.
