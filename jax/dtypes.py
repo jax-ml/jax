@@ -166,21 +166,10 @@ can_cast = np.can_cast
 issubsctype = np.issubsctype
 
 
-class _WeakType:
-  def __init__(self, type):
-    assert type in [int, float, complex], f"WeakType(type={type}) not supported."
-    self.type = type
-  def __repr__(self):
-    return f"_WeakType({self.type.name})"
-  def __hash__(self):
-    return hash((self.type,))
-  def __eq__(self, other):
-    if isinstance(other, _WeakType):
-      return self.type == other.type
-    return NotImplemented
-
 # List of all valid JAX dtypes, in the order they appear in the type promotion
 # table.
+_weak_types = [int, float, complex]
+
 _jax_types = [
   np.dtype('bool'),
   np.dtype('uint8'),
@@ -197,18 +186,15 @@ _jax_types = [
   np.dtype('float64'),
   np.dtype('complex64'),
   np.dtype('complex128'),
-  _WeakType(int),
-  _WeakType(float),
-  _WeakType(complex),
-]
+] + _weak_types
 
 def _jax_type(value):
   """Return the jax type for a value."""
   dtype_ = dtype(value)
   if is_weakly_typed(value):
     pytype = type(dtype_.type(0).item())
-    if pytype in [int, float, complex]:
-      return _WeakType(pytype)
+    if pytype in _weak_types:
+      return pytype
   return dtype_
 
 # Mapping from types to their type numbers.
@@ -253,8 +239,11 @@ def promote_types(a, b):
   Returns:
     A :class:`numpy.dtype` object.
   """
-  a = a if isinstance(a, _WeakType) else np.dtype(a)
-  b = b if isinstance(b, _WeakType) else np.dtype(b)
+  return np.dtype(_promote_types_raw(np.dtype(a), np.dtype(b)))
+
+def _promote_types_raw(a, b):
+  a = a if a in _weak_types else np.dtype(a)
+  b = b if b in _weak_types else np.dtype(b)
   try:
     return _type_promotion_table[_jax_type_nums[a], _jax_type_nums[b]]
   except KeyError:
@@ -292,8 +281,6 @@ def result_type(*args):
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
     return dtype(args[0])
-  result_type = functools.reduce(promote_types, (_jax_type(arg) for arg in args))
-  if isinstance(result_type, _WeakType):
-    # TODO(jakevdp): propagate weak_type=True to the result in this case.
-    return canonicalize_dtype(result_type.type)
+  result_type = functools.reduce(_promote_types_raw, (_jax_type(arg) for arg in args))
+  # TODO(jakevdp): propagate weak_type to the result when necessary.
   return canonicalize_dtype(result_type)
