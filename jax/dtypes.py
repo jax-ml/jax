@@ -202,27 +202,29 @@ _jax_type_nums = {t: i for i, t in enumerate(_jax_types)}
 
 
 def _make_type_promotion_table():
-  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s_, f_, c_ = _jax_types
-  #  b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s*, f*, c*
+  # Note: this promotion table is generated via the least upper bounds over a type
+  # promotion lattice. See testPromotionTableLattice for details of this.
+  b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_ = _jax_types
+  #  b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, s*, f*, c*
   return np.array([
-    [b1, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s8, f8, c8],  # b1
-    [u1, u1, u2, u4, u8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8, u1, f8, c8],  # u1
-    [u2, u2, u2, u4, u8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8, u2, f8, c8],  # u2
-    [u4, u4, u4, u4, u8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8, u4, f8, c8],  # u4
-    [u8, u8, u8, u8, u8, f8, f8, f8, f8, bf, f2, f4, f8, c4, c8, u8, f8, c8],  # u8
-    [s1, s2, s4, s8, f8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s1, f8, c8],  # s1
-    [s2, s2, s4, s8, f8, s2, s2, s4, s8, bf, f2, f4, f8, c4, c8, s2, f8, c8],  # s2
-    [s4, s4, s4, s8, f8, s4, s4, s4, s8, bf, f2, f4, f8, c4, c8, s4, f8, c8],  # s4
-    [s8, s8, s8, s8, f8, s8, s8, s8, s8, bf, f2, f4, f8, c4, c8, s8, f8, c8],  # s8
-    [bf, bf, bf, bf, bf, bf, bf, bf, bf, bf, f4, f4, f8, c4, c8, bf, bf, c8],  # bf
-    [f2, f2, f2, f2, f2, f2, f2, f2, f2, f4, f2, f4, f8, c4, c8, f2, f2, c8],  # f2
-    [f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f8, c4, c8, f4, f4, c8],  # f4
+    [b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_],  # b1
+    [u1, u1, u2, u4, u8, i2, i2, i4, i8, bf, f2, f4, f8, c4, c8, u1, f_, c_],  # u1
+    [u2, u2, u2, u4, u8, i4, i4, i4, i8, bf, f2, f4, f8, c4, c8, u2, f_, c_],  # u2
+    [u4, u4, u4, u4, u8, i8, i8, i8, i8, bf, f2, f4, f8, c4, c8, u4, f_, c_],  # u4
+    [u8, u8, u8, u8, u8, f_, f_, f_, f_, bf, f2, f4, f8, c4, c8, u8, f_, c_],  # u8
+    [i1, i2, i4, i8, f_, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i1, f_, c_],  # i1
+    [i2, i2, i4, i8, f_, i2, i2, i4, i8, bf, f2, f4, f8, c4, c8, i2, f_, c_],  # i2
+    [i4, i4, i4, i8, f_, i4, i4, i4, i8, bf, f2, f4, f8, c4, c8, i4, f_, c_],  # i4
+    [i8, i8, i8, i8, f_, i8, i8, i8, i8, bf, f2, f4, f8, c4, c8, i8, f_, c_],  # i8
+    [bf, bf, bf, bf, bf, bf, bf, bf, bf, bf, f4, f4, f8, c4, c8, bf, bf, c4],  # bf
+    [f2, f2, f2, f2, f2, f2, f2, f2, f2, f4, f2, f4, f8, c4, c8, f2, f2, c4],  # f2
+    [f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f4, f8, c4, c8, f4, f4, c4],  # f4
     [f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, f8, c8, c8, f8, f8, c8],  # f8
     [c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c4, c8, c4, c8, c4, c4, c4],  # c4
     [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8],  # c8
-    [s8, u1, u2, u4, u8, s1, s2, s4, s8, bf, f2, f4, f8, c4, c8, s_, f_, c_],  # s*
-    [f8, f8, f8, f8, f8, f8, f8, f8, f8, bf, f2, f4, f8, c4, c8, f_, f_, c_],  # f*
-    [c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c8, c4, c8, c_, c_, c_],  # c*
+    [i_, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_],  # s*
+    [f_, f_, f_, f_, f_, f_, f_, f_, f_, bf, f2, f4, f8, c4, c8, f_, f_, c_],  # f*
+    [c_, c_, c_, c_, c_, c_, c_, c_, c_, c4, c4, c4, c8, c4, c8, c_, c_, c_],  # c*
   ])
 
 _type_promotion_table = _make_type_promotion_table()
