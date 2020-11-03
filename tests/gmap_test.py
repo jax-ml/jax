@@ -28,7 +28,7 @@ import jax.numpy as jnp
 from jax import test_util as jtu
 from jax import vmap
 from jax import lax
-from jax.experimental.general_map import gmap
+from jax.experimental.general_map import gmap, resources, xmap, A
 from jax.lib import xla_bridge
 from jax.util import curry
 
@@ -36,7 +36,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 ignore_gmap_warning = functools.partial(
-  jtu.ignore_warning, message="gmap is an experimental.*")
+  jtu.ignore_warning, message=".*is an experimental.*")
 
 # TODO(mattjj): de-duplicate setUpModule and tearDownModule with pmap_test.py
 # Run all tests with 8 CPU devices.
@@ -123,6 +123,30 @@ class GmapTest(jtu.JaxTestCase):
     s = [('vectorized', None)]
     self.assertAllClose(gmap(gmap(f, s, axis_name='i'), s, axis_name='j')(x),
                         vmap(vmap(f, axis_name='i'), axis_name='j')(x))
+
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testXMap(self):
+    def f(a, b):
+      return a + 2, b * 4
+    with resources(r1=4, r2=2, r3=5):
+      fm = xmap(f,
+                in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
+                out_axes=[A({'x': 1, 'z': 0}), A({'y': 0})],
+                schedule=[
+                  ('x', 'r1'),
+                  ('x', 'r2'),
+                  ('y', 'r1'),
+                  ('z', 'r3'),
+                  ('x', 'vectorize'),
+                  ('y', 'vectorize'),
+                ])
+      a = jnp.arange(16*5*2).reshape((16, 5, 2))
+      b = jnp.arange(6*16).reshape((6, 16))
+      c, d = fm(a, b)
+      self.assertAllClose(c, (a + 2).transpose((1, 0, 2)))
+      self.assertAllClose(d, (b * 4).T)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -13,19 +13,185 @@
 # limitations under the License.
 
 import enum
+import threading
+import contextlib
 from collections import namedtuple
-from typing import Callable
+from typing import Callable, Iterable, List, Tuple, Optional, Dict
 from warnings import warn
 from functools import wraps
 
 import jax
+from .. import numpy as jnp
 from .. import core
 from .. import linear_util as lu
 from ..api import _mapped_axis_size, _check_callable, _check_arg
 from ..tree_util import tree_flatten, tree_unflatten
 from ..api_util import flatten_fun
 from ..interpreters import partial_eval as pe
+from ..interpreters import batching
+from ..util import safe_map, safe_zip, curry
 
+map = safe_map
+zip = safe_zip
+
+# Multi-dimensional generalized map
+
+# TODO: Use a more lax type annotation (we need == and hash)
+AxisName = str
+ResourceAxisName = str
+
+# TODO: At least support sequential mapping
+class ResourceEnv(threading.local):
+  def __init__(self):
+    self.axes : Dict[ResourceAxisName, int] = {}
+thread_resource_env = ResourceEnv()
+
+# This is really a Dict[AxisName, int], but we don't define a
+# pytree instance for it, so that it is treated as a leaf.
+class AxisNamePos(dict):
+  pass
+
+A = AxisNamePos
+
+@contextlib.contextmanager
+def resources(**axes):
+  old_axes = thread_resource_env.axes
+  thread_resource_env.axes = axes
+  try:
+    yield
+  finally:
+    thread_resource_env.axes = old_axes
+
+# TODO: Some syntactic sugar to make the API more usable in a single-axis case?
+# TODO: Are the resource axes scoped lexically or dynamically? Dynamically for now!
+def xmap(fun: Callable,
+         in_axes,  # PyTree[AxisNamePos]
+         out_axes,  # PyTree[AxisNamePos],
+         schedule: Iterable[Tuple[AxisName, ResourceAxisName]]):
+  warn("xmap is an experimental feature and probably has bugs!")
+  _check_callable(fun)
+
+  def fun_mapped(*args, **kwargs):
+    f = lu.wrap_init(fun)
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    for arg in args_flat: _check_arg(arg)
+    f, out_tree = flatten_fun(f, in_tree)
+    # TODO: We've skipped axis_size analysis and schedule parsing
+    # TODO: Check that:
+    #         - every scheduled axis name appears in at least one input
+    #         - every used resource axis name appears in the resource env
+    #         - every axis name is scheduled to a single resource axis only once
+    #         - every out axis has a distinct index
+    #         - two axes mapped to the same resource never coincide (even inside f)
+    in_axes_flat, in_axes_tree = tree_flatten(in_axes)
+    # TODO: Verify that in_axes are equal, or better expand their prefix
+    # assert in_axes_tree == in_tree
+    out_axes_flat, out_axes_tree = tree_flatten(out_axes)
+    # TODO: Verify that out_axes are equal, or better expand their prefix
+    # assert out_axes_tree == in_tree
+
+    resource_to_axis: Dict[ResourceAxisName, List[AxisName]] = dict()
+    for (axis, resource) in schedule:
+      if resource not in resource_to_axis:
+        resource_to_axis[resource] = []
+      resource_to_axis[resource].append(axis)
+
+    # TODO: The order of maps should be derived from the schedule, not from the
+    #       resource env. This doesn't really matter for as long as we only support
+    #       vmap, but will be important (e.g. for tiling).
+    #       We should be able to do that by building a graph of dependencies between
+    #       resources based on the order in which they appear within each axis.
+    #       If it has cycles then we cannot realize it. Otherwise, if the DAG doesn't
+    #       uniquely identify a linear order, we should use the order of entries in
+    #       the schedule to break ties.
+    resource_map = {resource: (pri, size)
+                    for pri, (resource, size) in enumerate(thread_resource_env.axes.items())}
+    resource_map['vectorize'] = (len(resource_map), None)
+    map_sequence = sorted(resource_to_axis.items(),
+                          key=lambda item: resource_map[item[0]][0])
+    f = hide_mapped_axes(f, in_axes_flat, out_axes_flat)
+    for resource, resource_axes in map_sequence[::-1]:
+      # TODO: Support collectives
+      # TODO: Support sequential
+      # XXX: Even though multiple axes might be mapped to the 'vectorized'
+      #      resource, we cannot vectorize them jointly, because they
+      #      might require different axis sizes.
+      if resource == 'vectorize':
+        maps = [[name] for name in resource_axes]
+      else:
+        maps = [resource_axes]
+      for axes in maps:
+        map_in_axes = map(lambda spec: lookup_exactly_one_of(spec, axes), in_axes_flat)
+        map_out_axes = map(lambda spec: lookup_exactly_one_of(spec, axes), out_axes_flat)
+        map_size = resource_map[resource][1]
+        f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size)
+    flat_out = f.call_wrapped(*args_flat)
+    return tree_unflatten(out_tree(), flat_out)
+
+  return fun_mapped
+
+def lookup_exactly_one_of(d: AxisNamePos, names: List[AxisName]) -> Optional[int]:
+  res = None
+  for name in names:
+    if name in d:
+      if res is not None:
+        raise ValueError("An input was mapped to the same resource twice")
+      res = d[name]
+  return res
+
+def _squeeze_mapped_axes(arg, axes: AxisNamePos):
+  for dim in sorted(axes.values(), reverse=True):
+    arg = arg.squeeze(dim)
+  return arg
+
+def _unsqueeze_mapped_axes(out, axes: AxisNamePos):
+  for dim in sorted(axes.values()):
+    out = jnp.expand_dims(out, dim)
+  return out
+
+@lu.transformation
+def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
+  squeezed_args = map(_squeeze_mapped_axes, flat_args, flat_in_axes)
+  flat_outputs = yield squeezed_args, {}
+  yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
+
+@curry
+def tile_axis(arg, axis: Optional[int], tile_size):
+  if axis is None:
+    return arg
+  shape = list(arg.shape)
+  shape[axis:axis+1] = [tile_size, shape[axis] // tile_size]
+  return arg.reshape(shape)
+
+def untile_axis(out, axis: Optional[int]):
+  if axis is None:
+    return out
+  shape = list(out.shape)
+  shape[axis:axis+2] = [shape[axis] * shape[axis+1]]
+  return out.reshape(shape)
+
+# NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
+def vtile(f_flat, in_axes_flat, out_axes_flat, tile_size: Optional[int]):
+  @lu.transformation
+  def _map_to_tile(*args_flat):
+    real_tile_size = tile_size
+    for arg, in_axis in zip(args_flat, in_axes_flat):
+      if real_tile_size is not None:
+        break
+      if in_axis is None:
+        continue
+      real_tile_size = arg.shape[in_axis]
+    assert real_tile_size is not None, "No mapped arguments?"
+    outputs_flat = yield map(tile_axis(tile_size=real_tile_size), args_flat, in_axes_flat), {}
+    yield map(untile_axis, outputs_flat, out_axes_flat)
+
+  return _map_to_tile(
+    batching.batch_fun(f_flat,
+                       in_axes_flat,
+                       out_axes_flat,
+                       axis_name=None))
+
+# Single-dimensional generalized map
 
 def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
   warn("gmap is an experimental feature and probably has bugs!")
