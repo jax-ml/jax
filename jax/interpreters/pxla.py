@@ -91,9 +91,9 @@ class ShardingSpec:
   of sharding, replication isn't associated with a particular logical array
   axis. However, it does have a position relative to the logical array axes,
   which is necessary to specify how replication is mapped to devices in
-  `spec_to_indices`. One to think about this is if you added an extra length-N
-  logical axis containing the N copies of the original array, where would that
-  new axis go? This would affect the final buffer order computed in
+  `spec_to_indices`. One way to think about this is if you added an extra
+  length-N logical axis containing the N copies of the original array, where
+  would that new axis go? This would affect the final buffer order computed in
   `spec_to_indices`.
 
   Attributes:
