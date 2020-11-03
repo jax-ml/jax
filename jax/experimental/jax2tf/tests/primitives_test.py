@@ -170,8 +170,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                   "only 1D FFT is currently supported."):
         harness.dyn_fun(*harness.dyn_args_maker(self.rng()))
     else:
+      tol = None if jtu.device_under_test() == "tpu" else 1e-3
       self.ConvertAndCompare(harness.dyn_fun,
-                             *harness.dyn_args_maker(self.rng()))
+                             *harness.dyn_args_maker(self.rng()),
+                             atol=tol, rtol=tol)
 
   @primitive_harness.parameterized(primitive_harness.lax_linalg_cholesky)
   def test_cholesky(self, harness: primitive_harness.Harness):
