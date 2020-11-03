@@ -77,6 +77,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                         custom_assert: Optional[Callable] = None,
                         always_custom_assert: bool = False,
                         expect_tf_exceptions: bool = False,
+                        enable_xla: bool = True,
                         atol=None,
                         rtol=None) -> Tuple[Any, Any]:
     """Compares jax_func(*args) with convert(jax_func)(*args).
@@ -93,13 +94,15 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         results. Use this function when JAX and TF produce different results.
         This function is only used for "eager" and "graph" modes by default, not
         for the "compiled" mode, because in that case we expect the results to
-        be equal.
+        be equal (default: None).
       always_custom_assert: if True, custom_assert is also called in "compiled"
         mode. This is useful in cases where JAX and TF produce different but
-        equally valid results.
+        equally valid results (default: False).
       expect_tf_exceptions: if True, there may be exceptions in some evaluation
         modes; when there is no exception the result should be the same
-        as in JAX.
+        as in JAX (default: False).
+      enable_xla: if True, allows the use of XLA ops in jax2tf.convert
+        (default: True).
     """
     original_impl = jax2tf.jax2tf.TensorFlowTrace.get_primitive_impl
 
@@ -120,7 +123,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # Run JAX
     result_jax = func_jax(*args)
     # Run TF in all execution modes
-    func_tf = jax2tf.convert(func_jax)
+    func_tf = jax2tf.convert(func_jax, enable_xla=enable_xla)
 
     def convert_if_bfloat16(v):
       if hasattr(v, "dtype"):
