@@ -36,6 +36,7 @@ try:
   from tensorflow.python.profiler import profiler_v2 as tf_profiler
 except ImportError:
   profiler_client = None
+  tf_profiler = None
 
 config.parse_flags_with_absl()
 
@@ -86,7 +87,7 @@ class ProfilerTest(unittest.TestCase):
     self.assertEqual(1, len(glob.glob(path)),
                      'Expected one path match: ' + path)
 
-  @unittest.skipIf(not (portpicker or profiler_client),
+  @unittest.skipIf(not (portpicker or profiler_client or tf_profiler),
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
