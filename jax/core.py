@@ -128,6 +128,9 @@ class ClosedJaxpr:
   def literals(self):
     return self.consts  # backwards compatible alias
 
+  def map_jaxpr(self, f):
+    return ClosedJaxpr(f(self.jaxpr), self.consts)
+
   def __str__(self): return str(self.jaxpr)
   def __repr__(self): return repr(self.jaxpr)
 
@@ -1259,7 +1262,7 @@ def axis_frame(axis_name):
   ]
   raise NameError(
       f'unbound axis name: {axis_name}. The following axis names (e.g. defined '
-      'by pmap) are available to collectives operations:'
+      'by pmap) are available to collective operations:'
       f'{named_axis}')
 
 
