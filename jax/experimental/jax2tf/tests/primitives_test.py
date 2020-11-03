@@ -635,10 +635,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     dtype = harness.params["dtype"]
     # TODO: https://www.tensorflow.org/api_docs/python/tf/math/betainc only
     # supports float32/64 tests.
-    # TODO(bchetioui): investigate why the test actually fails in JAX.
-    if dtype in [np.float16, dtypes.bfloat16]:
-      raise unittest.SkipTest("(b)float16 not implemented in TF")
-
     tol = None
     if dtype is np.float64:
       tol = 1e-14
