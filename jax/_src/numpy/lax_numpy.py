@@ -212,6 +212,12 @@ _DEFAULT_TYPEMAP = {
   np.complex_: complex_
 }
 
+_INT_DTYPES = {
+  16: np.int16,
+  32: np.int32,
+  64: np.int64,
+}
+
 def _np_array(obj, dtype=None, **kwargs):
   """Return a properly-typed numpy array.
 
@@ -671,19 +677,12 @@ def signbit(x):
     x = lax.convert_element_type(x, float32)
 
   info = finfo(dtype)
-  if info.bits == 16:
-    int_type = np.int16
-  elif info.bits == 32:
-    int_type = np.int32
-  elif info.bits == 64:
-    int_type = np.int64
-  else:
+  if info.bits not in _INT_DTYPES:
     raise NotImplementedError(
         "jax.numpy.signbit only supports 16, 32, and 64-bit types.")
-
+  int_type = _INT_DTYPES[info.bits]
   x = lax.bitcast_convert_type(x, int_type)
   return lax.convert_element_type(x >> (info.nexp + info.nmant), np.bool_)
-
 
 
 @_wraps(np.trapz)
@@ -750,17 +749,11 @@ def correlate(a, v, mode='valid', *, precision=None):
 def _normalize_float(x):
   info = finfo(_dtype(x))
   cond = lax.abs(x) < info.tiny
-  x1 = where(cond, x * (1 << info.nmant), x)
-  x2 = where(cond, full_like(x, -info.nmant, dtype=np.int32),
-             zeros_like(x, dtype=np.int32))
-  return lax.convert_element_type(x1, _dtype(x)), x2
+  x1 = where(cond, x * lax._const(x, 1 << info.nmant), x)
+  x2 = where(cond, lax._const(np.int32, -info.nmant), lax._const(np.int32, 0))
+  int_type = _INT_DTYPES[info.bits]
+  return lax.bitcast_convert_type(x1, int_type), x2
 
-
-_INT_DTYPES = {
-  16: np.int16,
-  32: np.int32,
-  64: np.int64,
-}
 
 @_wraps(np.ldexp)
 @jit
@@ -776,9 +769,7 @@ def ldexp(x1, x2):
   int_type = _INT_DTYPES[info.bits]
 
   x, e = _normalize_float(x1)
-  x2 += lax.convert_element_type(e, np.int32)
-  x = lax.bitcast_convert_type(x, int_type)
-  x2 += ((x >> info.nmant) & mask) - bias
+  x2 += e + ((x >> info.nmant) & mask) - bias
 
   # find underflow/overflow before denormalization
   underflow_cond = x2 < -(bias + info.nmant)
@@ -819,10 +810,7 @@ def frexp(x):
   mask = (1 << info.nexp) - 1
   bias = ((1 << info.nexp) - 1) >> 1
 
-  int_type = _INT_DTYPES[info.bits]
-
   x1, x2 = _normalize_float(x)
-  x1 = lax.bitcast_convert_type(x1, int_type)
   x2 += ((x1 >> info.nmant) & mask) - bias + 1
   x1 &= ~(mask << info.nmant)
   x1 |= (bias - 1) << info.nmant
