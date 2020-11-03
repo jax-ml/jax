@@ -55,6 +55,10 @@ flags.DEFINE_integer("num_epochs", 3, "For how many epochs to train.")
 flags.DEFINE_boolean(
     "generate_model", True,
     "Train and save a new model. Otherwise, use an existing SavedModel.")
+flags.DEFINE_boolean(
+    "compile_model", True,
+    "Enable TensorFlow experimental_compiler for the SavedModel. This is "
+    "necessary if you want to use the model for TensorFlow serving.")
 flags.DEFINE_boolean("show_model", True, "Show details of saved SavedModel.")
 flags.DEFINE_boolean(
     "show_images", False,
@@ -111,7 +115,8 @@ def train_and_save():
         predict_params,
         model_dir,
         input_signatures=input_signatures,
-        shape_polymorphic_input_spec=shape_polymorphic_input_spec)
+        shape_polymorphic_input_spec=shape_polymorphic_input_spec,
+        compile_model=FLAGS.compile_model)
 
     if FLAGS.test_savedmodel:
       tf_accelerator, tolerances = tf_accelerator_and_tolerances()
@@ -134,9 +139,7 @@ def train_and_save():
             pure_restored_model(tf.convert_to_tensor(test_input)),
             predict_fn(predict_params, test_input), **tolerances)
 
-  assert os.path.isdir(model_dir)
   if FLAGS.show_model:
-
     def print_model(model_dir: str):
       cmd = f"saved_model_cli show --all --dir {model_dir}"
       print(cmd)
@@ -165,14 +168,9 @@ def model_description() -> str:
 
 def savedmodel_dir(with_version: bool = True) -> str:
   """The directory where we save the SavedModel."""
-  if FLAGS.model == "mnist_pure_jax":
-    model_class = mnist_lib.PureJaxMNIST
-  elif FLAGS.model == "mnist_flax":
-    model_class = mnist_lib.FlaxMNIST
-
   model_dir = os.path.join(
       FLAGS.model_path,
-      f"{model_class.name}{'' if FLAGS.model_classifier_layer else '_features'}"
+      f"{'mnist' if FLAGS.model_classifier_layer else 'mnist_features'}"
   )
   if with_version:
     model_dir = os.path.join(model_dir, str(FLAGS.model_version))
