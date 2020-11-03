@@ -2603,7 +2603,7 @@ class LazyTest(jtu.JaxTestCase):
         jax_x = jnp.tri(N, M, k, dtype=dtype)
       else:
         assert False
-      assert type(np_x) is np.ndarray and type(jax_x) is xla.DeviceArray
+      assert type(np_x) is np.ndarray and xla.type_is_device_array(jax_x)
       return np_x, jax_x
 
     def random_op(rng, shape):

@@ -111,7 +111,9 @@ def aval_to_result_handler(device: Optional[Device], aval: core.AbstractValue) -
 def array_result_handler(device: Optional[Device], aval: core.ShapedArray):
   if aval.dtype is dtypes.float0:
     return lambda _: np.zeros(aval.shape, dtypes.float0)
-  return partial(DeviceArray, raise_to_shaped(aval), device, lazy.array(aval.shape))
+  return partial(make_device_array, raise_to_shaped(aval), device,
+                 lazy.array(aval.shape))
+
 
 xla_result_handlers: Dict[Type[core.AbstractValue], Callable[..., Callable]] = {
     core.AbstractUnit: lambda _, __: lambda _: core.unit,
@@ -822,7 +824,7 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers, *
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [canonicalize_dtype(v.val) if type(v) is Literal else env[v]
           for v in jaxpr.outvars]
-  return [_copy_device_array_to_device(x, device) if type(x) is DeviceArray
+  return [_copy_device_array_to_device(x, device) if type_is_device_array(x)
           else h(*device_put(x, device)) for h, x in zip(handlers, outs)]
 
 xla_call_p = core.CallPrimitive('xla_call')
@@ -977,6 +979,26 @@ canonicalize_dtype_handlers[Token] = identity
 def _forward_method(attrname, self, fun, *args):
   return fun(getattr(self, attrname), *args)
 _forward_to_value = partial(_forward_method, "_value")
+
+
+def make_device_array(aval: core.ShapedArray, device: Optional[Device],
+                      lazy_expr: lazy.LazyExpr, device_buffer: PyLocalBuffer):
+  """Returns a DeviceArray implementation based on arguments.
+
+  External users should not call the `DeviceArray` constructor as it's an
+  internal implementation detail. This is added to smooth the transition to a
+  C++ equivalent implementation.
+  """
+  return DeviceArray(aval, device, lazy_expr, device_buffer)
+
+
+def type_is_device_array(x):
+  """Returns `True` if `x` is a non-sharded DeviceArray.
+
+  Use this function instead of `type(x) is Devicearray`.
+  """
+  # TODO(jblespiau): Extend to also support `PyBuffer`.
+  return type(x) is DeviceArray
 
 
 class DeviceArray:
@@ -1166,7 +1188,7 @@ class DeviceConstant(object):
   def to_py(self): return None
 
 def is_device_constant(x):
-  return type(x) is DeviceArray and type(x.device_buffer) is DeviceConstant
+  return type_is_device_array(x) and type(x.device_buffer) is DeviceConstant
 
 core.literalable_types.add(DeviceArray)
 core.pytype_aval_mappings[DeviceArray] = ConcreteArray
@@ -1257,7 +1279,7 @@ def _lazy_force_computation(aval: core.ShapedArray,
 
 
 def _device_put_impl(x, device: Optional[Device] = None):
-  if type(x) is DeviceArray:
+  if type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
 
   try:
