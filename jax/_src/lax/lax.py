@@ -1421,7 +1421,7 @@ def iota(dtype: DType, size: int) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
     lazy_expr = lazy.iota(dtype, shape[0])
     aval = ShapedArray(shape, dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
 
 def broadcasted_iota(dtype: DType, shape: Shape, dimension: int) -> Array:
   """Convenience wrapper around ``iota``."""
@@ -1444,7 +1444,7 @@ def _eye(dtype: DType, shape: Shape, offset: int) -> Array:
   else:
     lazy_expr = lazy.eye(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
 
 def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
@@ -1462,7 +1462,7 @@ def _delta(dtype: DType, shape: Shape, axes: Sequence[int]) -> Array:
   else:
     lazy_expr = lazy.broadcast(lazy.delta(dtype, base_shape), shape, axes)
     aval = ShapedArray(shape, dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
 
 def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
@@ -1477,7 +1477,7 @@ def _tri(dtype: DType, shape: Shape, offset: int) -> Array:
   else:
     lazy_expr = lazy.tri(dtype, (N, M), offset)
     aval = ShapedArray((N, M), dtype)
-    return xla.DeviceArray(aval, None, lazy_expr, xla.DeviceConstant())
+    return xla.make_device_array(aval, None, lazy_expr, xla.DeviceConstant())
 
 def stop_gradient(x):
   """Stops gradient computation.
@@ -3104,13 +3104,13 @@ batching.primitive_batchers[broadcast_p] = _broadcast_batch_rule
 def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
   if type(operand) is np.ndarray:
     operand = _device_put_raw(operand)
-  if type(operand) is xla.DeviceArray and np.all(
+  if xla.type_is_device_array(operand) and np.all(
       np.equal(operand.shape, np.take(shape, broadcast_dimensions))):
     shape = _broadcast_in_dim_shape_rule(
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
     lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
-    return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
+    return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
                                broadcast_dimensions=broadcast_dimensions)
@@ -3403,12 +3403,12 @@ def expand_dims(array: Array, dimensions: Tuple[int, ...]) -> Array:
 # We have a nonstandard reshape impl so that we can be lazy about data movement.
 def _reshape_impl(operand, *, new_sizes, dimensions):
   old_sizes = np.shape(operand)
-  if type(operand) is xla.DeviceArray and dimensions is None:
+  if xla.type_is_device_array(operand) and dimensions is None:
     bcast_dims = _is_singleton_reshape(old_sizes, new_sizes)
     if bcast_dims is not None:
       aval = ShapedArray(new_sizes, operand.dtype)
       lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
-      return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
+      return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
   return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
                              dimensions=dimensions)
 
@@ -3519,10 +3519,10 @@ batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 
 def _transpose_impl(operand, *, permutation):
-  if type(operand) is xla.DeviceArray:
+  if xla.type_is_device_array(operand):
     lazy_expr = lazy.transpose(operand._lazy_expr, permutation)
     aval = ShapedArray(lazy_expr.shape, operand.dtype)
-    return xla.DeviceArray(aval, operand._device, lazy_expr, operand.device_buffer)
+    return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(transpose_p, operand, permutation=permutation)
 
