@@ -1202,7 +1202,7 @@ def _try_tf_conv(lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
 # the end shape is indeed the correct one (i.e. (1,3,26,24,16)). Further
 # investigation is required to really understand this behavior, which we have
 # not managed to reproduce as a pure TF test.
-ENABLE_TF_CONVOLUTION = False
+ENABLE_TF_CONVOLUTION = True
 
 def _conv_general_dilated(lhs, rhs, window_strides, padding, lhs_dilation,
                           rhs_dilation, dimension_numbers, feature_group_count,
