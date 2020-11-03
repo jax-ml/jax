@@ -3134,16 +3134,17 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     raise TypeError(msg.format(broadcast_dimensions, operand_ndim, shape))
   if any(operand.shape[i] != 1 and operand.shape[i] != shape[broadcast_dimensions[i]]
          for i in range(operand_ndim)):
-      msg = ('broadcast_in_dim operand dimension sizes must either be 1, or be '
-             'equal to their corresponding dimensions in the target broadcast shape; '
-             'got operand of shape {}, target broadcast shape {}, '
-             'broadcast_dimensions {} ')
-      raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
+    msg = (
+        "broadcast_in_dim operand dimension sizes must either be 1, or be "
+        "equal to their corresponding dimensions in the target broadcast "
+        "shape; got operand of shape {}, target broadcast shape {}, "
+        "broadcast_dimensions {} ")
+    raise TypeError(msg.format(operand.shape, shape, broadcast_dimensions))
   if (len(broadcast_dimensions) != len(set(broadcast_dimensions)) or
       tuple(broadcast_dimensions) != tuple(sorted(broadcast_dimensions))):
-      msg = ('broadcast_in_dim broadcast_dimensions must be strictly increasing; '
-             'got broadcast_dimensions {}')
-      raise TypeError(msg.format(broadcast_dimensions))
+    msg = ("broadcast_in_dim broadcast_dimensions must be strictly increasing; "
+           "got broadcast_dimensions {}")
+    raise TypeError(msg.format(broadcast_dimensions))
 
   return shape
 
@@ -6139,9 +6140,9 @@ def _canonicalize_axis(axis, num_dims):
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
   if not -num_dims <= axis < num_dims:
-      raise ValueError(
-          "axis {} is out of bounds for array of dimension {}".format(
-              axis, num_dims))
+    raise ValueError(
+        "axis {} is out of bounds for array of dimension {}".format(
+            axis, num_dims))
   if axis < 0:
     axis = axis + num_dims
   return axis
