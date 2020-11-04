@@ -35,9 +35,13 @@ jax 0.2.6 (Unreleased)
 
 jaxlib 0.1.57 (unreleased)
 ------------------------------
+
+* Switched the CPU FFT implementation from Eigen to PocketFFT.
 * Fixed a bug where the hash of bfloat16 values was not correctly initialized
   and could change (#4651).
 * Add support for retaining ownership when passing arrays to DLPack (#4636).
+* Fixed a bug for batched triangular solves with sizes greater than 128 but not
+  a multiple of 128.
 
 jax 0.2.5 (October 27 2020)
 --------------------------
