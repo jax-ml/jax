@@ -2246,7 +2246,7 @@ class LaxTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.jaxpr.eqns, 2)
 
   def test_named_call(self):
-
+    # TODO(qiuminxu) Make named_call a public function in lax. 
     def named_call(f, name):
       def named_f(*args):
         f_ = jax.linear_util.wrap_init(lambda: (f(*args),))
