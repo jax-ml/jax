@@ -554,7 +554,8 @@ def _make_fft_harness(name, *, shape=(14, 15, 16, 17), dtype=np.float32,
       return jtu.rand_default
 
   return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_ffttype={fft_type}_fftlengths={fft_lengths}",
-                 lax.fft,
+                 lambda *args: lax.fft_p.bind(args[0], fft_type=args[1],
+                                              fft_lengths=args[2]),
                  [RandArg(shape, dtype), StaticArg(fft_type),
                   StaticArg(fft_lengths)],
                  rng_factory=_fft_rng_factory(dtype),
@@ -563,16 +564,26 @@ def _make_fft_harness(name, *, shape=(14, 15, 16, 17), dtype=np.float32,
                  fft_type=fft_type,
                  fft_lengths=fft_lengths)
 
-lax_fft = tuple( # Validate dtypes
-  _make_fft_harness("dtypes", dtype=dtype)
-  for dtype in jtu.dtypes.all
-) + tuple( # Validate dimensions per FFT type
-  _make_fft_harness("fft_and_dims", shape=shape, fft_type=fft_type,
+lax_fft = tuple( # Validate dtypes per FFT type
+  _make_fft_harness("dtypes", shape=shape, dtype=dtype, fft_type=fft_type,
                     fft_lengths=fft_lengths)
   for shape in [(14, 15, 16, 17)]
-  for dims in [1, 2, 3]
   # FFT, IFFT, RFFT, IRFFT
   for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3]))
+  for dtype in (jtu.dtypes.floating if fft_type == xla_client.FftType.RFFT
+                else jtu.dtypes.complex)
+  for fft_lengths in [
+    (shape[-1],) if fft_type != xla_client.FftType.IRFFT else
+    ((shape[-1] - 1) * 2,)
+  ]
+) + tuple( # Validate dimensions per FFT type
+  _make_fft_harness("dims", shape=shape, fft_type=fft_type,
+                    fft_lengths=fft_lengths, dtype=dtype)
+  for shape in [(14, 15, 16, 17)]
+  for dims in [1, 2, 3]
+  for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3]))
+  for dtype in [np.float32 if fft_type == xla_client.FftType.RFFT
+                else np.complex64]
   for fft_lengths in [
     shape[-dims:] if fft_type != xla_client.FftType.IRFFT else
     shape[-dims:-1] + ((shape[-1] - 1) * 2,)
