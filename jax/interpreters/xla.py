@@ -28,7 +28,7 @@ from .. import ad_util
 from .. import dtypes
 from .. import lazy
 from .. import linear_util as lu
-from .. import source_info_util
+from jax._src import source_info_util
 from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
                                abstract_token)

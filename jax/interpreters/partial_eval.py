@@ -32,7 +32,7 @@ from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
                     dropvar)
-from .. import source_info_util
+from jax._src import source_info_util
 from ..config import config
 
 map = safe_map

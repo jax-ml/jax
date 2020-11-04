@@ -23,7 +23,7 @@ import numpy as np
 from jax import core
 from jax import dtypes
 from jax import tree_util
-from jax import source_info_util
+from jax._src import source_info_util
 from . import lax
 from jax.abstract_arrays import ShapedArray, raise_to_shaped
 from jax.interpreters import ad

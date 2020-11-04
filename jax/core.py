@@ -32,7 +32,7 @@ from . import dtypes
 from .config import FLAGS, config
 from . import linear_util as lu
 
-from . import source_info_util
+from jax._src import source_info_util
 from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
 from .pprint_util import pp, vcat, PrettyPrint
 

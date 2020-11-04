@@ -12,52 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-import os.path
-import threading
-from typing import Any, Optional
-
-from .lib import xla_client
-
-from ._src import traceback_util
-traceback_util.register_exclusion(__file__)
-
-
-Traceback = Any  # xla_client.Traceback
-Frame = Any  # xla_client.Traceback::Frame
-
-_jax_path = os.path.dirname(__file__)
-
-def user_frame(source_info: Optional[Traceback]) -> Optional[Frame]:
-  """Heuristic that guesses the identity of the user's code in a stack trace."""
-  # Guess the user's frame is the innermost frame not in the jax source tree
-  return next((x for x in (source_info.frames if source_info else [])
-               if not x.file_name.startswith(_jax_path)), None)
-
-
-def summarize(source_info: Optional[Traceback]) -> str:
-  frame = user_frame(source_info)
-  return (f"{frame.file_name}:{frame.line_num} ({frame.function_name})"
-          if frame else "unknown")
-
-
-class _SourceInfoContext(threading.local):
-  context: Optional[Traceback]
-
-  def __init__(self):
-    self.context = None
-
-_source_info_context = _SourceInfoContext()
-
-
-def current() -> Optional[Traceback]:
-  return _source_info_context.context or xla_client.Traceback.get_traceback()
-
-@contextlib.contextmanager
-def user_context(c):
-  prev = _source_info_context.context
-  _source_info_context.context = c or _source_info_context.context
-  try:
-    yield
-  finally:
-    _source_info_context.context = prev
+# flake8: noqa: F401
+from jax._src.source_info_util import current

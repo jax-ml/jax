@@ -31,7 +31,7 @@ import jax
 from jax import api
 from jax import core
 from jax import dtypes
-from jax import source_info_util
+from jax._src import source_info_util
 from jax import util
 from jax._src.lax import lax
 from jax import linear_util as lu

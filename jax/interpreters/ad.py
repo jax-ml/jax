@@ -30,7 +30,7 @@ from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
 from ..tree_util import tree_flatten, tree_unflatten, Partial
-from .. import source_info_util
+from jax._src import source_info_util
 
 zip = safe_zip
 map = safe_map
