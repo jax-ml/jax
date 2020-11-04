@@ -265,18 +265,6 @@ def is_weakly_typed(x):
 def is_python_scalar(x):
   return is_weakly_typed(x) and np.ndim(x) == 0
 
-def _dtype_priority(dtype):
-  if issubdtype(dtype, np.bool_):
-    return 0
-  elif issubdtype(dtype, np.integer):
-    return 1
-  elif issubdtype(dtype, np.floating):
-    return 2
-  elif issubdtype(dtype, np.complexfloating):
-    return 3
-  else:
-    raise TypeError("Dtype {} is not supported by JAX".format(dtype))
-
 def dtype(x):
   if type(x) in python_scalar_dtypes:
     return python_scalar_dtypes[type(x)]
