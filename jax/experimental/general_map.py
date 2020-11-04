@@ -16,9 +16,9 @@ import enum
 import threading
 import contextlib
 from collections import namedtuple
-from typing import Callable, Iterable, List, Tuple, Optional, Dict
+from typing import Callable, Iterable, List, Tuple, Optional, Dict, Any
 from warnings import warn
-from functools import wraps
+from functools import wraps, partial
 
 import jax
 from .. import numpy as jnp
@@ -46,13 +46,6 @@ class ResourceEnv(threading.local):
     self.axes : Dict[ResourceAxisName, int] = {}
 thread_resource_env = ResourceEnv()
 
-# This is really a Dict[AxisName, int], but we don't define a
-# pytree instance for it, so that it is treated as a leaf.
-class AxisNamePos(dict):
-  pass
-
-A = AxisNamePos
-
 @contextlib.contextmanager
 def resources(**axes):
   old_axes = thread_resource_env.axes
@@ -61,6 +54,13 @@ def resources(**axes):
     yield
   finally:
     thread_resource_env.axes = old_axes
+
+# This is really a Dict[AxisName, int], but we don't define a
+# pytree instance for it, so that it is treated as a leaf.
+class AxisNamePos(dict):
+  pass
+
+A = AxisNamePos
 
 # TODO: Some syntactic sugar to make the API more usable in a single-axis case?
 # TODO: Are the resource axes scoped lexically or dynamically? Dynamically for now!
@@ -72,11 +72,8 @@ def xmap(fun: Callable,
   _check_callable(fun)
 
   def fun_mapped(*args, **kwargs):
-    f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     for arg in args_flat: _check_arg(arg)
-    f, out_tree = flatten_fun(f, in_tree)
-    # TODO: We've skipped axis_size analysis and schedule parsing
     # TODO: Check that:
     #         - every scheduled axis name appears in at least one input
     #         - every used resource axis name appears in the resource env
@@ -109,26 +106,76 @@ def xmap(fun: Callable,
     resource_map['vectorize'] = (len(resource_map), None)
     map_sequence = sorted(resource_to_axis.items(),
                           key=lambda item: resource_map[item[0]][0])
+    axis_subst = {}
+    for axis, resource in schedule:
+      if axis not in axis_subst:
+        axis_subst[axis] = []
+      if resource == 'vectorize':
+        resource = f'v_{axis}'
+      else:
+        resource = f'r_{resource}'
+      axis_subst[axis].append(resource)
+    axis_subst = {axis: tuple(resources) for axis, resources in axis_subst.items()}
+
+    axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
+    jaxpr, out_tree = _trace_mapped_jaxpr(fun, args_flat, in_axes_flat, axis_sizes, in_tree)
+    jaxpr = jaxpr.map_jaxpr(partial(subst_axis_names, axis_subst=axis_subst))
+    f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
     f = hide_mapped_axes(f, in_axes_flat, out_axes_flat)
     for resource, resource_axes in map_sequence[::-1]:
-      # TODO: Support collectives
       # TODO: Support sequential
       # XXX: Even though multiple axes might be mapped to the 'vectorized'
       #      resource, we cannot vectorize them jointly, because they
       #      might require different axis sizes.
       if resource == 'vectorize':
-        maps = [[name] for name in resource_axes]
+        maps = [(f'v_{name}', [name]) for i, name in enumerate(resource_axes)]
       else:
-        maps = [resource_axes]
-      for axes in maps:
+        maps = [(f'r_{resource}', resource_axes)]
+      for raxis_name, axes in maps:
         map_in_axes = map(lambda spec: lookup_exactly_one_of(spec, axes), in_axes_flat)
         map_out_axes = map(lambda spec: lookup_exactly_one_of(spec, axes), out_axes_flat)
         map_size = resource_map[resource][1]
-        f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size)
+        f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis_name)
     flat_out = f.call_wrapped(*args_flat)
-    return tree_unflatten(out_tree(), flat_out)
+    return tree_unflatten(out_tree, flat_out)
 
   return fun_mapped
+
+def _delete_aval_axes(aval, axes: AxisNamePos):
+  assert isinstance(aval, core.ShapedArray)
+  shape = list(aval.shape)
+  for i in sorted(axes.values(), reverse=True):
+    del shape[i]
+  return core.ShapedArray(tuple(shape), aval.dtype)
+
+def _with_axes(axes: Iterable[Tuple[AxisName, int]], f):
+  for name, size in axes:
+    f = core.extend_axis_env(name, size, None)(f)
+  return f()
+
+def _trace_mapped_jaxpr(fun,
+                        args_flat,
+                        in_axes_flat: List[AxisNamePos],
+                        axis_sizes: Dict[AxisName, int],
+                        in_tree):
+  fun_flat, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+  avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
+  mapped_pvals = [pe.PartialVal.unknown(_delete_aval_axes(aval, in_axes))
+                  for aval, in_axes in zip(avals_flat, in_axes_flat)]
+  jaxpr, _, consts = _with_axes(axis_sizes.items(),
+                                lambda: pe.trace_to_jaxpr(fun_flat, mapped_pvals))
+  return core.ClosedJaxpr(jaxpr, consts), out_tree()
+
+def _get_axis_sizes(args_flat: Iterable[Any], in_axes_flat: Iterable[AxisNamePos]):
+  axis_sizes: Dict[AxisName, int] = {}
+  for arg, in_axes in zip(args_flat, in_axes_flat):
+    for name, dim in in_axes.items():
+      if name in axis_sizes:
+        assert axis_sizes[name] == arg.shape[dim]
+      else:
+        axis_sizes[name] = arg.shape[dim]
+  return axis_sizes
+
 
 def lookup_exactly_one_of(d: AxisNamePos, names: List[AxisName]) -> Optional[int]:
   res = None
@@ -171,7 +218,7 @@ def untile_axis(out, axis: Optional[int]):
   return out.reshape(shape)
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
-def vtile(f_flat, in_axes_flat, out_axes_flat, tile_size: Optional[int]):
+def vtile(f_flat, in_axes_flat, out_axes_flat, tile_size: Optional[int], axis_name):
   @lu.transformation
   def _map_to_tile(*args_flat):
     real_tile_size = tile_size
@@ -189,7 +236,7 @@ def vtile(f_flat, in_axes_flat, out_axes_flat, tile_size: Optional[int]):
     batching.batch_fun(f_flat,
                        in_axes_flat,
                        out_axes_flat,
-                       axis_name=None))
+                       axis_name=axis_name))
 
 # Single-dimensional generalized map
 
@@ -294,7 +341,7 @@ def _apply_schedule(fun: lu.WrappedFun,
 
   axis_names = tuple(_GMapSubaxis(full_axis_name, i) for i in range(len(schedule)))
   if binds_axis_name:
-    jaxpr = subst_axis_names(jaxpr, full_axis_name, axis_names)
+    jaxpr = subst_axis_names(jaxpr, {full_axis_name: (axis_names,)})  # type: ignore
 
   sched_fun = lambda *args: core.eval_jaxpr(jaxpr, consts, *args)
   for (ltype, size), axis_name in list(zip(schedule, axis_names))[::-1]:
@@ -320,17 +367,27 @@ gmap_p = core.MapPrimitive('gmap')
 gmap_p.def_impl(gmap_impl)
 
 
-def subst_axis_names(jaxpr, replaced_name, axis_names):
-  eqns = [subst_eqn_axis_names(eqn, replaced_name, axis_names) for eqn in jaxpr.eqns]
+def subst_axis_names(jaxpr, axis_subst: Dict[AxisName, Tuple[AxisName]]):
+  eqns = [subst_eqn_axis_names(eqn, axis_subst) for eqn in jaxpr.eqns]
   return core.Jaxpr(jaxpr.constvars, jaxpr.invars, jaxpr.outvars, eqns)
 
-def subst_eqn_axis_names(eqn, replaced_name, axis_names):
+def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
+  # TODO: Support custom_vjp, custom_jvp
   if isinstance(eqn.primitive, (core.CallPrimitive, core.MapPrimitive)):
-    if eqn.params.get('axis_name', None) == replaced_name:  # Check for shadowing
-      return eqn
-    new_call_jaxpr = subst_axis_names(eqn.params['call_jaxpr'], replaced_name, axis_names)
+    bound_name = eqn.params.get('axis_name', None)
+    if bound_name in axis_subst:  # Check for shadowing
+      sub_subst = dict(axis_subst)
+      del sub_subst[bound_name]
+    else:
+      sub_subst = axis_subst
+    new_call_jaxpr = subst_axis_names(eqn.params['call_jaxpr'], sub_subst)
     return eqn._replace(params=dict(eqn.params, call_jaxpr=new_call_jaxpr))
-  elif eqn.params.get('axis_name', None) == replaced_name:
-    return eqn._replace(params=dict(eqn.params, axis_name=axis_names))
-  else:
+  if 'axis_name' not in eqn.params:
     return eqn
+  axis_names = eqn.params['axis_name']
+  if not isinstance(axis_names, (tuple, list)):
+    axis_names = (axis_names,)
+  new_axis_names = sum((axis_subst.get(name, (name,)) for name in axis_names), ())
+  if len(new_axis_names) == 1:
+    new_axis_names = new_axis_names[0]  # type: ignore
+  return eqn._replace(params=dict(eqn.params, axis_name=new_axis_names))

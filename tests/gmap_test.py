@@ -148,5 +148,29 @@ class GmapTest(jtu.JaxTestCase):
       self.assertAllClose(c, (a + 2).transpose((1, 0, 2)))
       self.assertAllClose(d, (b * 4).T)
 
+  @ignore_gmap_warning()
+  @skipIf(not config.omnistaging_enabled,
+          "vmap collectives only supported when omnistaging is enabled")
+  def testXMapCollectives(self):
+    def f(a, b):
+      return lax.psum(a + 2, 'x'), b * 4
+    with resources(r1=4, r2=2, r3=5):
+      fm = xmap(f,
+                in_axes=[A({'x': 0, 'z': 1}), A({'y': 1})],
+                out_axes=[A({'z': 0}), A({'y': 0})],
+                schedule=[
+                  ('x', 'r1'),
+                  ('x', 'r2'),
+                  ('y', 'r1'),
+                  ('z', 'r3'),
+                  ('x', 'vectorize'),
+                  ('y', 'vectorize'),
+                ])
+      a = jnp.arange(16*5*2).reshape((16, 5, 2))
+      b = jnp.arange(6*16).reshape((6, 16))
+      c, d = fm(a, b)
+      self.assertAllClose(c, (a + 2).sum(0))
+      self.assertAllClose(d, (b * 4).T)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
