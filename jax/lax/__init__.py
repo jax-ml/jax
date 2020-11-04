@@ -356,8 +356,3 @@ from jax._src.lax.parallel import (
 from jax._src.lax.other import (
   conv_general_dilated_patches
 )
-
-# TODO(phawkins): fix callers and remove these imports.
-from . import lax
-from . import lax_parallel
-from . import lax_control_flow
