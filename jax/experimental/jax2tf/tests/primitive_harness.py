@@ -29,6 +29,7 @@ from jax import dtypes
 from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
+from jax._src.lax import control_flow as lax_control_flow
 
 from jaxlib import xla_client
 
@@ -470,6 +471,42 @@ lax_pad = tuple(
     [(0, 0, 0), (-2, -2, 4)],  # add big dilation then remove from edges
     [(0, 0, 0), (-2, -3, 1)],  # remove everything in one dimension
   ]
+)
+
+def _make_cumreduce_harness(name, *, f_jax=lax_control_flow.cummin,
+                            shape=(8, 9), dtype=np.float32,
+                            axis=0, reverse=False):
+  return Harness(f"{name}_f={f_jax.__name__}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axis={axis}_reverse={reverse}",
+                 f_jax,
+                 [RandArg(shape, dtype), StaticArg(axis), StaticArg(reverse)],
+                 f_jax=f_jax,
+                 shape=shape,
+                 dtype=dtype,
+                 axis=axis,
+                 reverse=reverse)
+
+lax_control_flow_cumreduce = tuple( # Validate dtypes for each function
+  _make_cumreduce_harness("dtype_by_fun", dtype=dtype, f_jax=f_jax)
+  for f_jax in [
+    lax_control_flow.cummin,
+    lax_control_flow.cummax
+  ]
+  for dtype in [dtype for dtype in jtu.dtypes.all if dtype != np.bool_]
+) + tuple( # Validate axis for each function
+  _make_cumreduce_harness("axis_by_fun", axis=axis, f_jax=f_jax, shape=shape)
+  for shape in [(8, 9)]
+  for f_jax in [
+    lax_control_flow.cummin,
+    lax_control_flow.cummax
+  ]
+  for axis in range(len(shape))
+) + tuple( # Validate reverse for each function
+  _make_cumreduce_harness("reverse", reverse=reverse, f_jax=f_jax)
+  for f_jax in [
+    lax_control_flow.cummin,
+    lax_control_flow.cummax
+  ]
+  for reverse in [True]
 )
 
 def _make_top_k_harness(name, *, operand=None, shape=(5, 3), dtype=np.float32,

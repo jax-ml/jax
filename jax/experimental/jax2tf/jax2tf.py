@@ -818,7 +818,6 @@ tf_not_yet_impl = [
 
   # Not high priority?
   lax.after_all_p, lax_parallel.all_to_all_p, lax.create_token_p,
-  lax_control_flow.cummax_p, lax_control_flow.cummin_p,
   lax.infeed_p, lax.outfeed_p, lax_parallel.pmax_p,
   lax_parallel.pmin_p, lax_parallel.ppermute_p, lax_parallel.psum_p,
   lax_parallel.axis_index_p,
@@ -1661,6 +1660,17 @@ tf_impl_with_avals[lax.reduce_window_max_p] = (
                       _get_max_identity, name="reduce_window_max"))
 tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
+
+# We use lax_control_flow._cumred_tpu_translation_rule to convert cummin and
+# cummax. This is efficient on TPU, but the complexity is O(n^2) on other
+# backends. This may be implemented using associative_scan instead to favor
+# different backends.
+tf_impl_with_avals[lax_control_flow.cummin_p] = _convert_jax_impl(
+    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+                      lax._reduce_window_min), multiple_results=False)
+tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
+    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+                      lax._reduce_window_max), multiple_results=False)
 
 def _select_and_scatter(
     operand, source, init_value, select_jaxpr, select_consts, scatter_jaxpr,

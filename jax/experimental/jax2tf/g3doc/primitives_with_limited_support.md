@@ -136,7 +136,7 @@ conversion to Tensorflow.
 
 The conversion of the following JAX primitives is not yet implemented:
 
-`after_all`, `all_to_all`, `axis_index`, `create_token`, `cummax`, `cummin`, `igamma_grad_a`, `infeed`, `outfeed`, `pmax`, `pmin`, `ppermute`, `psum`, `random_gamma_grad`, `reduce`, `rng_uniform`, `xla_pmap`
+`after_all`, `all_to_all`, `axis_index`, `create_token`, `igamma_grad_a`, `infeed`, `outfeed`, `pmax`, `pmin`, `ppermute`, `psum`, `random_gamma_grad`, `reduce`, `rng_uniform`, `xla_pmap`
 
 ## Primitive conversions with missing tests
 
