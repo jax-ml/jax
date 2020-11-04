@@ -1,7 +1,8 @@
-Getting started with jax2tf
-===========================
+jax2tf Examples
+===============
 
-This directory contains a number of examples of using the jax2tf converter to:
+This directory contains a number of examples of using the
+[jax2tf converter](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md) to:
 
   * save SavedModel from trained MNIST models, using both pure JAX and Flax.
   * reuse the feature-extractor part of the trained MNIST model in
@@ -9,10 +10,10 @@ This directory contains a number of examples of using the jax2tf converter to:
 
 It is also possible to use jax2tf-generated SavedModel with TensorFlow serving.
 At the moment, the open-source TensorFlow model server is missing XLA support,
-but the Google version can be used, as described in README_serving.md.
+but the Google version can be used, as shown in the
+[serving examples](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/serving/README.md).
 
 # Preparing the model for jax2tf
-
 
 The most important detail for using jax2tf with SavedModel is to express
 the trained model as a pair:
@@ -20,13 +21,17 @@ the trained model as a pair:
   * `func`: a two-argument function with signature:
    `(params: Parameters, inputs: Inputs) -> Outputs`.
    Both arguments must be a `numpy.ndarray` or
-   nested tuple/list/dictionaries thereof. In particular, it is important
-   for models that take multiple inputs to be adapted to take their inputs
-   as a single tuple/list/dictionary of `numpy.ndarray`.
+   (nested) tuple/list/dictionaries thereof. In particular, it is important
+   for models that take multiple inputs to be packaged as a fuunction with
+   just two arguments, e.g., by taking their inputs
+   as a single tuple/list/dictionary.
   * `params`: of type `Parameters`, the model parameters, to be used as the
-  first input for `func`.
+  first input for `func`. This also can be a `numpy.ndarray` or
+  (nested) tuple/list/dictionary thereof.
 
-You can see in [mnist_lib.py](mnist_lib.py) how this can be done for two
+You can see in
+[mnist_lib.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/mnist_lib.py)
+how this can be done for two
 implementations of MNIST, one using pure JAX (`PureJaxMNIST`) and a CNN
 one using Flax (`FlaxMNIST`). Other Flax models can be arranged similarly,
 and the same strategy should work for other neural-network libraries for JAX.
@@ -34,14 +39,17 @@ and the same strategy should work for other neural-network libraries for JAX.
 # Generating TensorFlow SavedModel
 
 Once you have the model in this form, you can use the
-`saved_model_lib.save_model` function [saved_model_lib.py](saved_model_lib.py)
+`saved_model_lib.save_model` function from
+[saved_model_lib.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/saved_model_lib.py)
 to generate the SavedModel. There is very little in that function that is
 specific to jax2tf. The goal of jax2tf is to convert JAX functions
 into functions that behave as if they had been written with TensorFlow.
 Therefore, if you are familiar with how to generate SavedModel, you can most
 likely just use your own code for this.
 
-The file `saved_model_main.py` is an executable that shows how to perform the
+The file
+[saved_model_main.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/saved_model_main.py)
+is an executable that shows how to perform the
 following sequence of steps:
 
    * train an MNIST model, and obtain a pair of an inference function and the
@@ -51,7 +59,6 @@ following sequence of steps:
    * reload the SavedModel and run it with TensorFlow to test that the inference
    function produces the same results as the JAX inference function.
    * optionally plot images with the training digits and the inference results.
-
 
 
 There are a number of flags to select the Flax model (`--model=mnist_flag`),
@@ -73,14 +80,19 @@ will contain a single batch-polymorphic TensorFlow graph.
 
 The SavedModel produced by the example in `saved_model_main.py` already
 implements the [reusable saved models interface](https://www.tensorflow.org/hub/reusable_saved_models).
-The executable `keras_reuse_main.py` extends `saved_model_main.py` with code
+The executable
+[keras_reuse_main.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/keras_reuse_main.py)
+extends
+[saved_model_main.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/saved_model_main.py)
+with code
 to include a jax2tf SavedModel into a larger TensorFlow Keras model.
 
 In order to demonstrate reuse, we have added a keyword argument `with_classifier`
 to the MNIST models. When this flag is set to False, the model will not include
 the last classification layer. The SavedModel will compute just the logits.
 
-We show in `keras_reuse_main.py` how to use `hub.KerasLayer` to turn the
+We show in
+`keras_reuse_main.py` how to use `hub.KerasLayer` to turn the
 SavedModel into a Keras layer, to which we add a Keras classification layer,
 that is then trained in TensorFlow.
 
