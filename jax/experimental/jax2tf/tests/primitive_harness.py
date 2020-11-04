@@ -441,6 +441,20 @@ lax_scatter = tuple( # Validate dtypes
   for unique_indices in [False]
 )
 
+disable_xla = tuple(
+  Harness("_pad",
+          lax.pad,
+          [RandArg(shape, dtype), np.array(0, dtype), StaticArg(pads)],
+          shape=shape,
+          dtype=dtype,
+          pads=pads)
+  for shape in [(2, 3)]
+  for dtype in [np.float32]
+  for pads in [
+    [(-1, 0, 0), (0, 0, 0)]
+  ]
+)
+
 lax_pad = tuple(
   Harness(f"_inshape={jtu.format_shape_dtype_string(arg_shape, dtype)}_pads={pads}",
           lax.pad,
@@ -1117,8 +1131,9 @@ def _make_conv_harness(name, *, lhs_shape=(2, 3, 9, 10), rhs_shape=(3, 3, 4, 5),
                        padding=((0, 0), (0, 0)), lhs_dilation=(1, 1),
                        rhs_dilation=(1, 1), feature_group_count=1,
                        dimension_numbers=("NCHW", "OIHW", "NCHW"),
-                       batch_group_count=1):
-  return Harness(f"_{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_windowstrides={window_strides}_padding={padding}_lhsdilation={lhs_dilation}_rhsdilation={rhs_dilation}_dimensionnumbers={dimension_numbers}_featuregroupcount={feature_group_count}_batchgroupcount={batch_group_count}_precision={precision}".replace(' ', ''),
+                       batch_group_count=1, enable_xla=True):
+
+  return Harness(f"_{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_windowstrides={window_strides}_padding={padding}_lhsdilation={lhs_dilation}_rhsdilation={rhs_dilation}_dimensionnumbers={dimension_numbers}_featuregroupcount={feature_group_count}_batchgroupcount={batch_group_count}_precision={precision}_enablexla={enable_xla}".replace(' ', ''),
                  lax.conv_general_dilated,
                  [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype),
                   StaticArg(window_strides), StaticArg(padding),
@@ -1135,7 +1150,8 @@ def _make_conv_harness(name, *, lhs_shape=(2, 3, 9, 10), rhs_shape=(3, 3, 4, 5),
                  dimension_numbers=dimension_numbers,
                  feature_group_count=feature_group_count,
                  batch_group_count=batch_group_count,
-                 precision=precision)
+                 precision=precision,
+                 enable_xla=enable_xla)
 
 lax_conv_general_dilated = tuple( # Validate dtypes and precision
   # This first harness runs the tests for all dtypes and precisions using
@@ -1188,7 +1204,8 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
   _make_conv_harness("tf_conversion_path_1d", lhs_shape=lhs_shape,
                      padding=padding, rhs_shape=rhs_shape,
                      dimension_numbers=dimension_numbers, window_strides=(1,),
-                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
+                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
+                     enable_xla=enable_xla)
   for padding, lhs_dilation, rhs_dilation in [
     ("VALID", (1,), (1,)), # no dilation with "VALID" padding
     ("SAME",  (1,), (1,)), # no dilation with "SAME" padding
@@ -1202,11 +1219,13 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
     # TODO(bchetioui): the NCW data format is not supported on CPU for TF
     # for now. That path is thus disabled to allow the code to use XLA instead.
   ]
+  for enable_xla in [False, True]
 ) + tuple(
   _make_conv_harness("tf_conversion_path_2d", lhs_shape=lhs_shape,
                      padding=padding, rhs_shape=rhs_shape,
                      dimension_numbers=dimension_numbers, window_strides=(1, 1),
-                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation)
+                     lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
+                     enable_xla=enable_xla)
   for padding, lhs_dilation, rhs_dilation in [
     ("VALID", (1, 1), (1, 1)), # no dilation with "VALID" padding
     ("SAME",  (1, 1), (1, 1)), # no dilation with "SAME" padding
@@ -1220,12 +1239,13 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
     # TODO(bchetioui): the NCHW data format is not supported on CPU for TF
     # for now. That path is thus disabled to allow the code to use XLA instead.
   ]
+  for enable_xla in [False, True]
 ) + tuple(
   _make_conv_harness("tf_conversion_path_3d", lhs_shape=lhs_shape,
                      padding=padding, rhs_shape=rhs_shape,
                      dimension_numbers=dimension_numbers,
                      window_strides=(1, 1, 1), lhs_dilation=lhs_dilation,
-                     rhs_dilation=rhs_dilation)
+                     rhs_dilation=rhs_dilation, enable_xla=enable_xla)
   for padding, lhs_dilation, rhs_dilation in [
     ("VALID", (1, 1, 1), (1, 1, 1)), # no dilation with "VALID" padding
     ("SAME",  (1, 1, 1), (1, 1, 1)), # no dilation with "SAME" padding
@@ -1240,24 +1260,5 @@ lax_conv_general_dilated = tuple( # Validate dtypes and precision
     # TODO(bchetioui): the NCDHW data format is not supported on CPU for TF
     # for now. That path is thus disabled to allow the code to use XLA instead.
   ]
-) + tuple(
-    # tf.nn.convolution only supports a subset of the possible dtypes for JAX
-    # convolutions (float16, float32, float64). With the below tests, we ensure
-    # that we avoid this branch in cases when it would not succeed.
-    _make_conv_harness("tf_conversion_path_dtype", lhs_shape=lhs_shape,
-                     padding='VALID', rhs_shape=rhs_shape, dtype=dtype,
-                     dimension_numbers=dimension_numbers, lhs_dilation=(1, 1),
-                     rhs_dilation=(1, 1))
-  for dtype in jtu.dtypes.all_inexact
-  for dimension_numbers, lhs_shape, rhs_shape in [
-    (("NHWC", "HWIO", "NHWC"), (1, 28, 28, 1), (3, 3, 1, 16)), # TF default
-  ]
-) + tuple(
-  # Validate that feature_group_count != 1 does not go through tf.nn.convolution
-  # as that would result in an exception.
-  [_make_conv_harness("tf_avoid_path_feature_group_count", dtype=np.float32,
-                      lhs_shape=(1, 28, 28, 32), rhs_shape=(3, 3, 16, 8),
-                      padding='VALID', batch_group_count=1, lhs_dilation=(1, 1),
-                      rhs_dilation=(1, 1), feature_group_count=2,
-                      dimension_numbers=('NHWC', 'HWIO', 'NHWC'))]
+  for enable_xla in [False, True]
 )
