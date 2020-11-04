@@ -257,7 +257,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       check_right_eigenvectors(aH, wC, vl)
 
     a, = args_maker()
-    results = lax.eig(a, compute_left_eigenvectors, compute_right_eigenvectors)
+    results = lax.linalg.eig(a, compute_left_eigenvectors,
+                             compute_right_eigenvectors)
     w = results[0]
 
     if compute_left_eigenvectors:
@@ -1180,12 +1181,12 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       b_shape, dtype, rng_factory):
     jtu.skip_if_unsupported_type(dtype)
     rng = rng_factory(self.rng())
-    # Test lax.triangular_solve instead of scipy.linalg.solve_triangular
+    # Test lax.linalg.triangular_solve instead of scipy.linalg.solve_triangular
     # because it exposes more options.
     A = jnp.tril(rng(a_shape, dtype) + 5 * np.eye(a_shape[-1], dtype=dtype))
     A = A if lower else T(A)
     B = rng(b_shape, dtype)
-    f = partial(lax.triangular_solve, lower=lower, transpose_a=transpose_a,
+    f = partial(lax.linalg.triangular_solve, lower=lower, transpose_a=transpose_a,
                 conjugate_a=conjugate_a, unit_diagonal=unit_diagonal,
                 left_side=left_side)
     jtu.check_grads(f, (A, B), 2, rtol=4e-2, eps=1e-3)
@@ -1209,7 +1210,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     A = jnp.tril(rng(a_shape, np.float32)
                 + 5 * np.eye(a_shape[-1], dtype=np.float32))
     B = rng(b_shape, np.float32)
-    solve = partial(lax.triangular_solve, lower=True, transpose_a=False,
+    solve = partial(lax.linalg.triangular_solve, lower=True, transpose_a=False,
                     conjugate_a=False, unit_diagonal=False, left_side=left_side)
     X = vmap(solve, bdims)(A, B)
     matmul = partial(jnp.matmul, precision=lax.Precision.HIGHEST)
@@ -1222,7 +1223,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     b = rng((1, 3), np.float32)
     jtu.assert_dot_precision(
         lax.Precision.HIGHEST,
-        partial(jvp, lax.triangular_solve),
+        partial(jvp, lax.linalg.triangular_solve),
         (a, b),
         (a, b))
 

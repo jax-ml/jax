@@ -33,6 +33,9 @@ jax 0.2.6 (Unreleased)
       ``jnp.result_type(jnp.float16, jnp.uint64, jnp.int64)`` both return ``float16``, where previously
       the first returned ``float64`` and the second returned ``float16``.
 
+  * The contents of the (undocumented) ``jax.lax_linalg`` linear algebra module
+    are now exposed publicly as ``jax.lax.linalg``.
+
 jaxlib 0.1.57 (unreleased)
 ------------------------------
 

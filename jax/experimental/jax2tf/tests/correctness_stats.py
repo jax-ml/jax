@@ -114,21 +114,21 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype in [np.float16, dtypes.bfloat16]:
       tf_unimpl(np_dtype)
 
-  if prim is lax.cholesky_p:
+  if prim is lax.linalg.cholesky_p:
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
-  if prim is lax.qr_p:
+  if prim is lax.linalg.qr_p:
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
-  if prim is lax.eig_p:
+  if prim is lax.linalg.eig_p:
     tf_unimpl(additional_msg=("this is a problem only in compiled mode "
                               "(experimental_compile=True))"))
     compute_left_eigenvectors = kwargs['compute_left_eigenvectors']
@@ -137,22 +137,22 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       tf_unimpl(additional_msg=("it is not possible to request both left and "
                                 "right eigenvectors for now"))
 
-  if prim is lax.eigh_p:
+  if prim is lax.linalg.eigh_p:
     if np_dtype in [np.complex64, np.complex128]:
       # See https://github.com/google/jax/pull/3775#issuecomment-659407824;
       # experimental_compile=True breaks for complex types.
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "
                                           "mode (experimental_compile=True))"))
 
-  if prim is lax.lu_p:
+  if prim is lax.linalg.lu_p:
     if np_dtype == np.complex64:
       tf_unimpl(np_dtype, devs=["TPU"])
 
-  if prim is lax.triangular_solve_p:
+  if prim is lax.linalg.triangular_solve_p:
     if np_dtype in [dtypes.bfloat16, np.float16]:
       tf_unimpl(np_dtype)
 
-  if prim is lax.svd_p:
+  if prim is lax.linalg.svd_p:
     if np_dtype in [dtypes.bfloat16]:
       # TODO: SVD on TPU for bfloat16 seems to work for JAX but fails for TF
       tf_unimpl(np_dtype, devs=["TPU"])

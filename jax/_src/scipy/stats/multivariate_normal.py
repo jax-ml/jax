@@ -37,8 +37,8 @@ def logpdf(x, mean, cov):
     else:
       if cov.ndim < 2 or cov.shape[-2:] != (n, n):
         raise ValueError("multivariate_normal.logpdf got incompatible shapes")
-      L = lax.cholesky(cov)
-      y = lax.triangular_solve(L, x - mean, lower=True, transpose_a=True)
+      L = lax.linalg.cholesky(cov)
+      y = lax.linalg.triangular_solve(L, x - mean, lower=True, transpose_a=True)
       return (-1/2 * jnp.einsum('...i,...i->...', y, y) - n/2*np.log(2*np.pi)
               - jnp.log(L.diagonal()).sum())
 

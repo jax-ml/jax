@@ -572,7 +572,7 @@ lax_sort = tuple( # Validate dtypes
 
 lax_linalg_cholesky = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
-          lambda *args: lax.cholesky_p.bind(*args),
+          lambda *args: lax.linalg.cholesky_p.bind(*args),
           [RandArg(shape, dtype)],
           shape=shape,
           dtype=dtype)
@@ -582,7 +582,7 @@ lax_linalg_cholesky = tuple(
 
 lax_linalg_qr = tuple(
   Harness(f"multi_array_shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}",
-          lax.qr,
+          lax.linalg.qr,
           [RandArg(shape, dtype), StaticArg(full_matrices)],
           shape=shape,
           dtype=dtype,
@@ -642,7 +642,7 @@ lax_fft = tuple( # Validate dtypes per FFT type
 
 lax_linalg_svd = tuple(
   Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
-          lambda *args: lax.svd_p.bind(args[0], full_matrices=args[1],
+          lambda *args: lax.linalg.svd_p.bind(args[0], full_matrices=args[1],
                                               compute_uv=args[2]),
           [RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
           shape=shape,
@@ -657,7 +657,7 @@ lax_linalg_svd = tuple(
 
 lax_linalg_eig = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_computelefteigenvectors={compute_left_eigenvectors}_computerighteigenvectors={compute_right_eigenvectors}",
-          lax.eig,
+          lax.linalg.eig,
           [RandArg(shape, dtype), StaticArg(compute_left_eigenvectors),
            StaticArg(compute_right_eigenvectors)],
           shape=shape,
@@ -672,7 +672,7 @@ lax_linalg_eig = tuple(
 
 lax_linalg_eigh = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}_lower={lower}",
-          lax.eigh,
+          lax.linalg.eigh,
           [RandArg(shape, dtype), StaticArg(lower), StaticArg(False)],
           shape=shape,
           dtype=dtype,
@@ -686,7 +686,7 @@ lax_linalg_eigh = tuple(
 
 lax_linalg_lu = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
-          lax.lu,
+          lax.linalg.lu,
           [RandArg(shape, dtype)],
           shape=shape,
           dtype=dtype)
@@ -703,7 +703,7 @@ def _make_triangular_solve_harness(name, *, left_side=True, lower=False,
                                    transpose_a=False, conjugate_a=False,
                                    unit_diagonal=False):
   a_shape, b_shape = ab_shapes
-  f_lax = lambda a, b: (lax.triangular_solve_p.bind(
+  f_lax = lambda a, b: (lax.linalg.triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a, unit_diagonal=unit_diagonal))
 

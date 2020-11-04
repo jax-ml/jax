@@ -463,7 +463,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       u = jnp.triu(lu)[...,:k, :]
       p_mat = _make_permutation_matrix(perm)
 
-      self.assertArraysEqual(lax.lu_pivots_to_permutation(pivots, m), perm)
+      self.assertArraysEqual(lax.linalg.lu_pivots_to_permutation(pivots, m),
+                             perm)
       self.assertAllClose(jnp.matmul(p_mat, operand), jnp.matmul(l, u),
                           atol=tol, rtol=tol)
 
