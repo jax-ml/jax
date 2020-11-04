@@ -14,6 +14,7 @@ More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
 [examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
 
+See also some internal ongoing design discussions at `go/jax2tf-doc`.
 
 ### Usage: converting basic functions.
 
@@ -176,6 +177,9 @@ when the shapes are fully known. For example, given the `"(b, d, d)"`
 specification for the argument `x` of a function, JAX will know that a conditional
 `x.shape[-2] == x.shape[-1]` is `True`, will know that `x` and `jnp.sin(x)` have the
 same shape of a batch of square matrices that can be passed to `jnp.matmul`.
+
+Try out the shape-polymorphic conversion with
+[example code](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
 
 ### Correctness of shape-polymorphic tracing
 
@@ -379,14 +383,43 @@ jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
                in_shapes=["(v, _)"])(np.ones((4, 4)))
 ```
 
+## Running on GPU
+
+To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
+for CUDA. One must be mindful to install a version of CUDA that is compatible
+with both [jaxlib](https://github.com/google/jax/blob/master/README.md#pip-installation) and
+[TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
+
+As of today, the tests are run using `tf_nightly==2.4.0.dev20200916`.
+
 ## Caveats
 
-1.  Some JAX primitives are converted into
-[special TensorFlow ops](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/tf2xla/ops/xla_ops.cc)
-  that are thin wrapper over XLA ops. For this reason, the graphs produced by jax2tf
-  require XLA in order to run. Also, these ops may not be recognized by
-  SavedModel converters, such as the TensorFlow.js converter.
-  We use the following such operations:
+### TensorFlow XLA ops
+
+For most JAX primitives there is a natural TF op that fits the needed semantics.
+There are a few (listed below) JAX primitives for which there is no
+single TF op with matching semantics.
+This is not so surprising, because JAX primitives have been designed
+to be compiled to [HLO ops](https://www.tensorflow.org/xla/operation_semantics),
+while the corresponding TF ops are sometimes higher-level.
+For the cases when there is no matching canonical TF op,
+we use a set of special TF ops that are thin wrappers over HLO ops
+(a subset of those registered in
+[tf2xla/ops/xla_ops.cc](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/tf2xla/ops/xla_ops.cc)
+and implemented in,
+e.g.,
+[tf2xla/kernels/xla_pad_op.cc](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/tf2xla/kernels/xla_pad_op.cc).)
+We refer to these ops here as the TFXLA ops.
+
+There are several drawbacks of using TFXLA ops:
+
+   * These ops will only be executable by a consumer that has XLA linked in.
+   This should not be a problem for TPU execution, since that requires XLA anyway.
+   But for other platforms (CPU, GPU, embedded) this can be a drawback in certain settings.
+   * These ops are not yet recognized by tools that process
+   tf.Graph, e.g., TensorFlow.js converter.
+
+We use the following such TFXLA:
 
      * ``XlaPad`` (wraps XLA Pad operator). We use this instead of ``tf.pad`` in order to
      support ``lax.pad`` interior padding (dilation) or negative edge padding.
@@ -404,62 +437,60 @@ jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
      ``lax.reduce_window_max_p``, and ``lax.reduce_window_p``.
      * ``XlaSort`` (wraps XLA Sort operator).
 
-2.  A small number of JAX primitives are converted only
-    for certain data types, when the required TensorFlow ops are not implemented for some
-    data types on certain devices. There is an
-    [up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md).
+### Incomplete data type coverage
 
-3.  Currently, TensorFlow SavedModel does not properly save the ``tf.custom_gradient``.
-    It does save however some attributes that on model restore result in a warning
-    that the model might not be differentiable, and trigger an error if differentiation
-    is attempted. The plan is to fix this. Note that if no gradients are requested,
-    the PreventGradient ops will be saved along with the converted code and will
-    give a nice error if differentiation of the converted code is attempted.
+A small number of JAX primitives are converted only
+for certain data types, when the required TensorFlow ops are not implemented for some
+data types on certain devices. There is an
+[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
 
-4.  There is currently no support for replicated (e.g. `pmap`) or multi-device
-    (e.g. `sharded_jit`) functions. The collective operations are not yet handled.
+### Missing features
 
-5.  The converted code may have slightly different performance characteristics than
-    the original JAX code.
-    If one were to write the same functionality in JAX idiomatic code vs.
-    native TensorFlow idiomatic code we could end up with very different compilation paths,
-    when TensorFlow is used without XLA. Take for example, the case of batch normalization.
-    In TensorFlow if one uses [tf.nn.batch_normalization](https://www.tensorflow.org/api_docs/python/tf/nn/batch_normalization),
-    a “high-level” TensorFlow op for batch
-    normalization is generated, and in the absence of XLA, on CPU or GPU,
-    a custom C++ “high-level” kernel implementing batch normalization is executed.
-    In JAX, there is no primitive for batch normalization, and instead the
-    operation is decomposed into low-level primitives (e.g., [flax.nn.BatchNorm](https://flax.readthedocs.io/en/latest/_autosummary/flax.nn.BatchNorm.html#flax.nn.BatchNorm),
-    or haiku.BatchNorm).
-    Once those primitives are converted to TensorFlow, and the resulting code is
-    run without XLA, the ensemble of the kernels executed will quite
-    possibly behave differently, performance-wise or even numerically,
-    than either the TensorFlow native or JAX native batch normalization.
-    A similar example is that of an LSTM cell.
+There is currently no support for replicated (e.g. `pmap`) or multi-device
+(e.g. `sharded_jit`) functions. The collective operations are not yet handled.
 
-    Yet another example are the PRNG primitives. JAX programs use a [stateless
-    deterministic PRNG](https://github.com/google/jax/blob/master/jax/design_notes/prng.md)
-    and it has an internal JAX primitive for it.
-    This primitive is at the moment converted to a soup of tf.bitwise operations,
-    which has a clear performance penalty. We plan to look into using the
-    HLO [RNGBitGenerator](https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator)
+### No SavedModel fine-tuning
 
-    (exposed as a TFXLA op), which does implement
-    the same basic Threefry algorithm as JAX’s PRNG, although that would
-    result in different results than JAX’s PRNG.
+Currently, TensorFlow SavedModel does not properly save the ``tf.custom_gradient``.
+It does save however some attributes that on model restore result in a warning
+that the model might not be differentiable, and trigger an error if differentiation
+is attempted. The plan is to fix this. Note that if no gradients are requested,
+the PreventGradient ops will be saved along with the converted code and will
+give a nice error if differentiation of the converted code is attempted.
 
-    We do expect that the performance characteristics of converted code
-    should approximate those of JAX or TensorFlow native with XLA. This is because
-    during conversion we try to generate one TensorFlow op for one JAX primitive.
-    We expect that the lowering that XLA does is similar to that done by JAX
-    before conversion. (This is a hypothesis, we have not verified it extensively.)
+### Different performance characteristics
 
+The converted code may have slightly different performance characteristics than
+the original JAX code.
+If one were to write the same functionality in JAX idiomatic code vs.
+native TensorFlow idiomatic code we could end up with very different compilation paths,
+when TensorFlow is used without XLA. Take for example, the case of batch normalization.
+In TensorFlow if one uses [tf.nn.batch_normalization](https://www.tensorflow.org/api_docs/python/tf/nn/batch_normalization),
+a “high-level” TensorFlow op for batch
+normalization is generated, and in the absence of XLA, on CPU or GPU,
+a custom C++ “high-level” kernel implementing batch normalization is executed.
+In JAX, there is no primitive for batch normalization, and instead the
+operation is decomposed into low-level primitives (e.g., [flax.nn.BatchNorm](https://flax.readthedocs.io/en/latest/_autosummary/flax.nn.BatchNorm.html#flax.nn.BatchNorm),
+or haiku.BatchNorm).
+Once those primitives are converted to TensorFlow, and the resulting code is
+run without XLA, the ensemble of the kernels executed will quite
+possibly behave differently, performance-wise or even numerically,
+than either the TensorFlow native or JAX native batch normalization.
+A similar example is that of an LSTM cell.
 
-### Running on GPU
+Yet another example are the PRNG primitives. JAX programs use a [stateless
+deterministic PRNG](https://github.com/google/jax/blob/master/design_notes/prng.md)
+and it has an internal JAX primitive for it.
+This primitive is at the moment converted to a soup of tf.bitwise operations,
+which has a clear performance penalty. We plan to look into using the
+HLO [RNGBitGenerator](https://www.tensorflow.org/xla/operation_semantics#rngbitgenerator)
+(exposed as a TFXLA op), which does implement
+the same basic Threefry algorithm as JAX’s PRNG, although that would
+result in different results than JAX’s PRNG.
 
-To run jax2tf on GPU, both jaxlib and TensorFlow must be installed with support
-for CUDA. One must be mindful to install a version of CUDA that is compatible
-with both [jaxlib](../../../../../#pip-installation) and
-[TensorFlow](https://www.tensorflow.org/install/source#tested_build_configurations).
+We do expect that the performance characteristics of converted code
+should approximate those of JAX or TensorFlow native with XLA. This is because
+during conversion we try to generate one TensorFlow op for one JAX primitive.
+We expect that the lowering that XLA does is similar to that done by JAX
+before conversion. (This is a hypothesis, we have not verified it extensively.)
 
-As of today, the tests are run using `tf_nightly==2.4.0.dev20200916`.
