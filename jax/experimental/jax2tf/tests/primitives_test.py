@@ -111,6 +111,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_pad(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_control_flow_cumreduce)
+  def test_cumreduce(self, harness: primitive_harness.Harness):
+    if (harness.params["dtype"] == np.complex64 and
+        jtu.device_under_test() == "tpu"):
+      raise unittest.SkipTest("TODO(bchetioui): cum{min,max} fails in JAX for "
+                              "complex64 on TPU")
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_top_k)
   def test_top_k(self, harness: primitive_harness.Harness):
     custom_assert = None
