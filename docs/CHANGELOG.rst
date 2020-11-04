@@ -18,6 +18,11 @@ jax 0.2.6 (Unreleased)
   * Add support for shape-polymorphic tracing for the jax.experimental.jax2tf converter.
     See `README.md <https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md>`_.
 
+* Breaking change cleanup
+
+  * Raise an error on non-hashable static arguments for jax.jit and
+    xla_computation.  See `https://github.com/google/jax/commit/cb48f42`_.
+
 jaxlib 0.1.57 (unreleased)
 ------------------------------
 * Fixed a bug where the hash of bfloat16 values was not correctly initialized
