@@ -162,7 +162,6 @@ from jax._src.lax.lax import (
   log_p,
   lt,
   lt_p,
-  lu,
   max,
   max_p,
   min,
