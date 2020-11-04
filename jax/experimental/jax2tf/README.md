@@ -1,4 +1,4 @@
-# JAX to TensorFlow converter
+# JAX to TensorFlow converter (jax2tf)
 
 This package provides an experimental JAX converter that can take a function
 written in JAX, possibly including JAX transformations, and turn it into
@@ -9,11 +9,13 @@ TensorFlow eager mode, or stage it out as a TensorFlow graph, even save it
 as a SavedModel for use with TensorFlow tools such as serving stack,
 or TensorFlow Hub.
 
-### Usage: converting basic functions.
-
-We describe below some simple usage scenarios. More involved examples, including
+We describe below some general concepts and capabilities.
+More involved examples, including using jax2tf with
 Flax models and their use with TensorFlow Hub and Keras, are described in the
-[getting started Colab](JAX2TF_getting_started.ipynb).
+[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+
+
+### Usage: converting basic functions.
 
 As a rule of thumb, if you can `jax.jit` your function then you should be able
 to use `jax2tf.convert`:
@@ -49,7 +51,7 @@ set `autograph=False` in order to avoid warnings or outright errors.
 ### Usage: saved model
 
 Since jax2tf provides a regular TensorFlow function using it with SavedModel
-is trivial.
+is trivial:
 
 ```python
 # You can save the model just like you would with any other TensorFlow function:
@@ -75,8 +77,12 @@ tf.saved_model.save(my_model, '/some/directory')
 
 More involved examples of using SavedModel, including how to prepare
 Flax models for conversion and saving, are described in the
-[getting started Colab](JAX2TensorFlow_getting_started.ipynb). For details of
-how you can save a batch-polymorphic SavedModel see [below](#shape-polymorphic-conversion).
+[examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
+As part of the examples, we provide the
+[saved_model_lib.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/saved_model_lib.py) library with a convenience function for converting and saving
+a JAX function as a SavedModel.
+
+For details on saving a batch-polymorphic SavedModel see [below](#shape-polymorphic-conversion).
 
 ## Differentiation
 
@@ -94,18 +100,22 @@ Other challenges for differentiation are that some of the TensorFlow ops used in
 do not yet have differentiation rules defined.
 For other ops, we would have to ensure that they match the JAX differentiation rules.
 
-All of these problems are solved by having the converter annotate the converted
-function with a ``tf.custom_gradient`` that, upon TensorFlow differentiation, will lazily
+All of these problems are solved by having the jax2tf converter
+annotate the converted
+function with a ``tf.custom_gradient`` that, upon TensorFlow differentiation,
+will lazily
 call into JAX to compute the ``jax.vjp`` of the converted function, followed by
 jax2tf conversion.
 This ensures that JAX’s differentiation uses the JAX rules and custom gradients.
-In particular, TensorFlow’s internal op differentiation rules will not be used at all,
-and we need not worry about ops not having differentiation rules that match JAX's.
-The jax2tf converter has an option to skip the custom gradients and wrap
-instead the converted function with ``tf.raw_ops.PreventGradient`` to generated an
-error in case a gradient computation is attempted.
+In particular, TensorFlow’s internal op differentiation rules will not be
+used at all, and we need not worry about ops not having differentiation rules
+that match JAX's.
+The jax2tf converter has an option ``with_gradient=False`` to skip the
+custom gradients and wrap instead the converted function with
+``tf.raw_ops.PreventGradient`` to generated an error in case a gradient
+computation is attempted.
 
-Currently there is a bug that prevents using custom gradients with SavedModel
+Currently, there is a bug that prevents using custom gradients with SavedModel
 (see [Caveats](#caveats) below).
 
 ## Shape-polymorphic conversion
@@ -113,37 +123,47 @@ Currently there is a bug that prevents using custom gradients with SavedModel
 **The shape polymorphism support is work in progress. Please report any bugs you encounter.**
 
 We described above how to include in the SavedModel several specializations
-of a converted function for a few specific input shapes. The converter can also produce
-a shape-polymorphic TensorFlow graph that is usable with inputs of any shape matching
-certain constraints. This is useful, e.g., to allow a single SavedModel to be used for multiple
-batch sizes. In order to help ensure correctness, we propose below an implementation
-strategy that does not require changes to the JAX core (it uses and builds upon ideas
-and code from JAX’s experimental auto-masking transformation).
+of a converted function for a few specific input shapes. The converter can
+also produce a shape-polymorphic TensorFlow graph that is usable with inputs
+of any shape matching
+certain constraints. This is useful, e.g., to allow a single SavedModel
+to be used for multiple batch sizes.
+In order to help ensure correctness, we propose below an implementation
+strategy that does not require changes to the JAX core
+(it uses and builds upon ideas and code from JAX’s experimental
+auto-masking transformation).
 
 The standard TensorFlow technique for producing a shape-polymorphic graph is
 to warm the function on partially-specified (shape polymorphic) inputs, e.g.,
 `tf.TensorSpec([None, 28, 28], tf.float32)` for a function that processes a
-batch (of unspecified batch size) of 28x28 images. For jax2tf it is also necessary
-to specify an additional `in_shapes` parameter for the `jax2tf.convert` function:
+batch (of unspecified batch size) of 28x28 images.
+For jax2tf it is also necessary to specify an additional `in_shapes` parameter
+for the `jax2tf.convert` function:
 
 ```
 f_tf = tf.function(jax2tf.convert(f_jax, in_shapes=["(b, 28, 28)"]), autograph=False)
 f_tf.get_concrete_function(tf.TensorSpec([None, 28, 28], tf.float32))
 ```
 
-The `in_shapes` parameter, in the form of a list of strings corresponding to the list of
+The `in_shapes` parameter, in the form of a list of strings corresponding
+to the list of
 arguments, introduces one or more shape variables, e.g., `b`, to stand for shape
-dimensions that are unknown at JAX tracing time. In this particular example, we can 
-also use the `in_shapes=["(b, _, _)"]`, because the `_` placeholders take their value
+dimensions that are unknown at JAX tracing time.
+In this particular example, we can
+also use the `in_shapes=["(b, _, _)"]`,
+because the `_` placeholders take their value
 from the corresponding dimension of the `tf.TensorSpec` (which must be known)
 
-In the example above, the `in_shapes` specification does not convey more information 
-than the partial `tf.TensorSpec`,
-except perhaps giving a name to the unknown dimension so that it can be recognized
-in the error messages. The need for named shape variables arises when there are
-multiple unknown dimensions and there is a relationship between them. For example,
-if the function to be converted is also polymorphic on the size of each image while
-requiring the images to be square, we would add a shape variable `d` to stand for
+In the example above, the `in_shapes` specification does
+not convey more information than the partial `tf.TensorSpec`,
+except perhaps giving a name to the unknown dimension so that it
+can be recognized in the error messages. The need for named shape
+variables arises when there are
+multiple unknown dimensions and there is a relationship between them.
+For example,
+if the function to be converted is also polymorphic on the size of each
+image while requiring the images to be square,
+we would add a shape variable `d` to stand for
 the unknown image size:
 
 ```
@@ -151,7 +171,7 @@ f_tf = tf.function(jax2tf.convert(f_jax, in_shapes=["(b, d, d)"]), autograph=Fal
 f_tf.get_concrete_function(tf.TensorSpec([None, None, None], tf.float32))
 ```
 
-The JAX tracing mechanism performs shape checking using the same strict rules as 
+The JAX tracing mechanism performs shape checking using the same strict rules as
 when the shapes are fully known. For example, given the `"(b, d, d)"`
 specification for the argument `x` of a function, JAX will know that a conditional
 `x.shape[-2] == x.shape[-1]` is `True`, will know that `x` and `jnp.sin(x)` have the
@@ -162,8 +182,9 @@ same shape of a batch of square matrices that can be passed to `jnp.matmul`.
 We want to trust that the converted program produces the same results as the
 original JAX program:
 
-For any function `f_jax` and any input signature `abs_sig` containing partially 
+For any function `f_jax` and any input signature `abs_sig` containing partially
 known `tf.TensorSpec`, and any concrete input `x` whose shape matches `abs_sig`:
+
  * If the conversion to TensorFlow succeeds: `f_tf = tf.function(jax2tf.convert(f_jax, in_shapes)).get_concrete_function(abs_sig)`
  * and if the TensorFlow execution succeeds with result `y`: `f_tf(x) = y`
  * then the JAX execution would produce the same result: `f_jax(x) = y`,
@@ -386,7 +407,7 @@ jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
 2.  A small number of JAX primitives are converted only
     for certain data types, when the required TensorFlow ops are not implemented for some
     data types on certain devices. There is an
-    [up-to-date list of unimplemented cases](primitives_with_limited_support.md).
+    [up-to-date list of unimplemented cases](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/primitives_with_limited_support.md).
 
 3.  Currently, TensorFlow SavedModel does not properly save the ``tf.custom_gradient``.
     It does save however some attributes that on model restore result in a warning
@@ -417,7 +438,7 @@ jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
     A similar example is that of an LSTM cell.
 
     Yet another example are the PRNG primitives. JAX programs use a [stateless
-    deterministic PRNG](https://github.com/google/jax/blob/master/design_notes/prng.md)
+    deterministic PRNG](https://github.com/google/jax/blob/master/jax/design_notes/prng.md)
     and it has an internal JAX primitive for it.
     This primitive is at the moment converted to a soup of tf.bitwise operations,
     which has a clear performance penalty. We plan to look into using the
