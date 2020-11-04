@@ -421,21 +421,21 @@ There are several drawbacks of using TFXLA ops:
 
 We use the following such TFXLA:
 
-     * ``XlaPad`` (wraps XLA Pad operator). We use this instead of ``tf.pad`` in order to
-     support ``lax.pad`` interior padding (dilation) or negative edge padding.
-     * ``XlaConv`` (wraps XLA ConvGeneralDilated operator).
-     * ``XlaGather`` (wraps XLA Gather operator). We could use ``tf.gather`` in some
-     cases but not always. Also, ``tf.gather`` has a different semantics than ``lax.gather``
+   * `XlaPad` (wraps XLA Pad operator). We use this instead of `tf.pad` in order to
+     support `lax.pad` interior padding (dilation) or negative edge padding.
+   * `XlaConv` (wraps XLA ConvGeneralDilated operator).
+   * `XlaGather` (wraps XLA Gather operator). We could use `tf.gather` in some
+     cases but not always. Also, `tf.gather` has a different semantics than `lax.gather`
      for index out of bounds.
-     * ``XlaScatter`` (wraps XLA Scatter operator).
-     * ``XlaSelectAndScatter`` (wraps XLA SelectAndScatter operator).
-     * ``XlaDynamicSlice`` (wraps XLA DynamicSlice operator).
-     We use this instead of ``tf.slice`` for reasons explained above for ``XlaGather``.
-     * ``XlaDynamicUpdateSlice`` (wraps XLA DynamicUpdateSlice operator).
-     * ``XlaReduceWindow`` (wraps XLA ReduceWindow operator). These are used
-     for ``lax.reduce_window_sum_p``, ``lax.reduce_window_min_p``,
-     ``lax.reduce_window_max_p``, and ``lax.reduce_window_p``.
-     * ``XlaSort`` (wraps XLA Sort operator).
+   * `XlaScatter` (wraps XLA Scatter operator).
+   * `XlaSelectAndScatter` (wraps XLA SelectAndScatter operator).
+   * `XlaDynamicSlice` (wraps XLA DynamicSlice operator).
+     We use this instead of `tf.slice` for reasons explained above for `XlaGather`.
+   * `XlaDynamicUpdateSlice` (wraps XLA DynamicUpdateSlice operator).
+   * `XlaReduceWindow` (wraps XLA ReduceWindow operator). These are used
+     for `lax.reduce_window_sum_p`, `lax.reduce_window_min_p`,
+     `lax.reduce_window_max_p`, and `lax.reduce_window_p`.
+   * `XlaSort` (wraps XLA Sort operator).
 
 ### Incomplete data type coverage
 
@@ -451,7 +451,7 @@ There is currently no support for replicated (e.g. `pmap`) or multi-device
 
 ### No SavedModel fine-tuning
 
-Currently, TensorFlow SavedModel does not properly save the ``tf.custom_gradient``.
+Currently, TensorFlow SavedModel does not properly save the `tf.custom_gradient`.
 It does save however some attributes that on model restore result in a warning
 that the model might not be differentiable, and trigger an error if differentiation
 is attempted. The plan is to fix this. Note that if no gradients are requested,
