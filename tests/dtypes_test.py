@@ -182,6 +182,24 @@ class DtypesTest(jtu.JaxTestCase):
 
 class TestPromotionTables(jtu.JaxTestCase):
 
+  @parameterized.named_parameters(
+    {"testcase_name": "_jaxtype={}".format(jaxtype),
+     "jaxtype": jaxtype}
+     for jaxtype in dtypes._jax_types)
+  def testJaxTypeFromType(self, jaxtype):
+    self.assertIs(dtypes._jax_type(jaxtype), jaxtype)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_jaxtype={}".format(jaxtype),
+     "jaxtype": jaxtype}
+     for jaxtype in dtypes._jax_types)
+  def testJaxTypeFromVal(self, jaxtype):
+    try:
+      val = jaxtype(0)
+    except TypeError:
+      val = jaxtype.type(0)
+    self.assertIs(dtypes._jax_type(val), jaxtype)
+
   def testObservedPromotionTable(self):
     """Test that the weak & strong dtype promotion table does not change over time."""
     # Note: * here refers to weakly-typed values

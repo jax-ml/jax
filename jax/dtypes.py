@@ -189,7 +189,10 @@ _jax_types = [
 ] + _weak_types
 
 def _jax_type(value):
-  """Return the jax type for a value."""
+  """Return the jax type for a value or type."""
+  # Note: `value in _weak_types` can return false positives due to dtype comparator overloading.
+  if any(value is typ for typ in _weak_types):
+    return value
   dtype_ = dtype(value)
   if is_weakly_typed(value):
     pytype = type(dtype_.type(0).item())
@@ -244,8 +247,9 @@ def promote_types(a, b):
   return np.dtype(_promote_types_raw(np.dtype(a), np.dtype(b)))
 
 def _promote_types_raw(a, b):
-  a = a if a in _weak_types else np.dtype(a)
-  b = b if b in _weak_types else np.dtype(b)
+  # Note: `x in _weak_types` can return false positives due to dtype comparator overloading.
+  a = a if any(a is t for t in _weak_types) else np.dtype(a)
+  b = b if any(b is t for t in _weak_types) else np.dtype(b)
   try:
     return _type_promotion_table[_jax_type_nums[a], _jax_type_nums[b]]
   except KeyError:
