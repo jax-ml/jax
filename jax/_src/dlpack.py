@@ -61,7 +61,9 @@ def from_dlpack(dlpack, backend=None):
   backend = backend or xla_bridge.get_backend()
   client = getattr(backend, "client", backend)
   buf = xla_client._xla.dlpack_managed_tensor_to_buffer(dlpack, client)
-  xla_shape = buf.shape()
+  # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
+  # the default.
+  xla_shape = getattr(buf, "xla_shape", buf.shape)()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
   return xla.make_device_array(aval, buf.device(), lazy.array(aval.shape), buf)  # pytype: disable=attribute-error

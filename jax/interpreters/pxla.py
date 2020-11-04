@@ -443,7 +443,11 @@ class ShardedDeviceArray(xla.DeviceArray):
   def __getitem__(self, idx):
     if self._npy_value is None and idx in self.indices:
       buf = self.device_buffers[self.indices.index(idx)]
-      aval = ShapedArray(buf.shape().dimensions(), self.aval.dtype)
+      # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58
+      # is the default.
+      aval = ShapedArray(
+          getattr(buf, "xla_shape", buf.shape)().dimensions(),
+          self.aval.dtype)
       return xla.make_device_array(aval, None, lazy.array(aval.shape), buf)
     else:
       return super(ShardedDeviceArray, self).__getitem__(idx)

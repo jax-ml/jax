@@ -362,7 +362,9 @@ def _execute_replicated_primitive(prim, compiled, result_handler, *args):
 
 def check_nans(prim, bufs):
   for buf in bufs:
-    _check_nans(prim.name, buf.shape(), buf)
+    # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
+    # the default.
+    _check_nans(prim.name, getattr(buf, "xla_shape", buf.shape)(), buf)
 
 def _check_nans(name, xla_shape, buf):
   assert not xla_shape.is_tuple()

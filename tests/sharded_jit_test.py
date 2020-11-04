@@ -142,8 +142,14 @@ class ShardedJitTest(jtu.JaxTestCase):
     actual = sharded_jit(f, in_parts=P(2,1), out_parts=P(2,1))(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertLen(actual.device_buffers, 2)
-    self.assertEqual(actual.device_buffers[0].shape().dimensions(), (4,8))
-    self.assertEqual(actual.device_buffers[1].shape().dimensions(), (4,8))
+    # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58 is
+    # the default.
+    self.assertEqual(
+        getattr(actual.device_buffers[0], "xla_shape",
+                actual.device_buffers[0].shape)().dimensions(), (4, 8))
+    self.assertEqual(
+        getattr(actual.device_buffers[1], "xla_shape",
+                actual.device_buffers[1].shape)().dimensions(), (4, 8))
 
     # Mismatched sharded_jit partitions
     with self.assertRaisesRegex(
