@@ -1,6 +1,59 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-10-23*
+*Last generated on (YYYY-MM-DD): 2020-11-04*
+
+We do not yet have support for `pmap` (with its collective primitives),
+nor for `sharded_jit` (SPMD partitioning).
+
+A few JAX primitives are converted to TF ops that have incomplete coverage
+for data types on different kinds of devices. The most [up-to-date list of
+limitations is generated automatically](#generated-summary-of-primitives-with-limited-support)
+by the jax2tf coverage tests.
+More detailed information can be found in the
+[source code of categorize](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/tests/correctness_stats.py)
+for some cases.
+
+Additionally, some primitives have numerical differences between JAX and TF in some corner cases:
+
+  * `top_k` is implemented using `tf.math.top_k` which has limited functionality. There are
+  silent errors when the array contains `inf` and `NaN` (they are sorted differently in TF vs. XLA).
+
+  * `digamma` is converted to `tf.math.digamma` with the following limitations (all
+  at the singularity points 0 and -1):
+  At singularity points with dtype float32 JAX returns `NaN` and TF returns `inf`.
+
+  * `igamma` and `igammac` are implemented using `tf.math.igamma` and `tf.math.igammac`,
+  with the following limitations: At undefined points (both arguments 0 for `igamma` and
+  both arguments less or equal to 0 for `igammac`) JAX returns `NaN` and TF returns 0 or
+  JAX returns 1 and TF returns `NaN`.
+
+  * `erf_inv` is converted to `tf.math.erfinv` with discrepancies at
+  undefined points (< -1 or > 1): At undefined points with dtype float32 JAX
+  returns `NaN` and TF returns `+inf` or `-inf`.
+
+  * QR decomposition is implemented using `tf.linalg.qr` with
+  the following limitations: QR for complex numbers will not work when using XLA
+  because it is not implemented in XLA. (It works in JAX on CPU and GPU
+  using custom calls to Lapack and Cusolver; it does not work in JAX on TPU.)
+  It is likely that on CPU and GPU the TF version is slower than the JAX version.
+
+  * `svd` is implemented using `tf.linalg.svd` and `tf.linalg.adjoint`:
+  SVD weirdly works for bfloat16 on TPU for JAX, but fails for TF (this
+  is related to a more general bfloat16 type casting problem).
+  The conversion does not work for complex types because XLA does
+  not implement support for complexes (once again, it works with JAX
+  because the implementation there uses custom calls to cusolver).
+
+  * `select_and_gather_add` is implemented using `XlaReduceWindow`:
+  This JAX primitive is not exposed directly in the JAX API but
+  arises from JVP of `lax.reduce_window` for reducers `lax.max` or
+  `lax.min`. It also arises from second-order VJP of the same.
+
+  * `select_and_scatter`: We decided to explicitly throw an error
+  when trying to translate this operation. The reason is that
+  the operation is not exposed in lax, and here mostly
+  for completion purposes. It is not expected that this
+  operation will ever have a use case.
 
 ## Updating the documentation
 
@@ -62,6 +115,7 @@ conversion to Tensorflow.
 | reduce_window_max | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | reduce_window_min | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | reduce_window_sum | Missing TF support | Primitive is unimplemented in TF | uint16, uint32, uint64 | CPU, GPU, TPU |
+| regularized_incomplete_beta | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
 | rem | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
 | round | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | rsqrt | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
