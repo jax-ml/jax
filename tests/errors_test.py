@@ -22,7 +22,7 @@ from absl.testing import absltest
 from jax import grad, jit, vmap
 import jax.numpy as jnp
 from jax import test_util as jtu
-from jax import traceback_util
+from jax._src import traceback_util
 
 
 from jax.config import config

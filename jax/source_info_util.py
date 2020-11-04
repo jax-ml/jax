@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 from .lib import xla_client
 
-from . import traceback_util
+from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 

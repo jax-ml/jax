@@ -17,7 +17,7 @@ import sys
 import traceback
 import types
 
-from . import util
+from jax import util
 
 _exclude_paths = [__file__, util.__file__]
 

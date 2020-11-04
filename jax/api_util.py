@@ -20,7 +20,7 @@ from . import linear_util as lu
 from .util import safe_map, WrapHashably, Hashable
 from .core import unit
 
-from . import traceback_util
+from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 map = safe_map

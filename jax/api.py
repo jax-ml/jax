@@ -44,7 +44,8 @@ from .api_util import (flatten_fun, apply_flat_fun, flatten_fun_nokwargs,
                        flatten_fun_nokwargs2, argnums_partial,
                        argnums_partial_except, flatten_axes, donation_vector,
                        rebase_donate_argnums)
-from .traceback_util import api_boundary
+from ._src import traceback_util
+from ._src.traceback_util import api_boundary
 from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, Partial)
@@ -69,7 +70,6 @@ from .interpreters.invertible_ad import custom_ivjp
 from .custom_derivatives import custom_jvp, custom_vjp, custom_gradient
 from .config import flags, config, bool_env
 
-from . import traceback_util
 traceback_util.register_exclusion(__file__)
 
 AxisName = Any
