@@ -24,7 +24,6 @@ import jax.numpy as jnp
 from jax.interpreters import batching
 from jax import test_util as jtu
 from jax import lax
-from jax import lax_linalg
 from jax import random
 from jax.api import jit, grad, jvp, vjp, make_jaxpr, jacfwd, jacrev, hessian
 from jax.api import vmap
@@ -607,7 +606,7 @@ class BatchingTest(jtu.JaxTestCase):
     a = np.random.RandomState(0).randn(10, 5, 5).astype(np.float32)
     a = np.matmul(a, np.conj(np.swapaxes(a, -1, -2)))
 
-    ans = vmap(lax_linalg.cholesky)(a)
+    ans = vmap(lax.cholesky)(a)
     expected = np.linalg.cholesky(a)
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=1e-4)
 
@@ -615,7 +614,7 @@ class BatchingTest(jtu.JaxTestCase):
     b = np.matmul(b, np.conj(np.swapaxes(b, -1, -2)))
     b_trans = np.swapaxes(b, 0, 1)  # shape is (5, 10, 5)
 
-    ans = vmap(lax_linalg.cholesky, in_axes=1, out_axes=0)(b_trans)
+    ans = vmap(lax.cholesky, in_axes=1, out_axes=0)(b_trans)
     expected = np.linalg.cholesky(b)
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=1e-4)
 
@@ -624,19 +623,19 @@ class BatchingTest(jtu.JaxTestCase):
     a += np.eye(4, dtype=jnp.float32)[:, None, :]
     b = np.random.RandomState(0).randn(5, 4, 10).astype(np.float32)
 
-    ans = vmap(lax_linalg.triangular_solve, in_axes=(1, 2))(a, b)
+    ans = vmap(lax.triangular_solve, in_axes=(1, 2))(a, b)
     expected = np.stack(
-      [lax_linalg.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
+      [lax.triangular_solve(a[:, i], b[..., i]) for i in range(10)])
     self.assertAllClose(ans, expected)
 
-    ans = vmap(lax_linalg.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
+    ans = vmap(lax.triangular_solve, in_axes=(None, 2))(a[:, 0], b)
     expected = np.stack(
-      [lax_linalg.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
+      [lax.triangular_solve(a[:, 0], b[..., i]) for i in range(10)])
     self.assertAllClose(ans, expected)
 
-    ans = vmap(lax_linalg.triangular_solve, in_axes=(1, None))(a, b[..., 0])
+    ans = vmap(lax.triangular_solve, in_axes=(1, None))(a, b[..., 0])
     expected = np.stack(
-      [lax_linalg.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
+      [lax.triangular_solve(a[:, i], b[..., 0]) for i in range(10)])
     self.assertAllClose(ans, expected)
 
   @parameterized.named_parameters(

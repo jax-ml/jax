@@ -23,7 +23,7 @@ from typing import Tuple, Union, cast
 from jax import jit, vmap, custom_jvp
 from jax import lax
 from jax import ops
-from jax import lax_linalg
+from jax._src.lax import linalg as lax_linalg
 from jax import dtypes
 from .util import _wraps
 from .vectorize import vectorize

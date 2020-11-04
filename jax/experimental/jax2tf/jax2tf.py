@@ -19,7 +19,6 @@ from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Uni
 import jax
 from jax import ad_util, api, api_util, config
 from jax import core, custom_derivatives, dtypes
-from jax import lax_linalg
 from jax import linear_util as lu
 from jax import numpy as jnp
 from jax import random, tree_util, util
@@ -30,6 +29,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src.lax import lax
+from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 from jax._src.lax import parallel as lax_parallel

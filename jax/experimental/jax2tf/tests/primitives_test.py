@@ -24,7 +24,6 @@ import itertools
 import jax
 from jax import dtypes
 from jax import lax
-from jax import lax_linalg
 from jax import numpy as jnp
 from jax import test_util as jtu
 from jax.config import config
@@ -456,8 +455,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       u = jnp.triu(lu)[...,:k, :]
       p_mat = _make_permutation_matrix(perm)
 
-      self.assertArraysEqual(lax_linalg.lu_pivots_to_permutation(pivots, m),
-                             perm)
+      self.assertArraysEqual(lax.lu_pivots_to_permutation(pivots, m), perm)
       self.assertAllClose(jnp.matmul(p_mat, operand), jnp.matmul(l, u),
                           atol=tol, rtol=tol)
 

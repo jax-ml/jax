@@ -319,6 +319,23 @@ from jax._src.lax.fft import (
   fft,
   fft_p,
 )
+from jax._src.lax.linalg import (
+  cholesky,
+  cholesky_p,
+  eig,
+  eig_p,
+  eigh,
+  eigh_p,
+  lu,
+  lu_p,
+  lu_pivots_to_permutation,
+  qr,
+  qr_p,
+  svd,
+  svd_p,
+  triangular_solve,
+  triangular_solve_p,
+)
 from jax._src.lax.parallel import (
   all_gather,
   all_to_all,

@@ -17,7 +17,6 @@ import numpy as np
 import scipy.stats as osp_stats
 
 from jax import lax
-from jax.lax_linalg import cholesky, triangular_solve
 from jax import numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
@@ -38,8 +37,8 @@ def logpdf(x, mean, cov):
     else:
       if cov.ndim < 2 or cov.shape[-2:] != (n, n):
         raise ValueError("multivariate_normal.logpdf got incompatible shapes")
-      L = cholesky(cov)
-      y = triangular_solve(L, x - mean, lower=True, transpose_a=True)
+      L = lax.cholesky(cov)
+      y = lax.triangular_solve(L, x - mean, lower=True, transpose_a=True)
       return (-1/2 * jnp.einsum('...i,...i->...', y, y) - n/2*np.log(2*np.pi)
               - jnp.log(L.diagonal()).sum())
 
