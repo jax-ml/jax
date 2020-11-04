@@ -182,11 +182,11 @@ class DtypesTest(jtu.JaxTestCase):
 
 class TestPromotionTables(jtu.JaxTestCase):
 
-  def testWeakDtypesPromotionTable(self):
+  def testObservedPromotionTable(self):
     """Test that the weak & strong dtype promotion table does not change over time."""
     # Note: * here refers to weakly-typed values
     typecodes = \
-      ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
+        ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*']
     if FLAGS.jax_enable_x64:
       expected = [
         ['b1','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
@@ -198,15 +198,15 @@ class TestPromotionTables(jtu.JaxTestCase):
         ['i2','i2','i4','i8','f8','i2','i2','i4','i8','bf','f2','f4','f8','c4','c8','i2','f8','c8'],
         ['i4','i4','i4','i8','f8','i4','i4','i4','i8','bf','f2','f4','f8','c4','c8','i4','f8','c8'],
         ['i8','i8','i8','i8','f8','i8','i8','i8','i8','bf','f2','f4','f8','c4','c8','i8','f8','c8'],
-        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c8'],
-        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c8'],
-        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c8'],
+        ['bf','bf','bf','bf','bf','bf','bf','bf','bf','bf','f4','f4','f8','c4','c8','bf','bf','c4'],
+        ['f2','f2','f2','f2','f2','f2','f2','f2','f2','f4','f2','f4','f8','c4','c8','f2','f2','c4'],
+        ['f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f4','f8','c4','c8','f4','f4','c4'],
         ['f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','f8','c8','c8','f8','f8','c8'],
         ['c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c4','c8','c4','c8','c4','c4','c4'],
         ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8'],
         ['i8','u1','u2','u4','u8','i1','i2','i4','i8','bf','f2','f4','f8','c4','c8','i*','f*','c*'],
         ['f8','f8','f8','f8','f8','f8','f8','f8','f8','bf','f2','f4','f8','c4','c8','f*','f*','c*'],
-        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c8','c4','c8','c*','c*','c*'],
+        ['c8','c8','c8','c8','c8','c8','c8','c8','c8','c4','c4','c4','c8','c4','c8','c*','c*','c*'],
       ]
     else:
       expected = [
@@ -268,6 +268,48 @@ class TestPromotionTables(jtu.JaxTestCase):
       return diffs
 
     self.assertEqual(table, expected, show_differences(expected, table))
+
+  def testPromotionTableLattice(self):
+    """
+    Test that the promotion table can be generated from the least upper bound
+    of a type promotion lattice.
+    """
+    nodes = dtypes._jax_types
+    b1, u1, u2, u4, u8, i1, i2, i4, i8, bf, f2, f4, f8, c4, c8, i_, f_, c_ = nodes
+
+    # Specify the generating lattice for the promotion table.
+    lattice = {
+      b1: [i_],
+      u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+      i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+      f_: [bf, f2, c_], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
+      c_: [c4], c4: [c8], c8: [],
+    }
+
+    # Compute all upper bounds of each node.
+    upper_bounds = {node: {node} for node in nodes}
+    for n in nodes:
+      while True:
+        new_upper_bounds = set().union(*(lattice[b] for b in upper_bounds[n]))
+        if n in new_upper_bounds:
+          raise ValueError(f"cycle detected for {n}")
+        if not new_upper_bounds.difference(upper_bounds[n]):
+          break
+        upper_bounds[n] |= new_upper_bounds
+
+    # Function to find the least upper bound of a set of nodes.
+    def least_upper_bound(nodes):
+      common_upper_bounds = set.intersection(*(upper_bounds[n] for n in nodes))
+      least_upper_bounds = common_upper_bounds - set.union(*(upper_bounds[n] - {n}
+                                                             for n in common_upper_bounds))
+      if len(least_upper_bounds) == 1:
+        return least_upper_bounds.pop()
+      else:
+        raise ValueError(f"{nodes} do not have a unique least upper bound.")
+
+    # Table of least upper bounds should equal the type promotion table.
+    lub_table = np.array([[least_upper_bound({n, m}) for n in nodes] for m in nodes])
+    self.assertArraysEqual(lub_table, dtypes._type_promotion_table)
 
 
 if __name__ == "__main__":

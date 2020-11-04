@@ -23,6 +23,16 @@ jax 0.2.6 (Unreleased)
   * Raise an error on non-hashable static arguments for jax.jit and
     xla_computation.  See `https://github.com/google/jax/commit/cb48f42`_.
 
+  * Improve consistency of type promotion behavior (#4744):
+    * Adding a complex Python scalar to a JAX floating point number respects the precision of
+      the JAX float. For example, ``jnp.float32(1) + 1j`` now returns ``complex64``, where previously
+      it returned ``complex128``.
+    * Results of type promotion with 3 or more terms involving uint64, a signed int, and a third type
+      are now independent of the order of arguments. For example:
+      ``jnp.result_type(jnp.uint64, jnp.int64, jnp.float16)`` and
+      ``jnp.result_type(jnp.float16, jnp.uint64, jnp.int64)`` both return ``float16``, where previously
+      the first returned ``float64`` and the second returned ``float16``.
+
 jaxlib 0.1.57 (unreleased)
 ------------------------------
 * Fixed a bug where the hash of bfloat16 values was not correctly initialized
