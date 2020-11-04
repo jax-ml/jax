@@ -282,7 +282,7 @@ def result_type(*args):
   """Convenience function to apply Numpy argument dtype promotion."""
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
-    return dtype(args[0])
+    return canonicalize_dtype(dtype(args[0]))
   result_type = functools.reduce(_promote_types_raw, (_jax_type(arg) for arg in args))
   # TODO(jakevdp): propagate weak_type to the result when necessary.
   return canonicalize_dtype(result_type)
