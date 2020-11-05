@@ -55,7 +55,7 @@ xops = xla_client.ops
 FLAGS = flags.FLAGS
 
 _max = builtins.max
-_min = builtins.max
+_min = builtins.min
 _reduce = functools.reduce
 
 Array = Any
