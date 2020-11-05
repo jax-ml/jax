@@ -58,6 +58,7 @@ from .api import (
   linear_transpose,
   make_jaxpr,
   mask,
+  named_call,
   partial,  # TODO(phawkins): update callers to use functools.partial.
   pmap,
   pxla,  # TODO(phawkins): update users to avoid this.

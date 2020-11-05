@@ -1346,14 +1346,26 @@ def _remat_translation_rule(c, axis_env, in_nodes,
 call_translations[pe.remat_call_p] = _remat_translation_rule
 
 
-def _call_translation_rule(c, axis_env, in_nodes, name_stack,
-                           *, backend, call_jaxpr):
-  subc = xb.make_computation_builder("core_call")
+ad.primitive_transposes[core.named_call_p] = partial(ad.call_transpose,
+                                                     core.named_call_p)
+
+
+def _named_call_translation_rule(c, axis_env, in_nodes, name_stack, *,
+                                 name="core_call", backend, call_jaxpr):
+  subc = xb.make_computation_builder(name)
   args = [xb.parameter(subc, i, c.GetShape(n)) for i, n in enumerate(in_nodes)]
   out_nodes = jaxpr_subcomp(subc, call_jaxpr, backend, axis_env, (),
-                            extend_name_stack(name_stack, 'core_call'), *args)
+                            extend_name_stack(name_stack, name), *args)
   subc = subc.Build(xops.Tuple(subc, out_nodes))
   return xops.Call(c, subc, list(in_nodes))
+call_translations[core.named_call_p] = _named_call_translation_rule
+
+
+def _call_translation_rule(c, axis_env, in_nodes, name_stack, *, backend,
+                           call_jaxpr):
+  return _named_call_translation_rule(
+      c, axis_env, in_nodes, name_stack, name="core_call",
+      backend=backend, call_jaxpr=call_jaxpr)
 call_translations[core.call_p] = _call_translation_rule
 
 
