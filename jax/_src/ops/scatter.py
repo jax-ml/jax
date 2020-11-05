@@ -207,8 +207,8 @@ def index_min(x, idx, y, indices_are_sorted=False, unique_indices=False):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
@@ -246,8 +246,8 @@ def index_max(x, idx, y, indices_are_sorted=False, unique_indices=False):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
@@ -286,8 +286,8 @@ def index_update(x, idx, y, indices_are_sorted=False, unique_indices=False):
       :data:`jax.ops.index` object.
     y: the array of updates. `y` must be broadcastable to the shape of the
       array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `scatter_indices` is known to be sorted
-    unique_indices: whether `scatter_indices` is known to be free of duplicates
+    indices_are_sorted: whether `idx` is known to be sorted
+    unique_indices: whether `idx` is known to be free of duplicates
 
   Returns:
     An array.
