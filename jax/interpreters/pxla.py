@@ -511,8 +511,16 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
   return compiled_fun(*args)
 
 @lu.cache
-def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
-                      devices, name, mapped_invars, donated_invars, *avals):
+def parallel_callable(fun: lu.WrappedFun,
+                      backend_name: Optional[str],
+                      axis_name,
+                      axis_size: int,
+                      global_axis_size: Optional[int],
+                      devices: Optional[Sequence[Any]],
+                      name: str,
+                      mapped_invars: Iterable[bool],
+                      donated_invars: Iterable[bool],
+                      *avals):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
@@ -551,7 +559,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
     local_devices = [d for d in devices if d.host_id == xb.host_id()]
     assert len(local_devices) > 0
   else:
-    local_devices = None
+    local_devices = None  # type: ignore
 
   if config.omnistaging_enabled:
     sharded_avals = tuple(shard_aval(axis_size, aval) if m else aval
@@ -570,8 +578,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
     pvals = [pe.PartialVal.unknown(aval) for aval in sharded_avals]
     # We add a dummy first invar, to carry the trace  details to `dynamic_fun`
     pval = pe.PartialVal.unknown(core.abstract_unit)  # dummy value for axis env
-    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(
-        dynamic_fun, [pval] + pvals, instantiate=False, stage_out=True, bottom=True)  # type: ignore
+    jaxpr, out_pvals, consts = pe.trace_to_jaxpr(  # type: ignore
+        dynamic_fun, [pval] + pvals, instantiate=False, stage_out=True, bottom=True)
     jaxpr.invars = jaxpr.invars[1:]  # ignore dummy
     jaxpr = xla.apply_outfeed_rewriter(jaxpr)
 
@@ -580,7 +588,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
   # for now raise an error
   if devices is not None:
-    is_multi_host_pmap = any(d.host_id != xb.host_id() for d in devices)
+    is_multi_host_pmap = len(local_devices) != len(devices)
   else:
     is_multi_host_pmap = xb.host_count() > 1
   if is_multi_host_pmap:
@@ -597,8 +605,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
       # out multi-replica XLA computations regardless of the hardware available.
       # The 'None' values here are just dummies we know will be ignored.
       handlers = [
-          _pval_to_result_handler(axis_size, None, None, None, pval, local_devices,
-                                  backend) for pval in out_pvals  # type: ignore
+        _pval_to_result_handler(axis_size, None, None, None, pval, local_devices,  # type: ignore
+                                backend_name) for pval in out_pvals
       ]
       results = [handler(None) for handler in handlers]
       return lambda *_: results
@@ -652,14 +660,14 @@ def parallel_callable(fun, backend, axis_name, axis_size, global_axis_size,
                                                     map(op.not_, mapped_invars), arg_parts,
                                                     donated_invars=donated_invars)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts,
+    out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend_name, axis_env, xla_consts,
                                   extend_name_stack(wrap_name(name, 'pmap')), *xla_args)
   build_out_tuple = partial(xops.Tuple, c, out_nodes)
   if out_parts is not None:
     out_tuple = xb.with_sharding(c, out_parts, build_out_tuple)
   else:
     out_tuple = build_out_tuple()
-  backend = xb.get_backend(backend)
+  backend = xb.get_backend(backend_name)
   if backend.platform in ("gpu", "tpu"):
     donated_invars = xla.set_up_aliases(c, xla_args, out_tuple, donated_invars, tuple_args)
   built = c.Build(out_tuple)
