@@ -512,7 +512,7 @@ def jaxpr_replicas(jaxpr):
   For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
   subjaxprs. For a list of eqns, take the maximum number of replicas.
   """
-  return max(it.chain([1], (eqn_replicas(eqn) for eqn in jaxpr.eqns)))
+  return max((eqn_replicas(eqn) for eqn in jaxpr.eqns), default=1)
 
 # TODO(mattjj): this function assumes that only pmap has a parameter named
 # axis_size, and that it corresponds to cross-replica mapping
