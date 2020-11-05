@@ -103,7 +103,7 @@ class ShardingSpec:
     is_axis_materialized: a tuple the same length as the array shape. Indicates
       whether each axis of the array is represented in the on-device shape
       (i.e. sum(is_axis_materialized) == len(device_buffer.shape())). Any
-      unmaterialized axes must be sharded into size-1 chunks
+      unmaterialized axis with length k must be sharded into k chunks
       (i.e. array_shape[i] == shards_per_axis[i]).
     replication_factors: list of tuples of (factor, index) describing how many
       times the array is replicated and before which logical axis index each
