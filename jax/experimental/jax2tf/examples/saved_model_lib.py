@@ -21,7 +21,7 @@ own code for this purpose.
 
 from typing import Callable, Sequence, Optional
 
-from jax.experimental import jax2tf
+from jax.experimental import jax2tf # type: ignore[import]
 import tensorflow as tf  # type: ignore[import]
 
 
@@ -32,6 +32,7 @@ def save_model(jax_fn: Callable,
                input_signatures: Sequence[tf.TensorSpec],
                shape_polymorphic_input_spec: Optional[str] = None,
                with_gradient: bool = False,
+               enable_xla: bool = True,
                compile_model: bool = True):
   """Saves the SavedModel for a function.
 
@@ -87,6 +88,9 @@ def save_model(jax_fn: Callable,
       tf.raw_ops.PreventGradient is saved to error if a gradient is attempted.
       (At the moment due to a bug in SavedModel, custom gradients are not
       supported.)
+    enable_xla: whether the jax2tf converter is allowed to use TFXLA ops. If
+      False, the conversion tries harder to use purely TF ops and raises an
+      exception if it is not possible. (default: True)
     compile_model: use TensorFlow experimental_compiler on the SavedModel. This
       is needed if the SavedModel will be used for TensorFlow serving.
   """
@@ -99,7 +103,8 @@ def save_model(jax_fn: Callable,
   tf_fn = jax2tf.convert(
       jax_fn,
       with_gradient=with_gradient,
-      in_shapes=[None, shape_polymorphic_input_spec])
+      in_shapes=[None, shape_polymorphic_input_spec],
+      enable_xla=enable_xla)
 
   # Create tf.Variables for the parameters.
   param_vars = tf.nest.map_structure(
