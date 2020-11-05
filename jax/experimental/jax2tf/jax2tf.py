@@ -25,7 +25,6 @@ from jax import random, tree_util, util
 from jax.api_util import flatten_fun
 from jax.interpreters import ad, batching
 from jax.interpreters import masking
-from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src.lax import lax
@@ -803,10 +802,7 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
 
-for unexpected in [
-    # Call primitives are inlined
-    xla.xla_call_p, pe.remat_call_p, core.call_p]:
-
+for unexpected in xla.call_translations: # Call primitives are inlined
   tf_impl[unexpected] = functools.partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.
