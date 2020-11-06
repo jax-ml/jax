@@ -16,7 +16,7 @@ Flax models and their use with TensorFlow Hub and Keras, are described in the
 
 See also some internal ongoing design discussions at `go/jax2tf-doc`.
 
-### Usage: converting basic functions.
+## Usage: converting basic functions.
 
 As a rule of thumb, if you can `jax.jit` your function then you should be able
 to use `jax2tf.convert`:
@@ -49,7 +49,7 @@ The Autograph feature of `tf.function` cannot be expected to work on
 functions converted from JAX as above, so it is recommended to
 set `autograph=False` in order to avoid warnings or outright errors.
 
-### Usage: saved model
+## Usage: saved model
 
 Since jax2tf provides a regular TensorFlow function using it with SavedModel
 is trivial:
@@ -65,6 +65,11 @@ tf.saved_model.save(my_model, '/some/directory')
 restored_model = tf.saved_model.load('/some/directory')
 ```
 
+An important point is that in the above code snippet **everything is standard
+TensorFlow code. In particular, the saving of the model is independent of JAX,
+and one can therefore set metadata and assets as needed for their application,
+as if the saved function had been written directly in TensorFlow**.
+
 Just like for regular TensorFlow functions, it is possible to include in the
 SavedModel multiple versions of a function for different input shapes, by
 "warming up" the function on different input shapes:
@@ -76,12 +81,8 @@ my_model.f(tf.ones([16, 28, 28]))  # a batch size of 16
 tf.saved_model.save(my_model, '/some/directory')
 ```
 
-More involved examples of using SavedModel, including how to prepare
-Flax models for conversion and saving, are described in the
+For examples of how to save a Flax or Haiku model as a SavedModel see the 
 [examples directory](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/README.md).
-As part of the examples, we provide the
-[saved_model_lib.py](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/examples/saved_model_lib.py) library with a convenience function for converting and saving
-a JAX function as a SavedModel.
 
 For details on saving a batch-polymorphic SavedModel see [below](#shape-polymorphic-conversion).
 

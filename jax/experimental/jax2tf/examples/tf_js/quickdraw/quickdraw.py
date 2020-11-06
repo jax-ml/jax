@@ -134,7 +134,7 @@ def main(*args):
   model_dir = os.path.join(base_model_path, "saved_models")
   # the model must be converted with with_gradient set to True to be able to
   # convert the saved model to TF.js, as "PreventGradient" is not supported
-  saved_model_lib.save_model(predict, flax_params, model_dir,
+  saved_model_lib.convert_and_save_model(predict, flax_params, model_dir,
                              input_signatures=[tf.TensorSpec([1, 28, 28, 1])],
                              with_gradient=True, compile_model=False,
                              enable_xla=False)
