@@ -1877,6 +1877,37 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     expected = np.sin(x + 3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPmapInAxes(self):
+    @partial(pmap, in_axes=(1, 2))
+    def f(x, y):
+      return jnp.sin(x + y)
+    xshape = (2, xla_bridge.device_count(), 4)
+    x = np.arange(prod(xshape)).reshape(xshape)
+    yshape = (2, 4, xla_bridge.device_count())
+    y = np.arange(prod(yshape)).reshape(yshape)
+
+    self.assertAllClose(f(x, y),
+                        jnp.sin(x.transpose((1, 0, 2)) + y.transpose((2, 0, 1))))
+
+  def testPmapInAxesGrad(self):
+    def f(x, y, z):
+      return jnp.sin(x + y + z)
+    fp = pmap(f, in_axes=(1, 2, None))
+    fv = vmap(f, in_axes=(1, 2, None))
+    xshape = (5, xla_bridge.device_count(), 7)
+    x = np.arange(prod(xshape), dtype=np.float32).reshape(xshape)
+    yshape = (5, 7, xla_bridge.device_count())
+    y = np.arange(prod(yshape), dtype=np.float32).reshape(yshape)
+    zshape = (5, 7)
+    z = np.arange(prod(zshape), dtype=np.float32).reshape(zshape)
+
+    dx, dy, dz = jax.grad(lambda args: fp(*args).sum())((x, y, z))
+    assert dx.shape == xshape
+    assert dy.shape == yshape
+    assert dz.shape == zshape
+
+    self.assertAllClose(jax.grad(lambda args: fp(*args).sum())((x, y, z)),
+                        jax.grad(lambda args: fv(*args).sum())((x, y, z)))
 
 class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
