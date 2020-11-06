@@ -43,26 +43,133 @@ xops = xla_client.ops
 
 # traceables
 
-def cholesky(x, symmetrize_input=True):
+def cholesky(x, symmetrize_input: bool = True):
+  """Cholesky decomposition.
+
+  Computes the Cholesky decomposition
+
+  .. math::
+    A = L . L^H
+
+  of square matrices, :math:`A`, such that :math:`L`
+  is lower triangular. The matrices of :math:`A` must be positive-definite and
+  either Hermitian, if complex, or symmetric, if real.
+
+  Args:
+    x: A batch of square Hermitian (symmetric if real) positive-definite
+      matrices with shape ``[..., n, n]``.
+    symmetrize_input: If ``True``, the matrix is symmetrized before Cholesky
+      decomposition by computing :math:`\\frac{1}{2}(x + x^H)`. If ``False``,
+      only the lower triangle of ``x`` is used; the upper triangle is ignored
+      and not accessed.
+
+  Returns:
+    The Cholesky decomposition as a matrix with the same dtype as ``x`` and
+    shape ``[..., n, n]``. If Cholesky decomposition fails, returns a matrix
+    full of NaNs. The behavior on failure may change in the future.
+  """
   if symmetrize_input:
     x = symmetrize(x)
   return jnp.tril(cholesky_p.bind(x))
 
 def eig(x, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
+  """Eigendecomposition of a general matrix.
+
+  Nonsymmetric eigendecomposition is at present only implemented on CPU.
+  """
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                     compute_right_eigenvectors=compute_right_eigenvectors)
 
-def eigh(x, lower=True, symmetrize_input=True):
+def eigh(x, lower: bool = True, symmetrize_input: bool = True):
+  """Eigendecomposition of a Hermitian matrix.
+
+  Computes the eigenvalues and eigenvectors of a complex Hermitian or real
+  symmetric square matrix.
+
+  Args:
+    x: A batch of square complex Hermitian or real symmetric matrices with shape
+      ``[..., n, n]``.
+    lower: If ``symmetrize_input`` is ``False``, describes which triangle of the
+      input matrix to use. If ``symmetrize_input`` is ``False``, only the
+      triangle given by ``lower`` is accessed; the other triangle is ignored and
+      not accessed.
+    symmetrize_input: If ``True``, the matrix is symmetrized before the
+      eigendecomposition by computing :math:`\\frac{1}{2}(x + x^H)`.
+
+  Returns:
+    A tuple ``(v, w)``.
+
+    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
+    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
+
+    ``w`` is an array with the same dtype as ``x`` such that ``w[..., :, i]`` is
+    the eigenvector corresponding to ``v[..., i]``.
+  """
   if symmetrize_input:
     x = symmetrize(x)
   v, w = eigh_p.bind(x, lower=lower)
   return v, w
 
 def lu(x):
+  """LU decomposition with partial pivoting.
+
+  Computes the matrix decomposition:
+
+  .. math::
+    P.A = L.U
+
+  where :math:`P` is a permutation of the rows of :math:`A`, :math:`L` is a
+  lower-triangular matrix with unit-diagonal elements, and :math:`U` is an
+  upper-triangular matrix.
+
+  Args:
+    x: A batch of matrices with shape ``[..., m, n]``.
+
+  Returns:
+    A tuple ``(lu, pivots, permutation)``.
+
+    ``lu`` is a batch of matrices with the same shape and dtype as ``x``
+    containing the :math:`L` matrix in its lower triangle and the :math:`U`
+    matrix in its upper triangle. The (unit) diagonal elements of :math:`L` are
+    not represented explicitly.
+
+    ``pivots`` is an int32 array with shape ``[..., min(m, n)]`` representing a
+    sequence of row swaps that should be performed on :math:`A`.
+
+    ``permutation`` is an alternative representation of the sequence of row
+    swaps as a permutation, represented as an int32 array with shape
+    ``[..., m]``.
+  """
   lu, pivots, permutation = lu_p.bind(x)
   return lu, pivots, permutation
 
-def qr(x, full_matrices=True):
+def qr(x, full_matrices: bool = True):
+  """QR decomposition.
+
+  Computes the QR decomposition
+
+  .. math::
+    A = Q . R
+
+  of matrices :math:`A`, such that :math:`Q` is a unitary (orthogonal) matrix,
+  and :math:`R` is an upper-triangular matrix.
+
+  Args:
+    x: A batch of matrices with shape ``[..., m, n]``.
+    full_matrices: Determines if full or reduced matrices are returned; see
+      below.
+
+  Returns:
+    A pair of arrays ``(q, r)``.
+
+    Array ``q`` is a unitary (orthogonal) matrix,
+    with shape ``[..., m, m]`` if ``full_matrices=True``, or
+    ``[..., m, min(m, n)]`` if ``full_matrices=False``.
+
+    Array ``r`` is an upper-triangular matrix with shape ``[..., m, n]`` if
+    ``full_matrices=True``, or ``[..., min(m, n), n]`` if
+    ``full_matrices=False``.
+  """
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, r
 
@@ -81,8 +188,43 @@ def svd(x, full_matrices=True, compute_uv=True):
     s, = result
     return s
 
-def triangular_solve(a, b, left_side=False, lower=False, transpose_a=False,
-                     conjugate_a=False, unit_diagonal=False):
+def triangular_solve(a, b, left_side: bool = False, lower: bool = False,
+                     transpose_a: bool = False, conjugate_a: bool = False,
+                     unit_diagonal: bool = False):
+  r"""Triangular solve.
+
+  Solves either the matrix equation
+
+  .. math::
+    \mathit{op}(A) . X = B
+
+  if ``left_side`` is ``True`` or
+
+  .. math::
+    X . \mathit{op}(A) = B
+
+  if ``left_side`` is ``False``.
+
+  ``A`` must be a lower or upper triangular square matrix, and where
+  :math:`\mathit{op}(A)` may either transpose :math:`A` if ``transpose_a``
+  is ``True`` and/or take its complex conjugate if ``conjugate_a`` is ``True``.
+
+  Args:
+    a: A batch of matrices with shape ``[..., m, m]``.
+    b: A batch of matrices with shape ``[..., m, n]`` if ``left_side`` is
+      ``True`` or shape ``[..., n, m]`` otherwise.
+    left_side: describes which of the two matrix equations to solve; see above.
+    lower: describes which triangle of ``a`` should be used. The other triangle
+      is ignored.
+    transpose_a: if ``True``, the value of ``a`` is transposed.
+    conjugate_a: if ``True``, the complex conjugate of ``a`` is used in the
+      solve. Has no effect if ``a`` is real.
+    unit_diagonal: if ``True``, the diagonal of ``a`` is assumed to be unit
+      (all 1s) and not accessed.
+
+  Returns:
+    A batch of matrices the same shape and dtype as ``b``.
+  """
   conjugate_a = conjugate_a and jnp.issubdtype(lax.dtype(a), jnp.complexfloating)
   singleton = jnp.ndim(b) == jnp.ndim(a) - 1
   if singleton:
