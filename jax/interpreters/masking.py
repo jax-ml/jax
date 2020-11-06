@@ -315,7 +315,7 @@ def finalize_spec(polymorphic_shape, padded_shape):
                for e, d in zip(polymorphic_shape, padded_shape))
 
 def parse_spec(spec=''):
-  if not spec:
+  if not spec or spec == '()':
     return ShapeSpec(())
   if spec[0] == '(':
     if spec[-1] != ')': raise ShapeSyntaxError(spec)
