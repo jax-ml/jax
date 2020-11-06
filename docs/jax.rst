@@ -18,7 +18,6 @@ Subpackages
     jax.ops
     jax.random
     jax.tree_util
-    jax.flatten_util
     jax.dlpack
     jax.profiler
 
@@ -91,8 +90,15 @@ Parallelization (:code:`pmap`)
 .. autofunction:: jvp
 .. autofunction:: linearize
 .. autofunction:: vjp
-.. autofunction:: custom_jvp
-.. autofunction:: custom_vjp
+.. autoclass:: custom_jvp
+
+    .. automethod:: defjvp
+    .. automethod:: defjvps
+
+.. autoclass:: custom_vjp
+
+    .. automethod:: defvjp
+
 .. autofunction:: checkpoint
 
 .. autofunction:: vmap
