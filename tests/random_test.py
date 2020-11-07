@@ -729,6 +729,37 @@ class LaxRandomTest(jtu.JaxTestCase):
     finally:
       xla.apply_primitive = apply_primitive
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_dtype={}_arraytype={}_seed={}".format(dtype.__name__, arraytype, seed),
+       "dtype": dtype, "arraytype": arraytype, "seed": seed}
+      for arraytype in [None, "np.array", "jnp.array"]
+      for dtype in jtu.dtypes.integer + jtu.dtypes.unsigned
+      for seed in {np.iinfo(dtype).min, -10, 0, 10, np.iinfo(dtype).max}))
+  def testPRNGSeedDtypes(self, dtype, arraytype, seed):
+    if np.issubdtype(dtype, np.unsignedinteger) and seed < 0:
+      self.skipTest("cannot test negative seed for unsigned type.")
+    if dtype == jnp.uint64 and seed == np.iinfo(dtype).max:
+      self.skipTest("input exceeds maximum int64.")
+    seed1 = int(seed)
+    seed2 = {
+      None: dtype,
+      "np.array": partial(np.array, dtype=dtype),
+      "jnp.array": partial(jnp.array, dtype=dtype),
+    }[arraytype](seed)
+
+    self.assertArraysEqual(
+      random.PRNGKey(seed1),
+      random.PRNGKey(seed2),
+    )
+    self.assertArraysEqual(
+      random.PRNGKey(seed2),
+      api.jit(random.PRNGKey)(seed2),
+    )
+    self.assertArraysEqual(
+      random.PRNGKey(seed1),
+      api.jit(random.PRNGKey)(seed1),
+    )
+
   def testPRNGValues(self):
     # Test to ensure consistent random values between JAX versions
     k = random.PRNGKey(0)

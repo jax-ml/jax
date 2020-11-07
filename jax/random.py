@@ -61,7 +61,6 @@ from jax.interpreters import batching
 from jax.interpreters import xla
 from jax.util import prod
 
-
 _UINT_DTYPES = {8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
 
 
@@ -78,15 +77,16 @@ def PRNGKey(seed: int) -> jnp.ndarray:
   """
   if np.shape(seed):
     raise TypeError("PRNGKey seed must be a scalar.")
+  if not np.issubdtype(np.result_type(seed), np.integer):
+    raise TypeError("PRNGKey seed must be an integer.")
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
-  if isinstance(seed, (int, np.ndarray)):
-    # Special handling of raw integer values, which may have be 64bit even
-    # when jax_enable_x64=False and we don't want to drop the top 32 bits
-    k1 = convert(np.bitwise_and(np.right_shift(seed, 32), 0xFFFFFFFF))
-  else:
-    k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
-  k2 = convert(jnp.bitwise_and(seed, 0xFFFFFFFF))
-  return lax.concatenate([k1, k2], 0)
+  # For jit invariance given Python int inputs, we must first convert to signed int.
+  seed = lax.convert_element_type(seed, dtypes.canonicalize_dtype(np.int64))
+  # Now convert to unsigned for the algorithm that follows.
+  seed = lax.convert_element_type(seed, dtypes.canonicalize_dtype(np.uint64))
+  k1 = lax.shift_right_logical(seed, lax._const(seed, 32))
+  k2 = lax.bitwise_and(seed, lax._const(seed, 0xFFFFFFFF))
+  return lax.concatenate([convert(k1), convert(k2)], 0)
 
 def _is_prng_key(key: jnp.ndarray) -> bool:
   try:
