@@ -37,6 +37,7 @@ For an introduction to JAX, start at the
    async_dispatch
    concurrency
    gpu_memory_allocation
+   gpu_determinism
    profiling
    device_memory_profiling
    pytrees
