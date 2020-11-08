@@ -90,6 +90,7 @@ Parallelization (:code:`pmap`)
 .. autofunction:: hessian
 .. autofunction:: jvp
 .. autofunction:: linearize
+.. autofunction:: linear_transpose
 .. autofunction:: vjp
 .. autofunction:: custom_jvp
 .. autofunction:: custom_vjp
