@@ -202,7 +202,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   return x, info
 
 
-def _safe_normalize(x, return_norm=False, thresh=None):
+def _safe_normalize(x, thresh=None):
   """
   Returns the L2-normalized vector (which can be a pytree) x, and optionally
   the computed norm. If the computed norm is less than the threshold `thresh`,
@@ -215,17 +215,11 @@ def _safe_normalize(x, return_norm=False, thresh=None):
     thresh = jnp.finfo(norm.dtype).eps
   thresh = thresh.astype(dtype).real
 
-  normalized_x, norm = lax.cond(
-      norm > thresh,
-      lambda y: (_div(y, norm), norm),
-      lambda y: (tree_map(jnp.zeros_like, y), jnp.zeros((),
-                                                        dtype=thresh.dtype)),
-      x,
-  )
-  if return_norm:
-    return normalized_x, norm
-  else:
-    return normalized_x
+  use_norm = norm > thresh
+  # where_normalizing = partial(tree_map, partial(jnp.where, norm > thresh))
+  normalized_x = tree_map(lambda y: jnp.where(use_norm, y / norm, 0.0), x)
+  norm = jnp.where(use_norm, norm, 0.0)
+  return normalized_x, norm
 
 
 def _project_on_columns(A, v):
@@ -270,7 +264,7 @@ def _iterative_classical_gram_schmidt(Q, x, max_iterations=2):
   # axis.
   r = jnp.zeros((tree_leaves(Q)[0].shape[-1]))
   q = x
-  _, xnorm = _safe_normalize(x, return_norm=True)
+  _, xnorm = _safe_normalize(x)
   xnorm_scaled = xnorm / jnp.sqrt(2)
 
   def body_function(carry):
@@ -286,7 +280,7 @@ def _iterative_classical_gram_schmidt(Q, x, max_iterations=2):
 
     def qnorm(carry):
       k, _, q, qnorm_scaled = carry
-      _, qnorm = _safe_normalize(q, return_norm=True)
+      _, qnorm = _safe_normalize(q)
       qnorm_scaled = qnorm / jnp.sqrt(2)
       return (k, False, q, qnorm_scaled)
 
@@ -296,7 +290,7 @@ def _iterative_classical_gram_schmidt(Q, x, max_iterations=2):
 
   def cond_function(carry):
     k, _, r, qnorm_scaled = carry
-    _, rnorm = _safe_normalize(r, return_norm=True)
+    _, rnorm = _safe_normalize(r)
     return jnp.logical_and(k < (max_iterations - 1), rnorm < qnorm_scaled)
 
   k, q, r, qnorm_scaled = body_function((0, q, r, xnorm_scaled))
@@ -318,7 +312,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = A(M(v))
   v, h = _iterative_classical_gram_schmidt(V, v, max_iterations=2)
-  unit_v, v_norm = _safe_normalize(v, return_norm=True, thresh=tol)
+  unit_v, v_norm = _safe_normalize(v, thresh=tol)
   V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
   h = h.at[k + 1].set(v_norm)
@@ -370,7 +364,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   """
   # https://www-users.cs.umn.edu/~saad/Calais/PREC.pdf
   #  residual = _sub(b, A(x0))
-  #  unit_residual, beta = _safe_normalize(residual, return_norm=True)
+  #  unit_residual, beta = _safe_normalize(residual)
 
   V = tree_map(
       lambda x: jnp.pad(x[..., None], ((0, 0),) * x.ndim + ((0, restart),)),
@@ -412,7 +406,7 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
 
   x = _add(x0, dx)
   residual = _sub(b, A(x))
-  unit_residual, residual_norm = _safe_normalize(residual, return_norm=True)
+  unit_residual, residual_norm = _safe_normalize(residual)
   return x, unit_residual, residual_norm
 
 
@@ -437,10 +431,6 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   def loop_cond(carry):
     _, _, breakdown, k = carry
     return jnp.logical_and(k < restart, jnp.logical_not(breakdown))
-    #  return lax.cond(k < restart,
-    #                  lambda x: ~x,
-    #                  lambda x: False,
-    #                  breakdown)
 
   def arnoldi_process(carry):
     V, H, _, k = carry
@@ -460,7 +450,7 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
   x = _add(x0, dx)
 
   residual = _sub(b, A(x))
-  unit_residual, residual_norm = _safe_normalize(residual, return_norm=True)
+  unit_residual, residual_norm = _safe_normalize(residual)
   return x, unit_residual, residual_norm
 
 
@@ -479,7 +469,7 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
   Returns: The solution.
   """
   residual = _sub(b, A(x0))
-  unit_residual, residual_norm = _safe_normalize(residual, return_norm=True)
+  unit_residual, residual_norm = _safe_normalize(residual)
 
   def cond_fun(value):
     _, k, _, residual_norm = value
