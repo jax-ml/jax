@@ -4356,6 +4356,16 @@ class InvertibleADTest(jtu.JaxTestCase):
                         jax.value_and_grad(lambda x: np.sum(finv(x, o)[0]))(o),
                         check_dtypes=True)
 
+  def test_invertible_pytree(self):
+    def f(x, y):
+      return jnp.exp(x[0]) * x[1] + y
+
+    finv = jax.invertible(f)
+    o = np.ones((5,))
+    self.assertAllClose(jax.value_and_grad(lambda x: np.sum(f((x, x), x)[0]))(o),
+                        jax.value_and_grad(lambda x: np.sum(finv((x, x), x)[0]))(o),
+                        check_dtypes=True)
+
 
 class DeprecatedCustomTransformsTest(jtu.JaxTestCase):
 
