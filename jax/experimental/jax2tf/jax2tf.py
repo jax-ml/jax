@@ -13,6 +13,7 @@
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 import functools
+import re
 import string
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, Union
 
@@ -44,6 +45,18 @@ from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 
 from jaxlib import xla_client
 
+
+# The scope name need to be a valid TensorFlow name. See
+# https://github.com/tensorflow/tensorflow/blob/r2.3/tensorflow/core/framework/node_def_util.cc#L731
+_VALID_SCOPE_REGEX = re.compile("^[A-Za-z0-9.][A-Za-z0-9_.\\/>-]*$")
+_INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/>-]")
+
+
+def _sanitize_scope_name(name):
+  scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
+  if not _VALID_SCOPE_REGEX.match(scope_name):
+    scope_name = ".{}".format(scope_name)
+  return scope_name
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
@@ -735,7 +748,13 @@ class TensorFlowTrace(core.Trace):
     assert call_primitive.multiple_results
     vals: Sequence[TfVal] = [t.val for t in tracers]
     f = _interpret_subtrace(f, self.main, tuple(t.aval for t in tracers))
-    vals_out: Sequence[Tuple[TfVal, core.AbstractValue]] = f.call_wrapped(*vals)
+    if call_primitive == core.named_call_p:
+      with tf.name_scope(_sanitize_scope_name(params["name"])):
+        vals_out: Sequence[Tuple[TfVal,
+                                 core.AbstractValue]] = f.call_wrapped(*vals)
+    else:
+      vals_out: Sequence[Tuple[TfVal,
+                               core.AbstractValue]] = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
