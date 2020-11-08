@@ -87,7 +87,7 @@ class ProfilerTest(unittest.TestCase):
     self.assertEqual(1, len(glob.glob(path)),
                      'Expected one path match: ' + path)
 
-  @unittest.skipIf(not (portpicker or profiler_client or tf_profiler),
+  @unittest.skipIf(not (portpicker and profiler_client and tf_profiler),
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
