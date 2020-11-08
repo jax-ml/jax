@@ -18,7 +18,7 @@ from functools import partial, reduce
 from itertools import chain, product
 import operator as op
 import string
-from typing import Callable, Dict, Sequence, Union
+from typing import Callable, Dict, Sequence, Union, Tuple
 
 import numpy as np
 
@@ -107,80 +107,91 @@ def eval_poly_shape(shape, values_dict):
 def eval_poly(poly, values_dict):
   return poly.evaluate(values_dict) if type(poly) is Poly else poly
 
-def _ensure_poly(p):
-  if type(p) is Poly:
-    return p
+def _ensure_poly(p: 'Size') -> 'Poly':
+  if isinstance(p, Poly): return p
   return Poly({Mon(): p})
 
 def _polys_to_ints(shape):
   return tuple(int(d) if type(d) is Poly and d.is_constant else d
                for d in shape)
 
-def is_polymorphic(shape: Sequence[Union[int, 'Poly']]):
+def is_polymorphic(shape: Sequence['Size']):
   return any(map(lambda d: type(d) is Poly, shape))
 
 class Poly(dict):
-  """Polynomial with nonnegative integer coefficients for polymorphic shapes."""
+  """Polynomial with integer coefficients for polymorphic shapes."""
 
-  def __init__(self, coeffs):
+  def __init__(self, coeffs: Dict['Mon', int]):
     # Makes sure Polynomials are always in canonical form
     coeffs = {mon: op.index(coeff)
               for mon, coeff in coeffs.items() if coeff != 0}
     coeffs = coeffs or {Mon(): 0}
     super().__init__(coeffs)
 
-  def __add__(self, other):
+  def __add__(self, other: 'Size') -> 'Poly':
     coeffs = self.copy()
     for mon, coeff in _ensure_poly(other).items():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
     return Poly(coeffs)
 
-  def __sub__(self, other):
+  def __sub__(self, other: 'Size') -> 'Poly':
     return self + -other
 
-  def __neg__(self):
+  def __neg__(self) -> 'Poly':
     return Poly({mon: -coeff for mon, coeff in self.items()})
 
-  def __mul__(self, other):
+  def __mul__(self, other: 'Size') -> 'Poly':
     other = _ensure_poly(other)
-    coeffs = {}
+    coeffs: Dict[Mon, int] = {}
     for (mon1, coeff1), (mon2, coeff2) in product(self.items(), other.items()):
       mon = mon1 * mon2
       coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
     return Poly(coeffs)
 
-  def __rmul__(self, other):
+  def __rmul__(self, other: 'Size') -> 'Poly':
     return self * other  # multiplication commutes
 
-  def __radd__(self, other):
+  def __radd__(self, other: 'Size') -> 'Poly':
     return self + other  # addition commutes
 
-  def __rsub__(self, other):
+  def __rsub__(self, other: 'Size') -> 'Poly':
     return _ensure_poly(other) - self
 
-  def __floordiv__(self, divisor):
-    q, _ = divmod(self, divisor)  # pytype: disable=wrong-arg-types
+  def __floordiv__(self, divisor: 'Size') -> 'Poly':
+    q, _ = divmod(self, divisor)  # type: ignore
     return q
 
-  def __mod__(self, divisor):
-    _, r = divmod(self, divisor)  # pytype: disable=wrong-arg-types
+  def __mod__(self, divisor: 'Size') -> int:
+    _, r = divmod(self, divisor)  # type: ignore
     return r
 
-  def __divmod__(self, divisor):
-    if self.is_constant:
-      return divmod(int(self), divisor)
-    else:
-      def divided(count):
-        q, r = divmod(count, divisor)
-        if r != 0:
-          raise ValueError('shapecheck  and masking currently only support '
-                           'strides that exactly divide the strided axis '
-                           'length.')
-        return q
+  def __divmod__(self, divisor: 'Size') -> Tuple['Poly', int]:
+    """
+    Floor division with remainder (divmod) generalized to polynomials. To allow
+    ensuring '0 <= remainder < divisor' for consistency with integer divmod, the
+    divisor must divide the dividend (up to a constant for constant divisors).
+    :return: Quotient resulting from polynomial division and integer remainder.
+    """
+    divisor = _ensure_poly(divisor)
+    dmon, dcount = divisor._leading_term
+    dividend, quotient, remainder = self, _ensure_poly(0), _ensure_poly(0)
+    while dividend != 0:  # invariant: dividend == divisor*quotient + remainder
+      mon, count = dividend._leading_term
+      qcount, rcount = divmod(count, dcount)
+      try:
+        qmon = mon // dmon
+      except ValueError:
+        raise ValueError(f"Stride {divisor} must divide size {self} "
+                         f"(up to a constant for constant divisors).")
+      r = Poly({mon: rcount})
+      q = Poly({qmon: qcount})
+      quotient += q
+      remainder += r
+      dividend -= q * divisor + r
+    return quotient, int(remainder)
 
-      return Poly(
-        {k: coeff // divisor if k.degree == 0 else divided(coeff)
-         for k, coeff in self.items()}), self.get(Mon(), 0) % divisor
+  def __rdivmod__(self, dividend: 'Size') -> Tuple['Poly', int]:
+    return divmod(_ensure_poly(dividend), self)  # type: ignore
 
   def __hash__(self):
     return hash(tuple(sorted(self.items())))
@@ -191,39 +202,28 @@ class Poly(dict):
   def __ne__(self, other):
     return not self == other
 
-  def __ge__(self, other):
-    other = _ensure_poly(other)
+  def __ge__(self, other: 'Size'):
+    diff = self - other
+    if diff.is_constant: return int(diff) >= 0
 
-    if other.is_constant and self.is_constant:
-      return int(self) >= int(other)
-    elif other.is_constant and int(other) <= 1:
-      # Assume nonzero polynomials are positive, allows use in shape rules
-      return True
-    elif self.is_constant and int(self) <= 0:
-      return False  # See above.
-    elif self == other:
-      return True
-    else:
-      diff = self - other
-      if diff.is_constant:
-        return int(diff) >= 0
+    # Assume nonconstant polynomials are positive, allows use in shape rules:
+    if _ensure_poly(other).is_constant and other <= 1: return True
+    elif self.is_constant and self <= 0: return False
 
-    raise ValueError('Polynomials comparison "{} >= {}" is inconclusive.'
-                     .format(self, other))
+    raise ValueError(f"Polynomial comparison {self} >= {other} is inconclusive.")
 
-  def __le__(self, other):
+  def __le__(self, other: 'Size'):
     return _ensure_poly(other) >= self
 
-  def __lt__(self, other):
+  def __lt__(self, other: 'Size'):
     return not (self >= other)
 
-  def __gt__(self, other):
+  def __gt__(self, other: 'Size'):
     return not (_ensure_poly(other) >= self)
 
   def __str__(self):
-    return ' + '.join('{} {}'.format(v, k)
-                      if (v != 1 or k.degree == 0) else str(k)
-                      for k, v in sorted(self.items())).strip()
+    return ' + '.join(f'{c} {mon}' if c != 1 or mon.degree == 0 else str(mon)
+                      for mon, c in sorted(self.items(), reverse=True)).strip()
 
   def __repr__(self):
     return str(self)
@@ -242,6 +242,13 @@ class Poly(dict):
   def is_constant(self):
     return len(self) == 1 and next(iter(self)).degree == 0
 
+  @property
+  def _leading_term(self) -> Tuple['Mon', int]:
+    """Returns the highest degree term that comes first lexicographically."""
+    return max(self.items())
+
+Size = Union[int, Poly]
+
 def pow(x, deg):
   try:
     deg = int(deg)
@@ -256,32 +263,50 @@ def mul(coeff, mon):
   except:
     return coeff * mon
   else:
-    return  0 if coeff == 0 else mon if coeff == 1 else coeff * mon
+    return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 
 abstract_arrays._DIMENSION_TYPES.add(Poly)
 
-
 class Mon(dict):
+  """Represents a multivariate monomial, such as n^3 * m."""
   def __hash__(self):
     return hash(frozenset(self.items()))
 
   def __str__(self):
-    return ' '.join('{}**{}'.format(k, v) if v != 1 else str(k)
-                    for k, v in sorted(self.items()))
+    return ' '.join(f'{key}^{exponent}' if exponent != 1 else str(key)
+                    for key, exponent in sorted(self.items()))
 
-  def __lt__(self, other):
-    # sort by total degree, then lexicographically on indets
+  def __lt__(self, other: 'Mon'):
+    """
+    Comparison to another monomial in graded reverse lexicographic order.
+    """
     self_key = -self.degree, tuple(sorted(self))
     other_key = -other.degree, tuple(sorted(other))
-    return self_key < other_key
+    return self_key > other_key
 
-  def __mul__(self, other):
+  def __mul__(self, other: 'Mon') -> 'Mon':
+    """
+    Returns the product with another monomial. Example: (n^2*m) * n == n^3 * m.
+    """
     return Mon(Counter(self) + Counter(other))
 
   @property
   def degree(self):
     return sum(self.values())
+
+  def __floordiv__(self, divisor: 'Mon') -> 'Mon':
+    """
+    Divides by another monomial. Raises a ValueError if impossible.
+    For example, (n^3 * m) // n == n^2*m, but n // m fails.
+    """
+    d = Counter(self)
+    for key, exponent in divisor.items():
+      diff = self.get(key, 0) - exponent
+      if diff < 0: raise ValueError(f"Cannot divide {self} by {divisor}.")
+      elif diff == 0: del d[key]
+      elif diff > 0: d[key] = diff
+    return Mon(d)
 
 class ShapeError(Exception): pass
 

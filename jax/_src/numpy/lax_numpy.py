@@ -1219,9 +1219,8 @@ def _compute_newshape(a, newshape):
     return size if type(size) is Poly else core.concrete_or_error(
       int, size, "The error arose in jax.numpy.reshape.")
   newshape = [check(size) for size in newshape] if iterable else check(newshape)
-  newsize = _prod((newshape,) if type(newshape) is Poly else newshape)
-  if newsize < 0:
-    fix = a.size // -newsize
+  if np.any(np.equal(newshape, -1)):
+    fix = -a.size // (newshape if type(newshape) is Poly else _prod(newshape))
     return [d if d != -1 else fix for d in newshape]
   else:
     return newshape
