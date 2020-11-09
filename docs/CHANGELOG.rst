@@ -45,6 +45,7 @@ jaxlib 0.1.57 (unreleased)
 * Add support for retaining ownership when passing arrays to DLPack (#4636).
 * Fixed a bug for batched triangular solves with sizes greater than 128 but not
   a multiple of 128.
+* Fixed a bug when performing concurrent FFTs on multiple GPUs (#3518).
 
 jax 0.2.5 (October 27 2020)
 --------------------------
