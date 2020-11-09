@@ -78,7 +78,7 @@ perex_grads = jit(vmap(grad_fun, in_axes=(None, 0, 0)))  # fast per-example grad
 * [Transformations](#transformations)
 * [Current gotchas](#current-gotchas)
 * [Installation](#installation)
-* [Neural net libraries](#neural-net-libraries)
+* [Neural net libraries](#neural-network-libraries)
 * [Citing JAX](#citing-jax)
 * [Reference documentation](#reference-documentation)
 
