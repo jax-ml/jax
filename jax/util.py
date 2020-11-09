@@ -271,3 +271,8 @@ def wraps(wrapped, fun, namestr="{fun}", docstr="{doc}", **kwargs):
 def get_name(fun): return getattr(fun, "__name__", "<unnamed function>")
 def get_module(fun): return getattr(fun, "__module__", "<unknown module>")
 def get_doc(fun): return getattr(fun, "__doc__", "")
+
+# NOTE: Ideally we would annotate both the argument and return type as NoReturn
+#       but it seems like pytype doesn't support that...
+def assert_unreachable(x):
+  raise AssertionError(f"Unhandled case: {type(x).__name__}")

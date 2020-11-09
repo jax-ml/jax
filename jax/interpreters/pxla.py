@@ -34,7 +34,7 @@ import itertools as it
 import operator as op
 import threading
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
-                    Type, Union, no_type_check)
+                    Type, Union, Iterable, no_type_check, NamedTuple)
 
 from absl import logging
 import numpy as np
@@ -46,7 +46,7 @@ from .. import lazy
 from ..abstract_arrays import ConcreteArray, ShapedArray, array_types
 from ..core import Var, Literal
 from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
-                    extend_name_stack, wrap_name)
+                    extend_name_stack, wrap_name, assert_unreachable)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_map
@@ -61,144 +61,143 @@ xops = xc.ops
 
 FLAGS = flags.FLAGS
 
-unsafe_map, map = map, safe_map
+unsafe_map, map = map, safe_map  # type: ignore
 
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
 
-def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client._xla.PyLocalBuffer]:
-  """Call device_put on a sequence of devices and return a flat sequence of buffers."""
-  if replicate:
-    return list(it.chain.from_iterable(xla.device_put(x, device) for device in devices))
-  else:
-    return list(it.chain.from_iterable(xla.device_put(val, device) for val, device in safe_zip(x, devices)))
+class Unstacked(NamedTuple):
+  size: int
 
+class Chunked(NamedTuple):
+  chunks: int
 
+"""
+Represents all the ways we can shard a dimension.
+- `None` means no sharding;
+- `Chunked` means that the dimension is split into the specified number of chunks,
+  but the split dimension itself is preserved inside the map;
+- `Unstacked` means that the dimension is split into chunks of size 1, and doesn't
+  appear inside the map.
+"""
+AvalDimSharding = Union[Unstacked, Chunked, None]
 
-# TODO(skye): make this a namedtuple. This may allow us to use ShardingSpecs in
-# performance-sensitive code, e.g. shard_args.
+class ShardedAxis(NamedTuple):
+  axis: int
+
+class Replicated(NamedTuple):
+  replicas: int
+
+"""
+Assigns sharded axes to mesh dimensions.
+
+When no axis is assigned, the data is replicated.
+Note that `ShardedAxis(2)` refers to the second actually sharded axis (i.e.
+counting as if the None dimensions of sharding were filtered out). For example,
+given the sharding `[Unstacked(n), None, Chunked(m)]`, an entry of `ShardedAxis(1)`
+refers to the `Chunked(m)` axis, not the `None`.
+"""
+MeshDimAssignment = Union[ShardedAxis, Replicated]
+
 class ShardingSpec:
-  """Describes how a logical array is sharded across devices.
+  """Describes the sharding of an ndarray.
 
-  Note this does not specify the physical devices to be sharded across, nor a
-  logical ordering of data shards. Use `spec_to_indices` to resolve a
-  ShardingSpec to the specific logical ordering expected throughout the system.
+  `sharding` specifies how the array is supposed to get partitioned into chunks.
+  Its length should match the rank of the array. See the docstring of
+  `AvalDimSharding` for the supported partitioning schemes.
 
-  Sharding includes "replication", where the same data is present on multiple
-  devices. Replication is always applied to the entire logical array, i.e. the
-  whole array is copied N times, although each copy may still be sharded
-  according to the rest of the ShardingSpec. This means that unlike other kinds
-  of sharding, replication isn't associated with a particular logical array
-  axis. However, it does have a position relative to the logical array axes,
-  which is necessary to specify how replication is mapped to devices in
-  `spec_to_indices`. One way to think about this is if you added an extra
-  length-N logical axis containing the N copies of the original array, where
-  would that new axis go? This would affect the final buffer order computed in
-  `spec_to_indices`.
-
-  Attributes:
-    shards_per_axis: a tuple the same length as the array shape. Indicates how
-      many shards each axis is divided into. Each axis must be divided into
-      equal-sized shards (i.e. array_shape[i] % shards_per_axis[i] == 0).
-    is_axis_materialized: a tuple the same length as the array shape. Indicates
-      whether each axis of the array is represented in the on-device shape
-      (i.e. sum(is_axis_materialized) == len(device_buffer.shape())). Any
-      unmaterialized axes must be sharded into size-1 chunks
-      (i.e. array_shape[i] == shards_per_axis[i]).
-    replication_factors: list of tuples of (factor, index) describing how many
-      times the array is replicated and before which logical axis index each
-      virtual replication axis is inserted.
+  `mesh_mapping` describes an assignments of the array chunks created by `sharding`
+  to a logical device mesh. The length of the tuple is equal to the rank of the mesh.
+  Each mesh dimension can either get partitions of data varying along one of the
+  sharded dimensions, or the data can be replicated. See the docstring of
+  `MeshDimAssignment` for more information.
   """
+  sharding: Tuple[AvalDimSharding, ...]
+  mesh_mapping: Tuple[MeshDimAssignment, ...]
 
   def __init__(self,
-               shards_per_axis: Tuple[int, ...],
-               is_axis_materialized: Tuple[bool, ...],
-               replication_factors: List[Tuple[int, int]]):
-    assert len(shards_per_axis) == len(is_axis_materialized)
-    self.shards_per_axis = shards_per_axis
-    self.is_axis_materialized = is_axis_materialized
-    self.replication_factors = replication_factors
+               sharding: Iterable[AvalDimSharding],
+               mesh_mapping: Iterable[MeshDimAssignment]):
+    self.sharding = tuple(sharding)
+    self.mesh_mapping = tuple(mesh_mapping)
 
-  def __eq__(self, other):
-    return (self.shards_per_axis == other.shards_per_axis and
-            self.is_axis_materialized == other.is_axis_materialized and
-            self.replication_factors == other.replication_factors)
+  def indices(self, shape: Tuple[int, ...]) -> np.ndarray:
+    """Returns NumPy-style indices corresponding to a sharding spec.
 
-  def __repr__(self):
-    return ("ShardingSpec(shards_per_axis=%s, is_axis_materialized=%s, "
-            "replication_factors=%s)" %
-            (self.shards_per_axis, self.is_axis_materialized,
-             self.replication_factors))
+    Args:
+      shape: The shape of the logical array being sharded.
 
+    Returns:
+      An ndarray with a NumPy-style index for each element of the logical mesh.
+      Each element is an int, a slice object with step=1, or a tuple thereof, to
+      be treated as an index into the full logical array.
+    """
+    assert len(shape) == len(self.sharding)
+
+    axis_indices: List[Sequence[Index]] = []
+    shard_indices_shape = []
+    for dim, sharding in enumerate(self.sharding):
+      axis_size = shape[dim]
+      if sharding is None:
+        axis_indices.append([slice(None)])
+        # NOTE: We don't append unsharded dimensions to shard_indices_shape here,
+        #       because they do not appear in the mesh mapping.
+      elif isinstance(sharding, Unstacked):
+        assert axis_size == sharding.size, f'{axis_size} != {sharding.size}'
+        axis_indices.append(range(axis_size))
+        shard_indices_shape.append(axis_size)
+      elif isinstance(sharding, Chunked):
+        shard_size, ragged = divmod(axis_size, sharding.chunks)
+        assert not ragged, (axis_size, sharding.chunks, dim)
+        axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)
+                             for i in range(sharding.chunks)])
+        shard_indices_shape.append(sharding.chunks)
+      else:
+        assert_unreachable(sharding)
+
+    # shard_indices is an ndarray representing the sharded axes of the logical array,
+    # with each dimension having size equal to the number of shards across the corresponding
+    # logical array dimension, and each element containing the multi-dimensional index that
+    # is used to extract the corresponding shard of the logical array.
+    shard_indices = np.empty([prod(shard_indices_shape)], dtype=np.object)
+    for i, idxs in enumerate(it.product(*axis_indices)):
+      shard_indices[i] = idxs
+    shard_indices = shard_indices.reshape(shard_indices_shape)
+
+    # Ensure that each sharded axis is used exactly once in the mesh mapping
+    num_sharded_dim = len(shard_indices_shape)
+    sharded_dim_perm = [a.axis for a in self.mesh_mapping if isinstance(a, ShardedAxis)]
+    assert (set(sharded_dim_perm) == set(range(num_sharded_dim)) and
+            len(sharded_dim_perm) == num_sharded_dim)
+    # Replicate/reorder the indices according to the mesh mapping
+    replica_sizes = tuple(a.replicas for a in self.mesh_mapping if isinstance(a, Replicated))
+    replica_dim, sharded_dim = it.count(0), iter(sharded_dim_perm)
+    perm = [next(replica_dim) if isinstance(a, Replicated) else
+            len(replica_sizes) + next(sharded_dim)
+            for a in self.mesh_mapping]
+    return (np.broadcast_to(shard_indices, replica_sizes + shard_indices.shape)
+              .transpose(perm))
 
 def spec_to_indices(shape: Tuple[int, ...],
-                    sharding_spec: ShardingSpec) -> Tuple[Index, ...]:
-  """Returns numpy-style indices corresponding to sharding_spec.
+                    spec: ShardingSpec) -> Tuple[Index, ...]:
+  """Returns numpy-style indices corresponding to a sharding spec.
 
   Each index describes a shard of the array. The order of the indices is the
   same as the device_buffers of a ShardedDeviceArray (i.e. the data is laid out
-  row-major, with replication treated as an extra innermost dimension).
+  row-major).
 
   Args:
     shape: The shape of the logical array being sharded.
-    sharding_spec: Describes how the array is sharded.
+    spec: Describes how the array is sharded and how the shards are assigned to
+          the logical mesh.
 
   Returns:
-    A tuple of length `prod(sharding_spec.shards_per_axis) *
-    prod(factor for factor, index in sharding_spec.replication_factors)`. Each
-    element is an int, a slice object with step=1, or a tuple thereof, to be
-    treated as an index into the full logical array.
+    A tuple of length equal to the size of the mesh (inferred as the product of
+    sharded dimension sizes and all replication factors).  Each element is an
+    int, a slice object with step=1, or a tuple thereof, to be treated as an
+    index into the full logical array.
   """
-  assert len(shape) == len(sharding_spec.shards_per_axis)
-  if not shape:
-    # special case: scalars can only be indexed by `()`
-    total_replication_factor = int(prod(factor for factor, index in
-                                        sharding_spec.replication_factors))
-    return ((),) * total_replication_factor
-
-  replication_factors = sorted(sharding_spec.replication_factors,
-                               key=op.itemgetter(1))
-  logical_index = 0
-  indices_per_mesh_axis = []
-  for mesh_index in range(len(shape) + len(sharding_spec.replication_factors)):
-    if replication_factors and replication_factors[0][1] == logical_index:
-      # Insert a placeholder `None` to represent a replication factor. These
-      # will all be removed later, since they don't correspond to logical axes.
-      factor, _ = replication_factors.pop(0)
-      indices_per_mesh_axis.append([None] * factor)
-    else:
-      indices = _axis_indices(
-          shape[logical_index],
-          sharding_spec.shards_per_axis[logical_index],
-          sharding_spec.is_axis_materialized[logical_index])
-      indices_per_mesh_axis.append(indices)
-      logical_index += 1
-  assert logical_index == len(shape) and not replication_factors
-
-  indices = list(it.product(*indices_per_mesh_axis))
-
-  # remove placeholder `None`s and trailing colons, then unwrap
-  # single-element tuples
-  def canonicalize(index):
-    index = [i for i in index if i is not None]
-    while len(index) > 1 and index[-1] == slice(None):
-      index.pop(-1)
-    assert index
-    if len(index) == 1:
-      return index[0]
-    return tuple(index)
-  return tuple(canonicalize(index) for index in indices)
-
-
-def _axis_indices(axis_size, num_shards, is_materialized):
-  if not is_materialized:
-    assert axis_size == num_shards, f'{axis_size} != {num_shards}'
-    return list(range(axis_size))
-  if num_shards == 1:
-    return [slice(None)]
-  shard_size, ragged = divmod(axis_size, num_shards)
-  assert not ragged
-  return [slice(i * shard_size, (i + 1) * shard_size) for i in range(num_shards)]
+  return tuple(spec.indices(shape).flat)
 
 
 ### util
@@ -441,16 +440,24 @@ class ShardedDeviceArray(xla.DeviceArray):
     return self._npy_value
 
   def __getitem__(self, idx):
-    if self._npy_value is None and idx in self.indices:
-      buf = self.device_buffers[self.indices.index(idx)]
-      # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58
-      # is the default.
-      aval = ShapedArray(
-          getattr(buf, "xla_shape", buf.shape)().dimensions(),
-          self.aval.dtype)
-      return xla.make_device_array(aval, None, lazy.array(aval.shape), buf)
+    if not isinstance(idx, tuple):
+      cidx = (idx,) + (slice(None),) * (len(self.aval.shape) - 1)
     else:
-      return super(ShardedDeviceArray, self).__getitem__(idx)
+      cidx = idx + (slice(None),) * (len(self.aval.shape) - len(idx))
+    if self._npy_value is None:
+      try:
+        buf_idx = self.indices.index(cidx)
+      except ValueError:
+        buf_idx = None
+      if buf_idx is not None:
+        buf = self.device_buffers[buf_idx]
+        # TODO(jblespiau): We can simply use buf.xla_shape() when version 0.1.58
+        # is the default.
+        aval = ShapedArray(
+            getattr(buf, "xla_shape", buf.shape)().dimensions(),
+            self.aval.dtype)
+        return xla.make_device_array(aval, None, lazy.array(aval.shape), buf)
+    return super(ShardedDeviceArray, self).__getitem__(idx)
 
 
 def _hashable_index(idx):
@@ -896,42 +903,34 @@ def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, mapped):
   replication_factor, ragged = divmod(nrep, axis_size)
   assert not ragged
   # get the sharding spec from inner sharded_jits as if we weren't in a pmap
-  shard_spec = partitioned_sharding_spec(npart, parts, sharded_aval)
-  assert shard_spec is not None  # hint for pytype
+  pspec = partitioned_sharding_spec(npart, parts, sharded_aval)
+  maybe_replicate = () if replication_factor == 1 else (Replicated(replication_factor),)
+  def shift_sharded_axis(dim_as: MeshDimAssignment):
+    return ShardedAxis(dim_as.axis + 1) if isinstance(dim_as, ShardedAxis) else dim_as
   if mapped:
     # replication_factor represents the product of inner pmaps, so it goes
     # after the outer pmapped axis at index 0
-    replication_factors = [] if replication_factor == 1 else [(replication_factor, 1)]
-    replication_factors.extend((factor, index + 1) for factor, index
-                                in shard_spec.replication_factors)
     return ShardingSpec(
-        shards_per_axis=(axis_size,) + shard_spec.shards_per_axis,
-        is_axis_materialized=(False,) + shard_spec.is_axis_materialized,
-        replication_factors=replication_factors)
+      sharding=(Unstacked(axis_size),) + pspec.sharding,
+      mesh_mapping=it.chain([ShardedAxis(0)],
+                            maybe_replicate,
+                            map(shift_sharded_axis, pspec.mesh_mapping)))
   else:
     return ShardingSpec(
-        shards_per_axis=shard_spec.shards_per_axis,
-        is_axis_materialized=shard_spec.is_axis_materialized,
-        replication_factors=[(replication_factor * axis_size, 0)] +
-            shard_spec.replication_factors)
+      sharding=pspec.sharding,
+      mesh_mapping=(Replicated(axis_size),) + maybe_replicate + pspec.mesh_mapping)
 
 def partitioned_sharding_spec(num_partitions: int,
-                              partitions: Optional[Sequence[int]], aval):
+                               partitions: Optional[Sequence[int]],
+                               aval) -> ShardingSpec:
   if partitions is None:
-    # hit by both replicated sharded_jit and no sharded_jit
-    # we drop the extra singleton replication factor in the latter case
-    # where we put the replication doesn't matter because all the shards_per_axis
-    # are 1
-    return ShardingSpec(
-        shards_per_axis=(1,) * len(aval.shape),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factors=[] if num_partitions == 1 else [(num_partitions, 0)])
+    maybe_replicate = () if num_partitions == 1 else (Replicated(num_partitions),)
+    return ShardingSpec(sharding=[None] * len(aval.shape),
+                        mesh_mapping=maybe_replicate)
   else:
     assert len(partitions) == len(aval.shape)
-    return ShardingSpec(
-        shards_per_axis=tuple(partitions),
-        is_axis_materialized=(True,) * len(aval.shape),
-        replication_factors=[])
+    return ShardingSpec(sharding=map(Chunked, partitions),
+                        mesh_mapping=map(ShardedAxis, range(len(partitions))))
 
 
 def execute_replicated(compiled, backend, in_handler, out_handler, *args):
@@ -1072,13 +1071,11 @@ def _soft_pmap_callable(fun, axis_name, axis_size, mapped_invars, *avals):
   compiled = xla.backend_compile(backend, built, compile_options)
 
   input_specs = [
-      ShardingSpec(shards_per_axis=(num_devices,) + (1,) * (aval.ndim - 1),
-                   is_axis_materialized=(True,) * aval.ndim,
-                   replication_factors=[])
+      ShardingSpec(sharding=[Chunked(num_devices)] + [None] * (aval.ndim - 1),
+                   mesh_mapping=[ShardedAxis(0)])
       if mapped else
-      ShardingSpec(shards_per_axis=(1,) * aval.ndim,
-                   is_axis_materialized=(False,) + (True,) * (aval.ndim - 1),
-                   replication_factors=[(num_devices, 0)])
+      ShardingSpec(sharding=[None] * aval.ndim,
+                   mesh_mapping=[Replicated(num_devices)])
       for aval, mapped in zip(avals, mapped_invars)]
   input_indices = [spec and spec_to_indices(aval.shape, spec)
                    for aval, spec in zip(avals, input_specs)]
@@ -1166,9 +1163,8 @@ def soft_pmap_aval_to_result_handler(chunk_size, num_devices, aval):
     return lambda _: core.unit
   elif isinstance(aval, core.ShapedArray):
     new_aval = ShapedArray((axis_size,) + aval.shape, aval.dtype)
-    spec = ShardingSpec(shards_per_axis=(num_devices,) + (1,) * aval.ndim,
-                        is_axis_materialized=(True,) * new_aval.ndim,
-                        replication_factors=[])
+    spec = ShardingSpec(sharding=(Chunked(num_devices),) + (None,) * aval.ndim,
+                        mesh_mapping=(ShardedAxis(0),))
     return lambda bufs: ShardedDeviceArray(new_aval, spec, bufs)
   else:
     raise TypeError(aval)
@@ -1322,3 +1318,10 @@ class _ThreadLocalState(threading.local):
     self.dynamic_axis_env = DynamicAxisEnv()
 
 _thread_local_state = _ThreadLocalState()
+
+def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client._xla.PyLocalBuffer]:
+  """Call device_put on a sequence of devices and return a flat sequence of buffers."""
+  if replicate:
+    return list(it.chain.from_iterable(xla.device_put(x, device) for device in devices))
+  else:
+    return list(it.chain.from_iterable(xla.device_put(val, device) for val, device in safe_zip(x, devices)))
