@@ -29,6 +29,7 @@ config.parse_flags_with_absl()
 
 onedim_shapes = [(1,), (2,), (5,), (10,)]
 twodim_shapes = [(1, 1), (2, 2), (2, 3), (3, 4), (4, 4)]
+threedim_shapes = [(2, 2, 2), (3, 3, 2), (4, 4, 2), (5, 5, 2)]
 
 
 default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer
@@ -42,16 +43,17 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
           op,
           jtu.format_shape_dtype_string(xshape, dtype),
           jtu.format_shape_dtype_string(yshape, dtype),
-          mode),
+          mode), "shapeset": shapeset,
        "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
        "jsp_op": getattr(jsp_signal, op),
        "osp_op": getattr(osp_signal, op)}
       for mode in ['full', 'same', 'valid']
       for op in ['convolve', 'correlate']
       for dtype in default_dtypes
-      for xshape in onedim_shapes
-      for yshape in onedim_shapes))
-  def testConvolutions(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
+      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
+      for xshape in shapeset
+      for yshape in shapeset))
+  def testConvolutions(self, shapeset, xshape, yshape, dtype, mode, jsp_op, osp_op):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)

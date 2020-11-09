@@ -68,8 +68,6 @@ def convolve(in1, in2, mode='full', method='auto',
     warnings.warn("convolve() ignores method argument")
   if jnp.issubdtype(in1.dtype, jnp.complexfloating) or jnp.issubdtype(in2.dtype, jnp.complexfloating):
     raise NotImplementedError("convolve() does not support complex inputs")
-  if jnp.ndim(in1) != 1 or jnp.ndim(in2) != 1:
-    raise ValueError("convolve() only supports 1-dimensional inputs.")
   return _convolve_nd(in1, in2, mode, precision=precision)
 
 
@@ -92,12 +90,10 @@ def correlate(in1, in2, mode='full', method='auto',
     warnings.warn("correlate() ignores method argument")
   if jnp.issubdtype(in1.dtype, jnp.complexfloating) or jnp.issubdtype(in2.dtype, jnp.complexfloating):
     raise NotImplementedError("correlate() does not support complex inputs")
-  if jnp.ndim(in1) != 1 or jnp.ndim(in2) != 1:
-    raise ValueError("correlate() only supports {ndim}-dimensional inputs.")
-  return _convolve_nd(in1, in2[::-1], mode, precision=precision)
+  return _convolve_nd(in1, jnp.flip(in2), mode, precision=precision)
 
 
-@_wraps(osp_signal.correlate)
+@_wraps(osp_signal.correlate2d)
 def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0,
                 precision=None):
   if boundary != 'fill' or fillvalue != 0:
