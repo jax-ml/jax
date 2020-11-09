@@ -16,6 +16,7 @@ RUN /pyenv/bin/pyenv install 3.8.0
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.6.8 && pip install numpy==1.15.4 scipy cython setuptools wheel packaging six auditwheel
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.7.2 && pip install numpy==1.15.4 scipy cython setuptools wheel packaging six auditwheel
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.8.0 && pip install numpy==1.17.3 scipy cython setuptools wheel packaging six auditwheel
+RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.9.0 && pip install numpy==1.19.4 scipy==1.5.4 cython setuptools wheel packaging six auditwheel
 
 # Change the CUDA version if it doesn't match the installed version.
 ARG JAX_CUDA_VERSION=10.0

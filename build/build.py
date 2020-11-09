@@ -179,6 +179,7 @@ BAZELRC_TEMPLATE = """
 common --experimental_repo_remote_exec
 
 build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
+build --action_env=PYENV_ROOT
 build --python_path="{python_bin_path}"
 build --repo_env TF_NEED_CUDA="{tf_need_cuda}"
 build --action_env TF_CUDA_COMPUTE_CAPABILITIES="{cuda_compute_capabilities}"
