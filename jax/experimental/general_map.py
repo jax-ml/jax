@@ -328,6 +328,7 @@ def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
         axis_name=axis_name,
         axis_size=axis_size,
         in_axes=in_axes,
+        out_axes_thunk=lambda: (0,) * out_tree().num_leaves,
         schedule=parsed_schedule,
         binds_axis_name=binds_axis_name)
     return tree_unflatten(out_tree(), outs)
@@ -376,10 +377,11 @@ def _parse_name(name):
     raise ValueError(f"Unrecognized loop type: {name}") from err
 
 
-def gmap_impl(fun: lu.WrappedFun, *args, axis_size, axis_name, binds_axis_name, in_axes, schedule):
+def gmap_impl(fun: lu.WrappedFun, *args, axis_size, axis_name,
+              binds_axis_name, in_axes, out_axes_thunk, schedule):
   avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
   scheduled_fun = _apply_schedule(fun, axis_size, axis_name, binds_axis_name,
-                                  in_axes, schedule, *avals)
+                                  in_axes, out_axes_thunk, schedule, *avals)
   return scheduled_fun(*args)
 
 class _GMapSubaxis:
@@ -399,13 +401,16 @@ class _GMapSubaxis:
 def _apply_schedule(fun: lu.WrappedFun,
                     axis_size, full_axis_name, binds_axis_name,
                     in_axes,
+                    out_axes_thunk,
                     schedule,
                     *avals):
   mapped_avals = [core.mapped_aval(axis_size, in_axis, aval)
                   if in_axis is not None else aval
                   for aval, in_axis in zip(avals, in_axes)]
   with core.extend_axis_env(full_axis_name, axis_size, None):
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
+  out_axes = out_axes_thunk()
+  assert all(out_axis == 0 for out_axis in out_axes)
 
   axis_names = tuple(_GMapSubaxis(full_axis_name, i) for i in range(len(schedule)))
   if binds_axis_name:

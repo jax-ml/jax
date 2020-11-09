@@ -288,9 +288,11 @@ def assert_unreachable(x):
   raise AssertionError(f"Unhandled case: {type(x).__name__}")
 
 def tuple_insert(t, idx, val):
+  assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
 
 def tuple_delete(t, idx):
+  assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
 
 # TODO(mattjj): replace with dataclass when Python 2 support is removed
@@ -304,3 +306,24 @@ def taggedtuple(name, fields) -> Callable[..., Any]:
   for i, f in enumerate(fields):
     class_namespace[f] = property(operator.itemgetter(i+1))  # type: ignore
   return type(name, (tuple,), class_namespace)
+
+class HashableFunction:
+  """Makes a function hashable based on the provided key."""
+  def __init__(self, f, key):
+    self.f = f
+    self.key = key
+
+  def __eq__(self, other):
+    return type(other) is HashableFunction and self.key == other.key
+
+  def __hash__(self):
+    return hash(self.key)
+
+  def __call__(self, *args, **kwargs):
+    return self.f(*args, **kwargs)
+
+  def __repr__(self):
+    return f'<HashableFunction with key={self.key}>'
+
+def as_hashable_function(key):
+  return lambda f: HashableFunction(f, key)

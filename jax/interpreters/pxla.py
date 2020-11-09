@@ -141,7 +141,7 @@ class ShardingSpec:
       Each element is an int, a slice object with step=1, or a tuple thereof, to
       be treated as an index into the full logical array.
     """
-    assert len(shape) == len(self.sharding)
+    assert len(shape) == len(self.sharding), (shape, self.sharding)
 
     axis_indices: List[Sequence[Index]] = []
     shard_indices_shape = []
@@ -186,6 +186,9 @@ class ShardingSpec:
             for a in self.mesh_mapping]
     return (np.broadcast_to(shard_indices, replica_sizes + shard_indices.shape)
               .transpose(perm))
+
+  def __repr__(self):
+    return f'ShardingSpec({self.sharding}, {self.mesh_mapping})'
 
 def spec_to_indices(shape: Tuple[int, ...],
                     spec: ShardingSpec) -> Tuple[Index, ...]:
@@ -512,11 +515,12 @@ xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
 def xla_pmap_impl(fun: lu.WrappedFun, *args, backend, axis_name, axis_size,
-                  global_axis_size, devices, name, in_axes, donated_invars,
-                  global_arg_shapes):
+                  global_axis_size, devices, name, in_axes, out_axes_thunk,
+                  donated_invars, global_arg_shapes):
   abstract_args = unsafe_map(xla.abstractify, args)
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size,
-                                   global_axis_size, devices, name, in_axes,
+                                   global_axis_size, devices, name,
+                                   in_axes, out_axes_thunk,
                                    donated_invars, global_arg_shapes,
                                    *abstract_args)
   return compiled_fun(*args)
@@ -530,6 +534,7 @@ def parallel_callable(fun: lu.WrappedFun,
                       devices: Optional[Sequence[Any]],
                       name: str,
                       in_axes: Iterable[Optional[int]],
+                      out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                       donated_invars: Iterable[bool],
                       global_arg_shapes,
                       *avals):
@@ -608,6 +613,13 @@ def parallel_callable(fun: lu.WrappedFun,
 
     out_pvs, out_consts = unzip2(out_pvals)
     global_sharded_avals = sharded_avals  # type: ignore
+
+  out_axes = out_axes_thunk()
+  if config.omnistaging_enabled:
+    assert len(out_sharded_avals) == len(out_axes), (len(out_sharded_avals), len(out_axes))
+  else:
+    assert len(out_pvals) == len(out_axes), (len(out_pvals), len(out_axes))
+    assert all(out_axis == 0 for out_axis in out_axes)
 
   # TODO(skye,mattjj): allow more collectives on multi-host as we test them, but
   # for now raise an error
@@ -785,17 +797,17 @@ def parallel_callable(fun: lu.WrappedFun,
     if local_out_parts is None:
       local_out_parts = (None,) * nouts
 
-    out_axis = 0
     local_out_avals = [get_local_aval(aval, parts, lparts)
                        for aval, parts, lparts
                        in safe_zip(out_sharded_avals, out_parts, local_out_parts)]
     local_unmapped_avals = [core.unmapped_aval(axis_size, out_axis, aval)
-                            for aval in local_out_avals]
+                            if out_axis is not None else aval
+                            for aval, out_axis in zip(local_out_avals, out_axes)]
 
     out_specs = [_pmap_sharding_spec(num_local_replicas, axis_size, local_num_partitions,
                                      parts, aval, out_axis)
                 if aval is not core.abstract_unit else None
-                for parts, aval in zip(local_out_parts, local_out_avals)]
+                for parts, aval, out_axis in zip(local_out_parts, local_out_avals, out_axes)]
     handle_outs = avals_to_results_handler(
         num_local_replicas, local_num_partitions, out_specs, local_unmapped_avals)
   else:
@@ -996,7 +1008,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   device_buffers = device_put(val, devices, replicate=True)
   return ShardedDeviceArray(replicated_aval, sharding_spec, device_buffers)
 
-def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, in_axis: Optional[int]):
+def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, map_axis: Optional[int]):
   """Sharding spec for arguments or results of a pmap.
   Args:
     nrep: number of local XLA replicas (product of local axis sizes)
@@ -1005,7 +1017,7 @@ def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, in_axis: Op
     parts: the partitioning of the value or None
     sharded_aval: the aval of the value inside the outer pmap, an instance of
       a ShapedArray.
-    in_axis: the axis along which the value is mapped in the outer pmap
+    map_axis: the axis along which the value is mapped in the outer pmap
   Returns:
     A ShardingSpec.
   """
@@ -1015,8 +1027,8 @@ def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, in_axis: Op
   # get the sharding spec from inner sharded_jits as if we weren't in a pmap
   pspec = partitioned_sharding_spec(npart, parts, sharded_aval)
   maybe_replicate = () if replication_factor == 1 else (Replicated(replication_factor),)
-  if in_axis is not None:
-    sharded_in_axis = sum(s is not None for s in pspec.sharding[:in_axis])
+  if map_axis is not None:
+    sharded_in_axis = sum(s is not None for s in pspec.sharding[:map_axis])
     def shift_sharded_axis(a: MeshDimAssignment):
       if isinstance(a, ShardedAxis) and a.axis >= sharded_in_axis:
         return ShardedAxis(a.axis + 1)
@@ -1024,7 +1036,7 @@ def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval, in_axis: Op
     # replication_factor represents the product of inner pmaps, so it goes
     # after the outer pmapped axis at index 0
     return ShardingSpec(
-      sharding=tuple_insert(pspec.sharding, in_axis, Unstacked(axis_size)),
+      sharding=tuple_insert(pspec.sharding, map_axis, Unstacked(axis_size)),
       mesh_mapping=it.chain([ShardedAxis(sharded_in_axis)],
                             maybe_replicate,
                             map(shift_sharded_axis, pspec.mesh_mapping)))
@@ -1065,7 +1077,7 @@ ad.call_transpose_param_updaters[xla_pmap_p] = \
 def _pmap_translation_rule(c, axis_env,
                            in_nodes, name_stack, axis_name, axis_size,
                            global_axis_size, devices, name,
-                           call_jaxpr, *, backend=None, in_axes,
+                           call_jaxpr, *, backend=None, in_axes, out_axes,
                            donated_invars, global_arg_shapes):
   del donated_invars  # Unused.
   # We in-line here rather than generating a Call HLO as in the xla_call
@@ -1086,8 +1098,8 @@ def _pmap_translation_rule(c, axis_env,
         c, call_jaxpr, backend, new_env, (),
         extend_name_stack(name_stack, wrap_name(name, 'pmap')), *in_nodes_sharded)
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_xla_unshard(c, aval, new_env, shard, backend=backend)
-          for aval, shard in zip(out_avals, sharded_outs)]
+  outs = [_xla_unshard(c, aval, new_env, out_axis, shard, backend=backend)
+          for aval, out_axis, shard in zip(out_avals, out_axes, sharded_outs)]
   return xops.Tuple(c, outs)
 
 xla.call_translations[xla_pmap_p] = _pmap_translation_rule
@@ -1110,7 +1122,7 @@ def _xla_shard(c, aval, axis_env, x, in_axis):
     raise TypeError((aval, c.get_shape(x)))
 
 # TODO(b/110096942): more efficient gather
-def _xla_unshard(c, aval, axis_env, x, backend):
+def _xla_unshard(c, aval, axis_env, out_axis, x, backend):
   if aval is core.abstract_unit:
     return x
   elif isinstance(aval, ShapedArray):
@@ -1130,6 +1142,11 @@ def _xla_unshard(c, aval, axis_env, x, backend):
     replica_groups_protos = xc.make_replica_groups(
       xla.axis_groups(axis_env, axis_env.names[-1]))
     out = xops.CrossReplicaSum(padded, replica_groups_protos)
+    if out_axis != 0:
+      # TODO(apaszke,mattjj): Change the indices to DynamicUpdateSlice instead
+      perm = list(range(1, len(dims)))
+      perm.insert(out_axis, 0)
+      out = xops.Transpose(out, perm)
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
@@ -1340,18 +1357,20 @@ def mesh_sharding_specs(local_axis_sizes, axis_names):
 
 # ------------------- soft_pmap -------------------
 
-def soft_pmap_impl(fun: lu.WrappedFun, *args, axis_name, axis_size, in_axes):
+def soft_pmap_impl(fun: lu.WrappedFun, *args, axis_name, axis_size, in_axes, out_axes_thunk):
   abstract_args = unsafe_map(xla.abstractify, args)
-  compiled_fun = _soft_pmap_callable(fun, axis_name, axis_size, in_axes,
+  compiled_fun = _soft_pmap_callable(fun, axis_name, axis_size, in_axes, out_axes_thunk,
                                      *abstract_args)
   return compiled_fun(*args)
 
 @lu.cache
-def _soft_pmap_callable(fun, axis_name, axis_size, in_axes, *avals):
+def _soft_pmap_callable(fun, axis_name, axis_size, in_axes, out_axes_thunk, *avals):
   mapped_avals = [core.mapped_aval(axis_size, in_axis, aval) if in_axis is not None else aval
                   for in_axis, aval in zip(in_axes, avals)]
   with core.extend_axis_env(axis_name, axis_size, None):  # type: ignore
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
+  out_axes = out_axes_thunk()
+  assert all(out_axis == 0 for out_axis in out_axes)
   jaxpr = xla.apply_outfeed_rewriter(jaxpr)
 
   num_devices = xb.local_device_count()
