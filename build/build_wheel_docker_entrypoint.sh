@@ -7,6 +7,7 @@ then
 fi
 
 export CC=/dt7/usr/bin/gcc
+export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
 export PYENV_ROOT="/pyenv"
 export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init -)"
@@ -61,4 +62,8 @@ esac
 
 export JAX_CUDA_VERSION=$3
 python setup.py bdist_wheel --python-tag "$PY_TAG" --plat-name "$PLAT_NAME"
+if python -m auditwheel show dist/jaxlib-*.whl  | grep -v 'platform tag: "manylinux2010_x86_64"' > /dev/null; then
+  echo "jaxlib wheel is not manylinux2010 compliant"
+  exit 1
+fi
 cp -r dist/* /dist
