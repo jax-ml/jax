@@ -430,10 +430,14 @@ def _scalar_constant_handler(c, val, canonicalize_types=True):
 
 for scalar_type in [np.int8, np.int16, np.int32, np.int64,
                     np.uint8, np.uint16, np.uint32, np.uint64,
-                    np.float16, np.float32, np.float64, np.float128,
+                    np.float16, np.float32, np.float64,
                     np.bool_, np.longlong,
                     xla_client.bfloat16]:
   register_constant_handler(scalar_type, _scalar_constant_handler)
+
+# https://github.com/winpython/winpython/issues/613#issuecomment-380121523
+if hasattr(np, "float128"):
+  register_constant_handler(np.float128, _scalar_constant_handler)
 
 def _python_scalar_handler(dtype, c, val, canonicalize_dtypes=True):
   return _numpy_array_constant(c, dtype.type(val))
