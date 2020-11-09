@@ -29,7 +29,6 @@ import os
 from absl import app
 from absl import flags
 
-from jax.experimental import jax2tf
 from jax.experimental.jax2tf.examples import mnist_lib  # type: ignore
 from jax.experimental.jax2tf.examples import saved_model_lib  # type: ignore
 
