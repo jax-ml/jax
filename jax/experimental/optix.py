@@ -55,7 +55,7 @@ Example Usage:
     value, opt_data = step(opt_data)
 """
 
-
+import warnings
 from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
 
 from jax import numpy as jnp
@@ -65,6 +65,10 @@ from jax.tree_util import tree_leaves
 from jax.tree_util import tree_multimap
 from jax.tree_util import tree_structure
 from jax.tree_util import tree_unflatten
+
+warnings.warn("jax.experimental.optix is deprecated and will be removed "
+              "shortly. You should use the 'optax' package instead.",
+              DeprecationWarning)
 
 ###
 # Typing
