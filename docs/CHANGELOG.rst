@@ -39,6 +39,7 @@ jax 0.2.6 (Unreleased)
 jaxlib 0.1.57 (unreleased)
 ------------------------------
 
+* Fixed manylinux2010 compliance issues in GPU wheels.
 * Switched the CPU FFT implementation from Eigen to PocketFFT.
 * Fixed a bug where the hash of bfloat16 values was not correctly initialized
   and could change (#4651).
