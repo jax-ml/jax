@@ -29,6 +29,7 @@ import os
 from absl import app
 from absl import flags
 
+from jax.experimental import jax2tf
 from jax.experimental.jax2tf.examples import mnist_lib  # type: ignore
 from jax.experimental.jax2tf.examples import saved_model_lib  # type: ignore
 
@@ -110,7 +111,7 @@ def train_and_save():
       ]
       shape_polymorphic_input_spec = None
     logging.info(f"Saving model for {model_descr}")
-    saved_model_lib.save_model(
+    saved_model_lib.convert_and_save_model(
         predict_fn,
         predict_params,
         model_dir,

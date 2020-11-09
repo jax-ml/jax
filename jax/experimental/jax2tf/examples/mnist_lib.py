@@ -103,7 +103,7 @@ class PureJaxMNIST:
     """
     # TODO: replace inputs.shape[1:] with -1 once we fix shape polymorphic bug
     x = inputs.reshape(
-        (inputs.shape[0], np.prod(inputs.shape[1:])))  # flatten to f32[B, 784]
+      (inputs.shape[0], np.prod(inputs.shape[1:])))  # flatten to f32[B, 784]
     for w, b in params[:-1]:
       x = jnp.dot(x, w) + b
       x = jnp.tanh(x)
@@ -113,7 +113,7 @@ class PureJaxMNIST:
     final_w, final_b = params[-1]
     logits = jnp.dot(x, final_w) + final_b
     return logits - jax.scipy.special.logsumexp(
-        logits, axis=1, keepdims=True)  # type: ignore[attr-defined]
+      logits, axis=1, keepdims=True)  # type: ignore[attr-defined]
 
   @staticmethod
   def loss(params, inputs, labels):
@@ -130,7 +130,7 @@ class PureJaxMNIST:
       return jnp.mean(predicted_class == target_class)
 
     batched = [
-        _per_batch(inputs, labels) for inputs, labels in tfds.as_numpy(dataset)
+      _per_batch(inputs, labels) for inputs, labels in tfds.as_numpy(dataset)
     ]
     return jnp.mean(jnp.stack(batched))
 
@@ -165,12 +165,12 @@ class PureJaxMNIST:
       train_acc = PureJaxMNIST.accuracy(PureJaxMNIST.predict, params, train_ds)
       test_acc = PureJaxMNIST.accuracy(PureJaxMNIST.predict, params, test_ds)
       logging.info(
-          f"{PureJaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
+        f"{PureJaxMNIST.name}: Epoch {epoch} in {epoch_time:0.2f} sec")
       logging.info(f"{PureJaxMNIST.name}: Training set accuracy {train_acc}")
       logging.info(f"{PureJaxMNIST.name}: Test set accuracy {test_acc}")
 
     return (functools.partial(
-        PureJaxMNIST.predict, with_classifier=with_classifier), params)
+      PureJaxMNIST.predict, with_classifier=with_classifier), params)
 
 
 class FlaxMNIST:
@@ -204,11 +204,14 @@ class FlaxMNIST:
       x = nn.log_softmax(x)
       return x
 
+  # Create the model and save it
+  model = Module()
+
   @staticmethod
   def predict(params, inputs, with_classifier=True):
-    return FlaxMNIST.Module().apply({"params": params},
-                                    inputs,
-                                    with_classifier=with_classifier)
+    return FlaxMNIST.model.apply({"params": params},
+                                 inputs,
+                                 with_classifier=with_classifier)
 
   @staticmethod
   def loss(params, inputs, labels):  # Same as the pure JAX example
@@ -229,7 +232,7 @@ class FlaxMNIST:
     Returns:
       a tuple with two elements:
         - a predictor function with signature "(Params, ImagesBatch) ->
-        Predictions".
+          Predictions".
           If `with_classifier=False` then the output of the predictor function
           is the last layer of logits.
         - the parameters "Params" for the predictor function
@@ -238,9 +241,9 @@ class FlaxMNIST:
     momentum_mass = 0.9
 
     init_shape = jnp.ones((1,) + input_shape, jnp.float32)
-    initial_params = FlaxMNIST.Module().init(rng, init_shape)["params"]
+    initial_params = FlaxMNIST.model.init(rng, init_shape)["params"]
     optimizer_def = flax.optim.Momentum(
-        learning_rate=step_size, beta=momentum_mass)
+      learning_rate=step_size, beta=momentum_mass)
     optimizer = optimizer_def.create(initial_params)
 
     for epoch in range(num_epochs):
@@ -257,8 +260,11 @@ class FlaxMNIST:
       logging.info(f"{FlaxMNIST.name}: Training set accuracy {train_acc}")
       logging.info(f"{FlaxMNIST.name}: Test set accuracy {test_acc}")
 
-    return (functools.partial(
-        FlaxMNIST.predict, with_classifier=with_classifier), optimizer.target)
+    # See discussion in README.md for packaging Flax models for conversion
+    predict_fn = functools.partial(FlaxMNIST.predict,
+                                   with_classifier=with_classifier)
+    params = optimizer.target
+    return (predict_fn, params)
 
 
 def plot_images(ds,
@@ -293,6 +299,6 @@ def plot_images(ds,
     digit_title += f"label: {np.argmax(labels[i])}"
     digit.set_title(digit_title)
     plt.imshow(
-        (np.reshape(image, (28, 28)) * 255).astype(np.uint8),
-        interpolation="nearest")
+      (np.reshape(image, (28, 28)) * 255).astype(np.uint8),
+      interpolation="nearest")
   plt.show()
