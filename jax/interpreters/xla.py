@@ -1046,7 +1046,7 @@ class DeviceArray:
     Returns the buffer object (`self`).
     """
     self._check_if_deleted()
-    self.device_buffer.block_host_until_ready()
+    self.device_buffer.block_host_until_ready()  # pytype: disable=attribute-error
     return self
 
   @property
@@ -1084,7 +1084,7 @@ class DeviceArray:
     """Requests a copy of the buffer to the host."""
     self._check_if_deleted()
     if self._npy_value is None and not is_device_constant(self):
-      self.device_buffer.copy_to_host_async()
+      self.device_buffer.copy_to_host_async()  # pytype: disable=attribute-error
 
   def delete(self):
     """Deletes the device array and any cached copy on the host.
@@ -1097,7 +1097,7 @@ class DeviceArray:
     However, it is sometimes useful to have more explicit control over the
     time of deletion.
     """
-    self.device_buffer.delete()
+    self.device_buffer.delete()  # pytype: disable=attribute-error
     self.device_buffer = deleted_buffer
     self._npy_value = None
 
@@ -1179,6 +1179,9 @@ class DeviceArray:
 
   # The following methods are dynamically overridden in lax_numpy.py.
   def __getitem__(self, i): raise NotImplementedError
+
+_DeviceArray = DeviceArray
+_CppDeviceArray = xc.Buffer
 
 class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
