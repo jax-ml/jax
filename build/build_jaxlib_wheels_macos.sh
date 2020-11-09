@@ -54,3 +54,4 @@ rm -fr build/dist
 build_jax 3.6.8 cp36 1.15.4 1.2.0
 build_jax 3.7.2 cp37 1.15.4 1.2.0
 build_jax 3.8.0 cp38 1.17.3 1.3.2
+build_jax 3.9.0 cp39 1.19.4 1.5.4
