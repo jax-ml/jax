@@ -461,7 +461,9 @@ def xla_computation(fun: Callable,
       ``'tpu'``.
     tuple_args: Optional bool, defaults to ``False``. If ``True``, the resulting
       XLA computation will have a single tuple argument that is unpacked into
-      the specified function arguments.
+      the specified function arguments. If `None`, tupling will be enabled when
+      there are more than 100 arguments, since some platforms have limits on
+      argument arity.
     instantiate_const_outputs: Deprecated argument, does nothing.
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
       wrapped function returns a pair where the first element is the XLA
@@ -551,58 +553,6 @@ def xla_computation(fun: Callable,
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
-  internal_computation_maker = _xla_computation(
-      fun,
-      static_argnums=static_argnums,
-      axis_env=axis_env,
-      in_parts=in_parts,
-      out_parts=out_parts,
-      backend=backend,
-      tuple_args=tuple_args,
-      instantiate_const_outputs=instantiate_const_outputs,
-      donate_argnums=donate_argnums)
-
-  def computation_maker(*args, **kwargs):
-    xla_return = internal_computation_maker(*args, **kwargs)
-    if return_shape:
-      return xla_return.xla_computation, xla_return.out_shape
-    else:
-      return xla_return.xla_computation
-
-  return computation_maker
-
-
-class _XlaReturn(NamedTuple):
-  xla_computation: xc.XlaComputation
-  # A tree of `ShapeDtypeStruct`.
-  out_shape: Any
-  out_pytree_def: Any  # A `PyTreeDef` object.
-  lazy_expressions: Optional[List[xla.lazy.LazyExpr]]
-  shaped_arrays: List[core.ShapedArray]
-  parameter_is_tupled_arguments: bool
-
-
-def _xla_computation(
-    fun: Callable,
-    static_argnums: Union[int, Iterable[int]] = (),
-    axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
-    in_parts=None,
-    out_parts=None,
-    backend: Optional[str] = None,
-    tuple_args: Optional[bool] = None,
-    instantiate_const_outputs: Optional[bool] = True,
-    donate_argnums: Union[int, Iterable[int]] = ()) -> Callable:
-  """An internal implementation for `xla_computation` and `_cpp_jit`.
-
-  See `xla_computation` for the full documentation.
-
-  Args:
-    tuple_args: By default (None), tupling will be enabled when there are more
-      than 100 arguments, since some platforms have limits on argument arity.
-
-  Returns:
-    An `_XlaReturn` object.
-  """
   del instantiate_const_outputs  # Unused
 
   _check_callable(fun)
@@ -611,7 +561,6 @@ def _xla_computation(
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
 
   fun_name = getattr(fun, "__name__", "unknown")
-
 
   def make_axis_env(nreps):
     if axis_env is None:
@@ -696,13 +645,10 @@ def _xla_computation(
                            "to get a ShapedArray, otherwise this "
                            "information is lost")
 
-    return _XlaReturn(
-        built,
-        out_shape,
-        out_pytree_def=out_tree(),
-        lazy_expressions=[xla.lazy.array(a.shape) for a in out_avals],
-        shaped_arrays=out_avals,
-        parameter_is_tupled_arguments=should_tuple)
+    if return_shape:
+      return built, out_shape
+    else:
+      return built
 
   return computation_maker
 
