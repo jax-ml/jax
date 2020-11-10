@@ -297,7 +297,7 @@ that there is a ``np.where`` *inside* the partially-defined function, to ensure
 that the adjoint is always finite::
 
   def safe_for_grad_log(x):
-    return np.log(np.where(x > 0., x, 1.)
+    return np.log(np.where(x > 0., x, 1.))
 
   safe_for_grad_log(0.) ==> 0.  # Ok
   jax.grad(safe_for_grad_log)(0.)  ==> 0.  # Ok
