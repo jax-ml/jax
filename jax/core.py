@@ -33,7 +33,8 @@ from .config import FLAGS, config
 from . import linear_util as lu
 
 from jax._src import source_info_util
-from .util import safe_zip, safe_map, partial, curry, prod, partialmethod
+from .util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
+                   tuple_insert, tuple_delete)
 from .pprint_util import pp, vcat, PrettyPrint
 
 from ._src import traceback_util
@@ -1209,7 +1210,7 @@ class MapPrimitive(Primitive):
   map_primitive = True
 
   def bind(self, fun, *args, **params):
-    assert len(params['mapped_invars']) == len(args)
+    assert len(params['in_axes']) == len(args)
     return call_bind(self, fun, *args, **params)
 
   def process(self, trace, fun, tracers, params):
@@ -1268,21 +1269,21 @@ def axis_frame(axis_name):
 
 # ------------------- Jaxpr checking -------------------
 
-def mapped_aval(size: int, aval: AbstractValue) -> AbstractValue:
+def mapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
   if aval is abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
     # might be raising abstraction level from Concrete here
-    assert aval.shape[0] == size
-    return ShapedArray(aval.shape[1:], aval.dtype)
+    assert aval.shape[axis] == size
+    return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype)
   else:
     raise TypeError(f"Mapped operand {aval}")
 
-def unmapped_aval(size: int, aval: AbstractValue) -> AbstractValue:
+def unmapped_aval(size: int, axis: int, aval: AbstractValue) -> AbstractValue:
   if aval is abstract_unit:
     return aval
   elif isinstance(aval, ShapedArray):
-    return ShapedArray((size,) + aval.shape, aval.dtype)
+    return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype)
   else:
     raise TypeError(f"Mapped output {aval}")
 
@@ -1414,23 +1415,26 @@ def check_map(prim, in_avals, params):
   typecheck_assert("axis_size" in params,
                    f"Map primitive {prim} missing 'axis_size' parameter")
   axis_size = params["axis_size"]
-  typecheck_assert("mapped_invars" in params,
-                   f"Map primitive {prim} missing 'mapped_invars' parameter")
-  mapped_invars = params["mapped_invars"]
+  typecheck_assert("in_axes" in params,
+                   f"Map primitive {prim} missing 'in_axes' parameter")
+  in_axes = params["in_axes"]
 
-  binder_avals = [unmapped_aval(axis_size, v.aval) if mapped else v.aval
-                  for v, mapped in zip(call_jaxpr.invars, mapped_invars)]
+  binder_avals = [unmapped_aval(axis_size, in_axis, v.aval)
+                  if in_axis is not None else v.aval
+                  for v, in_axis in zip(call_jaxpr.invars, in_axes)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
     typecheck_assert(typecompat(binder_aval, in_aval),
                      f"Call primitive {prim} passes operand {in_aval} "
                      f"to jaxpr expecting {binder_aval}")
 
-  mapped_avals = [mapped_aval(axis_size, aval) if mapped else aval
-                  for aval, mapped in zip(in_avals, mapped_invars)]
+  mapped_avals = [mapped_aval(axis_size, in_axis, aval)
+                  if in_axis is not None else aval
+                  for aval, in_axis in zip(in_avals, in_axes)]
   _check_jaxpr(call_jaxpr, mapped_avals)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, aval) for aval in mapped_out_avals]
+  # Assuming out_axes == 0
+  out_avals = [unmapped_aval(axis_size, 0, aval) for aval in mapped_out_avals]
   return out_avals
 
 

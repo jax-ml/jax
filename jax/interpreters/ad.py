@@ -25,7 +25,7 @@ from ..core import Trace, Tracer, get_aval, call_p, Primitive, Literal
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
 from ..abstract_arrays import raise_to_shaped
-from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name
+from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name, moveaxis
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
 from ..api_util import flatten_fun, flatten_fun_nokwargs
@@ -165,12 +165,18 @@ def backward_pass(jaxpr: core.Jaxpr, consts, primals_in, cotangents_in):
 
   def write_cotangent(v, ct):
     # assert v not in primal_env
-    if (ct is not None and type(v) is not Literal and
-        type(ct) is not Zero and ct is not Zero):
-      ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
-      if not core.skip_checks:
-        ct_aval = core.get_aval(ct_env[v])
-        assert v.aval.strip_weak_type() == core.lattice_join(v.aval, ct_aval).strip_weak_type(), (v.aval, ct_aval)
+    if ct is None or type(v) is Literal:
+      return
+    if type(ct) is Zero:
+      # FIXME: This triggers a lot of failures!
+      # assert v.aval == ct.aval, (v.aval, ct.aval)
+      return
+    if ct is Zero: # FIXME: This should never happen, but seems to be necessary
+      return
+    ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
+    if not core.skip_checks:
+      ct_aval = core.get_aval(ct_env[v])
+      assert v.aval.strip_weak_type() == core.lattice_join(v.aval, ct_aval).strip_weak_type(), (v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.get(v, Zero(v.aval))
@@ -284,9 +290,9 @@ class JVPTrace(Trace):
     nz_tangents = [type(t) is not Zero for t in tangents]
     params = dict(params, name=wrap_name(params['name'], 'jvp'))
     if isinstance(call_primitive, core.MapPrimitive):
-      mapped_invars = params['mapped_invars']
-      mapped_tangents = [m for m, nz in zip(mapped_invars, nz_tangents) if nz]
-      params = dict(params, mapped_invars=(*mapped_invars, *mapped_tangents))
+      in_axes = params['in_axes']
+      tangent_in_axes = [ax for ax, nz in zip(in_axes, nz_tangents) if nz]
+      params = dict(params, in_axes=(*in_axes, *tangent_in_axes))
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, nz_tangents) if update_params else params
     result = call_primitive.bind(f_jvp, *primals, *nonzero_tangents, **new_params)
@@ -305,7 +311,7 @@ class JVPTrace(Trace):
     return out, todo
 
   # The only difference between process_map and process_call is that
-  # the `mapped_invars` param must be updated; that's handled in process_call.
+  # the `in_axes` param must be updated; that's handled in process_call.
   process_map = process_call
   post_process_map = post_process_call
 
@@ -557,11 +563,13 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
-  new_mapped_invars = (*[m for m, x in zip(params['mapped_invars'], args)
-                         if not is_undefined_primal(x)],
-                       *[True for x in ct if type(x) is not Zero])
+  # Preserve axis for primal arguments, skip tangents (represented as undefined primals),
+  # we only support out_axes=0 for now, so hard-code that for each cotangent.
+  new_in_axes = (*[axis for axis, x in zip(params['in_axes'], args)
+                   if not is_undefined_primal(x)],
+                 *[0 for x in ct if type(x) is not Zero])
   new_params = dict(params, name=wrap_name(params['name'], 'transpose'),
-                    mapped_invars=new_mapped_invars)
+                    in_axes=new_in_axes)
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
     new_params = update_params(new_params, map(is_undefined_primal, args),
@@ -569,14 +577,18 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   out_flat = primitive.bind(fun, *all_args, **new_params)
   arg_cts = tree_unflatten(out_tree(), out_flat)
 
-  mapped_invars = params['mapped_invars']  # True for each mapped invar
+  in_axes = params['in_axes']
   # The freevars are being fanned out (not mapped). During transpose the
   # dual of fan-out is fan-in-sum. We apply it to the unmapped invars.
-  assert len(mapped_invars) == len(arg_cts)
-  arg_cts = (arg_ct if arg_mapped or type(arg_ct) is Zero else arg_ct.sum(0)
-             for arg_ct, arg_mapped in zip(arg_cts, mapped_invars))
-
-  return arg_cts
+  assert len(in_axes) == len(arg_cts)
+  def unmap_zero(zero, in_axis):
+    return (zero if in_axis is None else
+            Zero(core.unmapped_aval(params['axis_size'], in_axis, zero.aval)))
+  arg_cts = (unmap_zero(arg_ct, in_axis) if type(arg_ct) is Zero else
+             moveaxis(arg_ct, 0, in_axis) if in_axis is not None else
+             arg_ct.sum(0)
+             for arg_ct, in_axis in zip(arg_cts, in_axes))
+  return tuple(arg_cts)
 
 
 def jvp_jaxpr(jaxpr, nonzeros, instantiate):
