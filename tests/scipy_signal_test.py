@@ -43,7 +43,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
           op,
           jtu.format_shape_dtype_string(xshape, dtype),
           jtu.format_shape_dtype_string(yshape, dtype),
-          mode), "shapeset": shapeset,
+          mode),
        "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
        "jsp_op": getattr(jsp_signal, op),
        "osp_op": getattr(osp_signal, op)}
@@ -53,7 +53,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
       for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
       for xshape in shapeset
       for yshape in shapeset))
-  def testConvolutions(self, shapeset, xshape, yshape, dtype, mode, jsp_op, osp_op):
+  def testConvolutions(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
