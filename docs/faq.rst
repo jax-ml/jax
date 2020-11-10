@@ -11,8 +11,8 @@ JAX Frequently Asked Questions (FAQ)
 We are collecting here answers to frequently asked questions.
 Contributions welcome!
 
-`jit` changes the behavior of my function
------------------------------------------
+``jit`` changes the behavior of my function
+--------------------------------------------
 
 If you have a Python function that changes behavior after using :func:`jax.jit`, perhaps
 your function uses global state, or has side-effects. In the following code, the
@@ -53,6 +53,37 @@ Additional reading:
 
   * JAX_sharp_bits_
 
+.. _faq-slow-compile:
+
+``jit`` decorated function is very slow to compile
+--------------------------------------------------
+
+If your ``jit`` decorated function takes tens of seconds (or more!) to run the
+first time you call it, but executes quickly when called again, JAX is taking a
+long time to trace or compile your code.
+
+This is usually an symptom of calling your function generating a large amount of
+code in JAX's internal representation, typically because it makes heavy use of
+Python control flow such as ``for`` loop. For a handful of loop iterations
+Python is OK, but if you need _many_ loop iterations, you should rewrite your
+code to make use of JAX's
+`structured control flow primitives <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#Structured-control-flow-primitives>`_
+(such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
+still use ``jit`` decorated functions *inside* the loop).
+
+If you're not sure if this is the problem, you can try running
+:func:`jax.make_jaxpr` on your function. You can expect slow compilation if the
+output is many hundreds or thousands of lines long.
+
+Sometimes it isn't obvious how to rewrite your code to avoid Python loops
+because your code makes use of many arrays with different shapes. The
+recommended solution in this case is to make use of functions like
+:func:`jax.numpy.where` to do your computation on padded arrays with fixed
+shape. The JAX team is exploring a "masking" transformation to make such code
+easier to write.
+
+If your functions are slow to compile for another reason, please open an issue
+on GitHub.
 
 .. _faq-data-placement:
 
@@ -115,8 +146,8 @@ For a worked-out example, we recommend reading through
 
 .. comment We refer to the anchor below in JAX error messages
 
-`Abstract tracer value encountered where concrete value is expected` error
---------------------------------------------------------------------------
+``Abstract tracer value encountered where concrete value is expected`` error
+----------------------------------------------------------------------------
 
 If you are getting an error that a library function is called with
 *"Abstract tracer value encountered where concrete value is expected"*, you may need to
