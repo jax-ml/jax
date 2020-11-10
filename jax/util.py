@@ -255,6 +255,15 @@ def canonicalize_axis(axis, num_dims):
     axis = axis + num_dims
   return axis
 
+def moveaxis(x, src, dst):
+  if src == dst:
+    return x
+  src = canonicalize_axis(src, x.ndim)
+  dst = canonicalize_axis(dst, x.ndim)
+  perm = [i for i in range(np.ndim(x)) if i != src]
+  perm.insert(dst, src)
+  return x.transpose(perm)
+
 def ceil_of_ratio(x, y):
   return -(-x // y)
 
@@ -276,3 +285,9 @@ def get_doc(fun): return getattr(fun, "__doc__", "")
 #       but it seems like pytype doesn't support that...
 def assert_unreachable(x):
   raise AssertionError(f"Unhandled case: {type(x).__name__}")
+
+def tuple_insert(t, idx, val):
+  return t[:idx] + (val,) + t[idx:]
+
+def tuple_delete(t, idx):
+  return t[:idx] + t[idx + 1:]
