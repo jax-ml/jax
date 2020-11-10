@@ -26,6 +26,8 @@ from jax.util import safe_map as map
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 _vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
+_einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
+
 
 # aliases for working with pytrees
 def _vdot_real_part(x, y):
@@ -216,7 +218,6 @@ def _safe_normalize(x, thresh=None):
   thresh = thresh.astype(dtype).real
 
   use_norm = norm > thresh
-  # where_normalizing = partial(tree_map, partial(jnp.where, norm > thresh))
   normalized_x = tree_map(lambda y: jnp.where(use_norm, y / norm, 0.0), x)
   norm = jnp.where(use_norm, norm, 0.0)
   return normalized_x, norm
@@ -227,9 +228,7 @@ def _project_on_columns(A, v):
   Returns A.T.conj() @ v.
   """
   v_proj = tree_multimap(
-      lambda X, y: jnp.einsum("...n,...->n", X.conj(), y),
-      A,
-      v,
+      lambda X, y: _einsum("...n,...->n", X.conj(), y), A, v,
   )
   return tree_reduce(operator.add, v_proj)
 
@@ -299,7 +298,7 @@ def _iterative_classical_gram_schmidt(Q, x, max_iterations=2):
   return q, r
 
 
-def kth_arnoldi_iteration(k, A, M, V, H, tol):
+def _kth_arnoldi_iteration(k, A, M, V, H, tol):
   """
   Performs a single (the k'th) step of the Arnoldi process. Thus,
   adds a new orthonormalized Krylov vector A(M(V[:, k])) to V[:, k+1],
@@ -321,7 +320,7 @@ def kth_arnoldi_iteration(k, A, M, V, H, tol):
   return V, H, breakdown
 
 
-def apply_givens_rotations(H_row, givens, k):
+def _apply_givens_rotations(H_row, givens, k):
   """
   Applies the Givens rotations stored in the vectors cs and sn to the vector
   H_row. Then constructs and applies a new Givens rotation that eliminates
@@ -386,8 +385,8 @@ def _gmres_qr(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
 
   def arnoldi_qr_step(carry):
     k, _, V, R, beta_vec, givens = carry
-    V, H, _ = kth_arnoldi_iteration(k, A, M, V, R, inner_tol)
-    R_row, givens = apply_givens_rotations(H[k, :], givens, k)
+    V, H, _ = _kth_arnoldi_iteration(k, A, M, V, R, inner_tol)
+    R_row, givens = _apply_givens_rotations(H[k, :], givens, k)
     R = R.at[k, :].set(R_row[:])
     cs, sn = givens[k, :] * beta_vec[k]
     beta_vec = beta_vec.at[k].set(cs)
@@ -434,7 +433,7 @@ def _gmres_plain(A, b, x0, unit_residual, residual_norm, inner_tol, restart, M):
 
   def arnoldi_process(carry):
     V, H, _, k = carry
-    V, H, breakdown = kth_arnoldi_iteration(k, A, M, V, H, inner_tol)
+    V, H, breakdown = _kth_arnoldi_iteration(k, A, M, V, H, inner_tol)
     return V, H, breakdown, k + 1
 
   carry = (V, H, False, 0)
@@ -486,12 +485,11 @@ def _gmres_solve(A, b, x0, outer_tol, inner_tol, restart, maxiter, M,
   x_final, k, _, err = lax.while_loop(cond_fun, body_fun, initialization)
   _ = k # Until we can pass this out
   _ = err
-  # info = lax.cond(converged, lambda y: 0, lambda y: k, 0)
   return x_final  # , info
 
 
-def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
-          M=None, qr_mode=False):
+def _gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
+           M=None, qr_mode=False):
   """
   GMRES solves the linear system A x = b for x, given A and b.
 
