@@ -1585,7 +1585,7 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   # outputs from the jaxpr here, and updating out_flat below.
   extensive_invars = jaxpr_1_opt.jaxpr.invars[num_consts_1 + num_carry:]
   extensive_outvars = jaxpr_1_opt.jaxpr.outvars[num_carry:]
-  extensive_avals = [core.unmapped_aval(length, 0, core.raise_to_shaped(v.aval))
+  extensive_avals = [core.unmapped_aval(length, core.raise_to_shaped(v.aval))
                      for v in extensive_outvars]
   fwd_extensive = [num_consts + num_carry + extensive_invars.index(v)
                    if v in extensive_invars else None for v in extensive_outvars]
@@ -1833,7 +1833,7 @@ def _scan_typecheck(bind_time, *avals, reverse, length, num_consts, num_carry,
   const_avals_jaxpr, init_avals_jaxpr, x_avals_jaxpr = split_list(
       jaxpr.in_avals, [num_consts, num_carry])
   carry_avals_jaxpr, _ = split_list(jaxpr.out_avals, [num_carry])
-  x_avals_mapped = _map(partial(core.mapped_aval, length, 0), x_avals)
+  x_avals_mapped = _map(partial(core.mapped_aval, length), x_avals)
 
   core.typecheck_assert(
       all(_map(core.typematch, init_avals_jaxpr, carry_avals_jaxpr)),

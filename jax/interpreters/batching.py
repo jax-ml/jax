@@ -23,7 +23,7 @@ from ..abstract_arrays import ShapedArray, raise_to_shaped
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
 from ..util import (unzip2, partial, safe_map, wrap_name, split_list,
-                    canonicalize_axis, moveaxis)
+                    canonicalize_axis)
 from . import xla
 from . import partial_eval as pe
 
@@ -188,28 +188,14 @@ class BatchTrace(Trace):
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)
     else:
-      assert len({x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}) == 1
-      # The logic for the dimension math below is as follows:
-      # ╔═════════════╦════════════════════════════════════════╦═══════════╗
-      # ║ d / in_axis ║ None                                   ║ int       ║
-      # ╠═════════════╬════════════════════════════════════════╩═══════════╣
-      # ║ None        ║ No extra axis, so in_axis unaffected               ║
-      # ╠═════════════╬════════════════════════════════════════╦═══════════╣
-      # ║ int         ║ Not mapped, so batching dim unaffected ║ See below ║
-      # ╚═════════════╩════════════════════════════════════════╩═══════════╝
-      # When both d and in_axis are defined then:
-      # - If `d <= in_axis`, we have to move the `in_axis` one dimension further;
-      # - If `d >  in_axis`, we have to decrement `d` (as `in_axis` will get removed).
-      def fmap(x, f): return None if x is None else f(x)
-      new_in_axes = tuple(fmap(in_axis,
-                               lambda ax: ax + (1 if d is not None and d <= in_axis else 0))
-                          for d, in_axis in zip(dims, params['in_axes']))
-      new_dims = tuple(fmap(d,
-                            lambda dv: dv - (1 if in_axis is not None and in_axis < d else 0))
-                       for d, in_axis in zip(dims, params['in_axes']))
-      f, dims_out = batch_subtrace(f, self.main, new_dims)
-      vals_out = map_primitive.bind(f, *vals, **dict(params, in_axes=new_in_axes))
-      # We assume that out_axes are all 0, so we increment d
+      mapped_invars = params['mapped_invars']
+      size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
+      vals = [moveaxis(x, d, 1) if d == 0 and mapped_invar else x
+              for x, d, mapped_invar in zip(vals, dims, mapped_invars)]
+      dims = tuple(not_mapped if d is not_mapped else max(0, d - mapped_invar)
+                   for d, mapped_invar in zip(dims, mapped_invars))
+      f, dims_out = batch_subtrace(f, self.main, dims)
+      vals_out = map_primitive.bind(f, *vals, **params)
       dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
@@ -357,6 +343,17 @@ def broadcast(x, sz, axis):
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
   return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
+
+def moveaxis(x, src, dst):
+  if core.get_aval(x) is core.abstract_unit:
+    return core.unit
+  if src == dst:
+    return x
+  src = canonicalize_axis(src, x.ndim)
+  dst = canonicalize_axis(dst, x.ndim)
+  perm = [i for i in range(np.ndim(x)) if i != src]
+  perm.insert(dst, src)
+  return x.transpose(perm)
 
 def matchaxis(sz, src, dst, x, sum_match=False):
   if core.get_aval(x) is core.abstract_unit:

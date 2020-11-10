@@ -454,7 +454,7 @@ captured using the ``xla_pmap`` primitive. Consider this example
                     devices=None
                     donated_invars=(False, False)
                     global_axis_size=None
-                    in_axes=(None, 0)
+                    mapped_invars=(False, True)
                     name=inner ] b a
   in (c,) }
 
@@ -462,6 +462,6 @@ The ``xla_pmap`` primitive specifies the name of the axis (parameter ``rows``)
 and the body of the function to be mapped as the ``call_jaxpr`` parameter.
 value of this parameter is a Jaxpr with 3 input variables:
 
-The parameter ``in_axes`` specifies which of the input variables should be
+The parameter ``mapped_invars`` specify which of the input variables should be
 mapped and which should be broadcast. In our example, the value of ``extra``
 is broadcast, the other input values are mapped.

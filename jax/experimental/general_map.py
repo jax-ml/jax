@@ -250,7 +250,7 @@ def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
   def f_gmapped(*args, **kwargs):
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
-    in_axes = (0,) * len(args_flat)
+    mapped_invars = (True,) * len(args_flat)
     axis_size = _mapped_axis_size(in_tree, args_flat, (0,) * len(args_flat), "gmap")
     parsed_schedule = _normalize_schedule(schedule, axis_size, binds_axis_name)
     for arg in args_flat: _check_arg(arg)
@@ -259,7 +259,7 @@ def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
         flat_fun, *args_flat,
         axis_name=axis_name,
         axis_size=axis_size,
-        in_axes=in_axes,
+        mapped_invars=mapped_invars,
         schedule=parsed_schedule,
         binds_axis_name=binds_axis_name)
     return tree_unflatten(out_tree(), outs)
@@ -308,10 +308,10 @@ def _parse_name(name):
     raise ValueError(f"Unrecognized loop type: {name}") from err
 
 
-def gmap_impl(fun: lu.WrappedFun, *args, axis_size, axis_name, binds_axis_name, in_axes, schedule):
+def gmap_impl(fun: lu.WrappedFun, *args, axis_size, axis_name, binds_axis_name, mapped_invars, schedule):
   avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
   scheduled_fun = _apply_schedule(fun, axis_size, axis_name, binds_axis_name,
-                                  in_axes, schedule, *avals)
+                                  mapped_invars, schedule, *avals)
   return scheduled_fun(*args)
 
 class _GMapSubaxis:
@@ -330,12 +330,12 @@ class _GMapSubaxis:
 @lu.cache
 def _apply_schedule(fun: lu.WrappedFun,
                     axis_size, full_axis_name, binds_axis_name,
-                    in_axes,
+                    mapped_invars,
                     schedule,
                     *avals):
-  mapped_avals = [core.mapped_aval(axis_size, in_axis, aval)
-                  if in_axis is not None else aval
-                  for aval, in_axis in zip(avals, in_axes)]
+  assert all(mapped_invars)
+  mapped_avals = [core.mapped_aval(axis_size, aval) if mapped else aval
+                  for mapped, aval in zip(mapped_invars, avals)]
   with core.extend_axis_env(full_axis_name, axis_size, None):
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_avals)
 
@@ -346,20 +346,19 @@ def _apply_schedule(fun: lu.WrappedFun,
   sched_fun = lambda *args: core.eval_jaxpr(jaxpr, consts, *args)
   for (ltype, size), axis_name in list(zip(schedule, axis_names))[::-1]:
     if ltype is LoopType.vectorized:
-      sched_fun = jax.vmap(sched_fun, axis_name=axis_name, in_axes=in_axes)
+      sched_fun = jax.vmap(sched_fun, axis_name=axis_name)
     elif ltype is LoopType.parallel:
-      sched_fun = jax.pmap(sched_fun, axis_name=axis_name, in_axes=in_axes)
+      sched_fun = jax.pmap(sched_fun, axis_name=axis_name)
     elif ltype is LoopType.sequential:
       if binds_axis_name:
         raise NotImplementedError("gmaps with sequential components of the schedule don't support "
                                   "collectives yet. Please open a feature request!")
       assert not binds_axis_name
-      sched_fun = lambda *args, sched_fun=sched_fun: _sequential_map(sched_fun, in_axes, args)
+      sched_fun = lambda *args, sched_fun=sched_fun: jax.lax.map(lambda xs: sched_fun(*xs), args)
 
   dim_sizes = tuple(loop.size for loop in schedule)
   def sched_fun_wrapper(*args):
-    split_args = [arg.reshape(arg.shape[:in_axis] + dim_sizes + arg.shape[in_axis + 1:])
-                  for arg, in_axis in zip(args, in_axes)]
+    split_args = [arg.reshape(dim_sizes + arg.shape[1:]) for arg in args]
     results = sched_fun(*split_args)
     return [res.reshape((axis_size,) + res.shape[len(dim_sizes):]) for res in results]
   return sched_fun_wrapper
@@ -367,12 +366,6 @@ def _apply_schedule(fun: lu.WrappedFun,
 gmap_p = core.MapPrimitive('gmap')
 gmap_p.def_impl(gmap_impl)
 
-def _sequential_map(f, flat_in_axes, args):
-  flat_args, treedef = tree_flatten(args)
-  flat_args_leading = [jnp.moveaxis(arg, in_axis, 0)
-                       for arg, in_axis in zip(flat_args, flat_in_axes)]
-  args_leading = tree_unflatten(treedef, flat_args_leading)
-  return jax.lax.map(lambda xs: f(*xs), args_leading)
 
 def subst_axis_names(jaxpr, axis_subst: Dict[AxisName, Tuple[AxisName]]):
   eqns = [subst_eqn_axis_names(eqn, axis_subst) for eqn in jaxpr.eqns]

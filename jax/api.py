@@ -1290,6 +1290,7 @@ def pmap(fun: Callable[..., T],
       axis so that parallel collectives can be applied.
     in_axes: A non-negative integer, None, or nested Python container thereof
       that specifies which axes in the input to map over (see :py:func:`vmap`).
+      Currently, only 0 and None are supported axes for pmap.
     static_broadcasted_argnums: An int or collection of ints specifying which
       positional arguments to treat as static (compile-time constant).
       Operations that only depend on static arguments will be constant-folded.
@@ -1449,6 +1450,9 @@ def pmap(fun: Callable[..., T],
   donate_tuple = rebase_donate_argnums(_ensure_tuple(donate_argnums),
                                        static_broadcasted_tuple)
 
+  if any(axis != 0 for axis in tree_leaves(in_axes)):
+    raise ValueError(f"pmap in_axes leaves must be 0 or None, got {in_axes}")
+
   @wraps(fun)
   @api_boundary
   def f_pmapped(*args, **kwargs):
@@ -1482,7 +1486,7 @@ def pmap(fun: Callable[..., T],
         flat_fun, *args, backend=backend, axis_name=axis_name,
         axis_size=local_axis_size, global_axis_size=axis_size,
         devices=None if devices is None else tuple(devices),
-        in_axes=tuple(in_axes_flat),
+        mapped_invars=tuple(axis is not None for axis in in_axes_flat),
         name=flat_fun.__name__, donated_invars=tuple(donated_invars))
     return tree_unflatten(out_tree(), out)
 
@@ -1506,11 +1510,12 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
     f = lu.wrap_init(fun)
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_axes_flat = flatten_axes("soft_pmap in_axes", in_tree, (in_axes, 0))
+    mapped_invars = tuple(axis is not None for axis in in_axes_flat)
     axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     for arg in args_flat: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
     outs = pxla.soft_pmap(flat_fun, *args_flat, axis_name=axis_name,
-                          axis_size=axis_size, in_axes=tuple(in_axes_flat))
+                          axis_size=axis_size, mapped_invars=mapped_invars)
     return tree_unflatten(out_tree(), outs)
   return f_pmapped
 
