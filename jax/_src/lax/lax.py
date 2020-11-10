@@ -28,9 +28,11 @@ import jax
 from jax import core
 from jax import ad_util
 from jax import api
+from jax import api_util
 from jax import linear_util as lu
 from jax import dtypes
 from jax import lazy
+from jax import tree_util
 from jax.config import flags, config
 from jax.core import Primitive, _canonicalize_dimension
 from jax.abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray, array_types,
@@ -42,7 +44,8 @@ from jax.interpreters import ad
 from jax.interpreters import invertible_ad as iad
 from jax.interpreters import batching
 from jax.interpreters import masking
-from jax.util import cache, safe_zip, partial, prod, safe_map, canonicalize_axis
+from jax.util import (cache, safe_zip, partial, prod, safe_map, canonicalize_axis,
+                      split_list)
 from jax.tree_util import tree_map
 from jax.lib import pytree
 from jax.lib import xla_bridge
@@ -1088,19 +1091,30 @@ def argmax(operand: Array, axis: int,
   return argmax_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
 
-def reduce(operand: Array, init_value: Array, computation: Callable,
+def reduce(operands: Array, init_values: Array, computation: Callable,
            dimensions: Sequence[int]) -> Array:
   """Wraps XLA's `Reduce
   <https://www.tensorflow.org/xla/operation_semantics#reduce>`_
   operator.
   """
-  monoid_reducer = _get_monoid_reducer(computation, init_value)
+  flat_operands, operand_tree = tree_util.tree_flatten(operands)
+  flat_init_values, init_value_tree = tree_util.tree_flatten(init_values)
+  if operand_tree != init_value_tree:
+    raise ValueError('Operands must have the same tree structure as init_values:'
+                     f' {operand_tree} vs. {init_value_tree}')
+  if len(flat_operands) != len(flat_init_values):
+    raise ValueError('Must have same total number of operands as init_values: '
+                     f' {len(flat_operands)} vs. {len(flat_init_values)}')
+  monoid_reducer = _get_monoid_reducer(computation, flat_init_values)
   if monoid_reducer:
-    return monoid_reducer(operand, dimensions)
+    return monoid_reducer(*flat_operands, dimensions)
   else:
-    jaxpr, consts = _reduction_jaxpr(computation, _abstractify(init_value))
-    return reduce_p.bind(operand, init_value, computation=computation,
+    flat_init_avals = safe_map(_abstractify, flat_init_values)
+    jaxpr, consts, out_tree = _variadic_reduction_jaxpr(
+        computation, tuple(flat_init_avals), init_value_tree)
+    out = reduce_p.bind(*(flat_operands + flat_init_values), computation=computation,
                          jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
+    return tree_util.tree_unflatten(out_tree, out)
 
 @cache()
 def _reduction_jaxpr(computation, aval):
@@ -1109,12 +1123,27 @@ def _reduction_jaxpr(computation, aval):
   jaxpr, _, consts = pe.trace_to_jaxpr(comp, (pval, pval), instantiate=False)
   return jaxpr, consts
 
-def _get_monoid_reducer(monoid_op: Callable, x: Array) -> Optional[Callable]:
+@cache()
+def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
+  avals = tree_util.tree_unflatten(aval_tree, flat_avals)
+  flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
+  pvals = safe_map(pe.PartialVal.unknown, flat_in_avals)
+  comp = lu.wrap_init(computation)
+  flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
+  jaxpr, _, consts = pe.trace_to_jaxpr(flat_comp, tuple(pvals),
+                                       instantiate=False)
+  return jaxpr, consts, out_tree()
+
+def _get_monoid_reducer(monoid_op: Callable, xs: Array) -> Optional[Callable]:
+  if len(xs) != 1:
+    return None
+  x, = xs
   aval = core.get_aval(x)
   dtype = _dtype(x)
   if (type(aval) is ConcreteArray) and aval.shape == ():
     if monoid_op is add:
-      return np.equal(aval.val, 0) and _reduce_sum
+      return np.equal(aval.val, 0) and partial(
+          _reduce_sum)
     if monoid_op is mul:
       return np.equal(aval.val, 1) and _reduce_prod
     elif monoid_op is bitwise_or and dtype == np.bool_:
@@ -1939,8 +1968,10 @@ _input_dtype = lambda *args, **_: dtypes.canonicalize_dtype(args[0].dtype)
 _fixed_dtype = lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
 _complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
 
-def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None):
+def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
+                       multiple_results=False):
   prim = Primitive(name)
+  prim.multiple_results = multiple_results
   prim.def_impl(partial(xla.apply_primitive, prim))
   prim.def_abstract_eval(partial(standard_abstract_eval, prim, shape_rule, dtype_rule))
   xla.translations[prim] = translation_rule or partial(standard_translate, name)
@@ -1952,13 +1983,25 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, *args, **kwargs):
   least_specialized = _max(
       map(type, args), key=operator.attrgetter('array_abstraction_level'))
   if least_specialized is ConcreteArray:
-    return ConcreteArray(prim.impl(*[x.val for x in args], **kwargs))
+    out_vals = prim.impl(*[x.val for x in args], **kwargs)
+    if not prim.multiple_results:
+      out_vals = [out_vals]
+    out_avals = safe_map(ConcreteArray, out_vals)
   elif least_specialized is ShapedArray:
-    return ShapedArray(shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs))
+    shapes, dtypes = shape_rule(*args, **kwargs), dtype_rule(*args, **kwargs)
+    if not prim.multiple_results:
+      shapes, dtypes = [shapes], [dtypes]
+    out_avals = safe_map(ShapedArray, shapes, dtypes)
   elif least_specialized is UnshapedArray:
-    return UnshapedArray(dtype_rule(*args, **kwargs))
+    dtypes = dtype_rule(*args, **kwargs)
+    if not prim.multiple_results:
+      dtypes = [dtypes]
+    out_avals = safe_map(UnshapedArray, dtypes)
   else:
     raise TypeError(args, least_specialized)
+  if not prim.multiple_results:
+    return out_avals[0]
+  return out_avals
 
 
 def standard_translate(name, c, *args, **kwargs):
@@ -4681,52 +4724,92 @@ batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
 
 
-def _reduce_shape_rule(operand, init_value, *, computation, jaxpr, consts,
-                       dimensions):
-  return tuple(np.delete(operand.shape, dimensions))
+def _reduce_shape_rule(*args, computation, jaxpr, consts, dimensions):
+  operand_args, init_value_args = split_list(args, [len(args) // 2])
+  if any(arg.shape != () for arg in init_value_args):
+    init_value_shapes = [a.shape for a in init_value_args]
+    raise ValueError(f'Found non-scalar init_value: {init_value_shapes}')
+  return [
+      tuple(np.delete(op_arg.shape, dimensions))
+      for op_arg in operand_args
+  ]
 
-def _reduce_translation_rule(c, operand, init_value, *, computation, jaxpr,
+
+def _reduce_dtype_rule(*args, computation, jaxpr, consts, dimensions):
+  _, init_value_args = split_list(args, [len(args) // 2])
+  return [
+      dtypes.canonicalize_dtype(in_arg.dtype)
+      for in_arg in init_value_args
+  ]
+
+
+def _reduce_translation_rule(c, *values, computation, jaxpr,
                              consts, dimensions):
-  xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
-  return xops.Reduce(c, [operand], [init_value], xla_computation, dimensions)
+  operands, init_values = split_list(values, [len(values) // 2])
+  if len(operands) == 1:
+    init_value = init_values[0]
+    xla_computation = _reduction_computation(c, jaxpr, consts, init_value)
+    out = xops.Reduce(c, operands, init_values, xla_computation, dimensions)
+    return xops.Tuple(c, (out,))
+  xla_computation = _reduction_computation(c, jaxpr, consts, init_values, singleton=False)
+  return xops.Reduce(c, operands, init_values, xla_computation, dimensions)
 
-def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr, consts,
-                       dimensions):
-  operand, init_value = batched_args
-  operand_bdim, init_value_bdim = batch_dims
-  if init_value_bdim is None:
-    assert operand_bdim is not None
+
+def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
+                       consts, dimensions):
+  num_operands = len(batched_args) // 2
+  operands, init_values = split_list(batched_args, [num_operands])
+  operand_bdims, init_value_bdims = split_list(batch_dims, [num_operands])
+  if all(init_value_bdim is None for init_value_bdim in init_value_bdims):
+    # Assume all batch dims are the same for each of the operands
+    assert all(operand_bdim is not None for operand_bdim in operand_bdims)
+    assert all(operand_bdim == operand_bdims[0] for operand_bdim in operand_bdims)
+    # TODO(sharadmv): handle the case when batch dims are different across
+    # operands or when some are unbatched
+    operand_bdim = operand_bdims[0]
     new_dimensions = [d + bool(d >= operand_bdim) for d in dimensions]
     new_operand_bdim = operand_bdim - int(np.sum(np.less(dimensions, operand_bdim)))
-    return reduce(operand, init_value, computation, new_dimensions), new_operand_bdim
+    new_operand_bdims = [new_operand_bdim] * num_operands
+    return reduce_p.bind(*(operands + init_values),
+                         computation=computation, dimensions=tuple(new_dimensions),
+                         consts=consts,
+                         jaxpr=jaxpr), new_operand_bdims
   else:
     raise NotImplementedError  # loop and stack
 
-def _reduction_computation(c, jaxpr, consts, init_value):
-  shape = c.get_shape(init_value)
+
+def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
+  if singleton:
+    init_values = [init_values]
+  shapes = safe_map(c.get_shape, init_values + init_values)
   axis_env = xla.AxisEnv(1, (), (), None)  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
-  args = [xb.parameter(subc, 0, shape), xb.parameter(subc, 1, shape)]
-  out, = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
-  return subc.build(out)
+  args = [xb.parameter(subc, i, shape) for i, shape in enumerate(shapes)]
+  out_nodes = xla.jaxpr_subcomp(subc, jaxpr, None, axis_env, consts, '', *args)
+  if singleton:
+    return subc.build(out_nodes[0])
+  out_nodes = xops.Tuple(subc, out_nodes)
+  return subc.build(out_nodes)
 
 def _masking_defreducer(prim, identity):
   masking.masking_rules[prim] = partial(_reducer_masking_rule, prim, identity)
 
 def _reducer_masking_rule(prim, identity, padded_vals, logical_shapes,
-                          axes, input_shape=None):
+                          axes, input_shape=None, **reduce_kwargs):
   (padded_val,), (logical_shape,) = padded_vals, logical_shapes
   padded_shape = masking.padded_shape_as_value(padded_val.shape)
   masks = [broadcasted_iota(np.int32, padded_shape, i) < d
            for i, d in enumerate(logical_shape) if i in axes]
   mask = _reduce(operator.and_, masks)
   masked_val = select(mask, padded_val, identity(padded_shape, padded_val.dtype))
-  bind = prim.bind if input_shape is None else partial(prim.bind, input_shape=padded_shape)
+  prim_bind = partial(prim.bind, **reduce_kwargs)
+  bind = prim_bind if input_shape is None else partial(prim_bind, input_shape=padded_shape)
   return bind(masked_val, axes=axes)
 
-reduce_p = standard_primitive(_reduce_shape_rule, _input_dtype, 'reduce',
-                                        _reduce_translation_rule)
+reduce_p = standard_primitive(_reduce_shape_rule, _reduce_dtype_rule,
+                              'reduce', translation_rule=_reduce_translation_rule,
+                              multiple_results=True)
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 
 
@@ -4740,7 +4823,8 @@ def _reduce_sum_shape_rule(operand, *, axes):
   return _reduce_op_shape_rule(operand, axes=axes)
 
 def _reduce_sum_translation_rule(c, operand, *, axes):
-  dtype = c.get_shape(operand).numpy_dtype()
+  shape = c.get_shape(operand)
+  dtype = shape.numpy_dtype()
   scalar = ShapedArray((), dtype)
   return xops.Reduce(c, [operand], [xb.constant(c, np.array(0, dtype))],
                      xla.primitive_subcomputation(add_p, scalar, scalar),
