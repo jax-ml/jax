@@ -14,6 +14,7 @@
 """Tests for the jax2tf conversion for control-flow primitives."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from typing import Dict, Sequence
 
 import functools
@@ -39,6 +40,12 @@ import unittest
 from jax.config import config
 config.parse_flags_with_absl()
 
+
+def tensorspec_from_val(val, val_in_shape: str):
+  val_in_spec = masking.finalize_spec(masking.parse_spec(val_in_shape),
+                                      val.shape)
+  return tf.TensorSpec([None if type(d) is masking.Poly else d
+                        for d in val_in_spec], dtype=val.dtype)
 
 class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
@@ -555,7 +562,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     def f(a, i):
       return jnp.take(a, i, axis=1)
 
-    x = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))[:2, :3, :4]
+    a = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))[:2, :3, :4]
     i = np.array([1, 2], np.int32)
 
     f_tf = self.CheckShapePolymorphism(
@@ -564,18 +571,45 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       in_shapes=["batch, _, _", "_"],
       expected_output_signature=tf.TensorSpec([None, 2, 4]))
 
-    self.assertAllClose(f(x, i), f_tf(x, i))
+    self.assertAllClose(f(a, i), f_tf(a, i))
 
-    # Does not yet work
+    # TODO: does not yet work
     # f_tf = self.CheckShapePolymorphism(
     #   f,
-    #   input_signature=[tf.TensorSpec([None, 3, 4]), tf.TensorSpec([None], np.int32)],
-    #   in_shapes=["batch, _, _", "slice_size"],
-    #   expected_output_signature=tf.TensorSpec([None, None, 4]))
-    # self.assertAllClose(f(x, i), f_tf(x, i))
+    #   input_signature=[tf.TensorSpec(a.shape), tf.TensorSpec([None], np.int32)],
+    #   in_shapes=["_, _, _", "slice_size"],
+    #   expected_output_signature=tf.TensorSpec([None]))
+    # self.assertAllClose(f(a, i), f_tf(a, i))
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name=f"a_shape={a_shape}_a_in_shape={a_in_shape}_idx_shape={idx_shape}_idx_in_shape={idx_in_shape}_out_shape={out_shape}",
+         a_shape=a_shape, a_in_shape=a_in_shape,
+         idx_shape=idx_shape, idx_in_shape=idx_in_shape,
+         out_shape=out_shape)
+    for a_shape, a_in_shape, idx_shape, idx_in_shape, out_shape in [
+      ((12,), "_", (2,), "b", "b"),
+      ((3, 4), "_, _", (2,), "b", "b, 4"),
+      # TODO: this does not yet work
+      #((3, 4), "b, _", (2), "_", "2, 4"),
+      ]
+  ))
+  def test_take(self, a_shape=(12,), a_in_shape="_",
+                idx_shape=(2,), idx_in_shape="b",
+                out_shape="b"):
+    def f_jax(a, idx):
+      return a[idx]
+    a = np.arange(np.prod(a_shape), dtype=np.int32).reshape(a_shape)
+    idx = np.arange(np.prod(idx_shape), dtype=np.int32).reshape(idx_shape)
+    out = f_jax(a, idx)
+    f_tf = self.CheckShapePolymorphism(
+      f_jax,
+      input_signature=[tensorspec_from_val(a, a_in_shape),
+                       tensorspec_from_val(idx, idx_in_shape)],
+      in_shapes=[a_in_shape, idx_in_shape],
+      expected_output_signature=tensorspec_from_val(out, out_shape))
+    self.assertAllClose(out, f_tf(a, idx))
 
   def test_gather_vmap(self):
-    raise unittest.SkipTest("does not yet work")
     @jax.vmap
     def f(a, i):
       return jnp.take(a, i, axis=0)
@@ -587,7 +621,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       f,
       input_signature=[tf.TensorSpec([None, 3, 4]), tf.TensorSpec([None], np.int32)],
       in_shapes=["batch, _, _", "batch"],
-      expected_output_signature=tf.TensorSpec([None, 2, 4]))
+      expected_output_signature=tf.TensorSpec([None, 4]))
 
     self.assertAllClose(f(x, i), f_tf(x, i))
 

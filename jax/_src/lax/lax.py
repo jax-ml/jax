@@ -1413,8 +1413,8 @@ def iota(dtype: DType, size: int) -> Array:
   """
   if config.omnistaging_enabled:
     dtype = dtypes.canonicalize_dtype(dtype)
-    size = core.concrete_or_error(int, size, "size argument of lax.iota")
-    return iota_p.bind(dtype=dtype, shape=(size,), dimension=0)
+    shape = core.canonicalize_shape((size,))
+    return iota_p.bind(dtype=dtype, shape=shape, dimension=0)
   else:
     size = size if type(size) is masking.Poly else int(size)
     shape = canonicalize_shape((size,))

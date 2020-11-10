@@ -2669,9 +2669,9 @@ def arange(start, stop=None, step=None, dtype=None):
   require = partial(core.concrete_or_error, _np_asarray)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
   if stop is None and step is None:
-    start = require(start, msg("stop"))
+    start = require(start, msg("start"))
     dtype = dtype or _dtype(start)
-    return lax.iota(dtype, np.ceil(start)) # avoids materializing
+    return lax.iota(dtype, int(np.ceil(start))) # avoids materializing
   else:
     start = require(start, msg("start"))
     stop = None if stop is None else require(stop, msg("stop"))
@@ -3780,9 +3780,6 @@ def take(a, indices, axis=None, out=None, mode=None):
 
 def _normalize_index(index, axis_size):
   """Normalizes an index value in the range [-N, N) to the range [0, N)."""
-  if type(axis_size) is Poly:
-    return index + axis_size if index < 0 else index
-
   return lax.select(
     lax.lt(index, _constant_like(index, 0)),
     lax.add(index, _constant_like(index, axis_size)),
@@ -4102,7 +4099,8 @@ def _index_to_gather(x_shape, idx):
 
       # Broadcast gather_indices from [..., k] to [..., 1, 1, ..., 1, k].
       gather_indices = lax.broadcast_in_dim(
-        gather_indices, np.insert(gather_indices.shape, -1, shape),
+        gather_indices,
+        gather_indices.shape[:-1] + shape + gather_indices.shape[-1:],
         tuple(range(gather_indices.ndim - 1)) + (gather_indices.ndim + ndim - 1,))
       gather_indices = concatenate([gather_indices] + advanced_indexes, -1)
       start_index_map.extend(x_advanced_axes)
