@@ -98,9 +98,9 @@ on this lattice, which generates the following binary promotion table:
     from jax import dtypes
 
     types = [np.bool_, np.uint8, np.uint16, np.uint32, np.uint64,
-              np.int8, np.int16, np.int32, np.int64,
-              jnp.bfloat16, np.float16, np.float32, np.float64,
-              np.complex64, np.complex128, int, float, complex]
+             np.int8, np.int16, np.int32, np.int64,
+             jnp.bfloat16, np.float16, np.float32, np.float64,
+             np.complex64, np.complex128, int, float, complex]
 
     def name(d):
       if d in {int, float, complex}:
@@ -120,8 +120,7 @@ on this lattice, which generates the following binary promotion table:
     for t1 in types:
       out += "<tr><td>{}</td>".format(name(t1))
       for t2 in types:
-        # TODO(jakevdp): use a public API here.
-        t = np.dtype(dtypes._promote_types_raw(t1, t2))
+        t = jnp.promote_types(t1, t2)
         different = jnp.bfloat16 in (t1, t2) or t is not np.promote_types(t1, t2)
         out += "<td{}>{}</td>".format(" class=\"d\"" if different else "", name(t))
       out += "</tr>\n"
