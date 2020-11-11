@@ -328,6 +328,33 @@ lax_binary_elementwise_logical = tuple(
    ]
 )
 
+def _make_broadcast_in_dim_harness(name, *, dtype=np.float32,
+                                   shape=(2,), outshape=(2,),
+                                   broadcast_dimensions=(0,)):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_outshape={outshape}_broadcastdimensions={broadcast_dimensions}",
+                 lambda operand: lax.broadcast_in_dim_p.bind(
+                     operand, shape=outshape,
+                     broadcast_dimensions=broadcast_dimensions),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 outshape=outshape,
+                 broadcast_dimensions=broadcast_dimensions)
+
+lax_broadcast_in_dim = tuple( # Validate dtypes
+  _make_broadcast_in_dim_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate parameter combinations
+  _make_broadcast_in_dim_harness("parameter_combinations", shape=shape,
+                                 outshape=outshape,
+                                 broadcast_dimensions=broadcast_dimensions)
+  for shape, outshape, broadcast_dimensions in [
+    [(2,), (3, 2), (1,)],        # add major dimension
+    [(2,), (2, 3), (0,)],        # add inner dimension
+    [(), (2, 3), ()],            # use scalar shape
+    [(1, 2), (4, 3, 2), (0, 2)], # map size 1 dim to different output dim value
+  ]
+)
 
 lax_betainc = tuple(
   Harness(f"_{jtu.dtype_str(dtype)}",
