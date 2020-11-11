@@ -79,13 +79,6 @@ pytype_library(
 )
 
 pytype_library(
-    name = "vectorize",
-    srcs = ["experimental/vectorize.py"],
-    srcs_version = "PY3",
-    deps = [":jax"],
-)
-
-pytype_library(
     name = "loops",
     srcs = ["experimental/loops.py"],
     srcs_version = "PY3",
