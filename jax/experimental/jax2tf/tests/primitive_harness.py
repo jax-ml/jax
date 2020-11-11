@@ -516,7 +516,9 @@ lax_control_flow_cumreduce = tuple( # Validate dtypes for each function
   _make_cumreduce_harness("dtype_by_fun", dtype=dtype, f_jax=f_jax)
   for f_jax in [
     lax_control_flow.cummin,
-    lax_control_flow.cummax
+    lax_control_flow.cummax,
+    lax_control_flow.cumsum,
+    lax_control_flow.cumprod
   ]
   for dtype in [dtype for dtype in jtu.dtypes.all if dtype != np.bool_]
 ) + tuple( # Validate axis for each function
@@ -524,14 +526,18 @@ lax_control_flow_cumreduce = tuple( # Validate dtypes for each function
   for shape in [(8, 9)]
   for f_jax in [
     lax_control_flow.cummin,
-    lax_control_flow.cummax
+    lax_control_flow.cummax,
+    lax_control_flow.cumsum,
+    lax_control_flow.cumprod
   ]
   for axis in range(len(shape))
 ) + tuple( # Validate reverse for each function
   _make_cumreduce_harness("reverse", reverse=reverse, f_jax=f_jax)
   for f_jax in [
     lax_control_flow.cummin,
-    lax_control_flow.cummax
+    lax_control_flow.cummax,
+    lax_control_flow.cumsum,
+    lax_control_flow.cumprod
   ]
   for reverse in [True]
 )
