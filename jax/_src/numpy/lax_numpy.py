@@ -2669,9 +2669,9 @@ def arange(start, stop=None, step=None, dtype=None):
   require = partial(core.concrete_or_error, _np_asarray)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
   if stop is None and step is None:
-    start = require(start, msg("start"))
-    dtype = dtype or _dtype(start)
-    return lax.iota(dtype, int(np.ceil(start))) # avoids materializing
+    stop = require(start, msg("stop"))
+    dtype = dtype or _dtype(stop)
+    return lax.iota(dtype, int(np.ceil(stop))) # avoids materializing
   else:
     start = require(start, msg("start"))
     stop = None if stop is None else require(stop, msg("stop"))
