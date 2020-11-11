@@ -878,7 +878,18 @@ tf_impl[lax.bessel_i0e_p] = tf.math.bessel_i0e
 tf_impl[lax.bessel_i1e_p] = tf.math.bessel_i1e
 
 tf_impl[lax.complex_p] = tf.complex
-tf_impl[lax.conj_p] = tf.math.conj
+
+def _conj(x, **kwargs):
+  # The only dtypes that are allowed are: float32, float64, complex64, and
+  # complex128.
+  if x.dtype == tf.float32:
+    return tf.cast(x, tf.complex64)
+  elif x.dtype == tf.float64:
+    return tf.cast(x, tf.complex128)
+  else:
+    return tf.math.conj(x)
+
+tf_impl[lax.conj_p] = _conj
 tf_impl[lax.real_p] = tf.math.real
 tf_impl[lax.imag_p] = tf.math.imag
 
