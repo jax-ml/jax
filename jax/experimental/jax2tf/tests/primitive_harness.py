@@ -356,6 +356,25 @@ lax_broadcast_in_dim = tuple( # Validate dtypes
   ]
 )
 
+def _make_broadcast_harness(name, *, dtype=np.float32, shape=(2,), sizes=()):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_sizes={sizes}",
+                 lambda operand: lax.broadcast_p.bind(operand, sizes=sizes),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 sizes=sizes)
+
+lax_broadcast = tuple( # Validate dtypes
+  _make_broadcast_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate sizes
+  _make_broadcast_harness("sizes", sizes=sizes)
+  for sizes in [
+    (2,),      # broadcast 1 dim
+    (1, 2, 3), # broadcast n > 1 dims
+  ]
+)
+
 lax_betainc = tuple(
   Harness(f"_{jtu.dtype_str(dtype)}",
            lax.betainc,
