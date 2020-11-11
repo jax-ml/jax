@@ -32,7 +32,7 @@ from jax.scipy.special import expit
 from jax import mask, vmap, jit, grad, shapecheck, make_jaxpr
 from jax.interpreters.masking import (
   shape_as_value, ShapeError, parse_spec, Poly, Mon, finalize_spec,
-  eval_poly_shape, remap_ids, UniqueIds)
+  eval_poly_shape, remap_ids, UniqueIds, UndefinedPoly)
 
 config.parse_flags_with_absl()
 
@@ -83,8 +83,12 @@ class PolyTest(jtu.JaxTestCase):
     assert constant_poly(4) == constant_poly(4)
     assert constant_poly(3) != constant_poly(4)
     assert Poly({Mon(): 3, Mon({'n': 1}): 4}) == Poly({Mon({'n': 1}): 4, Mon(): 3})
-    assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
-    assert Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
+    assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 4, Mon({'n': 1}): 4})
+    assert Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 2})
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      Poly({Mon(): 3, Mon({'n': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 2}): 4})
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      Poly({Mon(): 3, Mon({'m': 1}): 4}) != Poly({Mon(): 3, Mon({'n': 1}): 4})
 
   def test_Poly_hash(self):
     assert not len(set(hash(Poly({Mon(): i})) for i in range(10))) == 1
@@ -118,8 +122,10 @@ class PolyTest(jtu.JaxTestCase):
     assert poly >= poly - 1
     assert poly < poly + 1
 
-    self.assertRaisesRegex(ValueError, "", lambda: poly >= 2)
-    self.assertRaisesRegex(ValueError, "", lambda: poly > 1)
+    poly >= 3
+    poly > 2
+    with self.assertRaisesRegex(UndefinedPoly, "inconclusive"):
+      poly >= 4
 
   n = Poly({Mon({'n': 1}): 1})
   m = Poly({Mon({'m': 1}): 1})
@@ -144,7 +150,7 @@ class PolyTest(jtu.JaxTestCase):
     expected = (quotient, remainder)
     if dividend.is_constant: dividend = int(dividend)
     if error_message:
-      with self.assertRaisesRegex(ValueError, error_message):
+      with self.assertRaisesRegex(UndefinedPoly, error_message):
         divmod(dividend, divisor)
     else:
       self.assertEqual(expected, divmod(dividend, divisor))
