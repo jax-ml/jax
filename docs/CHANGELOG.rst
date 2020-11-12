@@ -36,6 +36,21 @@ jax 0.2.6 (Unreleased)
   * The contents of the (undocumented) ``jax.lax_linalg`` linear algebra module
     are now exposed publicly as ``jax.lax.linalg``.
 
+  * ``jax.random.PRNGKey`` now produces the same results in and out of JIT compilation (#4877).
+    This required changing the result for a given seed in a few particular cases:
+
+    * With ``jax_enable_x64=False``, negative seeds passed as Python integers now return a different result
+      outside JIT mode. For example, ``jax.random.PRNGKey(-1)`` previously returned
+      ``[4294967295, 4294967295]``, and now returns ``[0, 4294967295]``. This matches the behavior in JIT.
+    * Seeds outside the range representable by `int64` outside JIT now result in an ``OverflowError``
+      rather than a ``TypeError``. This matches the behavior in JIT.
+
+    To recover the keys returned previously for negative integers with `jax_enable_x64=False` outside JIT,
+    you can use::
+
+        key = random.PRNGKey(-1).at[0].set(0xFFFFFFFF)
+    
+
 jaxlib 0.1.57 (unreleased)
 ------------------------------
 
