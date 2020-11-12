@@ -631,6 +631,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_binary_elementwise_logical(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_broadcast_in_dim)
+  def test_broadcast_in_dim(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
   @primitive_harness.parameterized(primitive_harness.lax_betainc)
   def test_betainc(self, harness: primitive_harness.Harness):

@@ -419,6 +419,8 @@ ShapeEnv = Dict[str, TfVal]
 _shape_env = {}  # type: ShapeEnv
 
 def _eval_shape(shape: Sequence[PolyDim]) -> Sequence[TfVal]:
+  assert all(map(lambda x: x is not None, shape)), (
+      f"Argument shape should be a valid JAX shape but got {shape}")
   return masking.eval_poly_shape(shape, _shape_env)
 
 # Extracting a shape environment by solving the shape variables.
@@ -1321,8 +1323,9 @@ tf_impl[lax.broadcast_p] = _broadcast
 
 
 def _broadcast_in_dim(operand, *, shape, broadcast_dimensions):
-  inshape = tuple(1 if i not in broadcast_dimensions else d
-                  for i, d in enumerate(shape))
+  inshape = [1] * len(shape)
+  for orig_shape_i, broadcast_dim_i in zip(operand.shape, broadcast_dimensions):
+    if orig_shape_i != 1: inshape[broadcast_dim_i] = shape[broadcast_dim_i]
   inshape_tf = _eval_shape(inshape)
   shape_tf = _eval_shape(shape)
   return tf.broadcast_to(tf.reshape(operand, inshape_tf), shape_tf)
