@@ -26,6 +26,7 @@ from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax import test_util as jtu
+from jax._src.lax import control_flow as lax_control_flow
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -112,11 +113,20 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
 
   @primitive_harness.parameterized(primitive_harness.lax_control_flow_cumreduce)
   def test_cumreduce(self, harness: primitive_harness.Harness):
-    if (harness.params["dtype"] == np.complex64 and
-        jtu.device_under_test() == "tpu"):
-      raise unittest.SkipTest("TODO(bchetioui): cum{min,max} fails in JAX for "
-                              "complex64 on TPU")
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+    f_jax, dtype = harness.params["f_jax"], harness.params["dtype"]
+    dut = jtu.device_under_test()
+    if (dtype == np.complex64 and
+        f_jax in [lax_control_flow.cummin, lax_control_flow.cummax,
+                  lax_control_flow.cumprod, lax_control_flow.cumsum] and
+        dut == "tpu"):
+      raise unittest.SkipTest("TODO(bchetioui): cum{min,max,prod,sum} fails "
+                              "in JAX for complex64 on TPU")
+    tol = None
+    if f_jax == lax_control_flow.cumsum:
+      tol = 0.1 if dtype == np.float16 else (0.5 if dtype == dtypes.bfloat16
+                                             else tol)
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),
+                           atol=tol, rtol=tol)
 
   @primitive_harness.parameterized(primitive_harness.lax_top_k)
   def test_top_k(self, harness: primitive_harness.Harness):
@@ -809,14 +819,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
          f_jax=f_jax)
     for f_jax in REDUCE))
   def test_reduce_ops_with_numerical_input(self, f_jax):
-    values = np.array([1, 2, 3], dtype=np.float32)
-    self.ConvertAndCompare(f_jax, values)
-
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{f_jax.__name__}",
-         f_jax=f_jax)
-    for f_jax in (jnp.cumsum, jnp.cumprod)))
-  def test_cumulated_ops(self, f_jax):
     values = np.array([1, 2, 3], dtype=np.float32)
     self.ConvertAndCompare(f_jax, values)
 

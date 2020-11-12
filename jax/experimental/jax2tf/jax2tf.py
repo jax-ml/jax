@@ -1400,9 +1400,6 @@ tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
 _add_fn = tf.function(tf.math.add, autograph=False)
 _ge_fn = tf.function(tf.math.greater_equal, autograph=False)
 
-tf_impl[lax_control_flow.cumsum_p] = tf.math.cumsum
-tf_impl[lax_control_flow.cumprod_p] = tf.math.cumprod
-
 def _select_and_gather_add(tangents: TfVal,
                            operand: TfVal,
                            select_prim: core.Primitive,
@@ -1660,16 +1657,27 @@ tf_impl_with_avals[lax.reduce_window_max_p] = (
 tf_impl_with_avals[lax.reduce_window_p] = _reduce_window
 # pylint: enable=protected-access
 
-# We use lax_control_flow._cumred_tpu_translation_rule to convert cummin and
-# cummax. This is efficient on TPU, but the complexity is O(n^2) on other
-# backends. This may be implemented using associative_scan instead to favor
-# different backends.
+# We use lax_control_flow._cumred_tpu_translation_rule to convert cummax,
+# cummin, cumsum and cumprod. This is efficient on TPU, but the complexity is
+# O(n^2) on other backends. This may be implemented using associative_scan
+# instead to favor different backends.
 tf_impl_with_avals[lax_control_flow.cummin_p] = _convert_jax_impl(
     functools.partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_min), multiple_results=False)
 tf_impl_with_avals[lax_control_flow.cummax_p] = _convert_jax_impl(
     functools.partial(lax_control_flow._cumred_tpu_translation_rule,
                       lax._reduce_window_max), multiple_results=False)
+# TODO(bchetioui): cumsum and cumprod can be converted using pure TF ops for
+# certain dtypes: bfloat16, float16, float32, float64, and int32. Other dtypes
+# will fail when running in compiled mode, but are otherwise compatible with
+# the operation. A non-XLA path can thus be defined for all dtypes, though the
+# tests will crash.
+tf_impl_with_avals[lax_control_flow.cumsum_p] = _convert_jax_impl(
+    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+                      lax._reduce_window_sum), multiple_results=False)
+tf_impl_with_avals[lax_control_flow.cumprod_p] = _convert_jax_impl(
+    functools.partial(lax_control_flow._cumred_tpu_translation_rule,
+                      lax._reduce_window_prod), multiple_results=False)
 
 def _select_and_scatter(
     operand, source, init_value, select_jaxpr, select_consts, scatter_jaxpr,
