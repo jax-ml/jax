@@ -889,6 +889,63 @@ class LaxRandomTest(jtu.JaxTestCase):
     with core.skipping_checks():  # check_jaxpr will materialize array
       api.eval_shape(f, 0)  # doesn't error
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": "seed={seed}_type={type}_jit={jit}".format(**dct), **dct} for dct in [
+      {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
+      {"seed": 0, "type": int, "jit": False, "key": [0, 0]},
+      {"seed": 1, "type": np.int32, "jit": True, "key": [0, 1]},
+      {"seed": 1, "type": np.int32, "jit": False, "key": [0, 1]},
+      {"seed": 2, "type": np.uint32, "jit": True, "key": [0, 2]},
+      {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
+      {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
+      {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
+      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if FLAGS.jax_enable_x64 else [0, 4294967295]},
+      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295]},  # TODO(jakevdp): make consistent with jit=True
+      {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
+      {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
+      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if FLAGS.jax_enable_x64 else [0, 4294967293]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if FLAGS.jax_enable_x64 else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548]},  # TODO(jakevdp): make consistent with jit=True
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if FLAGS.jax_enable_x64 else [0, 2147483547]},
+    ]
+  ))
+  def test_prng_seeds_and_keys(self, seed, type, jit, key):
+    seed = type(seed)
+    if jit:
+      actual = api.jit(random.PRNGKey)(seed)
+    else:
+      actual = random.PRNGKey(seed)
+    expected = jnp.array(key, dtype=jnp.uint32)
+    self.assertArraysEqual(actual, expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_seed={seed}_type={type}", "seed": seed, "type": type}
+      for type in ["int", "np.array", "jnp.array"]
+      for seed in [-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)]))
+  def test_prng_jit_invariance(self, seed, type):
+    # TODO(jakevdp): fix these jit invariance failures
+    if seed == (1 << 64) - 1 and type in ["int", "np.array"]:
+      self.skipTest(f"Known failure for seed={type}({seed})")
+    if not FLAGS.jax_enable_x64 and type in ["int", "np.array"] and seed in [-1, (1 << 63) - 1]:
+      self.skipTest(f"Known failure for seed={type}({seed})")
+    type = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type]
+    args_maker = lambda: [type(seed)]
+    self._CompileAndCheck(random.PRNGKey, args_maker)
+
+  def test_prng_errors(self):
+    seed = np.iinfo(np.uint64).max
+    # TODO(jakevdp): make this TypeError into an OverflowError.
+    with self.assertRaises(TypeError):
+      random.PRNGKey(seed)
+    with self.assertRaises(OverflowError):
+      api.jit(random.PRNGKey)(seed)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
