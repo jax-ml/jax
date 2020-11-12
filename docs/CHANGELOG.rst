@@ -49,9 +49,13 @@ jax 0.2.6 (Unreleased)
     you can use::
 
         key = random.PRNGKey(-1).at[0].set(0xFFFFFFFF)
-    
 
-jaxlib 0.1.57 (unreleased)
+
+jaxlib 0.1.58 (Unreleased)
+------------------------------
+
+
+jaxlib 0.1.57 (November 12 2021)
 ------------------------------
 
 * Fixed manylinux2010 compliance issues in GPU wheels.
@@ -63,6 +67,7 @@ jaxlib 0.1.57 (unreleased)
   a multiple of 128.
 * Fixed a bug when performing concurrent FFTs on multiple GPUs (#3518).
 * Fixed a bug in profiler where tools are missing (#4427).
+* Dropped support for CUDA 10.0.
 
 jax 0.2.5 (October 27 2020)
 --------------------------
