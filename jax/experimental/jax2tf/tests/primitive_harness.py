@@ -855,6 +855,24 @@ lax_slice = tuple(
   for dtype in [np.float32]
 )
 
+def _make_conj_harness(name, *, shape=(3, 4), dtype=np.float32, **kwargs):
+  return Harness(f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}_kwargs={kwargs}".replace(" ", ""),
+                 lambda x: lax.conj_p.bind(x, **kwargs),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 **kwargs)
+
+lax_conj = tuple( # Validate dtypes
+  _make_conj_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+) + tuple( # Validate kwargs
+  _make_conj_harness("kwargs", **kwargs)
+  for kwargs in [
+    { "_input_dtype": np.float32 },             # expected kwarg for ad
+  ]
+)
+
 # Use lax_slice, but (a) make the start_indices dynamic arg, and (b) no strides.
 lax_dynamic_slice = [
   Harness(harness.name,

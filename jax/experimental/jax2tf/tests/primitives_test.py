@@ -683,6 +683,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     else:
       self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_conj)
+  def test_conj(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_dynamic_slice)
   def test_dynamic_slice(self, harness):
     # JAX.dynamic_slice rejects slice sizes too big; check this, and skip jax2tf
