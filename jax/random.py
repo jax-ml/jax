@@ -77,14 +77,19 @@ def PRNGKey(seed: int) -> jnp.ndarray:
     of uint32 values (or from a 32-bit seed by first padding out with zeros).
   """
   if np.shape(seed):
-    raise TypeError("PRNGKey seed must be a scalar.")
+    raise TypeError(f"PRNGKey seed must be a scalar; got {seed!r}.")
+  if not np.issubdtype(np.result_type(seed), np.integer):
+    raise TypeError(f"PRNGKey seed must be an integer; got {seed!r}")
+
+  # Explicitly cast to int64 for JIT invariance of behavior on large ints.
+  if isinstance(seed, int):
+    seed = np.int64(seed)
+  # Converting to jnp.array may truncate bits when jax_enable_x64=False, but this
+  # is necessary for the sake of JIT invariance of the result for such values.
+  seed = jnp.array(seed)
+
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
-  if isinstance(seed, (int, np.ndarray)):
-    # Special handling of raw integer values, which may have be 64bit even
-    # when jax_enable_x64=False and we don't want to drop the top 32 bits
-    k1 = convert(np.bitwise_and(np.right_shift(seed, 32), 0xFFFFFFFF))
-  else:
-    k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
+  k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
   k2 = convert(jnp.bitwise_and(seed, 0xFFFFFFFF))
   return lax.concatenate([k1, k2], 0)
 
