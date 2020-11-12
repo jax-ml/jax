@@ -226,6 +226,46 @@ def _get_min_identity(dtype):
   elif dtypes.issubdtype(dtype, np.bool_):
     return np.array(True, np.bool_)
 
+def _make_argminmax_harness(name, *, shape=(15,), dtype=jnp.float32, axes=(0,),
+                            index_dtype=np.int32, prim=lax.argmin_p,
+                            arr=None):
+  arr = arr if arr is not None else RandArg(shape, dtype)
+  dtype, shape = arr.dtype, arr.shape
+  index_dtype = dtypes.canonicalize_dtype(index_dtype)
+  return Harness(f"{name}_prim={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_axes={axes}_indexdtype={index_dtype}",
+                 lambda arg: prim.bind(arg, axes=axes, index_dtype=index_dtype),
+                 [arr],
+                 shape=shape,
+                 dtype=dtype,
+                 axes=axes,
+                 index_dtype=index_dtype,
+                 prim=prim)
+
+lax_argminmax = tuple( # Validate dtypes for each primitive
+  _make_argminmax_harness("dtypes", dtype=dtype, prim=prim)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex)
+  for prim in [lax.argmin_p, lax.argmax_p]
+) + tuple( # Validate axes for each primitive
+  _make_argminmax_harness("axes", shape=shape, axes=axes, prim=prim)
+  for shape, axes in [
+    ((18, 12), (1,)), # non major axis
+  ]
+  for prim in [lax.argmin_p, lax.argmax_p]
+) + tuple( # Validate index dtype for each primitive
+  _make_argminmax_harness("index_dtype", index_dtype=index_dtype, prim=prim)
+  for index_dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned
+  for prim in [lax.argmin_p, lax.argmax_p]
+)
+# TODO(bchetioui): the below documents a limitation of argmin and argmax when a
+# dimension of the input is too large. However, it is not categorizable as it
+# seems that the converter fails before reaching the actual primitive call. This
+# suggests that we may need to harden the converter to handle inputs this big.
+# + tuple( # Document limitation in case of too large axis
+#  _make_argminmax_harness("overflow_axis", prim=prim,
+#                          arr=np.ones((2**31,), dtype=np.uint8))
+#  for prim in [lax.argmin_p, lax.argmax_p]
+#)
+
 lax_add_mul = tuple(
   Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
           f_jax,
