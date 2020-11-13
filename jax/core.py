@@ -618,6 +618,9 @@ class MainTrace:
 
 class TraceStack:
   # See comments in https://github.com/google/jax/pull/3370
+  stack: List[MainTrace]
+  dynamic: MainTrace
+
   def __init__(self):
     eval_trace = MainTrace(0, EvalTrace)
     self.stack = [eval_trace]
