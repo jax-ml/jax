@@ -3224,11 +3224,12 @@ def _concatenate_shape_rule(*operands, **kwargs):
   if len({operand.ndim for operand in operands}) != 1:
     msg = "Cannot concatenate arrays with different ranks, got {}."
     raise TypeError(msg.format(", ".join(str(o.ndim) for o in operands)))
-  shapes = np.array([operand.shape for operand in operands])
-  if not 0 <= dimension < shapes.shape[1]:
+  if not 0 <= dimension < operands[0].ndim:
     msg = "concatenate dimension out of bounds: dimension {} for shapes {}."
     raise TypeError(msg.format(dimension, ", ".join(map(str, shapes))))
-  if not np.all(np.delete(shapes[0] == shapes, dimension, axis=1)):
+  shapes = [operand.shape[:dimension] + operand.shape[dimension+1:]
+            for operand in operands]
+  if not all(s1 == s2 for s1, s2 in zip(shapes[:-1], shapes[1:])):
     msg = ("Cannot concatenate arrays with shapes that differ in dimensions "
            "other than the one being concatenated: dimension {} for shapes {}.")
     raise TypeError(msg.format(dimension, ", ".join(map(str, shapes))))
