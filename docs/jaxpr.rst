@@ -453,6 +453,7 @@ captured using the ``xla_pmap`` primitive. Consider this example
                                  in (g,) }
                     devices=None
                     donated_invars=(False, False)
+                    global_arg_shapes=(None,)
                     global_axis_size=None
                     in_axes=(None, 0)
                     name=inner ] b a
