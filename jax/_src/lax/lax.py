@@ -5387,6 +5387,8 @@ def _select_and_gather_add_transpose(
     msg = ("VJP not implemented for select_and_gather (MaxPool) with window "
            "dilation, got window_dilation={}.")
     raise NotImplementedError(msg.format(window_dilation))
+  if type(t) is ad_util.Zero:
+    return [ad_util.Zero, None]
   has_base_dilation = any(d != 1 for d in base_dilation)
   if has_base_dilation:
     select_identity = (_get_max_identity if select_prim is ge_p
