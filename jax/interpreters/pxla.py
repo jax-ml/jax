@@ -248,11 +248,15 @@ shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 shard_arg_handlers[core.Unit] = \
     lambda x, devices, _: device_put(core.unit, devices, replicate=True)
 def _shard_array(x, devices, indices):
+  logging.vlog(2, "sharding ndarray of shape %s to:\n%s\nfor devices:\n%s",
+               x.shape, indices, devices)
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
 def _shard_device_array(x, devices, indices):
+  logging.vlog(2, "sharding DeviceArray of shape %s to:\n%s\nfor devices:\n%s",
+               x.shape, indices, devices)
   start_indices, limit_indices, removed_dims = map(tuple, unzip3(
       _as_slice_indices(x, idx) for idx in indices))
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
@@ -468,6 +472,9 @@ def _hashable_index(idx):
 # The fast path is handled directly in shard_args().
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
 def _shard_sharded_device_array_slow_path(x, devices, indices):
+  logging.vlog(
+      2, "resharding ShardedDeviceArray from:\n%s\nto:\n%s\nfor devices:\n%s",
+      x.indices, indices, devices)
   candidates = defaultdict(list)
   for buf, idx in zip(x.device_buffers, x.indices):
     candidates[_hashable_index(idx)].append(buf)
