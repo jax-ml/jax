@@ -986,7 +986,10 @@ def heaviside(x1, x2):
 def hypot(x1, x2):
   _check_arraylike("hypot", x1, x2)
   x1, x2 = _promote_dtypes_inexact(x1, x2)
-  return lax.sqrt(x1*x1 + x2*x2)
+  x1 = lax.abs(x1)
+  x2 = lax.abs(x2)
+  x1, x2 = maximum(x1, x2), minimum(x1, x2)
+  return lax.select(x1 == 0, x1, x1 * lax.sqrt(1 + lax.square(lax.div(x2, lax.select(x1 == 0, ones_like(x1), x1)))))
 
 
 @_wraps(np.reciprocal)
