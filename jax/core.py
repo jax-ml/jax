@@ -1202,8 +1202,8 @@ call_p = CallPrimitive('call')
 call = call_p.bind
 call_p.def_impl(call_impl)
 
-named_call_p = core.CallPrimitive('named_call')
-named_call_p.def_impl(core.call_impl)
+named_call_p = CallPrimitive('named_call')
+named_call_p.def_impl(call_impl)
 
 # ------------------- Map -------------------
 
