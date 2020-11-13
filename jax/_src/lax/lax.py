@@ -63,13 +63,21 @@ DType = Any
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
-  for sizes in zip(*shapes):
-    sizes = [d for d in sizes if d != 1]
-    if sizes[:-1] != sizes[1:]:
-      break
-  else:
-    return tuple(next((d for d in sizes if d != 1), 1)
-                  for sizes in zip(*shapes))
+  assert shapes
+  if len(shapes) == 1: return shapes[0]
+  rank, *others = {len(shape) for shape in shapes}
+  if others: return None  # must have consistent rank
+  if not rank: return ()  # scalar case
+  result_shape = [None] * rank
+  for i, sizes in enumerate(zip(*shapes)):
+    if sizes[:-1] == sizes[1:]:
+      result_shape[i] = sizes[0]  # all equal sizes for this dimension
+    else:
+      sizes = [d for d in sizes if d != 1]
+      if sizes[:-1] != sizes[1:]:
+        return None  # must have equal sizes other than 1-sized axes
+      result_shape[i] = sizes[0] if sizes else 1
+  return tuple(result_shape)
 
 @cache()
 def broadcast_shapes(*shapes):
@@ -2010,8 +2018,8 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
 
 
 def _broadcasting_shape_rule(name, *avals):
-  shapes = np.array([aval.shape for aval in avals if aval.shape])
-  if not shapes.size:
+  shapes = [aval.shape for aval in avals if aval.shape]
+  if not shapes:
     return ()
   if len({len(shape) for shape in shapes}) != 1:
     msg = '{} got arrays of different rank: {}.'
@@ -3229,9 +3237,11 @@ def _concatenate_shape_rule(*operands, **kwargs):
     raise TypeError(msg.format(dimension, ", ".join(map(str, shapes))))
   shapes = [operand.shape[:dimension] + operand.shape[dimension+1:]
             for operand in operands]
-  if not all(s1 == s2 for s1, s2 in zip(shapes[:-1], shapes[1:])):
+  if not shapes[:-1] == shapes[1:]:
     msg = ("Cannot concatenate arrays with shapes that differ in dimensions "
-           "other than the one being concatenated: dimension {} for shapes {}.")
+           "other than the one being concatenated: concatenating along "
+           "dimension {} for shapes {}.")
+    shapes = [operand.shape for operand in operands]
     raise TypeError(msg.format(dimension, ", ".join(map(str, shapes))))
 
   concat_size = sum(o.shape[dimension] for o in operands)
