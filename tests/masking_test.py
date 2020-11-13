@@ -615,6 +615,17 @@ class MaskingTest(jtu.JaxTestCase):
     self.check(lambda x: x[..., -1], ['(n,3)'], 'n', {'n': 2}, [(3, 4)], ['float_'])
 
   def test_rev(self):
+    @shapecheck(['n'], 'n')
+    def rev(x):
+      return lax.rev(x, (0,))
+
+    @shapecheck(['(m, n)'], '(m, n)')
+    def rev(x):
+      return lax.rev(x, (1,))
+
+  def test_rev_by_indexing(self):
+    raise SkipTest
+
     @shapecheck(['n'], 'n+-1')
     def rev(x):
       return x[:0:-1]

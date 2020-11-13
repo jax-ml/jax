@@ -746,14 +746,9 @@ def slice(operand: Array, start_indices: Sequence[int],
   <https://www.tensorflow.org/xla/operation_semantics#slice>`_
   operator.
   """
-  if (np.all(np.equal(start_indices, 0))
-      and np.all(np.equal(limit_indices, operand.shape))
-      and strides is None):
-    return operand
-  else:
-    return slice_p.bind(operand, start_indices=tuple(start_indices),
-                        limit_indices=tuple(limit_indices),
-                        strides=None if strides is None else tuple(strides))
+  return slice_p.bind(operand, start_indices=tuple(start_indices),
+                      limit_indices=tuple(limit_indices),
+                      strides=None if strides is None else tuple(strides))
 
 def dynamic_slice(operand: Array, start_indices: Sequence[Array],
                   slice_sizes: Shape) -> Array:
