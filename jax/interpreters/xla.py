@@ -1034,7 +1034,7 @@ class DeviceArray:
 
   def _check_if_deleted(self):
     if self.device_buffer is deleted_buffer:
-      raise ValueError("DeviceArray has been deleted.")
+      raise RuntimeError("DeviceArray has been deleted.")
 
   def block_until_ready(self):
     """Blocks the caller until the buffer's value has been computed on device.

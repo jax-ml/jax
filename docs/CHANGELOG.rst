@@ -50,6 +50,8 @@ jax 0.2.6 (Unreleased)
 
         key = random.PRNGKey(-1).at[0].set(0xFFFFFFFF)
 
+  * DeviceArray now raises ``RuntimeError`` instead of ``ValueError`` when trying
+    to access its value while it has been deleted.
 
 jaxlib 0.1.58 (Unreleased)
 ------------------------------
