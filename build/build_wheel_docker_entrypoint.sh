@@ -62,7 +62,9 @@ esac
 
 export JAX_CUDA_VERSION=$3
 python setup.py bdist_wheel --python-tag "$PY_TAG" --plat-name "$PLAT_NAME"
-if python -m auditwheel show dist/jaxlib-*.whl  | grep -v 'platform tag: "manylinux2010_x86_64"' > /dev/null; then
+if ! python -m auditwheel show dist/jaxlib-*.whl  | grep 'platform tag: "manylinux2010_x86_64"' > /dev/null; then
+  # Print output for debugging
+  python -m auditwheel show dist/jaxlib-*.whl
   echo "jaxlib wheel is not manylinux2010 compliant"
   exit 1
 fi

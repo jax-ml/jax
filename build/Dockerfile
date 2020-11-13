@@ -6,11 +6,12 @@ WORKDIR /
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
 RUN apt-get update
 RUN apt-get install libffi-dev
-RUN git clone --branch v1.2.14 https://github.com/pyenv/pyenv.git /pyenv
+RUN git clone --branch v1.2.21 https://github.com/pyenv/pyenv.git /pyenv
 ENV PYENV_ROOT /pyenv
 RUN /pyenv/bin/pyenv install 3.6.8
 RUN /pyenv/bin/pyenv install 3.7.2
 RUN /pyenv/bin/pyenv install 3.8.0
+RUN /pyenv/bin/pyenv install 3.9.0
 
 # We pin numpy to a version < 1.16 to avoid version compatibility issues.
 RUN eval "$(/pyenv/bin/pyenv init -)" && /pyenv/bin/pyenv local 3.6.8 && pip install numpy==1.15.4 scipy cython setuptools wheel packaging six auditwheel
