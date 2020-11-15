@@ -1329,7 +1329,8 @@ tf_impl[lax.dot_general_p] = _dot_general
 
 
 def _broadcast(operand, *, sizes):
-  return tf.broadcast_to(operand, sizes + tf.shape(operand))
+  result_shape = tf.TensorShape(sizes).concatenate(operand.shape)
+  return tf.broadcast_to(operand, result_shape)
 tf_impl[lax.broadcast_p] = _broadcast
 
 
