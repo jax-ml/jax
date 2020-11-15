@@ -13,16 +13,9 @@ on:
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.7]
-
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python-version }}
+    - uses: actions/setup-python@v2
     - name: Get pip cache dir
       id: pip-cache
       run: |
@@ -116,15 +109,9 @@ jobs:
 
   documentation:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.7]
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python-version }}
+    - uses: actions/setup-python@v2
     - name: Get pip cache dir
       id: pip-cache
       run: |
