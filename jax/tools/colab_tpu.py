@@ -10,7 +10,7 @@ TPU_DRIVER_MODE = 0
 
 def setup_tpu():
   """Sets up Colab to run on TPU.
-  
+
   Note: make sure the Colab Runtime is set to Accelerator: TPU.
 
   """
