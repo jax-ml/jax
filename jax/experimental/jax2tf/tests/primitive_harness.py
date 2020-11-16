@@ -849,27 +849,27 @@ lax_slice = tuple(
           start_indices=start_indices,  # type: ignore
           limit_indices=limit_indices)  # type: ignore
   for shape, start_indices, limit_indices, strides in [
-    [(3,), (1,), (2,), None],
-    [(7,), (4,), (7,), None],
-    [(5,), (1,), (5,), (2,)],
-    [(8,), (1,), (6,), (2,)],
-    [(5, 3), (1, 1), (3, 2), None],
-    [(5, 3), (1, 1), (3, 1), None],
-    [(7, 5, 3), (4, 0, 1), (7, 1, 3), None],
-    [(5, 3), (1, 1), (2, 1), (1, 1)],
-    [(5, 3), (1, 1), (5, 3), (2, 1)],
+    ((3,), (1,), (2,), None),
+    ((7,), (4,), (7,), None),
+    ((5,), (1,), (5,), (2,)),
+    ((8,), (1,), (6,), (2,)),
+    ((5, 3), (1, 1), (3, 2), None),
+    ((5, 3), (1, 1), (3, 1), None),
+    ((7, 5, 3), (4, 0, 1), (7, 1, 3), None),
+    ((5, 3), (1, 1), (2, 1), (1, 1)),
+    ((5, 3), (1, 1), (5, 3), (2, 1)),
     # out-of-bounds cases
-    [(5,), (-1,), (0,), None],
-    [(5,), (-1,), (1,), None],
-    [(5,), (-4,), (-2,), None],
-    [(5,), (-5,), (-2,), None],
-    [(5,), (-6,), (-5,), None],
-    [(5,), (-10,), (-9,), None],
-    [(5,), (-100,), (-99,), None],
-    [(5,), (5,), (6,), None],
-    [(5,), (10,), (11,), None],
-    [(5,), (0,), (100,), None],
-    [(5,), (3,), (6,), None]
+    ((5,), (-1,), (0,), None),
+    ((5,), (-1,), (1,), None),
+    ((5,), (-4,), (-2,), None),
+    ((5,), (-5,), (-2,), None),
+    ((5,), (-6,), (-5,), None),
+    ((5,), (-10,), (-9,), None),
+    ((5,), (-100,), (-99,), None),
+    ((5,), (5,), (6,), None),
+    ((5,), (10,), (11,), None),
+    ((5,), (0,), (100,), None),
+    ((5,), (3,), (6,), None)
   ]
   for dtype in [np.float32]
 )
@@ -917,13 +917,13 @@ lax_dynamic_update_slice = tuple(
           start_indices=start_indices,  # type: ignore
           update_shape=update_shape)  # type: ignore
   for shape, start_indices, update_shape in [
-    [(3,), (1,), (1,)],
-    [(5, 3), (1, 1), (3, 1)],
-    [(7, 5, 3), (4, 1, 0), (2, 0, 1)],
-    [(3,), (-1,), (1,)],  # out-of-bounds
-    [(3,), (10,), (1,)],  # out-of-bounds
-    [(3,), (10,), (4,)],  # out-of-bounds shape too big
-    [(3,), (10,), (2,)],  # out-of-bounds
+    ((3,), (1,), (1,)),
+    ((5, 3), (1, 1), (3, 1)),
+    ((7, 5, 3), (4, 1, 0), (2, 0, 1)),
+    ((3,), (-1,), (1,)),  # out-of-bounds
+    ((3,), (10,), (1,)),  # out-of-bounds
+    ((3,), (10,), (4,)),  # out-of-bounds shape too big
+    ((3,), (10,), (2,)),  # out-of-bounds
   ]
   for dtype, update_dtype in [
     (np.float32, np.float32),
@@ -936,14 +936,14 @@ lax_squeeze = tuple(
           [RandArg(arg_shape, dtype), StaticArg(dimensions)],  # type: ignore[has-type]
           arg_shape=arg_shape, dtype=dtype, dimensions=dimensions)  # type: ignore[has-type]
   for arg_shape, dimensions in [
-    [(1,), (0,)],
-    [(1,), (-1,)],
-    [(2, 1, 4), (1,)],
-    [(2, 1, 4), (-2,)],
-    [(2, 1, 3, 1), (1,)],
-    [(2, 1, 3, 1), (1, 3)],
-    [(2, 1, 3, 1), (3,)],
-    [(2, 1, 3, 1), (1, -1)],
+    ((1,), (0,)),
+    ((1,), (-1,)),
+    ((2, 1, 4), (1,)),
+    ((2, 1, 4), (-2,)),
+    ((2, 1, 3, 1), (1,)),
+    ((2, 1, 3, 1), (1, 3)),
+    ((2, 1, 3, 1), (3,)),
+    ((2, 1, 3, 1), (1, -1)),
   ]
   for dtype in [np.float32]
 )
