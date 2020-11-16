@@ -178,6 +178,33 @@ lax_unary_elementwise = tuple(
   ]
 )
 
+_LAX_COMPARATORS = (
+  lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
+
+def _make_comparator_harness(name, *, dtype=np.float32, op=lax.eq, lhs_shape=(),
+                             rhs_shape=()):
+  return Harness(f"{name}_op={op.__name__}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
+                 op,
+                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype)],
+                 lhs_shape=lhs_shape,
+                 rhs_shape=rhs_shape,
+                 dtype=dtype)
+
+lax_comparators = tuple( # Validate dtypes
+  _make_comparator_harness("dtypes", dtype=dtype, op=op)
+  for op in _LAX_COMPARATORS
+  for dtype in (jtu.dtypes.all if op in [lax.eq, lax.ne] else
+                set(jtu.dtypes.all) - set(jtu.dtypes.complex))
+) + tuple( # Validate broadcasting behavior
+  _make_comparator_harness("broadcasting", lhs_shape=lhs_shape,
+                           rhs_shape=rhs_shape, op=op)
+  for op in _LAX_COMPARATORS
+  for lhs_shape, rhs_shape in [
+    ((), (2, 3)),     # broadcast scalar
+    ((1, 2), (3, 2)), # broadcast along specific axis
+  ]
+)
+
 lax_bitwise_not = tuple(
   [Harness(f"{jtu.dtype_str(dtype)}",
           lax.bitwise_not,

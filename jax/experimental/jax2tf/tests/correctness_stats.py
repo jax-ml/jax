@@ -261,6 +261,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
       # operations.
       tf_unimpl(np_dtype)
 
+  if prim in [lax.le_p, lax.lt_p, lax.ge_p, lax.gt_p]:
+    if np_dtype in [np.bool_, np.uint16, np.uint32, np.uint64]:
+      tf_unimpl(np_dtype)
+
   if prim is lax.fft_p:
     if np_dtype in [np.float64, np.complex128]:
       tf_unimpl(np_dtype, additional_msg=("this is a problem only in compiled "

@@ -105,7 +105,11 @@ conversion to Tensorflow.
 | erf_inv | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |
 | erfc | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | fft | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | complex128, float64 | CPU, GPU, TPU |
+| ge | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
+| gt | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
+| le | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
 | lgamma | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
+| lt | Missing TF support | Primitive is unimplemented in TF | bool, uint16, uint32, uint64 | CPU, GPU, TPU |
 | lu | Missing TF support | Primitive is unimplemented in TF | complex64 | TPU |
 | max | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | min | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
