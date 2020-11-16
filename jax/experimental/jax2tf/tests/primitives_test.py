@@ -746,6 +746,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_clamp(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_concatenate)
+  def test_concatenate(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_conv_general_dilated)
   def test_conv_general_dilated(self, harness: primitive_harness.Harness):
     dtype, device = harness.params["dtype"], jtu.device_under_test()
