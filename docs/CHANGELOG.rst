@@ -54,6 +54,8 @@ jax 0.2.6 (Unreleased)
 jaxlib 0.1.58 (Unreleased)
 ------------------------------
 
+* Fixed a bug that meant JAX sometimes return platform-specific types (e.g.,
+  `np.cint`) instead of standard types (e.g., `np.int32`). (#4903)
 
 jaxlib 0.1.57 (November 12 2021)
 ------------------------------
