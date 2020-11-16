@@ -1073,6 +1073,9 @@ tf_impl[lax.bitcast_convert_type_p] = _bitcast_convert_type
 
 
 def _clamp(minval, operand, maxval):
+  # The below permits mirroring the behavior of JAX when maxval < minval
+  maxval = tf.broadcast_to(maxval, operand.shape)
+  minval = tf.math.minimum(tf.broadcast_to(minval, operand.shape), maxval)
   return tf.clip_by_value(operand, minval, maxval)
 tf_impl[lax.clamp_p] = _clamp
 

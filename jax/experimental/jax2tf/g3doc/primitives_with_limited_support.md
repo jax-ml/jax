@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-11-04*
+*Last generated on (YYYY-MM-DD): 2020-11-16*
 
 We do not yet have support for `pmap` (with its collective primitives),
 nor for `sharded_jit` (SPMD partitioning).
@@ -88,6 +88,7 @@ conversion to Tensorflow.
 | bessel_i0e | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | bessel_i1e | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | cholesky | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | complex128, complex64 | CPU, GPU, TPU |
+| clamp | Missing TF support | Primitive is unimplemented in TF | int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | conv_general_dilated | Missing TF support | Primitive is unimplemented in TF; batch_group_count != 1 unsupported | ALL | CPU, GPU, TPU |
 | conv_general_dilated | Missing TF support | Primitive is unimplemented in TF; likely bug in the HLO -> LLVM IR lowering of XlaConv | complex128, complex64 | CPU, GPU, TPU |
 | cosh | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |
@@ -143,4 +144,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmin`, `broadcast`, `clamp`, `complex`, `conj`, `custom_lin`, `device_put`, `integer_pow`, `rev`, `select_and_scatter`, `tie_in`
+`argmin`, `complex`, `custom_lin`, `device_put`, `integer_pow`, `rev`, `select_and_scatter`, `tie_in`
