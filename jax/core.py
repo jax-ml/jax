@@ -1317,7 +1317,8 @@ def check_jaxpr(jaxpr: Jaxpr):
   - variables are typed equally throughout a jaxpr
   - variable type annotations are compatible with their binding expression
 
-  Raises `TypeError` if `jaxpr` is determined invalid. Returns `None` otherwise.
+  Raises `JaxprTypeError` if `jaxpr` is determined invalid. Returns `None`
+  otherwise.
   """
   try:
     _check_jaxpr(jaxpr, [v.aval for v in jaxpr.invars])

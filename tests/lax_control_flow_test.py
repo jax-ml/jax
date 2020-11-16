@@ -999,6 +999,24 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertAllClose(ans, expected, check_dtypes=False)
       jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
+  def testSwitchGradWithWeakTypeMismatch(self):  # issue 4696
+    branches = [
+        lambda x: x,           # This preserves the weak type of x.
+        lambda x: jnp.cos(x),  # This strips the weak type of x.
+    ]
+
+    def f_ref(x):
+      i = x.astype(jnp.int32)
+      return branches[i](x)
+
+    def f(x):
+      return lax.switch(x.astype(jnp.int32), branches, x)
+
+    for x in [0., 1.]:
+      ans = api.grad(f)(x)
+      expected = api.grad(f_ref)(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{name}", "cond": cond}
       for cond, name in COND_IMPLS)
