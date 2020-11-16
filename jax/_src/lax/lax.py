@@ -4315,6 +4315,35 @@ def _scatter_translation_rule(c, operand, scatter_indices, updates, *,
                       _scatter_dimensions_proto(indices_shape, dimension_numbers),
                       indices_are_sorted, unique_indices)
 
+def _scatter_add_translation_rule(
+    c, operand, scatter_indices, updates, *, update_jaxpr, update_consts,
+    dimension_numbers, indices_are_sorted, unique_indices,
+    expand_complex128=False):
+  dtype = c.get_shape(operand).numpy_dtype()
+  scatter_dims = _scatter_dimensions_proto(c.get_shape(scatter_indices),
+                                           dimension_numbers)
+
+  def _make_reducer(dtype):
+    subc = xla_bridge.make_computation_builder("scatter_add_reducer")
+    shape = xc.Shape.array_shape(np.dtype(dtype), ())
+    args = [xb.parameter(subc, 0, shape), xb.parameter(subc, 1, shape)]
+    out = xops.Add(args[0], args[1])
+    return subc.build(out)
+
+  if expand_complex128 and dtype == np.complex128:
+    update_computation = _make_reducer(np.float64)
+    re = xops.Scatter(xops.Real(operand), scatter_indices, xops.Real(updates),
+                      update_computation, scatter_dims, indices_are_sorted,
+                      unique_indices)
+    im = xops.Scatter(xops.Imag(operand), scatter_indices, xops.Imag(updates),
+                      update_computation, scatter_dims, indices_are_sorted,
+                      unique_indices)
+    return xops.Complex(re, im)
+  else:
+    update_computation = _make_reducer(dtype)
+    return xops.Scatter(operand, scatter_indices, updates, update_computation,
+                        scatter_dims, indices_are_sorted, unique_indices)
+
 def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
                      dimension_numbers, indices_are_sorted, unique_indices):
   operand, scatter_indices, updates = primals
@@ -4454,12 +4483,14 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
-    _scatter_translation_rule)
+    _scatter_add_translation_rule)
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
 
+xla.backend_specific_translations['gpu'][scatter_add_p] = partial(
+    _scatter_add_translation_rule, expand_complex128=True)
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',

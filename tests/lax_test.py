@@ -1934,7 +1934,7 @@ class LaxTest(jtu.JaxTestCase):
        "arg_shape": arg_shape, "dtype": dtype, "idxs": idxs,
        "update_shape": update_shape, "dnums": dnums,
        "rng_factory": rng_factory, "rng_idx_factory": rng_idx_factory}
-      for dtype in float_dtypes
+      for dtype in inexact_dtypes
       for arg_shape, idxs, update_shape, dnums in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
