@@ -753,8 +753,7 @@ class TensorFlowTrace(core.Trace):
         vals_out: Sequence[Tuple[TfVal,
                                  core.AbstractValue]] = f.call_wrapped(*vals)
     else:
-      vals_out: Sequence[Tuple[TfVal,
-                               core.AbstractValue]] = f.call_wrapped(*vals)
+      vals_out = f.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
