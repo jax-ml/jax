@@ -143,8 +143,8 @@ def transpose(lexpr: LazyExpr, perm: Sequence[int]):
 def is_constant(lexpr: Optional[LazyExpr]):
   return lexpr is not None and type(lexpr.input) is not ArrayVar
 
-def is_trivial(lexpr: LazyExpr) -> bool:
-  return (type(lexpr.input) is ArrayVar and
+def is_trivial(lexpr: Optional[LazyExpr]) -> bool:
+  return lexpr is None or (type(lexpr.input) is ArrayVar and
           lexpr.dims == tuple(range(len(lexpr.shape))))
 
 
@@ -205,7 +205,7 @@ def stage_lexpr(c, lexpr: Optional[LazyExpr], x):
   Returns:
     An XlaOp representing the value of the lazy expression.
   """
-  if lexpr is None or is_trivial(lexpr):
+  if is_trivial(lexpr):
     return x
 
   input_, shape, dims = lexpr

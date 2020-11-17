@@ -3127,7 +3127,10 @@ def _broadcast_in_dim_impl(operand, *, shape, broadcast_dimensions):
     shape = _broadcast_in_dim_shape_rule(
       operand, shape=shape, broadcast_dimensions=broadcast_dimensions)
     aval = ShapedArray(shape, _dtype(operand))
-    lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
+    if operand._lazy_expr is None:
+      lazy_expr = lazy.broadcast(lazy.array(operand), shape, broadcast_dimensions)
+    else:
+      lazy_expr = lazy.broadcast(operand._lazy_expr, shape, broadcast_dimensions)
     return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
   else:
     return xla.apply_primitive(broadcast_in_dim_p, operand, shape=shape,
@@ -3425,7 +3428,10 @@ def _reshape_impl(operand, *, new_sizes, dimensions):
     bcast_dims = _is_singleton_reshape(old_sizes, new_sizes)
     if bcast_dims is not None:
       aval = ShapedArray(new_sizes, operand.dtype)
-      lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
+      if operand._lazy_expr is None:
+        lazy_expr = lazy.broadcast(lazy.array(operand), new_sizes, bcast_dims)
+      else:
+        lazy_expr = lazy.broadcast(operand._lazy_expr, new_sizes, bcast_dims)
       return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
   return xla.apply_primitive(reshape_p, operand, new_sizes=new_sizes,
                              dimensions=dimensions)
@@ -3538,7 +3544,10 @@ batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 def _transpose_impl(operand, *, permutation):
   if xla.type_is_device_array(operand):
-    lazy_expr = lazy.transpose(operand._lazy_expr, permutation)
+    if operand._lazy_expr is None:
+      lazy_expr = lazy.transpose(lazy.array(operand), permutation)
+    else:
+      lazy_expr = lazy.transpose(operand._lazy_expr, permutation)
     aval = ShapedArray(lazy_expr.shape, operand.dtype)
     return xla.make_device_array(aval, operand._device, lazy_expr, operand.device_buffer)
   else:

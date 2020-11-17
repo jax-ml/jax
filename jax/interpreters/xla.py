@@ -1018,8 +1018,18 @@ class DeviceArray:
   _HAS_DYNAMIC_ATTRIBUTES = True
 
   def __init__(self, aval: core.ShapedArray, device: Optional[Device],
-               lazy_expr: lazy.LazyExpr,
+               lazy_expr: Optional[lazy.LazyExpr],
                device_buffer: PyLocalBuffer):
+    """Initializer.
+
+    Args:
+      aval: The abstract value associated to this array (shape+dtype+weak_type).
+      device:  The optional sticky device. See
+        https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
+      lazy_expr: An optional `LayExpr`. `None` is equivalent to a trivial
+        `LazyExpr`.
+      device_buffer: The underlying buffer owning the on-device data.
+    """
     self.aval = aval
     self.device_buffer = device_buffer
     self._device = device
