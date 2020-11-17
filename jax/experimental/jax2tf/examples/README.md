@@ -136,12 +136,7 @@ The default saving location is `/tmp/jax2tf/saved_models/1`.
 
 
 By default, this example will convert the inference function for three separate
-batch sizes: 1, 16, 128. You can see this in the dumped SavedModel. If you
-pass the argument `--serving_batch_size=-1`, then the conversion to TF will
-be done using jax2tf's
-[experimental shape-polymorphism feature](https://github.com/google/jax/blob/master/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion).
-As a result, the inference function will be traced only once and the SavedModel
-will contain a single batch-polymorphic TensorFlow graph.
+batch sizes: 1, 16, 128. You can see this in the dumped SavedModel.
 
 # Reusing models with TensorFlow Hub and TensorFlow Keras
 
