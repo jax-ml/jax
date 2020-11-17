@@ -2245,25 +2245,6 @@ class LaxTest(jtu.JaxTestCase):
                                              (x,), (1.,)))(1.)
     self.assertLen(jaxpr.jaxpr.eqns, 2)
 
-  def test_named_call(self):
-    # TODO(qiuminxu) Make named_call a public function in lax
-    def named_call(f, name):
-      def named_f(*args):
-        f_ = jax.linear_util.wrap_init(lambda: (f(*args),))
-        out, = lax.named_call_p.bind(f_, name=name)
-        return out
-      return named_f
-
-    def square(x):
-      return x ** 2
-
-    @jax.jit
-    def f(x):
-      return named_call(square, 'name_for_testing')(x)
-
-    c = jax.xla_computation(f)(2)
-    self.assertIn('name_for_testing', c.as_hlo_text())
-
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

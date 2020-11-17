@@ -169,7 +169,6 @@ from jax._src.lax.lax import (
   min_p,
   mul,
   mul_p,
-  named_call_p,
   naryop,
   naryop_dtype_rule,
   ne,

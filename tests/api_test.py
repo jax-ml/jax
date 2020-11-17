@@ -4595,5 +4595,57 @@ class BufferDonationTest(jtu.JaxTestCase):
         self.assertEqual(buffer.is_deleted(), deleted)
 
 
+class NamedCallTest(jtu.JaxTestCase):
+
+  def test_default_name(self):
+
+    @api.named_call
+    def my_test_function(x):
+      return x**2
+
+    @jax.jit
+    def f(x):
+      return my_test_function(x)
+
+    c = jax.xla_computation(f)(2)
+    self.assertIn("my_test_function", c.as_hlo_text())
+
+  def test_non_jaxtype_arg(self):
+    # For the test to fail without the invalid JaxType filter we need to pass
+    # in a valid JaxType that forces the invalid Jaxtype to be raised to an
+    # abstract value.
+    def f(not_a_jaxtype, a_jaxtype):
+      # then Jax needs to try and evaluate the abstractified non-JaxType
+      if not_a_jaxtype:
+        return a_jaxtype
+      return 0
+
+    f = api.named_call(f, name="test")
+    out = jax.jit(f, static_argnums=(0,))("not a Jaxtype", 1)
+    self.assertEqual(out, 1)
+
+  @parameterized.parameters(jax.jit, jax.grad, jax.vmap, jax.remat)
+  def test_jax_transforms(self, transform):
+    f = jnp.sum
+    x = jnp.array([1.])
+
+    unnamed_out = transform(f)(x)
+    named_out = transform(api.named_call(f, name="test"))(x)
+
+    self.assertEqual(unnamed_out, named_out)
+
+  def test_static_argnums(self):
+    f = api.named_call(lambda x, y: y if x else None, name="test")
+    f = jax.jit(f, static_argnums=(0,))
+    out = f(True, 5)
+    self.assertEqual(out, 5)
+
+  def test_partial_eval(self):
+    f = api.named_call(lambda x, y: y if x else None, name="test")
+    f = jax.jit(functools.partial(f, True))
+    out = f(5)
+    self.assertEqual(out, 5)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
