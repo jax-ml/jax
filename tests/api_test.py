@@ -1033,8 +1033,8 @@ class APITest(jtu.JaxTestCase):
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    self.assertRaisesRegex(ValueError, "DeviceArray has been deleted.",
-                            lambda: repr(x))
+    self.assertRaisesRegex(RuntimeError, "DeviceArray has been deleted.",
+                           lambda: repr(x))
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
