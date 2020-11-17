@@ -603,7 +603,11 @@ class MainTrace:
     self.payload = payload
 
   def __repr__(self) -> str:
-    return "MainTrace({},{})".format(self.level, self.trace_type.__name__)
+    prefix = f"MainTrace({self.level},{self.trace_type.__name__}"
+    if not self.payload:
+      return f"{prefix})"
+    else:
+      return f"{prefix},{self.payload})"
 
   def __hash__(self) -> int:
     return hash((self.level, self.trace_type))
@@ -1219,6 +1223,8 @@ class MapPrimitive(Primitive):
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_map(self, out_tracers, params)
 
+# ------------------- Named axis environment -------------------
+
 @contextmanager
 def extend_axis_env(axis_name, size: int, tag: Any):
   frame = AxisEnvFrame(axis_name, size, tag)
@@ -1228,27 +1234,20 @@ def extend_axis_env(axis_name, size: int, tag: Any):
   finally:
     thread_local_state.trace_state.axis_env.pop()
 
+class _InternalAxisName(str):
+  pass
 
-# When a mapped function is given no axis name, we generate a name object based
-# on the id of the function object. Collisions aren't important because this
-# name can't be used in collectives, as user code never gets a ref to this
-# object. We don't want to use the function object itself because that might
-# persist references to the function object.
-# TODO(mattjj): revisit this unique axis name strategy
-class _TempAxisName:
-
-  def __init__(self, obj):
-    self.id = id(obj)
-
-  def __repr__(self):
-    return f'<axis {hex(self.id)}>'
-
-  def __hash__(self):
-    return hash(self.id)
-
-  def __eq__(self, other):
-    return type(other) is _TempAxisName and self.id == other.id
-
+def fresh_axis_name(internal=False):
+  axis_env = thread_local_state.trace_state.axis_env
+  base_name = 'internal_axis' if internal else 'axis'
+  # This is quite inefficient, but how many axes do we expect people
+  # to have in scope...
+  i = 0
+  name = f'{base_name}{i}'
+  while name in axis_env:
+    i += 1
+    name = f'{base_name}{i}'
+  return _InternalAxisName(name) if internal else name
 
 def axis_frame(axis_name):
   frames = thread_local_state.trace_state.axis_env
@@ -1259,7 +1258,7 @@ def axis_frame(axis_name):
   named_axis = [
       frame.name
       for frame in reversed(frames)
-      if not isinstance(frame.name, _TempAxisName)
+      if not isinstance(frame.name, _InternalAxisName)
   ]
   raise NameError(
       f'unbound axis name: {axis_name}. The following axis names (e.g. defined '
@@ -1522,7 +1521,7 @@ def pp_kv_pairs(kv_pairs):
 def omnistaging_disabler() -> None:
   global thread_local_state, call_bind, find_top_trace, initial_style_staging, \
       new_main, reset_trace_state, TraceStack, TraceState, extend_axis_env, \
-      eval_context
+      fresh_axis_name, eval_context
 
   class TraceStack:
     upward: List[MainTrace]
@@ -1660,6 +1659,10 @@ def omnistaging_disabler() -> None:
       yield
     finally:
       trace_state.initial_style = prev
+
+  def fresh_axis_name(internal=False):
+    import uuid
+    return str(uuid.uuid4())
 
 # Casting float0 array to a float-valued zero array.
 def zeros_like_float0(array, dtype=None):

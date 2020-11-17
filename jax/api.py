@@ -1154,7 +1154,7 @@ def vmap(fun: Callable[..., T], in_axes=0, out_axes=0, axis_name=None) -> Callab
     docstr += "\n\nOriginal documentation:\n\n"
     docstr += fun.__doc__
 
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core.fresh_axis_name() if axis_name is None else axis_name
 
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -1444,7 +1444,7 @@ def pmap(fun: Callable[..., T],
   # the given value.
 
   _check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core.fresh_axis_name() if axis_name is None else axis_name
   static_broadcasted_tuple = _ensure_tuple(static_broadcasted_argnums)
   donate_tuple = rebase_donate_argnums(_ensure_tuple(donate_argnums),
                                        static_broadcasted_tuple)
@@ -1495,7 +1495,7 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
     raise NotImplementedError("soft_pmap requires omnistaging.")
   warn("soft_pmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core.fresh_axis_name() if axis_name is None else axis_name
 
   if any(axis != 0 for axis in tree_leaves(in_axes)):
     raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")

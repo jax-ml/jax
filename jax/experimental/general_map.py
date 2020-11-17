@@ -244,7 +244,7 @@ def gmap(fun: Callable, schedule, axis_name = None) -> Callable:
   warn("gmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
   binds_axis_name = axis_name is not None
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = core.fresh_axis_name() if axis_name is None else axis_name
 
   @wraps(fun)
   def f_gmapped(*args, **kwargs):

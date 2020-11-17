@@ -1720,7 +1720,7 @@ class APITest(jtu.JaxTestCase):
       assert python_should_be_executing
       return x
 
-    x = np.ones(1)
+    x = np.ones((1, 1))
 
     python_should_be_executing = True
     api.pmap(f)(x)
@@ -1731,6 +1731,16 @@ class APITest(jtu.JaxTestCase):
     api.pmap(f, 'i')(x)
     python_should_be_executing = False
     api.pmap(f, 'i')(x)
+
+    python_should_be_executing = True
+    api.vmap(api.pmap(f))(x)
+    python_should_be_executing = False
+    api.vmap(api.pmap(f))(x)
+
+    python_should_be_executing = True
+    api.jvp(api.pmap(f), (x,), (x,))
+    python_should_be_executing = False
+    api.jvp(api.pmap(f), (x,), (x,))
 
   def test_device_array_repr(self):
     rep = repr(jnp.ones(()) + 1.)
