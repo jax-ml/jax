@@ -2348,6 +2348,16 @@ class LazyConstantTest(jtu.JaxTestCase):
     make_const = lambda: lax.broadcast_in_dim(arr, (2, 1, 3), (0, 2))
     self._Check(make_const, expected)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_fn={}_indexdtype={}"
+       .format(jax_fn.__name__, np.dtype(index_dtype).name),
+       "index_dtype": index_dtype, "jax_fn": jax_fn}
+      for index_dtype in jtu.dtypes.all_inexact + jtu.dtypes.boolean
+      for jax_fn in [lax.argmin, lax.argmax]))
+  def testArgMinMaxIndexDtypeError(self, jax_fn, index_dtype):
+    with self.assertRaisesRegex(TypeError,
+                                "index_dtype must be an integer type"):
+      jax_fn(np.ones((2, 2)), axis=0, index_dtype=index_dtype)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
