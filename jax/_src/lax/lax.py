@@ -4903,6 +4903,9 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
   return tuple(np.delete(operand.shape, axis))
 
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
+  if not dtypes.issubdtype(index_dtype, np.integer):
+    raise TypeError("index_dtype must be an integer type, but got {}"
+                    .format(np.dtype(index_dtype).name))
   return index_dtype
 
 def _argminmax_translation_rule(value_comparator, identity,
