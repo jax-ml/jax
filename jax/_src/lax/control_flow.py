@@ -1934,13 +1934,13 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   prepended to details of the mismatch in TypeError.
   """
   if tree1 != tree2:
-    msg = ("{} must have same type structure, got {} and {}.")
-    raise TypeError(msg.format(what, tree1, tree2))
-  if not all(safe_map(core.typematch, avals1, avals2)):
-    msg = ("{} must have identical types, "
-           "got\n{}\nand\n{}.")
-    raise TypeError(msg.format(what, tree_unflatten(tree1, avals1),
-                               tree_unflatten(tree2, avals2)))
+    raise TypeError(
+        f"{what} must have same type structure, got {tree1} and {tree2}.")
+  if not all(_map(core.typematch, avals1, avals2)):
+    raise TypeError(
+        f"{what} must have identical types, got\n"
+        f"{tree_unflatten(tree1, avals1)}\nand\n"
+        f"{tree_unflatten(tree2, avals2)}.")
 
 
 def _check_tree(func_name, expected_name, actual_tree, expected_tree):
