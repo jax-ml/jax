@@ -1405,8 +1405,12 @@ tf_impl[lax.reduce_and_p] = axes_to_axis(tf.reduce_all)
 
 def _argminmax(fn, operand, axes, index_dtype):
   axis, = axes
+  output_type = tf.int32
+  if dtypes.iinfo(index_dtype).bits > 32:
+    output_type = tf.int64
   # TODO(phawkins): handle axes larger than 2^31.
-  return fn(operand, axis=axis, output_type=to_tf_dtype(index_dtype))
+  result = fn(operand, axis=axis, output_type=output_type)
+  return tf.cast(result, to_tf_dtype(index_dtype))
 
 tf_impl[lax.argmin_p] = functools.partial(_argminmax, tf.math.argmin)
 tf_impl[lax.argmax_p] = functools.partial(_argminmax, tf.math.argmax)
