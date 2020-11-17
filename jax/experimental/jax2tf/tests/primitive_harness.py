@@ -1181,6 +1181,38 @@ random_split = tuple(
                                np.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=np.uint32)])
 )
 
+def _make_clamp_harness(name, *, min_shape=(), operand_shape=(2, 3),
+                        max_shape=(), dtype=np.float32, min_max=None):
+  min_arr, max_arr = (min_max if min_max is not None else
+                      [RandArg(min_shape, dtype), RandArg(max_shape, dtype)])
+  return Harness(f"{name}_min={jtu.format_shape_dtype_string(min_arr.shape, min_arr.dtype)}_operand={jtu.format_shape_dtype_string(operand_shape, dtype)}_max={jtu.format_shape_dtype_string(max_arr.shape, max_arr.dtype)}",
+                 lax.clamp,
+                 [min_arr, RandArg(operand_shape, dtype), max_arr],
+                 min_shape=min_arr.shape,
+                 operand_shape=operand_shape,
+                 max_shape=max_arr.shape,
+                 dtype=dtype)
+
+lax_clamp = tuple( # Validate dtypes
+  _make_clamp_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.complex + [np.bool_])
+) + tuple( # Validate broadcasting of min/max arrays
+  _make_clamp_harness("broadcasting", min_shape=min_shape, max_shape=max_shape,
+                      operand_shape=operand_shape)
+  for min_shape, operand_shape, max_shape in [
+    ((), (2, 3), (2, 3)),     # no broadcasting for max
+    ((2, 3), (2, 3), ()),     # no broadcasting for min
+    ((2, 3), (2, 3), (2, 3)), # no broadcasting
+  ]
+) + tuple( # Validate clamping when minval > maxval, and when minval < maxval
+  _make_clamp_harness(f"order={is_ordered}", min_max=(min_arr, max_arr),
+                      dtype=np.float32)
+  for is_ordered, min_arr, max_arr in [
+    (False, np.array(4., dtype=np.float32), np.array(1., dtype=np.float32)),
+    (True, np.array(1., dtype=np.float32), np.array(4., dtype=np.float32))
+  ]
+)
+
 def _make_dot_general_harness(
     name, *, lhs_shape=(3, 4), rhs_shape=(4, 2), dtype=np.float32,
     precision=None, dimension_numbers=(((1,), (0,)), ((), ()))):

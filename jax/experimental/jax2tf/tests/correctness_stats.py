@@ -23,8 +23,6 @@ from jax import core
 from jax import dtypes
 from jax import lax
 from jax.experimental.jax2tf.jax2tf import tf_not_yet_impl, tf_impl
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
 from jax.interpreters import xla
 
 def to_jax_dtype(tf_dtype):
@@ -218,6 +216,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype in [np.uint32, np.uint64]:
       tf_unimpl(np_dtype)
 
+  if prim is lax.clamp_p:
+    if np_dtype in [np.int8, np.uint16, np.uint32, np.uint64]:
+      tf_unimpl(np_dtype)
+
   # Testing with matmul (TODO: comment out and test without matmul)
   if prim is lax.dot_general_p:
     np_dtype = _to_np_dtype(args[0].dtype)
@@ -327,7 +329,7 @@ def prettify_not_yet_covered(covered_set: Set[core.Primitive]) -> str:
   Builds an ordered summary markdown list of all the primitives that are
   implemented but not in the set passed as an argument.
   """
-  ignore = set([xla.xla_call_p, pxla.xla_pmap_p, pe.remat_call_p, core.call_p])
+  ignore = set(xla.call_translations)
   not_yet_covered = (
     set(filter(lambda prim: not prim in ignore, set(tf_impl) - covered_set)))
 
