@@ -1674,8 +1674,10 @@ def array_split(ary, indices_or_sections, axis=0):
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
 @_wraps(np.clip)
-def clip(a, a_min=None, a_max=None):
+def clip(a, a_min=None, a_max=None, out=None):
   _check_arraylike("clip", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.clip is not supported.")
   if a_min is None and a_max is None:
     raise ValueError("At most one of a_min and a_max may be None")
   if a_min is not None:
@@ -1699,8 +1701,10 @@ def _round_to_nearest_even(x):
     lax.add(round_val, one), round_val)
 
 @_wraps(np.round, update_doc=False)
-def round(a, decimals=0):
+def round(a, decimals=0, out=None):
   _check_arraylike("round", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.round is not supported.")
   dtype = _dtype(a)
   if issubdtype(dtype, integer):
     if decimals < 0:
@@ -1732,7 +1736,7 @@ around = round
 def fix(x, out=None):
   _check_arraylike("fix", x)
   if out is not None:
-    raise ValueError("fix does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.fix is not supported.")
   zero = lax._const(x, 0)
   return where(lax.ge(x, zero), floor(x), ceil(x))
 
@@ -1741,7 +1745,7 @@ def fix(x, out=None):
 def modf(x, out=None):
   _check_arraylike("modf", x)
   if out is not None:
-    raise ValueError("modf does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.modf is not supported.")
   whole = fix(x)
   return x - whole, whole
 
@@ -1771,7 +1775,9 @@ def isinf(x):
   else:
     return full_like(x, False, dtype=bool_)
 
-def _isposneginf(infinity, x):
+def _isposneginf(infinity, x, out):
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = _dtype(x)
   if issubdtype(dtype, floating):
     return lax.eq(x, _constant_like(x, infinity))
@@ -1780,9 +1786,9 @@ def _isposneginf(infinity, x):
   else:
     return full_like(x, False, dtype=bool_)
 
-isposinf = _wraps(np.isposinf)(lambda x: _isposneginf(inf, x))
+isposinf = _wraps(np.isposinf)(lambda x, out=None: _isposneginf(inf, x, out))
 
-isneginf = _wraps(np.isneginf)(lambda x: _isposneginf(-inf, x))
+isneginf = _wraps(np.isneginf)(lambda x, out=None: _isposneginf(-inf, x, out))
 
 @_wraps(np.isnan)
 def isnan(x):
@@ -1818,7 +1824,7 @@ def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
   @_wraps(np_fun)
   def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     if out is not None:
-      raise ValueError("reduction does not support the `out` argument.")
+      raise NotImplementedError("The 'out' argument to jnp.reduction is not supported.")
     _check_arraylike(name, a)
     lax._check_user_dtype_supported(dtype, name)
     axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
@@ -1880,7 +1886,7 @@ def mean(a, axis=None, dtype=None, out=None, keepdims=False):
   _check_arraylike("mean", a)
   lax._check_user_dtype_supported(dtype, "mean")
   if out is not None:
-    raise ValueError("mean does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
 
   if axis is None:
     normalizer = size(a)
@@ -1951,7 +1957,7 @@ def var(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("var", a)
   lax._check_user_dtype_supported(dtype, "var")
   if out is not None:
-    raise ValueError("var does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
   a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = mean(a, axis, dtype=a_dtype, keepdims=True)
@@ -1997,7 +2003,7 @@ def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("std", a)
   lax._check_user_dtype_supported(dtype, "std")
   if out is not None:
-    raise ValueError("std does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
   return sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
@@ -2005,7 +2011,7 @@ def std(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
 def ptp(a, axis=None, out=None, keepdims=False):
   _check_arraylike("ptp", a)
   if out is not None:
-    raise ValueError("ptp does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.ptp is not supported.")
   x = amax(a, axis=axis, keepdims=keepdims)
   y = amin(a, axis=axis, keepdims=keepdims)
   return lax.sub(x, y)
@@ -2070,7 +2076,7 @@ def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
   _check_arraylike("nanmean", a)
   lax._check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
-    raise ValueError("nanmean does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
   if issubdtype(_dtype(a), bool_) or issubdtype(_dtype(a), integer):
     return mean(a, axis, dtype, out, keepdims)
   if dtype is None:
@@ -2087,7 +2093,7 @@ def nanvar(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("nanvar", a)
   lax._check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
-    raise ValueError("nanvar does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
   a_dtype, dtype = _var_promote_types(_dtype(a), dtype)
   a_mean = nanmean(a, axis, dtype=a_dtype, keepdims=True)
@@ -2117,7 +2123,7 @@ def nanstd(a, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
   _check_arraylike("nanstd", a)
   lax._check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
-    raise ValueError("nanstd does not support the `out` argument.")
+    raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
   return sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims))
 
 
@@ -2147,8 +2153,11 @@ def _make_cumulative_reduction(np_reduction, reduction, fill_nan=False, fill_val
     return reduction(a, axis)
 
   @_wraps(np_reduction)
-  def cumulative_reduction(a, axis=None, dtype=None):
+  def cumulative_reduction(a, axis=None, dtype=None, out=None):
     _check_arraylike(np_reduction.__name__, a)
+    if out is not None:
+      raise NotImplementedError(f"The 'out' argument to jnp.{np_reduction.__name__} "
+                                f"is not supported.")
     lax._check_user_dtype_supported(dtype, np_reduction.__name__)
     # jit doesn't support kwargs as static_args.
     return _cumulative_reduction(a, axis, dtype)
@@ -2336,9 +2345,11 @@ def pad(array, pad_width, mode="constant", constant_values=0):
 
 
 @_wraps(np.stack)
-def stack(arrays, axis=0):
+def stack(arrays, axis=0, out=None):
   if not len(arrays):
     raise ValueError("Need at least one array to stack.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.stack is not supported.")
   _check_arraylike("stack", *arrays)
   shape0 = shape(arrays[0])
   axis = _canonicalize_axis(axis, len(shape0) + 1)
@@ -2417,7 +2428,7 @@ def column_stack(tup):
 @_wraps(np.choose)
 def choose(a, choices, out=None, mode='raise'):
   if out is not None:
-    raise NotImplementedError("out argument to jnp.choose()")
+    raise NotImplementedError("The 'out' argument to jnp.choose is not supported.")
   _check_arraylike('choose', a, *choices)
   if not issubdtype(_dtype(a), integer):
     raise ValueError("`a` array must be integer typed")
@@ -2957,8 +2968,8 @@ def triu(m, k=0):
 @_wraps(np.trace)
 def trace(a, offset=0, axis1=0, axis2=1, dtype=None, out=None):
   _check_arraylike("trace", a)
-  if out:
-    raise NotImplementedError("The 'out' argument to trace is not supported.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
   lax._check_user_dtype_supported(dtype, "trace")
 
   axis1 = _canonicalize_axis(axis1, ndim(a))
@@ -3318,7 +3329,9 @@ def tensordot(a, b, axes=2, *, precision=None):
 
 
 @_wraps(np.einsum, lax_description=_PRECISION_DOC)
-def einsum(*operands, optimize='greedy', precision=None):
+def einsum(*operands, out=None, optimize='greedy', precision=None):
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
   optimize = 'greedy' if optimize is True else optimize
   # using einsum_call=True here is an internal api for opt_einsum
   operands, contractions = opt_einsum.contract_path(
@@ -3478,8 +3491,8 @@ def inner(a, b, *, precision=None):
 
 @_wraps(np.outer)
 def outer(a, b, out=None):
-  if out:
-    raise NotImplementedError("The 'out' argument to outer is not supported.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
   a, b = _promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)[None, :]
 
@@ -3554,8 +3567,10 @@ def argwhere(a):
 
 
 @_wraps(np.argmax)
-def argmax(a, axis=None):
+def argmax(a, axis=None, out=None):
   _check_arraylike("argmax", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.argmax is not supported.")
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -3564,8 +3579,10 @@ def argmax(a, axis=None):
   return lax.argmax(a, _canonicalize_axis(axis, a.ndim), int64)
 
 @_wraps(np.argmin)
-def argmin(a, axis=None):
+def argmin(a, axis=None, out=None):
   _check_arraylike("argmin", a)
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.argmin is not supported.")
   if axis is None:
     a = ravel(a)
     axis = 0
@@ -3746,8 +3763,8 @@ def unpackbits(a, axis=None, count=None, bitorder='big'):
 
 @_wraps(np.take)
 def take(a, indices, axis=None, out=None, mode=None):
-  if out:
-    raise NotImplementedError("The 'out' argument to np.take is not supported.")
+  if out is not None:
+    raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
 
   a = asarray(a)
   indices = asarray(indices)
@@ -3759,7 +3776,7 @@ def take(a, indices, axis=None, out=None, mode=None):
 
   if mode == "raise":
     # TODO(phawkins): we have no way to report out of bounds errors yet.
-    raise NotImplementedError("The 'raise' mode to np.take is not supported.")
+    raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
   elif mode == "wrap":
     indices = mod(indices, _constant_like(indices, a.shape[axis]))
   elif mode != "clip" and mode is not None:
@@ -4414,7 +4431,7 @@ def extract(condition, arr):
 @_wraps(np.compress)
 def compress(condition, a, axis=None, out=None):
   if out is not None:
-    raise NotImplementedError("out argument is not supported.")
+    raise NotImplementedError("The 'out' argument to jnp.compress is not supported.")
   if ndim(condition) != 1:
     raise ValueError("condition must be a 1D array")
   condition = array(condition).astype(bool)
