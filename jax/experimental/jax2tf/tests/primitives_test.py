@@ -574,6 +574,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_bitwise_not(self, harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_zeros_like)
+  def test_zeros_like(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_population_count)
   def test_population_count(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
@@ -876,11 +880,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.random_split)
   def test_random_split(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-
-  def test_zeros_like(self):
-    v = np.float32(2.)
-    f_jax = jax.ad_util.zeros_like_jaxval
-    self.ConvertAndCompare(f_jax, v)
 
   def test_stop_gradient(self):
     f = jax2tf.convert(lax.stop_gradient)

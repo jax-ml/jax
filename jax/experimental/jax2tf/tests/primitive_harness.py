@@ -26,6 +26,7 @@ from absl import testing
 import jax
 from jax import config
 from jax import dtypes
+from jax import ad_util
 from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
@@ -224,6 +225,16 @@ lax_bitwise_not = tuple(
   for arg in [
     np.array([True, False])
   ]]
+)
+
+lax_zeros_like = tuple(
+  Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
+          ad_util.zeros_like_p.bind,
+          [RandArg(shape, dtype)],
+          shape=shape,
+          dtype=dtype)
+  for shape in [(3, 4, 5)]
+  for dtype in jtu.dtypes.all
 )
 
 lax_population_count = tuple(
