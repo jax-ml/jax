@@ -1284,6 +1284,32 @@ lax_dot_general = tuple( # Validate dtypes and precision
   ]
 )
 
+def _make_concatenate_harness(name, *, shapes=[(2, 3), (2, 3)], dimension=0,
+                              dtype=np.float32):
+  shapes_str = '_'.join(jtu.format_shape_dtype_string(s, dtype) for s in shapes)
+  return Harness(f"{name}_shapes={shapes_str}_dimension={dimension}",
+                 lambda *args: lax.concatenate_p.bind(*args,
+                                                      dimension=dimension),
+                 [RandArg(shape, dtype) for shape in shapes],
+                 shapes=shapes,
+                 dtype=dtype,
+                 dimension=dimension)
+
+lax_concatenate = tuple( # Validate dtypes
+  _make_concatenate_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate dimension
+  _make_concatenate_harness("dimension", dimension=dimension)
+  for dimension in [
+    1, # non-major axis
+  ]
+) + tuple( # Validate > 2 operands
+  _make_concatenate_harness("nb_operands", shapes=shapes)
+  for shapes in [
+    [(2, 3, 4), (3, 3, 4), (4, 3, 4)], # 3 operands
+  ]
+)
+
 def _make_conv_harness(name, *, lhs_shape=(2, 3, 9, 10), rhs_shape=(3, 3, 4, 5),
                        dtype=np.float32, window_strides=(1, 1), precision=None,
                        padding=((0, 0), (0, 0)), lhs_dilation=(1, 1),

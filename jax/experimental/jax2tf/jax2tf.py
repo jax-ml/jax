@@ -1080,7 +1080,7 @@ def _clamp(minval, operand, maxval):
 tf_impl[lax.clamp_p] = _clamp
 
 
-def _concatenate(*operands, dimension=None):
+def _concatenate(*operands, dimension):
   return tf.concat(operands, axis=dimension)
 tf_impl[lax.concatenate_p] = _concatenate
 
