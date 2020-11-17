@@ -156,7 +156,7 @@ def eval_lexpr(lexpr, x):
   Returns:
     An ndarray representing the value of the lazy expression.
   """
-  if is_trivial(lexpr):
+  if lexpr is None or is_trivial(lexpr):
     return x
 
   input_, shape, dims = lexpr
@@ -205,7 +205,7 @@ def stage_lexpr(c, lexpr: Optional[LazyExpr], x):
   Returns:
     An XlaOp representing the value of the lazy expression.
   """
-  if is_trivial(lexpr):
+  if lexpr is None or is_trivial(lexpr):
     return x
 
   input_, shape, dims = lexpr
