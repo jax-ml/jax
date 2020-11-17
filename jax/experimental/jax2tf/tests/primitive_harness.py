@@ -519,6 +519,26 @@ lax_pad = tuple(
   ]
 )
 
+def _make_select_harness(name, *, shape_pred=(2, 3), shape_args=(2, 3),
+                         dtype=np.float32):
+  return Harness(f"{name}_shapepred={jtu.format_shape_dtype_string(shape_pred, np.bool_)}_shapeargs={jtu.format_shape_dtype_string(shape_args, dtype)}",
+                 lax.select,
+                 [RandArg(shape_pred, np.bool_), RandArg(shape_args, dtype),
+                  RandArg(shape_args, dtype)],
+                 shape_pred=shape_pred,
+                 shape_args=shape_args,
+                 dtype=dtype)
+
+lax_select = tuple( # Validate dtypes
+  _make_select_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate shapes
+  _make_select_harness("shapes", shape_pred=shape_pred, shape_args=shape_args)
+  for shape_pred, shape_args in [
+    ((), (18,)), # scalar pred
+  ]
+)
+
 def _make_cumreduce_harness(name, *, f_jax=lax_control_flow.cummin,
                             shape=(8, 9), dtype=np.float32,
                             axis=0, reverse=False):
