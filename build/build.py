@@ -71,19 +71,24 @@ def check_python_version(python_version):
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/2.0.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/3.1.0/"
 BazelPackage = collections.namedtuple("BazelPackage", ["file", "sha256"])
 bazel_packages = {
     "Linux":
         BazelPackage(
-            file="bazel-2.0.0-linux-x86_64",
+            file="bazel-3.1.0-linux-x86_64",
             sha256=
-            "4df79462c6c3ecdeeee7af99fc269b52ab1aa4828ef3bc359c1837d3fafeeee7"),
+            "753434f4fa730266cf5ce21d1fdd425e1e167dd9347ad3e8adc19e8c0d54edca"),
     "Darwin":
         BazelPackage(
-            file="bazel-2.0.0-darwin-x86_64",
+            file="bazel-3.1.0-darwin-x86_64",
             sha256=
-            "3eca4c96cfda97a9d5f8d3d0dec4155a5cc5ff339b10d3f35213c398bf13881e"),
+            "b7c5b07026eb653d431b7f15c569ecfc36a5f79427e66b5a55cab7ee885927ab"),
+    "Windows":
+        BazelPackage(
+            file="bazel-3.1.0-windows-x86_64.exe",
+            sha256=
+            "776db1f4986dacc3eda143932f00f7529f9ee65c7c1c004414c44aaa6419d0e9"),
 }
 
 
@@ -131,7 +136,7 @@ def download_and_verify_bazel():
     os.chmod(package.file,
              st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-  return "./" + package.file
+  return os.path.join(".", package.file)
 
 
 def get_bazel_path(bazel_path_flag):
