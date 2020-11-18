@@ -1404,8 +1404,8 @@ tf_impl[lax.rev_p] = _rev
 
 tf_impl[lax.select_p] = tf.where
 
-def _transpose(operand, permutation):
-  return tf.transpose(operand, permutation)
+def _transpose(operand, *, permutation):
+  return tf.transpose(operand, perm=permutation)
 tf_impl[lax.transpose_p] = _transpose
 
 axes_to_axis = lambda func: lambda operand, axes: func(operand, axis=axes)

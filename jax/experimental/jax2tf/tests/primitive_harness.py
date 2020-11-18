@@ -617,6 +617,26 @@ lax_select = tuple( # Validate dtypes
   ]
 )
 
+def _make_transpose_harness(name, *, shape=(2, 3), permutation=(1, 0),
+                            dtype=np.float32):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_permutation={permutation}".replace(' ', ''),
+                 lambda x: lax.transpose_p.bind(x, permutation=permutation),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 permutation=permutation)
+
+lax_transpose = tuple( # Validate dtypes
+  _make_transpose_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate permutations
+  _make_transpose_harness("permutations", shape=shape, permutation=permutation)
+  for shape, permutation in [
+    ((2, 3, 4), (0, 1, 2)), # identity
+    ((2, 3, 4), (1, 2, 0)), # transposition
+  ]
+)
+
 def _make_cumreduce_harness(name, *, f_jax=lax_control_flow.cummin,
                             shape=(8, 9), dtype=np.float32,
                             axis=0, reverse=False):

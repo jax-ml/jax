@@ -115,6 +115,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   def test_select(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
 
+  @primitive_harness.parameterized(primitive_harness.lax_transpose)
+  def test_transpose(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.lax_control_flow_cumreduce)
   def test_cumreduce(self, harness: primitive_harness.Harness):
     f_jax, dtype = harness.params["f_jax"], harness.params["dtype"]
