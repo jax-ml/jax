@@ -1999,7 +1999,7 @@ def _var_promote_types(a_dtype, dtype):
     a_dtype = promote_types(a_dtype, dtype)
   else:
     if not issubdtype(a_dtype, inexact):
-      dtype = a_dtype = float_
+      dtype = a_dtype = dtypes.canonicalize_dtype(float_)
     else:
       dtype = _complex_elem_type(a_dtype)
       a_dtype = promote_types(a_dtype, float32)
