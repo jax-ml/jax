@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import os
 import re
 import traceback
 import unittest
 
 from absl.testing import absltest
 
+import jax
 from jax import grad, jit, vmap
 import jax.numpy as jnp
 from jax import test_util as jtu
 from jax._src import traceback_util
+from jax._src import source_info_util
 
 
 from jax.config import config
@@ -144,6 +146,13 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     self.assertIsInstance(e.__cause__, ValueError)
     self.assertIsInstance(e.__cause__.__cause__,
                           traceback_util.FilteredStackTrace)
+
+
+class SourceInfoTest(jtu.JaxTestCase):
+
+  def testJaxPathMatchesSourceInfoPath(self):
+    self.assertEqual(source_info_util._jax_path, os.path.dirname(jax.__file__))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
