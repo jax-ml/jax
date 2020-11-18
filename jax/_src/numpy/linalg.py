@@ -20,13 +20,12 @@ import textwrap
 import operator
 from typing import Tuple, Union, cast
 
-from jax import jit, vmap, custom_jvp
+from jax import jit, custom_jvp
 from jax import lax
 from jax import ops
 from jax._src.lax import linalg as lax_linalg
 from jax import dtypes
 from .util import _wraps
-from .vectorize import vectorize
 from . import lax_numpy as jnp
 from jax.util import canonicalize_axis
 
@@ -441,39 +440,11 @@ def qr(a, mode="reduced"):
   return q, r
 
 
-def _check_solve_shapes(a, b):
-  if not (a.ndim >= 2 and a.shape[-1] == a.shape[-2] and b.ndim >= 1):
-    msg = ("The arguments to solve must have shapes a=[..., m, m] and "
-           "b=[..., m, k] or b=[..., m]; got a={} and b={}")
-    raise ValueError(msg.format(a.shape, b.shape))
-
-
-@partial(vectorize, signature='(n,m),(m)->(n)')
-def _matvec_multiply(a, b):
-  return jnp.dot(a, b, precision=lax.Precision.HIGHEST)
-
-
 @_wraps(np.linalg.solve)
 @jit
 def solve(a, b):
   a, b = _promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
-  _check_solve_shapes(a, b)
-
-  # With custom_linear_solve, we can reuse the same factorization when
-  # computing sensitivities. This is considerably faster.
-  lu, _, permutation = lax_linalg.lu(lax.stop_gradient(a))
-  custom_solve = partial(
-      lax.custom_linear_solve,
-      lambda x: _matvec_multiply(a, x),
-      solve=lambda _, x: lax_linalg.lu_solve(lu, permutation, x, trans=0),
-      transpose_solve=lambda _, x: lax_linalg.lu_solve(lu, permutation, x,
-                                                       trans=1))
-  if a.ndim == b.ndim + 1:
-    # b.shape == [..., m]
-    return custom_solve(b)
-  else:
-    # b.shape == [..., m, k]
-    return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
+  return lax_linalg._solve(a, b)
 
 
 @_wraps(np.linalg.lstsq, lax_description=textwrap.dedent("""\

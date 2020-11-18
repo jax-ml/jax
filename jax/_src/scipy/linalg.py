@@ -46,7 +46,7 @@ def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
 @partial(jit, static_argnums=(2,))
 def _cho_solve(c, b, lower):
   c, b = np_linalg._promote_arg_dtypes(jnp.asarray(c), jnp.asarray(b))
-  np_linalg._check_solve_shapes(c, b)
+  lax_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
@@ -168,14 +168,14 @@ def _solve(a, b, sym_pos, lower):
     return np_linalg.solve(a, b)
 
   a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
-  np_linalg._check_solve_shapes(a, b)
+  lax_linalg._check_solve_shapes(a, b)
 
   # With custom_linear_solve, we can reuse the same factorization when
   # computing sensitivities. This is considerably faster.
   factors = cho_factor(lax.stop_gradient(a), lower=lower)
   custom_solve = partial(
       lax.custom_linear_solve,
-      lambda x: np_linalg._matvec_multiply(a, x),
+      lambda x: lax_linalg._matvec_multiply(a, x),
       solve=lambda _, x: cho_solve(factors, x),
       symmetric=True)
   if a.ndim == b.ndim + 1:

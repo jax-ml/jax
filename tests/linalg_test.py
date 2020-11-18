@@ -272,6 +272,30 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
+       "shape": shape, "dtype": dtype, "rng_factory": rng_factory
+       }
+      for shape in [(4, 4), (5, 5), (8, 8), (7, 6, 6)]
+      for dtype in float_types + complex_types
+      for rng_factory in [jtu.rand_default]))
+  # TODO(phawkins): enable when there is an eigendecomposition implementation
+  # for GPU/TPU.
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testEigvalsGrad(self, shape, dtype, rng_factory):
+    # This test sometimes fails for large matrices. I (@j-towns) suspect, but
+    # haven't checked, that might be because of perturbations causing the
+    # ordering of eigenvalues to change, which will trip up check_grads. So we
+    # just test on small-ish matrices.
+    rng = rng_factory(self.rng())
+    jtu.skip_if_unsupported_type(dtype)
+    args_maker = lambda: [rng(shape, dtype)]
+    a, = args_maker()
+    tol = 1e-4 if dtype in (np.float64, np.complex128) else 1e-1
+    jtu.check_grads(lambda x: jnp.linalg.eigvals(x), (a,), order=1,
+                    modes=['fwd', 'rev'], rtol=tol, atol=tol)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_shape={}".format(
+           jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
       for shape in [(4, 4), (5, 5), (50, 50)]
       for dtype in float_types + complex_types
