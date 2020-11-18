@@ -999,10 +999,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertAllClose(ans, expected, check_dtypes=False)
       jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
-  def testSwitchGradWithWeakTypeMismatch(self):  # issue 4696
+  def testSwitchGradWithWeakTypeMismatch(self):  # issue #4696, PR #4896
+    dtype = jnp.ones(1).dtype
+    dtype = jnp.float32 if dtype == jnp.float32 else jnp.float64
+
     branches = [
-        lambda x: x,           # This preserves the weak type of x.
-        lambda x: jnp.cos(x),  # This strips the weak type of x.
+        lambda x: x,             # This preserves the weak type of x.
+        lambda x: x + dtype(1),  # This strips the weak type of x.
     ]
 
     def f_ref(x):
