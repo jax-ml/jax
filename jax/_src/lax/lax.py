@@ -63,13 +63,21 @@ DType = Any
 Shape = Sequence[int]
 
 def _try_broadcast_shapes(shapes):
-  for sizes in zip(*shapes):
-    sizes = [d for d in sizes if d != 1]
-    if sizes[:-1] != sizes[1:]:
-      break
-  else:
-    return tuple(next((d for d in sizes if d != 1), 1)
-                  for sizes in zip(*shapes))
+  assert shapes
+  if len(shapes) == 1: return shapes[0]
+  rank, *others = {len(shape) for shape in shapes}
+  if others: return None  # must have consistent rank
+  if not rank: return ()  # scalar case
+  result_shape = [None] * rank
+  for i, sizes in enumerate(zip(*shapes)):
+    if sizes[:-1] == sizes[1:]:
+      result_shape[i] = sizes[0]  # all equal sizes for this dimension
+    else:
+      sizes = [d for d in sizes if d != 1]
+      if sizes[:-1] != sizes[1:]:
+        return None  # must have equal sizes other than 1-sized axes
+      result_shape[i] = sizes[0] if sizes else 1
+  return tuple(result_shape)
 
 @cache()
 def broadcast_shapes(*shapes):
@@ -738,14 +746,9 @@ def slice(operand: Array, start_indices: Sequence[int],
   <https://www.tensorflow.org/xla/operation_semantics#slice>`_
   operator.
   """
-  if (np.all(np.equal(start_indices, 0))
-      and np.all(np.equal(limit_indices, operand.shape))
-      and strides is None):
-    return operand
-  else:
-    return slice_p.bind(operand, start_indices=tuple(start_indices),
-                        limit_indices=tuple(limit_indices),
-                        strides=None if strides is None else tuple(strides))
+  return slice_p.bind(operand, start_indices=tuple(start_indices),
+                      limit_indices=tuple(limit_indices),
+                      strides=None if strides is None else tuple(strides))
 
 def dynamic_slice(operand: Array, start_indices: Sequence[Array],
                   slice_sizes: Shape) -> Array:
@@ -2010,8 +2013,8 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
 
 
 def _broadcasting_shape_rule(name, *avals):
-  shapes = np.array([aval.shape for aval in avals if aval.shape])
-  if not shapes.size:
+  shapes = [aval.shape for aval in avals if aval.shape]
+  if not shapes:
     return ()
   if len({len(shape) for shape in shapes}) != 1:
     msg = '{} got arrays of different rank: {}.'
@@ -3134,8 +3137,8 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
     msg = ('broadcast_in_dim broadcast_dimensions must be a subset of output '
            'dimensions, got {} for operand ndim {} and shape {}.')
     raise TypeError(msg.format(broadcast_dimensions, operand_ndim, shape))
-  if any(operand.shape[i] != 1 and operand.shape[i] != shape[broadcast_dimensions[i]]
-         for i in range(operand_ndim)):
+  if any(operand.shape[i] != shape[broadcast_dimensions[i]] and
+         operand.shape[i] != 1 for i in range(operand_ndim)):
     msg = (
         "broadcast_in_dim operand dimension sizes must either be 1, or be "
         "equal to their corresponding dimensions in the target broadcast "
@@ -3208,13 +3211,16 @@ def _concatenate_shape_rule(*operands, **kwargs):
   if len({operand.ndim for operand in operands}) != 1:
     msg = "Cannot concatenate arrays with different ranks, got {}."
     raise TypeError(msg.format(", ".join(str(o.ndim) for o in operands)))
-  shapes = np.array([operand.shape for operand in operands])
-  if not 0 <= dimension < shapes.shape[1]:
+  if not 0 <= dimension < operands[0].ndim:
     msg = "concatenate dimension out of bounds: dimension {} for shapes {}."
-    raise TypeError(msg.format(dimension, ", ".join(map(str, shapes))))
-  if not np.all(np.delete(shapes[0] == shapes, dimension, axis=1)):
+    raise TypeError(msg.format(dimension, ", ".join([str(o.shape) for o in operands])))
+  shapes = [operand.shape[:dimension] + operand.shape[dimension+1:]
+            for operand in operands]
+  if not shapes[:-1] == shapes[1:]:
     msg = ("Cannot concatenate arrays with shapes that differ in dimensions "
-           "other than the one being concatenated: dimension {} for shapes {}.")
+           "other than the one being concatenated: concatenating along "
+           "dimension {} for shapes {}.")
+    shapes = [operand.shape for operand in operands]
     raise TypeError(msg.format(dimension, ", ".join(map(str, shapes))))
 
   concat_size = sum(o.shape[dimension] for o in operands)

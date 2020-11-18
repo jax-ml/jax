@@ -1658,6 +1658,7 @@ def _split(op, ary, indices_or_sections, axis=0):
                                       + ((r + 1) * (part_size + 1) - 1)])
     else:
       raise ValueError("array split does not result in an equal division")
+  split_indices = split_indices.astype(int)
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))

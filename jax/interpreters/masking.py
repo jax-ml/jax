@@ -18,7 +18,7 @@ from functools import partial, reduce
 from itertools import chain, product
 import operator as op
 import string
-from typing import Callable, Dict, Sequence, Union, Tuple
+from typing import Callable, Dict, Optional, Sequence, Union, Tuple
 
 import numpy as np
 
@@ -118,8 +118,27 @@ def _polys_to_ints(shape):
 def is_polymorphic(shape: Sequence['Size']):
   return any(map(lambda d: type(d) is Poly, shape))
 
+class UndefinedPoly(Exception):
+  """Exception raised when an operation involving polynomials is not defined.
+
+  An operation `op` on polynomials `p1` and `p2` either raises this exception,
+  or produce a polynomial `res`, such that `op(Val(p1), Val(p2)) = Val(res)`,
+  for any `Val`, a non-negative integer valuation of the shape variables.
+  """
+  pass
+
 class Poly(dict):
-  """Polynomial with integer coefficients for polymorphic shapes."""
+  """Polynomial with integer coefficients for polymorphic shapes.
+
+  The shape variables are assumed to range over non-negative integers.
+
+  We overload integer operations, but we do that soundly, raising
+  :class:`UndefinedPoly` when the result is not representable as a polynomial.
+
+  The representation of a polynomial is as a dictionary mapping monomials to
+  integer coefficients. The special monomial `Mon()` is mapped to the
+  free integer coefficient of the polynomial.
+  """
 
   def __init__(self, coeffs: Dict['Mon', int]):
     # Makes sure Polynomials are always in canonical form
@@ -127,6 +146,9 @@ class Poly(dict):
               for mon, coeff in coeffs.items() if coeff != 0}
     coeffs = coeffs or {Mon(): 0}
     super().__init__(coeffs)
+
+  def __hash__(self):
+    return hash(tuple(sorted(self.items())))
 
   def __add__(self, other: 'Size') -> 'Poly':
     coeffs = self.copy()
@@ -175,14 +197,14 @@ class Poly(dict):
     divisor = _ensure_poly(divisor)
     dmon, dcount = divisor._leading_term
     dividend, quotient, remainder = self, _ensure_poly(0), _ensure_poly(0)
-    while dividend != 0:  # invariant: dividend == divisor*quotient + remainder
+    while not dividend.is_constant or dividend != 0:  # invariant: dividend == divisor*quotient + remainder
       mon, count = dividend._leading_term
       qcount, rcount = divmod(count, dcount)
       try:
         qmon = mon // dmon
-      except ValueError:
-        raise ValueError(f"Stride {divisor} must divide size {self} "
-                         f"(up to a constant for constant divisors).")
+      except UndefinedPoly:
+        raise UndefinedPoly(f"Stride {divisor} must divide size {self} "
+                            "(up to a constant for constant divisors).")
       r = Poly({mon: rcount})
       q = Poly({qmon: qcount})
       quotient += q
@@ -193,24 +215,26 @@ class Poly(dict):
   def __rdivmod__(self, dividend: 'Size') -> Tuple['Poly', int]:
     return divmod(_ensure_poly(dividend), self)  # type: ignore
 
-  def __hash__(self):
-    return hash(tuple(sorted(self.items())))
-
   def __eq__(self, other):
-    return super().__eq__(_ensure_poly(other))
+    lb, ub = (self - other).bounds()
+    if lb == ub == 0:
+      return True
+    if lb is not None and lb > 0:
+      return False
+    if ub is not None and ub < 0:
+      return False
+    raise UndefinedPoly(f"Polynomial comparison {self} == {other} is inconclusive")
 
   def __ne__(self, other):
     return not self == other
 
   def __ge__(self, other: 'Size'):
-    diff = self - other
-    if diff.is_constant: return int(diff) >= 0
-
-    # Assume nonconstant polynomials are positive, allows use in shape rules:
-    if _ensure_poly(other).is_constant and other <= 1: return True
-    elif self.is_constant and self <= 0: return False
-
-    raise ValueError(f"Polynomial comparison {self} >= {other} is inconclusive.")
+    lb, ub = (self - other).bounds()
+    if lb is not None and lb >= 0:
+      return True
+    if ub is not None and ub < 0:
+      return False
+    raise UndefinedPoly(f"Polynomial comparison {self} >= {other} is inconclusive")
 
   def __le__(self, other: 'Size'):
     return _ensure_poly(other) >= self
@@ -229,8 +253,21 @@ class Poly(dict):
     return str(self)
 
   def __int__(self):
-    assert self.is_constant, f"casting polynomial '{self}' to integer"
-    return op.index(next(iter(self.values())))
+    if self.is_constant:
+      return op.index(next(iter(self.values())))
+    else:
+      raise UndefinedPoly(f"Polynomial {self} is not constant")
+
+  def bounds(self) -> Tuple[Optional[int], Optional[int]]:
+    """Returns the lower and upper bounds, if defined."""
+    lb = ub = self.get(Mon(), 0)
+    for mon, coeff in self.items():
+      if mon.degree > 0:
+        if coeff > 0:
+          ub = None
+        else:
+          lb = None
+    return lb, ub
 
   def evaluate(self, env):
     prod = lambda xs: reduce(op.mul, xs) if xs else 1
@@ -269,7 +306,12 @@ def mul(coeff, mon):
 abstract_arrays._DIMENSION_TYPES.add(Poly)
 
 class Mon(dict):
-  """Represents a multivariate monomial, such as n^3 * m."""
+  # TODO: move this before Poly in the file
+  """Represents a multivariate monomial, such as n^3 * m.
+
+  The representation is a dictionary mapping var:exponent. The
+  exponent is >= 1.
+  """
   def __hash__(self):
     return hash(frozenset(self.items()))
 
@@ -278,6 +320,7 @@ class Mon(dict):
                     for key, exponent in sorted(self.items()))
 
   def __lt__(self, other: 'Mon'):
+    # TODO: do not override __lt__ for this
     """
     Comparison to another monomial in graded reverse lexicographic order.
     """
@@ -303,7 +346,7 @@ class Mon(dict):
     d = Counter(self)
     for key, exponent in divisor.items():
       diff = self.get(key, 0) - exponent
-      if diff < 0: raise ValueError(f"Cannot divide {self} by {divisor}.")
+      if diff < 0: raise UndefinedPoly(f"Cannot divide {self} by {divisor}.")
       elif diff == 0: del d[key]
       elif diff > 0: d[key] = diff
     return Mon(d)
