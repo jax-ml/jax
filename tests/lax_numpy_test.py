@@ -2232,23 +2232,47 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       jnp.ones((-1, 1))
 
+  @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_filldtype={}_outdtype={}".format(
+      {"testcase_name": "_inshape={}_filldtype={}_outdtype={}_outshape={}".format(
           jtu.format_shape_dtype_string(shape, in_dtype),
           np.dtype(fill_value_dtype).name,
-          np.dtype(out_dtype).name),
+          np.dtype(out_dtype).name,
+          out_shape),
        "shape": shape, "in_dtype": in_dtype,
        "fill_value_dtype": fill_value_dtype, "out_dtype": out_dtype,
-       "rng_factory": jtu.rand_default}
+       "out_shape": out_shape}
       for shape in array_shapes
+      for out_shape in [None] + array_shapes
       for in_dtype in default_dtypes
       for fill_value_dtype in default_dtypes
       for out_dtype in default_dtypes))
-  def testFullLike(self, shape, in_dtype, fill_value_dtype, out_dtype, rng_factory):
-    rng = rng_factory(self.rng())
-    np_fun = lambda x, fill_value: np.full_like(x, fill_value, dtype=out_dtype)
-    jnp_fun = lambda x, fill_value: jnp.full_like(x, fill_value, dtype=out_dtype)
+  def testFullLike(self, shape, in_dtype, fill_value_dtype, out_dtype, out_shape):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x, fill_value: np.full_like(x, fill_value, dtype=out_dtype, shape=out_shape)
+    jnp_fun = lambda x, fill_value: jnp.full_like(x, fill_value, dtype=out_dtype, shape=out_shape)
     args_maker = lambda: [rng(shape, in_dtype), rng((), fill_value_dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @unittest.skipIf(numpy_version < (1, 17), "shape parameter not supported in older numpy")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_inshape={}_func={}_outdtype={}_outshape={}".format(
+          jtu.format_shape_dtype_string(shape, in_dtype),
+          func, np.dtype(out_dtype).name, out_shape),
+       "shape": shape, "in_dtype": in_dtype,
+       "func": func, "out_dtype": out_dtype,
+       "out_shape": out_shape}
+      for shape in array_shapes
+      for out_shape in [None] + array_shapes
+      for in_dtype in default_dtypes
+      for func in ["ones_like", "zeros_like"]
+      for out_dtype in default_dtypes))
+  def testZerosOnesLike(self, shape, in_dtype, func, out_dtype, out_shape):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x: getattr(np, func)(x, dtype=out_dtype, shape=out_shape)
+    jnp_fun = lambda x: getattr(jnp, func)(x, dtype=out_dtype, shape=out_shape)
+    args_maker = lambda: [rng(shape, in_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4467,12 +4491,12 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'clip': ['kwargs'],
       'corrcoef': ['ddof', 'bias'],
       'diff': ['prepend', 'append'],
-      'empty_like': ['shape', 'subok', 'order'],
+      'empty_like': ['subok', 'order'],
       'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
       'eye': ['order'],
       'full': ['order'],
-      'full_like': ['shape', 'subok', 'order'],
+      'full_like': ['subok', 'order'],
       'gradient': ['varargs', 'axis', 'edge_order'],
       'histogram': ['normed'],
       'histogram2d': ['normed'],
@@ -4482,12 +4506,12 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'nanprod': ['dtype'],
       'nansum': ['dtype'],
       'ones': ['order'],
-      'ones_like': ['shape', 'subok', 'order'],
+      'ones_like': ['subok', 'order'],
       'pad': ['kwargs'],
       'prod': ['initial', 'where'],
       'product': ['initial', 'where'],
       'sum': ['initial', 'where'],
-      'zeros_like': ['shape', 'subok', 'order']
+      'zeros_like': ['subok', 'order']
     }
 
     extra_params = {

@@ -2580,17 +2580,21 @@ def asarray(a, dtype=None, order=None):
 
 
 @_wraps(np.zeros_like)
-def zeros_like(a, dtype=None):
+def zeros_like(a, dtype=None, shape=None):
   _check_arraylike("zeros_like", a)
   lax._check_user_dtype_supported(dtype, "zeros_like")
-  return lax.full_like(a, 0, dtype)
+  if np.isscalar(shape):
+    shape = (shape,)
+  return lax.full_like(a, 0, dtype, shape)
 
 
 @_wraps(np.ones_like)
-def ones_like(a, dtype=None):
+def ones_like(a, dtype=None, shape=None):
   _check_arraylike("ones_like", a)
   lax._check_user_dtype_supported(dtype, "ones_like")
-  return lax.full_like(a, 1, dtype)
+  if np.isscalar(shape):
+    shape = (shape,)
+  return lax.full_like(a, 1, dtype, shape)
 
 
 @_wraps(np.full)
@@ -2601,10 +2605,12 @@ def full(shape, fill_value, dtype=None):
 
 
 @_wraps(np.full_like)
-def full_like(a, fill_value, dtype=None):
+def full_like(a, fill_value, dtype=None, shape=None):
   _check_arraylike("full_like", a)
   lax._check_user_dtype_supported(dtype, "full_like")
-  return lax.full_like(a, fill_value, dtype)
+  if np.isscalar(shape):
+    shape = (shape,)
+  return lax.full_like(a, fill_value, dtype, shape)
 
 
 @_wraps(np.zeros)
