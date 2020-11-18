@@ -9,6 +9,10 @@ Change Log
 
 These are the release notes for JAX.
 
+jax 0.2.7 (Unreleased)
+----------------------
+* `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.6...master>`_.
+
 jax 0.2.6 (Nov 18 2020)
 -----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6>`_.
