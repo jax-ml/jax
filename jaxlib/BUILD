@@ -78,6 +78,7 @@ py_library(
     srcs = [
         "cuda_prng.py",
         "cusolver.py",
+        "init.py",
         "pocketfft.py",
         "version.py",
     ],
