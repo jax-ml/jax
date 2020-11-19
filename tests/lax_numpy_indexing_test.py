@@ -41,16 +41,15 @@ FLAGS = config.FLAGS
 # pylint: disable=bad-continuation
 
 
+ARRAY_MSG = r"Using a non-tuple sequence for multidimensional indexing is not allowed.*arr\[array\(seq\)\]"
+TUPLE_MSG = r"Using a non-tuple sequence for multidimensional indexing is not allowed.*arr\[tuple\(seq\)\]"
+
+
 float_dtypes = jtu.dtypes.floating
 default_dtypes = float_dtypes + jtu.dtypes.integer
 all_dtypes = default_dtypes + jtu.dtypes.boolean
 
 IndexSpec = collections.namedtuple("IndexTest", ["shape", "indexer"])
-
-
-suppress_deprecated_indexing_warnings = partial(
-  jtu.ignore_warning, category=FutureWarning,
-  message='Using a non-tuple sequence.*')
 
 
 def check_grads(f, args, order, atol=None, rtol=None, eps=None):
@@ -240,38 +239,34 @@ ADVANCED_INDEXING_TESTS = [
                                                    [-1, -2, 1, 0]])),
      ]),
     ("Two1DIntArrayIndicesNoBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[np.array([0, 1]),
-                                       np.array([1, 2])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[np.array([0, 2, 0, 1]),
-                                         np.array([-1, 0, -1, 2])]),
+     [IndexSpec(shape=(3, 3), indexer=(np.array([0, 1]),
+                                       np.array([1, 2]))),
+     IndexSpec(shape=(3, 4, 5), indexer=(np.array([0, 2, 0, 1]),
+                                         np.array([-1, 0, -1, 2]))),
      ]),
     ("Two1DIntArrayIndicesWithBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[np.array([[0, 1]]),
-                                       np.array([1, 2])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[np.array([[0, 2, 0, 1]]),
-                                         np.array([-1, 0, -1, 2])]),
+     [IndexSpec(shape=(3, 3), indexer=(np.array([[0, 1]]),
+                                       np.array([1, 2]))),
+     IndexSpec(shape=(3, 4, 5), indexer=(np.array([[0, 2, 0, 1]]),
+                                         np.array([-1, 0, -1, 2]))),
      ]),
-    ("ListOfPythonInts",
-     [IndexSpec(shape=(3,), indexer=[0, 1, 0]),
-     IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
-     ]),
-    ("ListOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
-     IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0, 3]]]),
+    ("ArrayOfInts",
+     [IndexSpec(shape=(3,), indexer=np.array([0, 1, 0])),
+     IndexSpec(shape=(3, 4, 5), indexer=np.array([0, -1])),
      ]),
     ("TupleOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
+     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1],)),
      IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0, 3]])),
      ]),
-    ("ListOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[0, np.array([0, 1])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                         np.array([[2, 3, 0, 3]])]),
+    ("TupleOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=(0, np.array([0, 1]))),
+     IndexSpec(shape=(3, 4, 5), indexer=(0, 1,
+                                         np.array([[2, 3, 0, 3]]))),
      ]),
-    ("ListOfListsOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], np.array([0])]),
-     IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                         np.array([[2, 3, 0, 3]])]),
+    ("TupleOfListsOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1], np.array([0]))),
+     IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]],
+                                         np.array([[2, 3, 0, 3]]))),
      ]),
 ]
 
@@ -290,38 +285,34 @@ ADVANCED_INDEXING_TESTS_NO_REPEATS = [
                                                  [3, 4, -1]])),
      ]),
     ("Two1DIntArrayIndicesNoBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[np.array([0, 1]),
-                                       np.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[np.array([0, 2, 1, 3]),
-                                          np.array([-1, 0, -2, 1])]),
+     [IndexSpec(shape=(3, 3), indexer=(np.array([0, 1]),
+                                       np.array([1, 2]))),
+      IndexSpec(shape=(4, 5, 6), indexer=(np.array([0, 2, 1, 3]),
+                                          np.array([-1, 0, -2, 1]))),
      ]),
     ("Two1DIntArrayIndicesWithBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[np.array([[0, 1]]),
-                                       np.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[np.array([[0, 2, -1, 1]]),
-                                          np.array([-1, 0, -2, 2])]),
+     [IndexSpec(shape=(3, 3), indexer=(np.array([[0, 1]]),
+                                       np.array([1, 2]))),
+      IndexSpec(shape=(4, 5, 6), indexer=(np.array([[0, 2, -1, 1]]),
+                                          np.array([-1, 0, -2, 2]))),
      ]),
-    ("ListOfPythonInts",
-     [IndexSpec(shape=(3,), indexer=[0, 2, 1]),
-      IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
-     ]),
-    ("ListOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
-      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0]]]),
+    ("ArrayOfInts",
+     [IndexSpec(shape=(3,), indexer=np.array([0, 2, 1])),
+      IndexSpec(shape=(3, 4, 5), indexer=np.array([0, -1])),
      ]),
     ("TupleOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
+     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1],)),
       IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[2, 3, 0]])),
      ]),
-    ("ListOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[0, np.array([0, 1])]),
-      IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                          np.array([[2, 3, 0]])]),
+    ("TupleOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=(0, np.array([0, 1]))),
+      IndexSpec(shape=(3, 4, 5), indexer=(0, 1,
+                                          np.array([[2, 3, 0]]))),
      ]),
-    ("ListOfListsOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], np.array([0])]),
-      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                          np.array([[2, 3, 0]])]),
+    ("TupleOfListsOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1], np.array([0]))),
+      IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]],
+                                          np.array([[2, 3, 0]]))),
      ]),
 ]
 
@@ -340,38 +331,30 @@ ADVANCED_INDEXING_TESTS_NO_REPEATS_SORTED = [
                                                  [ 2, 3, 4]])),
      ]),
     ("Two1DIntArrayIndicesNoBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[np.array([0, 1]),
-                                       np.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[np.array([0, 1, 2, 3]),
-                                          np.array([-2, -1, 0, 1])]),
+     [IndexSpec(shape=(3, 3), indexer=(np.array([0, 1]),
+                                       np.array([1, 2]))),
+      IndexSpec(shape=(4, 5, 6), indexer=(np.array([0, 1, 2, 3]),
+                                          np.array([-2, -1, 0, 1]))),
      ]),
     ("Two1DIntArrayIndicesWithBroadcasting",
-     [IndexSpec(shape=(3, 3), indexer=[np.array([[0, 1]]),
-                                       np.array([1, 2])]),
-      IndexSpec(shape=(4, 5, 6), indexer=[np.array([[-1, 0, 1, 2]]),
-                                          np.array([-2, -1, 0, 2])]),
-     ]),
-    ("ListOfPythonInts",
-     [IndexSpec(shape=(3,), indexer=[0, 1, 2]),
-      IndexSpec(shape=(3, 4, 5), indexer=[-1, 0]),
-     ]),
-    ("ListOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
-      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[0, 2, 3]]]),
+     [IndexSpec(shape=(3, 3), indexer=(np.array([[0, 1]]),
+                                       np.array([1, 2]))),
+      IndexSpec(shape=(4, 5, 6), indexer=(np.array([[-1, 0, 1, 2]]),
+                                          np.array([-2, -1, 0, 2]))),
      ]),
     ("TupleOfListsOfPythonInts",
-     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1])),
+     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1],)),
       IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]], [[0, 2, 3]])),
      ]),
-    ("ListOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[0, np.array([0, 1])]),
-      IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                          np.array([[0, 2, 3]])]),
+    ("TupleOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=(0, np.array([0, 1]))),
+      IndexSpec(shape=(3, 4, 5), indexer=(0, 1,
+                                          np.array([[0, 2, 3]]))),
      ]),
-    ("ListOfListsOfPythonIntsAndIntArrays",
-     [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], np.array([0])]),
-      IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                          np.array([[0, 2, 3]])]),
+    ("TupleOfListsOfPythonIntsAndIntArrays",
+     [IndexSpec(shape=(3, 4, 5), indexer=([0, 1], np.array([0]))),
+      IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]],
+                                          np.array([[0, 2, 3]]))),
      ]),
 ]
 
@@ -408,9 +391,9 @@ MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS = [
                                          np.array([-1, 2, 1]))),
      ]),
     ("NonesAndIntArrayIndices",
-     [IndexSpec(shape=(3, 4, 5), indexer=[np.array([0, 2]),
+     [IndexSpec(shape=(3, 4, 5), indexer=(np.array([0, 2]),
                                           None,
-                                          np.array([-1, 2])]),
+                                          np.array([-1, 2]))),
      IndexSpec(shape=(3, 4, 5), indexer=(np.array([0, 2]),
                                          None,
                                          None,
@@ -457,9 +440,8 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda x: np.asarray(x)[indexer]
     jnp_fun = lambda x: jnp.asarray(x)[indexer]
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters({
       "testcase_name":
@@ -561,9 +543,8 @@ class IndexingTest(jtu.JaxTestCase):
       return jnp.array(x)[indexer]
 
     args_maker = lambda: [rng(shape, dtype), unpacked_indexer]
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -612,9 +593,8 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), indexer]
     np_fun = lambda x, idx: np.asarray(x)[idx]
     jnp_fun = lambda x, idx: jnp.asarray(x)[idx]
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -636,34 +616,26 @@ class IndexingTest(jtu.JaxTestCase):
                                                           [-1, -2, 1, 0]])),
             ]),
           ("Two1DIntArrayIndicesNoBroadcasting",
-           [IndexSpec(shape=(3, 3), indexer=[np.array([0, 1]),
-                                             np.array([1, 2])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[np.array([0, 2, 0, 1]),
-                                                np.array([-1, 0, -1, 2])]),
+           [IndexSpec(shape=(3, 3), indexer=(np.array([0, 1]),
+                                             np.array([1, 2]))),
+            IndexSpec(shape=(3, 4, 5), indexer=(np.array([0, 2, 0, 1]),
+                                                np.array([-1, 0, -1, 2]))),
             ]),
           ("Two1DIntArrayIndicesWithBroadcasting",
-           [IndexSpec(shape=(3, 3), indexer=[np.array([[0, 1]]),
-                                             np.array([1, 2])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[np.array([[0, 2, 0, 1]]),
-                                                np.array([-1, 0, -1, 2])]),
+           [IndexSpec(shape=(3, 3), indexer=(np.array([[0, 1]]),
+                                             np.array([1, 2]))),
+            IndexSpec(shape=(3, 4, 5), indexer=(np.array([[0, 2, 0, 1]]),
+                                                np.array([-1, 0, -1, 2]))),
             ]),
-          ("ListOfPythonInts",
-           [IndexSpec(shape=(3,), indexer=[0, 1, 0]),
-            IndexSpec(shape=(3, 4, 5), indexer=[0, -1]),
+          ("TupleOfPythonIntsAndIntArrays",
+           [IndexSpec(shape=(3, 4, 5), indexer=(0, np.array([0, 1]))),
+            IndexSpec(shape=(3, 4, 5), indexer=(0, 1,
+                                                np.array([[2, 3, 0, 3]]))),
             ]),
-          ("ListOfListsOfPythonInts",
-           [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1]]),
-            IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]], [[2, 3, 0, 3]]]),
-            ]),
-          ("ListOfPythonIntsAndIntArrays",
-           [IndexSpec(shape=(3, 4, 5), indexer=[0, np.array([0, 1])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[0, 1,
-                                                np.array([[2, 3, 0, 3]])]),
-            ]),
-          ("ListOfListsOfPythonIntsAndIntArrays",
-           [IndexSpec(shape=(3, 4, 5), indexer=[[0, 1], np.array([0])]),
-            IndexSpec(shape=(3, 4, 5), indexer=[[[0], [-1]],
-                                                np.array([[2, 3, 0, 3]])]),
+          ("TupleOfListsOfPythonIntsAndIntArrays",
+           [IndexSpec(shape=(3, 4, 5), indexer=([0, 1], np.array([0]))),
+            IndexSpec(shape=(3, 4, 5), indexer=([[0], [-1]],
+                                                np.array([[2, 3, 0, 3]]))),
             ]),
       ]
       for shape, indexer in index_specs
@@ -673,8 +645,7 @@ class IndexingTest(jtu.JaxTestCase):
     tol = 1e-2 if jnp.finfo(dtype).bits == 32 else None
     arg = rng(shape, dtype)
     fun = lambda x: jnp.asarray(x)[indexer]
-    with suppress_deprecated_indexing_warnings():
-      check_grads(fun, (arg,), 2, tol, tol, eps=1.)
+    check_grads(fun, (arg,), 2, tol, tol, eps=1.)
 
   @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
@@ -699,9 +670,8 @@ class IndexingTest(jtu.JaxTestCase):
       idx = type(indexer)(util.subvals(indexer_with_dummies, substitutes))
       return np.asarray(x)[idx]
 
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testAdvancedIndexingManually(self):
     x = np.random.RandomState(0).randn(3, 4, 5)
@@ -754,10 +724,8 @@ class IndexingTest(jtu.JaxTestCase):
   def testBooleanIndexingList1D(self):
     idx = [True, True, False]
     x = api.device_put(np.arange(3))
-    with suppress_deprecated_indexing_warnings():
-      ans = x[idx]
-    expected = np.arange(3)[idx]
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    with self.assertRaisesRegex(TypeError, ARRAY_MSG):
+      x[idx]
 
   def testBooleanIndexingArray2DBroadcast(self):
     idx = np.array([True, True, False, True])
@@ -769,10 +737,8 @@ class IndexingTest(jtu.JaxTestCase):
   def testBooleanIndexingList2DBroadcast(self):
     idx = [True, True, False, True]
     x = np.arange(8).reshape(4, 2)
-    with suppress_deprecated_indexing_warnings():
-      ans = api.device_put(x)[idx]
-    expected = x[idx]
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    with self.assertRaisesRegex(TypeError, ARRAY_MSG):
+      api.device_put(x)[idx]
 
   def testBooleanIndexingArray2D(self):
     idx = np.array([[True, False],
@@ -875,7 +841,7 @@ def _broadcastable_shapes(shape):
   for x in f(list(reversed(shape))):
     yield list(reversed(x))
 
-@suppress_deprecated_indexing_warnings()
+
 def _update_shape(shape, indexer):
   return np.zeros(shape)[indexer].shape
 
@@ -887,7 +853,6 @@ class UpdateOps(enum.Enum):
   MIN = 3
   MAX = 4
 
-  @suppress_deprecated_indexing_warnings()
   def np_fn(op, indexer, x, y):
     x = x.copy()
     x[indexer] = {
@@ -948,9 +913,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
-      self._CompileAndCheck(jax_fn, args_maker)
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
+    self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
@@ -975,9 +939,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y, unique_indices=True)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, unique_indices=True)
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
-      self._CompileAndCheck(jax_fn, args_maker)
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
+    self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_sugared={}_op={}".format(
@@ -1004,9 +967,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(
           op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True)
-      self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}_sugared={}".format(
@@ -1031,9 +993,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       jax_fn = lambda x, y: UpdateOps.sugar_fn(op, indexer, x, y)
     else:
       jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    with suppress_deprecated_indexing_warnings():
-      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
-      self._CompileAndCheck(jax_fn, args_maker)
+    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker)
+    self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
@@ -1126,22 +1087,20 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       ([0, None], "tuple"),
       ([0, slice(None)], "tuple"),
     ]))
-  def testIndexSequenceDeprecationWarning(self, idx, idx_type):
-    msg = fr"Using a non-tuple sequence for multidimensional indexing is deprecated.*arr\[{idx_type}\(seq\)\]"
+  def testIndexSequenceDeprecation(self, idx, idx_type):
     normalize = {"array": np.array, "tuple": tuple}[idx_type]
+    msg = {"array": ARRAY_MSG, "tuple": TUPLE_MSG}[idx_type]
     x = jnp.arange(6).reshape(3, 2)
 
-    with self.assertWarnsRegex(FutureWarning, msg):
-      idx_get = x[idx]
+    with self.assertRaisesRegex(TypeError, msg):
+      x[idx]
     with self.assertNoWarnings():
-      idx_get_norm = x[normalize(idx)]
-    self.assertArraysEqual(idx_get, idx_get_norm)
+      x[normalize(idx)]
 
-    with self.assertWarnsRegex(FutureWarning, msg):
-      idx_set = x.at[idx].set(0)
+    with self.assertRaisesRegex(TypeError, msg):
+      x.at[idx].set(0)
     with self.assertNoWarnings():
-      idx_set_norm = x.at[normalize(idx)].set(0)
-    self.assertArraysEqual(idx_set, idx_set_norm)
+      x.at[normalize(idx)].set(0)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,10 @@ jax 0.2.7 (Unreleased)
   * ``jax.experimental.optix`` has been deleted, in favor of the standalone
     ``optax`` Python package.
 
+  * indexing of JAX arrays with non-tuple sequences now raises a `TypeError`. This type of indexing
+    has been deprecated in Numpy since v1.16, and in JAX since v0.2.4.
+    See `#4564 <https://github.com/google/jax/pull/4564>`_.
+
 jax 0.2.6 (Nov 18 2020)
 -----------------------
 * `GitHub commits <https://github.com/google/jax/compare/jax-v0.2.5...jax-v0.2.6>`_.
@@ -102,6 +106,10 @@ jax 0.2.4 (October 19 2020)
 
   * Add support for `remat` to jax.experimental.host_callback.  See `#4608 <https://github.com/google/jax/pull/4608>`_.
 
+* Deprecations
+
+  * Indexing with non-tuple sequences is now deprecated, following a similar deprecation in Numpy.
+    In a future release, this will result in a TypeError. See `#4564 <https://github.com/google/jax/pull/4564>`_.
 
 jaxlib 0.1.56 (October 14, 2020)
 --------------------------------
