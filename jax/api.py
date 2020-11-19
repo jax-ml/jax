@@ -564,11 +564,11 @@ def xla_computation(fun: Callable,
 
   def make_axis_env(nreps):
     if axis_env is None:
-      return xla.AxisEnv(nreps, (), (), None)
+      return xla.AxisEnv(nreps, (), ())
     else:
       nreps = nreps * prod(size for name, size in axis_env)
       names, sizes = unzip2(axis_env)
-      return xla.AxisEnv(nreps, names, sizes, None)
+      return xla.AxisEnv(nreps, names, sizes)
 
   def abstractify(x):
     return ShapedArray(np.shape(x), dtypes.result_type(x))

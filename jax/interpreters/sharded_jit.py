@@ -152,7 +152,7 @@ def _sharded_callable(
   c = xb.make_computation_builder("spjit_{}".format(fun.__name__))
   xla_consts = _map(partial(xb.constant, c), consts)
   xla_args = _xla_sharded_args(c, global_abstract_args, in_parts)
-  axis_env = xla.AxisEnv(nrep, (), (), None)
+  axis_env = xla.AxisEnv(nrep, (), ())
   out_nodes = xla.jaxpr_subcomp(
       c, jaxpr, None, axis_env, xla_consts,
       extend_name_stack(wrap_name(name, "sharded_jit")), *xla_args)

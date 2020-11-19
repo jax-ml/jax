@@ -652,7 +652,7 @@ def parallel_callable(fun: lu.WrappedFun,
               f"args {avals}. (num_replicas={num_global_replicas} "
               f"num_partitions={num_partitions}")
 
-  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,), devices)
+  axis_env = xla.AxisEnv(num_global_replicas, (axis_name,), (global_axis_size,))
 
   tuple_args = len(sharded_avals) > 100  # pass long arg lists as tuple for TPU
 
@@ -1112,7 +1112,7 @@ def _soft_pmap_callable(fun, axis_name, axis_size, in_axes, *avals):
   chunked_avals = [core.unmapped_aval(chunk_size, in_axis, aval) if in_axis is not None else aval
                    for in_axis, aval in zip(in_axes, mapped_avals)]
   xla_args, _ = xla._xla_callable_args(c, chunked_avals, tuple_args)
-  axis_env = xla.AxisEnv(num_devices, (axis_name,), (num_devices,), None)
+  axis_env = xla.AxisEnv(num_devices, (axis_name,), (num_devices,))
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, None, axis_env, xla_consts,
                                 'soft_pmap', *xla_args)
   built = c.Build(xops.Tuple(c, out_nodes))

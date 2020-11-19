@@ -4809,7 +4809,7 @@ def _reduction_computation(c, jaxpr, consts, init_values, singleton=True):
   if singleton:
     init_values = [init_values]
   shapes = safe_map(c.get_shape, init_values + init_values)
-  axis_env = xla.AxisEnv(1, (), (), None)  # no parallel primitives inside reductions
+  axis_env = xla.AxisEnv(1, (), ())  # no parallel primitives inside reductions
   subc = xla_bridge.make_computation_builder("reduction_computation")
   assert len(consts) == 0, "Reduction computations cannot have constants"
   args = [xb.parameter(subc, i, shape) for i, shape in enumerate(shapes)]
