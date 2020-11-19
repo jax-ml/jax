@@ -26,6 +26,7 @@ from jax import lax
 from jax import test_util as jtu
 from jax.tree_util import register_pytree_node_class
 import jax.scipy.sparse.linalg
+import jax._src.scipy.sparse.linalg
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -397,7 +398,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     def A_mv(x):
       return matmul_high_precision(A, x)
     for k in range(n):
-      Q, H, _ = jax.scipy.sparse.linalg._kth_arnoldi_iteration(
+      Q, H, _ = jax._src.scipy.sparse.linalg._kth_arnoldi_iteration(
           k, A_mv, M, Q, H, tol)
     QA = matmul_high_precision(Q[:, :n].conj().T, A)
     QAQ = matmul_high_precision(QA, Q[:, :n])
