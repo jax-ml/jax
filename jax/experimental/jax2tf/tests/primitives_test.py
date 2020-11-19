@@ -607,6 +607,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            custom_assert=custom_assert,
                            always_custom_assert=always_custom_assert)
 
+  @primitive_harness.parameterized(primitive_harness.lax_div_rem)
+  def test_div(self, harness: primitive_harness.Harness):
+    dividend, divisor = harness.dyn_args_maker(self.rng())
+    prim = harness.params["prim"]
+    if dtypes.issubdtype(dividend.dtype, np.integer):
+      if (prim is lax.div_p and
+          np.any(divisor == np.array(0, dtype=divisor.dtype))):
+        raise unittest.SkipTest(
+            "Divisor contains a 0, and TF returns an error value in compiled "
+            "mode instead of failing like in eager and graph mode for dtype "
+            f"{divisor.dtype}")
+    self.ConvertAndCompare(harness.dyn_fun, dividend, divisor)
+
   @primitive_harness.parameterized(primitive_harness.lax_binary_elementwise)
   def test_binary_elementwise(self, harness):
     tol = None
