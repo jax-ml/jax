@@ -2063,10 +2063,10 @@ def flatnonzero(a):
 
 def _make_nan_reduction(np_reduction, jnp_reduction, init_val, nan_if_all_nan):
   @_wraps(np_reduction)
-  def nan_reduction(a, axis=None, out=None, keepdims=False, **kwargs):
+  def nan_reduction(a, axis=None, dtype=None, out=None, keepdims=False):
     _check_arraylike(np_reduction.__name__, a)
     out = jnp_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
-                       axis=axis, out=out, keepdims=keepdims, **kwargs)
+                       axis=axis, dtype=dtype, out=out, keepdims=keepdims)
     if nan_if_all_nan:
       return where(all(isnan(a), axis=axis, keepdims=keepdims),
                    _constant_like(a, nan), out)
