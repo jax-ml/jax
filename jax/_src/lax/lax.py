@@ -34,9 +34,10 @@ from jax import dtypes
 from jax import lazy
 from jax import tree_util
 from jax.config import flags, config
-from jax.core import Primitive, _canonicalize_dimension
-from jax.abstract_arrays import (UnshapedArray, ShapedArray, ConcreteArray, array_types,
-                               raise_to_shaped, abstract_token, canonicalize_shape)
+from jax.core import (Primitive, _canonicalize_dimension, UnshapedArray,
+                      ShapedArray, ConcreteArray, raise_to_shaped,
+                      abstract_token, canonicalize_shape)
+from jax.abstract_arrays import array_types
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import pxla

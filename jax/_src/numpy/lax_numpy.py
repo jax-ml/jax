@@ -42,7 +42,7 @@ from .vectorize import vectorize
 from .util import _wraps
 from jax import core
 from jax import dtypes
-from jax.abstract_arrays import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
+from jax.core import UnshapedArray, ShapedArray, ConcreteArray, canonicalize_shape
 from jax.config import flags, config
 from jax.interpreters.xla import DeviceArray
 from jax.interpreters.masking import Poly

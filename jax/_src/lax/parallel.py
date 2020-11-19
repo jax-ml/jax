@@ -25,7 +25,7 @@ from jax import dtypes
 from jax import tree_util
 from jax._src import source_info_util
 from . import lax
-from jax.abstract_arrays import ShapedArray, raise_to_shaped
+from jax.core import ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import xla
 from jax.interpreters import pxla
