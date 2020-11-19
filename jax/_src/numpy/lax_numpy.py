@@ -1823,37 +1823,36 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 
 ### Reducers
 
-
-def _make_reduction(name, np_fun, op, init_val, preproc=None, bool_op=None,
-                    upcast_f16_for_computation=False):
-  """Creates reduction function given a binary operation and monoid identity."""
-
+def _reduction(a, name, np_fun, op, init_val,
+               preproc=None, bool_op=None, upcast_f16_for_computation=False,
+               axis=None, dtype=None, out=None, keepdims=False, initial=None, where=None):
   bool_op = bool_op or op
+  if out is not None:
+    raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
+  if initial is not None:
+    # TODO(jakevdp): support 'initial' argument.
+    raise NotImplementedError(f"The 'initial' argument to jnp.{name} is not supported.")
+  if where is not None:
+    # TODO(jakevdp): support 'where' argument.
+    raise NotImplementedError(f"The 'where' argument to jnp.{name} is not supported.")
+  _check_arraylike(name, a)
+  lax._check_user_dtype_supported(dtype, name)
+  axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
-  @_wraps(np_fun)
-  def reduction(a, axis=None, dtype=None, out=None, keepdims=False):
-    if out is not None:
-      raise NotImplementedError("The 'out' argument to jnp.reduction is not supported.")
-    _check_arraylike(name, a)
-    lax._check_user_dtype_supported(dtype, name)
-    axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
-
-    a = a if isinstance(a, ndarray) else asarray(a)
-    a = preproc(a) if preproc else a
-    dims = _reduction_dims(a, axis)
-    result_dtype = dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a))))
-    if upcast_f16_for_computation and issubdtype(result_dtype, inexact):
-      computation_dtype = promote_types(result_dtype, float32)
-    else:
-      computation_dtype = result_dtype
-    a = lax.convert_element_type(a, computation_dtype)
-    result = lax.reduce(a, _reduction_init_val(a, init_val),
-                        op if computation_dtype != np.bool_ else bool_op, dims)
-    if keepdims:
-      result = expand_dims(result, dims)
-    return lax.convert_element_type(result, dtype or result_dtype)
-
-  return reduction
+  a = a if isinstance(a, ndarray) else asarray(a)
+  a = preproc(a) if preproc else a
+  dims = _reduction_dims(a, axis)
+  result_dtype = dtypes.canonicalize_dtype(dtype or _dtype(np_fun(np.ones((), dtype=_dtype(a)))))
+  if upcast_f16_for_computation and issubdtype(result_dtype, inexact):
+    computation_dtype = promote_types(result_dtype, float32)
+  else:
+    computation_dtype = result_dtype
+  a = lax.convert_element_type(a, computation_dtype)
+  result = lax.reduce(a, _reduction_init_val(a, init_val),
+                      op if computation_dtype != np.bool_ else bool_op, dims)
+  if keepdims:
+    result = expand_dims(result, dims)
+  return lax.convert_element_type(result, dtype or result_dtype)
 
 def _reduction_dims(a, axis):
   if axis is None:
@@ -1880,15 +1879,43 @@ def _reduction_init_val(a, init_val):
 
 _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 
-sum = _make_reduction("sum", np.sum, lax.add, 0, upcast_f16_for_computation=True,
-                      bool_op=lax.bitwise_or)
-product = prod = _make_reduction("prod", np.prod, lax.mul, 1, bool_op=lax.bitwise_and,
-                                 upcast_f16_for_computation=True)
-amax = max = _make_reduction("max", np.max, lax.max, -np.inf)
-amin = min = _make_reduction("min", np.min, lax.min, np.inf)
-all = alltrue = _make_reduction("all", np.all, lax.bitwise_and, True, _cast_to_bool)
-any = sometrue = _make_reduction("any", np.any, lax.bitwise_or, False, _cast_to_bool)
+@_wraps(np.sum)
+def sum(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "sum", np.sum, lax.add, 0,
+                    bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
+                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where=where)
 
+@_wraps(np.prod)
+def prod(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "prod", np.prod, lax.mul, 1,
+                    bool_op=lax.bitwise_and, upcast_f16_for_computation=True,
+                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where=where)
+
+@_wraps(np.max)
+def max(a, axis=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "max", np.max, lax.max, -np.inf,
+                    axis=axis, out=out, keepdims=keepdims, initial=initial, where=where)
+
+@_wraps(np.min)
+def min(a, axis=None, out=None, keepdims=None, initial=None, where=None):
+  return _reduction(a, "min", np.min, lax.min, np.inf,
+                    axis=axis, out=out, keepdims=keepdims, initial=initial, where=where)
+
+@_wraps(np.all)
+def all(a, axis=None, out=None, keepdims=None):
+  return _reduction(a, "all", np.all, lax.bitwise_and, True, preproc=_cast_to_bool,
+                    axis=axis, out=out, keepdims=keepdims)
+
+@_wraps(np.any)
+def any(a, axis=None, out=None, keepdims=None):
+  return _reduction(a, "any", np.any, lax.bitwise_or, False, preproc=_cast_to_bool,
+                    axis=axis, out=out, keepdims=keepdims)
+
+product = prod
+amin = min
+amax = max
+alltrue = all
+sometrue = any
 
 @_wraps(np.mean)
 def mean(a, axis=None, dtype=None, out=None, keepdims=False):
@@ -2061,24 +2088,36 @@ def flatnonzero(a):
   return nonzero(ravel(a))[0]
 
 
-def _make_nan_reduction(np_reduction, jnp_reduction, init_val, nan_if_all_nan):
-  @_wraps(np_reduction)
-  def nan_reduction(a, axis=None, dtype=None, out=None, keepdims=False):
-    _check_arraylike(np_reduction.__name__, a)
-    out = jnp_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
-                       axis=axis, dtype=dtype, out=out, keepdims=keepdims)
-    if nan_if_all_nan:
-      return where(all(isnan(a), axis=axis, keepdims=keepdims),
-                   _constant_like(a, nan), out)
-    else:
-      return out
+def _nan_reduction(a, name, jnp_reduction, init_val, nan_if_all_nan,
+                   axis=None, keepdims=None, **kwargs):
+  _check_arraylike(name, a)
+  out = jnp_reduction(where(isnan(a), _reduction_init_val(a, init_val), a),
+                      axis=axis, keepdims=keepdims, **kwargs)
+  if nan_if_all_nan:
+    return where(all(isnan(a), axis=axis, keepdims=keepdims),
+                  _constant_like(a, nan), out)
+  else:
+    return out
 
-  return nan_reduction
+@_wraps(np.nanmin)
+def nanmin(a, axis=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nanmin', min, inf, nan_if_all_nan=True,
+                        axis=axis, out=out, keepdims=keepdims)
 
-nanmin = _make_nan_reduction(np.nanmin, min, inf, nan_if_all_nan=True)
-nanmax = _make_nan_reduction(np.nanmax, max, -inf, nan_if_all_nan=True)
-nansum = _make_nan_reduction(np.nansum, sum, 0, nan_if_all_nan=False)
-nanprod = _make_nan_reduction(np.nanprod, prod, 1, nan_if_all_nan=False)
+@_wraps(np.nanmax)
+def nanmax(a, axis=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nanmax', max, -inf, nan_if_all_nan=True,
+                        axis=axis, out=out, keepdims=keepdims)
+
+@_wraps(np.nansum)
+def nansum(a, axis=None, dtype=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
+                        axis=axis, dtype=dtype, out=out, keepdims=keepdims)
+
+@_wraps(np.nanprod)
+def nanprod(a, axis=None, dtype=None, out=None, keepdims=None):
+  return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
+                        axis=axis, dtype=dtype, out=out, keepdims=keepdims)
 
 @_wraps(np.nanmean)
 def nanmean(a, axis=None, dtype=None, out=None, keepdims=False):
