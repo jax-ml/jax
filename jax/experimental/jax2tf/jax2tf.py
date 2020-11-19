@@ -33,6 +33,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import fft as lax_fft
 from jax._src.lax import parallel as lax_parallel
+import jax._src.random
 from jax.lib import xla_bridge as xb
 
 import numpy as np
@@ -1749,7 +1750,7 @@ def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   _out_aval_cast = tuple(core.ShapedArray(out_aval.shape, np.int32)
                          for out_aval in _out_aval)
   res = _convert_jax_impl(
-    functools.partial(random._threefry2x32_lowering,
+    functools.partial(jax._src.random._threefry2x32_lowering,
                       use_rolled_loops=False),
     multiple_results=True)(*args_cast, _in_avals=_in_avals_cast, _out_aval=_out_aval_cast)
   res = tuple([tf.cast(r, tf.uint32) for r in res])
@@ -1760,7 +1761,7 @@ tf_impl_with_avals[jax.random.threefry2x32_p] = _threefry2x32_jax_impl
 # Use the vmap implementation, otherwise on TPU the performance is really bad
 # With use_vmap=True on, we get about the same performance for JAX and jax2tf.
 tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
-  functools.partial(random._gamma_impl, use_vmap=True),
+  functools.partial(jax._src.random._gamma_impl, use_vmap=True),
   multiple_results=False)
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
