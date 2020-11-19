@@ -90,7 +90,7 @@ def PRNGKey(seed: int) -> jnp.ndarray:
 
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
   k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))
-  k2 = convert(jnp.bitwise_and(seed, 0xFFFFFFFF))
+  k2 = convert(jnp.bitwise_and(seed, np.uint32(0xFFFFFFFF)))
   return lax.concatenate([k1, k2], 0)
 
 def _is_prng_key(key: jnp.ndarray) -> bool:
