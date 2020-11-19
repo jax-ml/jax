@@ -1223,14 +1223,13 @@ def untile_aval_nd(axis_sizes, out_axes: AxisNameMap, aval):
     shape[axis] *= axis_sizes[name]
   return ShapedArray(tuple(shape), aval.dtype)
 
-# TODO(apaszke): Cache compilation
-def mesh_tiled_callable(*in_avals,
-                        fun: lu.WrappedFun,
+def mesh_tiled_callable(fun: lu.WrappedFun,
                         transformed_name: str,
                         backend_name: Optional[str],
                         mesh: Mesh,
                         in_axes: Sequence[AxisNameMap],
-                        out_axes_thunk: Callable[[], Sequence[AxisNameMap]]):
+                        out_axes: Sequence[AxisNameMap],
+                        *in_avals):
   assert config.omnistaging_enabled
   local_mesh = mesh.local_mesh
 
@@ -1244,7 +1243,6 @@ def mesh_tiled_callable(*in_avals,
                         for aval_in_axes, aval in zip(in_axes, in_avals))
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(fun, sharded_avals)
-  out_axes = out_axes_thunk()
   assert len(out_axes) == len(out_sharded_avals)
   # TODO(apaszke): What about outfeed?
   # jaxpr = xla.apply_outfeed_rewriter(jaxpr)
