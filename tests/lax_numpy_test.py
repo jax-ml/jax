@@ -706,7 +706,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         for out_dtype in [None] + rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
         for keepdims in [False, True])
-    for rec in JAX_REDUCER_RECORDS))
+      for rec in JAX_REDUCER_RECORDS))
   def testReducer(self, np_op, jnp_op, rng_factory, shape, dtype, out_dtype,
                   axis, keepdims, inexact):
     rng = rng_factory(self.rng())
@@ -733,23 +733,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol,
                           rtol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
-          rec.test_name.capitalize(),
-          jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
-       "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-       "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-       "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
-      for rec in JAX_REDUCER_NO_DTYPE_RECORDS
-      for shape in rec.shapes for dtype in rec.dtypes
-      for axis in list(range(-len(shape), len(shape))) + [None]
-      for keepdims in [False, True]))
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
+            rec.test_name.capitalize(),
+            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
+        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
+        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
+        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+        for shape in rec.shapes for dtype in rec.dtypes
+        for axis in list(range(-len(shape), len(shape))) + [None]
+        for keepdims in [False, True])
+      for rec in JAX_REDUCER_NO_DTYPE_RECORDS))
   def testReducerNoDtype(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
                          keepdims, inexact):
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="All-NaN slice encountered.*")
     def np_fun(x):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
@@ -760,8 +763,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
-    self._CompileAndCheck(jnp_fun, args_maker)
+    tol = {np.float16: 0.002}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=tol, atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_axis={}".format(
