@@ -33,7 +33,7 @@ from ..abstract_arrays import (ConcreteArray, ShapedArray, AbstractToken,
                                make_shaped_array, array_types, raise_to_shaped,
                                abstract_token)
 from ..core import Literal, pp_eqn_compact
-from ..pprint_util import pp
+from jax._src.pprint_util import pp
 from ..util import (partial, partialmethod, cache, prod, unzip2,
                     extend_name_stack, wrap_name, safe_zip, safe_map)
 from ..lib import xla_bridge as xb

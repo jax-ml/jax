@@ -179,7 +179,7 @@ from jax import lax
 from jax.lib import pytree
 from jax.interpreters import ad, xla, batching, masking
 from jax.interpreters import partial_eval as pe
-from jax import pprint_util as ppu
+from jax._src import pprint_util as ppu
 from jax._src import source_info_util
 from jax import util
 from jaxlib import xla_client

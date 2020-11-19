@@ -35,7 +35,7 @@ from . import linear_util as lu
 from jax._src import source_info_util
 from .util import (safe_zip, safe_map, partial, curry, prod, partialmethod,
                    tuple_insert, tuple_delete)
-from .pprint_util import pp, vcat, PrettyPrint
+from ._src.pprint_util import pp, vcat, PrettyPrint
 
 from ._src import traceback_util
 traceback_util.register_exclusion(__file__)
