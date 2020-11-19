@@ -854,7 +854,20 @@ tf_impl[lax.neg_p] = tf.math.negative
 tf_impl[lax.sign_p] = tf.math.sign
 tf_impl[lax.floor_p] = tf.math.floor
 tf_impl[lax.ceil_p] = tf.math.ceil
-tf_impl[lax.round_p] = tf.math.round
+
+def _round(operand, *, rounding_method):
+  if rounding_method is lax.RoundingMethod.AWAY_FROM_ZERO:
+    sign = tf.math.sign(operand)
+    operand *= sign
+    floor = tf.math.floor(operand)
+    operand -= floor
+    cond = tf.math.equal(operand, tf.constant(np.array(0.5), operand.dtype))
+    return sign * (tf.where(cond, tf.constant(np.array(1), operand.dtype),
+                            tf.math.round(operand)) + floor)
+  else:
+    return tf.math.round(operand)
+
+tf_impl[lax.round_p] = _round
 tf_impl[lax.nextafter_p] = tf.math.nextafter
 
 def _population_count(x):
