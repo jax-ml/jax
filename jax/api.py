@@ -58,7 +58,7 @@ from .lib import xla_client as xc
 # Unused imports to be exported
 from .lib.xla_bridge import (device_count, local_device_count, devices,
                              local_devices, host_id, host_ids, host_count)
-from .abstract_arrays import ConcreteArray, ShapedArray, raise_to_shaped
+from .core import ConcreteArray, ShapedArray, raise_to_shaped
 from .interpreters import partial_eval as pe
 from .interpreters import xla
 from .interpreters import pxla

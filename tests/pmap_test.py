@@ -34,7 +34,7 @@ from jax import test_util as jtu
 from jax import tree_util
 from jax import lax
 from jax import random
-from jax.abstract_arrays import ShapedArray
+from jax.core import ShapedArray
 from jax.api import (pmap, soft_pmap, jit, vmap, jvp, grad, make_jaxpr,
                      linearize, device_put)
 from jax.lib import xla_bridge

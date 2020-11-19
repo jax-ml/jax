@@ -54,7 +54,6 @@ from jax.lib import xla_bridge
 from jax.lib import xla_client
 from jax.lib import cuda_prng
 from jax import core
-from jax import abstract_arrays
 from jax.numpy.linalg import cholesky
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -136,11 +135,11 @@ def _threefry2x32_abstract_eval(*args):
   if any(a.dtype != jnp.uint32 for a in args):
     raise TypeError("Arguments to threefry2x32 must have uint32 type, got {}"
                     .format(args))
-  if all(isinstance(arg, abstract_arrays.ShapedArray) for arg in args):
+  if all(isinstance(arg, core.ShapedArray) for arg in args):
     shape = lax._broadcasting_shape_rule(*args)
-    aval = abstract_arrays.ShapedArray(shape, jnp.dtype(jnp.uint32))
+    aval = core.ShapedArray(shape, jnp.dtype(jnp.uint32))
   else:
-    aval = abstract_arrays.UnshapedArray(jnp.dtype(jnp.uint32))
+    aval = core.UnshapedArray(jnp.dtype(jnp.uint32))
   return (aval,) * 2
 
 rotate_left = _make_rotate_left(np.uint32)
@@ -354,7 +353,7 @@ def _random_bits(key, bit_width, shape):
 
 
 def _check_shape(name, shape, *param_shapes):
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
 
   if param_shapes:
     shape_ = lax.broadcast_shapes(shape, *param_shapes)
@@ -388,7 +387,7 @@ def uniform(key: jnp.ndarray,
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _uniform(key, shape, dtype, minval, maxval)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
@@ -444,7 +443,7 @@ def randint(key: jnp.ndarray,
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _randint(key, shape, minval, maxval, dtype)
 
 @partial(jit, static_argnums=(1, 4))
@@ -640,7 +639,7 @@ def normal(key: jnp.ndarray,
     raise ValueError(f"dtype argument to `normal` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _normal(key, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(1, 2))
@@ -682,7 +681,7 @@ def multivariate_normal(key: jnp.ndarray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _multivariate_normal(key, mean, cov, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4))
@@ -739,7 +738,7 @@ def truncated_normal(key: jnp.ndarray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
 
 @partial(jit, static_argnums=(3, 4))
@@ -785,7 +784,7 @@ def bernoulli(key: jnp.ndarray,
   """
   dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   if not jnp.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
@@ -830,7 +829,7 @@ def beta(key: jnp.ndarray,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _beta(key, a, b, shape, dtype)
 
 def _beta(key, a, b, shape, dtype):
@@ -866,7 +865,7 @@ def cauchy(key, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `cauchy` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _cauchy(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -902,7 +901,7 @@ def dirichlet(key, alpha, shape=None, dtype=dtypes.float_):
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _dirichlet(key, alpha, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -938,7 +937,7 @@ def exponential(key, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `exponential` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _exponential(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -1039,7 +1038,7 @@ def _gamma_batching_rule(batched_args, batch_dims):
 
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a: abstract_arrays.raise_to_shaped(a))
+random_gamma_p.def_abstract_eval(lambda key, a: core.raise_to_shaped(a))
 ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
 xla.translations[random_gamma_p] = xla.lower_fun(
     partial(_gamma_impl, use_vmap=True),
@@ -1071,7 +1070,7 @@ def gamma(key, a, shape=None, dtype=dtypes.float_):
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _gamma(key, a, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1188,7 +1187,7 @@ def poisson(key, lam, shape=(), dtype=dtypes.int_):
     A random array with the specified shape and dtype.
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   if np.shape(lam) != shape:
     lam = jnp.broadcast_to(lam, shape)
   lam = lax.convert_element_type(lam, np.float32)
@@ -1212,7 +1211,7 @@ def gumbel(key, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `gumbel` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _gumbel(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -1269,7 +1268,7 @@ def laplace(key, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `laplace` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _laplace(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -1297,7 +1296,7 @@ def logistic(key, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `logistic` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _logistic(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
@@ -1341,7 +1340,7 @@ def pareto(key, b, shape=None, dtype=dtypes.float_):
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
-    shape = abstract_arrays.canonicalize_shape(shape)
+    shape = core.canonicalize_shape(shape)
   return _pareto(key, b, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1377,7 +1376,7 @@ def t(key, df, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `t` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _t(key, df, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3))
@@ -1410,7 +1409,7 @@ def rademacher(key, shape, dtype=dtypes.int_):
 
   """
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _rademacher(key, shape, dtype)
 
 
@@ -1440,7 +1439,7 @@ def maxwell(key, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `maxwell` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _maxwell(key, shape, dtype)
 
 
@@ -1472,7 +1471,7 @@ def double_sided_maxwell(key, loc, scale, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
                      f" dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _double_sided_maxwell(key, loc, scale, shape, dtype)
 
 
@@ -1512,7 +1511,7 @@ def weibull_min(key, scale, concentration, shape=(), dtype=dtypes.float_):
     raise ValueError(f"dtype argument to `weibull_min` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  shape = abstract_arrays.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   return _weibull_min(key, scale, concentration, shape, dtype)
 
 

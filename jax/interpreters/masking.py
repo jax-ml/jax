@@ -22,12 +22,10 @@ from typing import Callable, Dict, Optional, Sequence, Union, Tuple
 
 import numpy as np
 
-from .. import abstract_arrays
 from .. import core, dtypes
 from ..tree_util import tree_unflatten
-from ..core import Trace, Tracer
+from ..core import ShapedArray, Trace, Tracer
 from ..util import safe_map, safe_zip, unzip2, prod, wrap_name
-from ..abstract_arrays import ShapedArray
 from .. import linear_util as lu
 
 map = safe_map
@@ -303,7 +301,7 @@ def mul(coeff, mon):
     return 0 if coeff == 0 else mon if coeff == 1 else coeff * mon
 
 
-abstract_arrays._DIMENSION_TYPES.add(Poly)
+core._DIMENSION_TYPES.add(Poly)
 
 class Mon(dict):
   # TODO: move this before Poly in the file

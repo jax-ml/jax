@@ -25,13 +25,12 @@ import numpy as np
 from .. import core
 from .. import dtypes
 from .. import linear_util as lu
-from ..abstract_arrays import ConcreteArray, raise_to_shaped
 from ..ad_util import Zero
 from ..util import (unzip2, safe_zip, safe_map, toposort, partial, split_list,
                     cache)
 from ..core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                     unit, unitvar, abstract_unit, ClosedJaxpr, new_jaxpr_eqn,
-                    dropvar)
+                    dropvar, ConcreteArray, raise_to_shaped)
 from jax._src import source_info_util
 from ..config import config
 

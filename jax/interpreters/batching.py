@@ -18,8 +18,7 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 import jax
 from ..config import config
 from .. import core
-from ..core import Trace, Tracer
-from ..abstract_arrays import ShapedArray, raise_to_shaped
+from ..core import ShapedArray, raise_to_shaped, Trace, Tracer
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
 from ..util import (unzip2, partial, safe_map, wrap_name, split_list,

@@ -21,10 +21,10 @@ from . import partial_eval as pe
 from ..config import config
 from .. import core
 from ..dtypes import dtype, float0
-from ..core import Trace, Tracer, get_aval, call_p, Primitive, Literal
+from ..core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
+                    raise_to_shaped)
 from ..ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
                        zeros_like_p, Zero)
-from ..abstract_arrays import raise_to_shaped
 from ..util import unzip2, safe_map, safe_zip, partial, split_list, wrap_name, moveaxis
 from ..tree_util import register_pytree_node
 from .. import linear_util as lu
