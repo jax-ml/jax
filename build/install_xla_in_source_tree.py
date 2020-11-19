@@ -26,35 +26,37 @@ args = parser.parse_args()
 
 r = runfiles.Create()
 
+jaxlib_dir = os.path.join(args.target, "jaxlib")
 
 def _is_windows():
   return sys.platform.startswith("win32")
 
 
-def _copy_so(src_file, dst_dir):
+def _copy_so(src_file, dst_dir, dst_filename=None):
   src_filename = os.path.basename(src_file)
-  if _is_windows() and src_filename.endswith(".so"):
-    dst_filename = src_filename[:-3] + ".pyd"
-  else:
-    dst_filename = src_filename
+  if not dst_filename:
+    if _is_windows() and src_filename.endswith(".so"):
+      dst_filename = src_filename[:-3] + ".pyd"
+    else:
+      dst_filename = src_filename
   dst_file = os.path.join(dst_dir, dst_filename)
-  shutil.copyfile(src_file, dst_file)
+  shutil.copy(src_file, dst_file)
 
 
-def _copy_normal(src_file, dst_dir):
+def _copy_normal(src_file, dst_dir, dst_filename=None):
   src_filename = os.path.basename(src_file)
-  dst_file = os.path.join(dst_dir, src_filename)
-  shutil.copyfile(src_file, dst_file)
+  dst_file = os.path.join(dst_dir, dst_filename or src_filename)
+  shutil.copy(src_file, dst_file)
 
 
-def copy(src_file, dst_dir=os.path.join(args.target, "jaxlib")):
+def copy(src_file, dst_dir=jaxlib_dir, dst_filename=None):
   if src_file.endswith(".so"):
-    _copy_so(src_file, dst_dir)
+    _copy_so(src_file, dst_dir, dst_filename=dst_filename)
   else:
-    _copy_normal(src_file, dst_dir)
+    _copy_normal(src_file, dst_dir, dst_filename=dst_filename)
 
 
-def patch_copy_xla_client_py(dst_dir=os.path.join(args.target, "jaxlib")):
+def patch_copy_xla_client_py(dst_dir=jaxlib_dir):
   with open(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_client.py")) as f:
     src = f.read()
     src = src.replace("from tensorflow.compiler.xla.python import xla_extension as _xla",
@@ -65,7 +67,7 @@ def patch_copy_xla_client_py(dst_dir=os.path.join(args.target, "jaxlib")):
       f.write(src)
 
 
-def patch_copy_tpu_client_py(dst_dir=os.path.join(args.target, "jaxlib")):
+def patch_copy_tpu_client_py(dst_dir=jaxlib_dir):
   with open(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.py")) as f:
     src = f.read()
     src = src.replace("from tensorflow.compiler.xla.python import xla_extension as _xla",
@@ -78,7 +80,10 @@ def patch_copy_tpu_client_py(dst_dir=os.path.join(args.target, "jaxlib")):
     with open(os.path.join(dst_dir, "tpu_client.py"), "w") as f:
       f.write(src)
 
+shutil.rmtree(jaxlib_dir)
+os.makedirs(jaxlib_dir)
 
+copy(r.Rlocation("__main__/jaxlib/init.py"), dst_filename="__init__.py")
 copy(r.Rlocation("__main__/jaxlib/lapack.so"))
 copy(r.Rlocation("__main__/jaxlib/_pocketfft.so"))
 copy(r.Rlocation("__main__/jaxlib/pocketfft_flatbuffers_py_generated.py"))
