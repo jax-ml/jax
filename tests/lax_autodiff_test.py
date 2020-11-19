@@ -363,6 +363,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     if dtype == np.float16:
       raise SkipTest("float16 numerical issues")  # TODO(mattjj): resolve
 
+    if (jtu.device_under_test() == "cpu" and dtype == np.float64 and
+        lhs_shape == (1,1,6,7) and rhs_shape == (2,1,1,2) and strides == (2, 1)
+        and padding == ((0, -1), (0, 0)) and lhs_dil == (1, 1) and
+        rhs_dil == (1, 1)):
+      # TODO(b/173608403): reenable after LLVM fix.
+      raise SkipTest("Skipping test due to LLVM lowering bug")
     rng = rng_factory(self.rng())
     tol = {dtypes.bfloat16: 1e-0, np.float16: 5e-1, np.float32: 1e-3}
 
