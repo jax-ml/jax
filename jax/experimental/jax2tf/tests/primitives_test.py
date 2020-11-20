@@ -889,6 +889,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)
 
+  @primitive_harness.parameterized(primitive_harness.lax_reducer)
+  def test_reducers(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
   @primitive_harness.parameterized(primitive_harness.random_gamma)
   def test_random_gamma(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()),

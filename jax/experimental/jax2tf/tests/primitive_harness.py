@@ -1322,6 +1322,29 @@ lax_reduce_window = tuple( # Validate dtypes across all execution paths
   ]
 )
 
+def _make_reducer_harness(name, *, prim=lax.reduce_sum_p, shape=(2, 3),
+                          axes=(0,), dtype=np.int32):
+  return Harness(f"{name}_prime={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+                 lambda arg: prim.bind(arg, axes=axes),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 axes=axes)
+
+lax_reducer = tuple( # Validate dtypes
+  _make_reducer_harness("dtypes", prim=prim, dtype=dtype)
+  for prim in [lax.reduce_sum_p, lax.reduce_prod_p, lax.reduce_max_p,
+               lax.reduce_min_p, lax.reduce_or_p, lax.reduce_and_p]
+  for dtype in {
+    lax.reduce_sum_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+    lax.reduce_prod_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+    lax.reduce_max_p: jtu.dtypes.all,
+    lax.reduce_min_p: jtu.dtypes.all,
+    lax.reduce_or_p: jtu.dtypes.boolean,
+    lax.reduce_and_p: jtu.dtypes.boolean
+  }[prim]
+)
+
 random_gamma = tuple(
   Harness(f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
           jax.jit(jax.random.gamma),

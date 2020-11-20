@@ -97,6 +97,10 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     if np_dtype in [np.float16, dtypes.bfloat16]:
       tf_unimpl(np_dtype)
 
+  if prim in [lax.reduce_min_p, lax.reduce_max_p]:
+    if np_dtype in [np.complex64, np.complex128]:
+      tf_unimpl(np_dtype)
+
   if prim in [lax.min_p, lax.max_p, lax.reduce_window_min_p,
               lax.reduce_window_max_p]:
     if np_dtype in [np.bool_, np.int8, np.uint16, np.uint32, np.uint64,
