@@ -34,7 +34,7 @@ import itertools as it
 import operator as op
 import threading
 from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Tuple,
-                    Type, Union, Iterable, no_type_check, NamedTuple)
+                    Type, Union, Iterable, no_type_check, NamedTuple, TYPE_CHECKING)
 
 from absl import logging
 import numpy as np
@@ -47,7 +47,7 @@ from ..abstract_arrays import array_types
 from ..core import ConcreteArray, ShapedArray, Var, Literal
 from ..util import (partial, unzip2, unzip3, prod, safe_map, safe_zip,
                     extend_name_stack, wrap_name, assert_unreachable,
-                    tuple_insert, tuple_delete)
+                    tuple_insert, tuple_delete, taggedtuple)
 from ..lib import xla_bridge as xb
 from ..lib import xla_client as xc
 from ..tree_util import tree_flatten, tree_map
@@ -67,11 +67,15 @@ unsafe_map, map = map, safe_map  # type: ignore
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
 
-class Unstacked(NamedTuple):
-  size: int
-
-class Chunked(NamedTuple):
-  chunks: int
+# mypy is very unhappy about taggedtuple
+if TYPE_CHECKING:
+  class Unstacked(NamedTuple):
+    size: int
+  class Chunked(NamedTuple):
+    chunks: int
+else:
+  Unstacked = taggedtuple('Unstacked', ('size',))
+  Chunked = taggedtuple('Chunked', ('chunks',))
 
 """
 Represents all the ways we can shard a dimension.
@@ -83,11 +87,15 @@ Represents all the ways we can shard a dimension.
 """
 AvalDimSharding = Union[Unstacked, Chunked, None]
 
-class ShardedAxis(NamedTuple):
-  axis: int
-
-class Replicated(NamedTuple):
-  replicas: int
+# mypy is very unhappy about taggedtuple
+if TYPE_CHECKING:
+  class ShardedAxis(NamedTuple):
+    axis: int
+  class Replicated(NamedTuple):
+    replicas: int
+else:
+  ShardedAxis = taggedtuple('ShardedAxis', ('axis',))
+  Replicated = taggedtuple('Replicated', ('replicas',))
 
 """
 Assigns sharded axes to mesh dimensions.
