@@ -13,10 +13,11 @@
 # limitations under the License.
 
 
-from collections import defaultdict, deque, namedtuple
+from collections import defaultdict, deque
 import itertools as it
 import operator as op
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Tuple
+from typing import (Any, Callable, Dict, List, Optional, Sequence, Set, Type,
+                    Tuple, NamedTuple)
 from warnings import warn
 
 from absl import logging
@@ -274,7 +275,7 @@ def xla_primitive_callable(prim, *arg_specs: Tuple[core.AbstractValue,
         f"compiling a primitive computation `{prim}` that requires {nreps} "
         f"replicas, but only {xb.device_count(backend)} XLA devices are "
         f"available on backend {backend.platform}.")
-  built_c = primitive_computation(prim, AxisEnv(nreps, (), (), None), backend,
+  built_c = primitive_computation(prim, AxisEnv(nreps, (), ()), backend,
                                   tuple_args, *avals, **params)
   options = xb.get_compile_options(
       num_replicas=nreps,
@@ -336,7 +337,7 @@ def primitive_computation(prim, axis_env, backend, tuple_args, *avals, **params)
     raise RuntimeError(msg) from e
 
 def primitive_subcomputation(prim, *avals, **params):
-  axis_env = AxisEnv(1, (), (), None)
+  axis_env = AxisEnv(1, (), ())
   return primitive_computation(prim, axis_env, None, False, *avals, **params)
 
 def backend_compile(backend, built_c, options):
@@ -477,10 +478,14 @@ def check_backend_params(params, outer_backend):
   return {k: params[k] for k in params if k != 'backend'}
 
 
-AxisEnv = namedtuple('AxisEnv', ['nreps', 'names', 'sizes', 'devices'])
+class AxisEnv(NamedTuple):
+  """Represents a pmap mesh (only along the replica axes)."""
+  nreps: int
+  names: Tuple[Any, ...]
+  sizes: Tuple[int, ...]
 
-def extend_axis_env(env, name, size):
-  return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,), env.devices)
+def extend_axis_env(env: AxisEnv, name, size: int):
+  return AxisEnv(env.nreps, env.names + (name,), env.sizes + (size,))
 
 def axis_read(axis_env, axis_name):
   try:
@@ -488,21 +493,29 @@ def axis_read(axis_env, axis_name):
   except ValueError:
     raise NameError("unbound axis name: {}".format(axis_name)) from None
 
-def axis_groups(axis_env, name):
-  if isinstance(name, (list, tuple)):
-    mesh_axes = tuple(unsafe_map(partial(axis_read, axis_env), name))
-  else:
-    mesh_axes = (axis_read(axis_env, name),)
-  return _axis_groups(axis_env.nreps, axis_env.sizes, mesh_axes)
-
-def _axis_groups(nrep, mesh_spec, mesh_axes):
-  trailing_size, ragged = divmod(nrep, prod(mesh_spec))
+def axis_groups(axis_env: AxisEnv, name):
+  if not isinstance(name, (list, tuple)):
+    name = (name,)
+  mesh_axes = tuple(unsafe_map(partial(axis_read, axis_env), name))
+  trailing_size, ragged = divmod(axis_env.nreps, prod(axis_env.sizes))
   assert not ragged
-  full_spec = list(mesh_spec) + [trailing_size]
-  iota = np.arange(prod(full_spec)).reshape(full_spec)
+  mesh_spec = axis_env.sizes + (trailing_size,)
+  return _axis_groups(mesh_spec, mesh_axes)
+
+def _axis_groups(mesh_spec, mesh_axes):
+  """Computes replica group ids for a collective performed over a subset of the mesh.
+
+  Arguments:
+    mesh_spec: A sequence of integers representing the mesh shape.
+    mesh_axes: A sequence of integers between 0 and `len(mesh_spec)` (exclusive)
+      indicating over which axes the collective is performed.
+  Returns:
+    A tuple of replica groups (i.e. tuples containing replica ids).
+  """
+  iota = np.arange(prod(mesh_spec)).reshape(mesh_spec)
   groups = np.reshape(
       np.moveaxis(iota, mesh_axes, np.arange(len(mesh_axes))),
-      (prod(np.take(full_spec, mesh_axes)), -1))
+      (prod(np.take(mesh_spec, mesh_axes)), -1))
   return tuple(unsafe_map(tuple, groups.T))
 
 def jaxpr_replicas(jaxpr):
@@ -685,7 +698,7 @@ def _xla_callable(fun: lu.WrappedFun, device, backend, name, donated_invars, *ar
   xla_consts = _xla_consts(c, consts)
   xla_args, donated_invars = _xla_callable_args(c, abstract_args, tuple_args, donated_invars=donated_invars)
   out_nodes = jaxpr_subcomp(
-      c, jaxpr, backend, AxisEnv(nreps, (), (), None), xla_consts,
+      c, jaxpr, backend, AxisEnv(nreps, (), ()), xla_consts,
       extend_name_stack(wrap_name(name, 'jit')), *xla_args)
   out_tuple = xops.Tuple(c, out_nodes)
   backend = xb.get_backend(backend)
@@ -920,7 +933,7 @@ def lower_fun(fun, multiple_results, parallel=False):
       axis_env = params.pop('axis_env')
       del params['platform']
     else:
-      axis_env = AxisEnv(1, (), (), None)
+      axis_env = AxisEnv(1, (), ())
     wrapped_fun = lu.wrap_init(fun, params)
     if not multiple_results:
       wrapped_fun = _tuple_output(wrapped_fun)

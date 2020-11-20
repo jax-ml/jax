@@ -635,7 +635,7 @@ class PmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testAxisGroups(self):
-    axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2), None)
+    axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
     groups = xla.axis_groups(axis_env, 'i')
     self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
 
