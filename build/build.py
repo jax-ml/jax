@@ -264,6 +264,10 @@ build:windows --host_linkopt=/OPT:ICF
 
 # Suppress all warning messages.
 build:short_logs --output_filter=DONT_MATCH_ANYTHING
+
+# Workaround for gcc 10+ warnings related to upb.
+# See https://github.com/tensorflow/tensorflow/issues/39467
+build:linux --copt=-Wno-stringop-truncation
 """
 
 
