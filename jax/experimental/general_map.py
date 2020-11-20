@@ -327,17 +327,19 @@ class XMapPrimitive(core.Primitive):
 
   def bind(self, fun, *args, **params):
     assert len(params['in_axes']) == len(args)
-    return core.call_bind(self, fun, *args, **params)
+    return core.call_bind(self, fun, *args, **params)  # type: ignore
 
   def process(self, trace, fun, tracers, params):
     return trace.process_xmap(self, fun, tracers, params)
 
   def post_process(self, trace, out_tracers, params):
     raise NotImplementedError
-    return trace.post_process_xmap(self, out_tracers, params)
 
 xmap_p = XMapPrimitive()
 core.EvalTrace.process_xmap = core.EvalTrace.process_call  # type: ignore
+def _process_xmap_default(self, call_primitive, f, tracers, params):
+  raise NotImplementedError(f"{type(self)} must override process_xmap to handle xmap")
+core.Trace.process_xmap = _process_xmap_default  # type: ignore
 
 def _delete_aval_axes(aval, axes: AxisNamePos):
   assert isinstance(aval, core.ShapedArray)
