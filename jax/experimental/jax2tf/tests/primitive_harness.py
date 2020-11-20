@@ -1070,6 +1070,21 @@ lax_conj = tuple( # Validate dtypes
   ]
 )
 
+def _make_real_imag_harness(name, *, shape=(2, 3), dtype=np.float32,
+                            prim=lax.real_p):
+  return Harness(f"{name}_prim={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+                 prim.bind,
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 prim=prim)
+
+lax_real_imag = tuple( # Validate dtypes
+  _make_real_imag_harness("dtypes", dtype=dtype, prim=prim)
+  for prim in [lax.real_p, lax.imag_p]
+  for dtype in jtu.dtypes.complex
+)
+
 # Use lax_slice, but (a) make the start_indices dynamic arg, and (b) no strides.
 lax_dynamic_slice = [
   Harness(harness.name,
