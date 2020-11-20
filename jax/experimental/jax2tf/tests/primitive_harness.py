@@ -356,6 +356,48 @@ lax_min_max = tuple(
   ]
 )
 
+def _make_div_rem_harness(name, *, shapes=((2,), (2,)), dtype=np.float32,
+                          arrs=(None, None), prim=lax.div_p):
+  lhs, rhs = arrs
+  lhs = RandArg(shapes[0], dtype) if lhs is None else lhs
+  rhs = RandArg(shapes[1], dtype) if rhs is None else rhs
+  return Harness(f"{name}_prim={prim.name}_lhs={jtu.format_shape_dtype_string(lhs.shape, lhs.dtype)}_rhs={jtu.format_shape_dtype_string(rhs.shape, rhs.dtype)}",
+                 prim.bind,
+                 [lhs, rhs],
+                 rng_factory=jtu.rand_nonzero,
+                 lhs=lhs,
+                 rhs=rhs,
+                 prim=prim)
+
+lax_div_rem = tuple( # Validate dtypes
+  _make_div_rem_harness("dtypes", dtype=dtype, prim=prim)
+  for prim in [lax.div_p, lax.rem_p]
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean) - (
+      set() if prim is lax.div_p else set(jtu.dtypes.complex))
+) + tuple( # Validate broadcasting
+  _make_div_rem_harness("broadcast", shapes=shapes, prim=prim)
+  for prim in [lax.div_p, lax.rem_p]
+  for shapes in [
+    ((2, 1, 3), (2, 4, 3)), # broadcast dividend
+    ((2, 4, 3), (2, 1, 3)), # broadcast divisor
+  ]
+) + tuple( # Validate singularity points
+  _make_div_rem_harness(f"singularity_{name}", arrs=arrs, prim=prim)
+  for prim in [lax.div_p, lax.rem_p]
+  for name, arrs in [
+    ("positive_by_0", (np.ones((2,), dtype=np.float32),
+                       np.zeros((2,), dtype=np.float32))),
+    ("positive_by_0_int32", (np.ones((2,), dtype=np.int32),
+                             np.zeros((2,), dtype=np.int32))),
+    ("negative_by_0", (-np.ones((2,), dtype=np.float32),
+                       np.zeros((2,), dtype=np.float32))),
+    ("0_by_0", (np.zeros((2,), dtype=np.float32),
+                np.zeros((2,), dtype=np.float32))),
+    ("inf_by_inf", (np.array([np.inf], dtype=np.float32),
+                    np.array([np.inf], dtype=np.float32))),
+  ]
+)
+
 _LAX_BINARY_ELEMENTWISE = (
   lax.add, lax.atan2, lax.div, lax.igamma, lax.igammac, lax.max, lax.min,
   lax.nextafter, lax.rem, lax.sub)

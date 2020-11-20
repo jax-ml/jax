@@ -77,8 +77,8 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
     _report_failure(CATEGORY_MISSING_TF_SUPPORT, msg, np_dtype, devs=devs)
 
   def tf_possible_incorrect(np_dtype: Optional[NpDType] = None,
-                         msg: str = "",
-                         devs: Sequence[str] = all_devices) -> None:
+                            msg: str = "",
+                            devs: Sequence[str] = all_devices) -> None:
     _report_failure(CATEGORY_POSSIBLE_INCORRECT_RESULTS, msg, np_dtype, devs=devs)
 
   def _to_np_dtype(dtype) -> NpDType:
@@ -103,8 +103,23 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
                     np.complex64, np.complex128]:
       tf_unimpl(np_dtype)
 
-  if prim in [lax.rem_p, lax.atan2_p]:
-    if np_dtype in [np.float16, dtypes.bfloat16]:
+  if prim is lax.div_p:
+    if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.int8, np.int16]:
+      tf_unimpl(np_dtype)
+    elif dtypes.issubdtype(np_dtype, np.integer):
+      tf_unimpl(np_dtype, additional_msg=("integer division fails if the "
+                                          "divisor contains a 0"))
+
+  if prim is lax.rem_p:
+    if np_dtype in [np.uint8, np.uint16, np.uint32, np.uint64,
+                    np.int8, np.int16, np.float16]:
+      tf_unimpl(np_dtype)
+    elif dtypes.issubdtype(np_dtype, np.integer):
+      tf_unimpl(np_dtype, additional_msg=("integer division fails if the "
+                                          "divisor contains a 0"))
+
+  if prim is lax.atan2_p and np_dtype in [np.float16, dtypes.bfloat16]:
       # b/158006398: TF kernels are missing for 'rem' and 'atan2'
       tf_unimpl(np_dtype)
 

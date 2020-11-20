@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-11-16*
+*Last generated on (YYYY-MM-DD): 2020-11-19*
 
 We do not yet have support for `pmap` (with its collective primitives),
 nor for `sharded_jit` (SPMD partitioning).
@@ -93,6 +93,8 @@ conversion to Tensorflow.
 | conv_general_dilated | Missing TF support | Primitive is unimplemented in TF; likely bug in the HLO -> LLVM IR lowering of XlaConv | complex128, complex64 | CPU, GPU, TPU |
 | cosh | Missing TF support | Primitive is unimplemented in TF | float16 | CPU, GPU, TPU |
 | digamma | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
+| div | Missing TF support | Primitive is unimplemented in TF | int16, int8, uint16, uint32, uint64, uint8 | CPU, GPU, TPU |
+| div | Missing TF support | Primitive is unimplemented in TF; integer division fails if the divisor contains a 0 | int32, int64 | CPU, GPU, TPU |
 | dot_general | Missing TF support | Primitive is unimplemented in TF | bool, int8, uint16, uint32, uint64, uint8 | CPU, GPU, TPU |
 | dot_general | Missing TF support | Primitive is unimplemented in TF | int16 | TPU |
 | dot_general | Missing TF support | Primitive is unimplemented in TF; only cases representable as 2D matrix multiplication can be converted properly | int16 | CPU, GPU |
@@ -121,7 +123,8 @@ conversion to Tensorflow.
 | reduce_window_min | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | reduce_window_sum | Missing TF support | Primitive is unimplemented in TF | uint16, uint32, uint64 | CPU, GPU, TPU |
 | regularized_incomplete_beta | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
-| rem | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
+| rem | Missing TF support | Primitive is unimplemented in TF | float16, int16, int8, uint16, uint32, uint64, uint8 | CPU, GPU, TPU |
+| rem | Missing TF support | Primitive is unimplemented in TF; integer division fails if the divisor contains a 0 | int32, int64 | CPU, GPU, TPU |
 | round | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | rsqrt | Missing TF support | Primitive is unimplemented in TF | bfloat16 | CPU, GPU |
 | select_and_gather_add | Missing TF support | Primitive is unimplemented in TF | float32, float64 | TPU |
@@ -148,4 +151,4 @@ The conversion of the following JAX primitives is not yet implemented:
 The following JAX primitives have a defined conversion but are known to be
 missing tests:
 
-`argmin`, `complex`, `custom_lin`, `device_put`, `integer_pow`, `rev`, `select_and_scatter`, `tie_in`
+`complex`, `custom_lin`, `device_put`, `integer_pow`, `rev`, `select_and_scatter`, `tie_in`
