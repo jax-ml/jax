@@ -1823,21 +1823,22 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 
 ### Reducers
 
-def _reduction(a, name, np_fun, op, init_val,
+def _reduction(a, name, np_fun, op, init_val, has_identity=True,
                preproc=None, bool_op=None, upcast_f16_for_computation=False,
                axis=None, dtype=None, out=None, keepdims=False, initial=None, where=None):
   bool_op = bool_op or op
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
-  if initial is not None:
-    # TODO(jakevdp): support 'initial' argument.
-    raise NotImplementedError(f"The 'initial' argument to jnp.{name} is not supported.")
   if where is not None:
     # TODO(jakevdp): support 'where' argument.
     raise NotImplementedError(f"The 'where' argument to jnp.{name} is not supported.")
   _check_arraylike(name, a)
   lax._check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
+
+  if initial is None and not has_identity:
+    if not size(a):
+      raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
 
   a = a if isinstance(a, ndarray) else asarray(a)
   a = preproc(a) if preproc else a
@@ -1848,8 +1849,12 @@ def _reduction(a, name, np_fun, op, init_val,
   else:
     computation_dtype = result_dtype
   a = lax.convert_element_type(a, computation_dtype)
-  result = lax.reduce(a, _reduction_init_val(a, init_val),
-                      op if computation_dtype != np.bool_ else bool_op, dims)
+  op = op if computation_dtype != np.bool_ else bool_op
+  # NB: in XLA, init_val must be an identity for the op, so the user-specified
+  # initial value must be applied afterward.
+  result = lax.reduce(a, _reduction_init_val(a, init_val), op, dims)
+  if initial is not None:
+    result = op(_reduction_init_val(a, initial), result)
   if keepdims:
     result = expand_dims(result, dims)
   return lax.convert_element_type(result, dtype or result_dtype)
@@ -1893,12 +1898,12 @@ def prod(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=
 
 @_wraps(np.max)
 def max(a, axis=None, out=None, keepdims=None, initial=None, where=None):
-  return _reduction(a, "max", np.max, lax.max, -np.inf,
+  return _reduction(a, "max", np.max, lax.max, -np.inf, has_identity=False,
                     axis=axis, out=out, keepdims=keepdims, initial=initial, where=where)
 
 @_wraps(np.min)
 def min(a, axis=None, out=None, keepdims=None, initial=None, where=None):
-  return _reduction(a, "min", np.min, lax.min, np.inf,
+  return _reduction(a, "min", np.min, lax.min, np.inf, has_identity=False,
                     axis=axis, out=out, keepdims=keepdims, initial=initial, where=where)
 
 @_wraps(np.all)
