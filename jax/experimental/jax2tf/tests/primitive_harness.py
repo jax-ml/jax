@@ -1034,6 +1034,24 @@ lax_slice = tuple(
   for dtype in [np.float32]
 )
 
+def _make_complex_harness(name, *, shapes=((3, 4), (3, 4)), dtype=np.float32):
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+                 lax.complex_p.bind,
+                 [RandArg(shapes[0], dtype), RandArg(shapes[1], dtype)],
+                 shapes=shapes,
+                 dtype=dtype)
+
+lax_complex = tuple( # Validate dtypes
+  _make_complex_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.floating
+) + tuple( # Validate broadcasting
+  _make_complex_harness("broadcast", shapes=shapes)
+  for shapes in [
+    ((3, 2), (3, 1)), # broadcast imaginary part
+    ((3, 1), (3, 2)), # broadcast real part
+  ]
+)
+
 def _make_conj_harness(name, *, shape=(3, 4), dtype=np.float32, **kwargs):
   return Harness(f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}_kwargs={kwargs}".replace(" ", ""),
                  lambda x: lax.conj_p.bind(x, **kwargs),
