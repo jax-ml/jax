@@ -4486,8 +4486,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
       'allclose': ['equal_nan'],
-      'amax': ['initial', 'where'],
-      'amin': ['initial', 'where'],
       'angle': ['deg'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
@@ -4503,33 +4501,18 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
-      'max': ['initial', 'where'],
-      'min': ['initial', 'where'],
       'ones': ['order'],
       'ones_like': ['subok', 'order'],
       'pad': ['kwargs'],
-      'prod': ['initial', 'where'],
-      'product': ['initial', 'where'],
-      'sum': ['initial', 'where'],
       'zeros_like': ['subok', 'order']
     }
 
     extra_params = {
-      'all': ['dtype'],
-      'alltrue': ['dtype'],
-      'amax': ['dtype'],
-      'amin': ['dtype'],
-      'any': ['dtype'],
       'broadcast_to': ['arr'],
       'gradient': ['kwargs', 'args'],
       'einsum': ['precision'],
       'einsum_path': ['subscripts'],
-      'max': ['dtype'],
-      'min': ['dtype'],
-      'nanmax': ['dtype'],
-      'nanmin': ['dtype'],
       'pad': ['constant_values'],
-      'sometrue': ['dtype'],
     }
 
     mismatches = {}
