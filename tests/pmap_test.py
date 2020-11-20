@@ -47,7 +47,6 @@ config.parse_flags_with_absl()
 
 prev_xla_flags = None
 
-# TODO(jakevdp): move the following to test_util.py
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 def all_bdims(*shapes):
