@@ -110,7 +110,7 @@ class Config:
     if not already_configured_with_absl:
       import absl.flags
       self.config_with_absl()
-      absl.flags.FLAGS(sys.argv, known_only=True)  # type: ignore
+      absl.flags.FLAGS(sys.argv, known_only=True)
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
