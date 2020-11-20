@@ -304,6 +304,26 @@ lax_argminmax = tuple( # Validate dtypes for each primitive
 #  for prim in [lax.argmin_p, lax.argmax_p]
 #)
 
+def _make_iota_harness(name, *, shape=(2, 3), dtype=np.float32, dimension=0):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimension={dimension}",
+                 lambda dtype, shape, dim: (
+                   lax.iota_p.bind(dtype=dtype, shape=shape, dimension=dim)),
+                 [StaticArg(dtype), StaticArg(shape), StaticArg(dimension)],
+                 shape=shape,
+                 dtype=dtype,
+                 dimension=dimension)
+
+lax_iota = tuple( # Validate dtypes
+  _make_iota_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+) + tuple( # Validate broadcasting
+  _make_iota_harness("broadcasting", shape=shape, dimension=dimension)
+  for shape, dimension in [
+    ((4, 8, 1, 1), 1), # broadcasting along non-major dimension
+    ((4, 8, 1, 1), 2), # broadcasting along dimension == 1
+  ]
+)
+
 lax_add_mul = tuple(
   Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
           f_jax,

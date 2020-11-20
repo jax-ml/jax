@@ -150,6 +150,7 @@ from jax._src.lax.lax import (
   integer_pow,
   integer_pow_p,
   iota,
+  iota_p,
   is_finite,
   is_finite_p,
   itertools,
