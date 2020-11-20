@@ -1239,7 +1239,9 @@ def pmap(fun: Callable[..., T],
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None,
-         donate_argnums: Union[int, Iterable[int]] = ()) -> Callable[..., T]:
+         donate_argnums: Union[int, Iterable[int]] = (),
+         global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None
+         ) -> Callable[..., T]:
   """Parallel map with support for collective operations.
 
   The purpose of :py:func:`pmap` is to express single-program multiple-data (SPMD)
@@ -1315,6 +1317,11 @@ def pmap(fun: Callable[..., T],
       for example recycling one of your input buffers to store a result. You
       should not re-use buffers that you donate to a computation, JAX will raise
       an error if you try to.
+    global_arg_shapes: Optional, must be set when using pmap(sharded_jit) and
+      the partitioned values span multiple processes. The global cross-process
+      per-replica shape of each argument, i.e. does not include the leading
+      pmapped dimension. Can be None for replicated arguments. This API is
+      likely to change in the future.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -1463,18 +1470,29 @@ def pmap(fun: Callable[..., T],
       dyn_argnums = [i for i in range(len(args))
                      if i not in static_broadcasted_tuple]
       f, dyn_args = argnums_partial(f, dyn_argnums, args)
+
       if isinstance(in_axes, tuple):
         dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
       else:
         dyn_in_axes = in_axes
+        dyn_global_arg_shapes = global_arg_shapes
+
+      if isinstance(global_arg_shapes, tuple):
+        dyn_global_arg_shapes = tuple(global_arg_shapes[i] for i in dyn_argnums)
+      else:
+        dyn_global_arg_shapes = global_arg_shapes
     else:
       dyn_args, dyn_in_axes = args, in_axes
+      dyn_global_arg_shapes = global_arg_shapes
     args, in_tree = tree_flatten((dyn_args, kwargs))
+
     if donate_tuple:
       donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
     else:
       donated_invars = (False,) * len(args)
     in_axes_flat = flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0))
+    global_arg_shapes_flat = flatten_axes("pmap global_arg_shapes", in_tree,
+                                          (dyn_global_arg_shapes, None))
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
@@ -1483,7 +1501,8 @@ def pmap(fun: Callable[..., T],
         axis_size=local_axis_size, global_axis_size=axis_size,
         devices=None if devices is None else tuple(devices),
         in_axes=tuple(in_axes_flat),
-        name=flat_fun.__name__, donated_invars=tuple(donated_invars))
+        name=flat_fun.__name__, donated_invars=tuple(donated_invars),
+        global_arg_shapes=tuple(global_arg_shapes_flat))
     return tree_unflatten(out_tree(), out)
 
   return f_pmapped
