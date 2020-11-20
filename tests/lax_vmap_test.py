@@ -43,7 +43,6 @@ all_dtypes = jtu.dtypes.all
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-# TODO(jakevdp): move the following to test_util.py
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
 def all_bdims(*shapes):
