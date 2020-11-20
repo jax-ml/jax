@@ -333,8 +333,9 @@ def add_boolean_argument(parser, name, default=False, help_str=None):
 
 
 def main():
+  cwd = os.getcwd()
   parser = argparse.ArgumentParser(
-      description="Builds libjax from source.", epilog=EPILOG)
+      description="Builds jaxlib from source.", epilog=EPILOG)
   parser.add_argument(
       "--bazel_path",
       help="Path to the Bazel binary to use. The default is to find bazel via "
@@ -388,6 +389,10 @@ def main():
       "--bazel_options",
       action="append", default=[],
       help="Additional options to pass to bazel.")
+  parser.add_argument(
+      "--output_path",
+      default=os.path.join(cwd, "dist"),
+      help="Directory to which the jaxlib wheel should be written")
   args = parser.parse_args()
 
   if is_windows() and args.enable_cuda:
@@ -397,6 +402,8 @@ def main():
       parser.error("--cudnn_version is needed for Windows CUDA build.")
 
   print(BANNER)
+
+  output_path = os.path.abspath(args.output_path)
   os.chdir(os.path.dirname(__file__ or args.prog) or '.')
 
   # Find a working Bazel.
@@ -447,7 +454,8 @@ def main():
     config_args += ["--define=xla_python_enable_gpu=true"]
   command = ([bazel_path] + args.bazel_startup_options +
     ["run", "--verbose_failures=true"] + config_args +
-    [":install_xla_in_source_tree", os.getcwd()])
+    [":build_wheel", "--",
+    f"--output_path={output_path}"])
   print(" ".join(command))
   shell(command)
   shell([bazel_path, "shutdown"])
