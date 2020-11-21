@@ -1825,13 +1825,10 @@ def nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
 
 def _reduction(a, name, np_fun, op, init_val, has_identity=True,
                preproc=None, bool_op=None, upcast_f16_for_computation=False,
-               axis=None, dtype=None, out=None, keepdims=False, initial=None, where=None):
+               axis=None, dtype=None, out=None, keepdims=False, initial=None, where_=None):
   bool_op = bool_op or op
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
-  if where is not None:
-    # TODO(jakevdp): support 'where' argument.
-    raise NotImplementedError(f"The 'where' argument to jnp.{name} is not supported.")
   _check_arraylike(name, a)
   lax._check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
@@ -1839,6 +1836,9 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   if initial is None and not has_identity:
     if not size(a):
       raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
+    if where_ is not None:
+      raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
+                       f"where mask one has to specify 'initial'")
 
   a = a if isinstance(a, ndarray) else asarray(a)
   a = preproc(a) if preproc else a
@@ -1852,7 +1852,10 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   op = op if computation_dtype != np.bool_ else bool_op
   # NB: in XLA, init_val must be an identity for the op, so the user-specified
   # initial value must be applied afterward.
-  result = lax.reduce(a, _reduction_init_val(a, init_val), op, dims)
+  init_val = _reduction_init_val(a, init_val)
+  if where_ is not None:
+    a = where(where_, a, init_val)
+  result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
     result = op(_reduction_init_val(a, initial), result)
   if keepdims:
@@ -1888,23 +1891,23 @@ _cast_to_bool = partial(lax.convert_element_type, new_dtype=bool_)
 def sum(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "sum", np.sum, lax.add, 0,
                     bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
-                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where=where)
+                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.prod)
 def prod(a, axis=None, dtype=None, out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "prod", np.prod, lax.mul, 1,
                     bool_op=lax.bitwise_and, upcast_f16_for_computation=True,
-                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where=where)
+                    axis=axis, dtype=dtype, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.max)
 def max(a, axis=None, out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "max", np.max, lax.max, -np.inf, has_identity=False,
-                    axis=axis, out=out, keepdims=keepdims, initial=initial, where=where)
+                    axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.min)
 def min(a, axis=None, out=None, keepdims=None, initial=None, where=None):
   return _reduction(a, "min", np.min, lax.min, np.inf, has_identity=False,
-                    axis=axis, out=out, keepdims=keepdims, initial=initial, where=where)
+                    axis=axis, out=out, keepdims=keepdims, initial=initial, where_=where)
 
 @_wraps(np.all)
 def all(a, axis=None, out=None, keepdims=None):
