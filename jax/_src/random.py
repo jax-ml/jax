@@ -12,32 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""JAX pseudo-random number generators (PRNGs).
-
-Example usage:
-
->>> rng = jax.random.PRNGKey(seed)
->>> for i in range(num_steps):
-...   rng, rng_input = jax.random.split(rng)
-...   params = compiled_update(rng_input, params, next(batches))
-
-Context:
-
-Among other requirements, the JAX PRNG aims to:
-(a) ensure reproducibility,
-(b) parallelize well, both in terms of vectorization (generating array values)
-and multi-replica, multi-core computation. In particular it should not use
-sequencing constraints between random function calls.
-
-The approach is based on:
-1. "Parallel random numbers: as easy as 1, 2, 3" (Salmon et al. 2011)
-2. "Splittable pseudorandom number generators using cryptographic hashing"
-(Claessen et al. 2013)
-
-See also https://github.com/google/jax/blob/master/design_notes/prng.md
-for the design and its motivation.
-"""
-
 
 from functools import partial
 from typing import Optional, Sequence, Union
