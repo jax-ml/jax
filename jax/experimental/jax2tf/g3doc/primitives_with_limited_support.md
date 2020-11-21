@@ -1,6 +1,6 @@
 # Primitives with limited support
 
-*Last generated on (YYYY-MM-DD): 2020-11-19*
+*Last generated on (YYYY-MM-DD): 2020-11-20*
 
 We do not yet have support for `pmap` (with its collective primitives),
 nor for `sharded_jit` (SPMD partitioning).
@@ -119,6 +119,8 @@ conversion to Tensorflow.
 | nextafter | Missing TF support | Primitive is unimplemented in TF | bfloat16, float16 | CPU, GPU, TPU |
 | population_count | Missing TF support | Primitive is unimplemented in TF | uint32, uint64 | CPU, GPU, TPU |
 | qr | Missing TF support | Primitive is unimplemented in TF; this is a problem only in compiled mode (experimental_compile=True)) | complex128, complex64 | CPU, GPU, TPU |
+| reduce_max | Missing TF support | Primitive is unimplemented in TF | complex128, complex64 | CPU, GPU, TPU |
+| reduce_min | Missing TF support | Primitive is unimplemented in TF | complex128, complex64 | CPU, GPU, TPU |
 | reduce_window_max | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | reduce_window_min | Missing TF support | Primitive is unimplemented in TF | bool, complex128, complex64, int8, uint16, uint32, uint64 | CPU, GPU, TPU |
 | reduce_window_sum | Missing TF support | Primitive is unimplemented in TF | uint16, uint32, uint64 | CPU, GPU, TPU |

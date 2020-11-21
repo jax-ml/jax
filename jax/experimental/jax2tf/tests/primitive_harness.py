@@ -304,6 +304,26 @@ lax_argminmax = tuple( # Validate dtypes for each primitive
 #  for prim in [lax.argmin_p, lax.argmax_p]
 #)
 
+def _make_iota_harness(name, *, shape=(2, 3), dtype=np.float32, dimension=0):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimension={dimension}",
+                 lambda dtype, shape, dim: (
+                   lax.iota_p.bind(dtype=dtype, shape=shape, dimension=dim)),
+                 [StaticArg(dtype), StaticArg(shape), StaticArg(dimension)],
+                 shape=shape,
+                 dtype=dtype,
+                 dimension=dimension)
+
+lax_iota = tuple( # Validate dtypes
+  _make_iota_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+) + tuple( # Validate broadcasting
+  _make_iota_harness("broadcasting", shape=shape, dimension=dimension)
+  for shape, dimension in [
+    ((4, 8, 1, 1), 1), # broadcasting along non-major dimension
+    ((4, 8, 1, 1), 2), # broadcasting along dimension == 1
+  ]
+)
+
 lax_add_mul = tuple(
   Harness(f"fun={f_jax.__name__}_{jtu.dtype_str(dtype)}",
           f_jax,
@@ -1034,6 +1054,24 @@ lax_slice = tuple(
   for dtype in [np.float32]
 )
 
+def _make_complex_harness(name, *, shapes=((3, 4), (3, 4)), dtype=np.float32):
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(shapes[0], dtype)}_rhs={jtu.format_shape_dtype_string(shapes[1], dtype)}",
+                 lax.complex_p.bind,
+                 [RandArg(shapes[0], dtype), RandArg(shapes[1], dtype)],
+                 shapes=shapes,
+                 dtype=dtype)
+
+lax_complex = tuple( # Validate dtypes
+  _make_complex_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.floating
+) + tuple( # Validate broadcasting
+  _make_complex_harness("broadcast", shapes=shapes)
+  for shapes in [
+    ((3, 2), (3, 1)), # broadcast imaginary part
+    ((3, 1), (3, 2)), # broadcast real part
+  ]
+)
+
 def _make_conj_harness(name, *, shape=(3, 4), dtype=np.float32, **kwargs):
   return Harness(f"{name}_operand={jtu.format_shape_dtype_string(shape, dtype)}_kwargs={kwargs}".replace(" ", ""),
                  lambda x: lax.conj_p.bind(x, **kwargs),
@@ -1050,6 +1088,21 @@ lax_conj = tuple( # Validate dtypes
   for kwargs in [
     { "_input_dtype": np.float32 },             # expected kwarg for ad
   ]
+)
+
+def _make_real_imag_harness(name, *, shape=(2, 3), dtype=np.float32,
+                            prim=lax.real_p):
+  return Harness(f"{name}_prim={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+                 prim.bind,
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 prim=prim)
+
+lax_real_imag = tuple( # Validate dtypes
+  _make_real_imag_harness("dtypes", dtype=dtype, prim=prim)
+  for prim in [lax.real_p, lax.imag_p]
+  for dtype in jtu.dtypes.complex
 )
 
 # Use lax_slice, but (a) make the start_indices dynamic arg, and (b) no strides.
@@ -1320,6 +1373,29 @@ lax_reduce_window = tuple( # Validate dtypes across all execution paths
     ((2, 4, 3), (2, 2, 2)), # 3 spatial dimensions, left and right squeeze
     ((1, 4, 3, 2, 1), (1, 2, 2, 2, 1)) # 3 spatial dimensions, no squeeze
   ]
+)
+
+def _make_reducer_harness(name, *, prim=lax.reduce_sum_p, shape=(2, 3),
+                          axes=(0,), dtype=np.int32):
+  return Harness(f"{name}_prime={prim.name}_shape={jtu.format_shape_dtype_string(shape, dtype)}",
+                 lambda arg: prim.bind(arg, axes=axes),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 axes=axes)
+
+lax_reducer = tuple( # Validate dtypes
+  _make_reducer_harness("dtypes", prim=prim, dtype=dtype)
+  for prim in [lax.reduce_sum_p, lax.reduce_prod_p, lax.reduce_max_p,
+               lax.reduce_min_p, lax.reduce_or_p, lax.reduce_and_p]
+  for dtype in {
+    lax.reduce_sum_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+    lax.reduce_prod_p: set(jtu.dtypes.all) - set(jtu.dtypes.boolean),
+    lax.reduce_max_p: jtu.dtypes.all,
+    lax.reduce_min_p: jtu.dtypes.all,
+    lax.reduce_or_p: jtu.dtypes.boolean,
+    lax.reduce_and_p: jtu.dtypes.boolean
+  }[prim]
 )
 
 random_gamma = tuple(
