@@ -1639,26 +1639,30 @@ def broadcast_to(arr, shape):
     kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
     return lax.broadcast_in_dim(squeeze(arr, tuple(diff)), shape, kept_dims)
 
+
 def _split(op, ary, indices_or_sections, axis=0):
   axis = core.concrete_or_error(int, axis, f"in jax.numpy.{op} argument `axis`")
   size = ary.shape[axis]
   if isinstance(indices_or_sections, (tuple, list) + _arraylike_types):
-    indices_or_sections = [core.concrete_or_error(int, i_s, f"in jax.numpy.{op} argument 1")
-                           for i_s in indices_or_sections]
-    split_indices = np.concatenate([[0], indices_or_sections, [size]])
+    indices_or_sections = np.array(
+        [core.concrete_or_error(np.int64, i_s, f"in jax.numpy.{op} argument 1")
+         for i_s in indices_or_sections], np.int64)
+    split_indices = np.concatenate([[np.int64(0)], indices_or_sections,
+                                    [np.int64(size)]])
   else:
-    indices_or_sections = core.concrete_or_error(int, indices_or_sections,
+    indices_or_sections = core.concrete_or_error(np.int64, indices_or_sections,
                                                  f"in jax.numpy.{op} argument 1")
     part_size, r = _divmod(size, indices_or_sections)
     if r == 0:
-      split_indices = np.arange(indices_or_sections + 1) * part_size
+      split_indices = np.arange(indices_or_sections + 1,
+                                dtype=np.int64) * part_size
     elif op == "array_split":
-      split_indices = np.concatenate([np.arange(r + 1) * (part_size + 1),
-                                      np.arange(indices_or_sections - r) * part_size
-                                      + ((r + 1) * (part_size + 1) - 1)])
+      split_indices = np.concatenate(
+          [np.arange(r + 1, dtype=np.int64) * (part_size + 1),
+           np.arange(indices_or_sections - r, dtype=np.int64) * part_size
+           + ((r + 1) * (part_size + 1) - 1)])
     else:
       raise ValueError("array split does not result in an equal division")
-  split_indices = split_indices.astype(int)
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: subvals(x, [(i, v)])
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
