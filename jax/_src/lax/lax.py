@@ -16,10 +16,12 @@
 # pytype: skip-file
 
 import builtins
+from enum import IntEnum
 import functools
 import itertools
 import operator
-from typing import (Any, Callable, List, NamedTuple, Optional, Sequence, Union, Tuple)
+from typing import (Any, Callable, List, NamedTuple, Optional, Sequence,\
+                    Union, Tuple)
 import warnings
 
 import numpy as np
@@ -150,12 +152,28 @@ def ceil(x: Array) -> Array:
   r"""Elementwise ceiling: :math:`\left\lceil x \right\rceil`."""
   return ceil_p.bind(x)
 
-def round(x: Array) -> Array:
+class RoundingMethod(IntEnum):
+  AWAY_FROM_ZERO = 0
+  TO_NEAREST_EVEN = 1
+
+def round(x: Array,
+          rounding_method: RoundingMethod = RoundingMethod.AWAY_FROM_ZERO
+          ) -> Array:
   r"""Elementwise round.
 
-  Rounds values to the nearest integer. Halfway values (e.g., `0.5`) are rounded
-  away from zero."""
-  return round_p.bind(x)
+  Rounds values to the nearest integer.
+
+  Args:
+    x: an array or scalar value to round.
+    rounding_method: the method to use when rounding halfway values
+      (e.g., `0.5`). See ``lax.RoundingMethod`` for the list of possible
+      values.
+
+  Returns:
+    An array containing the elementwise rounding of x.
+  """
+  rounding_method = RoundingMethod(rounding_method)
+  return round_p.bind(x, rounding_method=rounding_method)
 
 def is_finite(x: Array) -> Array:
   r"""Elementwise :math:`\mathrm{isfinite}`.
@@ -2167,7 +2185,28 @@ ad.defjvp_zero(floor_p)
 ceil_p = standard_unop(_float, 'ceil')
 ad.defjvp_zero(ceil_p)
 
+def _round_to_nearest_even(x):
+  half = _const(x, 0.5)
+  one = _const(x, 1)
+  round_val = floor(x)
+  fraction = x - round_val
+  nearest_even_int = sub(
+    round_val, mul(_const(x, 2), floor(mul(half, x))))
+  is_odd = eq(nearest_even_int, one)
+  return select(
+    bitwise_or(gt(fraction, half),
+               bitwise_and(eq(fraction, half), is_odd)),
+    add(round_val, one), round_val)
+
+def _round_translation_rule(c, x, *, rounding_method):
+  if rounding_method is RoundingMethod.AWAY_FROM_ZERO:
+    return xops.Round(x)
+  else: # rounding_method is RoundingMethod.TO_NEAREST_EVEN
+    rounding_fun = xla.lower_fun(_round_to_nearest_even, multiple_results=False)
+    return rounding_fun(c, x)
+
 round_p = standard_unop(_float, 'round')
+xla.translations[round_p] = _round_translation_rule
 ad.defjvp_zero(round_p)
 
 is_finite_p = unop(_fixed_dtype(np.bool_), _float, 'is_finite')

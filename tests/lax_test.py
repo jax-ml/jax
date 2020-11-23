@@ -1177,6 +1177,13 @@ class LaxTest(jtu.JaxTestCase):
     numpy_op = lambda x: lax_reference.reshape(x, out_shape)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
+  def testRoundRoundingMethods(self):
+    x = np.array([-2.5, -1.5, -0.5, 0.5, 1.5, 2.5], dtype=np.float32)
+    self.assertAllClose(lax.round(x, lax.RoundingMethod.AWAY_FROM_ZERO),
+                        np.array([-3, -2, -1, 1, 2, 3], dtype=np.float32))
+    self.assertAllClose(lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN),
+                        np.array([-2, -2, 0, 0, 2, 2], dtype=np.float32))
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_pads={}"
        .format(jtu.format_shape_dtype_string(shape, dtype), pads),

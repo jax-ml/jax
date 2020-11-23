@@ -495,7 +495,7 @@ def rint(x):
     return lax.convert_element_type(x, float_)
   if issubdtype(dtype, complexfloating):
     return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
-  return _round_to_nearest_even(x)
+  return lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN)
 
 
 @_wraps(np.sign)
@@ -1695,20 +1695,6 @@ def clip(a, a_min=None, a_max=None, out=None):
     a = minimum(a_max, a)
   return a
 
-
-def _round_to_nearest_even(x):
-  half = lax._const(x, 0.5)
-  one = lax._const(x, 1)
-  round_val = lax.floor(x)
-  fraction = x - round_val
-  nearest_even_int = lax.sub(
-    round_val, lax.mul(lax._const(x, 2), lax.floor(lax.mul(half, x))))
-  is_odd = lax.eq(nearest_even_int, one)
-  return lax.select(
-    lax.bitwise_or(lax.gt(fraction, half),
-                   lax.bitwise_and(lax.eq(fraction, half), is_odd)),
-    lax.add(round_val, one), round_val)
-
 @_wraps(np.round, update_doc=False)
 def round(a, decimals=0, out=None):
   _check_arraylike("round", a)
@@ -1723,7 +1709,7 @@ def round(a, decimals=0, out=None):
 
   def _round_float(x):
     if decimals == 0:
-      return _round_to_nearest_even(x)
+      return lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN)
 
     # TODO(phawkins): the strategy of rescaling the value isn't necessarily a
     # good one since we may be left with an incorrectly rounded value at the
@@ -1731,7 +1717,8 @@ def round(a, decimals=0, out=None):
     # float32,
     x = lax.convert_element_type(x, np.float32) if dtype == np.float16 else x
     factor = _constant_like(x, 10 ** decimals)
-    out = lax.div(_round_to_nearest_even(lax.mul(x, factor)), factor)
+    out = lax.div(lax.round(lax.mul(x, factor),
+                            lax.RoundingMethod.TO_NEAREST_EVEN), factor)
     return lax.convert_element_type(out, dtype) if dtype == np.float16 else out
 
   if issubdtype(dtype, complexfloating):
