@@ -57,13 +57,19 @@ def _copy_so(src_file, dst_dir, dst_filename=None):
     else:
       dst_filename = src_filename
   dst_file = os.path.join(dst_dir, dst_filename)
-  shutil.copy(src_file, dst_file)
+  if _is_windows():
+    shutil.copyfile(src_file, dst_file)
+  else:
+    shutil.copy(src_file, dst_file)
 
 
 def _copy_normal(src_file, dst_dir, dst_filename=None):
   src_filename = os.path.basename(src_file)
   dst_file = os.path.join(dst_dir, dst_filename or src_filename)
-  shutil.copy(src_file, dst_file)
+  if _is_windows():
+    shutil.copyfile(src_file, dst_file)
+  else:
+    shutil.copy(src_file, dst_file)
 
 
 def copy_file(src_file, dst_dir, dst_filename=None):
@@ -169,4 +175,3 @@ try:
 finally:
   if tmpdir:
     tmpdir.cleanup()
-
