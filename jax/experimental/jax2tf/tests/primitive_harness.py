@@ -254,6 +254,30 @@ lax_integer_pow = tuple( # Validate dtypes and y values
   for y in [-1000]
 )
 
+def _make_pow_harness(name, *, shapes=((20, 30), (20, 30)), dtype=np.float32,
+                      lhs=None, rhs=None):
+  lhs = RandArg(shapes[0], dtype) if lhs is None else lhs
+  rhs = RandArg(shapes[1], dtype) if rhs is None else rhs
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(lhs.shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs.shape, dtype)}",
+                 lax.pow,
+                 [lhs, rhs],
+                 lhs=lhs,
+                 rhs=rhs,
+                 dtype=dtype)
+
+lax_pow = tuple( # Validate dtypes
+  _make_pow_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all_inexact
+) + tuple( # Validate broadcasting behavior
+  _make_pow_harness("broadcast", shapes=shapes)
+  for shapes in [
+    ((), (4, 5, 6)),        # broadcasting lhs
+    ((4, 5, 6), ()),        # broadcasting rhs
+    ((4, 1, 6), (4, 5, 6)), # broadcasting lhs on a specific axis
+    ((4, 5, 6), (4, 1, 6)), # broadcasting rhs on a specific axis
+  ]
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 

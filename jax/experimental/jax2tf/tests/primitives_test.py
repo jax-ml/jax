@@ -571,9 +571,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(primitive_harness.lax_round)
   def test_round(self, harness: primitive_harness.Harness):
     self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
-  
-  @primitive_harness.parameterized(primitive_harness.lax_integer_pow)
-  def test_integer_pow(self, harness: primitive_harness.Harness):
+
+  @primitive_harness.parameterized(primitive_harness.lax_convert_element_type)
+  def test_convert_element_type(self, harness: primitive_harness.Harness):
+    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+
+  def _pow_test_util(self, harness: primitive_harness.Harness):
     dtype = harness.params["dtype"]
     custom_assert = rtol = None
     if dtype in [np.float32, np.complex64]:
@@ -600,9 +603,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                            rtol=rtol, custom_assert=custom_assert,
                            always_custom_assert=True)
 
-  @primitive_harness.parameterized(primitive_harness.lax_convert_element_type)
-  def test_convert_element_type(self, harness: primitive_harness.Harness):
-    self.ConvertAndCompare(harness.dyn_fun, *harness.dyn_args_maker(self.rng()))
+  @primitive_harness.parameterized(primitive_harness.lax_integer_pow)
+  def test_integer_pow(self, harness: primitive_harness.Harness):
+    self._pow_test_util(harness)
+
+  @primitive_harness.parameterized(primitive_harness.lax_pow)
+  def test_pow(self, harness: primitive_harness.Harness):
+    self._pow_test_util(harness)
 
   @primitive_harness.parameterized(primitive_harness.lax_comparators)
   def test_comparators(self, harness: primitive_harness.Harness):
