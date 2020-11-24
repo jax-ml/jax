@@ -198,7 +198,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
        "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype, "rng_factory": rng_factory}
       for shape in [(1, 1), (4, 4), (5, 5), (2, 7, 7)]
-      for dtype in float_types
+      for dtype in float_types + complex_types
       for rng_factory in [jtu.rand_default]))
   @jtu.skip_on_devices("tpu")
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
