@@ -31,6 +31,7 @@ from jax import test_util as jtu
 from jax import lax
 from jax import numpy as jnp
 from jax._src.lax import control_flow as lax_control_flow
+from jax.interpreters import xla
 
 from jaxlib import xla_client
 
@@ -327,6 +328,26 @@ lax_rev = tuple( # Validate dtypes
     ((3, 4, 5), (0, 2)),    # some dimensions
     ((3, 4, 5), (0, 1, 2)), # all dimensions (ordered)
     ((3, 4, 5), (2, 0, 1)), # all dimensions (unordered)
+  ]
+)
+
+def _make_device_put_harness(name, *, shape=(3, 4), dtype=np.float32,
+                             device=None):
+  _device_fn = lambda: jax.devices(device)[0] if device is not None else None
+  return Harness(f"shape={jtu.format_shape_dtype_string(shape, dtype)}_device={device}",
+                 lambda x: xla.device_put_p.bind(x, device=_device_fn()),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 device=device)
+
+xla_device_put = tuple( # Validate dtypes
+  _make_device_put_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate devices
+  _make_device_put_harness("devices", device=device)
+  for device in [
+    "cpu" # first CPU device
   ]
 )
 
