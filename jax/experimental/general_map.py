@@ -15,8 +15,9 @@
 import enum
 import threading
 import contextlib
-from collections import namedtuple
-from typing import Callable, Iterable, List, Tuple, Optional, Dict, Any
+import numpy as np
+from collections import namedtuple, OrderedDict
+from typing import Callable, Iterable, List, Tuple, Optional, Dict, Any, Set
 from warnings import warn
 from functools import wraps, partial
 
@@ -29,6 +30,7 @@ from ..tree_util import tree_flatten, tree_unflatten
 from ..api_util import flatten_fun
 from ..interpreters import partial_eval as pe
 from ..interpreters import batching
+from ..interpreters import pxla
 from ..util import safe_map, safe_zip, curry
 
 map = safe_map
@@ -36,24 +38,68 @@ zip = safe_zip
 
 # Multi-dimensional generalized map
 
-# TODO: Use a more lax type annotation (we need == and hash)
-AxisName = str
-ResourceAxisName = str
+# TODO: Use a more concrete type annotation (we need __eq__ and __hash__)
+AxisName = Any
+ResourceAxisName = Any
 
-# TODO: At least support sequential mapping
+Mesh = pxla.Mesh
+
+# TODO: Support sequential mapping
 class ResourceEnv(threading.local):
   def __init__(self):
-    self.axes : Dict[ResourceAxisName, int] = {}
+    self.physical_mesh : Mesh = Mesh(np.empty((), dtype=object), ())
+    self.fake_resources : Dict[ResourceAxisName, int] = {}
+
+  @property
+  def physical_resource_axes(self) -> Set[ResourceAxisName]:
+    return set(self.physical_mesh.axis_names)
+
+  @property
+  def fake_resource_axes(self) -> Set[ResourceAxisName]:
+    return set(self.fake_resources.keys())
+
+  @property
+  def resource_axes(self) -> Set[ResourceAxisName]:
+    return self.physical_resource_axes | self.fake_resource_axes
+
+  @property
+  def shape(self):
+    shape = OrderedDict(self.physical_mesh.shape)
+    shape.update((name, size) for name, size in self.fake_resources.items())
+    return shape
+
+# TODO: Make this thread local
 thread_resource_env = ResourceEnv()
 
 @contextlib.contextmanager
-def resources(**axes):
-  old_axes = thread_resource_env.axes
-  thread_resource_env.axes = axes
+def fake_resources(**axes):
+  old_axes = thread_resource_env.fake_resources
+  thread_resource_env.fake_resources = axes
   try:
     yield
   finally:
     thread_resource_env.axes = old_axes
+
+@contextlib.contextmanager
+def mesh(*args, **kwargs):
+  old = thread_resource_env.physical_mesh
+  thread_resource_env.physical_mesh = Mesh(*args, **kwargs)
+  try:
+    yield
+  finally:
+      thread_resource_env.physical_mesh = old
+
+_next_resource_id = 0
+class UniqueResourceName:
+  def __init__(self, uid): self.uid = uid
+  def __eq__(self, other): return type(other) is UniqueResourceName and self.uid == other.uid
+  def __hash__(self): return hash(self.uid)
+def fresh_resource_name():
+  global _next_resource_id
+  try:
+    return UniqueResourceName(_next_resource_id)
+  finally:
+    _next_resource_id += 1
 
 # This is really a Dict[AxisName, int], but we don't define a
 # pytree instance for it, so that it is treated as a leaf.
@@ -72,6 +118,9 @@ def xmap(fun: Callable,
   _check_callable(fun)
 
   def fun_mapped(*args, **kwargs):
+    # Putting this outside of fun_mapped would make resources lexically scoped
+    resource_env = thread_resource_env
+
     args_flat, in_tree = tree_flatten((args, kwargs))
     for arg in args_flat: _check_arg(arg)
     # TODO: Check that:
@@ -85,58 +134,83 @@ def xmap(fun: Callable,
     # assert in_axes_tree == in_tree
     out_axes_flat, out_axes_tree = tree_flatten(out_axes)
     # TODO: Verify that out_axes are equal, or better expand their prefix
-    # assert out_axes_tree == in_tree
+    # assert out_axes_tree == out_tree
 
-    resource_to_axis: Dict[ResourceAxisName, List[AxisName]] = dict()
-    for (axis, resource) in schedule:
-      if resource not in resource_to_axis:
-        resource_to_axis[resource] = []
-      resource_to_axis[resource].append(axis)
+    axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
+    jaxpr, out_tree = _trace_mapped_jaxpr(fun, args_flat, in_axes_flat, axis_sizes, in_tree)
 
     # TODO: The order of maps should be derived from the schedule, not from the
     #       resource env. This doesn't really matter for as long as we only support
-    #       vmap, but will be important (e.g. for tiling).
+    #       vectorization and parallelization, but will be important for sequential.
     #       We should be able to do that by building a graph of dependencies between
     #       resources based on the order in which they appear within each axis.
     #       If it has cycles then we cannot realize it. Otherwise, if the DAG doesn't
     #       uniquely identify a linear order, we should use the order of entries in
     #       the schedule to break ties.
-    resource_map = {resource: (pri, size)
-                    for pri, (resource, size) in enumerate(thread_resource_env.axes.items())}
-    resource_map['vectorize'] = (len(resource_map), None)
-    map_sequence = sorted(resource_to_axis.items(),
-                          key=lambda item: resource_map[item[0]][0])
-    axis_subst = {}
-    for axis, resource in schedule:
-      if axis not in axis_subst:
-        axis_subst[axis] = []
-      if resource == 'vectorize':
-        resource = f'v_{axis}'
-      else:
-        resource = f'r_{resource}'
-      axis_subst[axis].append(resource)
-    axis_subst = {axis: tuple(resources) for axis, resources in axis_subst.items()}
+    # Technically the order doesn't matter right now, but we use the ordered dict
+    # to at least limit the amount of non-determinism in this code.
+    fake_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
+    physical_resource_map: Dict[ResourceAxisName, Set[AxisName]] = OrderedDict()
+    vectorized: Dict[AxisName, ResourceAxisName] = OrderedDict()
 
-    axis_sizes = _get_axis_sizes(args_flat, in_axes_flat)
-    jaxpr, out_tree = _trace_mapped_jaxpr(fun, args_flat, in_axes_flat, axis_sizes, in_tree)
-    jaxpr = jaxpr.map_jaxpr(partial(subst_axis_names, axis_subst=axis_subst))
+    axis_subst: Dict[AxisName, List[ResourceAxisName]] = {}
+    for axis, resource in schedule:
+      if resource == 'vectorize':
+        assert axis not in vectorized
+        resource = fresh_resource_name()
+        vectorized[axis] = resource
+      elif resource in resource_env.physical_resource_axes:
+        # TODO: Make sure that axis was not in the set?
+        physical_resource_map.setdefault(resource, set()).add(axis)
+      elif resource in resource_env.fake_resource_axes:
+        # TODO: Make sure that axis was not in the set?
+        fake_resource_map.setdefault(resource, set()).add(axis)
+      else:
+        raise ValueError(f"Mapping axis {axis} to an undefined resource axis {resource}. "
+                         f"The resource axes currently in scope are: {resource_env.resource_axes}")
+      axis_subst.setdefault(axis, []).append(resource)
+
+    axis_subst_t = {axis: tuple(resources) for axis, resources in axis_subst.items()}
+    jaxpr = jaxpr.map_jaxpr(partial(subst_axis_names, axis_subst=axis_subst_t))
+
     f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
     f = hide_mapped_axes(f, in_axes_flat, out_axes_flat)
-    for resource, resource_axes in map_sequence[::-1]:
-      # TODO: Support sequential
-      # XXX: Even though multiple axes might be mapped to the 'vectorized'
-      #      resource, we cannot vectorize them jointly, because they
-      #      might require different axis sizes.
-      if resource == 'vectorize':
-        maps = [(f'v_{name}', [name]) for i, name in enumerate(resource_axes)]
-      else:
-        maps = [(f'r_{resource}', resource_axes)]
-      for raxis_name, axes in maps:
-        map_in_axes = map(lambda spec: lookup_exactly_one_of(spec, axes), in_axes_flat)
-        map_out_axes = map(lambda spec: lookup_exactly_one_of(spec, axes), out_axes_flat)
-        map_size = resource_map[resource][1]
-        f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis_name)
-    flat_out = f.call_wrapped(*args_flat)
+
+    for naxis, raxis in vectorized.items():
+      map_in_axes = map(lambda spec: spec.get(naxis, None), in_axes_flat)
+      map_out_axes = map(lambda spec: spec.get(naxis, None), out_axes_flat)
+      f = vtile(f, map_in_axes, map_out_axes, tile_size=None, axis_name=raxis)
+
+    resource_env_shape = resource_env.shape
+    for raxis, naxes in fake_resource_map.items():
+      map_in_axes = map(lambda spec: lookup_exactly_one_of(spec, naxes), in_axes_flat)
+      map_out_axes = map(lambda spec: lookup_exactly_one_of(spec, naxes), out_axes_flat)
+      map_size = resource_env_shape[raxis]
+      f = vtile(f, map_in_axes, map_out_axes, tile_size=map_size, axis_name=raxis)
+
+    if physical_resource_map:
+      submesh = resource_env.physical_mesh[tuple(physical_resource_map.keys())]
+      in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
+      def to_mesh_axes(axes):
+        mesh_axes = {}
+        for paxis, naxes in physical_resource_map.items():
+          axis = lookup_exactly_one_of(axes, naxes)
+          if axis is None:
+              continue
+          mesh_axes[paxis] = axis
+        return mesh_axes
+      mesh_in_axes = map(to_mesh_axes, in_axes)
+      mesh_out_axes = map(to_mesh_axes, out_axes)
+      f = pxla.mesh_tiled_callable(*in_avals, fun=f,
+                                   transformed_name=f.__name__,
+                                   backend_name=None,
+                                   mesh=submesh,
+                                   in_axes=mesh_in_axes,
+                                   out_axes_thunk=lambda: mesh_out_axes)
+      flat_out = f(*args_flat)
+    else:
+      flat_out = f.call_wrapped(*args_flat)
+
     return tree_unflatten(out_tree, flat_out)
 
   return fun_mapped
@@ -148,11 +222,6 @@ def _delete_aval_axes(aval, axes: AxisNamePos):
     del shape[i]
   return core.ShapedArray(tuple(shape), aval.dtype)
 
-def _with_axes(axes: Iterable[Tuple[AxisName, int]], f):
-  for name, size in axes:
-    f = core.extend_axis_env(name, size, None)(f)
-  return f()
-
 def _trace_mapped_jaxpr(fun,
                         args_flat,
                         in_axes_flat: List[AxisNamePos],
@@ -160,10 +229,10 @@ def _trace_mapped_jaxpr(fun,
                         in_tree):
   fun_flat, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
-  mapped_pvals = [pe.PartialVal.unknown(_delete_aval_axes(aval, in_axes))
+  mapped_avals = [_delete_aval_axes(aval, in_axes)
                   for aval, in_axes in zip(avals_flat, in_axes_flat)]
-  jaxpr, _, consts = _with_axes(axis_sizes.items(),
-                                lambda: pe.trace_to_jaxpr(fun_flat, mapped_pvals))
+  with core.extend_axis_env_nd(axis_sizes.items()):
+    jaxpr, _, consts = pe.trace_to_jaxpr_final(fun_flat, mapped_avals)
   return core.ClosedJaxpr(jaxpr, consts), out_tree()
 
 def _get_axis_sizes(args_flat: Iterable[Any], in_axes_flat: Iterable[AxisNamePos]):
@@ -176,8 +245,7 @@ def _get_axis_sizes(args_flat: Iterable[Any], in_axes_flat: Iterable[AxisNamePos
         axis_sizes[name] = arg.shape[dim]
   return axis_sizes
 
-
-def lookup_exactly_one_of(d: AxisNamePos, names: List[AxisName]) -> Optional[int]:
+def lookup_exactly_one_of(d: AxisNamePos, names: Set[AxisName]) -> Optional[int]:
   res = None
   for name in names:
     if name in d:

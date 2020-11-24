@@ -24,7 +24,7 @@ import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast)
+                    Type, Union, cast, Iterable)
 
 import numpy as np
 
@@ -1221,14 +1221,27 @@ class MapPrimitive(Primitive):
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_map(self, out_tracers, params)
 
+# TODO: Use a more concrete type annotation (we need __eq__ and __hash__)
+AxisName = Any
+
 @contextmanager
-def extend_axis_env(axis_name, size: int, tag: Any):
+def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
   frame = AxisEnvFrame(axis_name, size, tag)
   thread_local_state.trace_state.axis_env.append(frame)
   try:
     yield
   finally:
     thread_local_state.trace_state.axis_env.pop()
+
+@contextmanager
+def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]]):
+  frames = [AxisEnvFrame(axis_name, size, None) for axis_name, size in axes]
+  thread_local_state.trace_state.axis_env.extend(frames)
+  try:
+    yield
+  finally:
+    for _ in frames:
+      thread_local_state.trace_state.axis_env.pop()
 
 
 # When a mapped function is given no axis name, we generate a name object based
