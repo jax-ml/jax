@@ -278,6 +278,36 @@ lax_pow = tuple( # Validate dtypes
   ]
 )
 
+def _make_reshape_harness(name, *, shape=(2, 3), new_sizes=(3, 2),
+                          dimensions=(0, 1), dtype=np.float32):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newsizes={new_sizes}_dimensions={dimensions}",
+                 lax.reshape,
+                 [RandArg(shape, dtype), StaticArg(new_sizes),
+                  StaticArg(dimensions)],
+                 shape=shape,
+                 dtype=dtype,
+                 new_sizes=new_sizes,
+                 dimensions=dimensions)
+
+lax_reshape = tuple( # Validate dtypes
+  _make_reshape_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate new_sizes
+  _make_reshape_harness("new_sizes", shape=shape, new_sizes=new_sizes,
+                        dimensions=dimensions)
+  for shape, new_sizes, dimensions in [
+    ((3, 4, 5), (3, 20), (0, 1, 2)), # merging two dimensions
+    ((3, 4, 5), (4, 15), (0, 1, 2)), # changing leading dimension
+  ]
+) + tuple( # Validate dimensions collapsing order
+  _make_reshape_harness("dimensions", shape=shape, new_sizes=new_sizes,
+                        dimensions=dimensions)
+  for shape, new_sizes, dimensions in [
+    ((3, 4, 5), (3, 20), (2, 1, 0)), # transpose shape (0, 1, 2) into (2, 1, 0)
+    ((3, 4, 5), (3, 20), (2, 0, 1)), # transpose shape (0, 1, 2) into (2, 0, 1)
+  ]
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 
