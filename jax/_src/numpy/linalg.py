@@ -139,10 +139,13 @@ def slogdet(a):
 def _slogdet_jvp(primals, tangents):
   x, = primals
   g, = tangents
-  if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
-    raise NotImplementedError  # TODO(pfau): make this work for complex types
   sign, ans = slogdet(x)
-  sign_dot, ans_dot = jnp.zeros_like(sign), jnp.trace(solve(x, g), axis1=-1, axis2=-2)
+  ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
+  if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
+    sign_dot = (ans_dot - np.real(ans_dot)) * sign
+    ans_dot = np.real(ans_dot)
+  else:
+    sign_dot = jnp.zeros_like(sign)
   return (sign, ans), (sign_dot, ans_dot)
 
 
