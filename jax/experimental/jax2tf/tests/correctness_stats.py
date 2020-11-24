@@ -296,6 +296,9 @@ def categorize(prim: core.Primitive, *args, **kwargs) \
         "integer types can not be raised to power > 3 in compiled mode "
         "(experimental_compile=True)"))
 
+  if prim is lax.rev_p:
+    if np_dtype in [np.uint32, np.uint64]:
+      tf_unimpl(np_dtype)
 
   if prim in [lax.le_p, lax.lt_p, lax.ge_p, lax.gt_p]:
     if np_dtype in [np.bool_, np.uint16, np.uint32, np.uint64]:

@@ -308,6 +308,28 @@ lax_reshape = tuple( # Validate dtypes
   ]
 )
 
+def _make_rev_harness(name, *, shape=(4, 5), dtype=np.float32,
+                      dimensions=(0,)):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_dimensions={dimensions}",
+                 lax.rev,
+                 [RandArg(shape, dtype), StaticArg(dimensions)],
+                 shape=shape,
+                 dtype=dtype,
+                 dimensions=dimensions)
+
+lax_rev = tuple( # Validate dtypes
+  _make_rev_harness("dtypes", dtype=dtype)
+  for dtype in jtu.dtypes.all
+) + tuple( # Validate dimensions
+  _make_rev_harness("dimensions", shape=shape, dimensions=dimensions)
+  for shape, dimensions in [
+    ((3, 4, 5), ()),        # empty dimensions
+    ((3, 4, 5), (0, 2)),    # some dimensions
+    ((3, 4, 5), (0, 1, 2)), # all dimensions (ordered)
+    ((3, 4, 5), (2, 0, 1)), # all dimensions (unordered)
+  ]
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 
