@@ -2065,8 +2065,8 @@ def ptp(a, axis=None, out=None, keepdims=False):
 
 
 @_wraps(np.allclose)
-def allclose(a, b, rtol=1e-05, atol=1e-08):
-  return all(isclose(a, b, rtol, atol))
+def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
+  return all(isclose(a, b, rtol, atol, equal_nan))
 
 
 @_wraps(np.count_nonzero)
