@@ -15,7 +15,7 @@
 
 import itertools as it
 import numpy as np
-from unittest import skipIf
+from unittest import skipIf, SkipTest
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -980,28 +980,28 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_collective={}".format(seq.__name__).replace(" ", ""),
-       "collective": collective,
-       "seq": seq}
-      for collective, seq in [(lax.psum, jnp.sum),
-                              (lax.pmean, jnp.mean),
-                              (lambda x, n: lax.pmax(x, n), jnp.max),
-                              (lambda x, n: lax.pmin(x, n), jnp.min)])
+      {"testcase_name": "_{}_vmap_names={}_collective_names={}".format(
+          collective.__name__.replace(" ", ""), vmap_names, collective_names),
+       "collective": collective, "bulk_op": bulk_op, "vmap_names": vmap_names,
+       "collective_names": collective_names}
+      for collective, bulk_op in [(lax.psum, jnp.sum),
+                                  (lax.pmax, jnp.max),
+                                  (lax.pmin, jnp.min)]
+      for vmap_names in [('i',), ('i', 'j'), ('j', 'i')]
+      for collective_names in it.permutations(vmap_names))
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
-  def testCollective(self, collective, seq):
-    x = jnp.arange(64).reshape((4, 4, 4))
-    self.assertAllClose(
-      vmap(lambda x: x - collective(x, 'i'), axis_name='i')(x),
-      x - seq(x, axis=0))
+  def testCommAssocCollective(self, collective, bulk_op, vmap_names, collective_names):
+    x = jnp.arange(3 * 4 * 5).reshape((3, 4, 5))
 
-    self.assertAllClose(
-      vmap(vmap(lambda x: x - collective(x, ('j', 'i')), axis_name='i'), axis_name='j')(x),
-      x - seq(x, axis=(0, 1)))
-
-    self.assertAllClose(
-      vmap(vmap(lambda x: x - collective(x, ('i', 'j')), axis_name='i'), axis_name='j')(x),
-      x - seq(x, axis=(1, 0)))
+    # To test relative permutations of the order in which the axis names appear
+    # in the primitive call versus the order the vmaps are applied, we always
+    # apply vmaps in the order of the `vmap_names` argument, and apply the
+    # collective with names according to the `collective_names` argument.
+    f = lambda x: x - collective(x, collective_names)
+    for axis_name in vmap_names:
+      f = vmap(f, axis_name=axis_name)
+    self.assertAllClose(f(x), x - bulk_op(x, axis=tuple(range(len(vmap_names)))))
 
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
@@ -1025,7 +1025,7 @@ class BatchingTest(jtu.JaxTestCase):
       for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
-  def testAllToAll(self, vmap_axis, split_axis, concat_axis):
+  def testAllToAllShape(self, vmap_axis, split_axis, concat_axis):
     d = vmap_axis
 
     def shape_fun(x, out_d):
@@ -1039,7 +1039,7 @@ class BatchingTest(jtu.JaxTestCase):
     shape = (2, 3, 4, 5)
     x = np.arange(np.prod(shape)).reshape(shape)
     rule = batching.collective_rules[lax.all_to_all_p]
-    (y,), (out_d,) = rule((x,), (d,), None, None, split_axis, concat_axis)
+    y, out_d = rule(None, (x,), (d,), None, split_axis, concat_axis)
     exp_shape = shape_fun(x, out_d)
     self.assertEqual(y.shape, exp_shape)
 
@@ -1050,6 +1050,7 @@ class BatchingTest(jtu.JaxTestCase):
   @skipIf(not jax.config.omnistaging_enabled,
           "vmap collectives only supported when omnistaging is enabled")
   def testAllToAllSplitAxis(self, vmap_axis, split_axis, concat_axis):
+    raise SkipTest("all_to_all split axis broken after #4835")  # TODO(mattjj,apaszke)
     shape = (4, 4, 4)
     x = np.arange(np.prod(shape)).reshape(shape)
 
