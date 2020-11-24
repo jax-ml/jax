@@ -17,6 +17,7 @@ import functools
 import itertools as it
 import operator
 import types
+from typing import Any, Callable
 
 import numpy as np
 
@@ -291,3 +292,15 @@ def tuple_insert(t, idx, val):
 
 def tuple_delete(t, idx):
   return t[:idx] + t[idx + 1:]
+
+# TODO(mattjj): replace with dataclass when Python 2 support is removed
+def taggedtuple(name, fields) -> Callable[..., Any]:
+  """Lightweight version of namedtuple where equality depends on the type."""
+  def __new__(cls, *xs):
+    return tuple.__new__(cls, (cls,) + xs)
+  def __str__(self):
+    return '{}{}'.format(name, tuple.__str__(self[1:]))
+  class_namespace = {'__new__' : __new__, '__str__': __str__}
+  for i, f in enumerate(fields):
+    class_namespace[f] = property(operator.itemgetter(i+1))  # type: ignore
+  return type(name, (tuple,), class_namespace)
