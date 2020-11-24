@@ -49,10 +49,20 @@ prev_xla_flags = None
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
-def all_bdims(*shapes):
-  bdims = (it.chain([cast(Optional[int], None)],
-                     range(len(shape) + 1)) for shape in shapes)
+def all_bdims(*shapes, pmap):
+  if pmap and not config.omnistaging_enabled:
+    bdims = ((None, 0) for shape in shapes)
+  else:
+    bdims = (it.chain([cast(Optional[int], None)],
+                       range(len(shape) + 1))
+             for shape in shapes)
   return (t for t in it.product(*bdims) if not all(e is None for e in t))
+
+def out_bdims(shape, pmap):
+  if pmap and not config.omnistaging_enabled:
+    return (0,)
+  return (d[0] for d in all_bdims(shape, pmap=pmap) if d[0] is not None)
+
 
 def add_bdim(bdim_size, bdim, shape):
   shape = list(shape)
@@ -1567,16 +1577,19 @@ class PmapTest(jtu.JaxTestCase):
 class VmapOfPmapTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"{shapes}_{vmap_bdims}_{pmap_bdims}",
-       "shapes": shapes, "vmap_bdims": vmap_bdims, "pmap_bdims": pmap_bdims}
-      for shape_group in compatible_shapes
+      {"testcase_name": f"{shapes}_{vmap_in_axes}_{vmap_out_axes}_{pmap_in_axes}_{pmap_out_axes}",
+       "shapes": shapes,
+       "vmap_in_axes": vmap_in_axes, "vmap_out_axes": vmap_out_axes,
+       "pmap_in_axes": pmap_in_axes, "pmap_out_axes": pmap_out_axes}
+      for arg_shapes in compatible_shapes
       for num_args in range(1, 4)
-      for shapes in it.combinations_with_replacement(shape_group, num_args)
-      for vmap_bdims in all_bdims(*shapes)
-      for pmap_bdims in it.product([0, None], repeat=num_args)
-      if not all(bd is None for bd in pmap_bdims)
+      for shapes in list(it.combinations_with_replacement(arg_shapes, num_args))
+      for vmap_in_axes in all_bdims(*shapes, pmap=False)
+      for pmap_in_axes in all_bdims(*shapes, pmap=True)
+      for vmap_out_axes in out_bdims(shapes[0], False)
+      for pmap_out_axes in out_bdims(shapes[0], True)
   ))
-  def testVmapOfPmap(self, shapes, vmap_bdims, pmap_bdims):
+  def testVmapOfPmap(self, shapes, vmap_in_axes, pmap_in_axes, vmap_out_axes, pmap_out_axes):
     vmapped_size = 3
     pmapped_size = xla_bridge.device_count()
 
@@ -1585,14 +1598,23 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     def fun(*args):
       return sum(args)
 
-    final_shapes = map(partial(add_bdim, vmapped_size), vmap_bdims,
-                       map(partial(add_bdim, pmapped_size), pmap_bdims, shapes))
+    final_shapes = map(partial(add_bdim, vmapped_size), vmap_in_axes,
+                       map(partial(add_bdim, pmapped_size), pmap_in_axes, shapes))
+
+    def args_slice(vi, pi):
+      return args_slicer(args_slicer(args, vmap_in_axes)(vi), pmap_in_axes)(pi)
 
     args = [rng(shape, jnp.float32) for shape in final_shapes]
-    args_slice = args_slicer(args, vmap_bdims)
-    ans = vmap(pmap(fun, in_axes=pmap_bdims), vmap_bdims)(*args)
-    expected = np.stack([fun(*args_slice(i)) for i in range(vmapped_size)])
+    ans = vmap(pmap(fun, in_axes=pmap_in_axes, out_axes=pmap_out_axes),
+               in_axes=vmap_in_axes,
+               out_axes=vmap_out_axes)(*args)
+    expected = np.stack(
+      [np.stack([fun(*args_slice(vi, pi)) for pi in range(pmapped_size)], axis=pmap_out_axes)
+       for vi in range(vmapped_size)],
+      axis=vmap_out_axes)
     self.assertAllClose(ans, expected)
+
+class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name": "_collective={}".format(collective.__name__).replace(" ", ""),
@@ -1876,7 +1898,8 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     expected = np.sin(x + 3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def testPmapInAxes(self):
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  def testPmapInAxesBasic(self):
     @partial(pmap, in_axes=(1, 2))
     def f(x, y):
       return jnp.sin(x + y)
@@ -1888,6 +1911,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     self.assertAllClose(f(x, y),
                         jnp.sin(x.transpose((1, 0, 2)) + y.transpose((2, 0, 1))))
 
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
   def testPmapInAxesGrad(self):
     def f(x, y, z):
       return jnp.sin(x + y + z)
@@ -1907,6 +1931,57 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
     self.assertAllClose(jax.grad(lambda args: fp(*args).sum())((x, y, z)),
                         jax.grad(lambda args: fv(*args).sum())((x, y, z)))
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  def testPmapOutAxesBasic(self):
+    @partial(pmap, in_axes=(1, None), out_axes=(2, None))
+    def f(x, y):
+      return jnp.sin(x + y), y * 2
+    xshape = (2, xla_bridge.device_count(), 4)
+    x = np.arange(prod(xshape)).reshape(xshape)
+    yshape = (2, 4)
+    y = np.arange(prod(yshape)).reshape(yshape)
+
+    self.assertAllClose(f(x, y),
+                        (jnp.sin(x.transpose((1, 0, 2)) + y).transpose((1, 2, 0)), y * 2))
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_{in_axes}_{out_axes}",
+       "in_axes": in_axes, "out_axes": out_axes}
+      for in_axes in all_bdims((3, 4), (3, 1), (1, 4), pmap=True)
+      for out_axes in out_bdims((3, 4), True)
+  ))
+  def testPmapAllAxesGrad(self, in_axes, out_axes):
+    def f(x, y, z):
+      return jnp.sin(x + y) * z
+
+    pmapped_size = xla_bridge.device_count()
+    mapped_shapes = [(3, 4), (3, 1), (1, 4)]
+    arg_shapes = map(partial(add_bdim, pmapped_size), in_axes, mapped_shapes)
+    rng = jtu.rand_default(self.rng())
+    args = [rng(shape, jnp.float64) for shape in arg_shapes]
+    jtu.check_grads(pmap(f, in_axes=in_axes, out_axes=out_axes), args,
+                    order=2, atol=2e-2, rtol=2e-2, eps=1e-3)
+
+  @skipIf(not config.omnistaging_enabled, "test requires omnistaging")
+  def testPmapPostProcess(self):
+    def mk_case(map_fun):
+      def f(x, y):
+        # NOTE: Map doesn't have any arguments we differentiate wrt
+        @partial(map_fun, in_axes=1, out_axes=2)
+        def h(y):
+          return jnp.sin(x + y)
+        return h(y).sum()
+      return f
+
+    xshape = (5, 7)
+    x = np.arange(prod(xshape), dtype=np.float32).reshape(xshape)
+    yshape = (5, xla_bridge.device_count(), 7)
+    y = np.arange(prod(yshape), dtype=np.float32).reshape(yshape)
+    self.assertAllClose(jax.grad(mk_case(pmap))(x, y),
+                        jax.grad(mk_case(vmap))(x, y))
+
 
 class ShardedDeviceArrayTest(jtu.JaxTestCase):
 

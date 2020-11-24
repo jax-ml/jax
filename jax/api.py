@@ -50,7 +50,7 @@ from .tree_util import (tree_map, tree_flatten, tree_unflatten, tree_structure,
                         tree_transpose, tree_leaves, tree_multimap,
                         treedef_is_leaf, Partial)
 from .util import (unzip2, curry, partial, safe_map, safe_zip, prod, split_list,
-                   extend_name_stack, wrap_name, cache, wraps)
+                   extend_name_stack, wrap_name, cache, wraps, HashableFunction)
 from .lib import jax_jit
 from .lib import version
 from .lib import xla_bridge as xb
@@ -1235,7 +1235,7 @@ def _mapped_axis_size(tree, vals, dims, name):
       raise ValueError(msg.format("the tree of axis sizes is:\n{}".format(sizes))) from None
 
 def pmap(fun: Callable[..., T],
-         axis_name: Optional[AxisName] = None, *, in_axes=0,
+         axis_name: Optional[AxisName] = None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums: Union[int, Iterable[int]] = (),
          devices=None, backend: Optional[str] = None,
          axis_size: Optional[int] = None,
@@ -1292,6 +1292,10 @@ def pmap(fun: Callable[..., T],
       axis so that parallel collectives can be applied.
     in_axes: A non-negative integer, None, or nested Python container thereof
       that specifies which axes in the input to map over (see :py:func:`vmap`).
+    out_axes: A non-negative integer, None, or nested Python container thereof
+      indicating where the mapped axis should appear in the output. All outputs
+      with a mapped axis must have a non-None ``out_axes`` specification
+      (see :py:func:`vmap`).
     static_broadcasted_argnums: An int or collection of ints specifying which
       positional arguments to treat as static (compile-time constant).
       Operations that only depend on static arguments will be constant-folded.
@@ -1496,11 +1500,33 @@ def pmap(fun: Callable[..., T],
     local_axis_size = _mapped_axis_size(in_tree, args, in_axes_flat, "pmap")
     for arg in args: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
+    if not config.omnistaging_enabled and out_axes != 0:
+      raise ValueError("out_axes supported only with omnistaging enabled")
+    if not config.omnistaging_enabled and any(in_axis not in {None, 0} for in_axis in in_axes_flat):
+      raise ValueError("in_axes other than 0 and None only supported with omnistaging enabled")
+    if any(out_axis is None for out_axis in tree_flatten(out_axes)):
+      raise NotImplementedError("None out_axes in pmap are not supported yet")
+    # NOTE: We don't put out_tree() in the closure, because it's (1) non-hashable,
+    #       (2) depends deterministically on flat_fun (at least that's the assumption
+    #       that we make).
+    if out_axes == 0:
+      # TODO(apaszke,mattjj): flatten_axes assumes that the output pytree is
+      #   functorial (i.e. it can hold leaves of any type), but some user code
+      #   breaks this assumption. This is a stop-gap solution to keep the old
+      #   out_axes == 0 path working as we look for a better solution.
+      out_axes_thunk = HashableFunction(
+        lambda: (0,) * out_tree().num_leaves,
+        key=out_axes)
+    else:
+      out_axes_thunk = HashableFunction(
+        lambda: tuple(flatten_axes("pmap out_axes", out_tree(), out_axes)),
+        key=out_axes)
     out = pxla.xla_pmap(
         flat_fun, *args, backend=backend, axis_name=axis_name,
         axis_size=local_axis_size, global_axis_size=axis_size,
         devices=None if devices is None else tuple(devices),
         in_axes=tuple(in_axes_flat),
+        out_axes_thunk=out_axes_thunk,
         name=flat_fun.__name__, donated_invars=tuple(donated_invars),
         global_arg_shapes=tuple(global_arg_shapes_flat))
     return tree_unflatten(out_tree(), out)
@@ -1528,8 +1554,13 @@ def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
     axis_size = _mapped_axis_size(in_tree, args_flat, in_axes_flat, "soft_pmap")
     for arg in args_flat: _check_arg(arg)
     flat_fun, out_tree = flatten_fun(f, in_tree)
+    # See note about out_axes_thunk in pmap for the explanation of why we choose this key
+    out_axes_thunk = HashableFunction(
+      lambda: tuple(flatten_axes("soft_pmap out_axes", out_tree(), 0)),
+      key=())
     outs = pxla.soft_pmap(flat_fun, *args_flat, axis_name=axis_name,
-                          axis_size=axis_size, in_axes=tuple(in_axes_flat))
+                          axis_size=axis_size, in_axes=tuple(in_axes_flat),
+                          out_axes_thunk=out_axes_thunk)
     return tree_unflatten(out_tree(), outs)
   return f_pmapped
 

@@ -22,7 +22,7 @@ from ..core import ShapedArray, raise_to_shaped, Trace, Tracer
 from ..ad_util import add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_p
 from .. import linear_util as lu
 from ..util import (unzip2, partial, safe_map, wrap_name, split_list,
-                    canonicalize_axis, moveaxis)
+                    canonicalize_axis, moveaxis, as_hashable_function)
 from . import xla
 from . import partial_eval as pe
 
@@ -199,26 +199,40 @@ class BatchTrace(Trace):
       # When both d and in_axis are defined then:
       # - If `d <= in_axis`, we have to move the `in_axis` one dimension further;
       # - If `d >  in_axis`, we have to decrement `d` (as `in_axis` will get removed).
-      def fmap(x, f): return None if x is None else f(x)
-      new_in_axes = tuple(fmap(in_axis,
-                               lambda ax: ax + (1 if d is not None and d <= in_axis else 0))
-                          for d, in_axis in zip(dims, params['in_axes']))
-      new_dims = tuple(fmap(d,
-                            lambda dv: dv - (1 if in_axis is not None and in_axis < d else 0))
-                       for d, in_axis in zip(dims, params['in_axes']))
+      def both_mapped(in_out_axis, d):
+        return in_out_axis is not None and d is not not_mapped
+      new_in_axes = tuple(
+        in_axis + 1 if both_mapped(in_axis, d) and d <= in_axis else in_axis
+        for d, in_axis in zip(dims, params['in_axes']))
+      new_dims = tuple(
+        d - 1 if both_mapped(in_axis, d) and in_axis < d else d
+        for d, in_axis in zip(dims, params['in_axes']))
       f, dims_out = batch_subtrace(f, self.main, new_dims)
-      vals_out = map_primitive.bind(f, *vals, **dict(params, in_axes=new_in_axes))
-      # We assume that out_axes are all 0, so we increment d
-      dims_out = tuple(d + 1 if d is not not_mapped else d for d in dims_out())
+      out_axes_thunk = params['out_axes_thunk']
+      @as_hashable_function(key=out_axes_thunk)
+      def new_out_axes_thunk():
+        return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
+                     for out_axis, d in zip(out_axes_thunk(), dims_out()))
+      new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
+      vals_out = map_primitive.bind(f, *vals, **new_params)
+      dims_out = (d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
+                  for d, out_axis in zip(dims_out(), out_axes_thunk()))
       return [BatchTracer(self, v, d) for v, d in zip(vals_out, dims_out)]
 
   def post_process_map(self, call_primitive, out_tracers, params):
     vals, dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
     main = self.main
+    def both_mapped(in_out_axis, d):
+      return in_out_axis is not None and d is not not_mapped
     def todo(vals):
       trace = main.with_cur_sublevel()
-      return [BatchTracer(trace, v, d + 1 if d is not not_mapped else d)
-              for v, d in zip(vals, dims)]
+      return [BatchTracer(trace, v, d + 1 if both_mapped(out_axis, d) and out_axis <= d else d)
+              for v, d, out_axis in zip(vals, dims, params['out_axes_thunk']())]
+    if call_primitive.map_primitive:
+      def out_axes_transform(out_axes):
+        return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
+                     for out_axis, d in zip(out_axes, dims))
+      todo = (todo, out_axes_transform)
     return vals, todo
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers):

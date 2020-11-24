@@ -23,6 +23,7 @@ import types
 import warnings
 import weakref
 import functools
+import itertools as it
 
 from absl import logging
 from absl.testing import absltest, parameterized
@@ -1716,21 +1717,28 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(vfoo(tree).shape, (6, 2, 5))
 
   def test_pmap_global_cache(self):
-    def f(x):
+    def f(x, y):
       assert python_should_be_executing
-      return x
+      return x, y
 
-    x = np.ones(1)
-
-    python_should_be_executing = True
-    api.pmap(f)(x)
-    python_should_be_executing = False
-    api.pmap(f)(x)
+    x = np.ones((1, 1, 1))
 
     python_should_be_executing = True
-    api.pmap(f, 'i')(x)
+    api.pmap(f)(x, x)
     python_should_be_executing = False
-    api.pmap(f, 'i')(x)
+    api.pmap(f)(x, x)
+
+    python_should_be_executing = True
+    api.pmap(f, 'i')(x, x)
+    python_should_be_executing = False
+    api.pmap(f, 'i')(x, x)
+
+    if config.omnistaging_enabled:
+      for x_in, y_in, x_out, y_out in it.product(*((0, 1, 2) for _ in range(4))):
+        python_should_be_executing = True
+        api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
+        python_should_be_executing = False
+        api.pmap(f, 'i', in_axes=(x_in, y_in), out_axes=(x_out, y_out))(x, x)
 
   def test_device_array_repr(self):
     rep = repr(jnp.ones(()) + 1.)
