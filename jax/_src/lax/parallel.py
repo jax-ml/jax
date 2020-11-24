@@ -139,8 +139,10 @@ def pmax(x, axis_name, *, axis_index_groups=None):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   _validate_axis_index_groups(axis_index_groups)
-  return tree_util.tree_map(partial(
-      pmax_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
+  leaves, treedef = tree_util.tree_flatten(x)
+  out_flat = pmax_p.bind(*leaves, axis_name=axis_name,
+                         axis_index_groups=axis_index_groups)
+  return tree_util.tree_unflatten(treedef, out_flat)
 
 def pmin(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce min on ``x`` over the pmapped axis ``axis_name``.
@@ -164,8 +166,10 @@ def pmin(x, axis_name, *, axis_index_groups=None):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   _validate_axis_index_groups(axis_index_groups)
-  return tree_util.tree_map(partial(
-      pmin_p.bind, axis_name=axis_name, axis_index_groups=axis_index_groups), x)
+  leaves, treedef = tree_util.tree_flatten(x)
+  out_flat = pmin_p.bind(*leaves, axis_name=axis_name,
+                         axis_index_groups=axis_index_groups)
+  return tree_util.tree_unflatten(treedef, out_flat)
 
 def _validate_axis_index_groups(axis_index_groups):
   if axis_index_groups is None:
@@ -344,16 +348,6 @@ def _allreduce_soft_pmap_rule(prim, reducer, vals, mapped, chunk_size,
                    axis_index_groups=axis_index_groups)
   return outs, (False,) * len(vals)
 
-def _allreduce_translation_rule(prim, c, val, *, axis_name, axis_index_groups,
-                                axis_env, platform):
-  replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
-  dtype = c.get_shape(val).numpy_dtype()
-  scalar = ShapedArray((), dtype)
-  computation = xla.primitive_subcomputation(prim, scalar, scalar)
-  replica_groups_protos = xc.make_replica_groups(replica_groups)
-  return xops.AllReduce(val, computation, replica_groups_protos, None, None)
-
-
 # This is only used for collectives that do not include the vmapped axis name,
 # which is why the rule is so simple.
 def _collective_batcher(prim, args, dims, **params):
@@ -375,23 +369,6 @@ def _batched_reduction_collective(
                          axis_index_groups=None)
   return vals_out, [batching.not_mapped] * len(vals_out)
 
-# TODO(mattjj): update pmin/pmax to have multiple_results like psum, delete this
-def _batched_reduction_collective2(
-    prim, if_mapped, if_unmapped, frame, vals_in, dims_in, axis_name,
-    axis_index_groups):
-  assert not prim.multiple_results  # cf. _batched_reduction_collective
-  if axis_index_groups is not None:
-    raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
-                              "Please open a feature request!")
-  (v,), (d,) = vals_in, dims_in
-  val_out = (if_mapped(v, d) if d is not batching.not_mapped
-             else if_unmapped(v, frame.size))
-  if len(axis_name) > 1:
-    remaining_axis_names = tuple(n for n in axis_name if n != frame.name)
-    val_out = prim.bind(val_out, axis_name=remaining_axis_names,
-                        axis_index_groups=None)
-  return val_out, batching.not_mapped
-
 def _replica_groups(axis_env, axis_name, axis_index_groups):
   replica_groups = xla.axis_groups(axis_env, axis_name)
   if axis_index_groups is not None:
@@ -400,13 +377,13 @@ def _replica_groups(axis_env, axis_name, axis_index_groups):
                       for axis_index_group in axis_index_groups]
   return replica_groups
 
-# psum translation rule has special handling for complex dtypes
-def _psum_translation_rule(c, *args, axis_name, axis_index_groups, axis_env,
-                           platform):
+def _allreduce_translation_rule(prim, c, *args, axis_name, axis_index_groups,
+                                axis_env, platform):
   if platform in ("cpu", "tpu"):
-    return _notuple_psum_translation_rule(c, *args, axis_name=axis_name,
-                                          axis_index_groups=axis_index_groups,
-                                          axis_env=axis_env, platform=platform)
+    return _notuple_allreduce_translation_rule(
+        prim, c, *args, axis_name=axis_name,
+        axis_index_groups=axis_index_groups, axis_env=axis_env,
+        platform=platform)
 
   # XLA's tuple all-reduce doesn't support different dtypes in the same
   # allreduce. Instead, we perform once all-reduce for each argument input type.
@@ -423,14 +400,15 @@ def _psum_translation_rule(c, *args, axis_name, axis_index_groups, axis_env,
   for dtype, (indices, dtype_args) in sorted(args_by_type.items()):
     is_complex = dtypes.issubdtype(dtype, np.complexfloating)
     n = len(dtype_args)
-    if is_complex:
+    if is_complex and prim is lax.add_p:
+      # we handle complex-dtype sum-reduction directly as a special case
       dtype_args = ([xops.Real(x) for x in dtype_args] +
                     [xops.Imag(x) for x in dtype_args])
     scalar = ShapedArray((), c.get_shape(dtype_args[0]).numpy_dtype())
-    computation = xla.primitive_subcomputation(lax.add_p, scalar, scalar)
+    computation = xla.primitive_subcomputation(prim, scalar, scalar)
     all_reduce = xops.AllReduce(xops.Tuple(c, dtype_args), computation,
                                 replica_groups_protos, None, None)
-    if is_complex:
+    if is_complex and prim is lax.add_p:
       xs = [xops.Complex(xops.GetTupleElement(all_reduce, i),
                          xops.GetTupleElement(all_reduce, n + i)) for i in range(n)]
     else:
@@ -439,22 +417,25 @@ def _psum_translation_rule(c, *args, axis_name, axis_index_groups, axis_env,
       out[i] = x
   return xops.Tuple(c, out)
 
-# TODO(b/150476027): CPU doesn't support tuple all-reduce correctly. But
-# fortunately we don't really need it in that case because CPU doesn't support
-# cross-task communication either.
 # TODO(b/155446630): An XLA:TPU optimization pass also doesn't support
 # tuple all-reduce yet. Meanwhile, rely on deterministic compiler behavior.
-def _notuple_psum_translation_rule(c, *args, axis_name, axis_env,
-                                   axis_index_groups, platform):
+def _notuple_allreduce_translation_rule(prim, c, *args, axis_name, axis_env,
+                                        axis_index_groups, platform):
   def _translate(val):
-    psum = partial(_allreduce_translation_rule, lax.add_p, c,
-                   axis_name=axis_name, axis_env=axis_env,
-                   axis_index_groups=axis_index_groups, platform=platform)
+    replica_groups = _replica_groups(axis_env, axis_name, axis_index_groups)
     dtype = c.get_shape(val).numpy_dtype()
-    if dtypes.issubdtype(dtype, np.complexfloating):
-      return xops.Complex(psum(xops.Real(val)), psum(xops.Imag(val)))
+    scalar = ShapedArray((), dtype)
+    computation = xla.primitive_subcomputation(prim, scalar, scalar)
+    replica_groups_protos = xc.make_replica_groups(replica_groups)
+    all_reduce = lambda x: xops.AllReduce(x, computation, replica_groups_protos,
+                                          None, None)
+
+    if dtypes.issubdtype(dtype, np.complexfloating) and prim is lax.add_p:
+      # we handle complex-dtype sum-reduction directly as a special case
+      return xops.Complex(all_reduce(xops.Real(val)),
+                          all_reduce(xops.Imag(val)))
     else:
-      return psum(val)
+      return all_reduce(val)
   return xops.Tuple(c, list(map(_translate, args)))
 
 def _psum_transpose_rule(cts, axis_name, axis_index_groups):
@@ -468,7 +449,7 @@ psum_p.multiple_results = True
 psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
 pxla.soft_pmap_rules[psum_p] = \
     partial(_allreduce_soft_pmap_rule, psum_p, lax._reduce_sum)
-xla.parallel_translations[psum_p] = _psum_translation_rule
+xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule, lax.add_p)
 ad.deflinear(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 batching.primitive_batchers[psum_p] = partial(_collective_batcher, psum_p)
@@ -495,29 +476,25 @@ def psum_bind(*args, axis_name, axis_index_groups):
 
 
 pmax_p = core.Primitive('pmax')
-pmax_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
-xla.parallel_translations[pmax_p] = \
-    partial(_allreduce_translation_rule, lax.max_p)
+pmax_p.multiple_results = True
+pmax_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
+xla.parallel_translations[pmax_p] = partial(_allreduce_translation_rule, lax.max_p)
 pxla.multi_host_supported_collectives.add(pmax_p)
 batching.primitive_batchers[pmax_p] = partial(_collective_batcher, pmax_p)
 batching.collective_rules[pmax_p] = \
-  partial(_batched_reduction_collective2,
-          pmax_p,
-          lambda v, d: v.max(d),
-          lambda v, axis_size: v)
+  partial(_batched_reduction_collective, pmax_p,
+          lambda v, d: v.max(d), lambda v, axis_size: v)
 
 
 pmin_p = core.Primitive('pmin')
-pmin_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
-xla.parallel_translations[pmin_p] = \
-    partial(_allreduce_translation_rule, lax.min_p)
+pmin_p.multiple_results = True
+pmin_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
+xla.parallel_translations[pmin_p] = partial(_allreduce_translation_rule, lax.min_p)
 pxla.multi_host_supported_collectives.add(pmin_p)
 batching.primitive_batchers[pmin_p] = partial(_collective_batcher, pmin_p)
 batching.collective_rules[pmin_p] = \
-  partial(_batched_reduction_collective2,
-          pmin_p,
-          lambda v, d: v.min(d),
-          lambda v, axis_size: v)
+  partial(_batched_reduction_collective, pmin_p,
+          lambda v, d: v.min(d), lambda v, axis_size: v)
 
 
 def _ppermute_translation_rule(c, x, *, axis_name, axis_env, perm, platform):
