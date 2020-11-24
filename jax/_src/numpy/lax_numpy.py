@@ -2584,7 +2584,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   dtype = dtype and dtypes.canonicalize_dtype(dtype)
 
   if _can_call_numpy_array(object):
-    object = _np_array(object, dtype=dtype, ndmin=ndmin)
+    object = _np_array(object, dtype=dtype, ndmin=ndmin, copy=False)
   assert type(object) not in dtypes.python_scalar_dtypes
 
   if type(object) is np.ndarray:
