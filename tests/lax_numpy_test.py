@@ -4586,7 +4586,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'eye': ['order'],
       'full': ['order'],
       'full_like': ['subok', 'order'],
-      'gradient': ['varargs', 'axis', 'edge_order'],
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
@@ -4598,7 +4597,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     extra_params = {
       'broadcast_to': ['arr'],
-      'gradient': ['kwargs', 'args'],
       'einsum': ['precision'],
       'einsum_path': ['subscripts'],
       'pad': ['constant_values'],

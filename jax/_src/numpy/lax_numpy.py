@@ -1190,11 +1190,10 @@ def _gradient(a, varargs, axis):
 
 
 @_wraps(np.gradient)
-def gradient(f, *args, **kwargs):
-  axis = kwargs.pop("axis", None)
-  if not len(kwargs) == 0:
-    raise ValueError("Only `axis` keyword is implemented")
-  return _gradient(f, args, axis)
+def gradient(f, *varargs, axis=None, edge_order=None):
+  if edge_order is not None:
+    raise NotImplementedError("The 'edge_order' argument to jnp.gradient is not supported.")
+  return _gradient(f, varargs, axis)
 
 
 @_wraps(np.isrealobj)
