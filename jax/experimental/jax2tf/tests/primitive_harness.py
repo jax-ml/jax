@@ -351,6 +351,26 @@ xla_device_put = tuple( # Validate dtypes
   ]
 )
 
+def _make_sub_harness(name, *, lhs_shape=(2, 3), rhs_shape=(2, 3),
+                      dtype=np.float32):
+  return Harness(f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}",
+                 lax.sub,
+                 [RandArg(lhs_shape, dtype), RandArg(rhs_shape, dtype)],
+                 lhs_shape=lhs_shape,
+                 rhs_shape=rhs_shape,
+                 dtype=dtype)
+
+lax_sub = tuple( # Validate dtypes
+  _make_sub_harness("dtypes", dtype=dtype)
+  for dtype in set(jtu.dtypes.all) - set(jtu.dtypes.boolean)
+) + tuple( # Validate broadcasting behaviour
+  _make_sub_harness("broadcasting", lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+  for lhs_shape, rhs_shape in [
+    ((), (2, 3)),     # broadcast scalar
+    ((1, 2), (3, 2)), # broadcast along specific axis
+  ]
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 
