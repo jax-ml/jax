@@ -406,15 +406,10 @@ def vtile(f_flat,
           tile_size: Optional[int], axis_name):
   @lu.transformation
   def _map_to_tile(*args_flat):
-    real_tile_size = tile_size
-    for arg, in_axis in zip(args_flat, in_axes_flat):
-      if real_tile_size is not None:
-        break
-      if in_axis is None:
-        continue
-      real_tile_size = arg.shape[in_axis]
-    assert real_tile_size is not None, "No mapped arguments?"
-    outputs_flat = yield map(tile_axis(tile_size=real_tile_size), args_flat, in_axes_flat), {}
+    sizes = (x.shape[i] for x, i in zip(args_flat, in_axes_flat) if i is not None)
+    tile_size_ = tile_size or next(sizes, None)
+    assert tile_size_ is not None, "No mapped arguments?"
+    outputs_flat = yield map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
     yield map(untile_axis, outputs_flat, out_axes_flat)
 
   return _map_to_tile(
@@ -531,7 +526,7 @@ def _apply_schedule(fun: lu.WrappedFun,
 
   axis_names = tuple(_GMapSubaxis(full_axis_name, i) for i in range(len(schedule)))
   if binds_axis_name:
-    jaxpr = subst_axis_names(jaxpr, {full_axis_name: (axis_names,)})  # type: ignore
+    jaxpr = subst_axis_names(jaxpr, {full_axis_name: axis_names})  # type: ignore
 
   sched_fun = lambda *args: core.eval_jaxpr(jaxpr, consts, *args)
   for (ltype, size), axis_name in list(zip(schedule, axis_names))[::-1]:
@@ -585,6 +580,4 @@ def subst_eqn_axis_names(eqn, axis_subst: Dict[AxisName, Tuple[AxisName]]):
   if not isinstance(axis_names, (tuple, list)):
     axis_names = (axis_names,)
   new_axis_names = sum((axis_subst.get(name, (name,)) for name in axis_names), ())
-  if len(new_axis_names) == 1:
-    new_axis_names = new_axis_names[0]  # type: ignore
   return eqn._replace(params=dict(eqn.params, axis_name=new_axis_names))
