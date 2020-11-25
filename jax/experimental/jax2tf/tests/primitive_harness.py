@@ -371,6 +371,33 @@ lax_sub = tuple( # Validate dtypes
   ]
 )
 
+def _make_bitcast_convert_type_harness(name, *, shape=(2, 3), dtype=np.float32,
+                                       new_dtype=np.float32):
+  return Harness(f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_newdtype={np.dtype(new_dtype).name}",
+                 lambda x: (
+                     lax.bitcast_convert_type_p.bind(x, new_dtype=new_dtype)),
+                 [RandArg(shape, dtype)],
+                 shape=shape,
+                 dtype=dtype,
+                 new_dtype=new_dtype)
+
+def _can_bitcast(dtype, target_dtype):
+  def _to_equivalence_class(dtype):
+    if dtypes.issubdtype(dtype, np.integer): return dtypes.iinfo(dtype).bits
+    elif dtypes.issubdtype(dtype, np.floating): return dtypes.finfo(dtype).bits
+    else:
+      assert dtype == np.bool_ or dtypes.issubdtype(dtype, np.complexfloating)
+      # Complex and boolean types can only be cast to themselves
+      return np.dtype(dtype).name
+  return _to_equivalence_class(dtype) == _to_equivalence_class(target_dtype)
+
+lax_bitcast_convert_type = tuple( # Validate dtypes combinations
+  _make_bitcast_convert_type_harness("dtypes_to_new_dtypes", dtype=dtype,
+                                     new_dtype=new_dtype)
+  for dtype in jtu.dtypes.all
+  for new_dtype in filter(partial(_can_bitcast, dtype), jtu.dtypes.all)
+)
+
 _LAX_COMPARATORS = (
   lax.eq, lax.ge, lax.gt, lax.le, lax.lt, lax.ne)
 
