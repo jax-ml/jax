@@ -380,6 +380,9 @@ def _batched_reduction_collective2(
     prim, if_mapped, if_unmapped, frame, vals_in, dims_in, axis_name,
     axis_index_groups):
   assert not prim.multiple_results  # cf. _batched_reduction_collective
+  if axis_index_groups is not None:
+    raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
+                              "Please open a feature request!")
   (v,), (d,) = vals_in, dims_in
   val_out = (if_mapped(v, d) if d is not batching.not_mapped
              else if_unmapped(v, frame.size))
@@ -538,6 +541,7 @@ def _ppermute_transpose_rule(t, perm, axis_name):
 
 def _ppermute_batcher(frame, vals_in, dims_in, axis_name, perm):
   assert len(perm) == frame.size, "Permutation doesn't match the axis size!"
+  assert axis_name == frame.name, "ppermute batcher called with wrong axis name"
   (v,), (d,) = vals_in, dims_in
   assert d is not batching.not_mapped
   perm_indices = [None] * frame.size
