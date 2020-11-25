@@ -24,7 +24,7 @@ import threading
 import types
 from typing import (Any, Callable, ClassVar, Dict, Generator,
                     Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple,
-                    Type, Union, cast, Iterable)
+                    Type, Union, cast, Iterable, Hashable)
 
 import numpy as np
 
@@ -660,6 +660,7 @@ class TraceStack:
 
 class Sublevel(int): pass
 AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
+AxisName = Hashable
 
 class TraceState:
   trace_stack: TraceStack
@@ -1257,9 +1258,6 @@ class MapPrimitive(Primitive):
   def post_process(self, trace, out_tracers, params):
     return trace.post_process_map(self, out_tracers, params)
 
-# TODO: Use a more concrete type annotation (we need __eq__ and __hash__)
-AxisName = Any
-
 @contextmanager
 def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
   frame = AxisEnvFrame(axis_name, size, tag)
@@ -1306,16 +1304,11 @@ def axis_frame(axis_name):
   for frame in reversed(frames):
     if frame.name == axis_name:
       return frame
-
-  named_axis = [
-      frame.name
-      for frame in reversed(frames)
-      if not isinstance(frame.name, _TempAxisName)
-  ]
+  named_axes = [frame.name for frame in reversed(frames)
+                if not isinstance(frame.name, _TempAxisName)]
   raise NameError(
       f'unbound axis name: {axis_name}. The following axis names (e.g. defined '
-      'by pmap) are available to collective operations:'
-      f'{named_axis}')
+      f'by pmap) are available to collective operations: {named_axes}')
 
 
 # ------------------- Jaxpr checking -------------------

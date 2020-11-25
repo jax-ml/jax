@@ -448,7 +448,7 @@ captured using the ``xla_pmap`` primitive. Consider this example
                                                            shape=(1,) ] 1.0
                                      e = add c d
                                      f = psum[ axis_index_groups=None
-                                               axis_name=rows ] b
+                                               axis_name=('rows',) ] b
                                      g = div e f
                                  in (g,) }
                     devices=None
