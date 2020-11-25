@@ -1543,9 +1543,13 @@ class APITest(jtu.JaxTestCase):
         assert len(w) == prev_len
 
     check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
-                  lambda: jnp.array([1, 2, 3], dtype="float32"),)
+                  lambda: jnp.array([1, 2, 3], dtype="float32"))
+    check_warning(lambda: jnp.array([1, 2, 3], dtype="float64"),
+                  lambda: jnp.array([1, 2, 3], dtype=float))
     check_warning(lambda: jnp.ones(3, dtype=np.float64),
                   lambda: jnp.ones(3))
+    check_warning(lambda: jnp.ones(3, dtype=np.float64),
+                  lambda: jnp.ones(3, dtype=float))
     check_warning(lambda: jnp.ones_like(3, dtype=np.int64),
                   lambda: jnp.ones_like(3, dtype=np.int32))
     check_warning(lambda: jnp.zeros(3, dtype="int64"),
@@ -1564,6 +1568,10 @@ class APITest(jtu.JaxTestCase):
                   lambda: jnp.linspace(0, 3, dtype=np.float32))
     check_warning(lambda: jnp.tri(2, dtype="float64"),
                   lambda: jnp.tri(2, dtype="float32"))
+    check_warning(lambda: jnp.arange(1).astype("float64"),
+                  lambda: jnp.arange(1).astype(float))
+    check_warning(lambda: jnp.arange(1.0).astype("int64"),
+                  lambda: jnp.arange(1.0).astype(int))
 
   def test_vmap_preserves_docstr(self):
     def superfun(a):
