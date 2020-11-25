@@ -401,7 +401,8 @@ def _allreduce_translation_rule(prim, c, *args, axis_name, axis_index_groups,
     is_complex = dtypes.issubdtype(dtype, np.complexfloating)
     n = len(dtype_args)
     if is_complex and prim is lax.add_p:
-      # we handle complex-dtype sum-reduction directly as a special case
+      # TODO(b/141575627): we handle complex-dtype sum-reduction directly as a
+      # special case because it's not currently handled by XLA:GPU or XLA:CPU
       dtype_args = ([xops.Real(x) for x in dtype_args] +
                     [xops.Imag(x) for x in dtype_args])
     scalar = ShapedArray((), c.get_shape(dtype_args[0]).numpy_dtype())
@@ -431,7 +432,8 @@ def _notuple_allreduce_translation_rule(prim, c, *args, axis_name, axis_env,
                                           None, None)
 
     if dtypes.issubdtype(dtype, np.complexfloating) and prim is lax.add_p:
-      # we handle complex-dtype sum-reduction directly as a special case
+      # TODO(b/141575627): we handle complex-dtype sum-reduction directly as a
+      # special case because it's not currently handled by XLA:GPU or XLA:CPU
       return xops.Complex(all_reduce(xops.Real(val)),
                           all_reduce(xops.Imag(val)))
     else:
