@@ -2809,25 +2809,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         self.assertTrue(jnp.all(jnp.equal(result_np, result_jax)))
         self.assertTrue(jnp.all(jnp.equal(result_np, result_jit)))
 
-  def testAllClose(self):
-    rng = np.random.RandomState(0)
-    x = rng.randn(2, 2)
-    y = rng.randn(2)
-
-    def same(list1, list2):
-      allclose = functools.partial(jnp.allclose, atol=1e-3, rtol=1e-3)
-      elements_close = list(map(allclose, list1, list2))
-      return jnp.all(jnp.array(elements_close))
-
-    csame = api.jit(same)
-
-    a1 = same((x, y), (x, y))
-    a2 = csame((x, y), (x, y))
-    a3 = csame((x, y), (x, 2 * y))
-
-    self.assertTrue(a1)
-    self.assertTrue(a2)
-    self.assertFalse(a3)
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_x={}_y={}_equal_nan={}".format(x, y, equal_nan),
+       "x": x, "y": y, "equal_nan": equal_nan}
+      for x, y in itertools.product([
+         1, [1], [1, 1 + 1E-4], [1, np.nan]], repeat=2)
+      for equal_nan in [True, False]))
+  def testAllClose(self, x, y, equal_nan):
+    jnp_fun = partial(jnp.allclose, equal_nan=equal_nan, rtol=1E-3)
+    np_fun = partial(np.allclose, equal_nan=equal_nan, rtol=1E-3)
+    args_maker = lambda: [x, y]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   def testZeroStridesConstantHandler(self):
     raw_const = np.random.RandomState(0).randn(1, 2, 1, 1, 5, 1)
@@ -4574,7 +4567,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
-      'allclose': ['equal_nan'],
       'angle': ['deg'],
       'broadcast_to': ['subok', 'array'],
       'clip': ['kwargs'],
