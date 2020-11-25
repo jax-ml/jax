@@ -450,7 +450,7 @@ psum_p.multiple_results = True
 psum_p.def_abstract_eval(lambda *args, **params: map(raise_to_shaped, args))
 pxla.soft_pmap_rules[psum_p] = \
     partial(_allreduce_soft_pmap_rule, psum_p, lax._reduce_sum)
-xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule, lax.add_p)
+xla.parallel_translations[psum_p] = partial(_allreduce_translation_rule, lax.add_p)  # type: ignore
 ad.deflinear(psum_p, _psum_transpose_rule)
 pxla.multi_host_supported_collectives.add(psum_p)
 batching.primitive_batchers[psum_p] = partial(_collective_batcher, psum_p)
