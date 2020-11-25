@@ -59,7 +59,7 @@ def PRNGKey(seed: int) -> jnp.ndarray:
     seed = np.int64(seed)
   # Converting to jnp.array may truncate bits when jax_enable_x64=False, but this
   # is necessary for the sake of JIT invariance of the result for such values.
-  seed = jnp.array(seed)
+  seed = jnp.asarray(seed)
 
   convert = lambda k: lax.reshape(lax.convert_element_type(k, np.uint32), [1])
   k1 = convert(lax.shift_right_logical(seed, lax._const(seed, 32)))

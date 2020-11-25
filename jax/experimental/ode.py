@@ -104,7 +104,7 @@ def interp_fit_dopri(y0, y1, k, dt):
       -2691868925 / 45128329728 / 2, 187940372067 / 1594534317056 / 2,
       -1776094331 / 19743644256 / 2, 11237099 / 235043384 / 2])
   y_mid = y0 + dt * jnp.dot(dps_c_mid, k)
-  return jnp.array(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
+  return jnp.asarray(fit_4th_order_polynomial(y0, y1, y_mid, k[0], k[-1], dt))
 
 def fit_4th_order_polynomial(y0, y1, y_mid, dy0, dy1, dt):
   a = -2.*dt*dy0 + 2.*dt*dy1 -  8.*y0 -  8.*y1 + 16.*y_mid
