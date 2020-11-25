@@ -877,7 +877,7 @@ def histogram_bin_edges(a, bins=10, range=None, weights=None):
   if isinstance(bins, str):
     raise NotImplementedError("string values for `bins` not implemented.")
   a = ravel(a)
-  b = array(bins)
+  b = asarray(bins)
   if b.ndim == 1:
     return b
   if range is None:
@@ -1593,7 +1593,7 @@ def bincount(x, weights=None, minlength=0, *, length=None):
     msg = f"x argument to bincount must have an integer type; got {x.dtype}"
     raise TypeError(msg)
   if length is None:
-    x = core.concrete_or_error(array, x,
+    x = core.concrete_or_error(asarray, x,
       "The error occured because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
     length = max(x) + 1
@@ -2446,7 +2446,7 @@ def concatenate(arrays, axis=0):
   # (https://github.com/google/jax/issues/653).
   k = 16
   if len(arrays) == 1:
-    return array(arrays[0])
+    return asarray(arrays[0])
   else:
     while len(arrays) > 1:
       arrays = [lax.concatenate(arrays[i:i+k], axis)
@@ -2477,7 +2477,7 @@ def dstack(tup):
 def column_stack(tup):
   arrays = []
   for v in tup:
-    arr = array(v)
+    arr = asarray(v)
     if arr.ndim < 2:
       arr = atleast_2d(arr).T
     arrays.append(arr)
@@ -2494,7 +2494,7 @@ def choose(a, choices, out=None, mode='raise'):
   N = len(choices)
 
   if mode == 'raise':
-    a = core.concrete_or_error(array, a,
+    a = core.concrete_or_error(asarray, a,
       "The error occurred because jnp.choose was jit-compiled"
       " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
     if any((a < 0) | (a >= N)):
@@ -2540,7 +2540,7 @@ def block(arrays):
 @_wraps(np.atleast_1d, update_doc=False)
 def atleast_1d(*arys):
   if len(arys) == 1:
-    arr = array(arys[0])
+    arr = asarray(arys[0])
     return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
     return [atleast_1d(arr) for arr in arys]
@@ -2549,7 +2549,7 @@ def atleast_1d(*arys):
 @_wraps(np.atleast_2d, update_doc=False)
 def atleast_2d(*arys):
   if len(arys) == 1:
-    arr = array(arys[0])
+    arr = asarray(arys[0])
     if ndim(arr) >= 2:
       return arr
     elif ndim(arr) == 1:
@@ -2563,7 +2563,7 @@ def atleast_2d(*arys):
 @_wraps(np.atleast_3d, update_doc=False)
 def atleast_3d(*arys):
   if len(arys) == 1:
-    arr = array(arys[0])
+    arr = asarray(arys[0])
     if ndim(arr) == 0:
       arr = expand_dims(arr, axis=(0, 1, 2))
     elif ndim(arr) == 1:
@@ -2598,7 +2598,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
       out = object
   elif isinstance(object, (list, tuple)):
     if object:
-      out = stack([array(elt, dtype=dtype) for elt in object])
+      out = stack([asarray(elt, dtype=dtype) for elt in object])
     else:
       out = _device_put_raw(_np_array([], dtype=dtype))
   else:
@@ -3998,7 +3998,7 @@ def _unique1d(ar, return_index=False, return_inverse=False,
 @_wraps(np.unique)
 def unique(ar, return_index=False, return_inverse=False,
            return_counts=False, axis=None):
-  ar = core.concrete_or_error(array, ar, "The error arose in jnp.unique()")
+  ar = core.concrete_or_error(asarray, ar, "The error arose in jnp.unique()")
 
   if iscomplexobj(ar):
     raise NotImplementedError(
@@ -4489,8 +4489,8 @@ def compress(condition, a, axis=None, out=None):
     raise NotImplementedError("The 'out' argument to jnp.compress is not supported.")
   if ndim(condition) != 1:
     raise ValueError("condition must be a 1D array")
-  condition = array(condition).astype(bool)
-  a = array(a)
+  condition = asarray(condition).astype(bool)
+  a = asarray(a)
   if axis is None:
     axis = 0
     a = ravel(a)

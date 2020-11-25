@@ -214,7 +214,7 @@ def _cofactor_solve(a, b):
   # Compute (partial) determinant, ignoring last diagonal of LU
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   parity = jnp.count_nonzero(pivots != jnp.arange(a_shape[-1]), axis=-1)
-  sign = jnp.array(-2 * (parity % 2) + 1, dtype=dtype)
+  sign = jnp.asarray(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains det(u) / u_{nn}.
   partial_det = jnp.cumprod(diag, axis=-1) * sign[..., None]
