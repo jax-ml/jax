@@ -312,6 +312,13 @@ def extract_call_jaxpr(
     return (params["call_jaxpr"], new_params)
 
 
+def traverse_jaxpr_params(f, params):
+  """Applies f to each jaxpr parameter and returns a tuple of returned values."""
+  return tuple(f(param if type(param) is Jaxpr else param.jaxpr)
+               for param in params.values()
+               if type(param) in (Jaxpr, ClosedJaxpr))
+
+
 def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   def read(v):
     if type(v) is Literal:

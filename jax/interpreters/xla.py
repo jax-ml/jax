@@ -524,7 +524,7 @@ def jaxpr_replicas(jaxpr):
   For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
   subjaxprs. For a list of eqns, take the maximum number of replicas.
   """
-  return max((eqn_replicas(eqn) for eqn in jaxpr.eqns), default=1)
+  return max(unsafe_map(eqn_replicas, jaxpr.eqns), default=1)
 
 # TODO(mattjj): this function assumes that only pmap has a parameter named
 # axis_size, and that it corresponds to cross-replica mapping
@@ -538,10 +538,7 @@ def eqn_replicas(eqn):
     return 1
 
 def initial_style_primitive_replicas(params):
-  nums = (jaxpr_replicas(param if type(param) is core.Jaxpr else param.jaxpr)
-          for param in params.values()
-          if type(param) in (core.Jaxpr, core.ClosedJaxpr))
-  return max(it.chain([1], nums))
+  return max(core.traverse_jaxpr_params(jaxpr_replicas, params), default=1)
 
 # TODO(mattjj,skyewm): the functions here are utilities for checking if
 # not-yet-supported features are used with multi-host programming

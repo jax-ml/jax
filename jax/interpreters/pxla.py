@@ -1240,14 +1240,13 @@ def untile_aval_nd(axis_sizes, out_axes: AxisNameMap, aval):
     shape[axis] *= axis_sizes[name]
   return ShapedArray(tuple(shape), aval.dtype)
 
-# TODO(apaszke): Cache compilation
-def mesh_tiled_callable(*in_avals,
-                        fun: lu.WrappedFun,
+def mesh_tiled_callable(fun: lu.WrappedFun,
                         transformed_name: str,
                         backend_name: Optional[str],
                         mesh: Mesh,
                         in_axes: Sequence[AxisNameMap],
-                        out_axes_thunk: Callable[[], Sequence[AxisNameMap]]):
+                        out_axes: Sequence[AxisNameMap],
+                        *in_avals):
   assert config.omnistaging_enabled
   local_mesh = mesh.local_mesh
 
@@ -1261,10 +1260,9 @@ def mesh_tiled_callable(*in_avals,
                         for aval_in_axes, aval in zip(in_axes, in_avals))
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(fun, sharded_avals)
-  out_axes = out_axes_thunk()
+  _sanitize_mesh_jaxpr(jaxpr)
+  jaxpr = xla.apply_outfeed_rewriter(jaxpr)
   assert len(out_axes) == len(out_sharded_avals)
-  # TODO(apaszke): What about outfeed?
-  # jaxpr = xla.apply_outfeed_rewriter(jaxpr)
 
   is_multi_host = local_mesh.shape == mesh.shape
   if is_multi_host:
@@ -1327,6 +1325,19 @@ def mesh_tiled_callable(*in_avals,
   handle_outs = avals_to_results_handler(local_mesh.size, 1, output_specs, output_avals)
 
   return partial(execute_replicated, compiled, backend, handle_args, handle_outs)
+
+
+_forbidden_primitives = {
+  'xla_pmap': 'pmap',
+  'soft_pmap': 'soft_pmap',
+  'sharded_call': 'sharded_jit',
+}
+def _sanitize_mesh_jaxpr(jaxpr):
+  for eqn in jaxpr.eqns:
+    if eqn.primitive.name in _forbidden_primitives:
+      raise RuntimeError(f"Nesting {_forbidden_primitives[eqn.primitive.name]} "
+                         f"inside xmaps not supported!")
+    core.traverse_jaxpr_params(_sanitize_mesh_jaxpr, eqn.params)
 
 
 def mesh_sharding_specs(local_axis_sizes, axis_names):

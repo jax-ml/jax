@@ -31,7 +31,7 @@ from jax import vmap
 from jax import lax
 from jax.experimental.general_map import gmap, fake_resources, Mesh, mesh, xmap, A
 from jax.lib import xla_bridge
-from jax.util import curry
+from jax.util import curry, unzip2
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -85,6 +85,19 @@ def check_default_schedules(cond, fun):
   return parameterized.named_parameters(
     {"testcase_name": "_" + name, "schedule": schedule}
     for name, schedule in schedules)(fun)
+
+@curry
+def with_mesh(named_shape, f):
+  def new_f(*args, **kwargs):
+    axis_names, shape = unzip2(named_shape)
+    size = np.prod(shape)
+    local_devices = list(jax.local_devices())
+    if len(local_devices) < size:
+      raise SkipTest(f"Test requires {size} local devices")
+    mesh_devices = np.array(local_devices[:size]).reshape(shape)
+    with mesh(mesh_devices, axis_names):
+      return f(*args, **kwargs)
+  return new_f
 
 
 class GmapTest(jtu.JaxTestCase):
@@ -226,6 +239,23 @@ class GmapTest(jtu.JaxTestCase):
       c, d = fm(a, b)
       self.assertAllClose(c, (a * 2).sum(0))
       self.assertAllClose(d, b * 4)
+
+  @ignore_gmap_warning()
+  @with_mesh([('x', 2)])
+  def testXMapCompilationCache(self):
+    def f(x):
+      assert python_should_be_executing
+      return x * 2
+    fm = xmap(f,
+              in_axes=[A({'a': 0})],
+              out_axes=[A({'a': 0})],
+              schedule=[('a', 'x'), ('a', 'vectorize')])
+    x = np.arange(8).reshape((2, 2, 2))
+    python_should_be_executing = True
+    fm(x)
+    python_should_be_executing = False
+    fm(x)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
