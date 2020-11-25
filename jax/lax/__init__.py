@@ -337,6 +337,7 @@ from jax._src.lax.parallel import (
   psum,
   psum_p,
   pswapaxes,
+  pdot,
 )
 from jax._src.lax.other import (
   conv_general_dilated_patches

@@ -337,6 +337,13 @@ def axis_index(axis_name):
   return axis_index_p.bind(axis_name=axis_name)
 
 
+def pdot(x, y, axis_name, pos_contract=((), ())):
+  if not isinstance(axis_name, (list, tuple)):
+    axis_name = (axis_name,)
+  return pdot_p.bind(x, y, axis_name=axis_name,
+                     pos_contract=pos_contract, pos_batch=[(), ()])
+
+
 ### parallel primitives
 
 def _allreduce_soft_pmap_rule(prim, reducer, vals, mapped, chunk_size,
@@ -747,6 +754,72 @@ axis_index_p.def_custom_bind(_axis_index_bind)
 def _process_axis_index(self, frame):
   return batching.BatchTracer(self, lax_numpy.arange(frame.size, dtype=np.int32), 0)
 batching.BatchTrace.process_axis_index = _process_axis_index  # type: ignore
+
+
+pdot_p = core.Primitive('pdot')
+
+@pdot_p.def_impl
+def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch):
+  if axis_name: raise NameError(f"unbound axis name: {axis_name[0]}")
+  return lax.dot_general(x, y, [pos_contract, pos_batch])
+
+@pdot_p.def_abstract_eval
+def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch):
+  # TODO: avals with names, check inputs are mapped along axis_name, eliminate
+  return lax.dot_general_p.abstract_eval(
+      x, y, dimension_numbers=[pos_contract, pos_batch],
+      precision=None)
+
+def _pdot_vmap_collective_rule(frame, vals_in, dims_in, *, axis_name,
+                               pos_contract, pos_batch):
+  x, y = vals_in
+  x_dim, y_dim = dims_in
+  x_pos_contract, y_pos_contract = pos_contract
+  x_pos_contract = [x_dim] + [d + (d >= x_dim) for d in x_pos_contract]
+  y_pos_contract = [y_dim] + [d + (d >= y_dim) for d in y_pos_contract]
+  x_pos_batch, y_pos_batch = pos_batch
+  x_pos_batch = [d + (d >= x_dim) for d in x_pos_batch]
+  y_pos_batch = [d + (d >= y_dim) for d in y_pos_batch]
+  remaining_axis_names = tuple(n for n in axis_name if n != frame.name)
+  out = pdot_p.bind(x, y, axis_name=remaining_axis_names,
+                    pos_contract=[x_pos_contract, y_pos_contract],
+                    pos_batch=[x_pos_batch, y_pos_batch])
+  return out, None
+batching.collective_rules[pdot_p] = _pdot_vmap_collective_rule
+
+def _pdot_vmap_batching_rule(vals_in, dims_in, *, axis_name, pos_contract,
+                             pos_batch):
+  x, y = vals_in
+  (pos_contract, pos_batch), result_batch_dim = lax._dot_general_batch_dim_nums(
+      (x.ndim, y.ndim), dims_in, [pos_contract, pos_batch])
+  out = pdot_p.bind(x, y, axis_name=axis_name, pos_contract=pos_contract,
+                    pos_batch=pos_batch)
+  return out, result_batch_dim
+batching.primitive_batchers[pdot_p] = _pdot_vmap_batching_rule
+
+def _pdot_translation_rule(c, x, y, *, axis_name, pos_contract, pos_batch,
+                           axis_env, platform):
+  assert axis_name
+  local_out = lax._dot_general_translation_rule(
+      c, x, y, dimension_numbers=[pos_contract, pos_batch], precision=None)
+  out_tup = xla.parallel_translations[psum_p](
+      c, local_out, axis_name=axis_name, axis_index_groups=None,
+      axis_env=axis_env, platform=platform)
+  out, = xla.xla_destructure(c, out_tup)
+  return out
+xla.parallel_translations[pdot_p] = _pdot_translation_rule
+
+def _pdot_transpose_lhs(g, y, *, axis_name, pos_contract, pos_batch):
+  # TODO: avals with names, call pbroadcast with axis_name
+  return lax._dot_general_transpose_lhs(
+      g, y, dimension_numbers=[pos_contract, pos_batch], precision=None)
+def _pdot_transpose_rhs(g, x, *, axis_name, pos_contract, pos_batch):
+  # TODO: avals with names, call pbroadcast with axis_name
+  return lax._dot_general_transpose_rhs(
+      g, x, dimension_numbers=[pos_contract, pos_batch], precision=None)
+ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
+
+pxla.multi_host_supported_collectives.add(pdot_p)
 
 
 @config.register_omnistaging_disabler
