@@ -582,7 +582,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name, donated_inv
     # by any transformation_with_aux's applied to fun. Since this is
     # intentional here, to avoid "Store occupied" errors we reset the stores to
     # be empty.
-    for store in fun.stores: store.reset()
+    for store in fun.stores: store and store.reset()
     return fun.call_wrapped(*args)  # probably won't return
 
 def flatten_shape(s: XlaShape) -> Sequence[Tuple[Sequence[int], XlaShape]]:
